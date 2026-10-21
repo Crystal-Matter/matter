@@ -159,6 +159,19 @@ verify discovery, CASE ACLs, mDNS window expiry, controller certificate stores,
 and full commissioning against an independent implementation. Those remain
 part of the interoperability work below.
 
+## Official SDK certification runner
+
+`e2e/interop/sdk_jfadmin_certification.py` launches a fresh Crystal JFA and
+runs connectedhomeip v1.6.0.0's **unmodified** `TC_JFADMIN_1_2.py` with the
+SDK Python controller. It supplies the device's generated setup code and
+discriminator, and retains the SDK and device logs under
+`tmp/interop-jfadmin-certification`. The Linux workflow
+`.github/workflows/sdk-jfadmin-certification.yml` builds the SDK Python
+controller from the tagged source and runs this case on pull requests that
+change the JFA implementation. The case covers the JFA command and fail-safe
+sequence before Joint Commissioning; it does not cover the controller's JCM
+or the Datastore scenarios.
+
 ## Work required for interoperable Joint Commissioning
 
 1. Integrate a DCL-backed operational VID trust source and exercise
