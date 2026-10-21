@@ -162,15 +162,17 @@ part of the interoperability work below.
 ## Official SDK certification runner
 
 `e2e/interop/sdk_jfadmin_certification.py` launches a fresh Crystal JFA and
-runs connectedhomeip v1.6.0.0's **unmodified** `TC_JFADMIN_1_2.py` with the
-SDK Python controller. It supplies the device's generated setup code and
-discriminator, and retains the SDK and device logs under
+runs connectedhomeip v1.6.0.0's `TC_JFADMIN_1_2.py` with the SDK Python
+controller. It supplies the device's generated setup code and discriminator,
+and retains the SDK and device logs under
 `tmp/interop-jfadmin-certification`. The Linux workflow
 `.github/workflows/sdk-jfadmin-certification.yml` builds the SDK Python
 controller from the tagged source and runs this case on pull requests that
 change the JFA implementation. The case covers the JFA command and fail-safe
 sequence before Joint Commissioning; it does not cover the controller's JCM
-or the Datastore scenarios.
+or the Datastore scenarios. The runner inserts one missing `jf_admin = None`
+initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
+certification steps and assertions are unchanged.
 
 ## Work required for interoperable Joint Commissioning
 

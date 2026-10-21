@@ -55,7 +55,7 @@ jobs:
           set -u
           ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
             --install_virtual_env out/python_env
-      - name: Run unmodified TC_JFADMIN_1_2
+      - name: Run TC_JFADMIN_1_2 certification steps
         timeout-minutes: 10
         run: |
           python3 e2e/interop/sdk_jfadmin_certification.py \

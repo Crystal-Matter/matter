@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the unmodified Matter 1.6 TC_JFADMIN_1_2 against a Crystal JFA.
+"""Run Matter 1.6 TC_JFADMIN_1_2 against a Crystal JFA.
 
 The SDK Python controller and Crystal device share one Linux network namespace.
 The official test commissions the device itself, so no other commissioner is
@@ -18,9 +18,11 @@ from sdk_jfc_switch_smoke import ManagedProcess
 def run(args):
     sdk = args.sdk.resolve()
     device = args.jfa.resolve()
-    python = (sdk / "out/python_env/bin/python3").resolve()
-    test = sdk / "src/python_testing/TC_JFADMIN_1_2.py"
-    for executable in (device, python, test):
+    # Keep the venv path intact: resolve() follows its Python symlink and
+    # would launch the host interpreter without the SDK's installed wheels.
+    python = sdk / "out/python_env/bin/python3"
+    upstream_test = sdk / "src/python_testing/TC_JFADMIN_1_2.py"
+    for executable in (device, python, upstream_test):
         if not executable.is_file():
             raise RuntimeError(f"missing official test prerequisite: {executable}")
 
@@ -30,6 +32,16 @@ def run(args):
     state.mkdir(exist_ok=True)
     pics = logs / "joint-fabric-pics-values"
     pics.write_text("PICS_SDK_CI_ONLY=0\nJFADMIN.S=1\n")
+
+    # v1.6.0.0 initializes jf_admin only in the SDK-CI path, then accesses it
+    # unconditionally in teardown_class. The non-CI path is required for a
+    # prestarted DUT. Fix that one harness line; do not alter test assertions.
+    source = upstream_test.read_text()
+    marker = "        self.admin_passcode = None\n"
+    if source.count(marker) != 1:
+        raise RuntimeError("unexpected SDK TC_JFADMIN_1_2 source; refusing to patch test")
+    test = logs / "TC_JFADMIN_1_2.py"
+    test.write_text(source.replace(marker, "        self.jf_admin = None\n" + marker, 1))
 
     process = ManagedProcess("crystal-jfa", [str(device), "--no-interactive"], state, logs)
     try:
@@ -54,7 +66,7 @@ def run(args):
         if result.returncode:
             tail = (logs / "TC_JFADMIN_1_2.log").read_text(errors="replace")[-12000:]
             raise RuntimeError(f"official TC_JFADMIN_1_2 failed with exit {result.returncode}:\n{tail}")
-        print("PASS: unmodified Matter 1.6 TC_JFADMIN_1_2 against Crystal JFA", flush=True)
+        print("PASS: Matter 1.6 TC_JFADMIN_1_2 against Crystal JFA", flush=True)
     finally:
         process.close()
 
