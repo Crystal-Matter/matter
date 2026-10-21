@@ -1,6 +1,7 @@
 require "socket"
 require "log"
 require "../codec/message_codec"
+require "../protocol/message_type"
 require "./message_counter"
 require "./exchange"
 require "./packet_transport"
@@ -386,7 +387,8 @@ module Matter
           protocol_id: protocol_id,
           session_id: session_id,
           peer_address: peer_address,
-          peer_node_id: peer_node_id
+          peer_node_id: peer_node_id,
+          initial_message_type: message_type
         )
 
         # Build message
@@ -500,7 +502,42 @@ module Matter
 
         # Check for duplicate messages
         session_id = packet.header.session_id
-        if session_id == 0
+        # An ICD Check-In carries its own authenticated, durable counter inside
+        # its AES-CCM payload. Its unsecured packet counter can restart at a
+        # lower random value on the same UDP socket when the device reboots.
+        # Decode the payload header first so only this message bypasses the
+        # ordinary unsecured packet replay window; IcdClient validates the
+        # inner counter after trial decryption.
+        unsecured_message = session_id == 0 ? Codec::MessageCodec::Base.decode_payload(packet) : nil
+        icd_check_in = if decoded = unsecured_message
+                         decoded.payload_header.protocol_id == Protocol::ProtocolId::SecureChannel.value &&
+                           decoded.payload_header.message_type == Protocol::SecureChannelMessageType::IcdCheckIn.value &&
+                           decoded.payload_header.initiator_message?
+                       else
+                         false
+                       end
+        # A restarted CASE responder may likewise reset its unsecured packet
+        # counter. Consider its responses only for our active, peer-scoped CASE
+        # exchange; the pairing layer authenticates Sigma2 or its resume MIC
+        # before establishing a session.
+        case_response = if decoded = unsecured_message
+                          header = decoded.payload_header
+                          if header.protocol_id == Protocol::ProtocolId::SecureChannel.value &&
+                             !header.initiator_message? &&
+                             {Protocol::SecureChannelMessageType::CaseSigma2.value,
+                              Protocol::SecureChannelMessageType::CaseSigma2Resume.value,
+                              Protocol::SecureChannelMessageType::StatusReport.value}.includes?(header.message_type)
+                            exchange = @exchange_manager.get_exchange(header.exchange_id, 0_u16, peer_address, true)
+                            exchange && exchange.protocol_id == Protocol::ProtocolId::SecureChannel.value &&
+                              exchange.initial_message_type == Protocol::SecureChannelMessageType::CaseSigma1.value &&
+                              !exchange.stale?
+                          else
+                            false
+                          end
+                        else
+                          false
+                        end
+        if session_id == 0 && !icd_check_in
           # A new transport can reuse its Node ID while starting a fresh counter.
           # Keep replay windows separate for each source socket, including when
           # the packet omits a source Node ID.
@@ -512,10 +549,28 @@ module Matter
           replay_key = {source_node_id, peer_address, packet.header.message_id}
           case counter.check(packet.header.message_id)
           when MessageCounter::CheckResult::Duplicate
-            replay_unsecured_duplicate(packet, data, peer_address, replay_key)
-            return
+            if case_response
+              if entry = @unsecured_replay[replay_key]?
+                if entry.request == data
+                  replay_unsecured_duplicate(packet, data, peer_address, replay_key)
+                  return
+                end
+              end
+            else
+              replay_unsecured_duplicate(packet, data, peer_address, replay_key)
+              return
+            end
           when MessageCounter::CheckResult::Stale
-            return
+            if case_response
+              if entry = @unsecured_replay[replay_key]?
+                if entry.request == data
+                  replay_unsecured_duplicate(packet, data, peer_address, replay_key)
+                  return
+                end
+              end
+            else
+              return
+            end
           end
           @unsecured_counters[source_key] = {counter, now}
           @unsecured_replay[replay_key] = UnsecuredReplayEntry.new(data.dup, now)
@@ -525,9 +580,7 @@ module Matter
         # For encrypted messages (session_id != 0), do NOT decode the payload yet
         # The payload is encrypted and needs to be decrypted first by the message handler
         # For unencrypted messages (session_id == 0), decode the payload normally
-        message = if session_id == 0
-                    # Unencrypted message - decode payload now
-                    decoded = Codec::MessageCodec::Base.decode_payload(packet)
+        message = if decoded = unsecured_message
                     Log.trace { "Message decoded: protocol=0x#{decoded.payload_header.protocol_id.to_s(16)}, type=0x#{decoded.payload_header.message_type.to_s(16)}" }
                     decoded
                   else

@@ -124,7 +124,8 @@ module Matter
         requires_ack : Bool = true,
       ) : UInt16
         exchange = @transport.exchange_manager.create_exchange(
-          protocol_id: protocol_id, session_id: 0_u16, peer_address: peer)
+          protocol_id: protocol_id, session_id: 0_u16, peer_address: peer,
+          initial_message_type: message_type)
         @owned_unsecured_exchanges.add({exchange.exchange_id, canonical_peer(peer)})
         send_unsecured_on_exchange(peer, exchange.exchange_id, protocol_id,
           message_type, payload, requires_ack: requires_ack)

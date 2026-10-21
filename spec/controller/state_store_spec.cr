@@ -23,6 +23,25 @@ private def sample_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::StateStore do
+  it "erases controller ICD Check-In keys when their fabric is removed" do
+    backend = Matter::Storage::Memory.new
+    state_store = Matter::Controller::StateStore.new(backend)
+    fabric = sample_fabric
+    state_store.save(Matter::Controller::State.new(fabric: fabric))
+    icd_store = Matter::Controller::IcdPeerStore.new(backend)
+    icd_store.save(Matter::Controller::IcdPeerStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+      0x3333_u64, Bytes.new(16, 0x55_u8), 10_u32, 11_u32))
+
+    state = state_store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id)
+    state_store.save(state)
+
+    icd_store.find_peer(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id, 0x3333_u64).should be_nil
+  end
+
   it "deletes CASE resumption secrets when a controller fabric is removed" do
     backend = Matter::Storage::Memory.new
     store = Matter::Controller::StateStore.new(backend)

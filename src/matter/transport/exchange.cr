@@ -24,6 +24,7 @@ module Matter
       getter peer_address : Socket::IPAddress?
       getter peer_node_id : DataType::NodeId?
       getter session_id : UInt16
+      getter initial_message_type : UInt8?
 
       # How long an exchange may sit idle before the sweep reclaims it.
       IDLE_TIMEOUT = 30.seconds
@@ -37,6 +38,7 @@ module Matter
         @initiator : Bool,
         @peer_address : Socket::IPAddress? = nil,
         @peer_node_id : DataType::NodeId? = nil,
+        @initial_message_type : UInt8? = nil,
       )
         @protocol_id = protocol_id.to_u32
         @state = State::Active
@@ -91,6 +93,7 @@ module Matter
         session_id : UInt16,
         peer_address : Socket::IPAddress,
         peer_node_id : DataType::NodeId? = nil,
+        initial_message_type : UInt8? = nil,
       ) : Exchange
         MAX_EXCHANGE_IDS.times do
           exchange_id = @next_exchange_id
@@ -104,7 +107,8 @@ module Matter
             session_id: session_id,
             initiator: true,
             peer_address: peer_address,
-            peer_node_id: peer_node_id
+            peer_node_id: peer_node_id,
+            initial_message_type: initial_message_type
           )
 
           @exchanges[key] = exchange

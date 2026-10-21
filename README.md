@@ -618,6 +618,34 @@ resolver; this library does not control radio power or discover an offline
 client's address. Devices without those hooks can still expose ICD metadata,
 but cannot deliver Check-Ins to an unreachable client.
 
+A controller can register its CASE identity as an ICD Check-In client and
+receive authenticated Check-Ins on its existing UDP transport:
+
+```crystal
+peer_store = Matter::Controller::IcdPeerStore.new(controller_state_store.backend)
+icd_client = Matter::Controller::IcdClient.new(controller_client, peer_store)
+icd_client.on_check_in = ->(check_in : Matter::Controller::IcdClient::CheckIn) do
+  # check_in carries authenticated fabric and device Node IDs, counter,
+  # ActiveModeThreshold, sender address, and key-refresh signal.
+  handle_waking_device(check_in)
+end
+icd_client.register_client(fabric, device_node_id, case_session, device_address)
+```
+
+`register_client` sends the typed ICD Management command over CASE and saves
+the Check-In key before sending, so a lost response does not lose a registration
+the device may have accepted. On key refresh, the controller retains the old
+and pending keys until an authenticated Check-In proves which one the device
+uses. Counters and key changes are saved before calling `on_check_in`; a replay
+is never delivered. A restarted device may reset its unsecured UDP packet
+counter; the controller accepts the packet only as a Check-In and uses its
+authenticated, durable Check-In counter to reject replay. Other unsecured
+messages retain UDP packet-counter replay protection. Removing a fabric
+through `Controller::StateStore` deletes
+its controller Check-In keys. Call `unregister_client` over CASE before removing
+an individual peer. Controllers still need application policy for sleep-aware
+subscriptions, key refresh scheduling, and routing replies to a waking device.
+
 ## Enhanced Setup Flow Terms and Conditions
 
 Devices can enable the optional Matter 1.6 General Commissioning TC feature
