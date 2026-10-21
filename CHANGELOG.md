@@ -14,6 +14,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   explicitly approved HTTP hosts for signed CRLs, bounds downloads, rejects
   redirects, and fails closed on partitioned or delegated CRLs.
 
+### Interaction Model data version filters
+
+- Decode and encode typed DataVersionFilterIB cluster paths for Read and
+  Subscribe requests. Matching cluster versions suppress unchanged attribute
+  reports; stale versions continue to return data, including on wildcard reads.
+- Let controller reads and subscriptions supply data version filters, with a
+  convenient version argument for a single attribute read.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

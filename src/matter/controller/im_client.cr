@@ -33,6 +33,7 @@ module Matter
         cluster_id : UInt32,
         attribute_id : UInt32,
         fabric_filtered : Bool = true,
+        data_version : UInt32? = nil,
       ) : InteractionModel::ReportDataMessage
         path = InteractionModel::AttributePath.new(
           endpoint: endpoint_id,
@@ -40,7 +41,12 @@ module Matter
           attribute: attribute_id
         )
 
-        read(session, peer, attribute_paths: [path], fabric_filtered: fabric_filtered)
+        filters = data_version.try do |version|
+          [InteractionModel::DataVersionFilterIB.new(
+            InteractionModel::ClusterPath.new(endpoint_id, cluster_id), version)]
+        end
+        read(session, peer, attribute_paths: [path], fabric_filtered: fabric_filtered,
+          data_version_filters: filters)
       end
 
       def read_events(
@@ -64,6 +70,7 @@ module Matter
         event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
         event_filters : Array(InteractionModel::EventFilterIB)? = nil,
         fabric_filtered : Bool = true,
+        data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil,
       ) : InteractionModel::ReportDataMessage
         if attribute_paths.empty? && event_paths.empty?
           raise Matter::ConfigurationError.new("Read requires an attribute or event path")
@@ -73,6 +80,7 @@ module Matter
           attribute_requests: attribute_paths.empty? ? nil : attribute_paths,
           event_requests: event_paths.empty? ? nil : event_paths,
           event_filters: event_filters,
+          data_version_filters: data_version_filters,
           fabric_filtered: fabric_filtered,
           interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION
         )

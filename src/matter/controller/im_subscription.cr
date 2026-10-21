@@ -21,7 +21,8 @@ module Matter
                      min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
                      @timeout : Time::Span = 10.seconds,
                      event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
-                     event_filters : Array(InteractionModel::EventFilterIB)? = nil)
+                     event_filters : Array(InteractionModel::EventFilterIB)? = nil,
+                     data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil)
         if (paths.empty? && event_paths.empty?) || max_interval == 0_u16 || max_interval < min_interval
           raise Matter::ConfigurationError.new("Invalid subscription intervals")
         end
@@ -32,6 +33,7 @@ module Matter
           attribute_requests: paths.empty? ? nil : paths,
           event_requests: event_paths.empty? ? nil : event_paths,
           event_filters: event_filters,
+          data_version_filters: data_version_filters,
           is_fabric_filtered: true,
           interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION)
         exchange_id = @client.send_encrypted_request(@session, @peer,
@@ -205,9 +207,10 @@ module Matter
                     attribute_paths : Array(InteractionModel::AttributePath) = [] of InteractionModel::AttributePath,
                     event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
                     event_filters : Array(InteractionModel::EventFilterIB)? = nil,
-                    min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
+                    min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
+                    data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil) : AttributeSubscription
         AttributeSubscription.new(@client, session, peer, attribute_paths,
-          min_interval, max_interval, @timeout, event_paths, event_filters)
+          min_interval, max_interval, @timeout, event_paths, event_filters, data_version_filters)
       end
 
       def subscribe_attributes(session : Session::SecureContext, peer : Socket::IPAddress,

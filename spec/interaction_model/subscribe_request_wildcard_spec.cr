@@ -382,7 +382,7 @@ describe "SubscribeRequestMessage with wildcard paths" do
       request = Matter::Protocol::IMHandler.parse_subscribe_request(payload)
       request.should_not be_nil
       subscribe_request = request.as(Matter::InteractionModel::SubscribeRequestMessage)
-      subscribe_request.data_version_filters.as(Array(TLV::Any)).size.should eq(22)
+      subscribe_request.data_version_filters.as(Array(Matter::InteractionModel::DataVersionFilterIB)).size.should eq(22)
 
       endpoint1 = endpoint(1)
       broken_cluster = BrokenTlvCluster.new(endpoint1)

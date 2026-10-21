@@ -91,6 +91,7 @@ module Matter
         peer_subject_ids : Array(UInt64)? = nil,
         fabric_filtered : Bool = true,
         session_id : UInt64? = nil,
+        data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil,
       ) : Array(InteractionModel::AttributeReportIB)
         attribute_reports = [] of InteractionModel::AttributeReportIB
         requests = attribute_requests || [] of InteractionModel::AttributePath
@@ -147,6 +148,7 @@ module Matter
             expanded_paths.each do |(endpoint_id, cluster_id, attribute_id)|
               cluster = clusters[{endpoint_id, cluster_id}]
               next unless cluster
+              next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id, cluster.data_version)
 
               concrete_path = InteractionModel::AttributePath.new(
                 endpoint: endpoint_id,
@@ -194,6 +196,8 @@ module Matter
             next
           end
 
+          next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id, cluster.data_version)
+
           required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
           unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
             status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
@@ -218,6 +222,19 @@ module Matter
         end
 
         attribute_reports
+      end
+
+      private def self.data_version_filtered?(
+        filters : Array(InteractionModel::DataVersionFilterIB)?,
+        endpoint_id : UInt16,
+        cluster_id : UInt32,
+        version : UInt32,
+      ) : Bool
+        return false unless filters
+        filters.any? do |filter|
+          filter.path.node.nil? && filter.path.endpoint == endpoint_id &&
+            filter.path.cluster == cluster_id && filter.data_version == version
+        end
       end
 
       # Reads journaled events for *event_requests*.
