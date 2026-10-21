@@ -61,6 +61,12 @@ describe "matter_level_control example" do
     read_int(device, "levelcontrol", "on-level", "OnLevel").should eq 100
   end
 
+  it "uses OnLevel when an On command turns the light on" do
+    expect_success(device.invoke("onoff", "off"))
+    expect_success(device.invoke("onoff", "on"))
+    read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 100
+  end
+
   it "toggles on/off" do
     before = read_bool(device, "onoff", "on-off", "OnOff")
     expect_success(device.invoke("onoff", "toggle"))
