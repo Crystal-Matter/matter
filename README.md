@@ -147,6 +147,27 @@ These projects show off how custom matter interfaces can be built for almost any
 model client. `examples/chip-tool.cr` is a full CLI built on it — see
 [examples/chip-tool/README.md](examples/chip-tool/README.md).
 
+For one-way group commands, use a controller store backed by a durable file.
+Provision the same epoch key and Group ID on each receiving device through
+GroupKeyManagement, add endpoint membership through Groups, and grant a Group
+ACL before sending. The controller retains only the derived operational key.
+
+```crystal
+group = Matter::Controller::GroupInvoker.new(client, store)
+group.install_epoch_key(fabric.fabric_id, fabric.root_public_key,
+  0x1234_u16, epoch_key)
+group.invoke(fabric.fabric_id, 0x1234_u16,
+  Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+  root_public_key: fabric.root_public_key)
+```
+
+`invoke` selects the controller identity on that fabric, reserves a durable
+message counter, and sends an authenticated private InvokeRequest to the
+fabric and group multicast address. It has no response; confirm effects with a
+separate CASE read if needed. Specify `controller_node_id:` as well when
+multiple controller identities share a fabric. Install the new epoch key before
+rotating a group's key set; `remove_group_key` erases the stored key.
+
 Find commissionable devices:
 
 ```crystal

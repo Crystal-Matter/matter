@@ -90,12 +90,13 @@ The response goes back the way it came: `IMHandler.encode_*` builds the payload,
 `Session::SecureMessage.encode`, hands a copy to `MrpCache#store` so a retransmitted request is
 answered from cache, and writes it with `UDPTransport#send_raw`.
 
-`Session::SecureMessage` (`session/secure_message.cr`) is the only place that encrypts or decrypts a
-message. There is one definition of the authenticated data — the complete packet header, including
-the optional node ids and opaque Message Extensions — used by both `encode` and `decode`.
+`Session::SecureMessage` (`session/secure_message.cr`) encrypts and decrypts unicast
+secure messages. There is one definition of the authenticated data — the complete packet
+header, including the optional node ids and opaque Message Extensions — used by both
+`encode` and `decode`.
 `MessageCodec` also skips length-delimited Secured Extensions after decryption, and carries
-vendor-qualified protocol IDs as a 32-bit vendor/protocol pair. Group privacy enhancements
-remain unsupported because they need header deobfuscation before packet parsing.
+vendor-qualified protocol IDs as a 32-bit vendor/protocol pair. Group privacy
+uses the separate authenticated packet path below.
 
 Groupcast uses a separate authenticated inbound path. The codec implements the
 Matter 1.6 §§3.7/4.9 group privacy transform: `MessagePrivacy` derives the
@@ -134,10 +135,14 @@ false value while still emitting no response. Writable, untimed attribute
 metadata determines whether each matching endpoint applies the value.
 `Protocol::GroupMessageSender` emits one-way group InvokeRequests and
 WriteRequests using durable
-`Session::GroupOutgoingCounters`; callers currently supply the fabric identity,
-installed operational key, and command paths. A high-level Controller method
-for selecting group keys is still needed. Group control messages and the
-provisional CacheAndSync/MCSP path remain unsupported.
+`Session::GroupOutgoingCounters`; callers supply the fabric identity, installed
+operational key, and interaction paths. `Controller::GroupInvoker` selects a
+stored fabric-scoped key and sends a one-way group Invoke. Group control
+messages and the provisional CacheAndSync/MCSP path remain unsupported.
+
+Matter 1.6 Core §4.18.1.2 makes CacheAndSync and MCSP optional; the advertised
+GroupKeyManagement policy is TrustFirst. The separate Groupcast cluster in
+§11.27 is also provisional and is not implemented.
 
 ### Who owns what in the protocol layer
 
@@ -275,6 +280,7 @@ Controller::Client             the UDP client and its unsecured message counter
 Controller::Pairing::PasePairing / CasePairing
 Controller::Commissioning::Commissioner / CommissioningWindowOpener
 Controller::ImClient           read attributes/events, subscribe, write_attribute(s), invoke
+Controller::GroupInvoker       fabric-scoped one-way group Invoke with durable counters
 Controller::StateStore         the fabric, its certificates and known nodes, over Storage::Backend
 ```
 
@@ -286,6 +292,13 @@ adds an optional minimum event number; the same bounded ReportData chunk
 ladder collects event and attribute reports. `subscribe_events` and `subscribe`
 allow event-only or mixed subscriptions, including EventFilterIB values.
 Subscription reports check both attribute and event status entries.
+
+`GroupInvoker` derives an operational key from a provisioned epoch key and the
+selected fabric's compressed ID, then stores the derived key in controller
+state. Its sender uses the same node-global durable group data counter as the
+device path. Key selection includes the fabric root and Group ID, so equal
+Group IDs on separate fabrics remain isolated. Removing the last controller
+identity for a logical fabric also removes its group keys.
 
 ### Joint Fabric
 
