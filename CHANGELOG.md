@@ -124,8 +124,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric SDK interoperability
 
-- Run the official Matter 1.6 multi-ecosystem JFA cases with isolated SDK
-  issuer stores and a Crystal JFA. Keep the SDK issuer private material out of
+- Pass the unmodified official Matter 1.6 `TC_JFADMIN_2_1` and
+  `TC_JFADMIN_2_2` multi-ecosystem JFA cases with isolated SDK issuer stores
+  and a Crystal JFA. Keep the SDK issuer private material out of
   uploaded CI artifacts and convert its X.509 DER certificates to Matter TLV
   with subject and public-key checks.
 - Verify an authenticated SDK Anchor from the Crystal JFA's operational UDP

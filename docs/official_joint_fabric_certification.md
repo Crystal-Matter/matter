@@ -42,13 +42,14 @@ building the SDK JFC and Python environment described in
 `.github/workflows/sdk-jf-cert-matrix.yml`. The script accepts `--case` for a
 single case. It preserves the official test, SDK JFC, bridge and Crystal logs.
 
-The remaining official cases have these prerequisites:
+The multi-ecosystem fixture runs the following official cases without changing
+their scripts or assertions. Both passed in the
+[Matter 1.6 SDK CI run](https://github.com/Crystal-Matter/matter/actions/runs/39619792506):
 
-| Case | Test fixture and protocol path still to exercise |
+| Case | Verified protocol path |
 | --- | --- |
-| `TC_JFADMIN_2_1` | Two SDK JFC ecosystems, two JFAs, two ordinary devices and SDK-driven Joint Commissioning of a joining JFA. |
-| `TC_JFADMIN_2_2` | Two SDK JFC ecosystems and SDK-driven Joint Commissioning of the Crystal JFA, including its DNS-SD `JF` advertisement and the joined fabric's Administrator CAT NOC. |
+| `TC_JFADMIN_2_1` | Two SDK JFC ecosystems, two JFAs, two ordinary devices and SDK-driven Joint Commissioning with Crystal as the Anchor JFA. |
+| `TC_JFADMIN_2_2` | Two SDK JFC ecosystems and SDK-driven Joint Commissioning of Crystal as the joining JFA, including its DNS-SD `JF` advertisement and the joined fabric's Administrator CAT NOC. |
 
-Local parity specs for these command sequences do not substitute for a passing
-official test. CI results and uploaded logs establish which independent tests
-have actually passed.
+The run's uploaded test summaries report PASS 1/1, with no failures or skips,
+for each case.
