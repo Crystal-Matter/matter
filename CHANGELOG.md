@@ -25,6 +25,10 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Verify operational Vendor IDs using explicit DCL trust records: bind Matter
   RCACs to VID-scoped OperationalPKI roots and validate VVS signatures through
   active VIDSignerPKI certificate chains.
+- Keep separate JFA services on the bootstrap B and joined A fabrics after
+  JCM. Endpoint 2 now serves B's administrator commands and Datastore while
+  endpoint 1 follows the cross-signed A ICAC, with fabric-scoped state across
+  restart and removal.
 - Issue locally signed Joint Fabric controller CAT NOCs and grant device access
   through Anchor Datastore groups, with idempotent retries and RefreshNode
   recovery. A live device test verifies CASE access before and after propagation.

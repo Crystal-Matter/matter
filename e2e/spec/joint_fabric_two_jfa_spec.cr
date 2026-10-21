@@ -252,6 +252,21 @@ describe "two provisioned Joint Fabric Administrators" do
     index_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any).as_u8.should eq(2_u8)
 
+    # B remains an independently addressable Administrator on its own fabric.
+    b_index_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 2_u16,
+      cluster_id: Matter::Cluster::JointFabricAdministrator::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX)
+    b_index_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any).as_u8.should eq(1_u8)
+    b_csr_without_failsafe = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 2_u16,
+      cluster_id: Matter::Cluster::JointFabricAdministrator::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricAdministrator::CMD_ICACCSR_REQUEST,
+      fields: Bytes.empty)
+    b_csr_without_failsafe.invoke_responses.first.command_status.as(Matter::InteractionModel::CommandStatusIB)
+      .status.status.should eq(Matter::InteractionModel::StatusCode::FailsafeRequired.value)
+
     # B's bootstrap Datastore remains on endpoint 2 after the JFA joins A.
     # Commission an ordinary B device, grant B's Administrator CAT, and move
     # it under A using B's locally held cross-signed ICAC signing key.
