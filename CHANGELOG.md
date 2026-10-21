@@ -7,6 +7,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Operational certificates
+
+- Derive Matter operational certificate SKID and AKID as SHA-1 of the complete
+  uncompressed P-256 public key, matching connectedhomeip v1.6 certificate
+  vectors. Root, intermediate, and node certificate signatures continue to
+  use ECDSA with SHA-256.
+- When issuing under a stored root or intermediate certificate, use that
+  certificate's SKID as the new certificate's AKID. This keeps existing Crystal
+  fabrics with legacy SHA-256-derived key identifiers internally consistent;
+  their existing CA certificates still need reprovisioning for SDK conformance.
+
 ### Attestation revocation
 
 - Validate Matter 1.6 partitioned and delegated DCL CRLs. Every partition
