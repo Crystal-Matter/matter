@@ -363,11 +363,12 @@ class CsrMailbox:
     boundary. Crystal verifies the returned PKCS#10 signature and pinned key.
     """
 
-    def __init__(self, path: Path, fabric_id: int, root_public_key: bytes,
-                 timeout: float = 1.0):
-        if not 0 < fabric_id <= MAX_NODE_ID:
+    def __init__(self, path: Path, fabric_id: int | None = None, root_public_key: bytes | None = None,
+                 timeout: float = 5.0):
+        if fabric_id is not None and not 0 < fabric_id <= MAX_NODE_ID:
             raise ValueError("fabric ID must be a nonzero uint64")
-        if len(root_public_key) != P256_PUBLIC_KEY_LENGTH or root_public_key[0] != 4:
+        if root_public_key is not None and (len(root_public_key) != P256_PUBLIC_KEY_LENGTH
+                                            or root_public_key[0] != 4):
             raise ValueError("root public key must be an uncompressed P-256 point")
         self.path = path
         self.fabric_id = fabric_id
@@ -411,7 +412,16 @@ class CsrMailbox:
             return None
         if nonce == self.completed_nonce:
             return None
-        if value.get("fabric_id") != self.fabric_id or value.get("root_public_key") != self.root_public_key.hex():
+        requested_fabric = value.get("fabric_id")
+        requested_root_hex = value.get("root_public_key")
+        try:
+            requested_root = bytes.fromhex(requested_root_hex)
+        except (ValueError, TypeError):
+            requested_root = b""
+        if (not isinstance(requested_fabric, int) or not 0 < requested_fabric <= MAX_NODE_ID
+                or len(requested_root) != P256_PUBLIC_KEY_LENGTH or requested_root[0] != 4
+                or (self.fabric_id is not None and requested_fabric != self.fabric_id)
+                or (self.root_public_key is not None and requested_root != self.root_public_key)):
             self._write({"nonce": nonce, "status": "wrong-fabric"})
             self.completed_nonce = nonce
             return None
@@ -427,7 +437,7 @@ class CsrMailbox:
         self.deadline = now + self.timeout
         channel_id, call_id = stream
         self.consumed_stream = stream
-        options = _field_varint(1, ICAC_CSR) + _field_varint(2, self.fabric_id)
+        options = _field_varint(1, ICAC_CSR) + _field_varint(2, requested_fabric)
         return RpcPacket(SERVER_STREAM, channel_id, SERVICE_ID, METHOD_IDS["GetStream"],
                          options, call_id=call_id)
 
@@ -598,9 +608,10 @@ def main() -> None:
     handoff = None
     csr_mailbox = None
     if args.command_path or args.handoff_command_path or args.csr_mailbox_path:
-        if args.fabric_id is None or args.root_public_key_hex is None:
-            parser.error("--fabric-id and --root-public-key-hex are required for Crystal command paths")
-        root_public_key = bytes.fromhex(args.root_public_key_hex)
+        if (args.command_path or args.handoff_command_path) and (
+                args.fabric_id is None or args.root_public_key_hex is None):
+            parser.error("--fabric-id and --root-public-key-hex are required for probe/handoff paths")
+        root_public_key = bytes.fromhex(args.root_public_key_hex) if args.root_public_key_hex else None
         if args.command_path:
             probe = FabricProbe(args.command_path, args.fabric_id, root_public_key)
         if args.handoff_command_path:

@@ -192,6 +192,21 @@ class RpcBridgeTest(unittest.TestCase):
             service.disconnect()
             self.assertFalse(service.streams)
 
+    def test_new_sdk_fabric_can_supply_its_selector_after_anchor_commissioning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "csr.json"
+            mailbox = CsrMailbox(path)
+            service = JointFabricService(csr_mailbox=mailbox)
+            service.handle(RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["GetStream"], call_id=8))
+            root = b"\x04" + bytes(range(64))
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                        "root_public_key": root.hex(), "nonce": "e" * 32}))
+            outbound = service.poll_stream()
+            self.assertEqual(outbound.kind, SERVER_STREAM)
+            self.assertEqual(outbound.payload, b"\x08\x00\x10\x80\xc2\x02")
+            service.disconnect()
+            self.assertEqual(json.loads(path.read_text())["status"], "unavailable")
+
     def test_csr_exchange_over_hdlc_socket_and_reconnect(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "csr.json"

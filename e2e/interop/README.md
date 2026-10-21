@@ -148,6 +148,32 @@ python3 -m unittest discover -s e2e/interop -p 'test_*.py' -v
 
 ## Lean official SDK interoperability run
 
+### Live SDK JFC to Crystal JFA Joint Commissioning
+
+Set `MATTER_INTEROP_SCENARIO=jcm` when invoking
+`e2e/interop/sdk_jfc_switch_smoke.sh`. The Linux runner builds the same
+official Matter 1.6 JFC binary, a Crystal JFA device, and a Crystal A-side
+JCM driver. It commissions Crystal B as the SDK-owned Anchor, opens B's Joint
+Commissioning window through the SDK JFC, and joins B to a separately
+bootstrapped Crystal A Anchor. The bridge's `GetStream`/`ResponseStream`
+transaction supplies B's ICAC CSR from the SDK-held key. The harness checks
+the CSR signature against B's commissioned ICAC, Anchor-originated
+`CommissioningComplete`, B's persisted cross-signed ICAC and
+`AdministratorFabricIndex`, and A's Datastore AdminList entry. Each failed
+step exits nonzero and writes process logs to `tmp/interop-sdk-jfc`.
+
+The dedicated `.github/workflows/sdk-jfc-jcm.yml` workflow runs this scenario
+on Linux x64 with Avahi. It can be run locally against prebuilt binaries with
+`MATTER_INTEROP_SKIP_BUILD=1`, `MATTER_SDK_ROOT`, `MATTER_INTEROP_JFA_BIN`,
+and `MATTER_INTEROP_JCM_DRIVER_BIN` set. The SDK owns B's root and Anchor ICAC
+private keys; the test only reads public certificates from the Crystal device.
+
+This direction uses Crystal A's local root issuer to sign the cross-ICAC.
+Using an SDK-owned **A** root remains blocked in Matter SDK v1.6: the JFC
+`GenerateReplyWork` switch handles `ICAC_CSR` only, despite the proto naming
+`CROSS_SIGNED_ICAC`; no Pigweed method exposes `SignICAC`. The test never
+exports an SDK issuer private key.
+
 Run this on a Linux x64 runner with enough free space for the Matter SDK build.
 Use the checked out `v1.6.0.0` SDK source. Bootstrap its own environment and
 submodules, then build only the two Joint Fabric apps, using the target names

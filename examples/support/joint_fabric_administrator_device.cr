@@ -148,6 +148,11 @@ module MatterJointFabricAdministrator
       getter fabric_present : Bool?
       getter inspected_fabric_id : UInt64?
       getter inspected_root_public_key : Bytes?
+      getter inspected_root_certificate : Bytes?
+      getter inspected_icac_certificate : Bytes?
+      getter inspected_node_id : UInt64?
+      getter inspected_cross_signed_icac : Bytes?
+      getter inspected_administrator_fabric_index : UInt8?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -155,7 +160,12 @@ module MatterJointFabricAdministrator
       def initialize(@status : String, @error : String? = nil, @fabric_present : Bool? = nil,
                      @inspected_fabric_id : UInt64? = nil,
                      @inspected_root_public_key : Bytes? = nil, @nonce : String? = nil,
-                     @certificate : Bytes? = nil, @subscription_committed : Bool? = nil)
+                     @certificate : Bytes? = nil, @subscription_committed : Bool? = nil,
+                     @inspected_root_certificate : Bytes? = nil,
+                     @inspected_icac_certificate : Bytes? = nil,
+                     @inspected_node_id : UInt64? = nil,
+                     @inspected_cross_signed_icac : Bytes? = nil,
+                     @inspected_administrator_fabric_index : UInt8? = nil)
       end
     end
 
@@ -1533,6 +1543,16 @@ module MatterJointFabricAdministrator
             end
             CommandResult.new("ok", fabric_present: present, inspected_fabric_id: fabric_id,
               inspected_root_public_key: root_public_key, nonce: request.nonce)
+          when "inspect-anchor-identity"
+            fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+            root_certificate = fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
+            icac_certificate = fabric.intermediate_cert || raise Matter::ConfigurationError.new("Anchor ICAC is unavailable")
+            CommandResult.new("ok", fabric_present: @joint_fabric_provisioned,
+              inspected_fabric_id: fabric.fabric_id, inspected_root_public_key: fabric.root_public_key,
+              inspected_root_certificate: root_certificate, inspected_icac_certificate: icac_certificate,
+              inspected_node_id: fabric.node_id, inspected_cross_signed_icac: persisted_icac,
+              inspected_administrator_fabric_index: joint_fabric_administrator.administrator_fabric_index,
+              nonce: request.nonce)
           when "inspect-new-anchor"
             CommandResult.new("ok", nonce: request.nonce,
               subscription_committed: @participant_view_current)
