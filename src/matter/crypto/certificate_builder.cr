@@ -133,7 +133,18 @@ module Matter
           serial : Bytes,
           crypto : CryptoBase = Crypto.instance,
           anchor : Bool = false,
+          issuer_certificate : Bytes? = nil,
         ) : Bytes
+          issuer = if certificate = issuer_certificate
+                     identity = MatterCertificate.from_slice(certificate)
+                     unless identity.subject.rcac_id == issuer_rcac_id &&
+                            identity.ec_public_key == issuer_key.public_key
+                       raise Matter::CertificateError.new("Intermediate issuer certificate does not match signing key or RCAC ID")
+                     end
+                     TLV::Any.from_slice(certificate).as_structure[Asn1::Field::Subject.value].as_list.dup
+                   else
+                     TLV::List{TLV::Any.new(issuer_rcac_id, Asn1::Dn::RcacId.value)}
+                   end
           subject = TLV::List{
             TLV::Any.new(icac_id, Asn1::Dn::IcacId.value),
             TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value),
@@ -144,7 +155,7 @@ module Matter
           sign(
             certificate(
               serial: serial,
-              issuer: TLV::List{TLV::Any.new(issuer_rcac_id, Asn1::Dn::RcacId.value)},
+              issuer: issuer,
               subject: subject,
               public_key: public_key,
               extensions: TLV::List{
