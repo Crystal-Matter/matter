@@ -240,6 +240,8 @@ describe Matter::Transport::UDPTransport do
   end
 end
 
+require "../../src/matter/controller/client"
+
 class AuthenticationBoundaryTransport < Matter::Transport::UDPTransport
   def receive_for_spec(data : Bytes, peer : Socket::IPAddress)
     handle_received_data(data, peer)
@@ -251,6 +253,43 @@ class AuthenticationBoundaryTransport < Matter::Transport::UDPTransport
 end
 
 describe Matter::Transport::UDPTransport do
+  it "routes a shared controller exchange before the device and keeps the listener open" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    received_by_device = [] of UInt16
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) {
+      received_by_device << message.payload_header.exchange_id
+      nil
+    }
+    client = Matter::Controller::Client.new(transport: transport)
+    peer = Socket::IPAddress.new("127.0.0.1", transport.port)
+    mapped_peer = Socket::IPAddress.new("::ffff:127.0.0.1", transport.port)
+    exchange_id = client.send_unsecured_request(peer, 0_u16, 1_u8, Bytes.empty, requires_ack: false)
+
+    response_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: exchange_id, protocol_id: 0_u16, message_type: 2_u8,
+      initiator_message: false, requires_acknowledge: false)
+    response_packet = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 0_u16, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 1_u32)
+    response = Matter::Codec::MessageCodec::Base.encode_message(response_packet, response_header, Bytes.empty)
+    transport.receive_for_spec(response, mapped_peer)
+
+    client.wait_for(exchange_id, 0_u16, 2_u8, 100.milliseconds).should_not be_nil
+    received_by_device.should be_empty
+
+    client.close
+    transport.socket.closed?.should be_false
+    next_response_packet = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 0_u16, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 2_u32)
+    next_response = Matter::Codec::MessageCodec::Base.encode_message(next_response_packet, response_header, Bytes.empty)
+    transport.receive_for_spec(next_response, mapped_peer)
+    received_by_device.should eq([exchange_id])
+  ensure
+    client.try(&.close)
+    transport.try(&.close)
+  end
+
   it "accepts a fresh unsecured counter from the same Node ID on another UDP socket" do
     transport = AuthenticationBoundaryTransport.new(port: 0)
     received = [] of UInt32

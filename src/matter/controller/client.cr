@@ -15,6 +15,7 @@ module Matter
 
       PROTOCOL_SECURE_CHANNEL    = 0x0000_u16
       PROTOCOL_INTERACTION_MODEL = 0x0001_u16
+      IPV4_MAPPED_PREFIX         = "::ffff:"
 
       MSG_STANDALONE_ACK      = 0x10_u8
       MSG_REPORT_DATA         = 0x05_u8
@@ -34,39 +35,74 @@ module Matter
       @deferred_mutex : Mutex
       @next_exchange_id : UInt16
       @unsecured_source_node_id : DataType::NodeId?
+      @owns_transport : Bool
+      @transport_observer_id : Int32?
+      @owned_unsecured_exchanges : Set(Tuple(UInt16, Socket::IPAddress))
+      @session_id_in_use : Proc(UInt16, Bool)?
 
       def initialize(
         port : Int32 = 0,
         @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
         unsecured_source_node_id : UInt64? = nil,
         initial_unsecured_message_counter : UInt32? = nil,
+        transport : Transport::UDPTransport? = nil,
+        @session_id_in_use : Proc(UInt16, Bool)? = nil,
       )
-        @transport = Transport::UDPTransport.new(port: port)
+        @owns_transport = transport.nil?
+        @transport = transport || Transport::UDPTransport.new(port: port)
+        @transport_observer_id = nil
+        @owned_unsecured_exchanges = Set(Tuple(UInt16, Socket::IPAddress)).new
         @unsecured_source_node_id = unsecured_source_node_id ? DataType::NodeId.new(unsecured_source_node_id) : nil
 
         # Avoid re-using old unsecured message IDs across process restarts: peers may
         # keep a dedupe window for unsecured traffic (session_id=0), which can cause
         # commissioning/CASE handshakes to be ignored as duplicates/stale.
-        if initial = initial_unsecured_message_counter
-          @transport.message_counter.reset(initial)
-        else
-          @transport.message_counter.reset(Random::Secure.rand(UInt32))
+        if @owns_transport
+          if initial = initial_unsecured_message_counter
+            @transport.message_counter.reset(initial)
+          else
+            @transport.message_counter.reset(Random::Secure.rand(UInt32))
+          end
+        elsif initial_unsecured_message_counter
+          raise Matter::ConfigurationError.new("Cannot reset a shared transport message counter")
         end
         @inbox = Channel(ReceivedMessage).new(256)
         @deferred_messages = [] of ReceivedMessage
         @deferred_mutex = Mutex.new
         @next_exchange_id = Random.rand(UInt16).to_u16
 
-        @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) { handle_transport_message(msg, peer) }
-        @transport.start
+        if @owns_transport
+          @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) { handle_transport_message(msg, peer) }
+          @transport.start
+        else
+          @transport_observer_id = @transport.add_message_observer do |msg, peer|
+            if owns_incoming?(msg, peer)
+              handle_transport_message(msg, peer)
+              true
+            else
+              false
+            end
+          end
+        end
       end
 
       def close : Nil
-        @transport.close
+        if id = @transport_observer_id
+          @transport.remove_message_observer(id)
+          @transport_observer_id = nil
+        end
+        @transport.close if @owns_transport
       end
 
       def register_session(session : Session::SecureContext) : Nil
+        unless session_id_available?(session.session_id)
+          raise Matter::ProtocolError.new("Controller session ID #{session.session_id} is already in use")
+        end
         @sessions[session.session_id] = session
+      end
+
+      def session_id_available?(session_id : UInt16) : Bool
+        session_id != 0 && !@sessions.has_key?(session_id) && !(@session_id_in_use.try(&.call(session_id)) || false)
       end
 
       def session?(session_id : UInt16) : Session::SecureContext?
@@ -87,17 +123,28 @@ module Matter
         payload : Bytes | Slice(UInt8),
         requires_ack : Bool = true,
       ) : UInt16
-        exchange = @transport.send_request(
-          protocol_id: protocol_id,
-          message_type: message_type,
-          payload: payload,
-          session_id: 0_u16,
-          peer_address: peer,
-          peer_node_id: nil,
-          source_node_id: @unsecured_source_node_id,
-          requires_ack: requires_ack
-        )
+        exchange = @transport.exchange_manager.create_exchange(
+          protocol_id: protocol_id, session_id: 0_u16, peer_address: peer)
+        @owned_unsecured_exchanges.add({exchange.exchange_id, canonical_peer(peer)})
+        send_unsecured_on_exchange(peer, exchange.exchange_id, protocol_id,
+          message_type, payload, requires_ack: requires_ack)
         exchange.exchange_id
+      end
+
+      private def owns_incoming?(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Bool
+        if msg.packet_header.session_id == 0
+          !msg.payload_header.initiator_message? &&
+            @owned_unsecured_exchanges.includes?({msg.payload_header.exchange_id, canonical_peer(peer)})
+        else
+          @sessions.has_key?(msg.packet_header.session_id)
+        end
+      end
+
+      private def canonical_peer(peer : Socket::IPAddress) : Socket::IPAddress
+        address = peer.address
+        return peer unless address.starts_with?(IPV4_MAPPED_PREFIX)
+
+        Socket::IPAddress.new(address[IPV4_MAPPED_PREFIX.size..], peer.port)
       end
 
       # Send an unsecured (session_id=0) message on an existing exchange.

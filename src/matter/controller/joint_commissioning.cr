@@ -697,6 +697,27 @@ module Matter
           queue.concat(read_descriptor_list(UInt16, im, session, peer,
             endpoint, Cluster::Descriptor::ATTR_PARTS_LIST))
         end
+
+        # Some Administrators expose the JFA attribute in a wildcard read even
+        # when their Descriptor PartsList does not enumerate the endpoint to
+        # this fabric. The official SDK uses that attribute path to locate the
+        # service. Require one concrete, non-null endpoint and re-read its
+        # AdministratorFabricIndex before relying on it.
+        path = InteractionModel::AttributePath.new(
+          cluster: Cluster::JointFabricAdministrator::CLUSTER_ID,
+          attribute: Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX)
+        report = im.read(session: session, peer: peer, attribute_paths: [path], fabric_filtered: false)
+        endpoints = (report.attribute_reports || [] of InteractionModel::AttributeReportIB).compact_map do |entry|
+          data = entry.attribute_data
+          next unless data && data.path.cluster == path.cluster && data.path.attribute == path.attribute
+          next if data.data.header.element_type.null?
+          endpoint = data.path.endpoint
+          next unless endpoint
+          index = UInt8.from_tlv(data.data.to_slice)
+          endpoint if index != 0_u8
+        end
+        endpoints.uniq!
+        return endpoints.first if endpoints.size == 1
         raise Matter::AuthenticationError.new("Joining node has no Joint Fabric Administrator endpoint")
       end
 
@@ -758,7 +779,9 @@ module Matter
                                     peer : Socket::IPAddress,
                                     trust : VidVerification::OperationalTrustAnchors,
                                     timeout : Time::Span = 10.seconds,
-                                    crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : VidVerification::VerifiedFabric
+                                    crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                                    client : Client? = nil,
+                                    on_verified_session : Proc(Session::SecureContext, Nil)? = nil) : VidVerification::VerifiedFabric
         root = fabric.root_cert || raise Matter::ConfigurationError.new("Joining fabric has no RCAC")
         identity = FabricInfo.new(fabric_id: fabric.fabric_id,
           controller_node_id: fabric.node_id,
@@ -769,14 +792,23 @@ module Matter
           controller_private_key: fabric.operational_private_key,
           admin_vendor_id: fabric.vendor_id,
           intermediate_cert: fabric.intermediate_cert)
-        client = Client.new(unsecured_source_node_id: fabric.node_id, crypto: crypto)
+        owns_client = client.nil?
+        client ||= Client.new(unsecured_source_node_id: fabric.node_id, crypto: crypto)
         begin
           session = Pairing::CasePairing.new(crypto).pair(client, peer, identity,
             peer_node_id: peer_node_id, timeout: timeout)
-          verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
+          verified = verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
             fabric.root_public_key, fabric.fabric_id, trust, crypto)
+          # Retain this CASE session only after the Anchor's operational VID and
+          # original-fabric binding have both been verified. A peer may reuse
+          # the newest CASE session for its following JCM command.
+          if on_verified_session
+            session.fabric_index = fabric.fabric_index
+            on_verified_session.call(session)
+          end
+          verified
         ensure
-          client.close
+          client.close if owns_client
         end
       end
 

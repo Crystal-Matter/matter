@@ -2,6 +2,10 @@ require "../spec_helper"
 require "../../examples/support/joint_fabric_administrator_device"
 
 class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator::Device
+  def prepare_for_start : Nil
+    before_start
+  end
+
   def advertised_joint_role : Matter::MDNS::JointFabricRole?
     commissioning_info_for(Matter::MDNS::CommissioningMode::Basic).joint_fabric_role
   end
@@ -25,9 +29,94 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def anchor_profile_for_spec(fabric : Matter::Fabric) : Bool
     compliant_anchor_fabric?(fabric)
   end
+
+  def anchor_verification_peer_for_spec(source : Socket::IPAddress) : Socket::IPAddress
+    scanner = Matter::Controller::Scanner.new
+    resolve_anchor_verification_peer(scanner, 0_u64, 1_u64, source, 0.seconds)
+  ensure
+    scanner.try(&.close)
+  end
+
+  def anchor_verification_client_for_spec(node_id : UInt64) : Matter::Controller::Client
+    anchor_verification_client(node_id)
+  end
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "starts Anchor verification from the operational listener without taking ownership of it" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
+    client = device.anchor_verification_client_for_spec(9_u64)
+    client.transport.should be(device.transport)
+    client.transport.port.should eq(device.port)
+    client.close
+    device.transport.socket.closed?.should be_false
+  ensure
+    client.try(&.close)
+    device.try(&.shutdown!)
+  end
+
+  it "uses the authenticated Anchor CASE source when operational discovery misses" do
+    previous = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?
+    ENV.delete("MATTER_JFA_ANCHOR_OPERATIONAL_PORT")
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    source = Socket::IPAddress.new("127.0.0.2", 44551)
+    device.anchor_verification_peer_for_spec(source).should eq(source)
+    expect_raises(Matter::TransportError, /operational port is unavailable/) do
+      device.anchor_verification_peer_for_spec(Socket::IPAddress.new("127.0.0.2", 0))
+    end
+  ensure
+    if previous
+      ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"] = previous
+    else
+      ENV.delete("MATTER_JFA_ANCHOR_OPERATIONAL_PORT")
+    end
+  end
+
+  it "keeps a fixture DUT out of SDK discovery until its gate opens" do
+    gate = File.join(Dir.tempdir, "matter-jfa-discovery-#{Random::Secure.hex(6)}")
+    previous = ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
+    ENV["MATTER_JFA_DISCOVERY_GATE_PATH"] = gate
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.start
+    device.responder.advertised_commissioning_info.should be_nil
+    File.write(gate, "ready")
+    sleep 1.2.seconds
+    device.responder.advertised_commissioning_info.should_not be_nil
+  ensure
+    device.try(&.shutdown!)
+    File.delete(gate) if gate && File.exists?(gate)
+    if previous
+      ENV["MATTER_JFA_DISCOVERY_GATE_PATH"] = previous
+    else
+      ENV.delete("MATTER_JFA_DISCOVERY_GATE_PATH")
+    end
+  end
+
+  it "does not expose an unprovisioned second JFA to wildcard commissioning reads" do
+    previous = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
+    ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.prepare_for_start
+    device.endpoint_ids.should eq([1_u16])
+    device.node.clusters.keys.should_not contain({2_u16, Matter::Cluster::JointFabricAdministrator::CLUSTER_ID})
+
+    ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
+    retained = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    retained.prepare_for_start
+    retained.endpoint_ids.should eq([1_u16, 2_u16])
+  ensure
+    if previous
+      ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = previous
+    else
+      ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    end
+  end
+
   it "serves JFA status commands on a newly commissioned non-Anchor fabric" do
     crypto = Matter::Crypto::StandardCrypto.new
     root_key = crypto.create_key_pair

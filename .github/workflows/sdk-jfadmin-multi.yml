@@ -1,0 +1,111 @@
+name: Matter 1.6 official multi-ecosystem JFA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/sdk-jfadmin-multi.yml
+      - e2e/interop/sdk_jfadmin_multi.py
+      - e2e/interop/sdk_cert_identity.py
+      - e2e/interop/sdk_jfadmin_issuer_fixture.cr
+      - e2e/interop/joint_fabric_rpc_bridge.py
+      - examples/support/joint_fabric_administrator_device.cr
+      - src/matter/cluster/joint_fabric_administrator.cr
+      - src/matter/controller/joint_commissioning.cr
+
+jobs:
+  tc-jfadmin-2-x:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crystal-lang/install-crystal@v1
+      - name: Prepare discovery and SDK dependencies
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            avahi-daemon avahi-utils dbus iproute2 libavahi-client-dev libdbus-1-dev \
+            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev \
+            pkg-config clang ninja-build cmake
+          interface=$(ip -o -4 route show default | awk '{print $5; exit}')
+          sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
+          sudo ip -6 addr add fd42:4d41:5454::2/64 dev "$interface"
+          sudo service dbus start
+          sudo service avahi-daemon start
+          avahi-daemon --check
+      - name: Build Crystal JFA
+        run: |
+          shards install --ignore-crystal-version --skip-postinstall --skip-executables
+          mkdir -p tmp
+          crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
+          crystal build e2e/interop/sdk_jfadmin_issuer_fixture.cr -o tmp/sdk_jfadmin_issuer_fixture
+      - name: Build official Matter 1.6 JFC, JFA, all-clusters and Python controller
+        timeout-minutes: 115
+        run: |
+          git clone --depth 1 --branch v1.6.0.0 \
+            https://github.com/project-chip/connectedhomeip.git tmp/connectedhomeip
+          cd tmp/connectedhomeip
+          ./scripts/checkout_submodules.py --shallow --platform linux
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("scripts/setup/environment.json").read_text())
+          config["cipd_package_files"] = [
+              package for package in config["cipd_package_files"]
+              if not package.endswith("/arm.json")
+          ]
+          Path("objdir-jf-environment.json").write_text(json.dumps(config))
+          PY
+          export PW_CONFIG_FILE=objdir-jf-environment.json
+          set +u
+          source scripts/bootstrap.sh -p linux
+          set -u
+          ./scripts/build/build_examples.py \
+            --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
+            --target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang \
+            --target linux-x64-all-clusters-ipv6only-no-ble-no-wifi-clang \
+            --build-profile debug build --copy-artifacts-to objdir-jf
+          ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
+            --include_pytest_deps no --install_virtual_env out/python_env
+          out/python_env/bin/pip install -r src/python_testing/requirements.txt
+          gn gen out/host
+          ninja -C out/host chip-cert
+          out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
+      - name: Run unmodified TC_JFADMIN_2_2 against Crystal joining JFA
+        id: jfadmin_2_2
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
+        run: |
+          python3 e2e/interop/sdk_jfadmin_multi.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --case TC_JFADMIN_2_2 --log-dir tmp/interop-jfadmin-multi
+      - name: Run unmodified TC_JFADMIN_2_1 against Crystal Anchor JFA
+        id: jfadmin_2_1
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
+        run: |
+          python3 e2e/interop/sdk_jfadmin_multi.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --case TC_JFADMIN_2_1 --log-dir tmp/interop-jfadmin-multi
+      - name: Require both official JFADMIN cases to pass
+        if: always()
+        env:
+          JFADMIN_2_2: ${{ steps.jfadmin_2_2.outcome }}
+          JFADMIN_2_1: ${{ steps.jfadmin_2_1.outcome }}
+        run: |
+          echo "TC_JFADMIN_2_2: $JFADMIN_2_2"
+          echo "TC_JFADMIN_2_1: $JFADMIN_2_1"
+          test "$JFADMIN_2_2" = success && test "$JFADMIN_2_1" = success
+      - name: Upload official test and device logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-jfadmin-multi-logs
+          path: tmp/interop-jfadmin-multi/
+          if-no-files-found: warn

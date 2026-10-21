@@ -300,6 +300,10 @@ module MatterJointFabricAdministrator
 
     protected def before_start : Nil
       super
+      # The second endpoint is a retained bootstrap JFA only when explicitly
+      # provisioned. A wildcard JCM read must not discover a second JFA with
+      # a null AdministratorFabricIndex, which the SDK correctly rejects.
+      remove_endpoint(2_u16, notify_subscribers: false) unless ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
       connect_failsafe_lifecycle
       fabrics = fabric_table.all_fabrics
       fabrics.select { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joint_fabric(fabric) }
@@ -313,8 +317,25 @@ module MatterJointFabricAdministrator
       attach_unprovisioned_administrator(fabric)
     end
 
+    protected def started_commissioning_mode : Nil
+      super
+      # The official multi-ecosystem fixture starts this external DUT before
+      # its first SDK test device. Keep it out of SDK on-network discovery
+      # until that device has completed commissioning.
+      @responder.stop_commissioning if ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
+    end
+
     protected def on_started : Nil
       super
+      if gate = ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
+        discovery_enabled = false
+        every(1.second) do
+          if !discovery_enabled && File.exists?(gate) && @fabric_table.empty?
+            discovery_enabled = true
+            @lifecycle.sync_advertisements
+          end
+        end
+      end
       @propagation_started = true
       @datastore_propagator.try(&.start) if joint_fabric_datastore.access_mode.active?
       @bootstrap_datastore_propagator.try(&.start) if bootstrap_joint_fabric_datastore.access_mode.active?
@@ -2008,25 +2029,57 @@ module MatterJointFabricAdministrator
         scanner.start
         scanner.query_operational
         compressed = IO::ByteFormat::BigEndian.decode(UInt64, fabric.compressed_fabric_id)
-        peer = begin
-          resolve_transfer_peer(scanner, compressed, node_id, 2.seconds)
-        rescue Matter::TransportError
-          listener_port = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?.try(&.to_i?)
-          raise Matter::TransportError.new("Anchor operational port is unavailable") unless listener_port
-          ::Log.for("matter.example.joint_fabric_administrator").info do
-            "Operational mDNS did not locate authenticated Anchor; trying configured listener port"
-          end
-          Socket::IPAddress.new(source.address, listener_port)
-        end
+        peer = resolve_anchor_verification_peer(scanner, compressed, node_id, source)
       ensure
         scanner.close
       end
-      Matter::Controller::JointCommissioning.verify_anchor_from_fabric(fabric, node_id, peer, trust,
-        timeout: 15.seconds)
+      # The fresh CASE verification must originate from this node's operational
+      # listener. Some peers update the route for our Node ID from each CASE
+      # handshake; an ephemeral verifier socket would divert their next JCM
+      # command away from the JFA device.
+      client = anchor_verification_client(fabric.node_id)
+      begin
+        Matter::Controller::JointCommissioning.verify_anchor_from_fabric(fabric, node_id, peer, trust,
+          timeout: 15.seconds, client: client,
+          on_verified_session: ->(session : Matter::Session::SecureContext) {
+            # SDK Administrators can reuse this newly authenticated CASE
+            # session for ICACCSRRequest immediately after Announce. The
+            # listener must continue to receive it once this client closes.
+            message_handler.registry.establish_session(session, preserve_existing: true)
+          })
+      ensure
+        client.close
+      end
       true
     rescue ex : Matter::Error | IO::Error
       ::Log.for("matter.example.joint_fabric_administrator").warn(exception: ex) { "Anchor VID verification failed" }
       false
+    end
+
+    private def anchor_verification_client(node_id : UInt64) : Matter::Controller::Client
+      Matter::Controller::Client.new(
+        transport: message_handler.transport,
+        unsecured_source_node_id: node_id,
+        session_id_in_use: ->(id : UInt16) { message_handler.sessions.has_key?(id) }
+      )
+    end
+
+    # Announce arrived over an authenticated CASE session. Its UDP source is
+    # therefore a route hint when operational DNS-SD misses a peer, including
+    # SDK Administrators that listen on a dynamic port. The fresh outbound
+    # CASE and VID verification above still authenticate the expected node.
+    private def resolve_anchor_verification_peer(scanner : Matter::Controller::Scanner,
+                                                 compressed_fabric_id : UInt64, node_id : UInt64,
+                                                 source : Socket::IPAddress,
+                                                 timeout : Time::Span = 2.seconds) : Socket::IPAddress
+      resolve_transfer_peer(scanner, compressed_fabric_id, node_id, timeout)
+    rescue Matter::TransportError
+      listener_port = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?.try(&.to_i?) || source.port
+      raise Matter::TransportError.new("Anchor operational port is unavailable") unless listener_port > 0
+      ::Log.for("matter.example.joint_fabric_administrator").info do
+        "Operational mDNS did not locate authenticated Anchor; trying CASE source route"
+      end
+      Socket::IPAddress.new(source.address, listener_port)
     end
 
     private def accessing_fabric_identity(index : UInt8) : Matter::Commissioning::JointFabricAdministratorService::FabricIdentity?

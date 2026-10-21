@@ -139,6 +139,9 @@ item below as covered only to the extent of its cited tests.
   If AddPendingNode has created an A NodeList entry but propagation remains
   Pending or CommitFailed, `resume-anchor-registration` explicitly sends
   RefreshNode and waits for a Committed entry without repeating AddPendingNode.
+  The default JFA has only endpoint 1. Endpoint 2 is removed before startup
+  unless the bootstrap Datastore retention option is enabled, so wildcard JCM
+  reads cannot encounter an unprovisioned second JFA.
   With `MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE=1`, endpoint 2 keeps both B's JFA
   service and Datastore bound to B after endpoint 1 joins A. The two services
   retain separate AdministratorFabricIndex, ICAC and Anchor role records, and
@@ -177,10 +180,8 @@ outcomes, JFA fail-safe statuses, and Joint Commissioning window parameter
 boundaries. The `TC_JFDS_2_2` invalid security policy is injected as raw TLV:
 the handler returns `ConstraintError` as the certification test requires.
 
-These are local parity checks. They do not run the official Python scripts or
-verify discovery, CASE ACLs, mDNS window expiry, controller certificate stores,
-and full commissioning against an independent implementation. Those remain
-part of the interoperability work below.
+These are local parity checks. The independent SDK cases and their exact
+coverage are tracked below and in `docs/official_joint_fabric_certification.md`.
 
 ## Official SDK certification runner
 
@@ -197,6 +198,53 @@ or the Datastore scenarios. The runner inserts one missing `jf_admin = None`
 initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
 certification steps and assertions are unchanged.
 
+`e2e/interop/sdk_jf_cert_matrix.py` runs the official SDK v1.6.0.0
+`TC_JFADMIN_1_1`, `1_4`, and `TC_JFDS_2_1` through `2_3` scripts unchanged
+against Crystal. `TC_JFDS_2_4` inherits every official step and assertion but
+converts the SDK fixture's 410-byte X.509 DER ICAC input to Matter TLV before
+AddAdmin's 400-byte field. The dedicated Linux workflow passed all six cases.
+
+`e2e/interop/sdk_jfc_jcm_live.py` separately commissions a Crystal B JFA
+with the official v1.6 JFC, verifies its SDK-held Anchor ICAC CSR, then has a
+Crystal A Anchor complete JCM and validate the cross-signed ICAC and Datastore
+registration. Its dedicated Linux workflow passed with the official SDK
+JFC/JFA binaries. This checks an independent JCM implementation; the official
+multi-ecosystem certification cases are separate coverage.
+
+`e2e/interop/sdk_jfadmin_multi.py` supplies isolated SDK issuer stores and a
+Crystal JFA to the unmodified official `TC_JFADMIN_2_2.py` and
+`TC_JFADMIN_2_1.py` scripts. The latter imports the SDK issuer's private key
+into a test-only Crystal Anchor fixture; its private input and state stay
+outside the uploaded CI artifact. The SDK persists issuer certificates as
+X.509 DER, so the fixture converts them with the SDK's `chip-cert` tool
+before passing Matter TLV certificates to Crystal. The converter checks that
+the round trip retains the certificate subject and public key, and the Crystal
+fixture checks each certificate against its corresponding private key.
+For `2_2`, the fixture holds the Crystal JFA's commissionable mDNS record
+until the official SDK has commissioned its first test device. Both devices
+share the CI host address, and advertising the external DUT before that step
+can make the SDK's on-network pairing select the wrong listener.
+When Crystal B verifies the SDK Anchor's operational Vendor ID after an
+authenticated Announce, its controller client shares the JFA device's UDP
+listener. This keeps the verifier's fresh CASE handshake on the same source
+port as the JFA's commissioned operational address; an ephemeral source port
+can cause the SDK peer route to point away from the JFA. The shared client
+claims only its own CASE exchange and secure session replies. Device requests
+remain on an ordered worker so the verifier can receive its replies while the
+Announce command waits. Missing operational trust or a failed CASE/VID check
+still leaves the initiator unverified. Once verification succeeds, the JFA
+adopts that CASE session into its device registry. The SDK may use the newest
+session for its next ICACCSRRequest; adopting it keeps the authenticated
+session available after the temporary controller client closes while the
+original Announce exchange finishes on its earlier session.
+The SDK may also refresh CASE between Announce, ICACCSRRequest, and AddICAC.
+Crystal keeps the VID decision and CSR owner bound to the authenticated
+Anchor node and fabric across those sessions; a different node or fabric
+cannot reuse either decision.
+The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
+`TC_JFADMIN_2_1` each passed all steps against Crystal in
+[the multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39619792506).
+
 ## Work required for interoperable Joint Commissioning
 
 1. Exercise independent consent decisions with real ecosystem policies and
@@ -209,18 +257,17 @@ certification steps and assertions are unchanged.
    unsupported, so independent VVS interoperability remains unproven.
    Deployment must authenticate and freshen its DCL gateway, and the optional
    Matter-TLV VVSC currently has only public-key/SKID equivalence checks.
-2. Run the JCM sequence against the official SDK `jf-control-app` and
-   `jf-admin-app`. The current Docker test proves Crystal-to-Crystal JCM;
-   the official `chip-tool` separately commissions the example device.
-3. Extend Anchor transfer and administrator removal network tests beyond two
-   administrators and exercise interruption at each journal transition. The
-   three-Administrator rotation and restart path currently has local spec
-   coverage.
-4. Run the [official Joint Fabric administrator tests](https://github.com/project-chip/connectedhomeip/tree/v1.6.0.0/src/python_testing)
-   and real device interoperability before claiming Matter 1.6 conformance.
-5. Deploy a production PAA/CD signer and revocation trust source through the
-   JFA example's explicit injection point. The Docker fixture deliberately
-   opts into the Matter test PAA/CD roots. Provisioned Datastores created before IPK seeding need their
+2. Exercise interruption at each remaining Anchor transfer and administrator
+   removal journal transition. The Docker three-administrator scenario covers
+   A-to-B transfer, A removal, B restart after a lost RemoveFabric
+   acknowledgement, and B/C registration; local specs cover interrupted
+   second credential rotation. Other network interruption points remain.
+3. Deploy production PAA/CD signers and a trusted CRL distribution source
+   through the JFA example's explicit injection point. The bundled
+   `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
+   scope for host-provisioned DER CRLs; automated DCL CRL retrieval is outside
+   this library. The Docker fixture opts into Matter test PAA/CD roots.
+   Provisioned Datastores created before IPK seeding need their
    GroupKeySetID zero repaired before the fail-closed migration path can run.
    Exercise restart and network interruption at each per-device journal stage
    with independent ecosystem devices before claiming conformance.

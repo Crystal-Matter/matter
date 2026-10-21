@@ -172,9 +172,15 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.announce_joint_fabric_administrator(cluster,
       Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
     cluster.request_session_id = 4_u64
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.unsupported_access)
+    cluster.request_peer_node_id = 8_u64
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
-    cluster.request_session_id = 3_u64
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 3_u8
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+    cluster.request_fabric_index = 2_u8
     cluster.administrator_fabric_index = nil
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex))
@@ -190,10 +196,15 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     )
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(Bytes.new(401, 0_u8)))
       .should eq(Matter::InteractionModel::Status.invalid_command)
-    cluster.request_session_id = 4_u64
+    cluster.request_session_id = 5_u64
+    cluster.request_peer_node_id = 8_u64
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(cross_signed)).should eq(
       Matter::InteractionModel::Status.unsupported_access)
-    cluster.request_session_id = 3_u64
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 3_u8
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(cross_signed)).should eq(
+      Matter::InteractionModel::Status.unsupported_access)
+    cluster.request_fabric_index = 2_u8
     failsafe_owner_matches = false
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(cross_signed)).should eq(
       Matter::InteractionModel::Status.unsupported_access)

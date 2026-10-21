@@ -26,6 +26,9 @@ module Matter
         initialize_unsecured_replay
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = Transport::ExchangeManager.new
+        @message_observers = {} of Int32 => Proc(Codec::MessageCodec::Message, Socket::IPAddress, Bool)
+        @observer_mutex = Mutex.new
+        @next_observer_id = 0
         initialize_reliable_messages
         @sent_packets = [] of Tuple(Bytes, Socket::IPAddress)
       end

@@ -122,6 +122,21 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   budget. Correlate pending read, subscription, and invoke chunks by session and
   exchange ID so another controller cannot advance the exchange.
 
+### Joint Fabric SDK interoperability
+
+- Pass the unmodified official Matter 1.6 `TC_JFADMIN_2_1` and
+  `TC_JFADMIN_2_2` multi-ecosystem JFA cases with isolated SDK issuer stores
+  and a Crystal JFA. Keep the SDK issuer private material out of
+  uploaded CI artifacts and convert its X.509 DER certificates to Matter TLV
+  with subject and public-key checks.
+- Verify an authenticated SDK Anchor from the Crystal JFA's operational UDP
+  listener. A shared controller client keeps outbound CASE and VID verification
+  on the device's advertised port while an ordered device worker handles other
+  requests, preventing a peer from routing later JCM commands to a temporary
+  verifier socket. Retain a verified CASE session for subsequent JCM commands;
+  bind VID approval and CSR ownership to the authenticated Anchor node and
+  fabric across CASE refreshes.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

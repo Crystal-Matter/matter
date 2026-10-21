@@ -31,8 +31,9 @@ module Matter
         TBE_DATA2_NONCE = "NCASE_Sigma2N".to_slice
         TBE_DATA3_NONCE = "NCASE_Sigma3N".to_slice
 
-        SESSION_KEYS_INFO  = "SessionKeys".to_slice
-        IPV4_MAPPED_PREFIX = "::ffff:"
+        SESSION_KEYS_INFO              = "SessionKeys".to_slice
+        IPV4_MAPPED_PREFIX             = "::ffff:"
+        SESSION_ID_ALLOCATION_ATTEMPTS = 32
 
         def initialize(@crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @resumption_store : Session::Case::ResumptionStore? = nil)
@@ -85,9 +86,16 @@ module Matter
           )
 
           initiator_random = @crypto.random_bytes(32)
-          initiator_session_id = @crypto.random_uint16
-          while initiator_session_id == 0 || client.session?(initiator_session_id)
-            initiator_session_id = @crypto.random_uint16
+          initiator_session_id = 0_u16
+          SESSION_ID_ALLOCATION_ATTEMPTS.times do
+            candidate = @crypto.random_uint16
+            if client.session_id_available?(candidate)
+              initiator_session_id = candidate
+              break
+            end
+          end
+          if initiator_session_id == 0
+            raise Matter::ProtocolError.new("Could not allocate an unused CASE session ID")
           end
 
           ephemeral_key = Crypto::ECDH.generate_key_pair

@@ -18,7 +18,8 @@ module Matter
       Log = ::Log.for("matter.transport.udp_transport")
 
       # Matter default port
-      MATTER_PORT = 5540
+      MATTER_PORT        = 5540
+      IPV4_MAPPED_PREFIX = "::ffff:"
 
       # How long the receive loop waits for a datagram before looping.
       RECEIVE_TIMEOUT = 100.milliseconds
@@ -96,6 +97,24 @@ module Matter
       property on_message : Proc(Codec::MessageCodec::Message, Socket::IPAddress, Nil)?
       property on_group_packet : Proc(Bytes, Socket::IPAddress, Nil)?
 
+      # A controller sharing this socket may claim its own CASE exchange or
+      # secure session before the device's default handler sees the packet.
+      @message_observers : Hash(Int32, Proc(Codec::MessageCodec::Message, Socket::IPAddress, Bool))
+      @observer_mutex : Mutex
+      @next_observer_id : Int32
+
+      def add_message_observer(&block : Codec::MessageCodec::Message, Socket::IPAddress -> Bool) : Int32
+        @observer_mutex.synchronize do
+          @next_observer_id += 1
+          @message_observers[@next_observer_id] = block
+          @next_observer_id
+        end
+      end
+
+      def remove_message_observer(id : Int32) : Nil
+        @observer_mutex.synchronize { @message_observers.delete(id) }
+      end
+
       @joined_groups = Set(Socket::IPAddress).new
 
       # Keep multicast memberships aligned with the device's GroupTable.
@@ -133,6 +152,9 @@ module Matter
         @unsecured_replay = {} of Tuple(UInt64?, Socket::IPAddress, UInt32) => UnsecuredReplayEntry
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = ExchangeManager.new
+        @message_observers = {} of Int32 => Proc(Codec::MessageCodec::Message, Socket::IPAddress, Bool)
+        @observer_mutex = Mutex.new
+        @next_observer_id = 0
         @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
         @reliable_mutex = Mutex.new
         @reliable_fiber = nil
@@ -260,7 +282,7 @@ module Matter
           key = {session_id, exchange_id, message_counter}
           pending = @pending_reliable[key]?
           return false unless pending
-          return false if peer && pending.peer != peer
+          return false if peer && canonical_peer(pending.peer) != canonical_peer(peer)
           !!@pending_reliable.delete(key)
         end
       end
@@ -330,7 +352,22 @@ module Matter
       # The one place bytes leave the process. Specs override this to capture
       # what would have gone out rather than bind a socket.
       protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
-        @socket.send(data, peer_address)
+        # This listener is AF_INET6. Darwin does not accept an AF_INET send
+        # destination on it even when IPV6_V6ONLY is disabled; use the mapped
+        # address that the same socket reports for IPv4 replies.
+        destination = if peer_address.family == Socket::Family::INET
+                        Socket::IPAddress.new("::ffff:#{peer_address.address}", peer_address.port)
+                      else
+                        peer_address
+                      end
+        @socket.send(data, destination)
+      end
+
+      private def canonical_peer(peer : Socket::IPAddress) : Socket::IPAddress
+        address = peer.address
+        return peer unless address.starts_with?(IPV4_MAPPED_PREFIX)
+
+        Socket::IPAddress.new(address[IPV4_MAPPED_PREFIX.size..], peer.port)
       end
 
       # Create and send a message on a new exchange
@@ -540,6 +577,11 @@ module Matter
             acknowledge_reliable(0_u16, message.payload_header.exchange_id, ack, peer_address)
           end
         end
+
+        # Give a controller sharing this listener first refusal. Copy the
+        # observer set before calling out so an observer may unregister itself.
+        observers = @observer_mutex.synchronize { @message_observers.values.to_a }
+        return if observers.any?(&.call(message, peer_address))
 
         # Deliver to application
         if callback = @on_message
