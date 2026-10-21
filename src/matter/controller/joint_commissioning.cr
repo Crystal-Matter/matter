@@ -697,6 +697,27 @@ module Matter
           queue.concat(read_descriptor_list(UInt16, im, session, peer,
             endpoint, Cluster::Descriptor::ATTR_PARTS_LIST))
         end
+
+        # Some Administrators expose the JFA attribute in a wildcard read even
+        # when their Descriptor PartsList does not enumerate the endpoint to
+        # this fabric. The official SDK uses that attribute path to locate the
+        # service. Require one concrete, non-null endpoint and re-read its
+        # AdministratorFabricIndex before relying on it.
+        path = InteractionModel::AttributePath.new(
+          cluster: Cluster::JointFabricAdministrator::CLUSTER_ID,
+          attribute: Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX)
+        report = im.read(session: session, peer: peer, attribute_paths: [path], fabric_filtered: false)
+        endpoints = (report.attribute_reports || [] of InteractionModel::AttributeReportIB).compact_map do |entry|
+          data = entry.attribute_data
+          next unless data && data.path.cluster == path.cluster && data.path.attribute == path.attribute
+          next if data.data.header.element_type.null?
+          endpoint = data.path.endpoint
+          next unless endpoint
+          index = UInt8.from_tlv(data.data.to_slice)
+          endpoint if index != 0_u8
+        end
+        endpoints.uniq!
+        return endpoints.first if endpoints.size == 1
         raise Matter::AuthenticationError.new("Joining node has no Joint Fabric Administrator endpoint")
       end
 

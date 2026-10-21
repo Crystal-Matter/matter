@@ -54,6 +54,50 @@ private class JointDescriptorIm < Matter::Controller::ImClient
   end
 end
 
+# The official SDK locates a JFA from a wildcard AdministratorFabricIndex
+# report. A participant can expose that path even when Descriptor traversal
+# does not enumerate its Administrator endpoint to this fabric.
+private class JointSparseDescriptorIm < JointDescriptorIm
+  def initialize(client : Matter::Controller::Client, @extra_endpoint : UInt16? = nil)
+    super(client)
+  end
+
+  def read_attribute(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+                     endpoint_id : UInt16, cluster_id : UInt32, attribute_id : UInt32,
+                     fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
+    if endpoint_id == 0_u16 && cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID &&
+       attribute_id == Matter::Cluster::Descriptor::ATTR_PARTS_LIST
+      path = Matter::InteractionModel::AttributePath.new(endpoint: 0_u16, cluster: cluster_id, attribute: attribute_id)
+      data = Matter::InteractionModel::AttributeDataIB.new(path: path, data: TLV::Any.from_slice(([] of UInt16).to_tlv))
+      return Matter::InteractionModel::ReportDataMessage.new(
+        attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)])
+    end
+    super
+  end
+
+  def read(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+           attribute_paths : Array(Matter::InteractionModel::AttributePath) = [] of Matter::InteractionModel::AttributePath,
+           event_paths : Array(Matter::InteractionModel::EventPath) = [] of Matter::InteractionModel::EventPath,
+           event_filters : Array(Matter::InteractionModel::EventFilterIB)? = nil,
+           fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
+    path = attribute_paths.first?
+    if path && path.endpoint.nil? && path.cluster == Matter::Cluster::JointFabricAdministrator::CLUSTER_ID &&
+       path.attribute == Matter::Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX
+      concrete = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: path.cluster, attribute: path.attribute)
+      data = Matter::InteractionModel::AttributeDataIB.new(path: concrete, data: TLV::Any.from_slice(2_u8.to_tlv))
+      reports = [Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)]
+      if endpoint = @extra_endpoint
+        extra_path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint, cluster: path.cluster, attribute: path.attribute)
+        extra_data = Matter::InteractionModel::AttributeDataIB.new(path: extra_path, data: TLV::Any.from_slice(2_u8.to_tlv))
+        reports << Matter::InteractionModel::AttributeReportIB.new(attribute_data: extra_data)
+      end
+      return Matter::InteractionModel::ReportDataMessage.new(
+        attribute_reports: reports)
+    end
+    super
+  end
+end
+
 private alias JointAsn1 = Matter::Crypto::MatterCertificate::Asn1
 
 private def joint_root_with_extra_subject(root : Bytes, key : Matter::Crypto::Key,
@@ -194,6 +238,34 @@ describe Matter::Controller::JointCommissioning do
     endpoint.should eq(1_u16)
     Matter::Controller::JointCommissioning.read_administrator_fabric_index(im, session, peer, endpoint).should eq(2_u8)
     Matter::Controller::JointCommissioning.read_joint_cat_versions(im, session, peer, endpoint).should eq({1_u16, 1_u16})
+    client.close
+  end
+
+  it "discovers an SDK Administrator from a wildcard JFA attribute when Descriptor traversal misses it" do
+    client = Matter::Controller::Client.new
+    im = JointSparseDescriptorIm.new(client)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer).should eq(1_u16)
+    client.close
+  end
+
+  it "rejects ambiguous wildcard Administrator endpoints" do
+    client = Matter::Controller::Client.new
+    im = JointSparseDescriptorIm.new(client, 2_u16)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    expect_raises(Matter::AuthenticationError, /no Joint Fabric Administrator endpoint/) do
+      Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
+    end
     client.close
   end
 
