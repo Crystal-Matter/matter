@@ -23,7 +23,9 @@ module Matter
       MAX_READ_REPORT_CHUNKS        =       128
       MAX_READ_REPORT_BYTES         = 1_048_576
       # Leave room for Matter, UDP, and IPv6 headers within the minimum MTU.
-      MAX_WRITE_PAYLOAD_SIZE = 1100
+      MAX_WRITE_PAYLOAD_SIZE     =      1100
+      MAX_INVOKE_RESPONSE_CHUNKS =       128
+      MAX_INVOKE_RESPONSE_BYTES  = 1_048_576
 
       def initialize(@client : Client, @timeout : Time::Span = 10.seconds)
       end
@@ -376,16 +378,54 @@ module Matter
           requires_ack: true
         )
 
-        response = if timed_request
-                     @client.wait_for_any(exchange_id, Client::PROTOCOL_INTERACTION_MODEL,
-                       [MSG_INVOKE_RESPONSE, MSG_STATUS_RESPONSE], @timeout)
-                   else
-                     @client.wait_for(exchange_id, Client::PROTOCOL_INTERACTION_MODEL, MSG_INVOKE_RESPONSE, @timeout)
-                   end
-        raise Matter::TimeoutError.new("IM: timeout waiting for InvokeResponse (exchange=#{exchange_id})") unless response
-        raise_follow_up_status!(response, "InvokeRequest", exchange_id) if timed_request
+        read_invoke_responses(session, peer, exchange_id)
+      end
 
-        InteractionModel::InvokeResponseMessage.from_slice(response.message.payload.to_slice)
+      private def read_invoke_responses(session : Session::SecureContext, peer : Socket::IPAddress,
+                                        exchange_id : UInt16) : InteractionModel::InvokeResponseMessage
+        deadline = Time.instant + @timeout
+        responses = [] of InteractionModel::InvokeResponseIB
+        chunks_received = 0
+        bytes_received = 0
+        loop do
+          remaining = deadline - Time.instant
+          raise Matter::TimeoutError.new("IM: timeout waiting for InvokeResponse (exchange=#{exchange_id})") if remaining <= 0.seconds
+          received = @client.wait_for_any(exchange_id, Client::PROTOCOL_INTERACTION_MODEL,
+            [MSG_INVOKE_RESPONSE, MSG_STATUS_RESPONSE], remaining)
+          raise Matter::TimeoutError.new("IM: timeout waiting for InvokeResponse (exchange=#{exchange_id})") unless received
+          message = received.message
+          unless message.packet_header.session_id == session.session_id
+            raise Matter::ProtocolError.new("IM: InvokeResponse arrived on session #{message.packet_header.session_id}, expected #{session.session_id} (exchange=#{exchange_id})")
+          end
+          if message.payload_header.message_type == MSG_STATUS_RESPONSE
+            raise_follow_up_status!(received, "InvokeRequest", exchange_id)
+          end
+
+          chunks_received += 1
+          bytes_received += message.payload.size
+          if chunks_received > MAX_INVOKE_RESPONSE_CHUNKS || bytes_received > MAX_INVOKE_RESPONSE_BYTES
+            raise Matter::ProtocolError.new("IM: InvokeResponse exceeded chunk limit (exchange=#{exchange_id})")
+          end
+          chunk = begin
+            InteractionModel::InvokeResponseMessage.from_slice(message.payload.to_slice)
+          rescue ex
+            raise Matter::ProtocolError.new("IM: invalid InvokeResponse (exchange=#{exchange_id})", cause: ex)
+          end
+          responses.concat(chunk.invoke_responses)
+          unless chunk.more_chunked_messages
+            return InteractionModel::InvokeResponseMessage.new(
+              suppress_response: chunk.suppress_response?,
+              invoke_responses: responses,
+              interaction_model_revision: chunk.interaction_model_revision)
+          end
+
+          @client.send_encrypted_request(session, peer, Client::PROTOCOL_INTERACTION_MODEL,
+            MSG_STATUS_RESPONSE,
+            InteractionModel::StatusResponseMessage.new(InteractionModel::StatusCode::Success.value).to_slice,
+            exchange_id: exchange_id,
+            initiator_message: !message.payload_header.initiator_message?,
+            acknowledged_message_id: message.packet_header.message_id)
+        end
       end
 
       private def raise_follow_up_status!(response : Client::ReceivedMessage, operation : String,

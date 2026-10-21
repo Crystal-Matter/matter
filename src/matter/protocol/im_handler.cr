@@ -903,14 +903,49 @@ module Matter
       def self.encode_invoke_response(
         invoke_responses : Array(InteractionModel::InvokeResponseIB),
         suppress_response : Bool = false,
+        more_chunked_messages : Bool = false,
       ) : Bytes
         msg = InteractionModel::InvokeResponseMessage.new(
           suppress_response: suppress_response,
           invoke_responses: invoke_responses,
-          more_chunked_messages: nil,
+          more_chunked_messages: more_chunked_messages ? true : nil,
           interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION
         )
         msg.to_slice
+      end
+
+      # Matter InvokeResponse arrays may span several messages on one exchange.
+      # Measure the actual TLV for each candidate chunk so container and tag
+      # overhead never push a datagram above the IPv6 minimum MTU budget.
+      def self.encode_chunked_invoke_response(
+        invoke_responses : Array(InteractionModel::InvokeResponseIB),
+        suppress_response : Bool = false,
+      ) : Array(Bytes)
+        chunks = [] of Bytes
+        current = [] of InteractionModel::InvokeResponseIB
+
+        invoke_responses.each do |response|
+          candidate = current + [response]
+          if encode_invoke_response(candidate, more_chunked_messages: true).size > MAX_REPORT_PAYLOAD_SIZE
+            unless current.empty?
+              chunks << encode_invoke_response(current, more_chunked_messages: true)
+              current = [] of InteractionModel::InvokeResponseIB
+            end
+
+            if encode_invoke_response([response]).size > MAX_REPORT_PAYLOAD_SIZE
+              path = response.command_data.try(&.command_path) || response.command_status.try(&.command_path)
+              raise Matter::ProtocolError.new("Invoke response exceeds maximum payload without a command path") unless path
+              status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
+              response = InteractionModel::InvokeResponseIB.new(
+                command_status: InteractionModel::CommandStatusIB.new(command_path: path, status: status)
+              )
+            end
+          end
+          current << response
+        end
+
+        chunks << encode_invoke_response(current, suppress_response: suppress_response)
+        chunks
       end
     end
   end
