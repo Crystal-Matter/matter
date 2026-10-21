@@ -17,7 +17,14 @@ from pathlib import Path
 from sdk_jfc_switch_smoke import ManagedProcess
 
 
-CASES = ("TC_JFADMIN_1_1", "TC_JFDS_2_1")
+CASES = (
+    "TC_JFADMIN_1_1",
+    "TC_JFDS_2_1",
+    "TC_JFDS_2_2",
+    "TC_JFDS_2_3",
+    "TC_JFDS_2_4",
+    "TC_JFADMIN_1_4",
+)
 RPC_PORT = 33033
 SETUP_PIN_PATTERN = r"Setup PIN:\s*(\d{7,8})"
 
@@ -88,9 +95,10 @@ def run_case(sdk, jfa, logs, name):
             "--string-arg", "dut_rpc_server_ip:127.0.0.1",
             "--string-arg", f"dut_rpc_server_port:{RPC_PORT}",
         ]
+        timeout = 760 if name == "TC_JFADMIN_1_4" else 420
         with (case_logs / "official-test.log").open("wb") as output:
             result = subprocess.run(command, cwd=sdk, stdout=output,
-                                    stderr=subprocess.STDOUT, timeout=420, check=False,
+                                    stderr=subprocess.STDOUT, timeout=timeout, check=False,
                                     env=os.environ.copy())
         if result.returncode:
             tail = (case_logs / "official-test.log").read_text(errors="replace")[-14000:]
@@ -120,13 +128,16 @@ def main():
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--case", choices=CASES, action="append")
     args = parser.parse_args()
-    try:
-        for name in args.case or CASES:
+    failures = []
+    for name in args.case or CASES:
+        try:
             run_case(args.sdk.resolve(), args.jfa.resolve(), args.log_dir.resolve(), name)
-    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
-        print(f"FAIL: {error}", file=sys.stderr)
-        return 1
-    return 0
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+            failures.append(name)
+            print(f"FAIL {name}: {error}", file=sys.stderr, flush=True)
+    if failures:
+        print(f"Failed official cases: {', '.join(failures)}", file=sys.stderr)
+    return int(bool(failures))
 
 
 if __name__ == "__main__":

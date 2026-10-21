@@ -14,7 +14,7 @@ on:
 jobs:
   official-jfadmin-and-jfds:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - uses: crystal-lang/install-crystal@v1
@@ -67,7 +67,7 @@ jobs:
           out/python_env/bin/pip install -r src/python_testing/requirements.txt
           out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
       - name: Run official JFA and Datastore cases
-        timeout-minutes: 18
+        timeout-minutes: 40
         env:
           MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
           MATTER_JFA_PROVISIONED_ANCHOR: '1'

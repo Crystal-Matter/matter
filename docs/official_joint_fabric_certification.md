@@ -8,12 +8,16 @@ The bridge serves the JFC Pigweed RPC stream. A separate device state and
 controller store are created for every case, so one result cannot depend on
 another case's provisioning.
 
-The CI workflow currently runs these cases:
+The CI workflow runs these cases and reports every failure in one run:
 
 | Official case | Coverage |
 | --- | --- |
 | `TC_JFADMIN_1_1` | Anchor commissioning, AdministratorFabricIndex and Operational Credentials Fabrics over CASE |
 | `TC_JFDS_2_1` | Anchor root, Node ID, vendor ID, friendly name and Datastore status over CASE |
+| `TC_JFDS_2_2` | KeySetList and Add/Update/RemoveKeySet over CASE, including invalid security policy status |
+| `TC_JFDS_2_3` | GroupList and Add/Update/RemoveGroup over CASE, including protected CAT groups |
+| `TC_JFDS_2_4` | AdminList and Add/Update/RemoveAdmin over CASE |
+| `TC_JFADMIN_1_4` | Commissioning window bounds, DNS-SD advertisement, expiry and busy status |
 
 Run them with `python3 e2e/interop/sdk_jf_cert_matrix.py --sdk
 <connectedhomeip-v1.6.0.0> --jfa <crystal-jfa> --log-dir <output>` after
@@ -25,10 +29,6 @@ The remaining official cases have these prerequisites:
 
 | Case | Test fixture and protocol path still to exercise |
 | --- | --- |
-| `TC_JFADMIN_1_4` | The same Anchor fixture, plus three complete commissioning window expiry cycles and DNS-SD advertisement checks. The official test uses 180 seconds per cycle outside its SDK CI mode. |
-| `TC_JFDS_2_2` | The same Anchor fixture, then KeySetList and Add/Update/RemoveKeySet over CASE, including invalid security policy status. |
-| `TC_JFDS_2_3` | The same Anchor fixture, then GroupList and Add/Update/RemoveGroup over CASE, including protected CAT groups. |
-| `TC_JFDS_2_4` | The same Anchor fixture, then AdminList and Add/Update/RemoveAdmin over CASE. |
 | `TC_JFADMIN_2_1` | Two SDK JFC ecosystems, two JFAs, two ordinary devices and SDK-driven Joint Commissioning of a joining JFA. |
 | `TC_JFADMIN_2_2` | Two SDK JFC ecosystems and SDK-driven Joint Commissioning of the Crystal JFA, including its DNS-SD `JF` advertisement and the joined fabric's Administrator CAT NOC. |
 
