@@ -2033,12 +2033,29 @@ module MatterJointFabricAdministrator
       ensure
         scanner.close
       end
-      Matter::Controller::JointCommissioning.verify_anchor_from_fabric(fabric, node_id, peer, trust,
-        timeout: 15.seconds)
+      # The fresh CASE verification must originate from this node's operational
+      # listener. Some peers update the route for our Node ID from each CASE
+      # handshake; an ephemeral verifier socket would divert their next JCM
+      # command away from the JFA device.
+      client = anchor_verification_client(fabric.node_id)
+      begin
+        Matter::Controller::JointCommissioning.verify_anchor_from_fabric(fabric, node_id, peer, trust,
+          timeout: 15.seconds, client: client)
+      ensure
+        client.close
+      end
       true
     rescue ex : Matter::Error | IO::Error
       ::Log.for("matter.example.joint_fabric_administrator").warn(exception: ex) { "Anchor VID verification failed" }
       false
+    end
+
+    private def anchor_verification_client(node_id : UInt64) : Matter::Controller::Client
+      Matter::Controller::Client.new(
+        transport: message_handler.transport,
+        unsecured_source_node_id: node_id,
+        session_id_in_use: ->(id : UInt16) { message_handler.sessions.has_key?(id) }
+      )
     end
 
     # Announce arrived over an authenticated CASE session. Its UDP source is

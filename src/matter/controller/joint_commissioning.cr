@@ -779,7 +779,8 @@ module Matter
                                     peer : Socket::IPAddress,
                                     trust : VidVerification::OperationalTrustAnchors,
                                     timeout : Time::Span = 10.seconds,
-                                    crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : VidVerification::VerifiedFabric
+                                    crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                                    client : Client? = nil) : VidVerification::VerifiedFabric
         root = fabric.root_cert || raise Matter::ConfigurationError.new("Joining fabric has no RCAC")
         identity = FabricInfo.new(fabric_id: fabric.fabric_id,
           controller_node_id: fabric.node_id,
@@ -790,14 +791,15 @@ module Matter
           controller_private_key: fabric.operational_private_key,
           admin_vendor_id: fabric.vendor_id,
           intermediate_cert: fabric.intermediate_cert)
-        client = Client.new(unsecured_source_node_id: fabric.node_id, crypto: crypto)
+        owns_client = client.nil?
+        client ||= Client.new(unsecured_source_node_id: fabric.node_id, crypto: crypto)
         begin
           session = Pairing::CasePairing.new(crypto).pair(client, peer, identity,
             peer_node_id: peer_node_id, timeout: timeout)
           verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
             fabric.root_public_key, fabric.fabric_id, trust, crypto)
         ensure
-          client.close
+          client.close if owns_client
         end
       end
 

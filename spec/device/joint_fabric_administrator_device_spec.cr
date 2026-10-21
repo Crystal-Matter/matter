@@ -36,9 +36,26 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   ensure
     scanner.try(&.close)
   end
+
+  def anchor_verification_client_for_spec(node_id : UInt64) : Matter::Controller::Client
+    anchor_verification_client(node_id)
+  end
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "starts Anchor verification from the operational listener without taking ownership of it" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
+    client = device.anchor_verification_client_for_spec(9_u64)
+    client.transport.should be(device.transport)
+    client.transport.port.should eq(device.port)
+    client.close
+    device.transport.socket.closed?.should be_false
+  ensure
+    client.try(&.close)
+    device.try(&.shutdown!)
+  end
+
   it "uses the authenticated Anchor CASE source when operational discovery misses" do
     previous = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?
     ENV.delete("MATTER_JFA_ANCHOR_OPERATIONAL_PORT")

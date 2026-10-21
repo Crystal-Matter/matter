@@ -284,6 +284,37 @@ describe Matter::Controller::JointCommissioning do
     end
   end
 
+  it "uses a supplied client's source port for outbound Anchor verification without closing it" do
+    node_key = crypto.create_key_pair
+    noc = Matter::Crypto::MatterCertificate::Builder.node(
+      node_key.public_key, fabric_id, 5_u64, root_key, 1_u64, Bytes[0x10], crypto
+    )
+    fabric = Matter::Fabric.new(fabric_id, 1_u8, 5_u64, root_key.public_key,
+      noc, node_key, Bytes.new(16), root_cert: root)
+    client = Matter::Controller::Client.new(unsecured_source_node_id: fabric.node_id)
+    listener = UDPSocket.new(Socket::Family::INET6)
+    listener.bind("::1", 0)
+    listener.read_timeout = 2.seconds
+    peer = Socket::IPAddress.new("::1", listener.local_address.port)
+    result = Channel(Exception?).new(1)
+    spawn do
+      Matter::Controller::JointCommissioning.verify_anchor_from_fabric(
+        fabric, 9_u64, peer, JointTestTrust.new,
+        timeout: 100.milliseconds, client: client
+      )
+      result.send(nil)
+    rescue ex
+      result.send(ex)
+    end
+    _, sender = listener.receive(Bytes.new(1280))
+    sender.port.should eq(client.transport.port)
+    result.receive.should be_a(Matter::TimeoutError)
+    client.transport.socket.closed?.should be_false
+  ensure
+    listener.try(&.close)
+    client.try(&.close)
+  end
+
   it "bootstraps an Anchor ICAC and Administrator identity with both CATs" do
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0x1234_u64, 5_u64, 0xFFF1_u16, crypto: crypto
