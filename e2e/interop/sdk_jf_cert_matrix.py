@@ -10,6 +10,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -52,12 +53,19 @@ def run_case(sdk, jfa, logs, name):
     device = None
     bridge = None
     bridge_log = None
+    drain_thread = None
+    stop_drain = threading.Event()
     try:
         device = ManagedProcess("crystal-jfa", [str(jfa), "--no-interactive"], state, case_logs)
         pin = device.expect(SETUP_PIN_PATTERN, 60).group(1)
         discriminator = device.expect(r"Discriminator:\s*(\d+)", 20).group(1)
         device.expect(r"Starting in Commissioning Mode", 60)
-        device.start_background_drain()
+        def drain_device():
+            while not stop_drain.is_set():
+                device.drain(0.2)
+
+        drain_thread = threading.Thread(target=drain_device, name="jfa-log-drain", daemon=True)
+        drain_thread.start()
 
         bridge_log = (case_logs / "rpc-bridge.log").open("wb")
         bridge = subprocess.Popen(
@@ -84,12 +92,14 @@ def run_case(sdk, jfa, logs, name):
             result = subprocess.run(command, cwd=sdk, stdout=output,
                                     stderr=subprocess.STDOUT, timeout=420, check=False,
                                     env=os.environ.copy())
-        device.drain(0)
         if result.returncode:
             tail = (case_logs / "official-test.log").read_text(errors="replace")[-14000:]
             raise RuntimeError(f"official {name} failed with exit {result.returncode}:\n{tail}")
         print(f"PASS: official Matter 1.6 {name} against Crystal JFA", flush=True)
     finally:
+        stop_drain.set()
+        if drain_thread is not None:
+            drain_thread.join(timeout=2)
         if device is not None:
             device.close()
         if bridge is not None:
