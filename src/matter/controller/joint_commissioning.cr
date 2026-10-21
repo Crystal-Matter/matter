@@ -206,7 +206,7 @@ module Matter
           finalize = @anchor_finalize || raise Matter::ConfigurationError.new("Anchor finalizer is unavailable")
           pending = PendingRegistration.new(fabric.fabric_id, fabric.controller_node_id,
             fabric.root_public_key, node_id, joiner.fabric.descriptor.vendor_id,
-            @administrator_name, Bytes.empty, peer.address, peer.port,
+            @administrator_name, Bytes.empty, OperationalPeerResolver.address_hint(peer), peer.port,
             handoff_nonce: handoff.nonce,
             joiner_icac_public_key: joiner.icac_public_key)
           @save_pending.call(pending)
@@ -313,7 +313,7 @@ module Matter
           JointCommissioning.validate_cross_signed_icac(icac, fabric, joiner.icac_public_key, @icac_id)
           pending = PendingRegistration.new(fabric.fabric_id, fabric.controller_node_id,
             fabric.root_public_key, node_id, joiner.fabric.descriptor.vendor_id,
-            @administrator_name, icac, peer.address, peer.port)
+            @administrator_name, icac, OperationalPeerResolver.address_hint(peer), peer.port)
           @save_pending.call(pending)
           @pending = pending
         end
@@ -338,7 +338,8 @@ module Matter
           pending = @pending
           unless pending && pending.node_id == node_id && pending.fabric_id == fabric.fabric_id &&
                  pending.root_public_key == fabric.root_public_key &&
-                 pending.peer_address == peer.address && pending.peer_port == peer.port && pending.icac.size > 0
+                 pending.peer_address == OperationalPeerResolver.address_hint(peer) &&
+                 pending.peer_port == peer.port && pending.icac.size > 0
             raise Matter::CommissioningError.new("Joint Commissioning completion does not match pending registration")
           end
           pending.completion_acknowledged = true

@@ -1,5 +1,6 @@
 require "./im_subscription"
 require "./scanner"
+require "./operational_peer_resolver"
 require "./pairing/case_pairing"
 require "../cluster/joint_fabric_datastore"
 require "../cluster/descriptor"
@@ -188,12 +189,9 @@ module Matter
         @scanner.query_operational
         deadline = Time.instant + timeout_span
         loop do
-          if device = @scanner.operational_devices.find do |entry|
-               entry.fabric_id == @fabric.compressed_fabric_id && entry.node_id == @anchor_node_id
-             end
-            if address = device.addresses.find(&.family.inet?) || device.addresses.first?
-              return Socket::IPAddress.new(address.address, device.port)
-            end
+          if peer = OperationalPeerResolver.select_peer(@scanner.operational_devices,
+               @fabric.compressed_fabric_id, @anchor_node_id)
+            return peer
           end
           break if Time.instant >= deadline
           sleep 100.milliseconds

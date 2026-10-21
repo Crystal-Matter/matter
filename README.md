@@ -244,6 +244,8 @@ ID, controller node ID, and peer node ID. `pair_discovered` matches the
 compressed fabric ID and Node ID in operational mDNS, then falls back to a
 saved address if discovery is unavailable. It saves a newly discovered address
 only after CASE authenticates that peer.
+Link-local IPv6 hints retain their interface scope across commissioning and
+controller restart so the saved route remains usable when mDNS is unavailable.
 
 ### Bulk Data Exchange
 
