@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Group key validation
+
+- Reject KeySetWrite requests without the first epoch or with a gap before a
+  later epoch, and return ConstraintError for a malformed epoch key length.
+  Rejected writes leave the fabric's existing key set unchanged. The provisional
+  Matter 1.6 GCAST feature remains disabled and the advertised revision stays 2.
+
 ### Access control interoperability
 
 - Decode Matter 1.6 AccessControlEntry AuxiliaryType (context tag 5), and
