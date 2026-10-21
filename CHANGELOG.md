@@ -19,6 +19,8 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Validate controller CASE peer certificates and device NOC updates against
   the fabric trust root, signed validity period, and intermediate fabric ID;
   bind commissioned NOCs to the device CSR key.
+- Preserve a trusted root certificate's complete subject DN when issuing an
+  intermediate, including cross signed Joint Fabric ICACs from external roots.
 - Store multiple controller fabrics with explicit selection and fabric-scoped
   known nodes; retain authenticated CASE CATs across session persistence.
 - Complete the TimedRequest handshake for controller writes and invokes, and

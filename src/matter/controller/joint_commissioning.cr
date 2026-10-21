@@ -80,7 +80,7 @@ module Matter
         icac = Crypto::MatterCertificate::Builder.intermediate(
           icac_key.public_key, fabric_id, BOOTSTRAP_ICAC_ID, root_key,
           BOOTSTRAP_RCAC_ID, crypto.random_bytes(BOOTSTRAP_SERIAL_BYTES), crypto,
-          anchor: true)
+          anchor: true, issuer_certificate: root)
         controller_key = crypto.create_key_pair
         temporary = FabricInfo.new(fabric_id: fabric_id,
           controller_node_id: controller_node_id, ipk_value: crypto.random_bytes(Fabric::IPK_SIZE),
@@ -802,7 +802,8 @@ module Matter
           issuer_key: anchor_root_key,
           issuer_rcac_id: rcac_id,
           serial: crypto.random_bytes(CERTIFICATE_SERIAL_BYTES),
-          crypto: crypto
+          crypto: crypto,
+          issuer_certificate: anchor_root_certificate
         )
         Crypto::MatterCertificate::Validation.verify_signature(icac, root.ec_public_key)
         icac

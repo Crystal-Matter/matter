@@ -54,6 +54,20 @@ private class JointDescriptorIm < Matter::Controller::ImClient
   end
 end
 
+private alias JointAsn1 = Matter::Crypto::MatterCertificate::Asn1
+
+private def joint_root_with_extra_subject(root : Bytes, key : Matter::Crypto::Key,
+                                          crypto : Matter::Crypto::CryptoBase) : Bytes
+  fields = TLV::Any.from_slice(root).as_structure
+  subject = fields[JointAsn1::Field::Subject.value].as_list.dup
+  subject << TLV::Any.new("Extended Anchor Root", JointAsn1::Dn::CommonName.value)
+  fields[JointAsn1::Field::Subject.value] = TLV::Any.new(subject, JointAsn1::Field::Subject.value)
+  fields[JointAsn1::Field::Issuer.value] = TLV::Any.new(subject.dup, JointAsn1::Field::Issuer.value)
+  signature = crypto.sign_ecdsa(key, JointAsn1.to_unsigned_asn1(TLV::Any.new(fields, nil)))
+  fields[JointAsn1::Field::Signature.value] = TLV::Any.new(signature, JointAsn1::Field::Signature.value)
+  TLV::Any.new(fields, nil).to_slice
+end
+
 describe Matter::Controller::JointCommissioning do
   crypto = Matter::Crypto::StandardCrypto.new
   root_key = crypto.create_key_pair
@@ -79,6 +93,22 @@ describe Matter::Controller::JointCommissioning do
         root, root_key, fabric_id, other.public_key, csr, 2_u64, crypto
       )
     end
+  end
+
+  it "cross-signs an ICAC under the complete subject DN of an external Anchor root" do
+    csr = Matter::Crypto::Pkcs10.create(joining_icac_key, crypto)
+    external_root = joint_root_with_extra_subject(root, root_key, crypto)
+    Matter::Crypto::MatterCertificate::Validation.verify_root(external_root)
+    Matter::Crypto::MatterCertificate::Validation.verify_signature(external_root, root_key.public_key)
+    Matter::Crypto::MatterCertificate::Validation.verify_issued_by(external_root, external_root)
+
+    icac = Matter::Controller::JointCommissioning.cross_sign_icac(
+      external_root, root_key, fabric_id, joining_icac_key.public_key, csr, 2_u64, crypto)
+    Matter::Crypto::MatterCertificate::Validation.verify_issued_by(icac, external_root)
+    fields = TLV::Any.from_slice(icac).as_structure
+    root_fields = TLV::Any.from_slice(external_root).as_structure
+    fields[JointAsn1::Field::Issuer.value].as_list.map(&.to_slice)
+      .should eq(root_fields[JointAsn1::Field::Subject.value].as_list.map(&.to_slice))
   end
 
   it "rejects a modified ICAC CSR signature" do

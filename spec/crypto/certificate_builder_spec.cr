@@ -38,6 +38,30 @@ describe Matter::Crypto::MatterCertificate::Builder do
     Matter::Crypto::MatterCertificate::Validation.verify_issued_by(node, root)
   end
 
+  it "uses a supplied RCAC subject for intermediate issuance and rejects a mismatched authority" do
+    intermediate_key = crypto.create_key_pair
+    issued = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      intermediate_key.public_key, FABRIC_ID, 3_u64, root_key, RCAC_ID,
+      Bytes[0x03], crypto, issuer_certificate: root)
+    Matter::Crypto::MatterCertificate::Validation.verify_issued_by(issued, root)
+
+    default_issued = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      intermediate_key.public_key, FABRIC_ID, 3_u64, root_key, RCAC_ID,
+      Bytes[0x04], crypto)
+    Matter::Crypto::MatterCertificate::Validation.verify_issued_by(default_issued, root)
+
+    expect_raises(Matter::CertificateError, /signing key or RCAC ID/) do
+      Matter::Crypto::MatterCertificate::Builder.intermediate(
+        intermediate_key.public_key, FABRIC_ID, 3_u64, root_key, RCAC_ID + 1_u64,
+        Bytes[0x05], crypto, issuer_certificate: root)
+    end
+    expect_raises(Matter::CertificateError, /signing key or RCAC ID/) do
+      Matter::Crypto::MatterCertificate::Builder.intermediate(
+        intermediate_key.public_key, FABRIC_ID, 3_u64, crypto.create_key_pair, RCAC_ID,
+        Bytes[0x06], crypto, issuer_certificate: root)
+    end
+  end
+
   it "reads back through the typed certificate struct" do
     parsed = Matter::Crypto::MatterCertificate.from_slice(node)
     parsed.noc?.should be_true

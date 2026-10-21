@@ -360,7 +360,8 @@ module Matter
           intermediate_cert = if key = intermediate_key
                                 Crypto::MatterCertificate::Builder.intermediate(
                                   key.public_key, fabric_id, ANCHOR_ICAC_ID, root_key,
-                                  ROOT_CERTIFICATE_ID, serial_number, @crypto, anchor: true
+                                  ROOT_CERTIFICATE_ID, serial_number, @crypto, anchor: true,
+                                  issuer_certificate: root_cert
                                 )
                               end
           controller_noc = if key = intermediate_key
