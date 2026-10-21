@@ -300,6 +300,10 @@ module MatterJointFabricAdministrator
 
     protected def before_start : Nil
       super
+      # The second endpoint is a retained bootstrap JFA only when explicitly
+      # provisioned. A wildcard JCM read must not discover a second JFA with
+      # a null AdministratorFabricIndex, which the SDK correctly rejects.
+      remove_endpoint(2_u16, notify_subscribers: false) unless ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
       connect_failsafe_lifecycle
       fabrics = fabric_table.all_fabrics
       fabrics.select { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joint_fabric(fabric) }

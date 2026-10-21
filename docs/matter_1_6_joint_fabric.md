@@ -139,6 +139,9 @@ item below as covered only to the extent of its cited tests.
   If AddPendingNode has created an A NodeList entry but propagation remains
   Pending or CommitFailed, `resume-anchor-registration` explicitly sends
   RefreshNode and waits for a Committed entry without repeating AddPendingNode.
+  The default JFA has only endpoint 1. Endpoint 2 is removed before startup
+  unless the bootstrap Datastore retention option is enabled, so wildcard JCM
+  reads cannot encounter an unprovisioned second JFA.
   With `MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE=1`, endpoint 2 keeps both B's JFA
   service and Datastore bound to B after endpoint 1 joins A. The two services
   retain separate AdministratorFabricIndex, ICAC and Anchor role records, and
@@ -177,10 +180,9 @@ outcomes, JFA fail-safe statuses, and Joint Commissioning window parameter
 boundaries. The `TC_JFDS_2_2` invalid security policy is injected as raw TLV:
 the handler returns `ConstraintError` as the certification test requires.
 
-These are local parity checks. They do not run the official Python scripts or
-verify discovery, CASE ACLs, mDNS window expiry, controller certificate stores,
-and full commissioning against an independent implementation. Those remain
-part of the interoperability work below.
+These are local parity checks. Independent SDK testing of discovery, CASE
+ACLs, mDNS window expiry, controller certificate stores, and full
+commissioning is tracked separately below.
 
 ## Official SDK certification runner
 
@@ -196,6 +198,13 @@ sequence before Joint Commissioning; it does not cover the controller's JCM
 or the Datastore scenarios. The runner inserts one missing `jf_admin = None`
 initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
 certification steps and assertions are unchanged.
+
+`e2e/interop/sdk_jfc_jcm_live.py` separately commissions a Crystal B JFA
+with the official v1.6 JFC, verifies its SDK-held Anchor ICAC CSR, then has a
+Crystal A Anchor complete JCM and validate the cross-signed ICAC and Datastore
+registration. Its dedicated Linux workflow passed with the official SDK
+JFC/JFA binaries. This checks an independent JCM implementation; the official
+multi-ecosystem certification cases are separate coverage.
 
 ## Work required for interoperable Joint Commissioning
 
@@ -216,11 +225,12 @@ certification steps and assertions are unchanged.
    administrators and exercise interruption at each journal transition. The
    three-Administrator rotation and restart path currently has local spec
    coverage.
-4. Run the [official Joint Fabric administrator tests](https://github.com/project-chip/connectedhomeip/tree/v1.6.0.0/src/python_testing)
-   and real device interoperability before claiming Matter 1.6 conformance.
-5. Deploy a production PAA/CD signer and revocation trust source through the
-   JFA example's explicit injection point. The Docker fixture deliberately
-   opts into the Matter test PAA/CD roots. Provisioned Datastores created before IPK seeding need their
+4. Deploy production PAA/CD signers and a trusted CRL distribution source
+   through the JFA example's explicit injection point. The bundled
+   `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
+   scope for host-provisioned DER CRLs; automated DCL CRL retrieval is outside
+   this library. The Docker fixture opts into Matter test PAA/CD roots.
+   Provisioned Datastores created before IPK seeding need their
    GroupKeySetID zero repaired before the fail-closed migration path can run.
    Exercise restart and network interruption at each per-device journal stage
    with independent ecosystem devices before claiming conformance.

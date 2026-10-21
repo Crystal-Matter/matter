@@ -2,6 +2,10 @@ require "../spec_helper"
 require "../../examples/support/joint_fabric_administrator_device"
 
 class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator::Device
+  def prepare_for_start : Nil
+    before_start
+  end
+
   def advertised_joint_role : Matter::MDNS::JointFabricRole?
     commissioning_info_for(Matter::MDNS::CommissioningMode::Basic).joint_fabric_role
   end
@@ -28,6 +32,28 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "does not expose an unprovisioned second JFA to wildcard commissioning reads" do
+    previous = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
+    ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.prepare_for_start
+    device.endpoint_ids.should eq([1_u16])
+    device.node.clusters.keys.should_not contain({2_u16, Matter::Cluster::JointFabricAdministrator::CLUSTER_ID})
+
+    ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
+    retained = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    retained.prepare_for_start
+    retained.endpoint_ids.should eq([1_u16, 2_u16])
+  ensure
+    if previous
+      ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = previous
+    else
+      ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    end
+  end
+
   it "serves JFA status commands on a newly commissioned non-Anchor fabric" do
     crypto = Matter::Crypto::StandardCrypto.new
     root_key = crypto.create_key_pair

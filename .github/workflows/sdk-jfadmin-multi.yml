@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/sdk-jfadmin-multi.yml
       - e2e/interop/sdk_jfadmin_multi.py
+      - e2e/interop/sdk_jfadmin_issuer_fixture.cr
       - e2e/interop/joint_fabric_rpc_bridge.py
       - examples/support/joint_fabric_administrator_device.cr
       - src/matter/cluster/joint_fabric_administrator.cr
@@ -37,6 +38,7 @@ jobs:
           shards install --ignore-crystal-version --skip-postinstall --skip-executables
           mkdir -p tmp
           crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
+          crystal build e2e/interop/sdk_jfadmin_issuer_fixture.cr -o tmp/sdk_jfadmin_issuer_fixture
       - name: Build official Matter 1.6 JFC, JFA, all-clusters and Python controller
         timeout-minutes: 115
         run: |
@@ -76,6 +78,14 @@ jobs:
           python3 e2e/interop/sdk_jfadmin_multi.py \
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --case TC_JFADMIN_2_2 --log-dir tmp/interop-jfadmin-multi
+      - name: Run unmodified TC_JFADMIN_2_1 against Crystal Anchor JFA
+        timeout-minutes: 25
+        env:
+          MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
+        run: |
+          python3 e2e/interop/sdk_jfadmin_multi.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --case TC_JFADMIN_2_1 --log-dir tmp/interop-jfadmin-multi
       - name: Upload official test and device logs
         if: always()
         uses: actions/upload-artifact@v4
