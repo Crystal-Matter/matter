@@ -211,7 +211,7 @@ Crystal JFA to the unmodified official `TC_JFADMIN_2_2.py` and
 `TC_JFADMIN_2_1.py` scripts. The latter imports the SDK issuer's private key
 into a test-only Crystal Anchor fixture; its private input and state stay
 outside the uploaded CI artifact. The SDK persists issuer certificates as
-X.509 DER, so the fixture converts them with the SDK's certificate converter
+X.509 DER, so the fixture converts them with the SDK's `chip-cert` tool
 before passing Matter TLV certificates to Crystal. The converter checks that
 the round trip retains the certificate subject and public key, and the Crystal
 fixture checks each certificate against its corresponding private key.

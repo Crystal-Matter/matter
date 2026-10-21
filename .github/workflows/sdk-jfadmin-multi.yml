@@ -6,7 +6,7 @@ on:
     paths:
       - .github/workflows/sdk-jfadmin-multi.yml
       - e2e/interop/sdk_jfadmin_multi.py
-      - e2e/interop/sdk_cert_to_chip.py
+      - e2e/interop/sdk_cert_identity.py
       - e2e/interop/sdk_jfadmin_issuer_fixture.cr
       - e2e/interop/joint_fabric_rpc_bridge.py
       - examples/support/joint_fabric_administrator_device.cr
@@ -70,6 +70,8 @@ jobs:
           ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
             --include_pytest_deps no --install_virtual_env out/python_env
           out/python_env/bin/pip install -r src/python_testing/requirements.txt
+          gn gen out/host
+          ninja -C out/host chip-cert
           out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
       - name: Run unmodified TC_JFADMIN_2_2 against Crystal joining JFA
         timeout-minutes: 25

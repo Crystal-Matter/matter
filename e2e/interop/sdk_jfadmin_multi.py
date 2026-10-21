@@ -29,17 +29,21 @@ CASES = ("TC_JFADMIN_2_1", "TC_JFADMIN_2_2")
 def sdk_cert_to_chip(sdk, certificate, private):
     """The JFC INI stores DER; Crystal trust and the JFDS wire require TLV."""
     python = sdk / "out/python_env/bin/python3"
-    helper = Path(__file__).with_name("sdk_cert_to_chip.py")
+    chip_cert = sdk / "out/host/chip-cert"
+    helper = Path(__file__).with_name("sdk_cert_identity.py")
     with tempfile.TemporaryDirectory(dir=private) as directory:
         source = Path(directory) / "certificate.der"
         target = Path(directory) / "certificate.tlv"
+        round_trip = Path(directory) / "round-trip.der"
         source.write_bytes(certificate)
-        result = subprocess.run([str(python), str(helper), str(source), str(target)],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                check=False)
-        if result.returncode:
-            raise RuntimeError("SDK certificate conversion failed: " +
-                               result.stderr.decode(errors="replace"))
+        for command in ([str(chip_cert), "convert-cert", str(source), str(target), "--chip"],
+                        [str(chip_cert), "convert-cert", str(target), str(round_trip), "--x509-der"],
+                        [str(python), str(helper), str(source), str(round_trip)]):
+            result = subprocess.run(command, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, check=False)
+            if result.returncode:
+                raise RuntimeError(f"SDK certificate conversion failed ({result.returncode}): " +
+                                   result.stdout.decode(errors="replace"))
         converted = target.read_bytes()
     if not converted or len(converted) > 400:
         raise RuntimeError("SDK certificate conversion produced invalid Matter TLV length")
