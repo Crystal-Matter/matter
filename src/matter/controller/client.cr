@@ -15,6 +15,7 @@ module Matter
 
       PROTOCOL_SECURE_CHANNEL    = 0x0000_u16
       PROTOCOL_INTERACTION_MODEL = 0x0001_u16
+      IPV4_MAPPED_PREFIX         = "::ffff:"
 
       MSG_STANDALONE_ACK      = 0x10_u8
       MSG_REPORT_DATA         = 0x05_u8
@@ -124,7 +125,7 @@ module Matter
       ) : UInt16
         exchange = @transport.exchange_manager.create_exchange(
           protocol_id: protocol_id, session_id: 0_u16, peer_address: peer)
-        @owned_unsecured_exchanges.add({exchange.exchange_id, peer})
+        @owned_unsecured_exchanges.add({exchange.exchange_id, canonical_peer(peer)})
         send_unsecured_on_exchange(peer, exchange.exchange_id, protocol_id,
           message_type, payload, requires_ack: requires_ack)
         exchange.exchange_id
@@ -133,10 +134,17 @@ module Matter
       private def owns_incoming?(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Bool
         if msg.packet_header.session_id == 0
           !msg.payload_header.initiator_message? &&
-            @owned_unsecured_exchanges.includes?({msg.payload_header.exchange_id, peer})
+            @owned_unsecured_exchanges.includes?({msg.payload_header.exchange_id, canonical_peer(peer)})
         else
           @sessions.has_key?(msg.packet_header.session_id)
         end
+      end
+
+      private def canonical_peer(peer : Socket::IPAddress) : Socket::IPAddress
+        address = peer.address
+        return peer unless address.starts_with?(IPV4_MAPPED_PREFIX)
+
+        Socket::IPAddress.new(address[IPV4_MAPPED_PREFIX.size..], peer.port)
       end
 
       # Send an unsecured (session_id=0) message on an existing exchange.

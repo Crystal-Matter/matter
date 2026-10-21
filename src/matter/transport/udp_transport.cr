@@ -351,7 +351,15 @@ module Matter
       # The one place bytes leave the process. Specs override this to capture
       # what would have gone out rather than bind a socket.
       protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
-        @socket.send(data, peer_address)
+        # This listener is AF_INET6. Darwin does not accept an AF_INET send
+        # destination on it even when IPV6_V6ONLY is disabled; use the mapped
+        # address that the same socket reports for IPv4 replies.
+        destination = if peer_address.family == Socket::Family::INET
+                        Socket::IPAddress.new("::ffff:#{peer_address.address}", peer_address.port)
+                      else
+                        peer_address
+                      end
+        @socket.send(data, destination)
       end
 
       # Create and send a message on a new exchange
