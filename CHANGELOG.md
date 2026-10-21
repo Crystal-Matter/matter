@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   malformed-frame checks. BLE GATT discovery, BTP flow control, and PASE over
   BLE are separate follow-up work.
 
+### Foundation clusters
+
+- Add Matter 1.6 Localization Configuration, Unit Localization, Power Source
+  Configuration, Flow Measurement, and Air Quality cluster implementations.
+  Locale and temperature unit writes validate supported values; applications
+  can publish bounded sensor readings and power source endpoint lists.
+
 ### ICD advertisement
 
 - Default always-on devices no longer advertise ICD Management. Matter 1.6
