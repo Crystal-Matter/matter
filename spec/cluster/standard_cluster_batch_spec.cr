@@ -60,7 +60,7 @@ describe "Matter 1.6 standard cluster coverage" do
     cluster.current_mode.should eq(2_u8)
     expect_status(invoke(cluster, Matter::Cluster::ModeSelect::CMD_CHANGE_TO_MODE,
       Matter::Cluster::ModeSelect::ChangeToModeRequest.new(3_u8)),
-      Matter::InteractionModel::StatusCode::ConstraintError)
+      Matter::InteractionModel::StatusCode::InvalidCommand)
   end
 
   it "bounds ModeSelect labels and semantic tags and checks feature-gated OnMode" do

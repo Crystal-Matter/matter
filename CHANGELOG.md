@@ -12,6 +12,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add Matter 1.6 Switch, Mode Select, and Valve Configuration and Control
   servers with feature-gated attributes and events, typed command payloads,
   bounded mode/position/level inputs, and a valve open-duration timer.
+- Return InvalidCommand for a Mode Select ChangeToMode request naming an
+  unadvertised mode, as required by the Matter 1.6 command definition.
 
 ### Level and OnOff coordination
 

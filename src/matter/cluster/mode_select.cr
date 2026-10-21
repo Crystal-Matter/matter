@@ -110,7 +110,7 @@ module Matter
       end
 
       def change_to_mode(request : ChangeToModeRequest) : InteractionModel::Status
-        return InteractionModel::Status.constraint_error unless mode_supported?(request.new_mode)
+        return InteractionModel::Status.invalid_command unless mode_supported?(request.new_mode)
         self.current_mode = request.new_mode
         InteractionModel::Status.success
       end
