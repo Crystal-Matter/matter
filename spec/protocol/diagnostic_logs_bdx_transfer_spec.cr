@@ -75,6 +75,62 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
+  it "sends command data and then BDX even when InvokeRequest suppresses status responses" do
+    handler, transport, session = diagnostic_bdx_fixture
+    session.peer_subject_ids = [0x2222_u64]
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    cluster.log("B" * 900)
+    cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
+      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content)
+    end
+    handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
+
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+      Matter::Cluster::DiagnosticLogs::TransferProtocol::BDX,
+      "support-log")
+    path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 0_u32)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(path, command.to_tlv(nil)),
+    ], suppress_response: true)
+    inbound = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 17_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+
+    sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    sent.size.should eq(2)
+    response = Matter::InteractionModel::InvokeResponseMessage.from_slice(sent[0].payload)
+    response.invoke_responses.first.command_data.should_not be_nil
+    sent[1].payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::Bdx.value)
+    sent[1].payload_header.message_type.should eq(DiagnosticBdx::Wire::Opcode::SendInit.value)
+    handler.close
+  end
+
+  it "suppresses an InvokeResponse containing only command statuses" do
+    handler, transport, session = diagnostic_bdx_fixture
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
+
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+      Matter::Cluster::DiagnosticLogs::TransferProtocol::ResponsePayload,
+      "support-log")
+    unsupported_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 99_u32)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(unsupported_path, command.to_tlv(nil)),
+    ], suppress_response: true)
+    inbound = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 17_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+
+    transport.sent_packets.should be_empty
+    handler.close
+  end
+
   it "sends a named multi-block log on the authenticated CASE exchange" do
     handler, transport, session = diagnostic_bdx_fixture
     contents = Bytes.new(1500) { |index| (index % 251).to_u8 }

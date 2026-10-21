@@ -57,6 +57,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   large logs. Send the InvokeResponse before the named transfer, enforce the
   authenticated CASE peer and fabric, and clear transfers with their session.
   Short BDX-requested logs use Exhausted with complete inline content.
+- Preserve command data InvokeResponses when SuppressResponse is set, as
+  required by Matter 1.6, while suppressing status-only InvokeResponses.
 - Add Matter 1.6 BDX v0 binary message codecs for transfer negotiation, block
   data, acknowledgements, and skip queries, plus a synchronous stream transfer
   engine with block ordering and definite-length checks.

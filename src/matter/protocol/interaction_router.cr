@@ -396,7 +396,9 @@ module Matter
         status_count = invoke_responses.count { |response| response.command_status != nil }
         Log.info { "InvokeResponse: #{invoke_responses.size} response(s), #{status_count} status(es)" }
 
-        if request.suppress_response && status_count == 0
+        # SuppressResponse hides status-only results, but CommandDataIB still
+        # requires an InvokeResponse (Core 8.8.3.2.1).
+        if request.suppress_response && invoke_responses.none? { |response| response.command_data != nil }
           Log.info { "Response suppressed per suppressResponse flag" }
           return
         end
