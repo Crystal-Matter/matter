@@ -50,9 +50,11 @@ binary). [docs/architecture.md](docs/architecture.md) follows a datagram through
 `Matter::Transport::BtpMessageTransport` accepts a `GattFragmentChannel` and
 carries PASE and encrypted Interaction Model packets over an established,
 negotiated BTP connection. A platform adapter must supply BLE discovery, GATT
-connection and notifications, and the BTP handshake before creating this
-transport. `Controller::Client.new(transport: btp_transport)` can then use the
-existing PASE and Interaction Model clients over that channel.
+connection and notifications. A platform `GattHandshakeChannel` writes C1
+frames, subscribes to C2, and exposes the ATT MTU. Pass that channel to
+`BtpCentralHandshake.open` to negotiate BTP v4 and start the packet transport.
+`Controller::Client.new(transport: btp_transport)` can then use the existing
+PASE and Interaction Model clients over that channel.
 
 ## Building a device
 
