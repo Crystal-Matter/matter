@@ -17,6 +17,7 @@ module Matter
       # replacement of that attribute on the same write exchange.
       class WriteListState
         property replacing_path : Tuple(UInt16, UInt32, UInt32)?
+        property replacement_data_version : UInt32?
       end
 
       private def self.access_control_cluster(clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base)) : Cluster::AccessControl?
@@ -495,8 +496,15 @@ module Matter
             end
           end
 
+          path_key = {endpoint_id, cluster_id, attribute_id}
           if version = request.data_version
-            if version != cluster.data_version
+            matches_replacement = path.list_index_null? && list_state.replacing_path == path_key &&
+                                  list_state.replacement_data_version == version
+            unless matches_replacement || version == cluster.data_version
+              unless path.list_index_null?
+                list_state.replacing_path = nil
+                list_state.replacement_data_version = nil
+              end
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::DataVersionMismatch.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
               next
@@ -513,9 +521,9 @@ module Matter
             cluster.request_peer_icac = nil
             cluster.request_fabric_filtered = true
 
-            path_key = {endpoint_id, cluster_id, attribute_id}
             status = if !metadata || !metadata.writable?
                        list_state.replacing_path = nil
+                       list_state.replacement_data_version = nil
                        cluster.write_attribute(attribute_id, request.data)
                      elsif path.list_index_null?
                        if metadata.try(&.type) != :array
@@ -527,6 +535,7 @@ module Matter
                        end
                      else
                        list_state.replacing_path = nil
+                       list_state.replacement_data_version = nil
                        # Preserve the TLV type when passing the attribute to its cluster.
                        value = request.data
                        write_status = if metadata.type == :array && !value.header.element_type.array?
@@ -546,6 +555,7 @@ module Matter
                                       end
                        if metadata.type == :array && value.header.element_type.array? && write_status.success?
                          list_state.replacing_path = path_key
+                         list_state.replacement_data_version = request.data_version
                        end
                        write_status
                      end

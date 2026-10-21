@@ -32,6 +32,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   DataVersionMismatch without calling the cluster writer.
 - Let controller single and batch writes carry cluster data versions for
   compare-and-write requests.
+- Preserve a successful list replacement's original data version precondition
+  for its subsequent append chunks on the same exchange.
 
 ### Interaction Model list writes
 

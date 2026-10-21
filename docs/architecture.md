@@ -185,6 +185,9 @@ filters through `ImClient#read` and `#subscribe`.
 When a WriteRequest carries an AttributeDataIB DataVersion, `IMHandler`
 compares it with the cluster's current version after access checking and
 returns DataVersionMismatch before invoking the writer if it is stale.
+For a chunked list replacement, the version supplied on the successful
+replacement also authorizes following appends to that list on the same exchange.
+An unsuccessful replacement clears that authorization.
 
 For list writes, the `AttributePath` TLV codec preserves an omitted ListIndex
 for whole-list replacement and an explicit null ListIndex for append. A numeric

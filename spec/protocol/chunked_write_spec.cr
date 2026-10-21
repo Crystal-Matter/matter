@@ -39,6 +39,71 @@ private def chunked_write_response(packet : Bytes, session : Matter::Session::Se
 end
 
 describe "chunked WriteRequest" do
+  it "retains a matching data version precondition across replacement and append chunks" do
+    handler, transport, session, labels = chunked_write_fixture
+    labels.label_list = [Matter::Cluster::LabelStruct.new("old", "label")]
+    path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST)
+    append_path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST, list_index_null: true)
+    version = labels.data_version
+    clear = Matter::InteractionModel::AttributeDataIB.new(path,
+      TLV::Any.from_tlv(([] of Matter::Cluster::LabelStruct).to_tlv), version)
+    append = Matter::InteractionModel::AttributeDataIB.new(append_path,
+      Matter::Cluster::LabelStruct.new("room", "office").to_tlv, version)
+
+    [
+      Matter::InteractionModel::WriteRequestMessage.new(write_requests: [clear], more_chunked_messages: true),
+      Matter::InteractionModel::WriteRequestMessage.new(write_requests: [append], more_chunked_messages: false),
+    ].each_with_index do |request, index|
+      handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+        session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+        payload: request.to_slice, message_counter: (50 + index).to_u32,
+        exchange_id: WRITE_EXCHANGE), WRITE_PEER)
+    end
+
+    statuses = transport.sent_packets.map { |packet, _| chunked_write_response(packet, session).write_responses.first.status.status }
+    statuses.should eq([Matter::InteractionModel::StatusCode::Success.value] * 2)
+    labels.label_list.should eq([Matter::Cluster::LabelStruct.new("room", "office")])
+    handler.close
+  end
+
+  it "invalidates list append state after a stale replacement" do
+    handler, transport, session, labels = chunked_write_fixture
+    labels.label_list = [Matter::Cluster::LabelStruct.new("old", "label")]
+    path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST)
+    append_path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST, list_index_null: true)
+    version = labels.data_version
+    clear = Matter::InteractionModel::AttributeDataIB.new(path,
+      TLV::Any.from_tlv(([] of Matter::Cluster::LabelStruct).to_tlv), version)
+    append = Matter::InteractionModel::AttributeDataIB.new(append_path,
+      Matter::Cluster::LabelStruct.new("room", "office").to_tlv)
+
+    [clear, clear, append].each_with_index do |data, index|
+      request = Matter::InteractionModel::WriteRequestMessage.new(
+        write_requests: [data], more_chunked_messages: index < 2)
+      handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+        session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+        payload: request.to_slice, message_counter: (60 + index).to_u32,
+        exchange_id: WRITE_EXCHANGE), WRITE_PEER)
+    end
+
+    statuses = transport.sent_packets.map { |packet, _| chunked_write_response(packet, session).write_responses.first.status.status }
+    statuses.should eq([
+      Matter::InteractionModel::StatusCode::Success.value,
+      Matter::InteractionModel::StatusCode::DataVersionMismatch.value,
+      Matter::InteractionModel::StatusCode::Busy.value,
+    ])
+    labels.label_list.should be_empty
+    handler.close
+  end
+
   it "keeps a list replacement open for an append in the next chunk of the same exchange" do
     handler, transport, session, labels = chunked_write_fixture
 
