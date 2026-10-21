@@ -16,6 +16,15 @@ describe Matter::Protocol::MrpCache do
     transport.sent_packets.first[1].should eq(peer)
   end
 
+  it "replays the Accept and initial transfer message together" do
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    cache = Matter::Protocol::MrpCache.new(transport)
+    cache.store(7_u16, 42_u32, Bytes[1])
+    cache.append(7_u16, 42_u32, Bytes[2])
+    cache.resend?(7_u16, 42_u32, peer).should be_true
+    transport.sent_packets.map(&.[0]).should eq([Bytes[1], Bytes[2]])
+  end
+
   it "does not replay an unknown counter or another session's response" do
     transport = Matter::Spec::CaptureTransport.new_for_spec
     cache = Matter::Protocol::MrpCache.new(transport)

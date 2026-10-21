@@ -89,6 +89,17 @@ Two rules keep the tree honest:
                                                   / #invoke_command
 ```
 
+BDX protocol ID `0x0002` is a third route for authenticated CASE messages.
+`protocol/bdx/responder.cr` authorizes a file designator through an application
+callback, negotiates synchronous v0 transfer parameters, and streams blocks
+on the same encrypted exchange. `ResponseSender` encrypts each block or
+StatusReport and caches the packet against the incoming counter for MRP replay.
+`SessionRegistry` removes an active BDX stream with its secure session and
+sweeps idle streams. The controller entry point is
+`Controller::BdxClient#download` or `#upload` behind `require "matter/controller"`.
+Device callbacks and stream IO run under the `SessionRegistry` protocol lock;
+they must finish promptly and must not wait for another Matter exchange.
+
 The response goes back the way it came: `IMHandler.encode_*` builds the payload,
 `ResponseSender#send_im_response` (`protocol/response_sender.cr`) encrypts it with
 `Session::SecureMessage.encode`, hands a copy to `MrpCache#store` so a retransmitted request is

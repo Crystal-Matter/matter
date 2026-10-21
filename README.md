@@ -162,6 +162,54 @@ after restart, use Sigma2Resume when the peer recognizes that record; otherwise
 the peer can answer with full Sigma2. Records are scoped to fabric root, fabric
 ID, controller node ID, and peer node ID.
 
+### Bulk Data Exchange
+
+`Controller::BdxClient` transfers named streams on a CASE session. The caller
+owns the source or sink IO. Downloads have a 64 MiB default maximum and both
+directions use 1024-byte blocks by default; choose lower limits if needed.
+
+```crystal
+bdx = Matter::Controller::BdxClient.new(client)
+File.open("diagnostics.bin", "w") do |sink|
+  bdx.download(session, peer, "diagnostics".to_slice, sink)
+end
+File.open("update.bin", "r") do |source|
+  bdx.upload(session, peer, "update".to_slice, source,
+    length: File.size("update.bin").to_u64)
+end
+```
+
+A device exposes a designator only through a callback on its message handler.
+The callback receives the authenticated peer session and negotiation request,
+so an application can check the fabric, peer Node ID, and requested file before
+opening a stream. Return `nil` to reject access. The handler closes a returned
+stream at transfer completion, on error, after five idle minutes, or when the
+secure session is removed. The device also limits each stream to 64 MiB by
+default; set `device.message_handler.bdx.max_transfer_bytes` for a larger
+application-specific limit.
+
+The callback and each stream read or write run synchronously under the device's
+session registry lock. Keep callbacks and IO prompt; do not wait for another
+Matter exchange from inside them. The controller waits up to five minutes for
+each response by default; a caller can set a different `BdxClient` timeout.
+
+```crystal
+device.message_handler.bdx.on_download = ->(session : Matter::Session::SecureContext,
+                                            init : Matter::Protocol::Bdx::Wire::Init) do
+  if session.fabric_index == 1_u8 && init.file_designator == "diagnostics".to_slice
+    file = File.open("diagnostics.bin", "r")
+    Matter::Protocol::Bdx::Responder::Source.new(file, File.size("diagnostics.bin").to_u64)
+      .as(Matter::Protocol::Bdx::Responder::Source?)
+  end
+end
+```
+
+This BDX service accepts synchronous v0 transfers over CASE. It supports both
+sender and receiver drive, choosing sender drive when both are proposed. A nonzero
+start offset, asynchronous mode, PASE transfer, and a designator with no callback
+are rejected. The Diagnostic Logs and OTA clusters do not register designators
+automatically; an application must bind its own stream and authorization.
+
 For one-way group commands, use a controller store backed by a durable file.
 Provision the same epoch key and Group ID on each receiving device through
 GroupKeyManagement, add endpoint membership through Groups, and grant a Group

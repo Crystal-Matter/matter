@@ -244,11 +244,23 @@ module Matter
         message_types : Array(UInt8),
         timeout : Time::Span,
       ) : ReceivedMessage?
+        pairs = message_types.map { |type| {protocol_id, type} }
+        wait_for_exchange_message(exchange_id, pairs, timeout)
+      end
+
+      # Wait for one of several protocol/opcode pairs on an exchange. BDX
+      # transfer replies use protocol 0x0002, while failures arrive as Secure
+      # Channel StatusReport on that same exchange.
+      def wait_for_exchange_message(
+        exchange_id : UInt16,
+        message_types : Array(Tuple(UInt16, UInt8)),
+        timeout : Time::Span,
+      ) : ReceivedMessage?
         deadline = Time.instant + timeout
 
         loop do
           if deferred = take_deferred do |rec|
-               matches?(rec, exchange_id, protocol_id, message_types)
+               matches_exchange?(rec, exchange_id, message_types)
              end
             return deferred
           end
@@ -259,7 +271,7 @@ module Matter
           select
           when rec = @inbox.receive
             ack_encrypted_if_needed(rec)
-            return rec if matches?(rec, exchange_id, protocol_id, message_types)
+            return rec if matches_exchange?(rec, exchange_id, message_types)
             defer(rec) unless standalone_ack?(rec)
           when timeout({remaining, DEFERRED_CHECK_INTERVAL}.min)
           end
@@ -282,11 +294,11 @@ module Matter
         end
       end
 
-      private def matches?(rec : ReceivedMessage, exchange_id : UInt16,
-                           protocol_id : UInt16, message_types : Array(UInt8)) : Bool
+      private def matches_exchange?(rec : ReceivedMessage, exchange_id : UInt16,
+                                    message_types : Array(Tuple(UInt16, UInt8))) : Bool
         header = rec.message.payload_header
-        header.exchange_id == exchange_id && header.protocol_id == protocol_id &&
-          message_types.includes?(header.message_type)
+        header.exchange_id == exchange_id &&
+          message_types.any? { |protocol, type| header.protocol_id == protocol && header.message_type == type }
       end
 
       private def standalone_ack?(rec : ReceivedMessage) : Bool

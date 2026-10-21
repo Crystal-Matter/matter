@@ -1,6 +1,7 @@
 require "log"
 require "socket"
 
+require "../error"
 require "../transport/udp_transport"
 
 module Matter
@@ -10,7 +11,8 @@ module Matter
     #
     # Controllers (notably iOS) retransmit a request when our response is lost.
     # Replaying the stored packet answers the retransmission without re-invoking
-    # cluster logic, so a repeated Invoke cannot toggle a relay twice.
+    # cluster logic, so a repeated Invoke cannot toggle a relay twice. BDX Init
+    # can produce Accept plus its first Block/Query, which are replayed together.
     class MrpCache
       Log = ::Log.for("matter.protocol.mrp_cache")
 
@@ -18,9 +20,10 @@ module Matter
       RESPONSE_TTL = 10.seconds
 
       # Upper bound on cached responses; the oldest are dropped first.
-      MAX_ENTRIES = 512
+      MAX_ENTRIES           = 512
+      MAX_PACKETS_PER_ENTRY =   2
 
-      private record Entry, packet : Bytes, created_at : Time::Instant
+      private record Entry, packets : Array(Bytes), created_at : Time::Instant
 
       @entries : Hash(Tuple(UInt16, UInt32), Entry) = {} of Tuple(UInt16, UInt32) => Entry
 
@@ -46,7 +49,7 @@ module Matter
 
         if Time.instant - cached.created_at <= RESPONSE_TTL
           Log.warn { "MRP duplicate detected: session_id=#{session_id}, message_counter=#{incoming_counter} - resending cached response" }
-          @transport.send_raw(cached.packet, peer)
+          cached.packets.each { |packet| @transport.send_raw(packet, peer) }
           true
         else
           @entries.delete(key)
@@ -56,8 +59,20 @@ module Matter
 
       # Stores *packet* as the response to `{session_id, incoming_counter}`.
       def store(session_id : UInt16, incoming_counter : UInt32, packet : Bytes) : Nil
-        @entries[{session_id, incoming_counter}] = Entry.new(packet, Time.instant)
+        @entries[{session_id, incoming_counter}] = Entry.new([packet], Time.instant)
         prune
+      end
+
+      # BDX may answer Init with Accept followed immediately by the first
+      # Block or BlockQuery. Both ciphertext packets belong to the same input
+      # counter and must be replayed together after an MRP retransmission.
+      def append(session_id : UInt16, incoming_counter : UInt32, packet : Bytes) : Nil
+        entry = @entries[{session_id, incoming_counter}]? ||
+                raise Matter::ProtocolError.new("No MRP response to append to")
+        if entry.packets.size >= MAX_PACKETS_PER_ENTRY
+          raise Matter::ProtocolError.new("Too many MRP responses for one request")
+        end
+        entry.packets << packet
       end
 
       # Forgets every response cached for *session_id*.
