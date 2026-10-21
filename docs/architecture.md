@@ -98,12 +98,19 @@ header; its fields must be authenticated with the operational group key and
 clear-header AAD before any replay or application processing. The ordinary
 codec rejects private packets without an explicit privacy key.
 
-To complete groupcast, the session layer still needs group key lookup across
-all session-ID collisions, AES-CCM validation, per-source replay windows and
-message counter synchronization. Transport and device runtime then need IPv6
-multicast membership, outbound group counters persisted across restart, and
-group interaction routing. No group message is accepted or emitted through the
-runtime until those pieces are connected.
+`Session::GroupSecurePacket` takes installed and mapped operational keys,
+derives their privacy keys and session IDs, tries every colliding session ID,
+authenticates the AES-CCM payload, then checks the mapped Group ID. It tracks
+separate data and control replay windows per fabric/source, retaining peer
+entries until restart as the TrustFirst policy requires. The caller must supply
+only currently installed epoch keys and must not reuse an outbound counter.
+
+To complete groupcast, the runtime needs key candidates from each fabric's
+GroupKeyManagement state, IPv6 multicast membership, outbound group counters
+persisted across restart, and group interaction routing. CacheAndSync policy
+and its message counter synchronization protocol remain unsupported. No group
+message is accepted or emitted through the runtime until those pieces are
+connected.
 
 ### Who owns what in the protocol layer
 
