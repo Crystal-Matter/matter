@@ -18,6 +18,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Validate Joint Fabric Node IDs against the Matter 1.6 range before
   commissioning and Datastore registration; regenerate random candidates
   that collide with the Datastore NodeList.
+- Add optional controller registration of commissioned devices with the Anchor
+  Datastore, including durable AddPendingNode, RefreshNode, and RemoveNode
+  recovery across restarts, and a chip-tool-backed Docker lifecycle test.
 - Add delegated controller identities on an existing fabric, a separate
   certificate issuer for commissioning, and an ACL grant helper for shared
   controller access.

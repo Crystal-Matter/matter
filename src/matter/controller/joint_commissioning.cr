@@ -392,7 +392,7 @@ module Matter
           @controller_node_id : UInt64,
           administrator_fabric_index : UInt8,
           administrator_endpoint : UInt16,
-          administrator_name : String,
+          @administrator_name : String,
           administrator_cat_version : UInt16,
           anchor_cat_version : UInt16,
           icac_id : UInt64,
@@ -406,12 +406,13 @@ module Matter
           anchor_finalize : CommissionerHooks::AnchorFinalize? = nil,
           @handoff_result : HandoffResultLookup? = nil,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
+          @datastore_registrar : DatastoreNodeRegistrar? = nil,
         )
           fabric = @store.load.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
           validate_anchor_fabric(fabric, anchor_cat_version)
           initial_pending = load_pending
           @hooks = CommissionerHooks.new(
-            administrator_fabric_index, administrator_endpoint, administrator_name,
+            administrator_fabric_index, administrator_endpoint, @administrator_name,
             administrator_cat_version, anchor_cat_version, icac_id, trust,
             attest, consent,
             ->(identity : FabricInfo, node_id : UInt64, public_key : Bytes, cat : UInt32) {
@@ -450,11 +451,13 @@ module Matter
           end
           commissioner = Commissioning::Commissioner.new(@store, @client,
             crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: 900_u16,
-            attestation_verifier: @attestation_verifier)
+            attestation_verifier: @attestation_verifier,
+            datastore_registrar: @datastore_registrar)
           commissioner.pairing_code(node_id, manual_code, peer,
             fabric_id: @fabric_id, root_public_key: @root_public_key,
             controller_node_id: @controller_node_id,
-            defer_completion: defer_completion)
+            defer_completion: defer_completion,
+            friendly_name: @datastore_registrar ? @administrator_name : nil)
         end
 
         # Replays a registration only after the Commissioner saved the new
@@ -501,7 +504,12 @@ module Matter
               @store.save(state)
             end
           end
-          @hooks.resume_pending(state)
+          recovered = @hooks.resume_pending(state)
+          if registrar = @datastore_registrar
+            fabric = state.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
+            registrar.resume(fabric)
+          end
+          recovered
         end
 
         def stored_icac(node_id : UInt64) : Bytes?

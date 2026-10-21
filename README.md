@@ -261,16 +261,52 @@ Matter::Controller::SharedFabric.grant_admin(im, session, peer, delegate.control
 
 The delegated store intentionally has no CA signing key. To commission a new
 device from that controller, keep the authority in a separate store and pass
-a certificate issuer to `Commissioning::Commissioner`:
+a certificate issuer and a trusted device attestation verifier to
+`Commissioning::Commissioner` (construct `verifier` as in the controller
+example above):
 
 ```crystal
 commissioner = Matter::Controller::Commissioning::Commissioner.new(
   delegate_store,
   client,
-  certificate_issuer: Matter::Controller::SharedFabric.issuer(authority)
+  certificate_issuer: Matter::Controller::SharedFabric.issuer(authority),
+  attestation_verifier: verifier
 )
 commissioner.pairing_code(new_device_node_id, pairing_code)
 ```
+
+When that fabric has a Matter 1.6 Joint Fabric Datastore Anchor, opt in to
+node lifecycle registration. The controller store must already contain the
+Anchor's operational Node ID and address. The registrar uses the controller's
+CASE identity to call AddPendingNode before the new device's final CASE,
+RefreshNode after CommissioningComplete, and RemoveNode when commissioning
+fails before completion. No root signing key is sent to the Anchor.
+
+```crystal
+delivery = Matter::Controller::DatastoreNodeRegistrar::NetworkDelivery.new(
+  delegate_store, client, anchor_node_id, datastore_endpoint
+)
+registrar = Matter::Controller::DatastoreNodeRegistrar.new(delegate_store, delivery)
+commissioner = Matter::Controller::Commissioning::Commissioner.new(
+  delegate_store, client,
+  certificate_issuer: Matter::Controller::SharedFabric.issuer(authority),
+  attestation_verifier: verifier,
+  datastore_registrar: registrar
+)
+commissioner.pairing_code(new_device_node_id, pairing_code, friendly_name: "Living room lamp")
+```
+
+Call `registrar.resume(delegate_store.load.fabric.not_nil!)` after a restart
+to retry an interrupted RefreshNode or clean up a pending registration after
+the fail-safe deadline. If CommissioningComplete was sent but its result was
+lost, the registrar retains an ambiguous entry and raises; verify the device's
+fabric state before calling `registrar.complete(fabric, node_id)` followed by
+`registrar.refresh(fabric, node_id)`, or `registrar.abort(fabric, node_id,
+confirmed_failure: true)` if the device did not join. A known failed
+CommissioningComplete response is cleaned up automatically.
+`JointCommissioning::Workflow` accepts the same registrar through its
+`datastore_registrar:` option and uses the Administrator name as the node's
+friendly name.
 
 Grant each controller access to the new device with `SharedFabric.grant_admin`
 over the commissioning controller's CASE session. The ACL has a minimum of

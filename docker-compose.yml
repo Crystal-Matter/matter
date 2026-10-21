@@ -88,6 +88,21 @@ services:
       E2E_DEVICE: matter_joint_fabric_refresh_target
       E2E_BINARY: matter_switch
 
+  joint-fabric-lifecycle-anchor:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_lifecycle_anchor
+      E2E_BINARY: matter_joint_fabric_administrator
+      MATTER_JFA_PROVISIONED_ANCHOR: "1"
+      MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_lifecycle_anchor.bootstrap.yml
+      MATTER_JFA_TRANSFER_PEERS: c401=joint-fabric-lifecycle-target
+
+  joint-fabric-lifecycle-target:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_lifecycle_target
+      E2E_BINARY: matter_switch
+
   level-control:
     <<: *device
     environment:
@@ -147,6 +162,8 @@ services:
       joint-fabric-joiner: { condition: service_healthy }
       joint-fabric-refresh-anchor: { condition: service_healthy }
       joint-fabric-refresh-target: { condition: service_healthy }
+      joint-fabric-lifecycle-anchor: { condition: service_healthy }
+      joint-fabric-lifecycle-target: { condition: service_healthy }
       level-control: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }
