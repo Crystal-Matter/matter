@@ -9,10 +9,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Attestation revocation
 
+- Validate Matter 1.6 partitioned and delegated DCL CRLs. Every partition
+  requires a unique DCL label and URL, a matching critical IDP URL, a current
+  signature, and issuer-scoped serial handling. Delegated PAA and PAI signers
+  are checked against the candidate attestation authority before use.
 - Add an opt-in DCL adapter for complete, directly signed PAA and PAI CRLs.
   It uses an explicit HTTPS DCL gateway and CRL host allowlist, permits
   explicitly approved HTTP hosts for signed CRLs, bounds downloads, rejects
-  redirects, and fails closed on partitioned or delegated CRLs.
+  redirects, and fails closed when coverage or signer validation is incomplete.
 
 ### Interaction Model data version filters
 

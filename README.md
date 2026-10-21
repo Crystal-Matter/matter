@@ -273,8 +273,8 @@ commissioning. The host must obtain the CRLs through a trusted channel;
 automated DCL retrieval, partitioned CRLs, and indirect CRL signers are not
 implemented by this local provider.
 
-For DCL revocation points with one complete, directly signed CRL per PAA and
-PAI, `DclAttestationRevocation` can query an explicitly selected HTTPS DCL
+For DCL revocation points with direct, partitioned, or delegated CRLs,
+`DclAttestationRevocation` can query an explicitly selected HTTPS DCL
 gateway and download CRLs from explicitly approved HTTPS hosts:
 
 ```crystal
@@ -294,11 +294,16 @@ an on-path attacker can withhold a newer CRL until the signed `nextUpdate`;
 the deployment must decide whether this tradeoff is acceptable.
 
 The DCL gateway must be authenticated and kept current by the deploying
-application. Missing coverage, multiple points for one issuer, delegated CRL
-signers, partitioned CRLs, and unknown DCL digest metadata return
-`Unavailable`; commissioning then fails closed. The library does not infer an
+application. A partition set is accepted only when every point has a unique
+label and URL, and every CRL has a critical Issuing Distribution Point URI
+equal to its DCL URL. A delegated signer must chain directly to the candidate
+PAA or PAI and satisfy the Matter 1.6 CRL signer profile. Missing or invalid
+coverage, unsupported IDP scope flags, delta CRLs, and unknown DCL digest
+metadata return `Unavailable`; commissioning then fails closed. The library does not infer an
 approved CRL host from the DCL's `dataURL`. An injected `DclRevocationSource`
-can use a separately authenticated DCL mirror; an injected fetch callback must
+can use a separately authenticated DCL mirror; it must supply the complete
+point set with `vendor_id`, `label`, and `product_id` where the PAI carries one.
+An injected fetch callback must
 apply the same byte limit, scheme/host/port allowlist, and redirect policy.
 
 `ImClient` also has `write_attribute`, `write_attributes` and `invoke`;
