@@ -63,6 +63,7 @@ module Matter
       # Forgets every response cached for *session_id*.
       def clear_session(session_id : UInt16) : Nil
         @entries.reject! { |(cached_session_id, _), _| cached_session_id == session_id }
+        @transport.clear_reliable_session(session_id)
       end
 
       # Forgets every cached response.

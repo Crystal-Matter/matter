@@ -88,7 +88,16 @@ Two rules keep the tree honest:
 The response goes back the way it came: `IMHandler.encode_*` builds the payload,
 `ResponseSender#send_im_response` (`protocol/response_sender.cr`) encrypts it with
 `Session::SecureMessage.encode`, hands a copy to `MrpCache#store` so a retransmitted request is
-answered from cache, and writes it with `UDPTransport#send_raw`.
+answered from cache, and writes it with `UDPTransport#send_reliable_raw`.
+
+Outbound messages that request an MRP acknowledgement use
+`UDPTransport#send_reliable_raw`. The transport retains the exact encoded bytes,
+including ciphertext and counter, and retries them with Matter's bounded
+backoff. An acknowledged counter clears only the matching session/exchange
+entry; secure acknowledgements reach that table only after AEAD verification.
+The table also covers unsecured controller handshake requests. Four retries
+are allowed before removal. Session removal clears that session's entries,
+and transport shutdown clears the table.
 
 `Session::SecureMessage` (`session/secure_message.cr`) encrypts and decrypts unicast
 secure messages. There is one definition of the authenticated data — the complete packet

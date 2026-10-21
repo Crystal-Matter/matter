@@ -165,9 +165,14 @@ module Matter
           acknowledged_message_id: acknowledged_message_id
         )
 
-        udp_packet, _ = Session::SecureMessage.encode(session, payload_header, payload.to_slice,
+        udp_packet, counter = Session::SecureMessage.encode(session, payload_header, payload.to_slice,
           source_node_id: session.local_node_id, destination_node_id: session.peer_node_id, crypto: @crypto)
-        @transport.send_raw(udp_packet, peer)
+        if requires_ack
+          @transport.send_reliable_raw(udp_packet, peer, session.session_id,
+            exchange_id, counter)
+        else
+          @transport.send_raw(udp_packet, peer)
+        end
 
         exchange_id
       end
@@ -285,6 +290,10 @@ module Matter
           return
         end
         decrypted_message = decrypt_message(session, msg)
+        if ack = decrypted_message.payload_header.acknowledged_message_id
+          @transport.acknowledge_reliable(session.session_id,
+            decrypted_message.payload_header.exchange_id, ack)
+        end
         @inbox.send(ReceivedMessage.new(decrypted_message, peer))
       rescue ex
         Log.error(exception: ex) { "Controller: failed handling inbound message (peer=#{peer} session_id=#{msg.packet_header.session_id} data_hex=#{msg.payload.hexstring})" }

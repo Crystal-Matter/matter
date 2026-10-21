@@ -25,6 +25,7 @@ module Matter
         @unsecured_counters = {} of Tuple(UInt64?, Socket::IPAddress) => Tuple(Transport::MessageCounter, Time::Instant)
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = Transport::ExchangeManager.new
+        initialize_reliable_messages
         @sent_packets = [] of Tuple(Bytes, Socket::IPAddress)
       end
 
@@ -35,6 +36,7 @@ module Matter
       end
 
       def close : Nil
+        clear_reliable
       end
 
       protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil

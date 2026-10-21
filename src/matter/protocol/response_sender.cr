@@ -48,7 +48,7 @@ module Matter
           requires_acknowledge: true,
           acknowledged_message_id: original_msg.payload_header.requires_acknowledge? ? original_msg.packet_header.message_id : nil
         )
-        udp_packet, _ = Session::SecureMessage.encode(session, payload_header, payload,
+        udp_packet, counter = Session::SecureMessage.encode(session, payload_header, payload,
           source_node_id: original_msg.packet_header.destination_node_id || session.local_node_id,
           destination_node_id: original_msg.packet_header.source_node_id)
 
@@ -56,7 +56,8 @@ module Matter
           @mrp_cache.store(original_msg.packet_header.session_id, original_msg.packet_header.message_id, udp_packet.dup)
         end
 
-        @transport.send_raw(udp_packet, peer)
+        @transport.send_reliable_raw(udp_packet, peer, session.session_id,
+          payload_header.exchange_id, counter)
       end
 
       # Acknowledges *original_msg* when there is no response to carry the ACK.
@@ -95,9 +96,10 @@ module Matter
           initiator_message: true,
           requires_acknowledge: true
         )
-        udp_packet, _ = Session::SecureMessage.encode(session, payload_header, payload,
+        udp_packet, counter = Session::SecureMessage.encode(session, payload_header, payload,
           source_node_id: session.local_node_id)
-        @transport.send_raw(udp_packet, peer)
+        @transport.send_reliable_raw(udp_packet, peer, session.session_id,
+          exchange_id, counter)
       end
 
       # Sends an unencrypted Secure Channel message: the PASE and CASE
