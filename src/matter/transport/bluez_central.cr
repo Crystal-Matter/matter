@@ -16,6 +16,14 @@ module Matter
       record Service, path : String, uuid : String
       record Characteristic, path : String, uuid : String
 
+      class RemoteError < Matter::TransportError
+        getter remote_name : String?
+
+        def initialize(message : String? = nil, cause : Exception? = nil, @remote_name : String? = nil)
+          super(message, cause)
+        end
+      end
+
       abstract class Notifications
         abstract def mtu : Int32?
         abstract def read(timeout_span : Time::Span) : Bytes?
@@ -66,8 +74,11 @@ module Matter
         def close : Nil
           return if @closed
           @closed = true
-          @notifications.try(&.close)
-          @bus.disconnect_device(@device_path)
+          begin
+            @notifications.try(&.close)
+          ensure
+            @bus.disconnect_device(@device_path)
+          end
         end
 
         def closed? : Bool

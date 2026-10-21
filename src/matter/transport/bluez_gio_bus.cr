@@ -1,4 +1,5 @@
 require "./bluez_central"
+require "./bluez_signal_notifications"
 
 {% if flag?(:linux) %}
   @[Link("gio-2.0")]
@@ -22,6 +23,14 @@ require "./bluez_central"
                                                       fd_list : Void*, out_fd_list : Void**, cancellable : Void*,
                                                       error : Error**) : Void*
     fun g_unix_fd_list_get(fd_list : Void*, index : Int32, error : Error**) : Int32
+    alias SignalCallback = (Void*, UInt8*, UInt8*, UInt8*, UInt8*, Void*, Void* -> Void)
+    fun g_dbus_connection_signal_subscribe(connection : Void*, sender : UInt8*, interface_name : UInt8*,
+                                           member : UInt8*, object_path : UInt8*, arg0 : UInt8*, flags : Int32,
+                                           callback : SignalCallback, user_data : Void*, free_func : Void*) : UInt32
+    fun g_dbus_connection_signal_unsubscribe(connection : Void*, subscription_id : UInt32) : Void
+    fun g_main_context_iteration(context : Void*, may_block : Int32) : Int32
+    fun g_dbus_error_get_remote_error(error : Error*) : UInt8*
+    fun g_free(pointer : Void*) : Void
     fun g_variant_parse(type : Void*, text : UInt8*, limit : Void*, endptr : Void*, error : Error**) : Void*
     fun g_variant_n_children(value : Void*) : LibC::SizeT
     fun g_variant_get_child_value(value : Void*, index : LibC::SizeT) : Void*
@@ -43,8 +52,17 @@ require "./bluez_central"
         # scanning and after connecting, so no GLib main loop or signal thread is
         # required. AcquireNotify supplies packet-preserving C2 indications.
         class GioBus < Bus
+          include SignalSource
+
+          @@callbacks = {} of UInt64 => Proc(Bytes, Nil)
+          @@callbacks_mutex = Mutex.new
+          @@next_callback_token = 1_u64
+
+          SIGNAL_CALLBACK = ->(connection : Void*, sender : UInt8*, object_path : UInt8*, interface_name : UInt8*, signal_name : UInt8*, parameters : Void*, user_data : Void*) { GioBus.deliver_signal(parameters, user_data) }
+
           BLUEZ_NAME               = "org.bluez"
           OBJECT_MANAGER           = "org.freedesktop.DBus.ObjectManager"
+          PROPERTIES_INTERFACE     = "org.freedesktop.DBus.Properties"
           ADAPTER_INTERFACE        = "org.bluez.Adapter1"
           DEVICE_INTERFACE         = "org.bluez.Device1"
           SERVICE_INTERFACE        = "org.bluez.GattService1"
@@ -54,8 +72,11 @@ require "./bluez_central"
           DBUS_FLAGS_NONE          =      0
           BYTE_SIZE                =      1
           MAX_NOTIFICATION_SIZE    =    512
+          ACQUIRE_NOT_SUPPORTED    = "org.bluez.Error.NotSupported"
+          ACQUIRE_NOT_PERMITTED    = "org.bluez.Error.NotPermitted"
 
           @connection : Void*
+          @subscription_tokens = {} of UInt32 => UInt64
 
           def initialize(@adapter_path : String = "/org/bluez/hci0")
             error = Pointer(LibMatterBluezGio::Error).null
@@ -171,6 +192,68 @@ require "./bluez_central"
           end
 
           def subscribe(characteristic_path : String) : Notifications
+            acquire_notifications(characteristic_path)
+          rescue ex : RemoteError
+            unless ex.remote_name.in?(ACQUIRE_NOT_SUPPORTED, ACQUIRE_NOT_PERMITTED)
+              raise ex
+            end
+            SignalNotifications.open(self, characteristic_path)
+          end
+
+          def subscribe_values(path : String, &callback : Bytes -> Nil) : UInt32
+            token = @@callbacks_mutex.synchronize do
+              next_token = @@next_callback_token
+              @@next_callback_token += 1_u64
+              @@callbacks[next_token] = callback
+              next_token
+            end
+            subscription_id = LibMatterBluezGio.g_dbus_connection_signal_subscribe(
+              @connection, BLUEZ_NAME, PROPERTIES_INTERFACE, "PropertiesChanged", path,
+              CHARACTERISTIC_INTERFACE, DBUS_FLAGS_NONE, SIGNAL_CALLBACK,
+              Pointer(Void).new(token), Pointer(Void).null)
+            @subscription_tokens[subscription_id] = token
+            subscription_id
+          end
+
+          def start_notify(path : String) : Nil
+            call(path, CHARACTERISTIC_INTERFACE, "StartNotify")
+          end
+
+          def stop_notify(path : String) : Nil
+            call(path, CHARACTERISTIC_INTERFACE, "StopNotify")
+          end
+
+          def unsubscribe_values(subscription_id : UInt32) : Nil
+            LibMatterBluezGio.g_dbus_connection_signal_unsubscribe(@connection, subscription_id)
+            if token = @subscription_tokens.delete(subscription_id)
+              @@callbacks_mutex.synchronize { @@callbacks.delete(token) }
+            end
+          end
+
+          def dispatch_pending : Nil
+            LibMatterBluezGio.g_main_context_iteration(Pointer(Void).null, 0)
+          end
+
+          # Receives only the C2 Value property from a BlueZ PropertiesChanged
+          # signal. The callback registry keeps Crystal closures alive while
+          # GIO owns the D-Bus signal subscription.
+          def self.deliver_signal(parameters : Void*, user_data : Void*) : Nil
+            token = user_data.address.to_u64
+            callback = @@callbacks_mutex.synchronize { @@callbacks[token]? }
+            return unless callback
+            changed = LibMatterBluezGio.g_variant_get_child_value(parameters, 1)
+            value = LibMatterBluezGio.g_variant_lookup_value(changed, "Value", Pointer(Void).null)
+            unless value.null?
+              count = uninitialized LibC::SizeT
+              pointer = LibMatterBluezGio.g_variant_get_fixed_array(value, pointerof(count), BYTE_SIZE)
+              callback.call(Bytes.new(pointer, count.to_i).dup) unless pointer.null? || count == 0
+            end
+          ensure
+            LibMatterBluezGio.g_variant_unref(value) if value && !value.null?
+            LibMatterBluezGio.g_variant_unref(changed) if changed
+          end
+
+          private def acquire_notifications(characteristic_path : String) : Notifications
             parameters = parse_variant("(@a{sv} {},)")
             error = Pointer(LibMatterBluezGio::Error).null
             fd_list = Pointer(Void).null
@@ -279,8 +362,11 @@ require "./bluez_central"
           private def check_error(error : LibMatterBluezGio::Error*, action : String) : Nil
             return if error.null?
             message = String.new(error.value.message)
+            remote_name_pointer = LibMatterBluezGio.g_dbus_error_get_remote_error(error)
+            remote_name = remote_name_pointer.null? ? nil : String.new(remote_name_pointer)
+            LibMatterBluezGio.g_free(remote_name_pointer.as(Void*)) unless remote_name_pointer.null?
             LibMatterBluezGio.g_error_free(error)
-            raise Matter::TransportError.new("Cannot #{action}: #{message}")
+            raise RemoteError.new("Cannot #{action}: #{message}", remote_name: remote_name)
           end
         end
 
