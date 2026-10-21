@@ -59,6 +59,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   turn on before raising a level and turn off after a transition reaches its
   minimum. Stopping a downward transition leaves OnOff unchanged.
 
+### Level Control bounds
+
+- Declare MinLevel and MaxLevel as always-present fixed attributes. They remain
+  configurable when constructing the cluster; the advertised cluster revision
+  stays at 6 until the remaining revision 7 semantics are implemented.
+
 ### Color Control continuous movement
 
 - Run MoveHue, MoveSaturation, MoveColor and MoveColorTemperature over time at
