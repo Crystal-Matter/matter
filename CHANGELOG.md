@@ -52,6 +52,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Activate a provisioned JFA Anchor from a valid ICAC and Anchor CAT even when
   the issuer omits Crystal's optional ICAC organizational unit, as the official
   Matter 1.6 controller does.
+- Accept the official SDK's CSR ResponseStream for an outstanding ICAC request
+  even when its optional transaction type is unset or inconsistent; verify the
+  returned CSR against the pinned ICAC key before using it.
 - Recover interrupted device migration commands after authenticated proof of
   completion or no effect. Verify both fabrics' Datastore ownership before
   declaring migration complete, and resume partially completed rollback.

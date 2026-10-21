@@ -443,15 +443,21 @@ class CsrMailbox:
 
     def respond(self, payload: bytes) -> int:
         if self.pending_nonce is None or time.monotonic() >= self.deadline:
+            LOG.warning("SDK CSR ResponseStream arrived without a pending request (bytes=%d)", len(payload))
             return FAILED_PRECONDITION
         try:
             fields = protobuf_fields(payload)
-        except ValueError:
+        except ValueError as error:
+            LOG.warning("SDK CSR ResponseStream protobuf invalid: %s (bytes=%d)", error, len(payload))
             return OUT_OF_RANGE
-        if fields.get(1, ICAC_CSR) != ICAC_CSR:
-            return OUT_OF_RANGE
+        # SDK v1.6 does not initialize Response.transaction_type. The
+        # outstanding GetStream request selects ICAC_CSR, and Crystal checks
+        # the returned PKCS#10 signature against its pinned ICAC key.
         csr = fields.get(2)
         if not isinstance(csr, bytes) or not 0 < len(csr) <= MAX_CSR_BYTES or csr[0] != 0x30:
+            LOG.warning("SDK CSR ResponseStream CSR invalid (type=%s, bytes=%s, prefix=%s)",
+                        type(csr).__name__, len(csr) if isinstance(csr, bytes) else None,
+                        csr[:4].hex() if isinstance(csr, bytes) else None)
             return OUT_OF_RANGE
         nonce = self.pending_nonce
         self._write({"nonce": nonce, "status": "ok", "csr": base64.b64encode(csr).decode("ascii")})
