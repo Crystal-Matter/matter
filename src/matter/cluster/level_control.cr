@@ -216,8 +216,8 @@ module Matter
 
       attribute 0x0000, :current_level, UInt8, default: LOWEST_LEVEL, persist: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL
       attribute 0x0001, :remaining_time, UInt16, default: 0_u16, requires: :lighting
-      attribute 0x0002, :min_level, UInt8, default: LOWEST_LEVEL, persist: true, optional: true
-      attribute 0x0003, :max_level, UInt8, default: HIGHEST_LEVEL, persist: true, optional: true
+      attribute 0x0002, :min_level, UInt8, default: LOWEST_LEVEL, persist: true, fixed: true
+      attribute 0x0003, :max_level, UInt8, default: HIGHEST_LEVEL, persist: true, fixed: true
       attribute 0x0004, :current_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
       attribute 0x0005, :min_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
       attribute 0x0006, :max_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
