@@ -8,8 +8,9 @@ module Matter
       # Application-owned stream dispatcher for inbound BDX exchanges. The
       # callbacks are the authorization boundary: an unregistered designator
       # cannot create a transfer, and both receive the authenticated CASE peer.
-      # MessageHandler serializes calls to this responder separately from its
-      # session registry. Application callbacks and stream IO may block.
+      # Shared transfer metadata is synchronized briefly. Each transfer owns
+      # its stream lock, so different CASE sessions can perform application IO
+      # independently without holding the session registry lock.
       class Responder
         Log                        = ::Log.for("matter.protocol.bdx.responder")
         MAX_ACTIVE_TRANSFERS       =        4
@@ -49,21 +50,30 @@ module Matter
           getter stream : IO
           getter max_bytes : UInt64
           property touched_at : Time::Instant
+          getter io_lock : Mutex
 
           def initialize(@session : Session::SecureContext, @transfer : Transfer,
                          @stream : IO, @max_bytes : UInt64)
             @touched_at = Time.instant
+            @io_lock = Mutex.new(:reentrant)
           end
         end
 
+        private record Pending, session : Session::SecureContext, touched_at : Time::Instant
+
         @active = {} of Key => Active
+        @pending = {} of Key => Pending
+        @state_lock = Mutex.new
 
         def active_count : Int32
-          @active.size
+          @state_lock.synchronize { @active.size + @pending.size }
         end
 
         def active_for_session?(session : Session::SecureContext) : Bool
-          @active.values.any?(&.session.same?(session))
+          @state_lock.synchronize do
+            @active.values.any?(&.session.same?(session)) ||
+              @pending.values.any?(&.session.same?(session))
+          end
         end
 
         # Process one BDX message and return its protocol response. The caller
@@ -72,36 +82,41 @@ module Matter
         def receive(session : Session::SecureContext, exchange_id : UInt16,
                     opcode : Wire::Opcode, payload : Bytes) : Step
           key = Key.new(session.session_id, exchange_id)
-          sweep
           return Step.new(status: Transfer::StatusCode::UnexpectedMessage) unless session.case_session? && session.fabric_index && session.peer_node_id
 
           if opcode.send_init? || opcode.receive_init?
-            return Step.new(status: Transfer::StatusCode::UnexpectedMessage) if @active.has_key?(key)
-            return Step.new(status: Transfer::StatusCode::ResponderBusy) if @active.size >= MAX_ACTIVE_TRANSFERS
-            init = Wire::Init.decode(opcode, payload)
-            accept(session, key, init)
-          else
-            active = @active[key]?
-            return Step.new(status: Transfer::StatusCode::UnexpectedMessage) unless active && active.session.same?(session)
-            active.touched_at = Time.instant
-            message = decode_transfer(opcode, payload, active.transfer.block_size)
-            result = active.transfer.receive(message)
-            if active.transfer.bytes_transferred > active.max_bytes
-              raise Transfer::Error.new(Transfer::StatusCode::LengthTooLarge,
-                "BDX transfer exceeds configured maximum")
+            if rejection = reserve(key, session)
+              return Step.new(status: rejection)
             end
-            finish(key) if active.transfer.complete?
-            Step.new(message: result)
+            init = Wire::Init.decode(opcode, payload)
+            step = accept(session, key, init)
+            finish(key, session) if step.status
+            step
+          else
+            active = @state_lock.synchronize { @active[key]? }
+            return Step.new(status: Transfer::StatusCode::UnexpectedMessage) unless active && active.session.same?(session)
+            active.io_lock.synchronize do
+              return Step.new(status: Transfer::StatusCode::UnexpectedMessage) unless current_active?(key, active)
+              @state_lock.synchronize { active.touched_at = Time.instant }
+              message = decode_transfer(opcode, payload, active.transfer.block_size)
+              result = active.transfer.receive(message)
+              if active.transfer.bytes_transferred > active.max_bytes
+                raise Transfer::Error.new(Transfer::StatusCode::LengthTooLarge,
+                  "BDX transfer exceeds configured maximum")
+              end
+              finish(key, session) if active.transfer.complete?
+              Step.new(message: result)
+            end
           end
         rescue ex : Transfer::Error
-          finish(Key.new(session.session_id, exchange_id))
+          finish(Key.new(session.session_id, exchange_id), session)
           Step.new(status: ex.status)
         rescue ex : Matter::CodecError
-          finish(Key.new(session.session_id, exchange_id))
+          finish(Key.new(session.session_id, exchange_id), session)
           Log.debug(exception: ex) { "Malformed BDX message (exchange=#{exchange_id})" }
           Step.new(status: Transfer::StatusCode::BadMessageContents)
         rescue ex
-          finish(Key.new(session.session_id, exchange_id))
+          finish(Key.new(session.session_id, exchange_id), session)
           Log.warn(exception: ex) { "BDX transfer failed (exchange=#{exchange_id})" }
           Step.new(status: Transfer::StatusCode::TransferFailed)
         end
@@ -112,28 +127,60 @@ module Matter
         end
 
         def abort(session : Session::SecureContext, exchange_id : UInt16) : Nil
-          key = Key.new(session.session_id, exchange_id)
-          finish(key) if @active[key]?.try(&.session.same?(session))
+          finish(Key.new(session.session_id, exchange_id), session)
         end
 
         def forget_session(session_id : UInt16) : Nil
-          @active.keys.select { |key| key.session_id == session_id }.each { |key| finish(key) }
+          keys = @state_lock.synchronize do
+            (@active.keys + @pending.keys).select { |key| key.session_id == session_id }
+          end
+          keys.each { |key| finish(key) }
         end
 
         # Identity-aware cleanup cannot affect a newly established CASE
         # session that happens to reuse the retired session's numeric ID.
         def forget_session(session : Session::SecureContext) : Nil
-          @active.select { |_key, active| active.session.same?(session) }
-            .each_key { |key| finish(key) }
+          keys = @state_lock.synchronize do
+            @active.select { |_key, active| active.session.same?(session) }.keys +
+              @pending.select { |_key, pending| pending.session.same?(session) }.keys
+          end
+          keys.each { |key| finish(key, session) }
         end
 
         def sweep(now : Time::Instant = Time.instant) : Nil
-          @active.keys.select { |key| now - @active[key].touched_at >= IDLE_TIMEOUT }
-            .each { |key| finish(key) }
+          expired = @state_lock.synchronize do
+            active_keys = @active.select { |_key, active| now - active.touched_at >= IDLE_TIMEOUT }.keys
+            pending_keys = @pending.select { |_key, pending| now - pending.touched_at >= IDLE_TIMEOUT }.keys
+            active_keys + pending_keys
+          end
+          expired.each { |key| finish_if_expired(key, now) }
         end
 
         def close : Nil
-          @active.keys.each { |key| finish(key) }
+          keys = @state_lock.synchronize { @active.keys + @pending.keys }
+          keys.each { |key| finish(key) }
+        end
+
+        private def reserve(key : Key, session : Session::SecureContext) : Transfer::StatusCode?
+          @state_lock.synchronize do
+            return Transfer::StatusCode::UnexpectedMessage if @active.has_key?(key) || @pending.has_key?(key)
+            return Transfer::StatusCode::ResponderBusy if @active.size + @pending.size >= MAX_ACTIVE_TRANSFERS
+            @pending[key] = Pending.new(session, Time.instant)
+            nil
+          end
+        end
+
+        private def activate(key : Key, session : Session::SecureContext, active : Active) : Bool
+          @state_lock.synchronize do
+            return false unless @pending[key]?.try(&.session.same?(session))
+            @pending.delete(key)
+            @active[key] = active
+            true
+          end
+        end
+
+        private def current_active?(key : Key, active : Active) : Bool
+          @state_lock.synchronize { @active[key]?.same?(active) || false }
         end
 
         private def accept(session : Session::SecureContext, key : Key, init : Wire::Init) : Step
@@ -167,21 +214,32 @@ module Matter
             end
             length = source.length
             transfer = Transfer.sender(source.io, size, drive, length)
-            @active[key] = Active.new(session, transfer, source.io,
-              requested_max || @max_transfer_bytes)
-            first = transfer.start
-            Step.new(message: Wire::Accept.new(Wire::Opcode::ReceiveAccept,
-              selected, size, length: length), follow_up: first)
+            active = Active.new(session, transfer, source.io, requested_max || @max_transfer_bytes)
+            active.io_lock.synchronize do
+              unless activate(key, session, active)
+                source.io.close
+                return Step.new(status: Transfer::StatusCode::UnexpectedMessage)
+              end
+              first = transfer.start
+              Step.new(message: Wire::Accept.new(Wire::Opcode::ReceiveAccept,
+                selected, size, length: length), follow_up: first)
+            end
           else
             sink = @on_upload.try(&.call(session, init))
             return Step.new(status: Transfer::StatusCode::FileDesignatorUnknown) unless sink
             length = init.length
             length = nil if length == 0
             transfer = Transfer.receiver(sink, size, drive, length)
-            @active[key] = Active.new(session, transfer, sink, @max_transfer_bytes)
-            first = transfer.start
-            Step.new(message: Wire::Accept.new(Wire::Opcode::SendAccept,
-              selected, size), follow_up: first)
+            active = Active.new(session, transfer, sink, @max_transfer_bytes)
+            active.io_lock.synchronize do
+              unless activate(key, session, active)
+                sink.close
+                return Step.new(status: Transfer::StatusCode::UnexpectedMessage)
+              end
+              first = transfer.start
+              Step.new(message: Wire::Accept.new(Wire::Opcode::SendAccept,
+                selected, size), follow_up: first)
+            end
           end
         end
 
@@ -197,9 +255,35 @@ module Matter
           end
         end
 
-        private def finish(key : Key) : Nil
-          if active = @active.delete(key)
-            active.stream.close
+        private def finish(key : Key, session : Session::SecureContext? = nil) : Nil
+          active = @state_lock.synchronize do
+            if pending = @pending[key]?
+              @pending.delete(key) if session.nil? || pending.session.same?(session)
+            end
+            current = @active[key]?
+            if current && (session.nil? || current.session.same?(session))
+              @active.delete(key)
+            end
+          end
+          close_active(active)
+        end
+
+        private def finish_if_expired(key : Key, now : Time::Instant) : Nil
+          active = @state_lock.synchronize do
+            if pending = @pending[key]?
+              @pending.delete(key) if now - pending.touched_at >= IDLE_TIMEOUT
+            end
+            current = @active[key]?
+            if current && now - current.touched_at >= IDLE_TIMEOUT
+              @active.delete(key)
+            end
+          end
+          close_active(active)
+        end
+
+        private def close_active(active : Active?) : Nil
+          active.try do |transfer|
+            transfer.io_lock.synchronize { transfer.stream.close }
           end
         rescue ex
           # Closing a finished application stream must not replace the actual

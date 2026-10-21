@@ -48,6 +48,7 @@ module Matter
       # device's inbound message ordering.
       INBOUND_QUEUE_LIMIT = 256
       BDX_QUEUE_LIMIT     =  16
+      BDX_WORKER_LIMIT    = Bdx::Responder::MAX_ACTIVE_TRANSFERS
       BDX_SHUTDOWN_GRACE  = 100.milliseconds
       @inbound_messages : Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress))
       @inbound_done : Channel(Nil)
@@ -58,13 +59,26 @@ module Matter
       private record BdxAbort, session : Session::SecureContext, exchange_id : UInt16
       private alias BdxWork = BdxTask | BdxAbort
 
-      @bdx_tasks : Channel(BdxWork)
-      @bdx_aborts : Channel(BdxAbort)
-      @bdx_done : Channel(Nil)
+      private class BdxLane
+        getter session : Session::SecureContext
+        getter tasks : Channel(BdxTask)
+        getter aborts : Channel(BdxAbort)
+        property queued : Int32 = 0
+
+        def initialize(@session : Session::SecureContext)
+          @tasks = Channel(BdxTask).new(BDX_QUEUE_LIMIT)
+          @aborts = Channel(BdxAbort).new(BDX_WORKER_LIMIT)
+        end
+      end
+
+      @bdx_lanes : Hash(UInt16, BdxLane)
+      @bdx_worker_count : Int32
+      @bdx_worker_done : Channel(Nil)
+      @bdx_housekeeping_stop : Channel(Nil)
+      @bdx_housekeeping_done : Channel(Nil)
       @bdx_cleanup_signal : Channel(Nil)
       @bdx_cleanup : Array(Session::SecureContext)
       @bdx_active_sessions : Hash(UInt16, Session::SecureContext)
-      @bdx_lock : Mutex
       @bdx_closing : Bool
 
       # Sessions, subscriptions and the lock every protocol fiber shares.
@@ -146,10 +160,11 @@ module Matter
         @sender = ResponseSender.new(@transport, @mrp_cache)
         @bdx = Bdx::Responder.new
         @bdx_initiator = Bdx::Initiator.new(@sender)
-        @bdx_lock = Mutex.new
-        @bdx_tasks = Channel(BdxWork).new(BDX_QUEUE_LIMIT)
-        @bdx_aborts = Channel(BdxAbort).new(Bdx::Responder::MAX_ACTIVE_TRANSFERS)
-        @bdx_done = Channel(Nil).new(1)
+        @bdx_lanes = {} of UInt16 => BdxLane
+        @bdx_worker_count = 0
+        @bdx_worker_done = Channel(Nil).new(1)
+        @bdx_housekeeping_stop = Channel(Nil).new
+        @bdx_housekeeping_done = Channel(Nil).new(1)
         @bdx_cleanup_signal = Channel(Nil).new(1)
         @bdx_cleanup = [] of Session::SecureContext
         @bdx_active_sessions = {} of UInt16 => Session::SecureContext
@@ -177,23 +192,16 @@ module Matter
         spawn do
           loop do
             select
-            when work = @bdx_tasks.receive?
-              break unless work
-              begin
-                process_bdx_work(work)
-              rescue ex
-                Log.warn(exception: ex) { "Failed processing queued BDX work" }
-              end
-            when abort = @bdx_aborts.receive?
-              process_bdx_work(abort) if abort
+            when @bdx_housekeeping_stop.receive?
+              break
             when @bdx_cleanup_signal.receive?
             when timeout(SessionRegistry::SWEEP_INTERVAL)
             end
             process_bdx_cleanup
-            @bdx_lock.synchronize { @bdx.sweep }
+            @bdx.sweep
           end
         ensure
-          @bdx_done.send(nil)
+          @bdx_housekeeping_done.send(nil)
         end
 
         # Set ourselves as the message handler
@@ -228,24 +236,27 @@ module Matter
           @inbound_messages.close
           @inbound_done.receive
         end
-        unless @bdx_tasks.closed?
-          @registry.synchronize { @bdx_closing = true }
-          @bdx_tasks.close
-          finished = false
-          select
-          when @bdx_done.receive
-            finished = true
-          when timeout(BDX_SHUTDOWN_GRACE)
-          end
-          if finished
-            finish_bdx_shutdown
+        close_bdx = @registry.synchronize do
+          if !@bdx_closing
+            @bdx_closing = true
+            @bdx_lanes.each_value { |lane| lane.tasks.close unless lane.tasks.closed? }
+            @bdx_lanes.clear
+            true
           else
-            # A blocked application callback cannot be cancelled safely. The
-            # worker releases its stream once that callback eventually exits.
-            spawn do
-              @bdx_done.receive
-              finish_bdx_shutdown
-            end
+            false
+          end
+        end
+        if close_bdx
+          @bdx_housekeeping_stop.close
+          finished = Channel(Nil).new(1)
+          spawn do
+            await_bdx_workers
+            finish_bdx_shutdown
+            finished.send(nil)
+          end
+          select
+          when finished.receive
+          when timeout(BDX_SHUTDOWN_GRACE)
           end
         end
         @registry.synchronize do
@@ -454,47 +465,104 @@ module Matter
         end
       end
 
-      # The queue is bounded independently of the general inbound queue.
-      # A full queue gets a protocol busy response without waiting on an
-      # application callback while holding the registry lock.
-      private def enqueue_bdx_work(work : BdxWork) : Nil
-        if abort = work.as?(BdxAbort)
-          # This small separate queue lets an abort reach the responder when
-          # ordinary BDX work is saturated.
-          select
-          when @bdx_aborts.send(abort)
-          else
-          end
-          return
-        end
-        select
-        when @bdx_tasks.send(work)
-        else
-          return unless task = work.as?(BdxTask)
-          @registry.synchronize do
-            if @registry.sessions[task.session.session_id]?.same?(task.session)
-              @sender.send_bdx_status(task.message, task.peer, task.session,
-                Bdx::Transfer::StatusCode::ResponderBusy)
+      # One bounded lane per CASE session preserves that peer's exchange order
+      # while independent sessions can run their application IO concurrently.
+      private def enqueue_bdx_work(task : BdxTask) : Nil
+        @registry.synchronize do
+          return if @bdx_closing || !@registry.sessions[task.session.session_id]?.same?(task.session)
+          if lane = bdx_lane_for(task.session)
+            select
+            when lane.tasks.send(task)
+              lane.queued += 1
+              return
+            else
             end
           end
+          @sender.send_bdx_status(task.message, task.peer, task.session,
+            Bdx::Transfer::StatusCode::ResponderBusy)
         end
       rescue Channel::ClosedError
         # The handler is shutting down.
       end
 
+      private def enqueue_bdx_work(abort : BdxAbort) : Nil
+        @registry.synchronize do
+          if lane = @bdx_lanes[abort.session.session_id]?
+            return unless lane.session.same?(abort.session)
+            select
+            when lane.aborts.send(abort)
+            else
+            end
+          end
+        end
+      end
+
+      # Caller holds the registry lock so lane admission and capacity remain
+      # atomic with the authenticated session lookup.
+      private def bdx_lane_for(session : Session::SecureContext) : BdxLane?
+        if lane = @bdx_lanes[session.session_id]?
+          return lane if lane.session.same?(session)
+          @bdx_lanes.delete(session.session_id)
+          lane.tasks.close unless lane.tasks.closed?
+        end
+        return if @bdx_worker_count >= BDX_WORKER_LIMIT
+        lane = BdxLane.new(session)
+        @bdx_lanes[session.session_id] = lane
+        @bdx_worker_count += 1
+        spawn { run_bdx_lane(lane) }
+        lane
+      end
+
+      private def run_bdx_lane(lane : BdxLane) : Nil
+        loop do
+          select
+          when task = lane.tasks.receive?
+            break unless task
+            begin
+              process_bdx_work(task)
+            rescue ex
+              Log.warn(exception: ex) { "Failed processing queued BDX work" }
+            ensure
+              @registry.synchronize { lane.queued -= 1 }
+            end
+          when abort = lane.aborts.receive?
+            process_bdx_work(abort) if abort
+          when timeout(SessionRegistry::SWEEP_INTERVAL)
+          end
+          retire_bdx_lane_if_idle(lane)
+        end
+      ensure
+        @registry.synchronize do
+          @bdx_worker_count -= 1
+          @bdx_lanes.delete(lane.session.session_id) if @bdx_lanes[lane.session.session_id]?.same?(lane)
+        end
+        select
+        when @bdx_worker_done.send(nil)
+        else
+        end
+      end
+
+      private def retire_bdx_lane_if_idle(lane : BdxLane) : Nil
+        active = @bdx.active_for_session?(lane.session)
+        @registry.synchronize do
+          if lane.queued == 0 && !active && @bdx_lanes[lane.session.session_id]?.same?(lane)
+            @bdx_lanes.delete(lane.session.session_id)
+            lane.tasks.close unless lane.tasks.closed?
+          end
+        end
+      end
+
       private def process_bdx_work(abort : BdxAbort) : Nil
-        @bdx_lock.synchronize { @bdx.abort(abort.session, abort.exchange_id) }
+        @bdx.abort(abort.session, abort.exchange_id)
       end
 
       private def process_bdx_work(task : BdxTask) : Nil
         return unless @registry.synchronize do
                         !@bdx_closing && @registry.sessions[task.session.session_id]?.same?(task.session)
                       end
-        step, active = @bdx_lock.synchronize do
-          result = @bdx.receive(task.session, task.message.payload_header.exchange_id,
-            task.opcode, task.message.payload)
-          {result, @bdx.active_for_session?(task.session)}
-        end
+        step = @bdx.receive(task.session, task.message.payload_header.exchange_id,
+          task.opcode, task.message.payload)
+        active = @bdx.active_for_session?(task.session)
 
         live = false
         @registry.synchronize do
@@ -522,14 +590,18 @@ module Matter
             @bdx_active_sessions.delete(session_id)
           end
         end
-        @bdx_lock.synchronize { @bdx.forget_session(task.session) } unless live
+        @bdx.forget_session(task.session) unless live
       end
 
       # Called by SessionRegistry while its lock is held. Only record a
       # session whose responder has live streams; closing an application IO
       # may block and is delegated to the separate BDX worker.
       private def queue_bdx_session_cleanup(session_id : UInt16) : Nil
-        if session = @bdx_active_sessions.delete(session_id)
+        lane = @bdx_lanes.delete(session_id)
+        lane.try { |worker| worker.tasks.close unless worker.tasks.closed? }
+        session = lane.try(&.session) || @bdx_active_sessions[session_id]?
+        @bdx_active_sessions.delete(session_id)
+        if session
           @bdx_cleanup << session
           select
           when @bdx_cleanup_signal.send(nil)
@@ -545,13 +617,20 @@ module Matter
           pending
         end
         sessions.each do |session|
-          @bdx_lock.synchronize { @bdx.forget_session(session) }
+          @bdx.forget_session(session)
         end
       end
 
       private def finish_bdx_shutdown : Nil
         process_bdx_cleanup
-        @bdx_lock.synchronize { @bdx.close }
+        @bdx.close
+      end
+
+      private def await_bdx_workers : Nil
+        until @registry.synchronize { @bdx_worker_count == 0 }
+          @bdx_worker_done.receive
+        end
+        @bdx_housekeeping_done.receive
       end
 
       # Authenticated Group packets bypass unicast session lookup and never

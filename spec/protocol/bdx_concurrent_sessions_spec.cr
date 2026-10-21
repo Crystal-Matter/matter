@@ -27,6 +27,60 @@ private def concurrent_bdx_response(packet_bytes : Bytes, session : Matter::Sess
 end
 
 describe "BDX concurrent CASE sessions" do
+  it "answers a second encrypted BDX transfer while the first session's source waits" do
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    handler = Matter::Protocol::MessageHandler.new(transport,
+      setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
+    waiting_session = Matter::Spec::ProtocolMessages.case_session(286_u16)
+    ready_session = Matter::Spec::ProtocolMessages.case_session(287_u16)
+    handler.sessions[waiting_session.session_id] = waiting_session
+    handler.sessions[ready_session.session_id] = ready_session
+    callback_entered = Channel(Nil).new(1)
+    release_callback = Channel(Nil).new(1)
+    handler.bdx.on_download = ->(_session : Matter::Session::SecureContext, init : ConcurrentBdx::Wire::Init) do
+      if init.file_designator == Bytes[0x61]
+        callback_entered.send(nil)
+        release_callback.receive
+      end
+      ConcurrentBdx::Responder::Source.new(IO::Memory.new(Bytes[1]), 1_u64).as(ConcurrentBdx::Responder::Source?)
+    end
+
+    waiting_init = ConcurrentBdx::Wire::Init.new(ConcurrentBdx::Wire::Opcode::ReceiveInit,
+      ConcurrentBdx::Wire::TransferControl::ReceiverDrive, 2_u16, Bytes[0x61])
+    ready_init = ConcurrentBdx::Wire::Init.new(ConcurrentBdx::Wire::Opcode::ReceiveInit,
+      ConcurrentBdx::Wire::TransferControl::ReceiverDrive, 2_u16, Bytes[0x62])
+    inbound = transport.on_message
+    inbound.try(&.call(Matter::Spec::ProtocolMessages.from_peer(waiting_session,
+      waiting_init.opcode.value, waiting_init.to_slice, 1_u32, 11_u16,
+      protocol_id: Matter::Protocol::ProtocolId::Bdx.value), BDX_CONCURRENT_PEER))
+    select
+    when callback_entered.receive
+    when timeout(5.seconds)
+      raise "first BDX callback did not start"
+    end
+
+    inbound.try(&.call(Matter::Spec::ProtocolMessages.from_peer(ready_session,
+      ready_init.opcode.value, ready_init.to_slice, 1_u32, 12_u16,
+      protocol_id: Matter::Protocol::ProtocolId::Bdx.value), BDX_CONCURRENT_PEER))
+    ready_response = nil
+    deadline = Time.instant + 5.seconds
+    until ready_response || Time.instant >= deadline
+      ready_response = transport.sent_packets.find do |packet, _|
+        Matter::Codec::MessageCodec::Base.decode_packet(packet).header.session_id == ready_session.peer_session_id
+      end
+      sleep 1.millisecond unless ready_response
+    end
+    release_callback.send(nil)
+    handler.close
+
+    ready_response.should_not be_nil
+    if packet = ready_response
+      message = concurrent_bdx_response(packet[0], ready_session)
+      message.payload_header.message_type.should eq(ConcurrentBdx::Wire::Opcode::ReceiveAccept.value)
+    end
+  end
+
   it "serves another session while an application BDX source callback is blocked" do
     transport = Matter::Spec::CaptureTransport.new_for_spec
     handler = Matter::Protocol::MessageHandler.new(transport,
