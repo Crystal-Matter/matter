@@ -13,8 +13,9 @@ private class ResumeExchangeClient < Matter::Controller::Client
 
   def initialize(@channel : Matter::Protocol::SecureChannel,
                  @capture : Matter::Spec::CaptureTransport,
-                 @peer : Socket::IPAddress)
-    super()
+                 @peer : Socket::IPAddress,
+                 session_id_in_use : Proc(UInt16, Bool)? = nil)
+    super(session_id_in_use: session_id_in_use)
   end
 
   def send_unsecured_request(peer : Socket::IPAddress, protocol_id : UInt16,
@@ -143,11 +144,15 @@ describe "controller and device CASE resumption exchange" do
       1000_u32, Bytes.new(32, 0x01_u8))
     controller_store = Matter::Session::Case::ResumptionStore.new(controller_backend)
     pairing = Matter::Controller::Pairing::CasePairing.new(crypto, controller_store)
-    client = ResumeExchangeClient.new(channel, capture, peer)
+    reserved_checks = 0
+    client = ResumeExchangeClient.new(channel, capture, peer,
+      ->(id : UInt16) { reserved_checks += 1; id == first_session.session_id })
     client.response_peer = Socket::IPAddress.new("::ffff:127.0.0.1", 5540)
 
     session = pairing.pair(client, peer, controller_fabric, device_node)
 
+    reserved_checks.should be > 0
+    session.session_id.should_not eq(first_session.session_id)
     client.sent_types.should eq([0x30_u8, 0x40_u8])
     session.case_session?.should be_true
     device_session = registry.session(session.peer_session_id).as(Matter::Session::SecureContext)
