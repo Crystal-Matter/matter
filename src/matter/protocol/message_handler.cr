@@ -39,6 +39,13 @@ module Matter
 
       getter transport : Transport::UDPTransport
 
+      # Network receive must remain free while a cluster handler performs a
+      # controller exchange through the same socket. One worker preserves the
+      # device's inbound message ordering.
+      INBOUND_QUEUE_LIMIT = 256
+      @inbound_messages : Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress))
+      @inbound_done : Channel(Nil)
+
       # Sessions, subscriptions and the lock every protocol fiber shares.
       getter registry : SessionRegistry
 
@@ -121,9 +128,22 @@ module Matter
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
+        @inbound_messages = Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress)).new(INBOUND_QUEUE_LIMIT)
+        @inbound_done = Channel(Nil).new(1)
+        spawn do
+          while entry = @inbound_messages.receive?
+            handle_message(entry[0], entry[1])
+          end
+        ensure
+          @inbound_done.send(nil)
+        end
+
         # Set ourselves as the message handler
         @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) do
-          handle_message(msg, peer)
+          payload = msg.payload.dup
+          header_bytes = msg.header_bytes.try(&.dup)
+          detached = Codec::MessageCodec::Message.new(msg.packet_header, msg.payload_header, payload, header_bytes)
+          @inbound_messages.send({detached, peer})
         end
         @transport.on_group_packet = ->(wire : Bytes, peer : Socket::IPAddress) do
           handle_group_packet(wire, peer)
@@ -144,6 +164,10 @@ module Matter
       # Stops the registry background sweep. The transport is closed by its
       # owner; this releases what the handler itself started.
       def close : Nil
+        unless @inbound_messages.closed?
+          @inbound_messages.close
+          @inbound_done.receive
+        end
         @registry.close
       end
 

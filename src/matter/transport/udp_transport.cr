@@ -96,6 +96,24 @@ module Matter
       property on_message : Proc(Codec::MessageCodec::Message, Socket::IPAddress, Nil)?
       property on_group_packet : Proc(Bytes, Socket::IPAddress, Nil)?
 
+      # A controller sharing this socket may claim its own CASE exchange or
+      # secure session before the device's default handler sees the packet.
+      @message_observers : Hash(Int32, Proc(Codec::MessageCodec::Message, Socket::IPAddress, Bool))
+      @observer_mutex : Mutex
+      @next_observer_id : Int32
+
+      def add_message_observer(&block : Codec::MessageCodec::Message, Socket::IPAddress -> Bool) : Int32
+        @observer_mutex.synchronize do
+          @next_observer_id += 1
+          @message_observers[@next_observer_id] = block
+          @next_observer_id
+        end
+      end
+
+      def remove_message_observer(id : Int32) : Nil
+        @observer_mutex.synchronize { @message_observers.delete(id) }
+      end
+
       @joined_groups = Set(Socket::IPAddress).new
 
       # Keep multicast memberships aligned with the device's GroupTable.
@@ -133,6 +151,9 @@ module Matter
         @unsecured_replay = {} of Tuple(UInt64?, Socket::IPAddress, UInt32) => UnsecuredReplayEntry
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = ExchangeManager.new
+        @message_observers = {} of Int32 => Proc(Codec::MessageCodec::Message, Socket::IPAddress, Bool)
+        @observer_mutex = Mutex.new
+        @next_observer_id = 0
         @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
         @reliable_mutex = Mutex.new
         @reliable_fiber = nil
@@ -540,6 +561,11 @@ module Matter
             acknowledge_reliable(0_u16, message.payload_header.exchange_id, ack, peer_address)
           end
         end
+
+        # Give a controller sharing this listener first refusal. Copy the
+        # observer set before calling out so an observer may unregister itself.
+        observers = @observer_mutex.synchronize { @message_observers.values.to_a }
+        return if observers.any?(&.call(message, peer_address))
 
         # Deliver to application
         if callback = @on_message
