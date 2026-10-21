@@ -8,8 +8,8 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Implemented standard cluster IDs compared: 54
-- Direct or revision-active mandatory server command IDs absent: 1
-- Direct or revision-active mandatory event IDs absent: 1
+- Direct or revision-active mandatory server command IDs absent: 0
+- Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 103
 - Feature or complex conditional IDs absent from Crystal: 28
 - Feature or complex conditional IDs declared without literal `requires:`: 12
@@ -35,7 +35,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0030 | General Commissioning Cluster | 2 | 2 | — | — |
 | 0x0031 | Network Commissioning Cluster | 2 | 2 | — | — |
 | 0x0032 | Diagnostic Logs Cluster | 1 | 1 | — | — |
-| 0x0033 | General Diagnostics Cluster | 3 | 2 | 0x0001 | 0x0003 |
+| 0x0033 | General Diagnostics Cluster | 3 | 2 | — | — |
 | 0x0034 | Software Diagnostics Cluster | 1 | 1 | — | — |
 | 0x0035 | Thread Network Diagnostics Cluster | 3 | 3 | — | — |
 | 0x0036 | Wi-Fi Network Diagnostics Cluster | 1 | 1 | — | — |

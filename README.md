@@ -185,6 +185,13 @@ Localization, Power Source Configuration, Flow Measurement, and Air Quality.
 Applications can add these clusters to endpoints through the device DSL.
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
+
+The root node's General Diagnostics cluster answers TimeSnapshot with monotonic
+milliseconds since startup. Its nullable POSIX time remains absent until an
+application supplies a synchronized clock through `on_posix_time_ms`. Device
+startup journals the configured BootReason as a critical event.
+When the application has no platform boot-cause signal, the reported reason is
+Unspecified.
 Each `PowerSource` also exposes the Matter 1.6 mandatory `EndpointList`;
 pass the powered endpoint numbers at construction or call
 `update_endpoint_list` when the mapping changes.
