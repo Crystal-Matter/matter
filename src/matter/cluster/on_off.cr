@@ -14,6 +14,9 @@ module Matter
     class OnOff < Base
       cluster 0x0006, revision: 6
 
+      TIMED_TICK = 100.milliseconds
+      TIME_HOLD  = UInt16::MAX
+
       feature :lighting, bit: 0            # LT - Lighting applications
       feature :dead_front_behavior, bit: 1 # DF - Dead front behavior when off
       feature :off_only, bit: 2            # OFFONLY - Only off command supported
@@ -70,8 +73,8 @@ module Matter
 
       attribute 0x0000, :on_off, Bool, default: false, persist: true, scene: true, callback: :new_only
       attribute 0x4000, :global_scene_control, Bool, default: true, persist: true, requires: :lighting
-      attribute 0x4001, :on_time, UInt16, default: 0_u16, writable: true, requires: :lighting
-      attribute 0x4002, :off_wait_time, UInt16, default: 0_u16, writable: true, requires: :lighting
+      attribute 0x4001, :on_time, UInt16, default: 0_u16, writable: true, persist: false, requires: :lighting
+      attribute 0x4002, :off_wait_time, UInt16, default: 0_u16, writable: true, persist: false, requires: :lighting
       attribute 0x4003, :start_up_on_off, StartUpOnOff, nullable: true, writable: true, write_access: :manage, requires: :lighting
 
       command 0x00, :off
@@ -87,7 +90,12 @@ module Matter
         @feature_map : Feature = Feature::None,
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+        @next_timed_tick = nil
+        @timed_fiber_running = false
       end
+
+      @next_timed_tick : Time::Instant?
+      @timed_fiber_running : Bool
 
       # ------------------------------------------------------------------------
       # Commands
@@ -95,13 +103,28 @@ module Matter
 
       def off : InteractionModel::Status
         self.on_off = false
-        self.global_scene_control = false if feature_map.lighting?
+        if feature_map.lighting?
+          self.global_scene_control = false
+          self.on_time = 0_u16
+          if @off_wait_time > 0 && @off_wait_time != TIME_HOLD
+            @next_timed_tick ||= Time.instant + TIMED_TICK
+            start_timed_fiber
+          else
+            @next_timed_tick = nil
+          end
+        end
         InteractionModel::Status.success
       end
 
       def on : InteractionModel::Status
         self.on_off = true
-        self.global_scene_control = true if feature_map.lighting?
+        if feature_map.lighting?
+          self.global_scene_control = true
+          if @on_time == 0
+            self.off_wait_time = 0_u16
+            @next_timed_tick = nil
+          end
+        end
         InteractionModel::Status.success
       end
 
@@ -118,9 +141,79 @@ module Matter
         on
       end
 
-      # The timed off is not scheduled; the device turns on immediately.
+      # OnTime and OffWaitTime count down in tenths of a second. A later timed
+      # command can extend the on period; during delayed off it may only
+      # shorten the guard period.
       def on_with_timed_off(request : OnWithTimedOffRequest) : InteractionModel::Status
+        return InteractionModel::Status.success if request.on_off_control.accept_only_when_on? && !@on_off
+
+        if @off_wait_time > 0 && !@on_off
+          self.off_wait_time = {@off_wait_time, request.off_wait_time}.min
+          if @off_wait_time == 0 || @off_wait_time == TIME_HOLD
+            @next_timed_tick = nil
+          else
+            @next_timed_tick ||= Time.instant + TIMED_TICK
+            start_timed_fiber
+          end
+          return InteractionModel::Status.success
+        end
+
+        self.on_time = {@on_time, request.on_time}.max
+        self.off_wait_time = request.off_wait_time
         on
+        if @on_time > 0 && @on_time != TIME_HOLD
+          @next_timed_tick ||= Time.instant + TIMED_TICK
+          start_timed_fiber
+        end
+        InteractionModel::Status.success
+      end
+
+      # Runs elapsed timer ticks. The public form permits deterministic
+      # platform clocks and tests; the cluster also schedules its own fiber.
+      def advance_timed_state(now : Time::Instant = Time.instant) : Nil
+        while tick = @next_timed_tick
+          break if now < tick
+
+          if @on_off
+            if @on_time == TIME_HOLD
+              @next_timed_tick = nil
+              break
+            end
+            self.on_time = @on_time - 1_u16 if @on_time > 0
+            if @on_time == 0
+              self.off_wait_time = 0_u16
+              self.on_off = false
+              @next_timed_tick = nil
+              break
+            end
+          else
+            if @off_wait_time == TIME_HOLD || @off_wait_time == 0
+              @next_timed_tick = nil
+              break
+            end
+            self.off_wait_time = @off_wait_time - 1_u16
+            if @off_wait_time == 0
+              @next_timed_tick = nil
+              break
+            end
+          end
+
+          @next_timed_tick = tick + TIMED_TICK
+        end
+      end
+
+      private def start_timed_fiber : Nil
+        return if @timed_fiber_running
+        @timed_fiber_running = true
+        spawn do
+          while tick = @next_timed_tick
+            remaining = tick - Time.instant
+            sleep remaining if remaining > 0.seconds
+            advance_timed_state
+          end
+        ensure
+          @timed_fiber_running = false
+        end
       end
 
       # ------------------------------------------------------------------------
@@ -169,10 +262,10 @@ module Matter
 
           case parsed = value.value
           when Bool
-            self.on_off = parsed
+            parsed ? on : off
             return true
           when UInt8
-            self.on_off = parsed == SCENE_BOOLEAN_TRUE
+            parsed == SCENE_BOOLEAN_TRUE ? on : off
             return true
           end
         end
