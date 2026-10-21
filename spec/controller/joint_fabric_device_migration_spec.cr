@@ -113,6 +113,7 @@ describe Migration do
   it "recovers a restarted journal only after proof that each command had no effect" do
     boundaries = {
       {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::Ready},
+      {"verify", Migration::Stage::VerifyingAnchor, Migration::Stage::AnchorCommissioned},
       {"add-anchor", Migration::Stage::AddingAnchorNode, Migration::Stage::AnchorVerified},
       {"remove-fabric", Migration::Stage::RemovingOldFabric, Migration::Stage::AnchorNodeAdded},
       {"remove-old", Migration::Stage::RemovingOldNode, Migration::Stage::OldFabricRemoved},
@@ -502,6 +503,9 @@ describe Migration do
     end
     journal.commissioning_acknowledged = true
     port.validate_journal!(journal)
+    expect_raises(Matter::CommissioningError, /Durable CommissioningComplete/) do
+      port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
+    end
     expect_raises(Matter::AuthenticationError, /A CASE/) do
       port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
     end
