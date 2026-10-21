@@ -60,8 +60,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
   )
 
   it "rejects expired, non-signing, and wrong-fabric cross-signed ICACs" do
+    # The official SDK issues ICACs whose subject contains ICAC ID alone.
     certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
-      icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[0x02], crypto)
+      icac_key.public_key, nil, 2_u64, root_key, 1_u64, Bytes[0x02], crypto)
     ok = Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK
     invalid = Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidICAC
     jfa_icac_install_status(certificate, root, icac_key, anchor_icac).should eq(ok)
@@ -351,8 +352,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     cluster.administrator_fabric_index = 1_u8
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+    # The SDK's same-root ICAC omits a Fabric ID in its subject.
     certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
-      icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[0x02], crypto)
+      icac_key.public_key, nil, 2_u64, root_key, 1_u64, Bytes[0x02], crypto)
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(certificate))
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidPublicKey)

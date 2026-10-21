@@ -1,0 +1,76 @@
+name: Matter 1.6 official JFA certification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/sdk-jfadmin-certification.yml
+      - e2e/interop/sdk_jfadmin_certification.py
+      - examples/support/joint_fabric_administrator_device.cr
+      - src/matter/commissioning/joint_fabric_administrator_service.cr
+      - src/matter/cluster/joint_fabric_administrator.cr
+
+jobs:
+  tc-jfadmin-1-2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crystal-lang/install-crystal@v1
+      - name: Free space and install discovery dependencies
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            avahi-daemon avahi-utils dbus libavahi-client-dev libdbus-1-dev \
+            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev \
+            pkg-config clang ninja-build cmake
+          pkg-config --modversion gobject-introspection-1.0
+          sudo service dbus start
+          sudo service avahi-daemon start
+          avahi-daemon --check
+      - name: Install Crystal dependencies
+        run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Build Crystal JFA
+        run: |
+          mkdir -p tmp
+          crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
+      - name: Build official Matter 1.6 Python controller
+        timeout-minutes: 105
+        run: |
+          git clone --depth 1 --branch v1.6.0.0 \
+            https://github.com/project-chip/connectedhomeip.git tmp/connectedhomeip
+          cd tmp/connectedhomeip
+          ./scripts/checkout_submodules.py --shallow --platform linux
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("scripts/setup/environment.json").read_text())
+          config["cipd_package_files"] = [
+              package for package in config["cipd_package_files"]
+              if not package.endswith("/arm.json")
+          ]
+          Path("objdir-jf-environment.json").write_text(json.dumps(config))
+          PY
+          export PW_CONFIG_FILE=objdir-jf-environment.json
+          set +u
+          source scripts/bootstrap.sh -p linux
+          set -u
+          ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
+            --include_pytest_deps no --install_virtual_env out/python_env
+          out/python_env/bin/pip install -r src/python_testing/requirements.txt
+          out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
+      - name: Run TC_JFADMIN_1_2 certification steps
+        timeout-minutes: 10
+        run: |
+          python3 e2e/interop/sdk_jfadmin_certification.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --log-dir tmp/interop-jfadmin-certification
+      - name: Upload official test and device logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-jfadmin-certification-logs
+          path: tmp/interop-jfadmin-certification/
+          if-no-files-found: warn

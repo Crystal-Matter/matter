@@ -61,6 +61,14 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Add local command-sequence parity specs drawn from seven Matter 1.6 JFA/JFD
   certification scenarios. Return `ConstraintError` for an unknown Joint Fabric key
   security policy on the command wire, as `TC_JFDS_2_2` requires.
+- Run the Matter 1.6 `TC_JFADMIN_1_2` Python certification steps against the
+  Crystal JFA in an opt-in Linux SDK workflow, preserving device and test logs
+  for interoperability failures.
+- Serve defined JFA fail-safe and ICAC validation statuses on a freshly
+  commissioned Administrator before it has joined a Joint Fabric.
+- Accept SDK-issued ICACs that identify their intermediate authority without
+  repeating the Fabric ID in the subject, while checking the issuer root and
+  any Fabric ID that is present.
 - Enforce signed Certification Declaration DAC origin VID/PID and authorized
   PAA identifiers during device attestation, including legitimate OEM chains.
 - Accept length-delimited Matter Message Extensions and Secured Extensions as

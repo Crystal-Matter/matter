@@ -127,7 +127,7 @@ module Matter
         # key while receiving an ICAC trusted by the Anchor fabric.
         def intermediate(
           public_key : Bytes,
-          fabric_id : UInt64,
+          fabric_id : UInt64?,
           icac_id : UInt64,
           issuer_key : Key,
           issuer_rcac_id : UInt64,
@@ -146,10 +146,8 @@ module Matter
                    else
                      TLV::List{TLV::Any.new(issuer_rcac_id, Asn1::Dn::RcacId.value)}
                    end
-          subject = TLV::List{
-            TLV::Any.new(icac_id, Asn1::Dn::IcacId.value),
-            TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value),
-          }
+          subject = TLV::List{TLV::Any.new(icac_id, Asn1::Dn::IcacId.value)}
+          subject << TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value) if fabric_id
           if anchor
             subject << TLV::Any.new(ANCHOR_ICAC_ORGANIZATIONAL_UNIT, Asn1::Dn::OrgUnitName.value)
           end

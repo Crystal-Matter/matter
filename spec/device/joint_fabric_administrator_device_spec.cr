@@ -24,6 +24,32 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "serves JFA status commands on a newly commissioned non-Anchor fabric" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    root_key = crypto.create_key_pair
+    icac_key = crypto.create_key_pair
+    noc_key = crypto.create_key_pair
+    fabric_id = 0xCAFE_u64
+    root = Matter::Crypto::MatterCertificate::Builder.root(root_key, 1_u64, Bytes[1], crypto)
+    icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[2], crypto)
+    noc = Matter::Crypto::MatterCertificate::Builder.node(
+      noc_key.public_key, fabric_id, 3_u64, icac_key, 1_u64, Bytes[3], crypto,
+      issuer_icac_id: 2_u64, issuer_certificate: icac)
+    fabric = Matter::Fabric.new(fabric_id, 1_u8, 3_u64, root_key.public_key, noc, noc_key,
+      Bytes.new(16, 1_u8), intermediate_cert: icac, root_cert: root)
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+
+    device.install_test_fabric(fabric)
+    administrator = device.joint_fabric_administrator
+    administrator.administrator_fabric_index.should be_nil
+    administrator.request_is_case_session = true
+    administrator.request_fabric_index = 1_u8
+    administrator.icaccsr_request.should eq(Matter::InteractionModel::Status.failsafe_required)
+    device.advertised_joint_role.should eq(Matter::MDNS::JointFabricRole::Available)
+  end
+
   it "keeps the bootstrap and joined Administrator services bound to distinct fabrics" do
     crypto = Matter::Crypto::StandardCrypto.new
     b_root_key = crypto.create_key_pair

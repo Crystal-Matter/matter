@@ -185,9 +185,16 @@ describe "Matter 1.6 Joint Fabric certification parity" do
     administrator.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
     valid = JFA::OpenJointCommissioningWindowRequest.new(
       400_u16, Bytes.new(97, 0_u8), 3839_u16, 1000_u32, Bytes.new(16, 0_u8))
+    administrator.request_peer_subject_ids = [0x1234_u64]
+    service.open_joint_commissioning_window(administrator, valid).should eq(
+      IMStatus.cluster_failure(JFA::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex))
+    administrator.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
     service.open_joint_commissioning_window(administrator, valid).should eq(
       IMStatus.cluster_failure(JFA::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex))
     administrator.administrator_fabric_index = 1_u8
+    administrator.request_peer_subject_ids = [0x1234_u64]
+    service.open_joint_commissioning_window(administrator, valid).should eq(IMStatus.unsupported_access)
+    administrator.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
     invalid = [
       JFA::OpenJointCommissioningWindowRequest.new(0_u16, valid.pake_passcode_verifier, valid.discriminator, valid.iterations, valid.salt),
       JFA::OpenJointCommissioningWindowRequest.new(UInt16::MAX, valid.pake_passcode_verifier, valid.discriminator, valid.iterations, valid.salt),

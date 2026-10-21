@@ -46,7 +46,9 @@ item below as covered only to the extent of its cited tests.
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with
   an Anchor CAT and ICAC, and requires explicit local consent to open a Joint
-  Commissioning window.
+  Commissioning window. A freshly commissioned but unprovisioned Administrator
+  serves the specified fail-safe and ICAC validation statuses while its
+  AdministratorFabricIndex remains null.
 - The Docker two-administrator test bootstraps separate fabrics, performs the
   JCM credential exchange between the Crystal implementations, and checks the
   stored cross-signed ICAC. CommissioningComplete is deferred to the Anchor
@@ -158,6 +160,21 @@ These are local parity checks. They do not run the official Python scripts or
 verify discovery, CASE ACLs, mDNS window expiry, controller certificate stores,
 and full commissioning against an independent implementation. Those remain
 part of the interoperability work below.
+
+## Official SDK certification runner
+
+`e2e/interop/sdk_jfadmin_certification.py` launches a fresh Crystal JFA and
+runs connectedhomeip v1.6.0.0's `TC_JFADMIN_1_2.py` with the SDK Python
+controller. It supplies the device's generated setup code and discriminator,
+and retains the SDK and device logs under
+`tmp/interop-jfadmin-certification`. The Linux workflow
+`.github/workflows/sdk-jfadmin-certification.yml` builds the SDK Python
+controller from the tagged source and runs this case on pull requests that
+change the JFA implementation. The case covers the JFA command and fail-safe
+sequence before Joint Commissioning; it does not cover the controller's JCM
+or the Datastore scenarios. The runner inserts one missing `jf_admin = None`
+initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
+certification steps and assertions are unchanged.
 
 ## Work required for interoperable Joint Commissioning
 
