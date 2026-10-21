@@ -157,6 +157,7 @@ describe Matter::Device::DSL do
       network.feature_map.wi_fi_network_interface?.should be_true
       # Ethernet diagnostics belong to an ethernet device only.
       device.node.get_cluster(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::EthernetNetworkDiagnostics).should be_nil
+      device.node.get_cluster(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::WiFiNetworkDiagnostics).should_not be_nil
     end
 
     it "passes a platform backend to Network Commissioning" do

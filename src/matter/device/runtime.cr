@@ -436,6 +436,7 @@ module Matter
           peer_node_id, peer, designator, content)
       end
       ethernet_diagnostics = include_ethernet_diagnostics? ? Cluster::EthernetNetworkDiagnostics.new(endpoint_0) : nil
+      wifi_diagnostics = commissioning_network_type.wi_fi? ? Cluster::WiFiNetworkDiagnostics.new(endpoint_0) : nil
 
       # Wire commissioning-window mDNS advertisement via the Responder.
       # This enables multi-admin flows (chip-tool/iOS) that require _matterc advertising
@@ -484,6 +485,7 @@ module Matter
         diagnostic_logs,
       ].each { |cluster| root.add_cluster(cluster) }
       root.add_cluster(ethernet_diagnostics.as(Cluster::EthernetNetworkDiagnostics)) if ethernet_diagnostics
+      root.add_cluster(wifi_diagnostics.as(Cluster::WiFiNetworkDiagnostics)) if wifi_diagnostics
       device_endpoints.delete(Node::ROOT_ENDPOINT_ID).try(&.each { |cluster| root.add_cluster(cluster) })
       @node.add_endpoint(root)
 

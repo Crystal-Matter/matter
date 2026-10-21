@@ -21,6 +21,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Locale and temperature unit writes validate supported values; applications
   can publish bounded sensor readings and power source endpoint lists.
 
+### Node diagnostics
+
+- Add Matter 1.6 Software Diagnostics and Wi-Fi Network Diagnostics cluster
+  servers with feature-gated counters, watermarks, and diagnostic events. Wi-Fi
+  devices now expose the Wi-Fi diagnostics cluster on their root endpoint;
+  applications supply observed link values and counters.
+
 ### ICD advertisement
 
 - Default always-on devices no longer advertise ICD Management. Matter 1.6
