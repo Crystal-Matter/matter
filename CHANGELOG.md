@@ -81,6 +81,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Reliable messaging
 
+- Keep in-progress PASE and CASE handshakes separate by peer endpoint and
+  exchange ID. Concurrent commissioners may reuse an exchange ID without
+  replacing each other's state, and unsecured follow-ups from another peer
+  cannot advance the handshake. A shared 64-entry oldest-first limit bounds
+  unauthenticated pending state while admitting new handshakes.
 - Replay the original unsecured PASE or CASE response when a byte-identical
   request is retransmitted after response loss. Duplicate requests receive a
   fresh MRP ACK where required, while the handshake state and response packet
