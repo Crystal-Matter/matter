@@ -23,6 +23,7 @@ require "../cluster/group_key_management"
 require "../cluster/ota_requestor"
 require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
+require "../cluster/thread_network_diagnostics"
 
 module Matter
   # A Matter device application.
@@ -446,6 +447,7 @@ module Matter
       end
       ethernet_diagnostics = include_ethernet_diagnostics? ? Cluster::EthernetNetworkDiagnostics.new(endpoint_0) : nil
       wifi_diagnostics = commissioning_network_type.wi_fi? ? Cluster::WiFiNetworkDiagnostics.new(endpoint_0) : nil
+      thread_diagnostics = commissioning_network_type.thread? ? Cluster::ThreadNetworkDiagnostics.new(endpoint_0) : nil
 
       # Wire commissioning-window mDNS advertisement via the Responder.
       # This enables multi-admin flows (chip-tool/iOS) that require _matterc advertising
@@ -495,6 +497,7 @@ module Matter
       ].each { |cluster| root.add_cluster(cluster) }
       root.add_cluster(ethernet_diagnostics.as(Cluster::EthernetNetworkDiagnostics)) if ethernet_diagnostics
       root.add_cluster(wifi_diagnostics.as(Cluster::WiFiNetworkDiagnostics)) if wifi_diagnostics
+      root.add_cluster(thread_diagnostics.as(Cluster::ThreadNetworkDiagnostics)) if thread_diagnostics
       device_endpoints.delete(Node::ROOT_ENDPOINT_ID).try(&.each { |cluster| root.add_cluster(cluster) })
       @node.add_endpoint(root)
 

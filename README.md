@@ -138,6 +138,11 @@ and peer there; command callbacks do not expose files by themselves.
 
 ### Cluster values
 
+Thread device declarations expose Thread Network Diagnostics at endpoint 0.
+Applications populate the cluster from their platform Thread stack; absent
+link values read as null, and packet/error/MLE/MAC counters require the
+corresponding feature bits.
+
 The foundation cluster set includes Localization Configuration, Unit
 Localization, Power Source Configuration, Flow Measurement, and Air Quality.
 Applications can add these clusters to endpoints through the device DSL.

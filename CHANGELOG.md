@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thread diagnostics
+
+- Add the Matter 1.6 Thread Network Diagnostics revision 3 server with typed
+  neighbor, route, policy, dataset and event payloads. Thread devices expose
+  the cluster at endpoint 0; applications provide observed Thread state and
+  counters through the cluster API.
+
 ### BLE transport framing
 
 - Add a GATT-independent BTP v4 session engine with ordered segmentation,
