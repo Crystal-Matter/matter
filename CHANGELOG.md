@@ -55,6 +55,8 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Run the Matter 1.6 `TC_JFADMIN_1_2` Python certification steps against the
   Crystal JFA in an opt-in Linux SDK workflow, preserving device and test logs
   for interoperability failures.
+- Serve defined JFA fail-safe and ICAC validation statuses on a freshly
+  commissioned Administrator before it has joined a Joint Fabric.
 - Enforce signed Certification Declaration DAC origin VID/PID and authorized
   PAA identifiers during device attestation, including legitimate OEM chains.
 - Accept length-delimited Matter Message Extensions and Secured Extensions as

@@ -224,6 +224,7 @@ module MatterJointFabricAdministrator
     @participant_view_current : Bool = false
     @watch_polling : Bool = false
     @watch_stopped : Bool = false
+    @unprovisioned_service_fabric_index : UInt8?
 
     def console_notes : Array(String)
       ["Endpoint 1: Joint Fabric Administrator and Joint Fabric Datastore"]
@@ -293,11 +294,13 @@ module MatterJointFabricAdministrator
       fabrics = fabric_table.all_fabrics
       fabrics.select { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joint_fabric(fabric) }
       fabrics.reject { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joined_fabric(fabric) }
+      fabrics.each { |fabric| attach_unprovisioned_administrator(fabric) }
     end
 
     protected def fabric_added(fabric : Matter::Fabric) : Nil
       attach_joint_fabric(fabric)
       attach_joined_fabric(fabric)
+      attach_unprovisioned_administrator(fabric)
     end
 
     protected def on_started : Nil
@@ -323,6 +326,10 @@ module MatterJointFabricAdministrator
     end
 
     protected def fabric_removed(fabric_index : UInt8) : Nil
+      if @unprovisioned_service_fabric_index == fabric_index
+        joint_fabric_administrator.service = nil
+        @unprovisioned_service_fabric_index = nil
+      end
       if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index
         @bootstrap_datastore_propagator.try(&.stop!)
         @bootstrap_datastore_propagator = nil
@@ -396,6 +403,27 @@ module MatterJointFabricAdministrator
                                  Matter::MDNS::JointFabricRole::Administrator
                                end
       info
+    end
+
+    # A freshly commissioned JFA has no Anchor role yet, but its JFA commands
+    # still have defined fail-safe and validation results. Keep an isolated
+    # service on that fabric until the device joins or provisions a Joint Fabric.
+    private def attach_unprovisioned_administrator(fabric : Matter::Fabric) : Nil
+      return if joint_fabric_administrator.service
+      root = fabric.root_cert || return
+      administrator = joint_fabric_administrator
+      administrator.service = Matter::Commissioning::JointFabricAdministratorService.new(
+        icac_private_key: Matter::Crypto::StandardCrypto.new.create_key_pair,
+        root_certificate: root,
+        fabric_id: fabric.fabric_id,
+        failsafe_armed: -> { general_commissioning.failsafe_armed? },
+        vendor_id_verified: ->(_index : UInt8) { false },
+        open_window: ->(_request : Admin::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.invalid_command },
+        transfer_authorized: ->(_node_id : UInt64) { false },
+        datastore_busy: -> { false },
+        begin_transfer: -> { nil },
+        complete_transfer: -> { nil })
+      @unprovisioned_service_fabric_index = fabric.fabric_index
     end
 
     private def attach_joint_fabric(fabric : Matter::Fabric) : Nil
@@ -497,6 +525,7 @@ module MatterJointFabricAdministrator
           end
         }
       )
+      @unprovisioned_service_fabric_index = nil
       configure_propagator(fabric, root)
       configure_bootstrap_datastore(fabric, root, icac, key)
     end
@@ -647,6 +676,7 @@ module MatterJointFabricAdministrator
           end
         }
       )
+      @unprovisioned_service_fabric_index = nil
       unless persistence.save_cluster(administrator) && persistence.save_cluster(datastore)
         raise Matter::StorageError.new("Could not persist joined Joint Fabric Administrator endpoints")
       end

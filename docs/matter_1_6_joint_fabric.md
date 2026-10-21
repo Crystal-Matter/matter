@@ -46,7 +46,9 @@ item below as covered only to the extent of its cited tests.
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with
   an Anchor CAT and ICAC, and requires explicit local consent to open a Joint
-  Commissioning window.
+  Commissioning window. A freshly commissioned but unprovisioned Administrator
+  serves the specified fail-safe and ICAC validation statuses while its
+  AdministratorFabricIndex remains null.
 - The Docker two-administrator test bootstraps separate fabrics, performs the
   JCM credential exchange between the Crystal implementations, and checks the
   stored cross-signed ICAC. CommissioningComplete is deferred to the Anchor
