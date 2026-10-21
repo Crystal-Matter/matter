@@ -12,6 +12,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Resolve operational and commissioning service addresses from the SRV target's
   A/AAAA records, including split mDNS replies and host address goodbyes. Persist
   updates to already discovered devices instead of changing a struct copy.
+- Ignore DNS query known answers and non-Internet records, and accept
+  case-insensitive DNS names while validating the complete operational
+  instance identifier.
 
 ### Joint Fabric three-Administrator transfer
 

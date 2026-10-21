@@ -21,6 +21,7 @@ describe Matter::Controller::Scanner do
       builder = Matter::MDNS::RecordBuilder
       packet = DNS::Packet.new(
         id: 0_u16,
+        response: true,
         answers: [
           builder.build_srv(first, 5540, "first.local", ttl),
           builder.build_srv(second, 5550, "second.local", ttl),
@@ -53,20 +54,21 @@ describe Matter::Controller::Scanner do
       builder = Matter::MDNS::RecordBuilder
       address = builder.build_a("node.local", Socket::IPAddress.new("192.0.2.3", 0), 120.seconds)
 
-      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, answers: [address]))
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, response: true, answers: [address]))
       scanner.devices.should be_empty
       scanner.process_packet_for_spec(DNS::Packet.new(
         id: 0_u16,
+        response: true,
         answers: [builder.build_srv(instance, 5540, "NODE.local", 120.seconds)]
       ))
       scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["192.0.2.3"])
 
       goodbye = builder.build_a("node.local", Socket::IPAddress.new("192.0.2.3", 0), 0.seconds)
-      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, answers: [goodbye]))
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, response: true, answers: [goodbye]))
       scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.should be_empty
 
       replacement = builder.build_aaaa("node.local", Socket::IPAddress.new("2001:db8::3", 0), 120.seconds)
-      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, additionals: [replacement]))
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, response: true, additionals: [replacement]))
       scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["2001:db8::3"])
       scanner.close
     end
@@ -76,11 +78,11 @@ describe Matter::Controller::Scanner do
       scanner = Matter::Controller::Scanner.new
       instance = "0123456789ABCDEF-0000000000000004._matter._tcp.local"
       builder = Matter::MDNS::RecordBuilder
-      original = DNS::Packet.new(id: 0_u16, answers: [
+      original = DNS::Packet.new(id: 0_u16, response: true, answers: [
         builder.build_srv(instance, 5540, "old.local", 120.seconds),
         builder.build_a("old.local", Socket::IPAddress.new("192.0.2.4", 0), 120.seconds),
       ])
-      replacement = DNS::Packet.new(id: 0_u16, answers: [
+      replacement = DNS::Packet.new(id: 0_u16, response: true, answers: [
         builder.build_srv(instance, 5555, "new.local", 120.seconds),
         builder.build_a("new.local", Socket::IPAddress.new("192.0.2.5", 0), 120.seconds),
       ])
@@ -100,12 +102,12 @@ describe Matter::Controller::Scanner do
       scanner = Matter::Controller::Scanner.new
       instance = "0123456789ABCDEF-0000000000000005._matter._tcp.local"
       builder = Matter::MDNS::RecordBuilder
-      initial = DNS::Packet.new(id: 0_u16, answers: [
+      initial = DNS::Packet.new(id: 0_u16, response: true, answers: [
         builder.build_srv(instance, 5540, "dual.local", 120.seconds),
         builder.build_a("dual.local", Socket::IPAddress.new("192.0.2.5", 0), 120.seconds),
         builder.build_aaaa("dual.local", Socket::IPAddress.new("2001:db8::5", 0), 120.seconds),
       ])
-      refreshed = DNS::Packet.new(id: 0_u16, answers: [
+      refreshed = DNS::Packet.new(id: 0_u16, response: true, answers: [
         builder.build_a("dual.local", Socket::IPAddress.new("192.0.2.6", 0), 120.seconds),
       ])
 
@@ -114,6 +116,65 @@ describe Matter::Controller::Scanner do
 
       addresses = scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).sort!
       addresses.should eq(["192.0.2.6", "2001:db8::5"])
+      scanner.close
+    end
+
+    it "ignores known-answer queries and non-Internet address records" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "0123456789ABCDEF-0000000000000006._matter._tcp.local"
+      builder = Matter::MDNS::RecordBuilder
+      srv = builder.build_srv(instance, 5540, "guard.local", 120.seconds)
+      address = builder.build_a("guard.local", Socket::IPAddress.new("192.0.2.6", 0), 120.seconds)
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, answers: [srv, address]))
+      scanner.devices.should be_empty
+
+      non_internet = DNS::Packet::ResourceRecord.new(
+        name: address.name, type: address.type, class_code: 3_u16,
+        ttl: address.ttl, resource_data: address.resource_data
+      )
+      scanner.process_packet_for_spec(DNS::Packet.new(
+        id: 0_u16, response: true, answers: [srv, non_internet]
+      ))
+      scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.should be_empty
+      scanner.close
+    end
+
+    it "accepts mixed-case DNS service and SRV target names" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "0123456789abCDef-0000000000000007._MaTtEr._TcP.LoCaL"
+      builder = Matter::MDNS::RecordBuilder
+      scanner.process_packet_for_spec(DNS::Packet.new(
+        id: 0_u16, response: true, answers: [
+        builder.build_srv(instance, 5540, "Node.LoCaL", 120.seconds),
+        builder.build_a("nOdE.lOcAl", Socket::IPAddress.new("192.0.2.7", 0), 120.seconds),
+      ]
+      ))
+
+      device = scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice)
+      device.fabric_id.should eq(0x0123456789ABCDEF_u64)
+      device.node_id.should eq(7_u64)
+      device.addresses.map(&.address).should eq(["192.0.2.7"])
+      scanner.close
+    end
+
+    it "treats differently cased answers for one instance as one device" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      builder = Matter::MDNS::RecordBuilder
+      uppercase = "0123456789ABCDEF-0000000000000008._matter._tcp.local"
+      lowercase = uppercase.downcase
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(uppercase, 5540, "same.local", 120.seconds),
+      ]))
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(lowercase, 5555, "same.local", 120.seconds),
+      ]))
+
+      scanner.devices.size.should eq(1)
+      scanner.get_device(uppercase).as(Matter::Controller::DiscoveredDevice).port.should eq(5555)
+      scanner.get_device(lowercase).as(Matter::Controller::DiscoveredDevice).port.should eq(5555)
       scanner.close
     end
   end
