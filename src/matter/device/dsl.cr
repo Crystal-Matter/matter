@@ -218,6 +218,7 @@ module Matter
           network_backend : ::Matter::Network::Backend? = nil,
           tc_min_required_version : UInt16? = nil,
           tc_required_acknowledgements : UInt16 = 0_u16,
+          icd_configuration : ::Matter::Cluster::IcdManagement::Configuration? = nil,
         )
           super
         end

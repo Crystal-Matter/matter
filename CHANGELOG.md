@@ -28,6 +28,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Select an IPv6 address when commissioning or subscribing to an Anchor
   Datastore discovered on a dual-stack network.
 
+### Intermittently connected devices
+
+- Implement Matter 1.6 ICD Management for explicitly configured ICD devices:
+  feature-gated attributes and commands, fabric-scoped durable registrations,
+  per-client Check-In backoff, StayActive responses, and registration cleanup
+  after fabric removal. Encode Check-In using the official SDK's HMAC nonce and
+  AES-CCM vector, persist the counter before sending, and expose application
+  sleep/wake and operational-address hooks. Always-on devices remain absent.
+
 ### BLE transport framing
 
 - Negotiate a central BTP v4 session over a GATT handshake channel. The

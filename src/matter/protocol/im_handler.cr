@@ -5,6 +5,7 @@ require "../cluster/cluster"
 require "../event_journal"
 require "../cluster/access_control"
 require "../cluster/group_key_management"
+require "../cluster/icd_management"
 require "tlv"
 
 module Matter
@@ -864,6 +865,11 @@ module Matter
           end
 
           result = cluster.with_request_context do
+            if icd = cluster.as?(Cluster::IcdManagement)
+              icd.request_administer_privilege = authorized?(clusters,
+                InteractionModel::EntryPrivilege::Administer, endpoint_id, path.cluster,
+                is_case_session, fabric_index, peer_subject_ids)
+            end
             cluster.request_auth_mode = is_case_session ? InteractionModel::EntryAuthMode::Case : InteractionModel::EntryAuthMode::Pase
             cluster.request_group_id = nil
             cluster.request_peer_subject_ids = peer_subject_ids

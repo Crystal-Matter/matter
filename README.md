@@ -562,6 +562,41 @@ Wait for the Datastore entries to become Committed before the delegated
 controller opens CASE to the device. The ICAC signing key stays with
 `joint_authority`.
 
+## Intermittently connected devices
+
+Always-on devices do not advertise ICD Management. An application that has a
+sleep and wake policy enables the Matter 1.6 cluster explicitly:
+
+```crystal
+icd = Matter::Cluster::IcdManagement::Configuration.new(
+  feature_map: Matter::Cluster::IcdManagement::Feature::CheckInProtocolSupport,
+  idle_mode_duration: 60_u32,       # seconds
+  active_mode_duration: 3_000_u32,   # milliseconds
+  active_mode_threshold: 5_000_u16  # milliseconds
+)
+device = MyDevice.new(icd_configuration: icd)
+device.icd_peer_resolver = ->(fabric_index : UInt8, node_id : UInt64) do
+  # Return the registered client's current operational Socket::IPAddress.
+  resolve_check_in_peer(fabric_index, node_id)
+end
+
+# Call these from the platform's sleep/wake integration:
+device.icd_enter_idle_mode
+device.icd_request_active_mode
+# A physical user trigger resets per-client Check-In backoff:
+device.icd_trigger_user_active_mode
+```
+
+The cluster implements fabric-scoped RegisterClient/UnregisterClient,
+StayActiveRequest, per-client Check-In backoff, and the feature-gated 1.6
+attributes. Registration keys and the Check-In counter are stored immediately;
+the counter advances on restart and is saved before each AES-CCM Check-In.
+Check-Ins use an unsecured Secure Channel message to the resolver's current
+address. A platform must provide physical sleep/wake scheduling and an address
+resolver; this library does not control radio power or discover an offline
+client's address. Devices without those hooks can still expose ICD metadata,
+but cannot deliver Check-Ins to an unreachable client.
+
 ## Enhanced Setup Flow Terms and Conditions
 
 Devices can enable the optional Matter 1.6 General Commissioning TC feature

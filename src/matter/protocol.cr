@@ -1,6 +1,7 @@
 # Protocol layer: the data types, the state a node keeps for its peers, and the
 # objects that turn an inbound datagram into a cluster call and back.
 require "./protocol/message_type"
+require "./protocol/icd/check_in_message"
 require "./protocol/bdx/wire"
 require "./protocol/bdx/transfer"
 require "./protocol/bdx/responder"
