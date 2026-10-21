@@ -2,6 +2,7 @@ require "./device_type"
 require "./error"
 require "./hex"
 require "./cluster/cluster"
+require "./cluster/color_control"
 require "./cluster/descriptor"
 require "./cluster/level_control"
 require "./cluster/on_off"
@@ -51,6 +52,9 @@ module Matter
       @clusters[cluster.cluster_id.id] = cluster
       if level = get_cluster(Cluster::LevelControl)
         level.bind_on_off(get_cluster(Cluster::OnOff))
+      end
+      if color = get_cluster(Cluster::ColorControl)
+        color.bind_on_off(get_cluster(Cluster::OnOff))
       end
       cluster
     end

@@ -7,12 +7,15 @@ module LevelControlE2E
   GROUP_ID               = 42
   GROUP_NAME             = "Reading room"
   TARGET_HUE             =   90
+  OFF_TARGET_HUE         =  120
   COLOR_TEMPERATURE      =  300
   LIFT_POSITION          = 5000
   NO_TRANSITION          = "0"
   NO_OPTIONS             = "0"
   SHORTEST_HUE_DIRECTION = "0"
   COLOR_OPTIONS          = 1
+  COLOR_OPTIONS_CLEAR    = 0
+  EXECUTE_IF_OFF         = 1
   COVERING_MODE          = 1
 end
 
@@ -107,6 +110,38 @@ describe "matter_level_control example" do
     read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint).should eq LevelControlE2E::COLOR_TEMPERATURE
     expect_success(device.write("colorcontrol", "options", LevelControlE2E::COLOR_OPTIONS, endpoint))
     read_int(device, "colorcontrol", "options", "Options", endpoint).should eq LevelControlE2E::COLOR_OPTIONS
+  end
+
+  it "applies Color Control ExecuteIfOff overrides on an off light" do
+    endpoint = LevelControlE2E::COLOR_ENDPOINT
+    expect_success(device.invoke("onoff", "on", endpoint: endpoint))
+    expect_success(device.invoke("colorcontrol", "move-to-hue", [
+      LevelControlE2E::TARGET_HUE.to_s,
+      LevelControlE2E::SHORTEST_HUE_DIRECTION,
+      LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::NO_OPTIONS,
+      LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    expect_success(device.invoke("onoff", "off", endpoint: endpoint))
+    expect_success(device.write("colorcontrol", "options", LevelControlE2E::COLOR_OPTIONS_CLEAR, endpoint))
+    expect_success(device.invoke("colorcontrol", "move-to-hue", [
+      LevelControlE2E::OFF_TARGET_HUE.to_s,
+      LevelControlE2E::SHORTEST_HUE_DIRECTION,
+      LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::NO_OPTIONS,
+      LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "current-hue", "CurrentHue", endpoint).should eq LevelControlE2E::TARGET_HUE
+
+    expect_success(device.invoke("colorcontrol", "move-to-hue", [
+      LevelControlE2E::OFF_TARGET_HUE.to_s,
+      LevelControlE2E::SHORTEST_HUE_DIRECTION,
+      LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::EXECUTE_IF_OFF.to_s,
+      LevelControlE2E::EXECUTE_IF_OFF.to_s,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "current-hue", "CurrentHue", endpoint).should eq LevelControlE2E::OFF_TARGET_HUE
+    read_bool(device, "onoff", "on-off", "OnOff", endpoint).should be_false
   end
 
   it "moves the window lift and reads and writes its attributes" do

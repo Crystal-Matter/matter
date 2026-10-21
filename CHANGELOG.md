@@ -59,6 +59,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   MoveMode Stop freeze the current value; zero rates for up/down moves return
   InvalidCommand. A monotonic clock drives movement and bounds are enforced.
 
+### Color Control and OnOff coordination
+
+- Link sibling ColorControl and OnOff clusters. All Color Control commands
+  apply OptionsMask and OptionsOverride to the Options attribute and leave
+  color state unchanged while off unless ExecuteIfOff is set.
 
 ### Level control transitions
 

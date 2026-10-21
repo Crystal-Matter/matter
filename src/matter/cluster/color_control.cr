@@ -1,5 +1,6 @@
 require "./cluster"
 require "./color_control/types"
+require "./on_off"
 
 module Matter
   module Cluster
@@ -19,7 +20,8 @@ module Matter
     class ColorControl < Base
       cluster 0x0300, revision: 7
 
-      MOVEMENT_TICK = 100.milliseconds
+      MOVEMENT_TICK  = 100.milliseconds
+      EXECUTE_IF_OFF = 1_u8
 
       feature :hue_saturation, bit: 0    # HS - Hue/saturation color specification
       feature :enhanced_hue, bit: 1      # EHUE - Enhanced 16-bit hue precision
@@ -114,6 +116,7 @@ module Matter
         @color_capabilities = @feature_map.value.to_u16
         @movement = nil
         @movement_fiber_running = false
+        @on_off_cluster = nil
       end
 
       private enum MovementKind
@@ -144,17 +147,25 @@ module Matter
 
       @movement : Movement?
       @movement_fiber_running : Bool
+      @on_off_cluster : OnOff?
+
+      # The endpoint links a sibling OnOff cluster regardless of add order.
+      def bind_on_off(cluster : OnOff?) : Nil
+        @on_off_cluster = cluster
+      end
 
       # ------------------------------------------------------------------------
       # Commands
       # ------------------------------------------------------------------------
 
       def move_to_hue(request : MoveToHueRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         move_to_hue(request.hue)
       end
 
       def move_hue(request : MoveHueRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         case request.move_mode
         when .stop?
           stop_movement
@@ -168,6 +179,7 @@ module Matter
       end
 
       def step_hue(request : StepHueRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         case request.step_mode
         in .up?
@@ -178,11 +190,13 @@ module Matter
       end
 
       def move_to_saturation(request : MoveToSaturationRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         move_to_saturation(request.saturation)
       end
 
       def move_saturation(request : MoveSaturationRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         case request.move_mode
         when .stop?
           stop_movement
@@ -196,6 +210,7 @@ module Matter
       end
 
       def step_saturation(request : StepSaturationRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         case request.step_mode
         in .up?
@@ -206,6 +221,7 @@ module Matter
       end
 
       def move_to_hue_and_saturation(request : MoveToHueAndSaturationRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         self.current_hue = request.hue
         self.current_saturation = request.saturation
@@ -214,26 +230,31 @@ module Matter
       end
 
       def move_to_color(request : MoveToColorRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         move_to_color(request.x, request.y)
       end
 
       def move_color(request : MoveColorRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         return stop_movement if request.x == 0 && request.y == 0
         start_movement(MovementKind::Xy, request.x.to_i, request.y.to_i, 0, CHROMATICITY_MAX.to_i)
       end
 
       def step_color(request : StepColorRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         move_to_color(step_chromaticity(@current_x, request.x), step_chromaticity(@current_y, request.y))
       end
 
       def move_to_color_temperature(request : MoveToColorTemperatureRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         move_to_color_temperature(request.color_temperature_mireds)
       end
 
       def move_color_temperature(request : MoveColorTemperatureRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         return stop_movement if request.move_mode.stop?
         return InteractionModel::Status.invalid_command if request.rate == 0
 
@@ -251,6 +272,7 @@ module Matter
       end
 
       def step_color_temperature(request : StepColorTemperatureRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         case request.step_mode
         in .up?
@@ -261,15 +283,18 @@ module Matter
       end
 
       def enhanced_move_to_hue(request : EnhancedMoveToHueRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         move_to_enhanced_hue(request.enhanced_hue)
       end
 
       def enhanced_move_hue(request : EnhancedMoveHueRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         InteractionModel::Status.success
       end
 
       def enhanced_step_hue(request : EnhancedStepHueRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         case request.step_mode
         in .up?
@@ -280,6 +305,7 @@ module Matter
       end
 
       def enhanced_move_to_hue_and_saturation(request : EnhancedMoveToHueAndSaturationRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
         self.enhanced_current_hue = request.enhanced_hue
         self.current_hue = (request.enhanced_hue >> ENHANCED_HUE_SHIFT).to_u8
@@ -289,12 +315,22 @@ module Matter
 
       # The loop is not run; the request is accepted
       def color_loop_set(request : ColorLoopSetRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         self.remaining_time = NO_TRANSITION
         InteractionModel::Status.success
       end
 
       def stop_move_step(request : StopMoveStepRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         stop_movement
+      end
+
+      private def execute_if_off?(mask : UInt8, override : UInt8) : Bool
+        on_off = @on_off_cluster
+        return true unless on_off && on_off.off?
+
+        effective_options = (@options & ~mask) | (override & mask)
+        (effective_options & EXECUTE_IF_OFF) != 0
       end
 
       # Advances a continuous move using a monotonic clock. Public for
