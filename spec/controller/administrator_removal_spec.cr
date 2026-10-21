@@ -1,25 +1,48 @@
 require "../spec_helper"
 require "../../src/matter/controller/administrator_removal"
 
+private alias RemovalStage = Matter::Controller::AdministratorRemoval::Stage
+
+private def removal_datastore : Matter::Cluster::JointFabricDatastore
+  datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+  datastore.anchor_node_id = 0x100_u64
+  datastore.admin_list = [
+    Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      0x300_u64, "Outgoing", 0xFFF2_u16, Bytes[1]),
+    Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      0x200_u64, "Remaining", 0xFFF2_u16, Bytes[2]),
+  ]
+  datastore.group_list = [Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct.new(
+    1_u64, "Administrators", nil, 0xFFFF_u16, 1_u16,
+    Matter::Cluster::JointFabricDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer)]
+  datastore.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+    Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+  datastore
+end
+
 private class FakeAdministratorRemovalPort < Matter::Controller::AdministratorRemoval::Port
   getter events = [] of String
   property? interrupt_participant = false
+  property fail_at : String?
 
   def remove_outgoing_fabric! : Nil
     @events << "RemoveFabric"
+    raise Matter::TransportError.new("RemoveFabric interrupted") if @fail_at == "RemoveFabric"
   end
 
   def remove_datastore_admin! : Nil
     @events << "RemoveAdmin"
+    raise Matter::TransportError.new("RemoveAdmin interrupted") if @fail_at == "RemoveAdmin"
   end
 
   def rotate_anchor! : Nil
     @events << "Anchor UpdateNOC"
+    raise Matter::TransportError.new("Anchor UpdateNOC interrupted") if @fail_at == "Anchor UpdateNOC"
   end
 
   def rotate_participant!(node_id : UInt64) : Nil
     @events << "Participant #{node_id.to_s(16)} UpdateNOC"
-    raise Matter::TransportError.new("participant interrupted") if interrupt_participant?
+    raise Matter::TransportError.new("participant interrupted") if interrupt_participant? || @fail_at == "Participant #{node_id.to_s(16)} UpdateNOC"
   end
 end
 
@@ -120,6 +143,75 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     expect_raises(Matter::ConfigurationError, /Invalid Administrator removal reconciliation/) do
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_journal!(journal,
         Matter::Controller::AdministratorRemoval::Stage::Completed, save)
+    end
+  end
+
+  it "recovers each interrupted removal command from a persisted journal" do
+    boundaries = {
+      {"RemoveFabric", RemovalStage::Ready, RemovalStage::RemovingFabric, RemovalStage::FabricRemoved},
+      {"RemoveAdmin", RemovalStage::FabricRemoved, RemovalStage::RemovingDatastore, RemovalStage::DatastoreRemoved},
+      {"Anchor UpdateNOC", RemovalStage::DatastoreRemoved, RemovalStage::RotatingAnchor, RemovalStage::AnchorRotated},
+      {"Participant 200 UpdateNOC", RemovalStage::AnchorRotated, RemovalStage::RotatingParticipant, RemovalStage::AnchorRotated},
+    }
+    boundaries.each do |command, before, uncertain, after|
+      {false, true}.each do |completed|
+        port = FakeAdministratorRemovalPort.new
+        port.fail_at = command
+        stored = Matter::Controller::AdministratorRemoval::Journal.new(
+          0x300_u64, before, administrator_cat_version: 2_u16)
+        save = ->(item : Matter::Controller::AdministratorRemoval::Journal) {
+          stored = Matter::Controller::AdministratorRemoval::Journal.from_document(item.to_document)
+          nil
+        }
+        workflow = Matter::Controller::AdministratorRemoval::Workflow.new(
+          removal_datastore, 0x100_u64, [0x200_u64], port,
+          -> { true }, -> { true }, save, stored)
+
+        expect_raises(Matter::TransportError, /interrupted/) { workflow.run }
+        stored.stage.should eq(uncertain)
+        restarted = Matter::Controller::AdministratorRemoval::Workflow.new(
+          removal_datastore, 0x100_u64, [0x200_u64], port,
+          -> { true }, -> { true }, save,
+          Matter::Controller::AdministratorRemoval::Journal.from_document(stored.to_document))
+        expect_raises(Matter::CommissioningError, /reconciliation/) { restarted.run }
+        if command.starts_with?("Participant")
+          restarted.reconcile!(after, 0x200_u64, participant_completed: completed)
+        else
+          restarted.reconcile!(completed ? after : before)
+        end
+        port.fail_at = nil
+        restarted.run
+
+        restarted.journal.stage.should eq(RemovalStage::Completed)
+        port.events.count(command).should eq(completed ? 1 : 2)
+      end
+    end
+  end
+
+  it "resumes from each persisted stable removal boundary without replaying earlier commands" do
+    boundaries = {
+      {RemovalStage::FabricRemoved, ["RemoveAdmin", "Anchor UpdateNOC", "Participant 200 UpdateNOC"]},
+      {RemovalStage::DatastoreRemoved, ["Anchor UpdateNOC", "Participant 200 UpdateNOC"]},
+      {RemovalStage::AnchorRotated, ["Participant 200 UpdateNOC"]},
+      {RemovalStage::Completed, [] of String},
+    }
+    boundaries.each do |stable, expected|
+      port = FakeAdministratorRemovalPort.new
+      stored = Matter::Controller::AdministratorRemoval::Journal.new(
+        0x300_u64, stable, administrator_cat_version: 2_u16)
+      restarted = Matter::Controller::AdministratorRemoval::Workflow.new(
+        removal_datastore, 0x100_u64, [0x200_u64], port,
+        -> { true }, -> { true },
+        ->(item : Matter::Controller::AdministratorRemoval::Journal) {
+          stored = Matter::Controller::AdministratorRemoval::Journal.from_document(item.to_document)
+          nil
+        }, Matter::Controller::AdministratorRemoval::Journal.from_document(stored.to_document))
+
+      restarted.run
+      port.events.should eq(expected)
+      stored.stage.should eq(RemovalStage::Completed)
+      restarted.run
+      port.events.should eq(expected)
     end
   end
 
