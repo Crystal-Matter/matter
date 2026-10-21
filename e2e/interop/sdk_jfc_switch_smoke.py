@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 SETUP_PIN_PATTERN = r"Setup PIN:\s*(\d{1,8})(?!\d)"
+JFC_PROMPT_PATTERN = r">>>[ \t]*(?:\r|$)"
 
 
 class ManagedProcess:
@@ -153,19 +154,19 @@ def run(args):
             jfc_state, logs,
         )
         processes.append(jfc)
-        jfc.expect(r">>>\s*$", 90)
+        jfc.expect(JFC_PROMPT_PATTERN, 90)
 
         anchor_start = jfc.command("pairing onnetwork-long 1 11022033 3840 --anchor true")
         jfc.expect(r"Anchor Administrator \(nodeId=1\) commissioned with success", 180, anchor_start)
-        jfc.expect(r">>>\s*$", 30, anchor_start)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, anchor_start)
 
         device_start = jfc.command(f"pairing onnetwork 2 {pin} --regular 1")
         jfc.expect(r"Device \(nodeId=2\) commissioned with success", 180, device_start)
-        jfc.expect(r">>>\s*$", 30, device_start)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, device_start)
 
         fabric_start = jfc.command("operationalcredentials read fabrics 2 0")
         jfc.expect(r"Fabrics:\s*[1-9]\d*\s+entries", 90, fabric_start)
-        jfc.expect(r">>>\s*$", 30, fabric_start)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, fabric_start)
 
         acl_start = jfc.command("accesscontrol read acl 2 0")
         jfc.expect(r"ACL:\s*[1-9]\d*\s+entries", 90, acl_start)

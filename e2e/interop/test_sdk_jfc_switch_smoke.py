@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 
-from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN
+from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN, JFC_PROMPT_PATTERN
 
 
 class ManagedProcessTest(unittest.TestCase):
@@ -61,6 +61,23 @@ class ManagedProcessTest(unittest.TestCase):
             log = (Path(directory) / "fake-jfc.log").read_text()
             self.assertIn("pairing onnetwork 2 20202021 --regular 1", log)
             self.assertIn("commissioned with success", log)
+
+    def test_prompt_remains_detectable_when_async_log_follows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = (
+                "import sys, time\n"
+                "sys.stdout.write('>>> \\r\\x1b[0Jasync log\\n')\n"
+                "sys.stdout.flush()\n"
+                "time.sleep(3)\n"
+            )
+            process = ManagedProcess(
+                "fake-jfc", [sys.executable, "-u", "-c", script],
+                Path(directory), Path(directory)
+            )
+            try:
+                process.expect(JFC_PROMPT_PATTERN, 1)
+            finally:
+                process.close()
 
 
 if __name__ == "__main__":
