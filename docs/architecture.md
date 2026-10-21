@@ -92,7 +92,7 @@ the optional node ids and opaque Message Extensions — used by both `encode` an
 vendor-qualified protocol IDs as a 32-bit vendor/protocol pair. Group privacy enhancements
 remain unsupported because they need header deobfuscation before packet parsing.
 
-Groupcast is not yet routed through this inbound path. The codec implements the
+Groupcast uses a separate authenticated inbound path. The codec implements the
 Matter 1.6 §§3.7/4.9 group privacy transform: `MessagePrivacy` derives the
 privacy key, builds the MIC-based nonce, and obfuscates the counter and optional
 IDs. `MessageCodec::Base.encode_private_packet` requires an already encrypted
@@ -111,12 +111,19 @@ blocks of node-global data and control counters in durable storage before use;
 it skips unused values after restart and refuses wraparound. A sender passes
 the returned value to `GroupSecurePacket#encode`.
 
-To complete groupcast, the runtime needs key candidates from each fabric's
-GroupKeyManagement state, IPv6 multicast membership, and group interaction
-routing. CacheAndSync policy
-and its message counter synchronization protocol remain unsupported. No group
-message is accepted or emitted through the runtime until those pieces are
-connected.
+The device runtime joins PerGroupId IPv6 multicast addresses from its
+fabric-scoped GroupTable, which follows Groups cluster membership changes.
+Fabric removal clears its key sets, mappings, group names, and multicast joins
+before the local FabricIndex can be reused.
+It authenticates private group packets against mapped epoch keys before
+parsing commands, replay checks, or ACL evaluation. A group command path
+without an Endpoint tag expands over member endpoints; each expansion passes
+its own Group ACL check. No group response or acknowledgement is sent.
+`Protocol::GroupMessageSender` emits one-way group InvokeRequests using durable
+`Session::GroupOutgoingCounters`; callers currently supply the fabric identity,
+installed operational key, and command paths. A high-level Controller method
+for selecting group keys is still needed. Group control messages, group writes,
+and the provisional CacheAndSync/MCSP path remain unsupported.
 
 ### Who owns what in the protocol layer
 

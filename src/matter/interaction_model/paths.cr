@@ -193,8 +193,8 @@ module Matter
     struct CommandPath
       include TLV::Serializable
 
-      @[TLV::Field(tag: 0, fixed_size: true)]
-      property endpoint : UInt16
+      @[TLV::Field(tag: 0, fixed_size: true, optional: true)]
+      property endpoint : UInt16?
 
       @[TLV::Field(tag: 1, fixed_size: true)]
       property cluster : UInt32
@@ -202,11 +202,11 @@ module Matter
       @[TLV::Field(tag: 2, fixed_size: true)]
       property command : UInt32
 
-      def initialize(@endpoint : UInt16, @cluster : UInt32, @command : UInt32)
+      def initialize(@endpoint : UInt16?, @cluster : UInt32, @command : UInt32)
       end
 
       def to_s(io : IO) : Nil
-        PathFormat.endpoint(io, endpoint)
+        PathFormat.endpoint(io, endpoint) if endpoint
         PathFormat.cluster(io, cluster)
         PathFormat.command(io, command)
       end

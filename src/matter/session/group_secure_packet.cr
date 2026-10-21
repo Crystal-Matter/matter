@@ -46,6 +46,11 @@ module Matter
         @reception = Hash(Tuple(UInt8, UInt64, Bool), Transport::MessageCounter).new
       end
 
+      # Refresh installed epoch keys while preserving replay windows. A key
+      # rotation must never make an old counter acceptable again in this boot.
+      def keys=(@keys : Array(Key)) : Nil
+      end
+
       def self.derive_operational_key(epoch_key : Bytes, compressed_fabric_id : Bytes) : Bytes
         raise Matter::SessionError.new("Epoch key must be 16 bytes") unless epoch_key.size == 16
         raise Matter::SessionError.new("Compressed fabric ID must be 8 bytes") unless compressed_fabric_id.size == 8

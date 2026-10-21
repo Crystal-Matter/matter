@@ -7,6 +7,21 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Groupcast runtime
+
+- Receive private AES-CCM group messages on fabric-derived IPv6 multicast
+  addresses, authenticate mapped epoch keys, retain replay windows, and invoke
+  commands only on member endpoints authorized by a Group ACL. Group commands
+  are one-way and produce no response.
+- Add a durable-counter group InvokeRequest sender for applications with a
+  group key and fabric identity.
+- Keep Groups membership and names fabric-scoped, synchronize membership with
+  GroupKeyManagement's GroupTable, and dispatch group command paths with an
+  omitted endpoint to every authorized member endpoint. Parse authenticated
+  message extensions without treating their opaque contents as commands.
+- Remove group keys, mappings, names, and multicast memberships when a fabric
+  is removed, before its local FabricIndex can be reused.
+
 The 0.2 refactor. Every layer of the library was reworked: storage, the device API, all 35
 clusters, the interaction model and the protocol objects. It is a breaking release, and
 **device storage written by 0.1 will not load** — see [Migrating from 0.1](#migrating-from-01).

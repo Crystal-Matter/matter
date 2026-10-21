@@ -3,6 +3,34 @@ require "../spec_helper"
 alias GroupPacket = Matter::Session::GroupSecurePacket
 
 describe Matter::Session::GroupSecurePacket do
+  it "authenticates an opaque message extension before accepting a group counter" do
+    operational_key = "a6f5306baf6d050af23ba4bd6b9dd960".hexbytes
+    key = GroupPacket::Key.new(1_u8, 0x0042_u16, operational_key)
+    header = Matter::Codec::MessageCodec::PacketHeader.new(
+      key.session_id, Matter::Codec::MessageCodec::SessionType::Group, 77_u32,
+      privacy_enhancements: true, message_extension_data: Bytes[0xaa],
+      source_node_id: Matter::DataType::NodeId.new(0x1234_u64),
+      destination_group_id: key.group_id)
+    payload_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      3_u16, 1_u16, 0x08_u8, true, false)
+    application = Matter::Codec::MessageCodec::Base.encode_payload(
+      Matter::Codec::MessageCodec::Message.new(header, payload_header, Bytes[0x47])).payload
+    aad = Matter::Codec::MessageCodec::Base.encode_packet_header(header)
+    nonce = Matter::Session::SecureMessage.build_nonce(0x1234_u64, 77_u32, header.security_flags)
+    ciphertext = Matter::Crypto.encrypt(operational_key, application, nonce, aad)
+    mic = ciphertext[ciphertext.size - 16, 16]
+    privacy_nonce = Matter::Codec::MessagePrivacy.nonce(key.session_id, mic)
+    private_header = aad.dup
+    private_header[4, 14].copy_from(Matter::Codec::MessagePrivacy.obfuscate(key.privacy_key, aad[4, 14], privacy_nonce))
+    wire = Slice.join([private_header, ciphertext])
+
+    receiver = GroupPacket.new([key])
+    tampered = wire.dup
+    tampered[aad.size - 1] ^= 1_u8
+    expect_raises(Matter::AuthenticationError) { receiver.decode(tampered) }
+    receiver.decode(wire).message.payload.should eq(Bytes[0x47])
+  end
+
   it "matches the Matter 1.6 operational key and group session ID vectors" do
     epoch = "235bf7e62823d358dca4ba50b1535f4b".hexbytes
     fabric = "87e1b004e235a130".hexbytes

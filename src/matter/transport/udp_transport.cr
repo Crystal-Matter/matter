@@ -53,6 +53,23 @@ module Matter
       # Callback for received messages
       # Signature: (message : Codec::MessageCodec::Message, peer_address : Socket::IPAddress) -> Nil
       property on_message : Proc(Codec::MessageCodec::Message, Socket::IPAddress, Nil)?
+      property on_group_packet : Proc(Bytes, Socket::IPAddress, Nil)?
+
+      @joined_groups = Set(Socket::IPAddress).new
+
+      # Keep multicast memberships aligned with the device's GroupTable.
+      def group_memberships=(addresses : Array(Socket::IPAddress)) : Nil
+        desired = addresses.to_set
+        (@joined_groups - desired).each do |address|
+          @socket.leave_group(address)
+          @joined_groups.delete(address)
+        end
+        (desired - @joined_groups).each do |address|
+          @socket.join_group(address)
+          @joined_groups.add(address)
+          Log.info { "Joined Matter group multicast #{address.address}" }
+        end
+      end
 
       @running : Bool
       @receive_fiber : Fiber?
@@ -243,6 +260,12 @@ module Matter
       private def handle_received_data(data : Bytes, peer_address : Socket::IPAddress) : Nil
         if data.size < MIN_PACKET_SIZE
           Log.warn { "Packet too small (#{data.size} bytes, minimum #{MIN_PACKET_SIZE}); ignoring malformed packet" }
+          return
+        end
+
+        if (data[Codec::MessageCodec::SECURITY_FLAGS_OFFSET] & Codec::MessageCodec::SecurityFlag::SessionTypeMask.value) == Codec::MessageCodec::SessionType::Group.value
+          Log.debug { "Received group packet: bytes=#{data.size} peer=#{peer_address}" }
+          @on_group_packet.try(&.call(data.dup, peer_address))
           return
         end
 

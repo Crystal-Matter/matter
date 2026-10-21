@@ -3,6 +3,25 @@ require "../spec_helper"
 private alias Codec = Matter::Codec::MessageCodec
 
 describe Matter::Codec::MessageCodec do
+  it "skips bounded message extensions while retaining them in authenticated header bytes" do
+    header = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 1_u16, session_type: Matter::Codec::MessageCodec::SessionType::Group,
+      message_id: 2_u32, message_extension_data: Bytes[0xaa, 0xbb, 0xcc])
+    clear = Matter::Codec::MessageCodec::Base.encode_packet_header(header)
+    payload = Bytes[0x01, 0x02]
+    wire = Slice.join([clear, payload])
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(wire)
+    packet.header.message_extensions?.should be_true
+    packet.header.message_extension_data.should eq(Bytes[0xaa, 0xbb, 0xcc])
+    packet.header_bytes.should eq(clear)
+    packet.payload.should eq(payload)
+
+    truncated = clear[0, clear.size - 2]
+    expect_raises(Matter::CodecError) do
+      Matter::Codec::MessageCodec::Base.decode_packet(truncated)
+    end
+  end
+
   it "encodes/decodes packet and payload header into a message" do
     source_node_id = Matter::DataType::NodeId.new(1_u64)
     # Compute flags with HasSourceNodeId flag set

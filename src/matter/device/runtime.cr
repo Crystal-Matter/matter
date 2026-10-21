@@ -154,6 +154,7 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
+      @message_handler.refresh_group_memberships
 
       @lifecycle = LifecycleManager.new(
         fabric_table: @fabric_table,
@@ -166,7 +167,10 @@ module Matter
       )
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
-      @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) { fabric_removed(fabric_index) }
+      @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
+        @message_handler.forget_group_fabric(fabric_index)
+        fabric_removed(fabric_index)
+      end
       @lifecycle.on_commissioned = ->(fabric : Fabric) do
         started_operational_mode
         commissioned(fabric)

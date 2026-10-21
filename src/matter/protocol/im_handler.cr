@@ -4,6 +4,7 @@ require "../interaction_model/tlv_messages"
 require "../cluster/cluster"
 require "../event_journal"
 require "../cluster/access_control"
+require "../cluster/group_key_management"
 require "tlv"
 
 module Matter
@@ -475,7 +476,19 @@ module Matter
 
             # Preserve the TLV type when passing the attribute to its cluster.
             value = request.data
-            status = cluster.write_attribute(attribute_id, value)
+            status = if group_keys = cluster.as?(Cluster::GroupKeyManagement)
+                       if attribute_id == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP
+                         if index = fabric_index
+                           group_keys.write_group_key_map(value, index)
+                         else
+                           InteractionModel::Status.unsupported_access
+                         end
+                       else
+                         cluster.write_attribute(attribute_id, value)
+                       end
+                     else
+                       cluster.write_attribute(attribute_id, value)
+                     end
 
             status_ib = InteractionModel::StatusIB.new(status: status.status.value, cluster_status: status.cluster_status)
             write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
@@ -641,8 +654,11 @@ module Matter
       end
 
       # Parse InvokeRequest from decrypted TLV payload
-      def self.parse_invoke_request(payload : Bytes) : InteractionModel::InvokeRequestMessage?
+      def self.parse_invoke_request(payload : Bytes, allow_group_path : Bool = false) : InteractionModel::InvokeRequestMessage?
         msg = InteractionModel::InvokeRequestMessage.from_slice(payload)
+        if !allow_group_path && msg.invoke_requests.any? { |command| command.command_path.endpoint.nil? }
+          raise Matter::CodecError.new("Unicast command path requires an endpoint")
+        end
         Log.debug { "InvokeRequest parsed: #{msg.invoke_requests.size} invoke request(s)" }
 
         msg.invoke_requests.each_with_index do |cmd_data, idx|
@@ -674,6 +690,13 @@ module Matter
           path = cmd_data.command_path
           Log.debug { "Invoking command: endpoint=#{path.endpoint}, cluster=0x#{path.cluster.to_s(16)}, command=0x#{path.command.to_s(16)}" }
 
+          unless path.endpoint
+            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedEndpoint.value)
+            cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
+            invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
+            next
+          end
+
           # Find cluster
           endpoint_id = path.endpoint || 0_u16 # Default to endpoint 0 if not specified
           cluster = clusters[{endpoint_id, path.cluster}]?
@@ -697,6 +720,8 @@ module Matter
           end
 
           result = cluster.with_request_context do
+            cluster.request_auth_mode = is_case_session ? InteractionModel::EntryAuthMode::Case : InteractionModel::EntryAuthMode::Pase
+            cluster.request_group_id = nil
             cluster.request_peer_subject_ids = peer_subject_ids
             cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
             cluster.request_peer_address = peer_address

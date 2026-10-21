@@ -1,0 +1,34 @@
+require "../spec_helper"
+require "file_utils"
+
+describe Matter::Protocol::GroupMessageSender do
+  it "emits an authenticated private one-way multicast InvokeRequest" do
+    directory = File.join(Dir.tempdir, "matter-group-send-#{Random::Secure.hex(8)}")
+    Dir.mkdir(directory)
+    begin
+      store = Matter::Storage::YamlFile.new(File.join(directory, "state.yml")).tap(&.open)
+      counters = Matter::Session::GroupOutgoingCounters.new(store)
+      transport = Matter::Spec::CaptureTransport.new_for_spec
+      sender = Matter::Protocol::GroupMessageSender.new(transport, counters)
+      key = Matter::Session::GroupSecurePacket::Key.new(1_u8, 0x0101_u16, Bytes.new(16, 0x11_u8))
+      command = Matter::InteractionModel::CommandDataIBTlv.new(
+        Matter::InteractionModel::CommandPath.new(nil, Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON))
+
+      sender.invoke(0x1234_5678_9abc_def0_u64, 1_u8, 0x2222_u64, key, [command])
+      transport.sent_packets.size.should eq(1)
+      packet, address = transport.sent_packets.first
+      address.address.should eq("ff35:40:fd12:3456:789a:bcde:f000:101")
+      address.port.should eq(5540)
+      (packet[3] & 0x80).should eq(0x80)
+      decoded = Matter::Session::GroupSecurePacket.new([key]).decode(packet)
+      decoded.message.payload_header.requires_acknowledge?.should be_false
+      request = Matter::InteractionModel::InvokeRequestMessage.from_slice(decoded.message.payload)
+      request.suppress_response.should be_true
+      request.invoke_requests.first.command_path.command.should eq(Matter::Cluster::OnOff::CMD_ON)
+      request.invoke_requests.first.command_path.endpoint.should be_nil
+      store.close
+    ensure
+      FileUtils.rm_rf(directory)
+    end
+  end
+end
