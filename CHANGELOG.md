@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cluster class remains available to devices that explicitly implement ICD
   behavior.
 
+### Network commissioning
+
+- Pass a platform network backend through the device constructor to the root
+  Network Commissioning cluster. Wi-Fi and Thread scans, provisioning, removal,
+  and connection now fail when no backend is configured, rather than reporting
+  success for changes that were never applied.
+
 ### Commissioning interoperability
 
 - Accept zero-valued RCAC and ICAC identifiers, which Matter 1.6 permits and

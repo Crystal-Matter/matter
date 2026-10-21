@@ -164,6 +164,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "sorts WiFi results by RSSI (strongest first)" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::ScanNetworksRequest.new
@@ -179,6 +180,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "sorts Thread results by LQI (highest first)" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::ThreadNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::ScanNetworksRequest.new
@@ -193,7 +195,7 @@ describe Matter::Cluster::NetworkCommissioning do
     end
 
     it "updates state attributes after scan" do
-      cluster = Matter::Cluster::NetworkCommissioning.new
+      cluster = Matter::Cluster::NetworkCommissioning.new(backend: Matter::Network::TestBackend.new)
       cmd = Matter::Cluster::NetworkCommissioning::ScanNetworksRequest.new
 
       cluster.handle_scan_networks(cmd, failsafe_armed: true)
@@ -235,6 +237,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "connects to network successfully" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       ssid = "TestSSID".to_slice
@@ -259,6 +262,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "disconnects other networks when connecting to target" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface,
         max_networks: 4_u8
       )
@@ -284,6 +288,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "updates state attributes after connect" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       ssid = "TestSSID".to_slice

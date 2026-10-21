@@ -95,6 +95,9 @@ The declarations are:
   that opens the backend. Every `Device#initialize` argument stays available, so a spec can pass its
   own backend: `SwitchDevice.new(Matter::Storage::Memory.new)`.
 * `network :ethernet | :wifi | :thread` — the Network Commissioning cluster's type and feature map.
+  Wi-Fi and Thread devices need a `Matter::Network::Backend` passed as `network_backend:` when
+  constructed. The backend performs scans, provisioning, removal, and connection; without one,
+  wireless commands report an error instead of claiming the network changed.
 * `endpoint number, device_type: do ... end` — an endpoint and, inside the block, one `cluster`
   declaration per cluster. `as: :switch` adds a typed accessor (`switch : Cluster::OnOff`).
   The endpoint is validated against its device types when it is registered, so a device type
