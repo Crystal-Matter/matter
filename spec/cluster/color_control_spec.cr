@@ -176,8 +176,8 @@ describe Matter::Cluster::ColorControl do
 
       invoke(cluster, Matter::Cluster::ColorControl::CMD_STEP_COLOR, Matter::Cluster::ColorControl::StepColorRequest.new(x: 2000_i16, y: -2000_i16, transition_time: (0).to_u16))
 
-      cluster.current_x.should eq(65535_u16) # Clamped to max
-      cluster.current_y.should eq(0_u16)     # Clamped to min
+      cluster.current_x.should eq(Matter::Cluster::ColorControl::CHROMATICITY_MAX) # XML bound
+      cluster.current_y.should eq(0_u16)                                           # Clamped to min
     end
   end
 

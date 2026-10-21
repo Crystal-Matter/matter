@@ -11,6 +11,7 @@ module LevelControlE2E
   COLOR_TEMPERATURE      =  300
   LIFT_POSITION          = 5000
   NO_TRANSITION          = "0"
+  TIMED_TRANSITION       = "50"
   NO_OPTIONS             = "0"
   SHORTEST_HUE_DIRECTION = "0"
   COLOR_OPTIONS          = 1
@@ -110,6 +111,24 @@ describe "matter_level_control example" do
     read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint).should eq LevelControlE2E::COLOR_TEMPERATURE
     expect_success(device.write("colorcontrol", "options", LevelControlE2E::COLOR_OPTIONS, endpoint))
     read_int(device, "colorcontrol", "options", "Options", endpoint).should eq LevelControlE2E::COLOR_OPTIONS
+  end
+
+  it "moves color hue over the requested five seconds" do
+    endpoint = LevelControlE2E::COLOR_ENDPOINT
+    expect_success(device.invoke("onoff", "on", endpoint: endpoint))
+    expect_success(device.invoke("colorcontrol", "move-to-hue", [
+      "10", LevelControlE2E::SHORTEST_HUE_DIRECTION,
+      LevelControlE2E::NO_TRANSITION, LevelControlE2E::NO_OPTIONS, LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    expect_success(device.invoke("colorcontrol", "move-to-hue", [
+      "110", LevelControlE2E::SHORTEST_HUE_DIRECTION,
+      LevelControlE2E::TIMED_TRANSITION, LevelControlE2E::NO_OPTIONS, LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "remaining-time", "RemainingTime", endpoint).should be > 0
+    read_int(device, "colorcontrol", "current-hue", "CurrentHue", endpoint).should be < 110
+    sleep 5.seconds
+    read_int(device, "colorcontrol", "current-hue", "CurrentHue", endpoint).should eq 110
+    read_int(device, "colorcontrol", "remaining-time", "RemainingTime", endpoint).should eq 0
   end
 
   it "applies Color Control ExecuteIfOff overrides on an off light" do
