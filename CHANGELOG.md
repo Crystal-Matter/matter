@@ -10,7 +10,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Controller groupcast
 
 - Add `Controller::GroupInvoker` to install fabric-scoped operational group
-  keys and send authenticated one-way group InvokeRequests with durable message
+  keys and send authenticated one-way group InvokeRequests and WriteRequests with durable message
   counters. The controller store removes a fabric's group keys when its last
   identity is removed.
 

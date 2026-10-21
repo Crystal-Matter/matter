@@ -13,6 +13,54 @@ private def group_invoker_fabric(store : Matter::Controller::StateStore,
 end
 
 describe Matter::Controller::GroupInvoker do
+  it "sends a fabric-scoped group write with a durable counter" do
+    directory = File.join(Dir.tempdir, "matter-controller-group-#{Random::Secure.hex(8)}")
+    Dir.mkdir(directory)
+    begin
+      backend = Matter::Storage::YamlFile.new(File.join(directory, "state.yml"))
+      store = Matter::Controller::StateStore.new(backend)
+      client = Matter::Controller::Client.new
+      fabric = group_invoker_fabric(store, client)
+      capture = Matter::Spec::CaptureTransport.new_for_spec
+      sender = Matter::Protocol::GroupMessageSender.new(capture,
+        Matter::Session::GroupOutgoingCounters.new(backend))
+      invoker = Matter::Controller::GroupInvoker.new(client, store, sender)
+      group_id = 0x5551_u16
+      invoker.install_epoch_key(fabric.fabric_id, fabric.root_public_key, group_id, Bytes.new(16, 0x11_u8))
+
+      invoker.write(fabric.fabric_id, group_id, Matter::Cluster::LevelControl::CLUSTER_ID,
+        Matter::Cluster::LevelControl::ATTR_OPTIONS, TLV::Any.new(1_u8, nil),
+        root_public_key: fabric.root_public_key)
+
+      compressed = Bytes.new(8)
+      IO::ByteFormat::BigEndian.encode(fabric.compressed_fabric_id, compressed)
+      key_bytes = Matter::Session::GroupSecurePacket.derive_operational_key(Bytes.new(16, 0x11_u8), compressed)
+      key = Matter::Session::GroupSecurePacket::Key.new(1_u8, group_id, key_bytes, fabric.fabric_id)
+      packet, address = capture.sent_packets.first
+      address.should eq(Matter::Transport::GroupMulticast.address(fabric.fabric_id, group_id))
+      decoded = Matter::Session::GroupSecurePacket.new([key]).decode(packet)
+      decoded.message.payload_header.message_type.should eq(Matter::Protocol::IMHandler::MSG_WRITE_REQUEST)
+      decoded.message.packet_header.source_node_id.as(Matter::DataType::NodeId).id.should eq(fabric.controller_node_id)
+      request = Matter::InteractionModel::WriteRequestMessage.from_slice(decoded.message.payload)
+      request.suppress_response.should be_true
+      request.timed_request.should be_false
+      attribute = request.write_requests.as(Array(Matter::InteractionModel::AttributeDataIB)).first
+      attribute.path.endpoint.should be_nil
+      attribute.path.cluster.should eq(Matter::Cluster::LevelControl::CLUSTER_ID)
+      attribute.path.attribute.should eq(Matter::Cluster::LevelControl::ATTR_OPTIONS)
+      attribute.data.as(TLV::Any).value.should eq(1_u8)
+
+      expect_raises(Matter::ConfigurationError) do
+        invoker.write(fabric.fabric_id, group_id + 1_u16, Matter::Cluster::LevelControl::CLUSTER_ID,
+          Matter::Cluster::LevelControl::ATTR_OPTIONS, TLV::Any.new(1_u8, nil))
+      end
+      client.close
+      backend.close
+    ensure
+      FileUtils.rm_rf(directory)
+    end
+  end
+
   it "uses an installed fabric-scoped epoch key and a durable counter" do
     directory = File.join(Dir.tempdir, "matter-controller-group-#{Random::Secure.hex(8)}")
     Dir.mkdir(directory)

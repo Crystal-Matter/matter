@@ -6,7 +6,7 @@ require "./state_store"
 
 module Matter
   module Controller
-    # Sends one-way group InvokeRequests using an installed operational key on
+    # Sends one-way group InvokeRequests and WriteRequests using an installed operational key on
     # the selected controller fabric. The controller store must be durable so
     # group message counters cannot be reused after restart.
     class GroupInvoker
@@ -54,6 +54,28 @@ module Matter
                  command_id : UInt32, fields : Bytes = Bytes.empty,
                  root_public_key : Bytes? = nil,
                  controller_node_id : UInt64? = nil) : Nil
+        fabric, key = select_group(fabric_id, group_id, root_public_key, controller_node_id)
+        path = InteractionModel::CommandPath.new(nil, cluster_id, command_id)
+        command_fields = fields.empty? ? nil : TLV::Any.from_slice(fields)
+        command = InteractionModel::CommandDataIBTlv.new(path, command_fields)
+        @sender.invoke(fabric.fabric_id, LOCAL_FABRIC_INDEX, fabric.controller_node_id,
+          key, [command])
+      end
+
+      # Group writes are one-way and have no endpoint or data version in the path.
+      def write(fabric_id : UInt64, group_id : UInt16, cluster_id : UInt32,
+                attribute_id : UInt32, value : TLV::Any,
+                root_public_key : Bytes? = nil,
+                controller_node_id : UInt64? = nil) : Nil
+        fabric, key = select_group(fabric_id, group_id, root_public_key, controller_node_id)
+        path = InteractionModel::AttributePath.new(nil, cluster_id, attribute_id)
+        attribute = InteractionModel::AttributeDataIB.new(path, value)
+        @sender.write(fabric.fabric_id, LOCAL_FABRIC_INDEX, fabric.controller_node_id,
+          key, [attribute])
+      end
+
+      private def select_group(fabric_id : UInt64, group_id : UInt16,
+                               root_public_key : Bytes?, controller_node_id : UInt64?)
         state = @store.load
         fabric = state.fabric_for(fabric_id, root_public_key, controller_node_id)
         entry = state.group_keys.find do |candidate|
@@ -62,11 +84,7 @@ module Matter
         end || raise Matter::ConfigurationError.new("No group key installed for selected fabric and Group ID")
         key = Session::GroupSecurePacket::Key.new(LOCAL_FABRIC_INDEX, group_id,
           entry.operational_key, fabric.fabric_id)
-        path = InteractionModel::CommandPath.new(nil, cluster_id, command_id)
-        command_fields = fields.empty? ? nil : TLV::Any.from_slice(fields)
-        command = InteractionModel::CommandDataIBTlv.new(path, command_fields)
-        @sender.invoke(fabric.fabric_id, LOCAL_FABRIC_INDEX, fabric.controller_node_id,
-          key, [command])
+        {fabric, key}
       end
     end
   end

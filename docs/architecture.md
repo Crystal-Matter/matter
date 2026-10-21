@@ -137,7 +137,7 @@ metadata determines whether each matching endpoint applies the value.
 WriteRequests using durable
 `Session::GroupOutgoingCounters`; callers supply the fabric identity, installed
 operational key, and interaction paths. `Controller::GroupInvoker` selects a
-stored fabric-scoped key and sends a one-way group Invoke. Group control
+stored fabric-scoped key and sends a one-way group Invoke or Write. Group control
 messages and the provisional CacheAndSync/MCSP path remain unsupported.
 
 Matter 1.6 Core §4.18.1.2 makes CacheAndSync and MCSP optional; the advertised
