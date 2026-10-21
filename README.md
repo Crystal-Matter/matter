@@ -135,6 +135,11 @@ Applications can add these clusters to endpoints through the device DSL.
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
 
+Wi-Fi device declarations expose Wi-Fi Network Diagnostics at endpoint 0.
+Applications can update observed link values and counters on that cluster.
+Software Diagnostics is available as an optional cluster for applications
+that can provide process and heap metrics.
+
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;
 command requests and `CommandResponse#response` use `TLV::Any?`. Pass `TLV::Any.new(50_u8)` to
 write a scalar or `request.to_tlv(nil)` for a `TLV::Serializable` command struct. Wire encoding
