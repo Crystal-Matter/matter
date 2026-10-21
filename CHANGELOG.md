@@ -7,13 +7,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Standard application clusters
+
+- Add Matter 1.6 Switch, Mode Select, and Valve Configuration and Control
+  servers with feature-gated attributes and events, typed command payloads,
+  bounded mode/position/level inputs, and a valve open-duration timer.
+
 ### Level and OnOff coordination
 
 - Wire sibling OnOff and LevelControl servers on an endpoint. Ordinary level
   commands obey ExecuteIfOff and command option overrides; WithOnOff commands
   turn on before raising a level and turn off after a transition reaches its
   minimum. Stopping a downward transition leaves OnOff unchanged.
-
 ### Level control transitions
 
 - Apply MoveToLevel and Step transition times in deciseconds and Move rates in
