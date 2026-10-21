@@ -201,6 +201,12 @@ Boolean State advertises revision 3 and ChangeEvent by default; changing
 event once per actual change. Pass `feature_map: BooleanState::Feature::None`
 to omit the event on devices that do not support it.
 
+Sensors with alarms can also add `BooleanStateConfiguration` revision 2.
+It exposes feature-gated alarm, sensitivity and fault state, typed commands
+and events, and persisted sensitivity and enabled-alarm settings. See the
+[cluster guide](docs/boolean-state-configuration.md) for construction and
+state update APIs.
+
 Energy devices can add `ElectricalPowerMeasurement`,
 `ElectricalEnergyMeasurement`, and `PowerTopology`. The power and energy
 clusters require their fixed measurement accuracy at construction. Select the

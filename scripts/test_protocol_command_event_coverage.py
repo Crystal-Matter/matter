@@ -29,6 +29,8 @@ class CommandEventCoverageTests(unittest.TestCase):
         xml = load_xml_members(FIXTURES / "xml")
         crystal = load_crystal_members(FIXTURES / "crystal")
         self.assertEqual(crystal[0x1234].commands[2], ":test")
+        self.assertEqual(crystal[0x1234].commands[4], "[:test, :other]")
+        self.assertEqual(crystal[0x1234].events[3], ":test")
         report = build_report(xml, crystal)
         sample = report[0x1234]
         self.assertEqual(sample.missing_mandatory_commands, {1})

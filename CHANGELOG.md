@@ -13,6 +13,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Record the mandatory critical BootReason event on device startup, defaulting
   to Unspecified when the platform cannot identify the cause.
 
+### Boolean State Configuration
+
+- Add the Matter 1.6 revision 2 Boolean State Configuration server with typed
+  alarm and sensor-fault bitmaps, feature-gated attributes and commands,
+  sensitivity bounds, alarm suppression, and typed alarm/fault events.
+- Clear active and suppressed bits when an alarm mode is disabled; report
+  InvalidInState when suppressing an inactive mode, as in the Matter 1.6 SDK.
+- Persist sensitivity and enabled-alarm settings and include the cluster in
+  the generated declaration coverage reports.
+
 ### Protocol command and event coverage
 
 - Add a reproducible Matter 1.6 canonical XML report for server command and

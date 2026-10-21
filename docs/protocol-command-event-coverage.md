@@ -7,12 +7,12 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 54
+- Implemented standard cluster IDs compared: 55
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 103
+- Conditional command/event declarations for review: 107
 - Feature or complex conditional IDs absent from Crystal: 28
-- Feature or complex conditional IDs declared without literal `requires:`: 12
+- Feature or complex conditional IDs declared without literal `requires:`: 8
   (Neither count alone establishes a conformance failure.)
 
 | Cluster ID | XML name | XML rev | Crystal rev | Mandatory server commands absent | Mandatory events absent |
@@ -53,6 +53,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0050 | Mode Select Cluster | 2 | 2 | — | — |
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — | — |
+| 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — | — |
@@ -118,16 +119,20 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x003B | event | 0x0002 | feature(MSL) | declared; requires `:momentary_switch_long_press` |
 | 0x003B | event | 0x0003 | feature(MSR) | declared; requires `:momentary_switch_release` |
 | 0x003B | event | 0x0004 | feature(MSL) | declared; requires `:momentary_switch_long_press` |
-| 0x003B | event | 0x0005 | (feature(MSM) and not(feature(AS))) | declared; requires `—` |
-| 0x003B | event | 0x0006 | feature(MSM) | declared; requires `—` |
+| 0x003B | event | 0x0005 | (feature(MSM) and not(feature(AS))) | declared; requires `{momentary_switch_multi_press: true, action_switch: false}` |
+| 0x003B | event | 0x0006 | feature(MSM) | declared; requires `:momentary_switch_multi_press` |
 | 0x003C | command | 0x0001 | feature(BC) | declared; requires `:basic` |
 | 0x0045 | event | 0x0000 | feature(CHGEVENT) | declared; requires `:change_event` |
 | 0x0046 | command | 0x0000 | feature(CIP) | declared; requires `:check_in_protocol_support` |
 | 0x0046 | command | 0x0002 | feature(CIP) | declared; requires `:check_in_protocol_support` |
 | 0x0046 | command | 0x0003 | feature(LITS) | declared; requires `—` |
+| 0x0080 | command | 0x0000 | feature(SPRS) | declared; requires `:alarm_suppress` |
+| 0x0080 | command | 0x0001 | (feature(VIS) or feature(AUD)) | declared; requires `[:visual, :audible]` |
+| 0x0080 | event | 0x0000 | (feature(VIS) or feature(AUD)) | declared; requires `[:visual, :audible]` |
+| 0x0080 | event | 0x0001 | feature(FAULTEV) | declared; requires `:fault_events` |
 | 0x0090 | event | 0x0000 | attribute() | declared; requires `—` |
-| 0x0091 | event | 0x0000 | feature(CUME) | declared; requires `—` |
-| 0x0091 | event | 0x0001 | feature(PERE) | declared; requires `—` |
+| 0x0091 | event | 0x0000 | feature(CUME) | declared; requires `:cumulative_energy` |
+| 0x0091 | event | 0x0001 | feature(PERE) | declared; requires `:periodic_energy` |
 | 0x0101 | command | 0x000B | feature(WDSCH) | declared; requires `:week_day_access_schedules` |
 | 0x0101 | command | 0x000C | feature(WDSCH) | declared; requires `:week_day_access_schedules` |
 | 0x0101 | command | 0x000D | feature(WDSCH) | declared; requires `:week_day_access_schedules` |
