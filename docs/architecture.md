@@ -173,7 +173,7 @@ GroupKeyManagement policy is TrustFirst. The separate Groupcast cluster in
 | `MrpCache` | `protocol/mrp_cache.cr` | responses cached by `{session id, counter}` so a retransmit is answered without re-running the handler |
 | `SessionRegistry` | `protocol/session_registry.cr` | sessions, active subscriptions, pending cleanups, the sweep fiber, and **the one protocol lock** |
 | `SubscriptionManager` | `protocol/subscription_manager.cr` | session-scoped chunk ladders for reads, subscriptions, and invoke responses; drains the event journal per subscription |
-| `SecureChannel` | `protocol/secure_channel.cr` | the PASE and CASE state machines, keyed by peer endpoint and exchange id so concurrent commissioners cannot collide |
+| `SecureChannel` | `protocol/secure_channel.cr` | the PASE and CASE state machines, keyed by peer endpoint and exchange id so concurrent commissioners cannot collide; resumed CASE rotates its ID only after Success from that exchange |
 | `InteractionRouter` | `protocol/interaction_router.cr` | interaction model message types, timed-request bookkeeping, access control context |
 | `ResponseSender` | `protocol/response_sender.cr` | encrypt, cache, send — the single outbound seam |
 | `Node` | `node.cr` | endpoints, the flat cluster index and the event journal |
@@ -250,6 +250,7 @@ persistence, so everything dirtied in a burst is written once, in one transactio
 | Collection | Written by | When |
 |---|---|---|
 | `fabrics/<index>` | `FabricTable` (`fabric_table.cr`) | immediately on add/update/remove; `mark_fabric_used` is debounced |
+| `case_resumptions/<id>` | `Session::Case::ResumptionStore` | after full CASE or authenticated resumed CASE; rotated on reconnection and removed with a device fabric |
 | `sessions/<id>`, `subscriptions/<id>`, `device/counters` | `Protocol::Persistence::StorageBackend` (`protocol/persistence.cr`) | establishment writes immediately, counter and activity updates are debounced |
 | `clusters/<endpoint>-<cluster>` | `Device::Persistence` via `Cluster::Base#save_state` | on the dirty flag set by `increment_version` |
 | `device/identity` | `Device::Persistence` | on change |

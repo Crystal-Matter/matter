@@ -147,6 +147,21 @@ These projects show off how custom matter interfaces can be built for almost any
 model client. `examples/chip-tool.cr` is a full CLI built on it — see
 [examples/chip-tool/README.md](examples/chip-tool/README.md).
 
+CASE pairing can reuse a persisted secret after the first certificate exchange.
+The Crystal chip-tool enables this with its controller store. Library callers
+can share a `ResumptionStore` with their controller state backend:
+
+```crystal
+resume_store = Matter::Session::Case::ResumptionStore.new(state_store.backend)
+pairing = Matter::Controller::Pairing::CasePairing.new(resumption_store: resume_store)
+session = pairing.pair(client, peer, fabric, peer_node_id: node_id)
+```
+
+The first call performs full CASE and saves a record. Later calls, including
+after restart, use Sigma2Resume when the peer recognizes that record; otherwise
+the peer can answer with full Sigma2. Records are scoped to fabric root, fabric
+ID, controller node ID, and peer node ID.
+
 For one-way group commands, use a controller store backed by a durable file.
 Provision the same epoch key and Group ID on each receiving device through
 GroupKeyManagement, add endpoint membership through Groups, and grant a Group

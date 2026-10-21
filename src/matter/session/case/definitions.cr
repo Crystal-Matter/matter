@@ -139,6 +139,32 @@ module Matter
           end
         end
 
+        # Short responder handshake when both peers retained CASE resumption
+        # state. Context tags follow Matter 1.6 Core 4.14.2.3.
+        struct Sigma2Resume
+          include TLV::Serializable
+
+          @[TLV::Field(tag: 1)]
+          property resumption_id : Bytes
+
+          @[TLV::Field(tag: 2)]
+          property resume_mic : Bytes
+
+          @[TLV::Field(tag: 3)]
+          property responder_session_id : UInt16
+
+          @[TLV::Field(tag: 4, optional: true)]
+          property responder_session_params : SessionParameter?
+
+          def initialize(
+            @resumption_id : Bytes,
+            @resume_mic : Bytes,
+            @responder_session_id : UInt16,
+            @responder_session_params : SessionParameter? = nil,
+          )
+          end
+        end
+
         # CASE Sigma3 message
         # Sent by initiator (chip-tool) to complete CASE session establishment
         struct Sigma3

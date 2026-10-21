@@ -23,6 +23,25 @@ private def sample_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::StateStore do
+  it "deletes CASE resumption secrets when a controller fabric is removed" do
+    backend = Matter::Storage::Memory.new
+    store = Matter::Controller::StateStore.new(backend)
+    fabric = sample_fabric
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    resume_store = Matter::Session::Case::ResumptionStore.new(backend)
+    id = Bytes.new(16, 0x11_u8)
+    resume_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+      0x3333_u64, id, Bytes.new(32, 0x22_u8), [0x3333_u64]))
+
+    state = store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id)
+    store.save(state)
+
+    resume_store.find_by_id(id).should be_nil
+  end
+
   it "matches the device's operational discovery fabric identifier" do
     info = sample_fabric
     device_fabric = Matter::Fabric.new(

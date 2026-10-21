@@ -36,6 +36,10 @@ module Matter
     # Storage backend for persistence
     @backend : Storage::Backend
 
+    getter backend : Storage::Backend
+
+    property on_fabric_removed : Proc(Fabric, Nil)?
+
     # Fabrics whose `last_used_at` changed and have not been written yet.
     @dirty : Hash(UInt8, Fabric) = Hash(UInt8, Fabric).new
 
@@ -135,7 +139,11 @@ module Matter
 
     # Remove a fabric by fabric_index
     def remove_fabric(fabric_index : UInt8) : Bool
-      return false unless @fabrics.delete(fabric_index)
+      fabric = @fabrics[fabric_index]?
+      return false unless fabric
+
+      @on_fabric_removed.try(&.call(fabric))
+      @fabrics.delete(fabric_index)
 
       @dirty.delete(fabric_index)
       @backend.delete(COLLECTION, fabric_index.to_s)

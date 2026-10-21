@@ -34,7 +34,7 @@ module ChipTool
             initial_unsecured_message_counter: state.unsecured_message_counter
           )
           begin
-            session = Matter::Controller::Pairing::CasePairing.new.pair(controller, peer, fabric, peer_node_id: node_id, timeout: ctx.timeout)
+            session = ctx.case_pairing.pair(controller, peer, fabric, peer_node_id: node_id, timeout: ctx.timeout)
             im = Matter::Controller::ImClient.new(controller, ctx.timeout)
             resp = im.invoke(
               session: session,

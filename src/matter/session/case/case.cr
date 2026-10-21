@@ -18,11 +18,16 @@ module Matter
       # specification section 4.14.2, "CASE Session Establishment"). Both sides
       # of the handshake derive from the same constants; matter.js keeps the
       # same names in `packages/protocol/src/session/case/CaseMessages.ts`.
-      KDFSR2_INFO       = "Sigma2".to_slice
-      KDFSR3_INFO       = "Sigma3".to_slice
-      TBE_DATA2_NONCE   = "NCASE_Sigma2N".to_slice
-      TBE_DATA3_NONCE   = "NCASE_Sigma3N".to_slice
-      SESSION_KEYS_INFO = "SessionKeys".to_slice
+      KDFSR2_INFO                  = "Sigma2".to_slice
+      KDFSR3_INFO                  = "Sigma3".to_slice
+      KDFSR1_RESUME_INFO           = "Sigma1_Resume".to_slice
+      KDFSR2_RESUME_INFO           = "Sigma2_Resume".to_slice
+      RESUME1_MIC_NONCE            = "NCASE_SigmaS1".to_slice
+      RESUME2_MIC_NONCE            = "NCASE_SigmaS2".to_slice
+      TBE_DATA2_NONCE              = "NCASE_Sigma2N".to_slice
+      TBE_DATA3_NONCE              = "NCASE_Sigma3N".to_slice
+      SESSION_KEYS_INFO            = "SessionKeys".to_slice
+      SESSION_RESUMPTION_KEYS_INFO = "SessionResumptionKeys".to_slice
 
       # AES-128-CCM key length: Sigma2/Sigma3 keys and each session key
       SYMMETRIC_KEY_LENGTH = 16
@@ -35,6 +40,7 @@ module Matter
       RANDOM_LENGTH = 32
       # Resumption ID generated with Sigma2
       RESUMPTION_ID_LENGTH = 16
+      RESUME_MIC_LENGTH    = 16
       # Sigma1 destination id: an HMAC-SHA256 tag
       DESTINATION_ID_LENGTH = 32
 
@@ -47,6 +53,53 @@ module Matter
       end
 
       alias SessionKeys = NamedTuple(encryption: Bytes, decryption: Bytes, attestation_challenge: Bytes)
+
+      def self.resume1_mic(crypto : Crypto::CryptoBase, shared_secret : Bytes,
+                           initiator_random : Bytes, resumption_id : Bytes) : Bytes
+        resume_mic(crypto, shared_secret, initiator_random, resumption_id,
+          KDFSR1_RESUME_INFO, RESUME1_MIC_NONCE)
+      end
+
+      def self.resume2_mic(crypto : Crypto::CryptoBase, shared_secret : Bytes,
+                           initiator_random : Bytes, resumption_id : Bytes) : Bytes
+        resume_mic(crypto, shared_secret, initiator_random, resumption_id,
+          KDFSR2_RESUME_INFO, RESUME2_MIC_NONCE)
+      end
+
+      def self.valid_resume1_mic?(crypto : Crypto::CryptoBase, shared_secret : Bytes,
+                                  initiator_random : Bytes, resumption_id : Bytes, mic : Bytes) : Bool
+        valid_resume_mic?(crypto, shared_secret, initiator_random, resumption_id,
+          mic, KDFSR1_RESUME_INFO, RESUME1_MIC_NONCE)
+      end
+
+      def self.valid_resume2_mic?(crypto : Crypto::CryptoBase, shared_secret : Bytes,
+                                  initiator_random : Bytes, resumption_id : Bytes, mic : Bytes) : Bool
+        valid_resume_mic?(crypto, shared_secret, initiator_random, resumption_id,
+          mic, KDFSR2_RESUME_INFO, RESUME2_MIC_NONCE)
+      end
+
+      private def self.resume_mic(crypto : Crypto::CryptoBase, shared_secret : Bytes,
+                                  initiator_random : Bytes, resumption_id : Bytes,
+                                  info : Bytes, nonce : Bytes) : Bytes
+        unless initiator_random.size == RANDOM_LENGTH && resumption_id.size == RESUMPTION_ID_LENGTH
+          raise Matter::ProtocolError.new("CASE resumption random or ID has an invalid length")
+        end
+        key = crypto.create_hkdf_key(shared_secret, initiator_random + resumption_id,
+          info, SYMMETRIC_KEY_LENGTH)
+        crypto.encrypt(key, Bytes.empty, nonce)
+      end
+
+      private def self.valid_resume_mic?(crypto : Crypto::CryptoBase, shared_secret : Bytes,
+                                         initiator_random : Bytes, resumption_id : Bytes,
+                                         mic : Bytes, info : Bytes, nonce : Bytes) : Bool
+        return false unless mic.size == RESUME_MIC_LENGTH &&
+                            initiator_random.size == RANDOM_LENGTH && resumption_id.size == RESUMPTION_ID_LENGTH
+        key = crypto.create_hkdf_key(shared_secret, initiator_random + resumption_id,
+          info, SYMMETRIC_KEY_LENGTH)
+        crypto.decrypt(key, mic, nonce).empty?
+      rescue Matter::AuthenticationError
+        false
+      end
 
       # Operational certificate chain for CASE authentication
       # Note: For CASE Sigma2/Sigma3, these are operational certificates from commissioning,
@@ -79,8 +132,10 @@ module Matter
         shared_secret : Bytes,
         salt : Bytes,
         role : Role,
+        resumption : Bool = false,
       ) : SessionKeys
-        keys = crypto.create_hkdf_key(shared_secret, salt, SESSION_KEYS_INFO, SESSION_KEYS_LENGTH)
+        info = resumption ? SESSION_RESUMPTION_KEYS_INFO : SESSION_KEYS_INFO
+        keys = crypto.create_hkdf_key(shared_secret, salt, info, SESSION_KEYS_LENGTH)
 
         i2r_key = keys[I2R_KEY_OFFSET, SYMMETRIC_KEY_LENGTH]
         r2i_key = keys[R2I_KEY_OFFSET, SYMMETRIC_KEY_LENGTH]
@@ -296,7 +351,8 @@ module Matter
         property peer_cert : Bytes?
         property peer_ephemeral_key : Bytes?
         property shared_secret : Bytes?
-        property our_random : Bytes?           # Random value we sent in Sigma2
+        property our_random : Bytes? # Random value we sent in Sigma2
+        property resumption_id : Bytes?
         property our_ephemeral_public : Bytes? # Our ephemeral public key sent in Sigma2
         property crypto : Crypto::CryptoBase
         property fabric_id : UInt64
@@ -332,6 +388,7 @@ module Matter
         )
           @peer_ephemeral_key = nil
           @shared_secret = nil
+          @resumption_id = nil
           @our_random = nil
           @our_ephemeral_public = nil
 
@@ -436,6 +493,7 @@ module Matter
           end
 
           resumption_id = @crypto.random_bytes(RESUMPTION_ID_LENGTH)
+          @resumption_id = resumption_id
 
           # Build TLV structure for encryption (TBE_Data2)
           # This contains: NOC, ICAC (optional), signature, resumption ID
