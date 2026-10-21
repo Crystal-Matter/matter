@@ -20,6 +20,8 @@ module Matter
 
       DEFAULT_TIMED_REQUEST_TIMEOUT = 10.seconds
       MAX_TIMED_REQUEST_TIMEOUT_MS  = UInt16::MAX
+      MAX_READ_REPORT_CHUNKS        =       128
+      MAX_READ_REPORT_BYTES         = 1_048_576
 
       def initialize(@client : Client, @timeout : Time::Span = 10.seconds)
       end
@@ -54,10 +56,108 @@ module Matter
           requires_ack: true
         )
 
-        response = @client.wait_for(exchange_id, Client::PROTOCOL_INTERACTION_MODEL, MSG_REPORT_DATA, @timeout)
-        raise Matter::TimeoutError.new("IM: timeout waiting for ReportData (exchange=#{exchange_id})") unless response
+        read_report_data(session, peer, exchange_id, path)
+      end
 
-        InteractionModel::ReportDataMessage.from_slice(response.message.payload.to_slice)
+      private def read_report_data(session : Session::SecureContext, peer : Socket::IPAddress,
+                                   exchange_id : UInt16, path : InteractionModel::AttributePath) : InteractionModel::ReportDataMessage
+        deadline = Time.instant + @timeout
+        attributes = [] of InteractionModel::AttributeReportIB
+        events = [] of InteractionModel::EventReportIB
+        bytes_received = 0
+        chunks_received = 0
+        loop do
+          remaining = deadline - Time.instant
+          raise Matter::TimeoutError.new("IM: timeout waiting for ReportData (exchange=#{exchange_id})") if remaining <= 0.seconds
+          received = @client.wait_for_any(exchange_id, Client::PROTOCOL_INTERACTION_MODEL,
+            [MSG_REPORT_DATA, MSG_STATUS_RESPONSE], remaining)
+          raise Matter::TimeoutError.new("IM: timeout waiting for ReportData (exchange=#{exchange_id})") unless received
+          message = received.message
+          unless message.packet_header.session_id == session.session_id
+            raise Matter::ProtocolError.new("IM: Read response arrived on another session (exchange=#{exchange_id})")
+          end
+          if message.payload_header.message_type == MSG_STATUS_RESPONSE
+            raise_read_status!(message.payload.to_slice, exchange_id)
+          end
+          chunks_received += 1
+          bytes_received += message.payload.size
+          if chunks_received > MAX_READ_REPORT_CHUNKS || bytes_received > MAX_READ_REPORT_BYTES
+            raise Matter::ProtocolError.new("IM: Read response exceeded chunk limit (exchange=#{exchange_id})")
+          end
+
+          report = begin
+            InteractionModel::ReportDataMessage.from_slice(message.payload.to_slice)
+          rescue ex
+            raise Matter::ProtocolError.new("IM: invalid ReportData (exchange=#{exchange_id})", cause: ex)
+          end
+          if report.subscription_id
+            raise Matter::ProtocolError.new("IM: Read response carried a subscription ID (exchange=#{exchange_id})")
+          end
+          attributes.concat(report.attribute_reports || [] of InteractionModel::AttributeReportIB)
+          events.concat(report.event_reports || [] of InteractionModel::EventReportIB)
+          if report.more_chunked_messages || !report.suppress_response
+            @client.send_encrypted_request(session, peer, Client::PROTOCOL_INTERACTION_MODEL,
+              MSG_STATUS_RESPONSE,
+              InteractionModel::StatusResponseMessage.new(InteractionModel::StatusCode::Success.value).to_slice,
+              exchange_id: exchange_id,
+              initiator_message: !message.payload_header.initiator_message?,
+              acknowledged_message_id: message.packet_header.message_id)
+          end
+          unless report.more_chunked_messages
+            return InteractionModel::ReportDataMessage.new(attribute_reports: normalize_read_attribute(attributes, path),
+              event_reports: events, more_chunked_messages: false,
+              suppress_response: report.suppress_response,
+              interaction_model_revision: report.interaction_model_revision)
+          end
+        end
+      end
+
+      # Matter may report a list as an initial Array value followed by
+      # list-index item reports on later chunks. Preserve the existing
+      # single-report API by folding those items into one Array value.
+      private def normalize_read_attribute(reports : Array(InteractionModel::AttributeReportIB),
+                                           path : InteractionModel::AttributePath) : Array(InteractionModel::AttributeReportIB)
+        return reports if reports.size < 2
+        data = reports.compact_map(&.attribute_data)
+        return reports unless data.size == reports.size
+        return reports unless data.all? do |entry|
+                                candidate = entry.path
+                                (candidate.endpoint.nil? || candidate.endpoint == path.endpoint) &&
+                                (candidate.cluster.nil? || candidate.cluster == path.cluster) &&
+                                (candidate.attribute.nil? || candidate.attribute == path.attribute)
+                              end
+
+        first = data.first
+        items = TLV::List.new
+        data.each do |entry|
+          value = entry.data
+          if value.header.element_type.array?
+            items.concat(value.as_list)
+          else
+            if index = entry.path.list_index
+              unless index == items.size
+                raise Matter::ProtocolError.new("IM: Read list item index #{index} did not follow #{items.size} items")
+              end
+            end
+            items << value
+          end
+        end
+        merged = InteractionModel::AttributeDataIB.new(path,
+          TLV::Any.new(items, nil, as_array: true), first.data_version)
+        [InteractionModel::AttributeReportIB.new(attribute_data: merged)]
+      end
+
+      private def raise_read_status!(payload : Bytes, exchange_id : UInt16) : NoReturn
+        status = begin
+          InteractionModel::StatusResponseMessage.from_slice(payload).status
+        rescue ex
+          raise Matter::ProtocolError.new("IM: invalid ReadRequest StatusResponse (exchange=#{exchange_id})", cause: ex)
+        end
+        code = InteractionModel::StatusCode.from_value?(status)
+        if code == InteractionModel::StatusCode::Timeout
+          raise Matter::TimeoutError.new("IM: ReadRequest timed out (exchange=#{exchange_id})")
+        end
+        raise Matter::ProtocolError.new("IM: ReadRequest rejected with #{code || "0x#{status.to_s(16)}"} (exchange=#{exchange_id})")
       end
 
       def write_attribute(

@@ -23,6 +23,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
   known nodes; retain authenticated CASE CATs across session persistence.
 - Complete the TimedRequest handshake for controller writes and invokes, and
   expose Matter 1.6 Basic Information revision and version attributes.
+- Consume chunked controller Read reports through the Interaction Model
+  acknowledgement ladder, with bounded accumulation, global status handling,
+  and list item reassembly for split attribute arrays.
 - Add Matter 1.6 Joint Fabric Administrator and Datastore cluster schemas,
   VID verification commands, a persistent Joint Commissioning workflow,
   Datastore propagation, and a dedicated administrator example. Two Crystal
