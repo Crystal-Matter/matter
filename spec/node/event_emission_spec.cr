@@ -71,6 +71,25 @@ describe "Cluster event emission" do
   end
 
   describe Matter::Node do
+    it "journals BooleanState ChangeEvent payloads after a direct state setter change" do
+      node = Matter::Node.new
+      contact_endpoint = Matter::Endpoint.new(endpoint(ENDPOINT_NUMBER))
+      contact = build(Matter::Cluster::BooleanState, ENDPOINT_NUMBER)
+      contact_endpoint.add_cluster(contact)
+      node.add_endpoint(contact_endpoint)
+
+      contact.state_value = true
+      contact.state_value = true
+
+      records = node.event_journal.query([Matter::InteractionModel::EventPath.new(
+        cluster: Matter::Cluster::BooleanState::CLUSTER_ID,
+        event: Matter::Cluster::BooleanState::EVENT_STATE_CHANGE,
+      )])
+      records.size.should eq(1)
+      records.first.priority.info?.should be_true
+      Matter::Cluster::BooleanState::StateChangeEvent.from_tlv(records.first.data).state_value?.should be_true
+    end
+
     it "journals every event a cluster on the node emits" do
       node = Matter::Node.new
       node.add_endpoint(bridged_endpoint)
