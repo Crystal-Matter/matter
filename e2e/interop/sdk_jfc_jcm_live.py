@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN
+from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN, JFC_PROMPT_PATTERN
 
 
 def run_command(argv, log_path, timeout=300):
@@ -124,10 +124,10 @@ def run(args):
             "--storage-directory", str(jfc_state), "--commissioner-vendor-id", "0xFFF1"],
             jfc_state, logs)
         processes.append(jfc)
-        jfc.expect(r">>>\s*$", 90)
+        jfc.expect(JFC_PROMPT_PATTERN, 90)
         paired = jfc.command(f"pairing onnetwork-long 11 {b_pin} {b_discriminator} --anchor true")
         jfc.expect(r"Anchor Administrator \(nodeId=11\) commissioned with success", 180, paired)
-        jfc.expect(r">>>\s*$", 30, paired)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, paired)
         b_identity = inspect_identity(b_command)
         if b_identity["inspected_node_id"] != 11:
             raise RuntimeError("SDK JFC commissioned an unexpected B Anchor Node ID")
@@ -157,7 +157,7 @@ def run(args):
 
         opened = jfc.command("pairing open-joint-commissioning-window 11 1 400 1000 1261")
         b_code = jfc.expect(r"Manual pairing code:\s*\[([^\]]+)\]", 90, opened).group(1)
-        jfc.expect(r">>>\s*$", 30, opened)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, opened)
         print("PASS: SDK JFC opened B Joint Commissioning window", flush=True)
 
         run_command([str(args.driver), "commission", str(bootstrap), a_code, b_code,
