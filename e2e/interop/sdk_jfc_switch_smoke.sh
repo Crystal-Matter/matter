@@ -42,7 +42,11 @@ config["cipd_package_files"] = [
 Path("objdir-jf-environment.json").write_text(json.dumps(config))
 PY
     export PW_CONFIG_FILE=objdir-jf-environment.json
+    # The SDK bootstrap script reads unset optional environment variables.
+    # Restore nounset immediately afterward for the rest of this runner.
+    set +u
     source scripts/bootstrap.sh -p linux
+    set -u
     ./scripts/build/build_examples.py \
       --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
       --target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang \
