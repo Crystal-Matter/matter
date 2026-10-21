@@ -1,0 +1,20 @@
+<cluster id="0x1236" name="Direct Cluster" revision="4">
+  <attributes>
+    <attribute id="0x0000" name="Always"><mandatoryConform/></attribute>
+    <attribute id="0x0001" name="WhenFeature"><mandatoryConform><feature name="X"/></mandatoryConform></attribute>
+    <attribute id="0x0002" name="Optional"><optionalConform/></attribute>
+    <attribute id="0x0003" name="Undeclared"/>
+    <attribute id="0x0004" name="RequiredAtThisRevision">
+      <otherwiseConform>
+        <mandatoryConform><greaterOrEqualTerm><revision value="current"/><revision value="4"/></greaterOrEqualTerm></mandatoryConform>
+        <optionalConform/>
+      </otherwiseConform>
+    </attribute>
+    <attribute id="0x0005" name="RequiredLater">
+      <otherwiseConform>
+        <mandatoryConform><greaterOrEqualTerm><revision value="current"/><revision value="5"/></greaterOrEqualTerm></mandatoryConform>
+        <optionalConform/>
+      </otherwiseConform>
+    </attribute>
+  </attributes>
+</cluster>

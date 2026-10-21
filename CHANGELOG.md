@@ -14,6 +14,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fabric ACLs. The controller ACL JSON helper also rejects this field instead
   of silently discarding it. The provisional AUX feature remains disabled.
 
+### Protocol coverage report
+
+- Add a reproducible Matter 1.6 cluster declaration report from the official
+  XML data model. It compares IDs, revisions, and directly declared mandatory
+  server attributes (including revision-only conditions) with Crystal DSL
+  declarations and flags attributes declared optional in Crystal. Its stated
+  limits distinguish declaration coverage from protocol conformance.
+
 ### Standard application clusters
 
 - Add Matter 1.6 Switch, Mode Select, and Valve Configuration and Control
