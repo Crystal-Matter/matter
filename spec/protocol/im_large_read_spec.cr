@@ -22,8 +22,8 @@ describe "large Read responses" do
     end
     data.first.path.list_index.should be_nil
     data.first.data.as_list.size.should be >= 1
-    data[1..].each_with_index do |item, index|
-      item.path.list_index.should eq((data.first.data.as_list.size + index).to_u16)
+    data[1..].each do |item|
+      item.path.list_index_null?.should be_true
     end
     restored = data.first.data.as_list.map(&.value.as(String)) + data[1..].map(&.data.value.as(String))
     restored.should eq values
@@ -48,6 +48,21 @@ describe "large Read responses" do
 
     chunks.size.should eq 1
     chunks.first[0].size.should be <= Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE
+    status = Matter::InteractionModel::ReportDataMessage.from_slice(chunks.first[0])
+      .attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first.attribute_status
+    status.try(&.status.status).should eq Matter::InteractionModel::StatusCode::ResourceExhausted.value
+  end
+
+  it "does not split an oversized value at an existing list item path" do
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32,
+      attribute: 0_u32, list_index_null: true)
+    data = Matter::InteractionModel::AttributeDataIB.new(path,
+      TLV::Any.from_slice(Array.new(20) { "A" * 100 }.to_tlv), 9_u32)
+    report = Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)
+
+    chunks = Matter::Protocol::IMHandler.encode_chunked_report_data([report])
+
+    chunks.size.should eq 1
     status = Matter::InteractionModel::ReportDataMessage.from_slice(chunks.first[0])
       .attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first.attribute_status
     status.try(&.status.status).should eq Matter::InteractionModel::StatusCode::ResourceExhausted.value

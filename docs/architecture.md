@@ -234,7 +234,7 @@ discards in-flight subscriptions and `SessionRegistry` removes active ones
 owned by that CASE node on the same fabric. Ownership is checked across secure
 session renewals, and removal deletes the persisted subscription document.
 
-Oversized list attributes are emitted as an initial array plus indexed item reports; an
+Oversized list attributes are emitted as an initial array plus append item reports; an
 indivisible attribute or event larger than the message budget receives ResourceExhausted.
 
 ## Persistence

@@ -69,7 +69,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Large Interaction Model reads
 
 - Split oversized list attributes into an initial array report followed by
-  indexed item reports that fit the IPv6 message budget. Return
+  append item reports that fit the IPv6 message budget. Return
   ResourceExhausted for an indivisible attribute or event payload that cannot
   fit, instead of sending an oversized datagram.
 

@@ -731,16 +731,16 @@ module Matter
         return [report] if report.to_slice.size <= MAX_REPORT_ITEM_SIZE
         data = report.attribute_data
         return [resource_exhausted_attribute(report)] unless data && data.data.header.element_type.array?
+        return [resource_exhausted_attribute(report)] if data.path.list_index || data.path.list_index_null?
 
         items = data.data.as_list
-        return [resource_exhausted_attribute(report)] if items.size > UInt16::MAX
         prefix = TLV::List.new
         first = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(data.path, TLV::Any.new(prefix, nil, as_array: true), data.data_version))
         result = [first]
 
-        items.each_with_index do |item, index|
+        items.each do |item|
           item_path = InteractionModel::AttributePath.new(endpoint: data.path.endpoint,
-            cluster: data.path.cluster, attribute: data.path.attribute, list_index: index.to_u16,
+            cluster: data.path.cluster, attribute: data.path.attribute, list_index_null: true,
             node: data.path.node, enable_tag_compression: data.path.enable_tag_compression,
             wildcard_path_flags: data.path.wildcard_path_flags)
           item_report = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(item_path, item, data.data_version))
