@@ -111,7 +111,7 @@ module Matter
         requires_ack : Bool = true,
         acknowledged_message_id : UInt32? = nil,
       ) : Nil
-        unless @transport.exchange_manager.get_exchange(exchange_id)
+        unless @transport.exchange_manager.get_exchange(exchange_id, 0_u16, peer, initiator_message)
           raise Matter::ProtocolError.new("unknown exchange_id=#{exchange_id}")
         end
 

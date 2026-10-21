@@ -1,8 +1,10 @@
 require "../codec/message_codec"
+require "../error"
 
 module Matter
   module Transport
-    # One bidirectional conversation, identified by its exchange id.
+    # One bidirectional conversation, identified within a session, peer, and
+    # initiator direction by its exchange id.
     #
     # The node answers every message that asks to be acknowledged inline, so an
     # exchange is bookkeeping rather than a queue: who the peer is, which
@@ -67,11 +69,19 @@ module Matter
 
     # Manages multiple exchanges
     class ExchangeManager
-      @exchanges : Hash(UInt16, Exchange)
+      # The exchange ID is chosen by an initiator within a session. A device
+      # can receive the same numeric ID from another peer or direction while
+      # its own controller exchange is still active.
+      alias Key = Tuple(UInt16, UInt16, Bool, Socket::IPAddress)
+
+      MAX_EXCHANGE_IDS   = UInt16::MAX.to_i + 1
+      IPV4_MAPPED_PREFIX = "::ffff:"
+
+      @exchanges : Hash(Key, Exchange)
       @next_exchange_id : UInt16
 
       def initialize
-        @exchanges = Hash(UInt16, Exchange).new
+        @exchanges = Hash(Key, Exchange).new
         @next_exchange_id = Random.rand(UInt16).to_u16
       end
 
@@ -82,20 +92,25 @@ module Matter
         peer_address : Socket::IPAddress,
         peer_node_id : DataType::NodeId? = nil,
       ) : Exchange
-        exchange_id = @next_exchange_id
-        @next_exchange_id = @next_exchange_id &+ 1 # Wrap-around safe
+        MAX_EXCHANGE_IDS.times do
+          exchange_id = @next_exchange_id
+          @next_exchange_id = @next_exchange_id &+ 1
+          key = exchange_key(session_id, exchange_id, true, peer_address)
+          next if @exchanges.has_key?(key)
 
-        exchange = Exchange.new(
-          exchange_id: exchange_id,
-          protocol_id: protocol_id,
-          session_id: session_id,
-          initiator: true,
-          peer_address: peer_address,
-          peer_node_id: peer_node_id
-        )
+          exchange = Exchange.new(
+            exchange_id: exchange_id,
+            protocol_id: protocol_id,
+            session_id: session_id,
+            initiator: true,
+            peer_address: peer_address,
+            peer_node_id: peer_node_id
+          )
 
-        @exchanges[exchange_id] = exchange
-        exchange
+          @exchanges[key] = exchange
+          return exchange
+        end
+        raise Matter::ProtocolError.new("No exchange IDs are available for this session and peer")
       end
 
       # Get or create exchange for received message
@@ -107,7 +122,8 @@ module Matter
         peer_node_id : DataType::NodeId? = nil,
         initiator : Bool = false,
       ) : Exchange
-        if exchange = @exchanges[exchange_id]?
+        key = exchange_key(session_id, exchange_id, initiator, peer_address)
+        if exchange = @exchanges[key]?
           exchange.touch
           return exchange
         end
@@ -122,21 +138,48 @@ module Matter
           peer_node_id: peer_node_id
         )
 
-        @exchanges[exchange_id] = exchange
+        @exchanges[key] = exchange
         exchange
       end
 
-      # Get exchange by ID
+      # Use the scoped lookup when the same ID may exist on multiple sessions
+      # or peers. The legacy lookup rejects ambiguity instead of guessing.
       def get_exchange(exchange_id : UInt16) : Exchange?
-        @exchanges[exchange_id]?
+        matches = @exchanges.values.select { |exchange| exchange.exchange_id == exchange_id }
+        raise Matter::ProtocolError.new("Ambiguous exchange ID #{exchange_id}") if matches.size > 1
+        matches.first?
       end
 
-      # Close and remove exchange
+      def get_exchange(exchange_id : UInt16, session_id : UInt16,
+                       peer_address : Socket::IPAddress, initiator : Bool) : Exchange?
+        @exchanges[exchange_key(session_id, exchange_id, initiator, peer_address)]?
+      end
+
+      # Close and remove an exchange. An unscoped close also rejects ambiguity.
       def close_exchange(exchange_id : UInt16) : Nil
-        if exchange = @exchanges[exchange_id]?
+        exchange = get_exchange(exchange_id)
+        return unless exchange
+        peer = exchange.peer_address
+        raise Matter::ProtocolError.new("Exchange has no peer address") unless peer
+        close_exchange(exchange_id, exchange.session_id, peer, exchange.initiator?)
+      end
+
+      def close_exchange(exchange_id : UInt16, session_id : UInt16,
+                         peer_address : Socket::IPAddress, initiator : Bool) : Nil
+        if exchange = @exchanges.delete(exchange_key(session_id, exchange_id, initiator, peer_address))
           exchange.close
-          @exchanges.delete(exchange_id)
         end
+      end
+
+      private def exchange_key(session_id : UInt16, exchange_id : UInt16, initiator : Bool,
+                               peer_address : Socket::IPAddress) : Key
+        address = peer_address.address
+        peer = if address.starts_with?(IPV4_MAPPED_PREFIX)
+                 Socket::IPAddress.new(address[IPV4_MAPPED_PREFIX.size..], peer_address.port)
+               else
+                 peer_address
+               end
+        {session_id, exchange_id, initiator, peer}
       end
 
       # Drops exchanges that are closed, failed, or long idle. Without this the

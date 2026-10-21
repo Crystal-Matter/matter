@@ -104,6 +104,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unsecured ACKs clear the matching entry; session removal and shutdown clear
   pending packets.
 
+### Exchange isolation
+
+- Key active exchanges by session, peer address, and initiator role as well as
+  exchange ID. Reusing an ID on another peer or direction no longer replaces
+  an active conversation; local allocation skips IDs still in use in its scope.
+  IPv4 addresses and their dual-stack IPv6-mapped form identify the same peer.
+
 ### Joint Fabric three-Administrator transfer
 
 - Exercise two live Joint Commissioning joins, Anchor transfer, and removal

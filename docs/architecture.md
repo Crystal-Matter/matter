@@ -36,6 +36,10 @@ enumerates addresses on active, non-loopback interfaces, including local IPv6 ad
 no public route. It uses IPv4 loopback only when no usable interface address exists. Windows uses
 outbound route probes until native interface enumeration is available there.
 
+`Transport::ExchangeManager` keys each exchange by session, numeric exchange ID,
+local initiator role, and peer address. Two controllers or opposite initiators
+may use the same numeric ID without taking over each other's exchange state.
+
 Two rules keep the tree honest:
 
 * `require "matter"` is the **device** library. The controller — scanner, client, PASE/CASE pairing,
