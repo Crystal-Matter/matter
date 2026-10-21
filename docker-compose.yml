@@ -158,6 +158,14 @@ services:
     environment:
       E2E_DEVICE: matter_bridge
 
+  # Official connectedhomeip server used to verify Crystal-originated groupcast.
+  official-group-recipient:
+    image: matter-e2e-tests
+    entrypoint: ["/usr/bin/chip-all-clusters-app"]
+    command: ["--discriminator", "3841", "--passcode", "20202021", "--KVS", "/tmp/official-group-recipient.kvs"]
+    networks:
+      - matter
+
   tests:
     build:
       context: .
@@ -184,6 +192,7 @@ services:
       ambient-light-sensor: { condition: service_healthy }
       air-conditioner: { condition: service_healthy }
       bridge: { condition: service_healthy }
+      official-group-recipient: { condition: service_started }
     environment:
       E2E_RUN_UNIT: ${E2E_RUN_UNIT:-1}
       E2E_RUN_E2E: ${E2E_RUN_E2E:-1}

@@ -159,6 +159,21 @@ module Matter
       end
     end
 
+    # Current operational group key for a group on one logical fabric. Store
+    # only the derived key, never the provisioned epoch input key.
+    struct GroupKeyInfo
+      include Storage::Record
+
+      getter fabric_id : UInt64
+      getter root_public_key : Bytes
+      getter group_id : UInt16
+      getter operational_key : Bytes
+
+      def initialize(@fabric_id : UInt64, @root_public_key : Bytes,
+                     @group_id : UInt16, @operational_key : Bytes)
+      end
+    end
+
     struct State
       include Storage::Record
 
@@ -171,6 +186,7 @@ module Matter
       property other_nodes : Hash(String, Hash(UInt64, NodeInfo)) = {} of String => Hash(UInt64, NodeInfo)
       property pending_handoffs : Array(PendingCommissioningHandoff) = [] of PendingCommissioningHandoff
       property pending_datastore_nodes : Array(PendingDatastoreNode) = [] of PendingDatastoreNode
+      property group_keys : Array(GroupKeyInfo) = [] of GroupKeyInfo
 
       # Commissioner node id used for unsecured message source_node_id and as the
       # controller node id when creating a new fabric.
@@ -189,6 +205,7 @@ module Matter
         @other_nodes : Hash(String, Hash(UInt64, NodeInfo)) = {} of String => Hash(UInt64, NodeInfo),
         @pending_handoffs : Array(PendingCommissioningHandoff) = [] of PendingCommissioningHandoff,
         @pending_datastore_nodes : Array(PendingDatastoreNode) = [] of PendingDatastoreNode,
+        @group_keys : Array(GroupKeyInfo) = [] of GroupKeyInfo,
       )
       end
 
@@ -268,6 +285,9 @@ module Matter
         else
           @other_fabrics.delete(key)
           @other_nodes.delete(key)
+        end
+        unless fabrics.any? { |fabric| fabric.fabric_id == selected.fabric_id && fabric.root_public_key == selected.root_public_key }
+          @group_keys.reject! { |entry| entry.fabric_id == selected.fabric_id && entry.root_public_key == selected.root_public_key }
         end
         selected
       end

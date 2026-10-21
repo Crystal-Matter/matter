@@ -275,6 +275,7 @@ Controller::Client             the UDP client and its unsecured message counter
 Controller::Pairing::PasePairing / CasePairing
 Controller::Commissioning::Commissioner / CommissioningWindowOpener
 Controller::ImClient           read attributes/events, subscribe, write_attribute(s), invoke
+Controller::GroupInvoker       fabric-scoped one-way group Invoke with durable counters
 Controller::StateStore         the fabric, its certificates and known nodes, over Storage::Backend
 ```
 
@@ -286,6 +287,13 @@ adds an optional minimum event number; the same bounded ReportData chunk
 ladder collects event and attribute reports. `subscribe_events` and `subscribe`
 allow event-only or mixed subscriptions, including EventFilterIB values.
 Subscription reports check both attribute and event status entries.
+
+`GroupInvoker` derives an operational key from a provisioned epoch key and the
+selected fabric's compressed ID, then stores the derived key in controller
+state. Its sender uses the same node-global durable group data counter as the
+device path. Key selection includes the fabric root and Group ID, so equal
+Group IDs on separate fabrics remain isolated. Removing the last controller
+identity for a logical fabric also removes its group keys.
 
 ### Joint Fabric
 
