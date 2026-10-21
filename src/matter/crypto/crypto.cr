@@ -47,6 +47,14 @@ module Matter
       # @return 32-byte hash
       abstract def compute_sha256(data : Bytes | Array(Bytes)) : Bytes
 
+      # Matter certificate key identifiers are SHA-1 of the full public key.
+      # This is only for SKID/AKID derivation; certificate signatures use SHA-256.
+      def compute_sha1(data : Bytes) : Bytes
+        digest = OpenSSL::Digest.new("SHA1")
+        digest.update(data)
+        digest.final
+      end
+
       # Derive key using PBKDF2 with SHA-256
       # @param secret Secret/password
       # @param salt Salt value

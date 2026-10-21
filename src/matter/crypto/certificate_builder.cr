@@ -20,7 +20,6 @@ module Matter
         PUBLIC_KEY_ALGORITHM = 1_u8
         ELLIPTIC_CURVE_ID    = 1_u8
 
-        # A key identifier is the leading bytes of the SHA-256 of the public key
         KEY_IDENTIFIER_LENGTH       = 20
         MAX_SERIAL_NUMBER_LENGTH    = 20
         MAX_CASE_AUTHENTICATED_TAGS =  3
@@ -114,7 +113,8 @@ module Matter
                 key_usage(KEY_USAGE_DIGITAL_SIGNATURE),
                 extended_key_usage(NODE_EXTENDED_KEY_USAGE),
                 key_identifier_extension(Asn1::Extension::SubjectKeyIdentifier, key_identifier(public_key, crypto)),
-                key_identifier_extension(Asn1::Extension::AuthorityKeyIdentifier, key_identifier(issuer_key.public_key, crypto)),
+                key_identifier_extension(Asn1::Extension::AuthorityKeyIdentifier,
+                  authority_identifier(issuer_certificate, issuer_key.public_key, crypto)),
               }
             ),
             issuer_key,
@@ -161,7 +161,8 @@ module Matter
                 basic_constraints(certificate_authority: true),
                 key_usage(KEY_USAGE_KEY_CERT_SIGN | KEY_USAGE_CRL_SIGN),
                 key_identifier_extension(Asn1::Extension::SubjectKeyIdentifier, key_identifier(public_key, crypto)),
-                key_identifier_extension(Asn1::Extension::AuthorityKeyIdentifier, key_identifier(issuer_key.public_key, crypto)),
+                key_identifier_extension(Asn1::Extension::AuthorityKeyIdentifier,
+                  authority_identifier(issuer_certificate, issuer_key.public_key, crypto)),
               }
             ),
             issuer_key,
@@ -169,9 +170,25 @@ module Matter
           )
         end
 
-        # The identifier other certificates refer to this key by
+        # Matter SKID/AKID: SHA-1 of the complete uncompressed P-256 public key.
         def key_identifier(public_key : Bytes, crypto : CryptoBase = Crypto.instance) : Bytes
-          crypto.compute_sha256(public_key)[0, KEY_IDENTIFIER_LENGTH]
+          crypto.compute_sha1(public_key)
+        end
+
+        # The AKID names the issuer certificate's SKID. A stored certificate
+        # may predate the SHA-1 correction, so its signed identifier takes
+        # precedence after the caller has matched its public key to issuer_key.
+        private def authority_identifier(issuer_certificate : Bytes?, issuer_public_key : Bytes,
+                                         crypto : CryptoBase) : Bytes
+          return key_identifier(issuer_public_key, crypto) unless certificate = issuer_certificate
+
+          extensions = TLV::Any.from_slice(certificate).as_structure[Asn1::Field::Extensions.value].as_list
+          skid_tag = Asn1::Extension::SubjectKeyIdentifier.value
+          identifiers = extensions.select { |extension| extension.header.ids == skid_tag }
+          if identifiers.size != 1 || identifiers[0].as_bytes.size != KEY_IDENTIFIER_LENGTH
+            raise Matter::CertificateError.new("Issuer certificate has no valid subject key identifier")
+          end
+          identifiers[0].as_bytes.dup
         end
 
         private def certificate(
