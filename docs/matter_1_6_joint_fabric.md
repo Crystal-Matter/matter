@@ -61,6 +61,11 @@ item below as covered only to the extent of its cited tests.
   an idempotent removal retry. The former Anchor subscribes to the new
   Anchor's authenticated Datastore and suspends Joint Commissioning when that
   view is stale. The subscription is invalidated if its fabric changes.
+  The transfer journal records each completed Administrator credential rotation
+  and identifies an uncertain in-flight rotation. After restart, the caller
+  must inspect that Administrator's NOC/CAT and reconcile the rotation before
+  resuming; completed rotations are skipped. A three-Administrator spec covers
+  interruption during the second rotation.
 - The Datastore accepts CASE reads and commands only while this device is the
   Anchor. During transfer it remains readable for the candidate's frozen
   snapshot; after TransferAnchorComplete, the former Anchor rejects Datastore
@@ -87,7 +92,9 @@ item below as covered only to the extent of its cited tests.
    `jf-admin-app`. The current Docker test proves Crystal-to-Crystal JCM;
    the official `chip-tool` separately commissions the example device.
 3. Extend Anchor transfer and administrator removal network tests beyond two
-   administrators and exercise interruption at each journal transition.
+   administrators and exercise interruption at each journal transition. The
+   three-Administrator rotation and restart path currently has local spec
+   coverage.
 4. Run the [official Joint Fabric administrator tests](https://github.com/project-chip/connectedhomeip/tree/v1.6.0.0/src/python_testing)
    and real device interoperability before claiming Matter 1.6 conformance.
 

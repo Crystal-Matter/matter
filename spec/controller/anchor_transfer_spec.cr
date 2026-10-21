@@ -144,12 +144,14 @@ end
 
 private class FakeCredentialTransition < Matter::Controller::AnchorTransfer::CredentialTransition
   getter target_node_id : UInt64
+  property? fail_transition = false
 
   def initialize(@label : String, @events : Array(String), @target_node_id : UInt64 = 0x100_u64)
   end
 
   def transition! : UInt8
     @events << @label
+    raise Matter::TransportError.new("Administrator rotation interrupted") if fail_transition?
     2_u8
   end
 end
@@ -333,6 +335,15 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     loaded = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
     loaded.candidate_node_id.should eq(0x200_u64)
     loaded.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copying)
+    loaded.rotated_administrator_node_ids.should be_empty
+    loaded.active_rotation_node_id.should be_nil
+
+    legacy = Matter::Storage::Document.new
+    legacy["candidate_node_id"] = 0x200_u64
+    legacy["stage"] = "Copying"
+    restored = Matter::Controller::AnchorTransfer::Journal.from_document(legacy)
+    restored.rotated_administrator_node_ids.should be_empty
+    restored.active_rotation_node_id.should be_nil
   end
 
   it "orders the accepted transfer and saves every boundary" do
@@ -406,6 +417,33 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     workflow.run
     port.calls.should eq(["request", "complete"])
     workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
+  end
+
+  it "records an observed completed Administrator rotation before stage recovery" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64,
+      Matter::Controller::AnchorTransfer::Stage::Rotating)
+    journal.active_rotation_node_id = 0x300_u64
+    journal.rotated_administrator_node_ids = [0x100_u64]
+    saved = [] of Matter::Controller::AnchorTransfer::Journal
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(
+      committed_anchor_store, FakeAnchorPort.new, FakeAnchorMigration.new,
+      -> { true }, ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      saved << Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }, journal)
+
+    expect_raises(Matter::CommissioningError, /rotation needs reconciliation/) do
+      workflow.reconcile!(Matter::Controller::AnchorTransfer::Stage::Copied)
+    end
+    expect_raises(Matter::ConfigurationError, /Invalid Administrator rotation reconciliation/) do
+      workflow.reconcile_rotation!(0x400_u64, completed: true)
+    end
+    workflow.reconcile_rotation!(0x300_u64, completed: true)
+
+    workflow.journal.rotated_administrator_node_ids.should eq([0x100_u64, 0x300_u64])
+    workflow.journal.active_rotation_node_id.should be_nil
+    saved.last.rotated_administrator_node_ids.should eq([0x100_u64, 0x300_u64])
+    workflow.reconcile!(Matter::Controller::AnchorTransfer::Stage::Copied)
   end
 
   it "journals TransferAnchorComplete separately from participant follow-up" do
@@ -536,6 +574,110 @@ describe Matter::Controller::AnchorTransfer::AdministratorRotation do
 end
 
 describe Matter::Controller::AnchorTransfer::RotationMigration do
+  it "cannot reconcile a resumed rotation that omits a Datastore Administrator" do
+    source = committed_anchor_store
+    candidate = committed_anchor_store
+    candidate.admin_list = [
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x100_u64, "old Anchor", 1_u16, Bytes[1]),
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x300_u64, "omitted peer", 1_u16, Bytes[2]),
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x200_u64, "candidate", 1_u16, Bytes[3]),
+    ]
+    im = FakeAnchorReadImClient.new(source)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    events = [] of String
+    old_anchor = FakeCredentialTransition.new("old Anchor", events, 0x100_u64)
+    candidate_rotation = FakeCredentialTransition.new("candidate", events, 0x200_u64)
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(0x1234_u64, 0x200_u64, 0xFFF2_u16)
+    migration = Matter::Controller::AnchorTransfer::RotationMigration.new(
+      im, session, Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
+      candidate, 0x200_u64, bootstrap,
+      [old_anchor.as(Matter::Controller::AnchorTransfer::CredentialTransition)],
+      candidate_rotation, -> { nil }, -> { nil }, finalize_administrators: -> { nil })
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64,
+      Matter::Controller::AnchorTransfer::Stage::Rotating)
+    journal.rotated_administrator_node_ids = [0x100_u64]
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(source,
+      FakeAnchorPort.new, migration, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) { nil }, journal)
+
+    expect_raises(Matter::ConfigurationError, /every other Datastore Administrator/) do
+      workflow.reconcile!(Matter::Controller::AnchorTransfer::Stage::Rotated)
+    end
+    workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating)
+  ensure
+    im.try(&.close)
+  end
+
+  it "resumes a three-Administrator rotation without replaying completed credentials" do
+    source = committed_anchor_store
+    candidate = committed_anchor_store
+    candidate.admin_list = [
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x100_u64, "old Anchor", 1_u16, Bytes[1]),
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x300_u64, "peer", 1_u16, Bytes[2]),
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x200_u64, "candidate", 1_u16, Bytes[3]),
+    ]
+    candidate.anchor_node_id = 0x200_u64
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(0x1234_u64, 0x200_u64, 0xFFF2_u16)
+    candidate.anchor_root_ca = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric.root_cert
+    im = FakeAnchorReadImClient.new(source)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    events = [] of String
+    old_anchor = FakeCredentialTransition.new("old Anchor", events, 0x100_u64)
+    peer = FakeCredentialTransition.new("peer", events, 0x300_u64)
+    peer.fail_transition = true
+    candidate_rotation = FakeCredentialTransition.new("candidate", events, 0x200_u64)
+    rotations = [old_anchor.as(Matter::Controller::AnchorTransfer::CredentialTransition),
+                 peer.as(Matter::Controller::AnchorTransfer::CredentialTransition)]
+    saved = [] of Matter::Controller::AnchorTransfer::Journal
+    persist = -> { events << "persist"; nil }
+    save = ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      saved << Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }
+    build_migration = -> {
+      Matter::Controller::AnchorTransfer::RotationMigration.new(
+        im, session, Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
+        candidate, 0x200_u64, bootstrap, rotations, candidate_rotation,
+        persist, -> { events << "advertise"; nil },
+        finalize_administrators: -> { events << "follow-up"; nil })
+    }
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64,
+      Matter::Controller::AnchorTransfer::Stage::Copied)
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(source,
+      FakeAnchorPort.new, build_migration.call, -> { true }, save, journal)
+
+    expect_raises(Matter::TransportError, /rotation interrupted/) { workflow.run }
+    workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating)
+    workflow.journal.rotated_administrator_node_ids.should eq([0x100_u64])
+    workflow.journal.active_rotation_node_id.should eq(0x300_u64)
+    saved.last.active_rotation_node_id.should eq(0x300_u64)
+
+    restored = Matter::Controller::AnchorTransfer::Journal.from_document(workflow.journal.to_document)
+    peer.fail_transition = false
+    resumed = Matter::Controller::AnchorTransfer::Workflow.new(source,
+      FakeAnchorPort.new, build_migration.call, -> { true }, save, restored)
+    expect_raises(Matter::CommissioningError, /reconciliation/) { resumed.run }
+    resumed.reconcile_rotation!(0x300_u64, completed: false)
+    expect_raises(Matter::CommissioningError, /Administrators remain unrotated/) do
+      resumed.reconcile!(Matter::Controller::AnchorTransfer::Stage::Rotated)
+    end
+    resumed.reconcile!(Matter::Controller::AnchorTransfer::Stage::Copied)
+    resumed.run
+
+    events.count("old Anchor").should eq(1)
+    events.count("peer").should eq(2)
+    events.count("candidate").should eq(1)
+    resumed.journal.rotated_administrator_node_ids.should eq([0x100_u64, 0x300_u64])
+    resumed.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
+  ensure
+    im.try(&.close)
+  end
+
   it "refuses a transfer snapshot when rotations omit an Administrator" do
     source = committed_anchor_store
     source.status = TransferDatastore::DatastoreStatusEntryStruct.new(
@@ -599,7 +741,7 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
     im.try(&.close)
   end
 
-  it "rotates other Administrators before promoting and advertising the candidate" do
+  it "rotates all three Administrators with newer CAT versions before promotion" do
     old_store = committed_anchor_store
     old_store.group_list = [
       TransferDatastore::DatastoreGroupInformationEntryStruct.new(1_u64, "administrators", nil,
@@ -609,7 +751,8 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
     ]
     old_store.admin_list = [
       TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x100_u64, "other", 1_u16, Bytes[1]),
-      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x200_u64, "candidate", 1_u16, Bytes[2]),
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x300_u64, "peer", 1_u16, Bytes[2]),
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x200_u64, "candidate", 1_u16, Bytes[3]),
     ]
     old_store.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
       Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
@@ -621,6 +764,7 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(0x1234_u64, 0x200_u64, 0xFFF2_u16)
     events = [] of String
     other = FakeCredentialTransition.new("other", events)
+    peer = FakeCredentialTransition.new("peer", events, 0x300_u64)
     anchor = FakeCredentialTransition.new("anchor", events, 0x200_u64)
     session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
       session_type: Matter::Session::SessionType::Unicast,
@@ -628,7 +772,8 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
     migration = Matter::Controller::AnchorTransfer::RotationMigration.new(
       im, session, Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
       candidate, 0x200_u64, bootstrap,
-      [other.as(Matter::Controller::AnchorTransfer::CredentialTransition)], anchor,
+      [other.as(Matter::Controller::AnchorTransfer::CredentialTransition),
+       peer.as(Matter::Controller::AnchorTransfer::CredentialTransition)], anchor,
       -> { events << "persist"; nil }, -> { events << "advertise"; nil },
       administrator_cat_version: 2_u16, anchor_cat_version: 2_u16,
       finalize_administrators: -> { events << "follow-up"; nil })
@@ -639,7 +784,7 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
     migration.promote_candidate!
     migration.follow_up_administrators!
 
-    events.should eq(["persist", "other", "persist", "anchor", "persist", "advertise", "follow-up"])
+    events.should eq(["persist", "other", "persist", "peer", "persist", "anchor", "persist", "advertise", "follow-up"])
     candidate.anchor_node_id.should eq(0x200_u64)
     candidate.anchor_root_ca.should eq(bootstrap.fabric.root_cert)
     candidate.anchor_vendor_id.should eq(bootstrap.fabric.admin_vendor_id)
