@@ -16,14 +16,18 @@ module Matter
     # The PASE and CASE handshakes, and the PASE parameters a commissioning
     # window configures.
     #
-    # Handshake state is keyed by exchange id: two commissioners talking to the
-    # node at once each get their own responder, and an abandoned handshake is
-    # forgotten rather than reused by whoever sends the next Sigma3.
+    # Handshake state is keyed by peer endpoint and exchange id: commissioners
+    # may independently choose the same exchange id, and an unsecured follow-up
+    # from another peer must not advance either handshake.
     class SecureChannel
       Log = ::Log.for("matter.protocol.secure_channel")
 
       # How long an incomplete handshake is kept before it is discarded.
       HANDSHAKE_TIMEOUT = 60.seconds
+
+      # PBKDFParamRequest and Sigma1 are unsecured. Bound their pending state
+      # across all peers while allowing a new commissioner to make progress.
+      MAX_HANDSHAKES_IN_FLIGHT = 64
 
       # SPAKE2+ context prefix (Matter spec 3.10).
       SPAKE_CONTEXT = "CHIP PAKE V1 Commissioning"
@@ -68,8 +72,24 @@ module Matter
         end
       end
 
-      @pase_handshakes : Hash(UInt16, PaseHandshake) = {} of UInt16 => PaseHandshake
-      @case_handshakes : Hash(UInt16, CaseHandshake) = {} of UInt16 => CaseHandshake
+      alias HandshakeKey = Tuple(Socket::IPAddress, UInt16)
+
+      @pase_handshakes : Hash(HandshakeKey, PaseHandshake) = {} of HandshakeKey => PaseHandshake
+      @case_handshakes : Hash(HandshakeKey, CaseHandshake) = {} of HandshakeKey => CaseHandshake
+
+      private def handshake_key(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : HandshakeKey
+        {peer, msg.payload_header.exchange_id}
+      end
+
+      private def evict_oldest_handshake : Nil
+        pase = @pase_handshakes.min_by? { |_, handshake| handshake.created_at }
+        case_entry = @case_handshakes.min_by? { |_, handshake| handshake.created_at }
+        if pase && (!case_entry || pase[1].created_at <= case_entry[1].created_at)
+          @pase_handshakes.delete(pase[0])
+        elsif case_entry
+          @case_handshakes.delete(case_entry[0])
+        end
+      end
 
       # The passcode the node commissions with, and the PBKDF parameters it
       # advertises. A commissioning window may replace them for its lifetime.
@@ -219,7 +239,9 @@ module Matter
         )
         Log.info { "Sent PBKDFParamResponse with session ID: #{responder_session_id}" }
 
-        @pase_handshakes[msg.payload_header.exchange_id] = PaseHandshake.new(
+        key = handshake_key(msg, peer)
+        evict_oldest_handshake if !@pase_handshakes.has_key?(key) && handshakes_in_flight >= MAX_HANDSHAKES_IN_FLIGHT
+        @pase_handshakes[key] = PaseHandshake.new(
           responder: build_pase_responder(spake_context_hash(request_payload, response_payload)),
           initiator_session_id: initiator_session_id,
           responder_session_id: responder_session_id
@@ -256,7 +278,7 @@ module Matter
       private def handle_pase_pake1(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil
         Log.info { "Handling PASE Pake1" }
 
-        handshake = @pase_handshakes[msg.payload_header.exchange_id]?
+        handshake = @pase_handshakes[handshake_key(msg, peer)]?
         unless handshake
           Log.error { "PASE responder not initialized - PBKDF request must come first (exchange=#{msg.payload_header.exchange_id})" }
           return
@@ -289,7 +311,8 @@ module Matter
         Log.info { "Handling PASE Pake3" }
 
         exchange_id = msg.payload_header.exchange_id
-        handshake = @pase_handshakes[exchange_id]?
+        key = handshake_key(msg, peer)
+        handshake = @pase_handshakes[key]?
         unless handshake
           Log.error { "PASE responder not initialized (exchange=#{exchange_id})" }
           return
@@ -308,7 +331,7 @@ module Matter
           Log.error { "PASE confirmation failed - cA doesn't match h_ay" }
           Log.trace { "  Expected: #{secret_and_verifiers.h_ay.hexstring}" }
           Log.trace { "  Received: #{c_a.hexstring}" }
-          @pase_handshakes.delete(exchange_id)
+          @pase_handshakes.delete(key)
           return
         end
         Log.debug { "PASE confirmation successful" }
@@ -327,7 +350,7 @@ module Matter
           attestation_challenge: keys[:attestation_challenge],
           initiator: false
         ))
-        @pase_handshakes.delete(exchange_id)
+        @pase_handshakes.delete(key)
 
         Log.info do
           "PASE secure session established (session_id=#{handshake.responder_session_id}, " \
@@ -394,7 +417,9 @@ module Matter
           sigma1_bytes: msg.payload
         )
 
-        @case_handshakes[msg.payload_header.exchange_id] = CaseHandshake.new(
+        key = handshake_key(msg, peer)
+        evict_oldest_handshake if !@case_handshakes.has_key?(key) && handshakes_in_flight >= MAX_HANDSHAKES_IN_FLIGHT
+        @case_handshakes[key] = CaseHandshake.new(
           responder: responder,
           fabric: fabric,
           initiator_session_id: sigma1.initiator_session_id,
@@ -452,7 +477,8 @@ module Matter
         Log.info { "Handling CASE Sigma3" }
 
         exchange_id = msg.payload_header.exchange_id
-        handshake = @case_handshakes[exchange_id]?
+        key = handshake_key(msg, peer)
+        handshake = @case_handshakes[key]?
         unless handshake
           Log.error { "CASE responder not initialized - Sigma1 must come first (exchange=#{exchange_id})" }
           return
@@ -464,7 +490,7 @@ module Matter
         responder = handshake.responder
         unless responder.process_sigma3(sigma3.encrypted3, msg.payload)
           Log.error { "CASE Sigma3 verification failed" }
-          @case_handshakes.delete(exchange_id)
+          @case_handshakes.delete(key)
           return
         end
         Log.debug { "CASE Sigma3 verified successfully" }
@@ -513,7 +539,7 @@ module Matter
         end
 
         @registry.establish_session(session)
-        @case_handshakes.delete(exchange_id)
+        @case_handshakes.delete(key)
 
         Log.info do
           "CASE secure session established (session_id=#{session.session_id}, " \
@@ -545,7 +571,7 @@ module Matter
         Log.warn { "StatusReport: general=#{Hex.u16(general)}, protocol=#{Hex.u16(protocol)} (peer=#{peer})" }
         return if general == STATUS_REPORT_SUCCESS
 
-        if @case_handshakes.has_key?(msg.payload_header.exchange_id)
+        if @case_handshakes.has_key?(handshake_key(msg, peer))
           Log.debug do
             "StatusReport during CASE: protocol=#{Hex.u16(protocol)} " \
             "(e.g. 0x0002 NO_SHARED_TRUST_ROOTS; check ICAC/root trust)"

@@ -2,14 +2,17 @@ require "../spec_helper"
 
 require "../../src/matter/protocol/secure_channel"
 
-private PEER = Socket::IPAddress.new("127.0.0.1", 5540)
+private PEER       = Socket::IPAddress.new("127.0.0.1", 5540)
+private OTHER_PEER = Socket::IPAddress.new("127.0.0.2", 5540)
 
-private ITERATIONS =     1000_u32
-private SETUP_PIN  = 20202021_u32
+private ITERATIONS              =     1000_u32
+private SETUP_PIN               = 20202021_u32
+private MAX_EXPECTED_HANDSHAKES =           64
 
 private record SecureChannelFixture,
   channel : Matter::Protocol::SecureChannel,
-  transport : Matter::Spec::CaptureTransport
+  transport : Matter::Spec::CaptureTransport,
+  fabric_table : Matter::FabricTable
 
 private def build_secure_channel : SecureChannelFixture
   transport = Matter::Spec::CaptureTransport.new_for_spec
@@ -17,8 +20,9 @@ private def build_secure_channel : SecureChannelFixture
   mrp_cache = Matter::Protocol::MrpCache.new(transport)
   registry = Matter::Protocol::SessionRegistry.new(mrp_cache: mrp_cache)
 
+  fabric_table = Matter::FabricTable.new(storage)
   channel = Matter::Protocol::SecureChannel.new(
-    fabric_table: Matter::FabricTable.new(storage),
+    fabric_table: fabric_table,
     registry: registry,
     sender: Matter::Protocol::ResponseSender.new(transport, mrp_cache),
     setup_pin: SETUP_PIN,
@@ -26,7 +30,51 @@ private def build_secure_channel : SecureChannelFixture
     salt: Bytes.new(32, 0x01_u8)
   )
 
-  SecureChannelFixture.new(channel, transport)
+  SecureChannelFixture.new(channel, transport, fabric_table)
+end
+
+private def case_sigma1_request(fabric : Matter::Fabric, exchange_id : UInt16,
+                                initiator_session_id : UInt16) : Matter::Codec::MessageCodec::Message
+  random = Random::Secure.random_bytes(32)
+  ephemeral = Matter::Crypto::StandardCrypto.new.create_key_pair.public_key
+  payload = Matter::Session::Case::Definitions::Sigma1.new(
+    initiator_random: random,
+    initiator_session_id: initiator_session_id,
+    destination_id: fabric.compute_destination_id(random),
+    initiator_eph_pub_key: ephemeral).to_slice
+  Matter::Codec::MessageCodec::Message.new(
+    packet_header: Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 0_u16,
+      session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 1_u32
+    ),
+    payload_header: Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: exchange_id,
+      protocol_id: Matter::Protocol::ProtocolId::SecureChannel.value,
+      message_type: Matter::Protocol::SecureChannelMessageType::CaseSigma1.value,
+      initiator_message: true,
+      requires_acknowledge: false
+    ),
+    payload: payload
+  )
+end
+
+private def case_test_fabric : Matter::Fabric
+  crypto = Matter::Crypto::StandardCrypto.new
+  authority = crypto.create_key_pair
+  operational = crypto.create_key_pair
+  fabric_id = 0x1234_u64
+  node_id = 0x4321_u64
+  noc = Matter::Crypto::MatterCertificate::Builder.node(
+    public_key: operational.public_key,
+    fabric_id: fabric_id,
+    node_id: node_id,
+    issuer_key: authority,
+    issuer_rcac_id: 1_u64,
+    serial: crypto.random_bytes(8),
+    crypto: crypto)
+  Matter::Fabric.new(fabric_id, 1_u8, node_id, authority.public_key, noc,
+    operational, Bytes.new(16, 0x01_u8))
 end
 
 # An unsecured PBKDFParamRequest, as a commissioner opens PASE with.
@@ -61,6 +109,25 @@ private def decode_pbkdf_response(packet_bytes : Bytes) : Matter::Session::Pase:
   Matter::Session::Pase::Definitions::PbkdfParamResponse.from_slice(message.payload)
 end
 
+private def pake1_request(exchange_id : UInt16) : Matter::Codec::MessageCodec::Message
+  point = Matter::Crypto::StandardCrypto.new.create_key_pair.public_key
+  Matter::Codec::MessageCodec::Message.new(
+    packet_header: Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 0_u16,
+      session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 2_u32
+    ),
+    payload_header: Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: exchange_id,
+      protocol_id: Matter::Protocol::ProtocolId::SecureChannel.value,
+      message_type: Matter::Protocol::SecureChannelMessageType::PasePake1.value,
+      initiator_message: true,
+      requires_acknowledge: false
+    ),
+    payload: Matter::Session::Pase::Definitions::Pake1.new(x: point).to_slice
+  )
+end
+
 describe Matter::Protocol::SecureChannel do
   it "keeps a separate handshake per exchange, so two commissioners do not collide" do
     fixture = build_secure_channel
@@ -74,6 +141,70 @@ describe Matter::Protocol::SecureChannel do
     session_ids = fixture.transport.sent_packets.map { |packet_bytes, _| decode_pbkdf_response(packet_bytes).responder_session_id }
     session_ids.size.should eq(2)
     session_ids.uniq.size.should eq(2)
+  end
+
+  it "keeps same-numbered PASE exchanges from different peers independent" do
+    fixture = build_secure_channel
+
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x1111_u16), PEER).should be_true
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x2222_u16), OTHER_PEER).should be_true
+
+    fixture.channel.handshakes_in_flight.should eq(2)
+    fixture.transport.sent_packets.map(&.[1]).should eq([PEER, OTHER_PEER])
+  end
+
+  it "does not advance another peer's PASE exchange" do
+    fixture = build_secure_channel
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x1111_u16), PEER)
+
+    fixture.channel.handle(pake1_request(1_u16), OTHER_PEER).should be_true
+
+    fixture.channel.handshakes_in_flight.should eq(1)
+    fixture.transport.sent_packets.size.should eq(1)
+  end
+
+  it "keeps same-numbered CASE exchanges from different peers independent" do
+    fixture = build_secure_channel
+    fabric = case_test_fabric
+    fixture.fabric_table.add_fabric(fabric).should be_true
+
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x1111_u16), PEER).should be_true
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x2222_u16), OTHER_PEER).should be_true
+
+    fixture.channel.handshakes_in_flight.should eq(2)
+    fixture.transport.sent_packets.map(&.[1]).should eq([PEER, OTHER_PEER])
+  end
+
+  it "bounds unauthenticated handshakes and evicts the oldest pending exchange" do
+    fixture = build_secure_channel
+    limit = MAX_EXPECTED_HANDSHAKES
+
+    (1..limit + 1).each do |number|
+      fixture.channel.handle(pbkdf_param_request(number.to_u16, number.to_u16), PEER).should be_true
+    end
+
+    fixture.channel.handshakes_in_flight.should eq(limit)
+    response_count = fixture.transport.sent_packets.size
+    fixture.channel.handle(pake1_request(1_u16), PEER).should be_true
+    fixture.transport.sent_packets.size.should eq(response_count)
+    fixture.channel.handle(pake1_request((limit + 1).to_u16), PEER).should be_true
+    fixture.transport.sent_packets.size.should eq(response_count + 1)
+  end
+
+  it "shares the pending-handshake limit between PASE and CASE" do
+    fixture = build_secure_channel
+    fabric = case_test_fabric
+    fixture.fabric_table.add_fabric(fabric).should be_true
+    (1..MAX_EXPECTED_HANDSHAKES).each do |number|
+      fixture.channel.handle(pbkdf_param_request(number.to_u16, number.to_u16), PEER)
+    end
+
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x2222_u16), OTHER_PEER).should be_true
+
+    fixture.channel.handshakes_in_flight.should eq(MAX_EXPECTED_HANDSHAKES)
+    response_count = fixture.transport.sent_packets.size
+    fixture.channel.handle(pake1_request(1_u16), PEER).should be_true
+    fixture.transport.sent_packets.size.should eq(response_count)
   end
 
   it "answers with the configured PBKDF parameters" do
