@@ -248,26 +248,44 @@ describe VidTrust::DclOperationalTrustAnchors do
       VidTrust::DclCertificate::Type::VIDSignerPKI, false)]
     matter_vvsc = dcl_test_matter_vvsc(leaf_key, leaf_skid, middle_key, dcl_test_skid(middle), crypto)
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, matter_vvsc).should be_true
+    source.signers.clear
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, matter_vvsc).should be_true
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, nil).should be_false
+    local_signer_key = crypto.create_key_pair
+    local_signer_skid = crypto.compute_sha1(local_signer_key.public_key)
+    local_vvsc = dcl_test_matter_vvsc(local_signer_key, local_signer_skid,
+      middle_key, dcl_test_skid(middle), crypto)
+    local_signature = crypto.sign_ecdsa(local_signer_key, tbs)
+    trust.verify_statement?(0x1234_u16, local_signer_skid, tbs, local_signature, local_vvsc).should be_true
+    source.signers = [VidTrust::DclCertificate.new(leaf, 0x1234_u16,
+      VidTrust::DclCertificate::Type::VIDSignerPKI, false)]
     altered_fields = TLV::Any.from_slice(matter_vvsc).as_structure
     altered_signature = altered_fields[11_u8].as_bytes.dup
     altered_signature[0] ^= 1_u8
     altered_fields[11_u8] = TLV::Any.new(altered_signature, 11_u8)
     altered_vvsc = TLV::Any.new(altered_fields, nil).to_slice
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, altered_vvsc).should be_false
-    wrong_id_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+    alternate_id_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
       fields[6_u8] = TLV::Any.new(TLV::List{
         TLV::Any.new(4_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
         TLV::Any.new("VID signer", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
       }, 6_u8)
     end
-    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, wrong_id_vvsc).should be_false
-    wrong_name_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, alternate_id_vvsc).should be_true
+    alternate_name_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
       fields[6_u8] = TLV::Any.new(TLV::List{
         TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
         TLV::Any.new("Other signer", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
       }, 6_u8)
     end
-    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, wrong_name_vvsc).should be_false
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, alternate_name_vvsc).should be_true
+    wrong_issuer_name_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      fields[3_u8] = TLV::Any.new(TLV::List{
+        TLV::Any.new(2_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::IcacId.value),
+        TLV::Any.new("Other CA", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+      }, 3_u8)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, wrong_issuer_name_vvsc).should be_false
     unknown_name_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
       fields[6_u8] = TLV::Any.new(TLV::List{
         TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
@@ -322,6 +340,17 @@ describe VidTrust::DclOperationalTrustAnchors do
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, tampered, matter_vvsc).should be_false
     source.intermediates.clear
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, matter_vvsc).should be_false
+    direct_vvsc = dcl_test_reissue_vvsc(matter_vvsc, root_key, crypto) do |fields|
+      fields[3_u8] = TLV::Any.new(TLV::List{
+        TLV::Any.new(1_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::RcacId.value),
+        TLV::Any.new("Root CA", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+      }, 3_u8)
+      extensions = fields[10_u8].as_list
+      extensions[3] = TLV::Any.new(dcl_test_skid(root),
+        Matter::Crypto::MatterCertificate::Asn1::Extension::AuthorityKeyIdentifier.value)
+    end
+    source.signers.clear
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, direct_vvsc).should be_true
     direct_leaf = dcl_test_certificate(leaf_key, root_key, leaf_name,
       OpenSSL::X509::Certificate.from_der(root), 10, false)
     source.signers = [VidTrust::DclCertificate.new(direct_leaf, 0x1234_u16,

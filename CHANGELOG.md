@@ -29,9 +29,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Joint Fabric operational VID trust
 
 - Validate an optional Matter-TLV VVSC as a signed, current Vendor Verification
-  Signer certificate from the same approved DCL Root/ICA path. Check its VVS
-  identity, key usage, CA flag, SKID/AKID, signing key, and issuer, and reject
-  altered signatures or mismatched profiles.
+  Signer certificate through an approved DCL Root/ICA path, without requiring
+  a duplicate DCL signer leaf. Check its VVS identity, key usage, CA flag,
+  SKID/AKID, signing key, and issuer, and reject altered signatures or
+  mismatched profiles.
 - Bind a DCL OperationalPKI root to the candidate Matter RCAC by VID, RCAC ID,
   public key, and SKID. Require a VIDSignerPKI leaf with the Matter VID signer
   subject and a signed OperationalPKI Root/ICA CA path before accepting a VID

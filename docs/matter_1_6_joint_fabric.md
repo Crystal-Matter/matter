@@ -301,21 +301,23 @@ For DCL-backed operational VID checks, construct
 and pass it to the JCM verifier. The gateway URL is an explicit HTTPS origin.
 The adapter reads the DCL's active, VID-scoped NOC root, ICA, and signer indexes.
 It verifies the operational RCAC ID, public key, and SKID against an approved
-OperationalPKI root. For a VVS, it validates the signature through a
-VIDSignerPKI leaf issued by an
-OperationalPKI Root/ICA CA chain of at most three certificates. The signer
-must carry the Matter VID signer subject, use P-256 ECDSA-SHA256, and have the
-leaf digital-signature profile; CA parents need the Matter Root/ICA subject and
-certificate-signing profile. The built-in fetcher uses a 1 MiB streaming limit,
+OperationalPKI root. Without a supplied VVSC, it validates a VVS signature
+through a DCL VIDSignerPKI leaf issued by an OperationalPKI Root/ICA CA chain
+of at most three certificates. That signer must carry the Matter VID signer
+subject, use P-256 ECDSA-SHA256, and have the leaf digital-signature profile.
+With a supplied VVSC, it validates the signed Matter certificate through the
+DCL OperationalPKI Root/ICA CA path without requiring a duplicate DCL signer
+leaf. CA parents need the Matter Root/ICA subject and certificate-signing
+profile. The built-in fetcher uses a 1 MiB streaming limit,
 five-second connection/read timeouts, and rejects redirects.
 CA path length constraints are enforced for the signer chain.
 Missing, malformed, expired, mismatched, or removed records fail closed.
 Applications may implement `DclSource` for a locally authenticated DCL mirror.
 An untrusted gateway can lie about the active/revoked status, so deploy with a
 gateway whose ledger synchronization and transport you trust. The optional
-Matter-TLV VVSC is checked for the approved signer key and VVS identifier,
-ordered subject and issuer names, validity, digital-signature usage, non-CA
-status, SKID/AKID, and signature under its DCL-approved Root/ICA issuer. The
+Matter-TLV VVSC is checked for its VVS identifier, issuer name, validity,
+digital-signature usage, non-CA status, SKID/AKID, and signature under its
+DCL-approved Root/ICA issuer. The
 SDK v1.6 does not implement independent VVS path verification, so this path
 still needs an independent ecosystem interoperability run.
 

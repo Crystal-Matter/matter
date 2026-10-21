@@ -101,7 +101,8 @@ module Matter
       end
 
       # Verifies an Operational RCAC against a VID-scoped DCL root, or a VVS
-      # through a VID Signer leaf issued by a DCL OperationalPKI Root/ICA.
+      # through a supplied VVSC or DCL VID Signer leaf issued by a DCL
+      # OperationalPKI Root/ICA.
       class DclOperationalTrustAnchors < OperationalTrustAnchors
         Log                                = ::Log.for("matter.controller.vid_verification_dcl")
         MAX_SIGNER_CHAIN_DEPTH             =          3
@@ -146,13 +147,19 @@ module Matter
           return false unless signer_skid.size == KEY_ID_SIZE && signature.size == 64
           roots = @source.roots_for(vendor_id).select { |record| ca_record?(record, vendor_id, root: true) }
           intermediates = @source.intermediates_for(vendor_id).select { |record| ca_record?(record, vendor_id, root: false) }
+          if vvsc
+            return false unless valid_matter_vvsc?(vvsc, signer_skid, intermediates, roots)
+            key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
+            key.public_bits = Crypto::MatterCertificate.public_key_from_tlv(vvsc)
+            @crypto.verify_ecdsa(key, statement_tbs, signature)
+            return true
+          end
           signers = @source.signers_for(vendor_id, signer_skid)
           signers.any? do |record|
             next false unless signer_record?(record, vendor_id)
             cert = record.certificate
             next false unless key_id(cert) == signer_skid
             next false unless signer_chain?(cert, intermediates, roots, 1)
-            next false if vvsc && !matches_matter_vvsc?(vvsc, cert, signer_skid, intermediates, roots)
             key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
             key.public_bits = cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes
             @crypto.verify_ecdsa(key, statement_tbs, signature)
@@ -225,12 +232,12 @@ module Matter
           path_length == -1 || path_length >= subordinate_cas
         end
 
-        # NOCStruct carries the VVSC as a Matter TLV certificate, while the
-        # DCL publishes the X.509 form. Both encodings must name the approved
-        # signer and the TLV certificate must be signed by its trusted issuer.
-        private def matches_matter_vvsc?(vvsc : Bytes, cert : OpenSSL::X509::Certificate,
-                                         signer_skid : Bytes, intermediates : Array(DclCertificate),
-                                         roots : Array(DclCertificate)) : Bool
+        # NOCStruct carries the VVSC as a Matter TLV certificate. The DCL
+        # supplies its issuer path; a separate DCL VID Signer leaf is not
+        # required when the VVSC is present.
+        private def valid_matter_vvsc?(vvsc : Bytes, signer_skid : Bytes,
+                                       intermediates : Array(DclCertificate),
+                                       roots : Array(DclCertificate)) : Bool
           return false if vvsc.size > MAX_VVSC_SIZE
           matter_cert = Crypto::MatterCertificate.from_slice(vvsc)
           subject = matter_cert.subject
@@ -243,10 +250,7 @@ module Matter
           subject_fields = matter_subject.as_list
           return false unless valid_matter_name?(matter_subject) &&
                               subject_fields.count { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Dn::VvsId.value } == 1
-          return false unless matter_subject?(cert, VID_SIGNER_ID_OID, vvs_id) &&
-                              Crypto::MatterCertificate::Asn1.distinguished_name_der(matter_subject) == name_der(cert.subject) &&
-                              matter_cert.ec_public_key == cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes &&
-                              matter_key_id(vvsc) == signer_skid &&
+          return false unless matter_key_id(vvsc) == signer_skid &&
                               @crypto.compute_sha1(matter_cert.ec_public_key) == signer_skid
           valid_profile = matter_cert.signature_algorithm == MATTER_CERTIFICATE_ALGORITHM &&
                           matter_cert.public_key_algorithm == MATTER_CERTIFICATE_ALGORITHM &&
@@ -274,14 +278,12 @@ module Matter
 
           (intermediates + roots).any? do |parent_record|
             parent = parent_record.certificate
-            next false unless cert.issuer.to_a == parent.subject.to_a &&
-                              Crypto::MatterCertificate::Asn1.distinguished_name_der(matter_issuer) == name_der(parent.subject) &&
-                              key_id(cert, authority: true) == key_id(parent) &&
-                              cert.verify(parent.public_key) &&
+            next false unless Crypto::MatterCertificate::Asn1.distinguished_name_der(matter_issuer) == name_der(parent.subject) &&
                               matter_key_id(vvsc, authority: true) == key_id(parent)
             next false unless parent_record.root? ? (!issuer.rcac_id.nil? && issuer.icac_id.nil? &&
                               matter_subject?(parent, ROOT_ID_OID, issuer.rcac_id)) : (!issuer.icac_id.nil? && issuer.rcac_id.nil? &&
                               matter_subject?(parent, ICA_ID_OID, issuer.icac_id))
+            next false unless parent_record.root? ? valid_root?(parent) && valid_path_length?(parent, 0) : signer_chain?(parent, intermediates.reject(&.==(parent_record)), roots, 2)
             begin
               Crypto::MatterCertificate::Validation.verify_signature(vvsc,
                 parent.public_key.as(OpenSSL::PKey::EC).public_key_bytes)
