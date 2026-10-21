@@ -306,7 +306,11 @@ point set with `vendor_id`, `label`, and `product_id` where the PAI carries one.
 An injected fetch callback must
 apply the same byte limit, scheme/host/port allowlist, and redirect policy.
 
-`ImClient` also has `write_attribute`, `write_attributes` and `invoke`;
+`ImClient` also has `write_attribute`, `write_attributes` and `invoke`. Large
+list writes are sent as an empty replacement followed by append items in
+bounded WriteRequest chunks on one exchange. The client waits for each
+WriteResponse, stops after a failed status, and returns the collected statuses.
+Timed writes that would require multiple chunks fail before sending.
 `Commissioning::CommissioningWindowOpener` opens an enhanced commissioning window on an already
 commissioned node and hands back a manual pairing code for it.
 

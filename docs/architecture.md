@@ -197,6 +197,10 @@ attribute; an orphan append receives `Busy`. `InteractionRouter` retains that
 list state across WriteRequest chunks on the same secure session and exchange,
 responds to each chunk, and drops the state after the final chunk or timeout.
 Timed writes cannot be chunked.
+The controller budgets each WriteRequest to 1,100 TLV bytes. An oversized
+list becomes an empty replacement plus null-ListIndex appends; all chunks use
+one exchange and each WriteResponse is read before the next chunk is sent.
+One list item that cannot fit in a chunk is rejected before network I/O.
 
 ## Node, endpoints and clusters
 

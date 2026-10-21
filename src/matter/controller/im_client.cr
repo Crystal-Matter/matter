@@ -22,6 +22,8 @@ module Matter
       MAX_TIMED_REQUEST_TIMEOUT_MS  = UInt16::MAX
       MAX_READ_REPORT_CHUNKS        =       128
       MAX_READ_REPORT_BYTES         = 1_048_576
+      # Leave room for Matter, UDP, and IPv6 headers within the minimum MTU.
+      MAX_WRITE_PAYLOAD_SIZE = 1100
 
       def initialize(@client : Client, @timeout : Time::Span = 10.seconds)
       end
@@ -232,49 +234,109 @@ module Matter
         timed_request_timeout : Time::Span = DEFAULT_TIMED_REQUEST_TIMEOUT,
         data_versions : Hash(Tuple(UInt16, UInt32), UInt32)? = nil,
       ) : InteractionModel::WriteResponseMessage
-        write_ibs = writes.map do |endpoint_id, cluster_id, attribute_id, value|
+        write_ibs = writes.flat_map do |endpoint_id, cluster_id, attribute_id, value|
           path = InteractionModel::AttributePath.new(
             endpoint: endpoint_id,
             cluster: cluster_id,
             attribute: attribute_id
           )
 
-          InteractionModel::AttributeDataIB.new(
+          data = InteractionModel::AttributeDataIB.new(
             path: path,
             data: TLV::Any.from_slice(value),
             data_version: data_versions.try(&.[{endpoint_id, cluster_id}]?)
           )
+          expand_large_list_write(data, suppress_response, timed_request)
+        end
+        chunks = chunk_write_requests(write_ibs, suppress_response, timed_request)
+        if timed_request && chunks.size > 1
+          raise Matter::ConfigurationError.new("Timed WriteRequest cannot be chunked")
         end
 
-        request = InteractionModel::WriteRequestMessage.new(
+        exchange_id = begin_timed_request(session, peer, timed_request_timeout) if timed_request
+        exchange_id ||= @client.next_exchange_id
+        statuses = [] of InteractionModel::AttributeStatusIB
+        chunks.each_with_index do |chunk, index|
+          request = write_request(chunk, suppress_response, timed_request, index < chunks.size - 1)
+          @client.send_encrypted_request(
+            session: session,
+            peer: peer,
+            protocol_id: Client::PROTOCOL_INTERACTION_MODEL,
+            message_type: MSG_WRITE_REQUEST,
+            payload: request.to_slice,
+            exchange_id: exchange_id,
+            requires_ack: true
+          )
+
+          response = @client.wait_for_any(exchange_id, Client::PROTOCOL_INTERACTION_MODEL,
+            [MSG_WRITE_RESPONSE, MSG_STATUS_RESPONSE], @timeout)
+          raise Matter::TimeoutError.new("IM: timeout waiting for WriteResponse (exchange=#{exchange_id})") unless response
+          unless response.message.packet_header.session_id == session.session_id
+            raise Matter::ProtocolError.new("IM: Write response arrived on another session (exchange=#{exchange_id})")
+          end
+          raise_follow_up_status!(response, "WriteRequest", exchange_id)
+          chunk_statuses = InteractionModel::WriteResponseMessage.from_slice(response.message.payload.to_slice).write_responses
+          unless chunk_statuses.size == chunk.size
+            raise Matter::ProtocolError.new("IM: WriteResponse status count did not match WriteRequest (exchange=#{exchange_id})")
+          end
+          statuses.concat(chunk_statuses)
+          break unless chunk_statuses.all? { |status| status.status.status == InteractionModel::StatusCode::Success.value }
+        end
+
+        InteractionModel::WriteResponseMessage.new(statuses)
+      end
+
+      private def write_request(items : Array(InteractionModel::AttributeDataIB), suppress_response : Bool,
+                                timed_request : Bool, more : Bool) : InteractionModel::WriteRequestMessage
+        InteractionModel::WriteRequestMessage.new(
           suppress_response: suppress_response,
           timed_request: timed_request,
-          write_requests: write_ibs,
-          more_chunked_messages: false,
-          interaction_model_revision: 12_u8
+          write_requests: items,
+          more_chunked_messages: more,
+          interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION
         )
+      end
 
-        exchange_id = begin_timed_request(session, peer, timed_request_timeout) if timed_request
-        exchange_id = @client.send_encrypted_request(
-          session: session,
-          peer: peer,
-          protocol_id: Client::PROTOCOL_INTERACTION_MODEL,
-          message_type: MSG_WRITE_REQUEST,
-          payload: request.to_slice,
-          exchange_id: exchange_id || @client.next_exchange_id,
-          requires_ack: true
-        )
+      private def chunk_write_requests(items : Array(InteractionModel::AttributeDataIB), suppress_response : Bool,
+                                       timed_request : Bool) : Array(Array(InteractionModel::AttributeDataIB))
+        chunks = [] of Array(InteractionModel::AttributeDataIB)
+        current = [] of InteractionModel::AttributeDataIB
+        items.each do |item|
+          candidate = current + [item]
+          if write_request(candidate, suppress_response, timed_request, true).to_slice.size > MAX_WRITE_PAYLOAD_SIZE
+            if current.empty?
+              raise Matter::ConfigurationError.new("Write attribute exceeds the Matter message size")
+            end
+            chunks << current
+            current = [item]
+            if write_request(current, suppress_response, timed_request, true).to_slice.size > MAX_WRITE_PAYLOAD_SIZE
+              raise Matter::ConfigurationError.new("Write attribute exceeds the Matter message size")
+            end
+          else
+            current = candidate
+          end
+        end
+        chunks << current unless current.empty?
+        chunks << current if chunks.empty?
+        chunks
+      end
 
-        response = if timed_request
-                     @client.wait_for_any(exchange_id, Client::PROTOCOL_INTERACTION_MODEL,
-                       [MSG_WRITE_RESPONSE, MSG_STATUS_RESPONSE], @timeout)
-                   else
-                     @client.wait_for(exchange_id, Client::PROTOCOL_INTERACTION_MODEL, MSG_WRITE_RESPONSE, @timeout)
-                   end
-        raise Matter::TimeoutError.new("IM: timeout waiting for WriteResponse (exchange=#{exchange_id})") unless response
-        raise_follow_up_status!(response, "WriteRequest", exchange_id) if timed_request
+      private def expand_large_list_write(data : InteractionModel::AttributeDataIB,
+                                          suppress_response : Bool, timed_request : Bool) : Array(InteractionModel::AttributeDataIB)
+        return [data] if write_request([data], suppress_response, timed_request, false).to_slice.size <= MAX_WRITE_PAYLOAD_SIZE
+        return [data] unless data.data.header.element_type.array?
 
-        InteractionModel::WriteResponseMessage.from_slice(response.message.payload.to_slice)
+        path = data.path
+        append_path = InteractionModel::AttributePath.new(
+          endpoint: path.endpoint, cluster: path.cluster, attribute: path.attribute,
+          list_index_null: true)
+        empty = InteractionModel::AttributeDataIB.new(path,
+          TLV::Any.new(TLV::List.new, nil, as_array: true), data.data_version)
+        items = data.data.as_list.map do |item|
+          anonymous = TLV::Any.new(TLV::Header.new(item.header.element_type), item.value)
+          InteractionModel::AttributeDataIB.new(append_path, anonymous, data.data_version)
+        end
+        [empty] + items
       end
 
       def invoke(
