@@ -341,7 +341,8 @@ module Matter
         group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
         return unless group_keys
         addresses = @fabric_table.all_fabrics.flat_map do |fabric|
-          group_keys.group_table(fabric.fabric_index).map do |group|
+          mapped = group_keys.group_key_map(fabric.fabric_index).map(&.group_id)
+          group_keys.group_table(fabric.fabric_index).select { |group| mapped.includes?(group.group_id) }.map do |group|
             Transport::GroupMulticast.address(fabric.fabric_id, group.group_id, @transport.port)
           end
         end

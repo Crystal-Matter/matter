@@ -50,7 +50,7 @@ describe Matter::Protocol::GroupInteractionRouter do
     decoded = Matter::Session::GroupSecurePacket.new([key]).decode(wire)
     router = Matter::Protocol::GroupInteractionRouter.new(clusters, gkm)
     router.handle(decoded).should be_nil
-    on_1.on?.should be_true
+    on_1.on?.should be_false
     on_2.on?.should be_false
 
     on_1.off

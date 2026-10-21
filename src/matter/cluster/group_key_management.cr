@@ -586,23 +586,14 @@ module Matter
       # Add a group to the group table
       # Called by Groups cluster when AddGroup command is executed
       #
-      # Validations:
-      # - Group must have a corresponding key map entry
-      # - Must not exceed max_groups_per_fabric
+      # Membership can be provisioned before its GroupKeyMap entry. A mapped
+      # operational key is required only when receiving group messages.
       def add_group(
         group_id : UInt16,
         endpoint_id : UInt16,
         group_name : String?,
         fabric_index : UInt8,
       ) : Nil
-        # Validate that group has a key map entry
-        has_key_map = @group_key_map.any? do |entry|
-          entry.fabric_index == fabric_index && entry.group_id == group_id
-        end
-        unless has_key_map
-          raise Matter::ClusterError.new("Group #{group_id} has no key map entry", InteractionModel::StatusCode::NotFound)
-        end
-
         # Find or create group info
         existing = @group_table.find do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id

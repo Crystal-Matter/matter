@@ -15,6 +15,7 @@ module Matter
                  key : Session::GroupSecurePacket::Key,
                  commands : Array(InteractionModel::CommandDataIBTlv)) : Nil
         raise ArgumentError.new("Group key is for another fabric") unless key.fabric_index == fabric_index
+        raise ArgumentError.new("Group key is not bound to the multicast fabric") unless key.fabric_id == fabric_id
         raise ArgumentError.new("At least one command is required") if commands.empty?
         raise ArgumentError.new("Group command paths must omit endpoint") if commands.any?(&.command_path.endpoint)
         request = InteractionModel::InvokeRequestMessage.new(commands,

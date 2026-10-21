@@ -16,13 +16,16 @@ module Matter
 
       struct Key
         getter fabric_index : UInt8
+        getter fabric_id : UInt64?
         getter group_id : DataType::GroupId
         getter operational_key : Bytes
         getter session_id : UInt16
         getter privacy_key : Bytes
 
-        def initialize(@fabric_index : UInt8, group_id : UInt16, @operational_key : Bytes)
+        def initialize(@fabric_index : UInt8, group_id : UInt16, @operational_key : Bytes,
+                       @fabric_id : UInt64? = nil)
           raise Matter::SessionError.new("Group key requires a fabric") if @fabric_index == 0
+          raise Matter::SessionError.new("Fabric ID zero is reserved") if @fabric_id == 0_u64
           raise Matter::SessionError.new("Group ID zero is reserved") if group_id == 0
           raise Matter::SessionError.new("Operational group key must be 16 bytes") unless @operational_key.size == 16
           @group_id = DataType::GroupId.new(group_id)

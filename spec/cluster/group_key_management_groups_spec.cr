@@ -174,14 +174,13 @@ module Matter::Cluster
         groups[0].endpoints.should eq([1_u16, 2_u16])
       end
 
-      it "rejects group without key map entry" do
+      it "allows group membership before key map provisioning" do
         cluster = build(GroupKeyManagement, 0)
         fabric_index = 1_u8
 
-        error = expect_raises(Matter::ClusterError, /has no key map entry/) do
-          cluster.add_group(100_u16, endpoint_id: 1_u16, group_name: nil, fabric_index: fabric_index)
-        end
-        error.status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+        cluster.add_group(100_u16, endpoint_id: 1_u16, group_name: nil, fabric_index: fabric_index)
+        cluster.group_table(fabric_index).first.endpoints.should eq([1_u16])
+        cluster.group_key_map(fabric_index).should be_empty
       end
 
       it "enforces max_groups_per_fabric limit" do

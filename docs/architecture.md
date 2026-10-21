@@ -111,13 +111,15 @@ blocks of node-global data and control counters in durable storage before use;
 it skips unused values after restart and refuses wraparound. A sender passes
 the returned value to `GroupSecurePacket#encode`.
 
-The device runtime joins PerGroupId IPv6 multicast addresses from its
-fabric-scoped GroupTable, which follows Groups cluster membership changes.
+The device runtime joins PerGroupId IPv6 multicast addresses for groups with
+both fabric-scoped GroupTable membership and a GroupKeyMap binding. Groups
+membership may be provisioned before its key mapping.
 Fabric removal clears its key sets, mappings, group names, and multicast joins
 before the local FabricIndex can be reused.
 It authenticates private group packets against mapped epoch keys before
 parsing commands, replay checks, or ACL evaluation. A group command path
-without an Endpoint tag expands over member endpoints; each expansion passes
+without an Endpoint tag expands over member endpoints; an explicit Endpoint
+tag is invalid on a group command path. Each expansion passes
 its own Group ACL check. No group response or acknowledgement is sent.
 `Protocol::GroupMessageSender` emits one-way group InvokeRequests using durable
 `Session::GroupOutgoingCounters`; callers currently supply the fabric identity,

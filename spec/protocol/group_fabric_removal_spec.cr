@@ -41,12 +41,15 @@ describe "group fabric removal" do
       key_set = Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(5_u16,
         epoch_key0: Bytes.new(16, index), epoch_start_time0: 1_u64)
       gkm.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(key_set), index)
-      gkm.add_group_key_map(index.to_u16, 5_u16, index)
       groups.with_request_context do
         groups.request_fabric_index = index
         groups.add_group(Matter::Cluster::Groups::AddGroupRequest.new(
           Matter::DataType::GroupId.new(index.to_u16), "Fabric #{index}"))
       end
+      gkm.group_table(index).size.should eq(1)
+      transport.group_memberships.size.should eq(index.to_i - 1)
+      gkm.add_group_key_map(index.to_u16, 5_u16, index)
+      handler.refresh_group_memberships
     end
     transport.group_memberships.size.should eq(2)
 

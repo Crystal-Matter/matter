@@ -34,11 +34,13 @@ module Matter
         request = IMHandler.parse_invoke_request(message.payload, allow_group_path: true)
         return unless request
         return if request.timed_request
+        # A group CommandPath carries the Group ID in the packet header; its
+        # Endpoint field is absent (Core §8.9.4.2). Reject the whole action.
+        return if request.invoke_requests.any?(&.command_path.endpoint)
 
         request.invoke_requests.each do |command|
           path = command.command_path
-          endpoints = path.endpoint ? [path.endpoint.as(UInt16)] : group.endpoints
-          endpoints.each do |endpoint|
+          group.endpoints.each do |endpoint|
             next unless group.endpoints.includes?(endpoint)
             cluster = @clusters[{endpoint, path.cluster}]?
             next unless cluster
