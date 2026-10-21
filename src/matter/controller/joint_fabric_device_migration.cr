@@ -535,7 +535,6 @@ module Matter
                                  peer : Socket::IPAddress) : Session::SecureContext
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, fabric,
             peer_node_id: node_id, timeout: @timeout)
-          @client.register_session(session)
           session
         end
 
