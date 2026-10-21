@@ -294,7 +294,11 @@ the application supplies those and registers any BDX file designator separately.
 The Requestor cluster declares AnnounceOTAProvider and the StateTransition,
 VersionApplied, and DownloadError events. `Controller::OtaRequestorClient`
 uses the shared controller's IM and BDX clients to query and stage an image on
-the provider's CASE session. `Protocol::OtaImage` validates the staged file in
+the provider's CASE session. HTTPS offers are supported only when an
+`OtaHttpsDownloader` is supplied; it streams over certificate-checked TLS into
+the same application-owned sink. A wired consent callback is advertised in
+QueryImage and gates either download transport when the provider requests
+consent. `Protocol::OtaImage` validates the staged file in
 bounded reads, including its header identity, version, size, and payload
 digest. The staging IO belongs to the application; installing a validated
 image and surviving rollback remain application responsibilities. The client

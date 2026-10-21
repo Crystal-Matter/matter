@@ -64,6 +64,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### OTA Software Update Requestor
 
+- Support opt-in HTTPS image offers with bounded streaming and verified TLS,
+  advertise user-consent capability only when an application callback is
+  wired, and obtain consent before downloading when the provider requires it.
 - Add typed AnnounceOTAProvider command and Requestor lifecycle events, plus a
   CASE QueryImage and BDX download client that stages a bounded image in
   caller-owned storage and validates its Matter header and payload digest.
