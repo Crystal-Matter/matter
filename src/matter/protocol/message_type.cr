@@ -21,6 +21,7 @@ module Matter
       CaseSigma3         = 0x32
       CaseSigma2Resume   = 0x33
       StatusReport       = 0x40
+      IcdCheckIn         = 0x50
     end
   end
 end

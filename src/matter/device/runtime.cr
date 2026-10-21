@@ -21,6 +21,7 @@ require "../cluster/general_diagnostics"
 require "../cluster/network_commissioning"
 require "../cluster/group_key_management"
 require "../cluster/ota_requestor"
+require "../cluster/icd_management"
 require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
 require "../cluster/thread_network_diagnostics"
@@ -83,6 +84,10 @@ module Matter
     getter responder : MDNS::Responder
     getter lifecycle : LifecycleManager
 
+    # The application supplies a current operational address for a registered
+    # Check-In client. No stale CASE peer address is reused after sleep.
+    property icd_peer_resolver : Proc(UInt8, UInt64, Socket::IPAddress?)? = nil
+
     @shutdown_channel : Channel(Nil) = Channel(Nil).new
     @basic_info : Cluster::BasicInformation? = nil
     @general_commissioning : Cluster::GeneralCommissioning? = nil
@@ -128,6 +133,7 @@ module Matter
       @network_backend : Network::Backend? = nil,
       @tc_min_required_version : UInt16? = nil,
       @tc_required_acknowledgements : UInt16 = 0_u16,
+      @icd_configuration : Cluster::IcdManagement::Configuration? = nil,
     )
       @ip_addresses = ip_addresses || default_ip_addresses
 
@@ -159,6 +165,27 @@ module Matter
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
       @message_handler.refresh_group_memberships
+      if icd = icd_management
+        icd.retain_fabrics(@fabric_table.all_fabrics.map(&.fabric_index))
+        # restore_state advances the counter by 1000; commit that advancement
+        # before any outbound Check-In can reuse a prior AES-CCM nonce.
+        @persistence.save_cluster(icd)
+        icd.on_persist_counter = -> { @persistence.save_cluster(icd) }
+        icd.on_persist_registration = -> { @persistence.save_cluster(icd) }
+        icd.on_monitored_subject_covered = ->(fabric_index : UInt8, subject : UInt64) do
+          @message_handler.active_subscriptions.each_value.any? do |subscription|
+            session = subscription.session
+            session.case_session? && session.fabric_index == fabric_index &&
+              (session.peer_subject_ids.includes?(subject) || session.peer_node_id.try(&.id) == subject)
+          end
+        end
+        icd.on_check_in = ->(fabric_index : UInt8, node_id : UInt64, key : Bytes, counter : UInt32, threshold : UInt16) do
+          if peer = @icd_peer_resolver.try(&.call(fabric_index, node_id))
+            send_icd_check_in(peer, key, counter, threshold)
+          end
+          nil
+        end
+      end
 
       @lifecycle = LifecycleManager.new(
         fabric_table: @fabric_table,
@@ -174,6 +201,10 @@ module Matter
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
+        icd_management.try do |fabric_icd|
+          fabric_icd.remove_fabric(fabric_index)
+          @persistence.save_cluster(fabric_icd)
+        end
         fabric_removed(fabric_index)
       end
       @lifecycle.on_commissioned = ->(fabric : Fabric) do
@@ -361,11 +392,46 @@ module Matter
     end
 
     protected def operational_info_for(fabric : Fabric) : MDNS::OperationalInfo
+      icd = icd_management
       MDNS::OperationalInfo.new(
         compressed_fabric_id: fabric.compressed_fabric_id,
         node_id: fabric.node_id,
+        session_idle_interval: icd && icd.operating_mode.sit? ? icd.idle_mode_duration * 1000_u32 : nil,
+        session_active_interval: icd.try(&.active_mode_duration),
         tcp_supported: false
       )
+    end
+
+    def icd_management : Cluster::IcdManagement?
+      @node.get_cluster(Cluster::IcdManagement)
+    end
+
+    def icd_enter_idle_mode : Nil
+      icd_management.try(&.enter_idle_mode)
+    end
+
+    def icd_request_active_mode : Nil
+      icd_management.try(&.request_active_mode)
+    end
+
+    def icd_trigger_user_active_mode : Nil
+      icd_management.try(&.trigger_user_active_mode)
+    end
+
+    private def send_icd_check_in(peer : Socket::IPAddress, key : Bytes,
+                                  counter : UInt32, threshold : UInt16) : Nil
+      payload = Protocol::Icd::CheckInMessage.encode_icd(key, counter, threshold)
+      packet = Codec::MessageCodec::PacketHeader.new(
+        session_id: 0_u16,
+        session_type: Codec::MessageCodec::SessionType::Unicast,
+        message_id: 0_u32)
+      header = Codec::MessageCodec::PayloadHeader.new(
+        exchange_id: Random::Secure.rand(UInt16),
+        protocol_id: Protocol::ProtocolId::SecureChannel.value,
+        message_type: Protocol::SecureChannelMessageType::IcdCheckIn.value,
+        initiator_message: true,
+        requires_acknowledge: false)
+      @transport.send_message(Codec::MessageCodec::Message.new(packet, header, payload), peer)
     end
 
     # ------------------------------------------------------------------------
@@ -440,6 +506,7 @@ module Matter
       end
       group_key_management = Cluster::GroupKeyManagement.new(endpoint_0)
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)
+      icd_management = @icd_configuration.try { |config| Cluster::IcdManagement.new(endpoint_0, configuration: config) }
       diagnostic_logs = Cluster::DiagnosticLogs.new(endpoint_0)
       diagnostic_logs.on_bdx_transfer = ->(session_id : UInt16, fabric_index : UInt8, peer_node_id : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
         @message_handler.queue_bdx_transfer(session_id, fabric_index,
@@ -495,6 +562,7 @@ module Matter
         ota_requestor,
         diagnostic_logs,
       ].each { |cluster| root.add_cluster(cluster) }
+      root.add_cluster(icd_management.as(Cluster::IcdManagement)) if icd_management
       root.add_cluster(ethernet_diagnostics.as(Cluster::EthernetNetworkDiagnostics)) if ethernet_diagnostics
       root.add_cluster(wifi_diagnostics.as(Cluster::WiFiNetworkDiagnostics)) if wifi_diagnostics
       root.add_cluster(thread_diagnostics.as(Cluster::ThreadNetworkDiagnostics)) if thread_diagnostics
