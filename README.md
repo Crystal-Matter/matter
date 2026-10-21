@@ -189,6 +189,11 @@ Each `PowerSource` also exposes the Matter 1.6 mandatory `EndpointList`;
 pass the powered endpoint numbers at construction or call
 `update_endpoint_list` when the mapping changes.
 
+Boolean State advertises revision 3 and ChangeEvent by default; changing
+`StateValue` through `update_state` or its setter emits a typed StateChange
+event once per actual change. Pass `feature_map: BooleanState::Feature::None`
+to omit the event on devices that do not support it.
+
 Energy devices can add `ElectricalPowerMeasurement`,
 `ElectricalEnergyMeasurement`, and `PowerTopology`. The power and energy
 clusters require their fixed measurement accuracy at construction. Select the

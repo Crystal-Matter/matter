@@ -3,8 +3,26 @@ require "../../src/matter/cluster/boolean_state"
 
 private alias BooleanState = Matter::Cluster::BooleanState
 
+# Independent Matter 1.6 StateChange wire shape, context tag 0.
+private struct BooleanStateChangeWire
+  include TLV::Serializable
+
+  @[TLV::Field(tag: 0)]
+  getter? state_value : Bool
+
+  def initialize(@state_value : Bool)
+  end
+end
+
 describe Matter::Cluster::BooleanState do
   describe "initialization" do
+    it "advertises revision 3 and ChangeEvent by default" do
+      cluster = build(BooleanState)
+      cluster.cluster_revision.should eq(3_u16)
+      cluster.feature_map.value.should eq(1_u32)
+      cluster.get_event_metadata(BooleanState::EVENT_STATE_CHANGE).should_not be_nil
+    end
+
     it "creates with default false state" do
       cluster = build(BooleanState)
 
@@ -42,6 +60,42 @@ describe Matter::Cluster::BooleanState do
   end
 
   describe "update_state" do
+    it "omits StateChange metadata and emission when ChangeEvent is disabled" do
+      cluster = build(BooleanState, feature_map: BooleanState::Feature::None)
+      events = [] of TLV::Any
+      cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, _event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+        events << data
+        nil
+      end
+
+      cluster.events.should be_empty
+      cluster.get_event_metadata(BooleanState::EVENT_STATE_CHANGE).should be_nil
+      cluster.update_state(true)
+      cluster.state_value?.should be_true
+      events.should be_empty
+    end
+
+    it "emits a typed StateChange event for direct setter changes, alongside callbacks" do
+      cluster = build(BooleanState, state_value: false)
+      changed = [] of Bool
+      events = [] of TLV::Any
+      cluster.on_state_changed { |_old, value| changed << value }
+      cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, priority : Matter::InteractionModel::EventPriority, data : TLV::Any, fabric : UInt8?) do
+        event.should eq(BooleanState::EVENT_STATE_CHANGE)
+        priority.should eq(Matter::InteractionModel::EventPriority::Info)
+        fabric.should be_nil
+        events << data
+        nil
+      end
+
+      cluster.state_value = true
+      cluster.state_value = true
+      cluster.update_state(false)
+
+      changed.should eq([true, false])
+      events.map { |data| BooleanStateChangeWire.from_tlv(data).state_value? }.should eq([true, false])
+    end
+
     it "updates state and increments data version" do
       cluster = build(BooleanState, state_value: false)
 

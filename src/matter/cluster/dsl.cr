@@ -61,6 +61,8 @@ module Matter
     #   version, notifies subscribers and runs the change callback, and
     #   `on_name_changed(&block : Type, Type -> Nil)` (`(old, new)`; with
     #   `callback: :new_only` the block takes the new value only).
+    #   `on_change: :method` calls a cluster-owned hook with the new value
+    #   after assignment and notification, independently of user callbacks.
     #   `writable: true` implies `persist: true` unless `persist: false`.
     # * `attribute id, :name, Type, computed: true` — no ivar, accessors or
     #   persistence: a read calls the reader method `name` (`name?` for `Bool`)
@@ -127,7 +129,7 @@ module Matter
       ATTRIBUTE_OPTIONS = [
         :default, :writable, :persist, :persist_default, :nullable, :fixed, :optional, :requires,
         :read_access, :write_access, :min, :max, :max_length, :scene,
-        :omit_changes, :timed, :fabric_scoped, :callback, :computed, :present_if,
+        :omit_changes, :timed, :fabric_scoped, :callback, :on_change, :computed, :present_if,
       ]
       COMMAND_OPTIONS  = [:request, :response, :response_id, :requires, :timed, :access, :optional, :handler]
       PRIVILEGES       = [:view, :proxy_view, :operate, :manage, :administer]
@@ -185,6 +187,7 @@ module Matter
         {% writable = options[:writable] %}
         {% computed = options[:computed] %}
         {% callback = options[:callback] %}
+        {% on_change = options[:on_change] %}
         {% requires = options[:requires] %}
         {% requires = requires.resolve if requires.is_a?(Path) %}
         {% present_if = options[:present_if] %}
@@ -192,11 +195,13 @@ module Matter
           {% raise "#{@type}: attribute :#{name.id} is computed: and takes no default:" unless options[:default].nil? %}
           {% raise "#{@type}: attribute :#{name.id} is computed: and cannot be persisted" unless options[:persist].nil? %}
           {% raise "#{@type}: attribute :#{name.id} is computed: and has no change callback" if callback %}
+          {% raise "#{@type}: attribute :#{name.id} is computed: and has no change hook" if on_change %}
         {% else %}
           {% raise "#{@type}: attribute :#{name.id} needs a default: value (or nullable: true)" if options[:default].nil? && !nullable %}
         {% end %}
         {% raise "#{@type}: attribute :#{name.id} is fixed: and cannot be writable:" if options[:fixed] && writable %}
         {% raise "#{@type}: attribute :#{name.id} callback: must be :new_only" if callback && callback != :new_only %}
+        {% raise "#{@type}: attribute :#{name.id} on_change: must be a symbol" if on_change && !on_change.is_a?(SymbolLiteral) %}
         {% raise "#{@type}: attribute :#{name.id} present_if: must be a symbol" if present_if && !present_if.is_a?(SymbolLiteral) %}
         {% if options[:read_access] && !::Matter::Cluster::DSL::PRIVILEGES.includes?(options[:read_access]) %}
           {% raise "#{@type}: attribute :#{name.id} read_access: must be one of #{::Matter::Cluster::DSL::PRIVILEGES.join(", ").id}" %}
@@ -230,6 +235,7 @@ module Matter
              timed:           options[:timed],
              fabric_scoped:   options[:fabric_scoped],
              callback:        callback,
+             on_change:       on_change,
            } %}
 
         {% value_type = nullable ? "#{type}?".id : type %}
@@ -254,6 +260,9 @@ module Matter
             {% end %}
             @{{ name.id }} = value
             increment_version_and_notify(ATTR_{{ name.id.upcase }})
+            {% if on_change %}
+              {{ on_change.id }}(value)
+            {% end %}
             @on_{{ name.id }}_changed.try &.call({% unless callback == :new_only %}old_value, {% end %}value)
           end
 

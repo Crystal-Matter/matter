@@ -7,12 +7,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Boolean State events
+
+- Advertise Boolean State revision 3 with the ChangeEvent feature by default.
+  Emit a typed StateChange event when StateValue changes, including direct
+  setter changes, and omit the event when ChangeEvent is disabled. Application
+  state-change callbacks continue to run independently.
+
 ### Bridged device identity
 
 - Require a stable 1–32-byte UniqueID for Bridged Device Basic Information,
   advertise it as a mandatory fixed attribute at revision 5, and retain each
   dynamic endpoint's provisioned ID across bridge restarts.
-
 ### Group key validation
 
 - Reject KeySetWrite requests without the first epoch or with a gap before a
