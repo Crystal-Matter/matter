@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Level control transitions
+
+- Apply MoveToLevel and Step transition times in deciseconds and Move rates in
+  levels per second. CurrentLevel and RemainingTime advance on autonomous
+  monotonic ticks, and Stop holds the current level. RemainingTime resets after
+  restart instead of restoring a stale countdown.
+
 ### Time synchronization
 
 - Add the Matter 1.6 Time Synchronization base server: nullable UTC before sync,
