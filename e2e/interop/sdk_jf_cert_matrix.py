@@ -85,7 +85,7 @@ def preseed_sdk_issuer(jfc, storage_dir, case_logs):
             storage_dir, case_logs,
         )
         try:
-            preflight.expect(r">>>\s*$", 90)
+            preflight.expect(r">>>", 90)
             # JFC creates the issuer in InitializeCommissioner, which happens
             # only after dispatching a command. This unreachable pairing can
             # be interrupted once its issuer key is safely persisted.
@@ -149,7 +149,10 @@ def run_case(sdk, jfa, logs, name):
         ))
 
         previous_mailbox = os.environ.get("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+        previous_jcm_consent = os.environ.get("MATTER_JFA_ALLOW_JCM")
         os.environ["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = str(csr_mailbox)
+        if name == "TC_JFADMIN_1_4":
+            os.environ["MATTER_JFA_ALLOW_JCM"] = "1"
         try:
             device = ManagedProcess("crystal-jfa", [str(jfa), "--no-interactive"], state, case_logs)
         finally:
@@ -157,6 +160,10 @@ def run_case(sdk, jfa, logs, name):
                 os.environ.pop("MATTER_JFA_ICAC_CSR_MAILBOX_PATH", None)
             else:
                 os.environ["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_mailbox
+            if previous_jcm_consent is None:
+                os.environ.pop("MATTER_JFA_ALLOW_JCM", None)
+            else:
+                os.environ["MATTER_JFA_ALLOW_JCM"] = previous_jcm_consent
         pin = device.expect(SETUP_PIN_PATTERN, 60).group(1)
         discriminator = device.expect(r"Discriminator:\s*(\d+)", 20).group(1)
         device.expect(r"Starting in Commissioning Mode", 60)
