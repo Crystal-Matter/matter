@@ -1,0 +1,14 @@
+<cluster id="0x1234" name="Sample" revision="4">
+  <commands>
+    <command id="0x00" name="Present" direction="commandToServer"><mandatoryConform/></command>
+    <command id="0x01" name="Missing" direction="commandToServer"><mandatoryConform/></command>
+    <command id="0x02" name="FeatureCommand" direction="commandToServer"><mandatoryConform><feature name="TEST"/></mandatoryConform></command>
+    <command id="0x03" name="RevisionCommand" direction="commandToServer"><otherwiseConform><mandatoryConform><greaterOrEqualTerm><revision value="current"/><revision value="4"/></greaterOrEqualTerm></mandatoryConform><optionalConform/></otherwiseConform></command>
+    <command id="0x04" name="Response" direction="responseFromServer"><mandatoryConform/></command>
+  </commands>
+  <events>
+    <event id="0x00" name="MissingEvent"><mandatoryConform/></event>
+    <event id="0x01" name="OptionalEvent"><optionalConform/></event>
+    <event id="0x02" name="FeatureEvent"><otherwiseConform><mandatoryConform><feature name="TEST"/></mandatoryConform><optionalConform/></otherwiseConform></event>
+  </events>
+</cluster>

@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Protocol command and event coverage
+
+- Add a reproducible Matter 1.6 canonical XML report for server command and
+  event IDs declared by implemented Crystal clusters. It identifies direct
+  mandatory ID gaps and shows conditional feature expressions for review,
+  without claiming handler or event behavior conformance.
+
 ### Boolean State events
 
 - Advertise Boolean State revision 3 with the ChangeEvent feature by default.
