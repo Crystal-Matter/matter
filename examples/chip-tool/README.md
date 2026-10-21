@@ -35,6 +35,14 @@ To skip mDNS discovery and target a specific address:
 ./bin/chip-tool-crystal pairing code 0x1 1495-753-5193 --address 192.168.1.50:5540 --allow-test-attestation
 ```
 
+For a Wi-Fi or Thread device already reachable over IP, pass regulatory
+information so the commissioner can issue `SetRegulatoryConfig` when its
+Network Commissioning feature map requires it:
+
+```bash
+./bin/chip-tool-crystal pairing code 0x1 1495-753-5193 --regulatory-location indoor --country-code AU
+```
+
 The example devices use the public Matter test PAA and CD signer. The
 `--allow-test-attestation` flag explicitly opts in to those credentials.
 The controller rejects commissioning without a configured attestation verifier;

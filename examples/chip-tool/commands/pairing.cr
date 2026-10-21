@@ -23,12 +23,31 @@ module ChipTool
           manual_code = args.shift?
 
           unless node_id_str && manual_code
-            STDERR.puts "Usage: pairing code <node-id> <manual-code> [--address <ip[:port]>] [--new-fabric] [--allow-test-attestation]"
+            STDERR.puts "Usage: pairing code <node-id> <manual-code> [--address <ip[:port]>] [--new-fabric] [--allow-test-attestation] [--regulatory-location indoor|outdoor|indoor-outdoor --country-code <CC>]"
             next 2
           end
 
           new_fabric = !!args.delete("--new-fabric")
           allow_test_attestation = !!args.delete("--allow-test-attestation")
+          regulatory_location = nil.as(Matter::Cluster::GeneralCommissioning::RegulatoryLocationType?)
+          if idx = args.index("--regulatory-location")
+            value = args[idx + 1]?
+            raise ArgumentError.new("missing value for --regulatory-location") unless value
+            regulatory_location = case value
+                                  when "indoor"         then Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::Indoor
+                                  when "outdoor"        then Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::Outdoor
+                                  when "indoor-outdoor" then Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor
+                                  else                       raise ArgumentError.new("invalid regulatory location: #{value}")
+                                  end
+            args.delete_at(idx)
+            args.delete_at(idx)
+          end
+          regulatory_country_code = nil.as(String?)
+          if idx = args.index("--country-code")
+            regulatory_country_code = args[idx + 1]? || raise ArgumentError.new("missing value for --country-code")
+            args.delete_at(idx)
+            args.delete_at(idx)
+          end
           peer = nil.as(Socket::IPAddress?)
           if idx = args.index("--address")
             addr = args[idx + 1]?
@@ -60,7 +79,9 @@ module ChipTool
                          Matter::Controller::AttestationTrustStore.matter_test_fixture)
                      end
           commissioner = Matter::Controller::Commissioning::Commissioner.new(store, controller,
-            timeout: ctx.timeout, attestation_verifier: verifier)
+            timeout: ctx.timeout, attestation_verifier: verifier,
+            regulatory_location: regulatory_location,
+            regulatory_country_code: regulatory_country_code)
           begin
             commissioner.pairing_code(node_id, manual_code, peer: peer, new_fabric: new_fabric)
           ensure
