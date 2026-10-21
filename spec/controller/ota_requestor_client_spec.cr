@@ -276,4 +276,31 @@ describe "OTA Requestor controller download" do
     client.request_apply(session, peer, 0_u16, staged)
     cluster.update_state.should eq(OtaRequestorSpec::UpdateState::Idle)
   end
+
+  it "invokes the application installer only after an immediate Proceed" do
+    im = OtaApplyImFake.new
+    cluster = OtaRequestorSpec.new
+    client = OtaRequestorClientSpec.new(im, OtaBdxFake.new(Bytes.empty), cluster)
+    header = Matter::Protocol::OtaImage::Header.new
+    header.software_version = 11_u32
+    staged = OtaRequestorClientSpec::StagedUpdate.new(header,
+      Bytes[1, 2, 3, 4, 5, 6, 7, 8], "bdx://0000000000001234/image", 1024_u64)
+    session = ota_controller_session
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    sink = IO::Memory.new("candidate".to_slice)
+    sink.seek(4)
+    called = 0
+
+    client.apply_staged(session, peer, 0_u16, staged, sink) do |image, applied_header|
+      image.pos.should eq(0)
+      applied_header.software_version.should eq(11_u32)
+      called += 1
+    end
+    called.should eq(1)
+
+    im.delay = 60_u32
+    client.apply_staged(session, peer, 0_u16, staged, sink) { |_image, _header| called += 1 }
+    called.should eq(1)
+    cluster.update_state.should eq(OtaRequestorSpec::UpdateState::DelayedOnApply)
+  end
 end

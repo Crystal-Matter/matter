@@ -122,7 +122,8 @@ streams with a size limit, and verifies the Matter OTA image header and payload
 digest. Provider QueryImage delays are enforced per fabric and provider; the
 application can inspect `next_query_at(session)` before scheduling a retry.
 `request_apply` then asks the provider when the staged version may be
-installed, and `notify_applied` reports a version after the application boots
+installed. `apply_staged` invokes an application installer only after an
+immediate Proceed; `notify_applied` reports a version after the application boots
 it. The application owns the storage, installer, token persistence across a
 reboot, and rollback policy. It must not advertise `UpdatePossible` until
 those paths are ready.

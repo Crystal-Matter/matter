@@ -195,6 +195,24 @@ module Matter
         raise ex
       end
 
+      # Run a platform installer only when the provider permits immediate
+      # application. A delayed Proceed or AwaitNextAction is returned to the
+      # caller for scheduling; the image and token remain caller-owned.
+      def apply_staged(session : Session::SecureContext, peer : Socket::IPAddress,
+                       provider_endpoint : UInt16, staged : StagedUpdate,
+                       image : IO,
+                       &installer : IO, Protocol::OtaImage::Header ->) : Provider::ApplyUpdateResponse
+        approval = request_apply(session, peer, provider_endpoint, staged)
+        if approval.action.proceed? && approval.delayed_action_time == 0
+          image.seek(0)
+          installer.call(image, staged.header)
+        end
+        approval
+      rescue ex
+        @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Failure)
+        raise ex
+      end
+
       # Call only after the new software is actually running and Basic
       # Information reports software_version. The application must persist the
       # token across any reboot before calling this method.

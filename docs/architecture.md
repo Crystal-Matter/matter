@@ -300,7 +300,8 @@ digest. The staging IO belongs to the application; installing a validated
 image and surviving rollback remain application responsibilities. The client
 can send ApplyUpdateRequest and NotifyUpdateApplied over the same fabric;
 provider scheduling is returned to the application, which persists the token
-and reports success only after the new image is running.
+and reports success only after the new image is running. `apply_staged` can
+invoke the application's installer after an immediate Proceed response.
 
 On start, `Protocol::Persistence::StorageBackend#restore` brings back only CASE sessions whose
 fabric still exists, and only subscriptions whose session came back. `Device#shutdown!` persists
