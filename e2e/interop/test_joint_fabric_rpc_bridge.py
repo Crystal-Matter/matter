@@ -1,10 +1,12 @@
 """Dependency-free transport and service smoke tests for the SDK JFC bridge."""
 
 import base64
+import json
 import os
 import socket
 import tempfile
 import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -19,11 +21,13 @@ from joint_fabric_rpc_bridge import (
     RPC_CHANNEL,
     SERVER_ERROR,
     SERVICE_ID,
+    SERVER_STREAM,
     UNIMPLEMENTED,
     FabricProbe,
     JointFabricService,
     RpcPacket,
     HandoffQueue,
+    CsrMailbox,
     decode_frame,
     encode_frame,
     handle_connection,
@@ -136,6 +140,91 @@ class RpcBridgeTest(unittest.TestCase):
         self.assertEqual(reply.kind, SERVER_ERROR)
         self.assertEqual(reply.status, UNIMPLEMENTED)
         self.assertEqual(reply.call_id, 12)
+
+    def test_icac_csr_single_flight_stream_and_bound_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "csr.json"
+            root = b"\x04" + bytes(range(64))
+            mailbox = CsrMailbox(path, 41216, root)
+            service = JointFabricService(csr_mailbox=mailbox)
+            stream = RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["GetStream"], call_id=17)
+            self.assertIsNone(service.handle(stream))
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                        "root_public_key": root.hex(), "nonce": "a" * 32}))
+            outbound = service.poll_stream()
+            self.assertEqual(outbound.kind, SERVER_STREAM)
+            self.assertEqual(outbound.call_id, 17)
+            self.assertEqual(outbound.payload, b"\x08\x00\x10\x80\xc2\x02")
+            self.assertIsNone(service.poll_stream())
+            csr = b"\x30\x03\x02\x01\x00"
+            response = RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["ResponseStream"],
+                                 b"\x08\x00\x12\x05" + csr, call_id=18)
+            self.assertEqual(service.handle(response).kind, RESPONSE)
+            self.assertEqual(json.loads(path.read_text()),
+                             {"nonce": "a" * 32, "status": "ok", "csr": base64.b64encode(csr).decode()})
+            self.assertEqual(service.handle(response).status, FAILED_PRECONDITION)
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                        "root_public_key": root.hex(), "nonce": "b" * 32}))
+            self.assertIsNone(service.poll_stream())
+            self.assertEqual(json.loads(path.read_text())["status"], "stream-consumed")
+
+    def test_csr_timeout_wrong_fabric_and_disconnect_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "csr.json"
+            root = b"\x04" + bytes(range(64))
+            mailbox = CsrMailbox(path, 41216, root, timeout=0.01)
+            service = JointFabricService(csr_mailbox=mailbox)
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 7,
+                                        "root_public_key": root.hex(), "nonce": "a" * 32}))
+            self.assertIsNone(service.poll_stream())
+            self.assertEqual(json.loads(path.read_text())["status"], "wrong-fabric")
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                        "root_public_key": root.hex(), "nonce": "b" * 32}))
+            self.assertIsNone(service.poll_stream())
+            self.assertEqual(json.loads(path.read_text())["status"], "unavailable")
+            service.handle(RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["GetStream"], call_id=21))
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                        "root_public_key": root.hex(), "nonce": "c" * 32}))
+            self.assertEqual(service.poll_stream().kind, SERVER_STREAM)
+            with mock.patch("joint_fabric_rpc_bridge.time.monotonic", return_value=mailbox.deadline + 1):
+                service.poll_stream()
+            self.assertEqual(json.loads(path.read_text())["status"], "timeout")
+            service.disconnect()
+            self.assertFalse(service.streams)
+
+    def test_csr_exchange_over_hdlc_socket_and_reconnect(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "csr.json"
+            root = b"\x04" + bytes(range(64))
+            mailbox = CsrMailbox(path, 41216, root)
+            service = JointFabricService(csr_mailbox=mailbox)
+            client, server = socket.socketpair()
+            worker = threading.Thread(target=handle_connection, args=(server, service), daemon=True)
+            worker.start()
+            try:
+                get_stream = RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["GetStream"], call_id=23)
+                client.sendall(encode_frame(get_stream.encode()))
+                deadline = time.monotonic() + 1
+                while (RPC_CHANNEL, 23) not in service.streams and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertIn((RPC_CHANNEL, 23), service.streams)
+                path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                            "root_public_key": root.hex(), "nonce": "d" * 32}))
+                client.settimeout(1)
+                stream = RpcPacket.decode(decode_frame(client.recv(2048)[1:-1]))
+                self.assertEqual(stream.kind, SERVER_STREAM)
+                self.assertEqual(stream.call_id, 23)
+                response = RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["ResponseStream"],
+                                     b"\x12\x05\x30\x03\x02\x01\x00", call_id=24)
+                client.sendall(encode_frame(response.encode()))
+                reply = RpcPacket.decode(decode_frame(client.recv(2048)[1:-1]))
+                self.assertEqual(reply.kind, RESPONSE)
+                self.assertEqual(json.loads(path.read_text())["nonce"], "d" * 32)
+            finally:
+                client.close()
+                worker.join(timeout=1)
+                server.close()
+            self.assertFalse(service.streams)
 
     def test_standard_handoff_is_durably_queued_before_rpc_ack(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,8 +4,8 @@
 This implements the HDLC/pw_rpc transport needed to keep the SDK controller's
 GetStream open after commissioning a Crystal Anchor. It can durably queue a
 standard (non-JCM) ownership handoff through Crystal JFA's YAML command
-channel. The optional fabric probe uses the same channel. JCM handoff and
-ICAC CSR streaming remain unsupported.
+channel. The optional fabric probe uses the same channel. The ICAC CSR
+stream is supported for an SDK-held key; a live JCM handoff remains unverified.
 """
 
 from __future__ import annotations
@@ -13,9 +13,11 @@ from __future__ import annotations
 import argparse
 import base64
 import dataclasses
+import json
 import logging
 import os
 import socket
+import select
 import struct
 import threading
 import time
@@ -33,14 +35,18 @@ REQUEST = 0
 RESPONSE = 1
 CLIENT_ERROR = 4
 SERVER_ERROR = 5
+SERVER_STREAM = 7
 UNIMPLEMENTED = 12
 FAILED_PRECONDITION = 9
 OUT_OF_RANGE = 11
 INTERNAL = 13
+DEADLINE_EXCEEDED = 4
 MAX_ENCODED_FRAME = 2048
 P256_PUBLIC_KEY_LENGTH = 65
 INVALID_ENDPOINT_ID = 0xFFFF
 MAX_NODE_ID = (1 << 64) - 1
+MAX_CSR_BYTES = 1024
+ICAC_CSR = 0
 
 
 def rpc_id(name: str) -> int:
@@ -350,11 +356,125 @@ class HandoffQueue:
             return nonce
 
 
+class CsrMailbox:
+    """One bounded Crystal request to the SDK-owned ICAC signer at a time.
+
+    The file is an application-local test channel, not an authentication
+    boundary. Crystal verifies the returned PKCS#10 signature and pinned key.
+    """
+
+    def __init__(self, path: Path, fabric_id: int, root_public_key: bytes,
+                 timeout: float = 1.0):
+        if not 0 < fabric_id <= MAX_NODE_ID:
+            raise ValueError("fabric ID must be a nonzero uint64")
+        if len(root_public_key) != P256_PUBLIC_KEY_LENGTH or root_public_key[0] != 4:
+            raise ValueError("root public key must be an uncompressed P-256 point")
+        self.path = path
+        self.fabric_id = fabric_id
+        self.root_public_key = root_public_key
+        self.timeout = timeout
+        self.pending_nonce: str | None = None
+        self.deadline = 0.0
+        self.completed_nonce: str | None = None
+        # ResponseStream has no transaction ID. Reusing a stream after a
+        # timeout or duplicate could bind a stale CSR to a new request.
+        self.consumed_stream: tuple[int, int] | None = None
+
+    def _write(self, value: dict) -> None:
+        temporary = self.path.with_name(f"{self.path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(value), encoding="utf-8")
+        os.replace(temporary, self.path)
+
+    def _read(self) -> dict | None:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (ValueError, OSError) as error:
+            LOG.warning("Invalid CSR mailbox: %s", error)
+            return None
+        return value if isinstance(value, dict) else None
+
+    def poll(self, stream: tuple[int, int] | None) -> RpcPacket | None:
+        now = time.monotonic()
+        if self.pending_nonce is not None:
+            if now >= self.deadline:
+                self._write({"nonce": self.pending_nonce, "status": "timeout"})
+                self.completed_nonce = self.pending_nonce
+                self.pending_nonce = None
+            return None
+        value = self._read()
+        if value is None or value.get("operation") != "icac-csr":
+            return None
+        nonce = value.get("nonce")
+        if not isinstance(nonce, str) or len(nonce) != 32 or any(c not in "0123456789abcdef" for c in nonce):
+            return None
+        if nonce == self.completed_nonce:
+            return None
+        if value.get("fabric_id") != self.fabric_id or value.get("root_public_key") != self.root_public_key.hex():
+            self._write({"nonce": nonce, "status": "wrong-fabric"})
+            self.completed_nonce = nonce
+            return None
+        if stream is None:
+            self._write({"nonce": nonce, "status": "unavailable"})
+            self.completed_nonce = nonce
+            return None
+        if self.consumed_stream is not None:
+            self._write({"nonce": nonce, "status": "stream-consumed"})
+            self.completed_nonce = nonce
+            return None
+        self.pending_nonce = nonce
+        self.deadline = now + self.timeout
+        channel_id, call_id = stream
+        self.consumed_stream = stream
+        options = _field_varint(1, ICAC_CSR) + _field_varint(2, self.fabric_id)
+        return RpcPacket(SERVER_STREAM, channel_id, SERVICE_ID, METHOD_IDS["GetStream"],
+                         options, call_id=call_id)
+
+    def respond(self, payload: bytes) -> int:
+        if self.pending_nonce is None or time.monotonic() >= self.deadline:
+            return FAILED_PRECONDITION
+        try:
+            fields = protobuf_fields(payload)
+        except ValueError:
+            return OUT_OF_RANGE
+        if fields.get(1, ICAC_CSR) != ICAC_CSR:
+            return OUT_OF_RANGE
+        csr = fields.get(2)
+        if not isinstance(csr, bytes) or not 0 < len(csr) <= MAX_CSR_BYTES or csr[0] != 0x30:
+            return OUT_OF_RANGE
+        nonce = self.pending_nonce
+        self._write({"nonce": nonce, "status": "ok", "csr": base64.b64encode(csr).decode("ascii")})
+        self.completed_nonce = nonce
+        self.pending_nonce = None
+        return 0
+
+    def disconnect(self) -> None:
+        if self.pending_nonce is not None:
+            self._write({"nonce": self.pending_nonce, "status": "unavailable"})
+            self.completed_nonce = self.pending_nonce
+            self.pending_nonce = None
+        self.consumed_stream = None
+
+
 class JointFabricService:
-    def __init__(self, probe: FabricProbe | None = None, handoff: HandoffQueue | None = None):
+    def __init__(self, probe: FabricProbe | None = None, handoff: HandoffQueue | None = None,
+                 csr_mailbox: CsrMailbox | None = None):
         self.probe = probe
         self.handoff = handoff
+        self.csr_mailbox = csr_mailbox
         self.streams: set[tuple[int, int]] = set()
+
+    def poll_stream(self) -> RpcPacket | None:
+        if self.csr_mailbox is None:
+            return None
+        stream = next(iter(self.streams), None)
+        return self.csr_mailbox.poll(stream)
+
+    def disconnect(self) -> None:
+        self.streams.clear()
+        if self.csr_mailbox is not None:
+            self.csr_mailbox.disconnect()
 
     def handle(self, request: RpcPacket) -> RpcPacket | None:
         if request.kind == CLIENT_ERROR:
@@ -366,6 +486,8 @@ class JointFabricService:
             return request.reply(SERVER_ERROR, UNIMPLEMENTED)
         if request.method_id == METHOD_IDS["GetStream"]:
             if request.payload:
+                return request.reply(SERVER_ERROR, FAILED_PRECONDITION)
+            if self.streams:
                 return request.reply(SERVER_ERROR, FAILED_PRECONDITION)
             if self.probe is not None:
                 try:
@@ -410,32 +532,56 @@ class JointFabricService:
             )
             return request.reply(SERVER_ERROR, UNIMPLEMENTED)
         if request.method_id == METHOD_IDS["ResponseStream"]:
-            LOG.warning("SDK ResponseStream unavailable without an ICAC request stream")
-            return request.reply(SERVER_ERROR, UNIMPLEMENTED)
+            if self.csr_mailbox is None or not self.streams:
+                return request.reply(SERVER_ERROR, UNIMPLEMENTED)
+            status = self.csr_mailbox.respond(request.payload)
+            return request.reply(RESPONSE if status == 0 else SERVER_ERROR, status)
         return request.reply(SERVER_ERROR, UNIMPLEMENTED)
 
 
 def serve(host: str, port: int, probe: FabricProbe | None = None,
-          handoff: HandoffQueue | None = None) -> None:
+          handoff: HandoffQueue | None = None, csr_mailbox: CsrMailbox | None = None) -> None:
     with socket.create_server((host, port), reuse_port=False) as server:
         LOG.info("Listening for SDK jfc-app Pigweed RPC on %s:%d", host, port)
         while True:
             connection, address = server.accept()
             LOG.info("SDK JFC connected from %s", address)
             with connection:
-                handle_connection(connection, JointFabricService(probe, handoff))
+                handle_connection(connection, JointFabricService(probe, handoff, csr_mailbox))
 
 
 def handle_connection(connection: socket.socket, service: JointFabricService) -> None:
-    for data in frames_from_socket(connection):
-        try:
-            request = RpcPacket.decode(data)
-            response = service.handle(request)
-        except (ValueError, struct.error) as error:
-            LOG.warning("Discarded malformed RPC request: %s", error)
-            continue
-        if response is not None:
-            connection.sendall(encode_frame(response.encode()))
+    frame = bytearray()
+    try:
+        while True:
+            outbound = service.poll_stream()
+            if outbound is not None:
+                connection.sendall(encode_frame(outbound.encode()))
+            ready, _, _ = select.select([connection], [], [], 0.05)
+            if not ready:
+                continue
+            chunk = connection.recv(4096)
+            if not chunk:
+                break
+            for byte in chunk:
+                if byte != FLAG:
+                    if len(frame) < MAX_ENCODED_FRAME:
+                        frame.append(byte)
+                    else:
+                        frame.clear()
+                    continue
+                if not frame:
+                    continue
+                try:
+                    request = RpcPacket.decode(decode_frame(bytes(frame)))
+                    response = service.handle(request)
+                    if response is not None:
+                        connection.sendall(encode_frame(response.encode()))
+                except (ValueError, struct.error) as error:
+                    LOG.warning("Discarded malformed RPC request: %s", error)
+                frame.clear()
+    finally:
+        service.disconnect()
 
 
 def main() -> None:
@@ -444,12 +590,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=33000)
     parser.add_argument("--command-path", type=Path)
     parser.add_argument("--handoff-command-path", type=Path)
+    parser.add_argument("--csr-mailbox-path", type=Path)
     parser.add_argument("--fabric-id", type=int)
     parser.add_argument("--root-public-key-hex")
     args = parser.parse_args()
     probe = None
     handoff = None
-    if args.command_path or args.handoff_command_path:
+    csr_mailbox = None
+    if args.command_path or args.handoff_command_path or args.csr_mailbox_path:
         if args.fabric_id is None or args.root_public_key_hex is None:
             parser.error("--fabric-id and --root-public-key-hex are required for Crystal command paths")
         root_public_key = bytes.fromhex(args.root_public_key_hex)
@@ -457,12 +605,16 @@ def main() -> None:
             probe = FabricProbe(args.command_path, args.fabric_id, root_public_key)
         if args.handoff_command_path:
             handoff = HandoffQueue(args.handoff_command_path, args.fabric_id, root_public_key)
-        if args.command_path == args.handoff_command_path:
-            parser.error("probe and handoff command paths must be distinct")
+        if args.csr_mailbox_path:
+            csr_mailbox = CsrMailbox(args.csr_mailbox_path, args.fabric_id, root_public_key)
+        paths = [path for path in (args.command_path, args.handoff_command_path,
+                                  args.csr_mailbox_path) if path is not None]
+        if len(paths) != len(set(paths)):
+            parser.error("Crystal command and CSR mailbox paths must be distinct")
     elif args.fabric_id is not None or args.root_public_key_hex is not None:
         parser.error("a Crystal command path is required with fabric identity")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    serve(args.host, args.port, probe, handoff)
+    serve(args.host, args.port, probe, handoff, csr_mailbox)
 
 
 if __name__ == "__main__":
