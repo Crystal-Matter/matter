@@ -63,7 +63,10 @@ item below as covered only to the extent of its cited tests.
   Anchor CASE adapter reads NodeList before retrying a command; known failures
   remove the pending entry. A lost CommissioningComplete result requires
   explicit reconciliation before removal. Focused controller specs cover the
-  journal, retry, and network command behavior.
+  journal, retry, and network command behavior. A dedicated Docker scenario
+  first commissions a Crystal switch with official chip-tool, then joins the
+  Anchor fabric through the opt-in registrar; it observes the pending NodeList
+  record before final CASE and the committed node, endpoint, and ACL afterward.
 
 ## Work required for interoperable Joint Commissioning
 
