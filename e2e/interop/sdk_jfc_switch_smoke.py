@@ -133,7 +133,10 @@ def run(args):
         if jfa.process.poll() is not None:
             raise RuntimeError("official JFA exited during startup")
 
-        switch = ManagedProcess("switch", [str(switch_bin), "--no-interactive"], switch_state, logs)
+        switch_env = os.environ.copy()
+        switch_env["MATTER_SWITCH_IP_ADDRESS"] = "fd42:4d41:5454::2"
+        switch = ManagedProcess("switch", [str(switch_bin), "--no-interactive"],
+                                switch_state, logs, switch_env)
         processes.append(switch)
         pin = switch.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
         switch.expect(r"Starting in Commissioning Mode", 60)
