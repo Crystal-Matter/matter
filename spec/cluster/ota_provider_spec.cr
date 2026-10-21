@@ -60,6 +60,26 @@ describe OtaProvider do
     observed.map(&.peer_node_id).should eq([0x1234_u64])
   end
 
+  it "routes QueryImage through the interaction model with CASE identity" do
+    cluster = OtaProvider.new
+    observed = [] of OtaProvider::RequestContext
+    cluster.on_query_image = ->(context : OtaProvider::RequestContext, _request : OtaProvider::QueryImageRequest) do
+      observed << context
+      OtaProvider::QueryImageResponse.new(OtaProvider::QueryStatus::NotAvailable)
+    end
+    path = Matter::InteractionModel::CommandPath.new(0_u16,
+      OtaProvider::CLUSTER_ID, OtaProvider::CMD_QUERY_IMAGE)
+    command = Matter::InteractionModel::CommandDataIBTlv.new(path, ota_query.to_tlv(nil))
+    clusters = { {0_u16, OtaProvider::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) }
+    responses = Matter::Protocol::IMHandler.invoke_commands([command], clusters,
+      is_case_session: true, fabric_index: 2_u8, peer_subject_ids: [0x1234_u64])
+    response = responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+    response.command_path.command.should eq(1_u32)
+    body = OtaProvider::QueryImageResponse.from_tlv(response.command_fields.as(TLV::Any))
+    body.status.should eq(OtaProvider::QueryStatus::NotAvailable)
+    observed.should eq([OtaProvider::RequestContext.new(2_u8, 0x1234_u64)])
+  end
+
   it "rejects unauthenticated queries and malformed update offers" do
     cluster = OtaProvider.new
     cluster.invoke_command(OtaProvider::CMD_QUERY_IMAGE, ota_query.to_tlv(nil))
