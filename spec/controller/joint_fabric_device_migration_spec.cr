@@ -17,6 +17,7 @@ end
 private class MigrationPort < Migration::Port
   getter calls = [] of String
   property fail_at : String? = nil
+  property? no_effect : Bool = true
 
   def commission_anchor! : Nil
     call("commission")
@@ -42,8 +43,17 @@ private class MigrationPort < Migration::Port
     call("reconcile-#{stage}")
   end
 
+  def verify_no_effect!(stage : Migration::Stage) : Nil
+    call("no-effect-#{stage}")
+    raise Matter::CommissioningError.new("operation took effect") unless @no_effect
+  end
+
   def rollback_anchor!(anchor_registered : Bool) : Nil
     call("rollback-#{anchor_registered}")
+  end
+
+  def resume_rollback! : Nil
+    call("resume-rollback")
   end
 
   def validate_journal!(journal : Migration::Journal) : Nil
@@ -90,6 +100,109 @@ describe Migration do
     runner.journal.stage.should eq(Migration::Stage::RemovingOldFabric)
     expect_raises(Matter::CommissioningError) { runner.run }
     port.calls.count("remove-fabric").should eq(1)
+  end
+
+  it "recovers a restarted journal only after proof that each command had no effect" do
+    boundaries = {
+      {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::Ready},
+      {"add-anchor", Migration::Stage::AddingAnchorNode, Migration::Stage::AnchorVerified},
+      {"remove-fabric", Migration::Stage::RemovingOldFabric, Migration::Stage::AnchorNodeAdded},
+      {"remove-old", Migration::Stage::RemovingOldNode, Migration::Stage::OldFabricRemoved},
+    }
+    boundaries.each do |command, uncertain, previous|
+      backend = Matter::Storage::Memory.new
+      store = Migration::JournalStore.new(backend)
+      port = MigrationPort.new
+      port.fail_at = command
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], previous)
+      runner = Migration::Workflow.new(journal, port, -> { true },
+        ->(item : Migration::Journal) { store.save(item) })
+      expect_raises(Matter::TransportError) { runner.run }
+      store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(uncertain)
+
+      restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+        -> { true }, ->(item : Migration::Journal) { store.save(item) })
+      expect_raises(Matter::CommissioningError) { restarted.run }
+      port.no_effect = false
+      expect_raises(Matter::CommissioningError) { restarted.reconcile_no_effect! }
+      restarted.journal.stage.should eq(uncertain)
+      port.no_effect = true
+      restarted.reconcile_no_effect!
+      restarted.journal.stage.should eq(previous)
+      port.fail_at = nil
+      restarted.run
+      restarted.journal.stage.should eq(Migration::Stage::Complete)
+      port.calls.count(command).should eq(2)
+    end
+  end
+
+  it "recovers completed commands with lost replies without issuing them twice" do
+    boundaries = {
+      {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::AnchorCommissioned},
+      {"verify", Migration::Stage::VerifyingAnchor, Migration::Stage::AnchorVerified},
+      {"add-anchor", Migration::Stage::AddingAnchorNode, Migration::Stage::AnchorNodeAdded},
+      {"remove-fabric", Migration::Stage::RemovingOldFabric, Migration::Stage::OldFabricRemoved},
+      {"remove-old", Migration::Stage::RemovingOldNode, Migration::Stage::Complete},
+    }
+    boundaries.each do |command, uncertain, observed|
+      backend = Matter::Storage::Memory.new
+      store = Migration::JournalStore.new(backend)
+      port = MigrationPort.new
+      port.fail_at = command
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+      runner = Migration::Workflow.new(journal, port, -> { true },
+        ->(item : Migration::Journal) { store.save(item) })
+      expect_raises(Matter::TransportError) { runner.run }
+      restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+        -> { true }, ->(item : Migration::Journal) { store.save(item) })
+      restarted.journal.stage.should eq(uncertain)
+      expect_raises(Matter::CommissioningError) { restarted.run }
+      port.no_effect = false
+      expect_raises(Matter::CommissioningError) { restarted.reconcile_no_effect! }
+      restarted.reconcile!(observed)
+      port.fail_at = nil
+      restarted.run
+      restarted.journal.stage.should eq(Migration::Stage::Complete)
+      port.calls.count(command).should eq(1)
+    end
+  end
+
+  it "persists an interrupted migration across a fresh file backend" do
+    path = File.join(Dir.tempdir, "matter-migration-#{Random::Secure.hex(8)}.json")
+    begin
+      first_backend = Matter::Storage::JsonFile.new(path)
+      first_store = Migration::JournalStore.new(first_backend)
+      port = MigrationPort.new
+      port.fail_at = "remove-old"
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+      runner = Migration::Workflow.new(journal, port, -> { true },
+        ->(item : Migration::Journal) { first_store.save(item) })
+      expect_raises(Matter::TransportError) { runner.run }
+      first_backend.close
+
+      reopened_backend = Matter::Storage::JsonFile.new(path)
+      reopened_store = Migration::JournalStore.new(reopened_backend)
+      persisted = reopened_store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      persisted.stage.should eq(Migration::Stage::RemovingOldNode)
+      restarted = Migration::Workflow.new(persisted, port, -> { true },
+        ->(item : Migration::Journal) { reopened_store.save(item) })
+      restarted.reconcile_no_effect!
+      restarted.journal.stage.should eq(Migration::Stage::OldFabricRemoved)
+      port.fail_at = nil
+      restarted.run
+      reopened_store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(Migration::Stage::Complete)
+      reopened_backend.close
+    ensure
+      File.delete?(path)
+    end
   end
 
   it "issues a device NOC under B's cross-signed ICAC for Fabric A" do
@@ -213,6 +326,31 @@ describe Migration do
     runner.journal.stage.should eq(Migration::Stage::RolledBack)
     port.calls.should eq(["rollback-true", "reconcile-RolledBack"])
     saved.map(&.stage).should eq([Migration::Stage::RollingBack, Migration::Stage::RolledBack])
+  end
+
+  it "resumes a partially completed rollback after restart only on explicit request" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    port = MigrationPort.new
+    port.fail_at = "rollback-true"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AnchorNodeAdded)
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { runner.rollback! }
+    persisted = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    persisted.stage.should eq(Migration::Stage::RollingBack)
+    restarted = Migration::Workflow.new(persisted, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::CommissioningError) { restarted.run }
+    port.fail_at = "resume-rollback"
+    expect_raises(Matter::TransportError) { restarted.resume_rollback! }
+    restarted.journal.stage.should eq(Migration::Stage::RollingBack)
+    port.fail_at = nil
+    restarted.resume_rollback!
+    restarted.journal.stage.should eq(Migration::Stage::RolledBack)
+    port.calls.should eq(["rollback-true", "resume-rollback", "resume-rollback"])
   end
 
   it "refuses rollback after B removal begins" do

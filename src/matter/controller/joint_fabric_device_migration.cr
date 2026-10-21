@@ -89,7 +89,9 @@ module Matter
         abstract def remove_old_fabric! : Nil
         abstract def remove_old_node! : Nil
         abstract def verify_postcondition!(stage : Stage) : Nil
+        abstract def verify_no_effect!(stage : Stage) : Nil
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
+        abstract def resume_rollback! : Nil
         abstract def validate_journal!(journal : Journal) : Nil
       end
 
@@ -258,10 +260,19 @@ module Matter
             Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
             Cluster::JointFabricDatastore::RemoveNodeRequest.new(@old_node_id).to_slice)
           assert_status_success!(response, "RemoveNode")
+          verify_postcondition!(Stage::Complete)
         end
 
         def rollback_anchor!(anchor_registered : Bool) : Nil
-          if anchor_registered
+          resume_rollback!
+        end
+
+        # An interrupted rollback may have removed only the Anchor NodeList
+        # entry. Every retry first reads both peers over CASE and issues only
+        # the removal whose target is still present.
+        def resume_rollback! : Nil
+          require_old_fabric_present!
+          if anchor_node_entry
             session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
             response = ImClient.new(@client, @timeout).invoke(session, @anchor_datastore_peer,
               @anchor_datastore_endpoint, Cluster::JointFabricDatastore::CLUSTER_ID,
@@ -275,18 +286,14 @@ module Matter
               entry.root_public_key == @anchor_fabric.root_public_key &&
               entry.node_id == @anchor_node_id
           end
-          raise Matter::AuthenticationError.new("Selected Anchor fabric is absent or differs during rollback") unless descriptor
-          response = ImClient.new(@client, @timeout).invoke(session, @device_peer, 0_u16,
-            Cluster::OperationalCredentials::CLUSTER_ID,
-            Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
-            Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
-          assert_noc_success!(response, "Anchor RemoveFabric")
-          if fabrics(session, @device_peer).any? do |entry|
-               entry.fabric_id == @anchor_fabric.fabric_id &&
-               entry.root_public_key == @anchor_fabric.root_public_key
-             end
-            raise Matter::CommissioningError.new("Anchor fabric remained installed after rollback")
+          if descriptor
+            response = ImClient.new(@client, @timeout).invoke(session, @device_peer, 0_u16,
+              Cluster::OperationalCredentials::CLUSTER_ID,
+              Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
+              Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
+            assert_noc_success!(response, "Anchor RemoveFabric")
           end
+          verify_postcondition!(Stage::RolledBack)
         end
 
         # These are read-only postconditions for explicit journal
@@ -329,13 +336,16 @@ module Matter
             end
           when Stage::OldFabricRemoved
             raise Matter::CommissioningError.new("Fabric B remains installed") unless old_fabric_absent?
+            verify_postcondition!(Stage::AnchorNodeAdded)
           when Stage::Complete
+            verify_postcondition!(Stage::OldFabricRemoved)
             session = case_session(@old_fabric, @old_datastore_node_id, @old_datastore_peer)
             if datastore_nodes(ImClient.new(@client, @timeout), session,
                  @old_datastore_peer, @old_datastore_endpoint).any?(&.node_id.==(@old_node_id))
               raise Matter::CommissioningError.new("Fabric B Datastore still contains the migrated node")
             end
           when Stage::RolledBack
+            require_old_fabric_present!
             session = case_session(@old_fabric, @old_node_id, @device_peer)
             if fabrics(session, @device_peer).any? do |entry|
                  entry.fabric_id == @anchor_fabric.fabric_id &&
@@ -351,6 +361,77 @@ module Matter
           else
             raise Matter::ConfigurationError.new("Stage has no observable migration postcondition")
           end
+        end
+
+        # A failed command response does not establish whether the peer
+        # committed it. A retry is permitted only when authenticated reads
+        # establish the exact pre-command state on both sides of the handoff.
+        def verify_no_effect!(stage : Stage) : Nil
+          case stage
+          when Stage::CommissioningAnchor
+            state = @store.load
+            if state.nodes_for(@anchor_fabric.fabric_id,
+                 @anchor_fabric.root_public_key,
+                 @anchor_fabric.controller_node_id).has_key?(@anchor_node_id)
+              raise Matter::CommissioningError.new("Controller already stores the Anchor device identity")
+            end
+            require_old_fabric_present!
+            if anchor_fabric_present_over_old_case?
+              raise Matter::CommissioningError.new("Anchor fabric is present on the device")
+            end
+            if anchor_node_entry
+              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            end
+          when Stage::VerifyingAnchor
+            verify_postcondition!(Stage::AnchorCommissioned)
+          when Stage::AddingAnchorNode
+            verify_anchor!
+            require_old_fabric_present!
+            if anchor_node_entry
+              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            end
+          when Stage::RemovingOldFabric
+            verify_postcondition!(Stage::AnchorNodeAdded)
+            require_old_fabric_present!
+          when Stage::RemovingOldNode
+            verify_postcondition!(Stage::OldFabricRemoved)
+            unless old_node_entry
+              raise Matter::CommissioningError.new("Fabric B Datastore no longer contains the migrated node")
+            end
+          else
+            raise Matter::ConfigurationError.new("Stage has no observable no-effect migration condition")
+          end
+        end
+
+        private def anchor_fabric_present_over_old_case? : Bool
+          session = case_session(@old_fabric, @old_node_id, @device_peer)
+          fabrics(session, @device_peer).any? do |entry|
+            entry.fabric_id == @anchor_fabric.fabric_id &&
+              entry.root_public_key == @anchor_fabric.root_public_key
+          end
+        end
+
+        private def require_old_fabric_present! : Nil
+          session = case_session(@old_fabric, @old_node_id, @device_peer)
+          unless fabrics(session, @device_peer).any? do |entry|
+                   entry.fabric_id == @old_fabric.fabric_id &&
+                   entry.root_public_key == @old_fabric.root_public_key &&
+                   entry.node_id == @old_node_id
+                 end
+            raise Matter::CommissioningError.new("Fabric B device identity is no longer present")
+          end
+        end
+
+        private def anchor_node_entry : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct?
+          session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
+          datastore_nodes(ImClient.new(@client, @timeout), session,
+            @anchor_datastore_peer, @anchor_datastore_endpoint).find(&.node_id.==(@anchor_node_id))
+        end
+
+        private def old_node_entry : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct?
+          session = case_session(@old_fabric, @old_datastore_node_id, @old_datastore_peer)
+          datastore_nodes(ImClient.new(@client, @timeout), session,
+            @old_datastore_peer, @old_datastore_endpoint).find(&.node_id.==(@old_node_id))
         end
 
         private def case_session(fabric : FabricInfo, node_id : UInt64,
@@ -603,6 +684,14 @@ module Matter
           advance(Stage::RolledBack)
         end
 
+        def resume_rollback! : Nil
+          unless @journal.stage.rolling_back?
+            raise Matter::ConfigurationError.new("Migration rollback is not awaiting recovery")
+          end
+          @port.resume_rollback!
+          advance(Stage::RolledBack)
+        end
+
         # An uncertain operation is never replayed by run. The caller must
         # inspect the device or Datastore over authenticated CASE and then
         # explicitly record the observed postcondition before resuming.
@@ -622,6 +711,22 @@ module Matter
           end
           @port.verify_postcondition!(completed)
           advance(completed)
+        end
+
+        # Record an authenticated observation that an interrupted operation
+        # did not take effect. The next run may then issue that command once.
+        def reconcile_no_effect! : Nil
+          previous = case @journal.stage
+                     when Stage::CommissioningAnchor then Stage::Ready
+                     when Stage::VerifyingAnchor     then Stage::AnchorCommissioned
+                     when Stage::AddingAnchorNode    then Stage::AnchorVerified
+                     when Stage::RemovingOldFabric   then Stage::AnchorNodeAdded
+                     when Stage::RemovingOldNode     then Stage::OldFabricRemoved
+                     else
+                       raise Matter::ConfigurationError.new("Migration is not awaiting a command outcome")
+                     end
+          @port.verify_no_effect!(@journal.stage)
+          advance(previous)
         end
 
         private def advance(stage : Stage) : Nil
