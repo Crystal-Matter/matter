@@ -6,12 +6,14 @@ official SDK test owns commissioning and all protocol assertions.
 """
 
 import argparse
+import base64
 import os
 import socket
 import subprocess
 import sys
 import threading
 import time
+from configparser import ConfigParser
 from pathlib import Path
 
 from sdk_jfc_switch_smoke import ManagedProcess
@@ -27,6 +29,9 @@ CASES = (
 )
 RPC_PORT = 33033
 SETUP_PIN_PATTERN = r"Setup PIN:\s*(\d{7,8})"
+DEFAULT_JF_FABRIC_ID = 1
+P256_SERIALIZED_KEYPAIR_LENGTH = 97
+P256_PUBLIC_KEY_LENGTH = 65
 
 
 def await_bridge(process, port=RPC_PORT, timeout=20):
@@ -42,6 +47,58 @@ def await_bridge(process, port=RPC_PORT, timeout=20):
     raise RuntimeError("RPC bridge did not listen")
 
 
+def start_bridge(case_logs, extra_args=()):
+    bridge_log = (case_logs / "rpc-bridge.log").open("ab")
+    bridge = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name("joint_fabric_rpc_bridge.py")),
+         "--host", "127.0.0.1", "--port", str(RPC_PORT), *extra_args],
+        stdout=bridge_log, stderr=subprocess.STDOUT, start_new_session=True,
+    )
+    try:
+        await_bridge(bridge)
+    except BaseException:
+        close_bridge(bridge, bridge_log)
+        raise
+    return bridge, bridge_log
+
+
+def close_bridge(bridge, bridge_log):
+    bridge.terminate()
+    try:
+        bridge.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        bridge.kill()
+        bridge.wait(timeout=5)
+    bridge_log.close()
+
+
+def preseed_sdk_issuer(jfc, storage_dir, case_logs):
+    """Start JFC once so the official test reuses its persisted issuer keys."""
+    bridge, bridge_log = start_bridge(case_logs)
+    try:
+        preflight = ManagedProcess(
+            "sdk-jfc-preflight",
+            [str(jfc), "--rpc-server-port", str(RPC_PORT),
+             "--storage-directory", str(storage_dir),
+             "--commissioner-vendor-id", "0xFFF1"],
+            storage_dir, case_logs,
+        )
+        try:
+            preflight.expect(r">>>\s*$", 90)
+        finally:
+            preflight.close()
+    finally:
+        close_bridge(bridge, bridge_log)
+
+    config = ConfigParser()
+    if not config.read(storage_dir / "chip_tool_config.alpha.ini"):
+        raise RuntimeError("SDK JFC did not persist its CA keypair")
+    serialized = base64.b64decode(config.get("Default", "ExampleOpCredsCAKey0"), validate=True)
+    if len(serialized) != P256_SERIALIZED_KEYPAIR_LENGTH or serialized[0] != 0x04:
+        raise RuntimeError("SDK JFC persisted an unexpected CA keypair encoding")
+    return serialized[:P256_PUBLIC_KEY_LENGTH]
+
+
 def run_case(sdk, jfa, logs, name):
     python = sdk / "out/python_env/bin/python3"
     script = sdk / "src/python_testing" / f"{name}.py"
@@ -52,8 +109,14 @@ def run_case(sdk, jfa, logs, name):
 
     case_logs = logs / name
     case_logs.mkdir(parents=True, exist_ok=True)
+    # The SDK INI store contains private issuer keys. Keep it outside the CI
+    # artifact directory, which uploads all files under case_logs.
+    issuer_dir = logs.parent / "interop-jf-cert-private" / name
+    issuer_dir.mkdir(parents=True, exist_ok=True)
     state = case_logs / "crystal-state"
     state.mkdir(exist_ok=True)
+    csr_mailbox = case_logs / "icac-csr.json"
+    csr_mailbox.unlink(missing_ok=True)
     pics = case_logs / "pics-values"
     pics.write_text("PICS_SDK_CI_ONLY=0\nJFADMIN.S=1\nJFADMIN.S.A0000=1\nJFDS.S=1\n")
 
@@ -63,7 +126,22 @@ def run_case(sdk, jfa, logs, name):
     drain_thread = None
     stop_drain = threading.Event()
     try:
-        device = ManagedProcess("crystal-jfa", [str(jfa), "--no-interactive"], state, case_logs)
+        root_public_key = preseed_sdk_issuer(jfc, issuer_dir, case_logs)
+        bridge, bridge_log = start_bridge(case_logs, (
+            "--csr-mailbox-path", str(csr_mailbox),
+            "--fabric-id", str(DEFAULT_JF_FABRIC_ID),
+            "--root-public-key-hex", root_public_key.hex(),
+        ))
+
+        previous_mailbox = os.environ.get("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+        os.environ["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = str(csr_mailbox)
+        try:
+            device = ManagedProcess("crystal-jfa", [str(jfa), "--no-interactive"], state, case_logs)
+        finally:
+            if previous_mailbox is None:
+                os.environ.pop("MATTER_JFA_ICAC_CSR_MAILBOX_PATH", None)
+            else:
+                os.environ["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_mailbox
         pin = device.expect(SETUP_PIN_PATTERN, 60).group(1)
         discriminator = device.expect(r"Discriminator:\s*(\d+)", 20).group(1)
         device.expect(r"Starting in Commissioning Mode", 60)
@@ -73,14 +151,6 @@ def run_case(sdk, jfa, logs, name):
 
         drain_thread = threading.Thread(target=drain_device, name="jfa-log-drain", daemon=True)
         drain_thread.start()
-
-        bridge_log = (case_logs / "rpc-bridge.log").open("wb")
-        bridge = subprocess.Popen(
-            [sys.executable, str(Path(__file__).with_name("joint_fabric_rpc_bridge.py")),
-             "--host", "127.0.0.1", "--port", str(RPC_PORT)],
-            stdout=bridge_log, stderr=subprocess.STDOUT, start_new_session=True,
-        )
-        await_bridge(bridge)
 
         command = [
             str(python), str(script),
@@ -92,6 +162,7 @@ def run_case(sdk, jfa, logs, name):
             "--PICS", str(pics),
             "--string-arg", f"jfc_server_app:{jfc}",
             "--string-arg", f"jfa_server_app:{jfa}",
+            "--string-arg", f"fabric_a_storage:{issuer_dir}",
             "--string-arg", "dut_rpc_server_ip:127.0.0.1",
             "--string-arg", f"dut_rpc_server_port:{RPC_PORT}",
         ]
@@ -111,14 +182,7 @@ def run_case(sdk, jfa, logs, name):
         if device is not None:
             device.close()
         if bridge is not None:
-            bridge.terminate()
-            try:
-                bridge.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                bridge.kill()
-                bridge.wait(timeout=5)
-        if bridge_log is not None:
-            bridge_log.close()
+            close_bridge(bridge, bridge_log)
 
 
 def main():

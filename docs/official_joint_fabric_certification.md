@@ -8,6 +8,13 @@ The bridge serves the JFC Pigweed RPC stream. A separate device state and
 controller store are created for every case, so one result cannot depend on
 another case's provisioning.
 
+Before each official script starts, the fixture starts JFC once to persist its
+issuer keys, then configures the bridge with that issuer's public root key and
+the JFA with a matching ICAC CSR mailbox. The official script reopens the
+same JFC store, and Crystal can delegate ICAC CSR signing without importing
+the SDK's private key. The SDK store contains private keys and is kept outside
+the uploaded log directory.
+
 The CI workflow runs these cases and reports every failure in one run:
 
 | Official case | Coverage |
