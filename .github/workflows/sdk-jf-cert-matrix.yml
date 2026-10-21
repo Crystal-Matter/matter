@@ -1,0 +1,84 @@
+name: Matter 1.6 official Joint Fabric matrix
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/sdk-jf-cert-matrix.yml
+      - e2e/interop/sdk_jf_cert_matrix.py
+      - e2e/interop/joint_fabric_rpc_bridge.py
+      - examples/support/joint_fabric_administrator_device.cr
+      - src/matter/cluster/joint_fabric_administrator.cr
+      - src/matter/cluster/joint_fabric_datastore.cr
+
+jobs:
+  official-jfadmin-and-jfds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crystal-lang/install-crystal@v1
+      - name: Prepare discovery and Python SDK dependencies
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            avahi-daemon avahi-utils dbus iproute2 libavahi-client-dev libdbus-1-dev \
+            libglib2.0-dev libcairo2-dev libgirepository1.0-dev libssl-dev \
+            pkg-config clang ninja-build cmake
+          interface=$(ip -o -4 route show default | awk '{print $5; exit}')
+          sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
+          sudo ip -6 addr add fd42:4d41:5454::2/64 dev "$interface"
+          sudo service dbus start
+          sudo service avahi-daemon start
+          avahi-daemon --check
+      - name: Build Crystal JFA
+        run: |
+          shards install --ignore-crystal-version --skip-postinstall --skip-executables
+          mkdir -p tmp
+          crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
+      - name: Build official Matter 1.6 JFC and Python controller
+        timeout-minutes: 105
+        run: |
+          git clone --depth 1 --branch v1.6.0.0 \
+            https://github.com/project-chip/connectedhomeip.git tmp/connectedhomeip
+          cd tmp/connectedhomeip
+          ./scripts/checkout_submodules.py --shallow --platform linux
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("scripts/setup/environment.json").read_text())
+          config["cipd_package_files"] = [
+              package for package in config["cipd_package_files"]
+              if not package.endswith("/arm.json")
+          ]
+          Path("objdir-jf-environment.json").write_text(json.dumps(config))
+          PY
+          export PW_CONFIG_FILE=objdir-jf-environment.json
+          set +u
+          source scripts/bootstrap.sh -p linux
+          set -u
+          ./scripts/build/build_examples.py \
+            --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
+            --build-profile debug build --copy-artifacts-to objdir-jf
+          ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
+            --include_pytest_deps no --install_virtual_env out/python_env
+          out/python_env/bin/pip install -r src/python_testing/requirements.txt
+          out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
+      - name: Run official JFA and Datastore cases
+        timeout-minutes: 40
+        env:
+          MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
+          MATTER_JFA_PROVISIONED_ANCHOR: '1'
+        run: |
+          python3 e2e/interop/sdk_jf_cert_matrix.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --log-dir tmp/interop-jf-cert-matrix
+      - name: Upload official test and device logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-jf-cert-matrix-logs
+          path: tmp/interop-jf-cert-matrix/
+          if-no-files-found: warn
