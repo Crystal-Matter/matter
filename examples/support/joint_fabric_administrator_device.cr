@@ -148,6 +148,11 @@ module MatterJointFabricAdministrator
       getter fabric_present : Bool?
       getter inspected_fabric_id : UInt64?
       getter inspected_root_public_key : Bytes?
+      getter inspected_root_certificate : Bytes?
+      getter inspected_icac_certificate : Bytes?
+      getter inspected_node_id : UInt64?
+      getter inspected_cross_signed_icac : Bytes?
+      getter inspected_administrator_fabric_index : UInt8?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -155,7 +160,12 @@ module MatterJointFabricAdministrator
       def initialize(@status : String, @error : String? = nil, @fabric_present : Bool? = nil,
                      @inspected_fabric_id : UInt64? = nil,
                      @inspected_root_public_key : Bytes? = nil, @nonce : String? = nil,
-                     @certificate : Bytes? = nil, @subscription_committed : Bool? = nil)
+                     @certificate : Bytes? = nil, @subscription_committed : Bool? = nil,
+                     @inspected_root_certificate : Bytes? = nil,
+                     @inspected_icac_certificate : Bytes? = nil,
+                     @inspected_node_id : UInt64? = nil,
+                     @inspected_cross_signed_icac : Bytes? = nil,
+                     @inspected_administrator_fabric_index : UInt8? = nil)
       end
     end
 
@@ -434,7 +444,7 @@ module MatterJointFabricAdministrator
       end
       unless compliant_anchor_fabric?(fabric)
         ::Log.for("matter.example.joint_fabric_administrator").info do
-          "JFA activation skipped: Anchor CAT or ICAC profile gate failed (fabric_id=0x#{fabric.fabric_id.to_s(16)}, cats=#{fabric.cats.map(&.value).map(&.to_s(16))})"
+          "JFA activation skipped: Anchor CAT or ICAC validation failed (fabric_id=0x#{fabric.fabric_id.to_s(16)}, cats=#{fabric.cats.map(&.value).map(&.to_s(16))})"
         end
         return
       end
@@ -1533,6 +1543,16 @@ module MatterJointFabricAdministrator
             end
             CommandResult.new("ok", fabric_present: present, inspected_fabric_id: fabric_id,
               inspected_root_public_key: root_public_key, nonce: request.nonce)
+          when "inspect-anchor-identity"
+            fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+            root_certificate = fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
+            icac_certificate = fabric.intermediate_cert || raise Matter::ConfigurationError.new("Anchor ICAC is unavailable")
+            CommandResult.new("ok", fabric_present: @joint_fabric_provisioned,
+              inspected_fabric_id: fabric.fabric_id, inspected_root_public_key: fabric.root_public_key,
+              inspected_root_certificate: root_certificate, inspected_icac_certificate: icac_certificate,
+              inspected_node_id: fabric.node_id, inspected_cross_signed_icac: persisted_icac,
+              inspected_administrator_fabric_index: joint_fabric_administrator.administrator_fabric_index,
+              nonce: request.nonce)
           when "inspect-new-anchor"
             CommandResult.new("ok", nonce: request.nonce,
               subscription_committed: @participant_view_current)
@@ -1903,13 +1923,8 @@ module MatterJointFabricAdministrator
       return false unless fabric.cats.includes?(ANCHOR_CAT)
       icac = fabric.intermediate_cert
       return false unless icac
-      certificate = Matter::Crypto::MatterCertificate.from_slice(icac)
-      return false if certificate.subject.icac_id.nil?
-      subject = TLV::Any.from_slice(icac).as_structure[Matter::Crypto::MatterCertificate::Asn1::Field::Subject.value].as_list
-      subject.any? do |entry|
-        entry.header.ids == Matter::Crypto::MatterCertificate::Asn1::Dn::OrgUnitName.value &&
-          entry.as_s? == Matter::Crypto::MatterCertificate::Builder::ANCHOR_ICAC_ORGANIZATIONAL_UNIT
-      end
+      Matter::Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, fabric.fabric_id)
+      true
     rescue Matter::Error
       false
     end

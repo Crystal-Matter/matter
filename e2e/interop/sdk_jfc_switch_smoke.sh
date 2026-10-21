@@ -47,19 +47,32 @@ PY
     set +u
     source scripts/bootstrap.sh -p linux
     set -u
-    ./scripts/build/build_examples.py \
-      --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
-      --target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang \
-      --build-profile debug \
+    sdk_targets=(--target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang)
+    if [[ "${MATTER_INTEROP_SCENARIO:-switch}" != jcm ]]; then
+      sdk_targets+=(--target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang)
+    fi
+    ./scripts/build/build_examples.py "${sdk_targets[@]}" --build-profile debug \
       build --copy-artifacts-to objdir-jf
   ) 2>&1 | tee "${log_dir}/sdk-build.log"
 fi
 
-switch_bin="${MATTER_INTEROP_SWITCH_BIN:-${log_dir}/matter_switch}"
-if [[ "${MATTER_INTEROP_SKIP_BUILD:-0}" != 1 ]]; then
-  (cd "${repo_root}" && crystal build examples/matter_switch_device.cr -o "${switch_bin}") \
-    2>&1 | tee "${log_dir}/switch-build.log"
+if [[ "${MATTER_INTEROP_SCENARIO:-switch}" == jcm ]]; then
+  jfa_bin="${MATTER_INTEROP_JFA_BIN:-${log_dir}/matter_jfa}"
+  driver_bin="${MATTER_INTEROP_JCM_DRIVER_BIN:-${log_dir}/sdk_jfc_jcm_driver}"
+  if [[ "${MATTER_INTEROP_SKIP_BUILD:-0}" != 1 ]]; then
+    (cd "${repo_root}" && crystal build examples/matter_joint_fabric_administrator_device.cr -o "${jfa_bin}") \
+      2>&1 | tee "${log_dir}/jfa-build.log"
+    (cd "${repo_root}" && crystal build e2e/interop/sdk_jfc_jcm_driver.cr -o "${driver_bin}") \
+      2>&1 | tee "${log_dir}/jcm-driver-build.log"
+  fi
+  python3 "${repo_root}/e2e/interop/sdk_jfc_jcm_live.py" \
+    --sdk "${sdk_root}" --jfa "${jfa_bin}" --driver "${driver_bin}" --log-dir "${log_dir}"
+else
+  switch_bin="${MATTER_INTEROP_SWITCH_BIN:-${log_dir}/matter_switch}"
+  if [[ "${MATTER_INTEROP_SKIP_BUILD:-0}" != 1 ]]; then
+    (cd "${repo_root}" && crystal build examples/matter_switch_device.cr -o "${switch_bin}") \
+      2>&1 | tee "${log_dir}/switch-build.log"
+  fi
+  python3 "${repo_root}/e2e/interop/sdk_jfc_switch_smoke.py" \
+    --sdk "${sdk_root}" --switch "${switch_bin}" --log-dir "${log_dir}"
 fi
-
-python3 "${repo_root}/e2e/interop/sdk_jfc_switch_smoke.py" \
-  --sdk "${sdk_root}" --switch "${switch_bin}" --log-dir "${log_dir}"

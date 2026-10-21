@@ -10,7 +10,7 @@ module Matter
       MAX_CSR_BYTES = 1024
 
       def initialize(@path : String, @fabric_id : UInt64, @root_public_key : Bytes,
-                     @timeout : Time::Span = 1.second)
+                     @timeout : Time::Span = 5.seconds)
         raise Matter::ConfigurationError.new("Invalid remote CSR fabric") if @fabric_id == 0
         unless @root_public_key.size == 65 && @root_public_key[0] == 4
           raise Matter::ConfigurationError.new("Invalid remote CSR root public key")

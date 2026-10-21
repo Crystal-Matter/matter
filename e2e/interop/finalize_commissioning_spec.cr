@@ -56,6 +56,20 @@ private def completion_response(error : Matter::Commissioning::ErrorCode) : Matt
 end
 
 describe "SDK JFC standard ownership handoff command" do
+  it "round trips the public Anchor identity for the live CSR verifier" do
+    result = JfaDevice::CommandResult.new("ok", fabric_present: true,
+      inspected_fabric_id: 41216_u64, inspected_root_public_key: Bytes[4_u8] + Bytes.new(64, 1_u8),
+      inspected_root_certificate: Bytes[1_u8, 2_u8], inspected_icac_certificate: Bytes[3_u8, 4_u8],
+      inspected_node_id: 11_u64, inspected_cross_signed_icac: Bytes[5_u8, 6_u8],
+      inspected_administrator_fabric_index: 2_u8, nonce: "inspect-1")
+    restored = JfaDevice::CommandResult.from_document(result.to_document)
+    restored.inspected_root_certificate.should eq(Bytes[1_u8, 2_u8])
+    restored.inspected_icac_certificate.should eq(Bytes[3_u8, 4_u8])
+    restored.inspected_node_id.should eq(11_u64)
+    restored.inspected_cross_signed_icac.should eq(Bytes[5_u8, 6_u8])
+    restored.inspected_administrator_fabric_index.should eq(2_u8)
+  end
+
   it "round trips its fabric selector and nonce through the device YAML record" do
     key = Bytes.new(65, 7_u8)
     request = JfaDevice::CommandRequest.new("finalize-commissioning", 42_u64,

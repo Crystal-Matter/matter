@@ -163,6 +163,15 @@ class RpcBridgeTest(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()),
                              {"nonce": "a" * 32, "status": "ok", "csr": base64.b64encode(csr).decode()})
             self.assertEqual(service.handle(response).status, FAILED_PRECONDITION)
+
+            # SDK v1.6 leaves Response.transaction_type unset; the pending
+            # GetStream request and verified CSR key bind the exchange.
+            mailbox.pending_nonce = "c" * 32
+            mailbox.deadline = time.monotonic() + 5
+            sdk_response = RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["ResponseStream"],
+                                     b"\x08\x01\x12\x05" + csr, call_id=19)
+            self.assertEqual(service.handle(sdk_response).kind, RESPONSE)
+            self.assertEqual(json.loads(path.read_text())["nonce"], "c" * 32)
             path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
                                         "root_public_key": root.hex(), "nonce": "b" * 32}))
             self.assertIsNone(service.poll_stream())
@@ -191,6 +200,21 @@ class RpcBridgeTest(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())["status"], "timeout")
             service.disconnect()
             self.assertFalse(service.streams)
+
+    def test_new_sdk_fabric_can_supply_its_selector_after_anchor_commissioning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "csr.json"
+            mailbox = CsrMailbox(path)
+            service = JointFabricService(csr_mailbox=mailbox)
+            service.handle(RpcPacket(REQUEST, RPC_CHANNEL, SERVICE_ID, METHOD_IDS["GetStream"], call_id=8))
+            root = b"\x04" + bytes(range(64))
+            path.write_text(json.dumps({"operation": "icac-csr", "fabric_id": 41216,
+                                        "root_public_key": root.hex(), "nonce": "e" * 32}))
+            outbound = service.poll_stream()
+            self.assertEqual(outbound.kind, SERVER_STREAM)
+            self.assertEqual(outbound.payload, b"\x08\x00\x10\x80\xc2\x02")
+            service.disconnect()
+            self.assertEqual(json.loads(path.read_text())["status"], "unavailable")
 
     def test_csr_exchange_over_hdlc_socket_and_reconnect(self):
         with tempfile.TemporaryDirectory() as directory:
