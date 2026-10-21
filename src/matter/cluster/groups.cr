@@ -11,7 +11,7 @@ module Matter
     #
     # Specification: Matter 1.4 § 1.3
     class Groups < Base
-      cluster 0x0004, revision: 4, persist_state: false
+      cluster 0x0004, revision: 4, persist_state: true
 
       feature :group_names, bit: 0 # GN - Store names for groups
 
@@ -189,6 +189,9 @@ module Matter
 
       # Group storage: GroupId => GroupName
       property groups : Hash(UInt16, String)
+      @fabric_groups : Hash(UInt8, Hash(UInt16, String))
+      property on_group_added : Proc(UInt16, UInt16, String, UInt8, Nil)?
+      property on_group_removed : Proc(UInt16, UInt16, UInt8, Nil)?
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
@@ -197,6 +200,7 @@ module Matter
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @groups = Hash(UInt16, String).new
+        @fabric_groups = Hash(UInt8, Hash(UInt16, String)).new
         @name_support = @feature_map.group_names? ? NameSupport::GroupNames : NameSupport::None
       end
 
@@ -211,7 +215,7 @@ module Matter
 
       def view_group(request : ViewGroupRequest) : ViewGroupResponse
         group_id = request.group_id.id
-        group_name = @groups[group_id]?
+        group_name = current_groups[group_id]?
         status = if !valid_group_id?(group_id)
                    InteractionModel::StatusCode::ConstraintError
                  elsif group_name
@@ -224,8 +228,8 @@ module Matter
 
       def get_group_membership(request : GetGroupMembershipRequest) : GetGroupMembershipResponse
         requested = request.group_list.map(&.id)
-        members = @groups.keys.select { |id| requested.empty? || requested.includes?(id) }.map { |id| DataType::GroupId.new(id) }
-        capacity = (@max_groups - @groups.size).to_u8
+        members = current_groups.keys.select { |id| requested.empty? || requested.includes?(id) }.map { |id| DataType::GroupId.new(id) }
+        capacity = (@max_groups - current_groups.size).to_u8
         GetGroupMembershipResponse.new(capacity, members)
       end
 
@@ -235,7 +239,13 @@ module Matter
       end
 
       def remove_all_groups : InteractionModel::Status
-        @groups.clear
+        groups = current_groups
+        if fabric_index = request_fabric_index
+          groups.each_key do |group_id|
+            @on_group_removed.try(&.call(group_id, endpoint_id.number, fabric_index))
+          end
+        end
+        groups.clear
         increment_version
         InteractionModel::Status.success
       end
@@ -253,18 +263,26 @@ module Matter
         unless valid_group_id?(group_id) && group_name.bytesize <= GROUP_NAME_MAX_LENGTH
           return InteractionModel::StatusCode::ConstraintError
         end
-        if @groups.size >= @max_groups && !@groups.has_key?(group_id)
+        groups = current_groups
+        if groups.size >= @max_groups && !groups.has_key?(group_id)
           return InteractionModel::StatusCode::ResourceExhausted
         end
 
-        @groups[group_id] = group_name
+        if fabric_index = request_fabric_index
+          @on_group_added.try(&.call(group_id, endpoint_id.number, group_name, fabric_index))
+        end
+
+        groups[group_id] = group_name
         increment_version
         InteractionModel::StatusCode::Success
       end
 
       private def delete_group(group_id : UInt16) : InteractionModel::StatusCode
         return InteractionModel::StatusCode::ConstraintError unless valid_group_id?(group_id)
-        if @groups.delete(group_id)
+        if current_groups.delete(group_id)
+          if fabric_index = request_fabric_index
+            @on_group_removed.try(&.call(group_id, endpoint_id.number, fabric_index))
+          end
           increment_version
           InteractionModel::StatusCode::Success
         else
@@ -280,22 +298,25 @@ module Matter
         include Storage::Record
 
         getter groups : Hash(UInt16, String)
+        getter fabric_groups : Hash(UInt8, Hash(UInt16, String)) = Hash(UInt8, Hash(UInt16, String)).new
         getter data_version : UInt32
 
         def initialize(
           @groups : Hash(UInt16, String),
           @data_version : UInt32,
+          @fabric_groups : Hash(UInt8, Hash(UInt16, String)) = Hash(UInt8, Hash(UInt16, String)).new,
         )
         end
       end
 
       def save_state : Storage::Document?
-        PersistedState.new(@groups, @data_version).to_document
+        PersistedState.new(@groups, @data_version, @fabric_groups).to_document
       end
 
       def restore_state(document : Storage::Document) : Nil
         state = PersistedState.from_document(document)
         @groups = state.groups
+        @fabric_groups = state.fabric_groups
         @data_version = state.data_version
       rescue ex
         Log.warn(exception: ex) { "Groups restore_state failed; starting fresh" }
@@ -303,11 +324,27 @@ module Matter
 
       # Public API
       def member_of?(group_id : UInt16) : Bool
-        @groups.has_key?(group_id)
+        current_groups.has_key?(group_id)
       end
 
       def group_count : Int32
-        @groups.size
+        current_groups.size
+      end
+
+      # Fabric indexes can be reused after RemoveFabric. Discard the removed
+      # fabric's group names before another commissioner receives that index.
+      def remove_fabric(fabric_index : UInt8) : Nil
+        return unless @fabric_groups.delete(fabric_index)
+
+        increment_version
+      end
+
+      private def current_groups : Hash(UInt16, String)
+        if fabric_index = request_fabric_index
+          @fabric_groups[fabric_index] ||= Hash(UInt16, String).new
+        else
+          @groups
+        end
       end
     end
   end

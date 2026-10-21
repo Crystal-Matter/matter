@@ -124,6 +124,8 @@ module Matter
       property request_peer_icac : Bytes? = nil
       property? request_is_case_session : Bool = false
       property request_fabric_index : UInt8? = nil
+      property request_auth_mode : InteractionModel::EntryAuthMode? = nil
+      property request_group_id : UInt16? = nil
       property? request_fabric_filtered : Bool = true
 
       # IMHandler sets request_* fields immediately before dispatch. A fiber

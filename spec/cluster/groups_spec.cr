@@ -25,6 +25,58 @@ def test_group_membership(cluster, ids = [] of UInt16)
 end
 
 describe Matter::Cluster::Groups do
+  it "updates the GroupTable through fabric-scoped membership callbacks" do
+    groups = GroupsDef.new(Matter::DataType::EndpointNumber.new(1_u16))
+    key_management = Matter::Cluster::GroupKeyManagement.new(Matter::DataType::EndpointNumber.new(0_u16))
+    key_management.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(5_u16,
+        epoch_key0: Bytes.new(16, 1_u8), epoch_start_time0: 1_u64)), 1_u8)
+    key_management.add_group_key_map(257_u16, 5_u16, 1_u8)
+    groups.on_group_added = ->(id : UInt16, endpoint : UInt16, name : String, fabric : UInt8) do
+      key_management.add_group(id, endpoint, name, fabric)
+    end
+    groups.on_group_removed = ->(id : UInt16, endpoint : UInt16, fabric : UInt8) do
+      key_management.remove_group(id, endpoint, fabric)
+    end
+
+    groups.with_request_context do
+      groups.request_fabric_index = 1_u8
+      groups.add_group(GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(257_u16), "Office"))
+      key_management.group_table(1_u8).first.endpoints.should eq([1_u16])
+      groups.remove_group(GroupsDef::RemoveGroupRequest.new(Matter::DataType::GroupId.new(257_u16)))
+      key_management.group_table(1_u8).should be_empty
+      key_management.group_key_map(1_u8).size.should eq(1)
+      groups.add_group(GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(257_u16), "Office"))
+      groups.remove_all_groups
+      key_management.group_table(1_u8).should be_empty
+      key_management.group_key_map(1_u8).size.should eq(1)
+    end
+  end
+
+  it "keeps group names and membership scoped to the requesting fabric across restore" do
+    groups = GroupsDef.new(Matter::DataType::EndpointNumber.new(1_u16))
+    groups.with_request_context do
+      groups.request_fabric_index = 1_u8
+      groups.add_group(GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(257_u16), "First"))
+      groups.request_fabric_index = 2_u8
+      groups.view_group(GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(257_u16))).status_code.should eq(GroupsStatus::NotFound)
+      groups.add_group(GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(257_u16), "Second"))
+    end
+
+    restored = GroupsDef.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored.restore_state(groups.save_state.as(Matter::Storage::Document))
+    restored.with_request_context do
+      restored.request_fabric_index = 1_u8
+      restored.view_group(GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(257_u16))).group_name.should eq("First")
+      restored.request_fabric_index = 2_u8
+      restored.view_group(GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(257_u16))).group_name.should eq("Second")
+      restored.remove_all_groups
+      restored.get_group_membership(GroupsDef::GetGroupMembershipRequest.new([] of Matter::DataType::GroupId)).group_list.should be_empty
+      restored.request_fabric_index = 1_u8
+      restored.get_group_membership(GroupsDef::GetGroupMembershipRequest.new([] of Matter::DataType::GroupId)).group_list.map(&.id).should eq([257_u16])
+    end
+  end
+
   it "creates cluster with default values" do
     cluster = build(Matter::Cluster::Groups)
     cluster.name.should eq("Groups")

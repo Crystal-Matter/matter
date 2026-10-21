@@ -16,13 +16,16 @@ module Matter
 
       struct Key
         getter fabric_index : UInt8
+        getter fabric_id : UInt64?
         getter group_id : DataType::GroupId
         getter operational_key : Bytes
         getter session_id : UInt16
         getter privacy_key : Bytes
 
-        def initialize(@fabric_index : UInt8, group_id : UInt16, @operational_key : Bytes)
+        def initialize(@fabric_index : UInt8, group_id : UInt16, @operational_key : Bytes,
+                       @fabric_id : UInt64? = nil)
           raise Matter::SessionError.new("Group key requires a fabric") if @fabric_index == 0
+          raise Matter::SessionError.new("Fabric ID zero is reserved") if @fabric_id == 0_u64
           raise Matter::SessionError.new("Group ID zero is reserved") if group_id == 0
           raise Matter::SessionError.new("Operational group key must be 16 bytes") unless @operational_key.size == 16
           @group_id = DataType::GroupId.new(group_id)
@@ -44,6 +47,11 @@ module Matter
       def initialize(@keys : Array(Key),
                      @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
         @reception = Hash(Tuple(UInt8, UInt64, Bool), Transport::MessageCounter).new
+      end
+
+      # Refresh installed epoch keys while preserving replay windows. A key
+      # rotation must never make an old counter acceptable again in this boot.
+      def keys=(@keys : Array(Key)) : Nil
       end
 
       def self.derive_operational_key(epoch_key : Bytes, compressed_fabric_id : Bytes) : Bytes

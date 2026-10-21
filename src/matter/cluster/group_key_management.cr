@@ -181,10 +181,10 @@ module Matter
         include TLV::Serializable
         include Storage::Record
 
-        @[TLV::Field(tag: 0)]
+        @[TLV::Field(tag: 1)]
         property group_id : UInt16
 
-        @[TLV::Field(tag: 1)]
+        @[TLV::Field(tag: 2)]
         property group_key_set_id : UInt16
 
         @[TLV::Field(tag: 254)]
@@ -198,6 +198,24 @@ module Matter
           if group_id == RESERVED_GROUP_ID
             raise ArgumentError.new("Group ID 0 is reserved and invalid")
           end
+        end
+      end
+
+      # Incoming fabric-scoped entries omit FabricIndex; the authenticated
+      # accessing fabric supplies it. Stored/read entries use GroupKeyMapStruct.
+      private struct GroupKeyMapWriteStruct
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1)]
+        property group_id : UInt16
+
+        @[TLV::Field(tag: 2)]
+        property group_key_set_id : UInt16
+
+        @[TLV::Field(tag: 254, optional: true)]
+        property fabric_index : UInt8?
+
+        def initialize(@group_id : UInt16, @group_key_set_id : UInt16, @fabric_index : UInt8? = nil)
         end
       end
 
@@ -533,6 +551,30 @@ module Matter
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
       end
 
+      # Handles a complete list replacement or chip-tool's empty-list clear
+      # followed by list-item appends. FabricIndex on the wire is ignored.
+      def write_group_key_map(value : TLV::Any, fabric_index : UInt8) : InteractionModel::Status
+        if list = value.as_list?
+          return InteractionModel::Status.resource_exhausted if list.size > max_groups_per_fabric
+          entries = list.map { |item| GroupKeyMapWriteStruct.from_tlv(item) }
+          return InteractionModel::Status.constraint_error if entries.any? { |entry| entry.group_id == 0 || entry.group_key_set_id == 0 }
+          return InteractionModel::Status.constraint_error if entries.map(&.group_id).to_set.size != entries.size
+          return InteractionModel::Status.not_found if entries.any? { |entry| !get_key_set(entry.group_key_set_id, fabric_index) }
+          self.group_key_map = entries.map { |entry| GroupKeyMapStruct.new(entry.group_id, entry.group_key_set_id, fabric_index) }
+        elsif value.as_structure?
+          entry = GroupKeyMapWriteStruct.from_tlv(value)
+          return InteractionModel::Status.constraint_error if entry.group_key_set_id == IPK_KEY_SET_ID
+          add_group_key_map(entry.group_id, entry.group_key_set_id, fabric_index)
+        else
+          return InteractionModel::Status.invalid_data_type
+        end
+        InteractionModel::Status.success
+      rescue ex : Matter::ClusterError
+        ex.to_status
+      rescue TLV::DeserializationError | TypeCastError | ArgumentError
+        InteractionModel::Status.invalid_data_type
+      end
+
       # Remove a group key map entry
       def remove_group_key_map(group_id : UInt16, fabric_index : UInt8) : Nil
         @group_key_map.reject! do |entry|
@@ -544,23 +586,14 @@ module Matter
       # Add a group to the group table
       # Called by Groups cluster when AddGroup command is executed
       #
-      # Validations:
-      # - Group must have a corresponding key map entry
-      # - Must not exceed max_groups_per_fabric
+      # Membership can be provisioned before its GroupKeyMap entry. A mapped
+      # operational key is required only when receiving group messages.
       def add_group(
         group_id : UInt16,
         endpoint_id : UInt16,
         group_name : String?,
         fabric_index : UInt8,
       ) : Nil
-        # Validate that group has a key map entry
-        has_key_map = @group_key_map.any? do |entry|
-          entry.fabric_index == fabric_index && entry.group_id == group_id
-        end
-        unless has_key_map
-          raise Matter::ClusterError.new("Group #{group_id} has no key map entry", InteractionModel::StatusCode::NotFound)
-        end
-
         # Find or create group info
         existing = @group_table.find do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id

@@ -1,11 +1,14 @@
 require "../cluster/basic_information"
 require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
+require "../cluster/group_key_management"
 require "../codec/message_codec"
 require "../fabric_table"
 require "../node"
 require "../session/context"
 require "../session/secure_message"
+require "../session/group_secure_packet"
+require "../transport/group_multicast"
 require "../transport/udp_transport"
 require "./interaction_router"
 require "./message_type"
@@ -116,10 +119,14 @@ module Matter
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
+        @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
         # Set ourselves as the message handler
         @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) do
           handle_message(msg, peer)
+        end
+        @transport.on_group_packet = ->(wire : Bytes, peer : Socket::IPAddress) do
+          handle_group_packet(wire, peer)
         end
 
         # Restore persisted protocol state (CASE sessions + subscriptions)
@@ -221,8 +228,23 @@ module Matter
       # This should be called after all clusters have been added to the clusters hash
       # It enables automatic subscription updates when attributes change
       def setup_cluster_notifications
+        if group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
+          @node.clusters.each_value do |cluster|
+            next unless groups = cluster.as?(Cluster::Groups)
+            groups.on_group_added = ->(group_id : UInt16, endpoint_id : UInt16, name : String, fabric_index : UInt8) do
+              group_keys.add_group(group_id, endpoint_id, name, fabric_index)
+            end
+            groups.on_group_removed = ->(group_id : UInt16, endpoint_id : UInt16, fabric_index : UInt8) do
+              group_keys.remove_group(group_id, endpoint_id, fabric_index)
+            end
+          end
+        end
         @node.on_attribute_changed = ->(ep : UInt16, cl : UInt32, attr : UInt32) do
           @subscriptions.notify(ep, cl, attr)
+          if cl == Cluster::GroupKeyManagement::CLUSTER_ID &&
+             (attr == Cluster::GroupKeyManagement::ATTR_GROUP_TABLE || attr == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
+            refresh_group_memberships
+          end
         end
         @node.on_event_emitted = ->(_record : EventJournal::Record) do
           @subscriptions.notify_events
@@ -297,6 +319,69 @@ module Matter
           "type=0x#{msg.payload_header.message_type.to_s(16)} exchange=#{msg.payload_header.exchange_id} " \
           "payload_bytes=#{msg.payload.size}"
         end
+      end
+
+      # Authenticated Group packets bypass unicast session lookup and never
+      # enter the ordinary IM router, which assumes a CASE/PASE session.
+      def handle_group_packet(wire : Bytes, peer : Socket::IPAddress) : Nil
+        @registry.synchronize do
+          keys = group_candidate_keys
+          return if keys.empty?
+          @group_packets.keys = keys
+          decoded = @group_packets.decode(wire)
+          if group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
+            GroupInteractionRouter.new(@node.clusters, group_keys).handle(decoded)
+          end
+        end
+      rescue ex
+        Log.debug(exception: ex) { "Dropping group packet from #{peer}" }
+      end
+
+      def refresh_group_memberships : Nil
+        group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
+        return unless group_keys
+        addresses = @fabric_table.all_fabrics.flat_map do |fabric|
+          mapped = group_keys.group_key_map(fabric.fabric_index).map(&.group_id)
+          group_keys.group_table(fabric.fabric_index).select { |group| mapped.includes?(group.group_id) }.map do |group|
+            Transport::GroupMulticast.address(fabric.fabric_id, group.group_id, @transport.port)
+          end
+        end
+        @transport.group_memberships = addresses.uniq
+      rescue ex
+        Log.warn(exception: ex) { "Failed to update group multicast memberships" }
+      end
+
+      # Remove every group credential and membership associated with a fabric
+      # before its local index can be reused by a new commissioner.
+      def forget_group_fabric(fabric_index : UInt8) : Nil
+        @node.get_cluster(Cluster::GroupKeyManagement).try(&.remove_fabric(fabric_index))
+        @node.clusters.each_value do |cluster|
+          cluster.as?(Cluster::Groups).try(&.remove_fabric(fabric_index))
+        end
+        refresh_group_memberships
+      end
+
+      private def group_candidate_keys : Array(Session::GroupSecurePacket::Key)
+        group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
+        return [] of Session::GroupSecurePacket::Key unless group_keys
+        result = [] of Session::GroupSecurePacket::Key
+        @fabric_table.all_fabrics.each do |fabric|
+          group_keys.group_key_map(fabric.fabric_index).each do |mapping|
+            next if mapping.group_key_set_id == Cluster::GroupKeyManagement::IPK_KEY_SET_ID
+            key_set = group_keys.get_key_set(mapping.group_key_set_id, fabric.fabric_index)
+            next unless key_set
+            {
+              {key_set.epoch_key0, key_set.epoch_start_time0},
+              {key_set.epoch_key1, key_set.epoch_start_time1},
+              {key_set.epoch_key2, key_set.epoch_start_time2},
+            }.each do |epoch, start_time|
+              next unless epoch && start_time && start_time != UInt64::MAX
+              operational = Session::GroupSecurePacket.derive_operational_key(epoch, fabric.compressed_fabric_id)
+              result << Session::GroupSecurePacket::Key.new(fabric.fabric_index, mapping.group_id, operational)
+            end
+          end
+        end
+        result
       end
 
       # Hands a decrypted message to the protocol that owns it.
