@@ -678,9 +678,10 @@ module Matter
           Snapshot.copy!(source, @candidate_store, @candidate_node_id,
             @candidate_old_node_id, @candidate_administrator)
           validate_participants!
-          @candidate_store.group_list.each do |group|
+          @candidate_store.group_list = @candidate_store.group_list.map do |group|
             group.group_cat_version = @administrator_cat_version if group.group_cat == 0xFFFF_u16 && @administrator_cat_version
             group.group_cat_version = @anchor_cat_version if group.group_cat == 0xFFFE_u16 && @anchor_cat_version
+            group
           end
           @persist.call
         end

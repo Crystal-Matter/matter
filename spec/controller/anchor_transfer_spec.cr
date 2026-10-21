@@ -600,6 +600,12 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
 
   it "rotates other Administrators before promoting and advertising the candidate" do
     old_store = committed_anchor_store
+    old_store.group_list = [
+      TransferDatastore::DatastoreGroupInformationEntryStruct.new(1_u64, "administrators", nil,
+        0xFFFF_u16, 1_u16, TransferDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer),
+      TransferDatastore::DatastoreGroupInformationEntryStruct.new(2_u64, "anchor", nil,
+        0xFFFE_u16, 1_u16, TransferDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer),
+    ]
     old_store.admin_list = [
       TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x100_u64, "other", 1_u16, Bytes[1]),
       TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(0x200_u64, "candidate", 1_u16, Bytes[2]),
@@ -623,9 +629,11 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
       candidate, 0x200_u64, bootstrap,
       [other.as(Matter::Controller::AnchorTransfer::CredentialTransition)], anchor,
       -> { events << "persist"; nil }, -> { events << "advertise"; nil },
+      administrator_cat_version: 2_u16, anchor_cat_version: 2_u16,
       finalize_administrators: -> { events << "follow-up"; nil })
 
     migration.copy_datastore!
+    candidate.group_list.map(&.group_cat_version).should eq([2_u16, 2_u16])
     migration.rotate_credentials!
     migration.promote_candidate!
     migration.follow_up_administrators!
