@@ -643,6 +643,7 @@ module Matter
 
       # Extra bytes the event report array costs when the chunk carries one.
       EVENT_ARRAY_OVERHEAD = 2
+      MAX_REPORT_ITEM_SIZE = MAX_REPORT_PAYLOAD_SIZE - REPORT_DATA_OVERHEAD - SUBSCRIPTION_ID_OVERHEAD - EVENT_ARRAY_OVERHEAD
 
       # Chunk attribute and event reports into ReportData messages that fit
       # within the MTU. Returns (encoded_bytes, is_last_chunk) tuples.
@@ -660,8 +661,10 @@ module Matter
         events = event_reports || [] of InteractionModel::EventReportIB
 
         # Pre-encode every report so its wire size is known before packing
-        encoded_attributes = attribute_reports.map { |report| {report, report.to_slice} }
-        encoded_events = events.map { |report| {report, report.to_slice} }
+        encoded_attributes = attribute_reports.flat_map { |report| fit_attribute_report(report) }
+          .map { |report| {report, report.to_slice} }
+        encoded_events = events.map { |report| fit_event_report(report) }
+          .map { |report| {report, report.to_slice} }
         total = encoded_attributes.size + encoded_events.size
 
         base_overhead = REPORT_DATA_OVERHEAD
@@ -702,8 +705,7 @@ module Matter
           end
 
           if empty_chunk && current_size + encoded.size > MAX_REPORT_PAYLOAD_SIZE
-            # Single report too large - include it anyway (will exceed MTU but necessary)
-            Log.warn { "Single report exceeds max payload size (#{encoded.size} bytes)" }
+            raise Matter::ProtocolError.new("Report exceeds maximum payload after size reduction (#{encoded.size} bytes)")
           end
 
           if index < encoded_attributes.size
@@ -720,6 +722,57 @@ module Matter
 
         Log.debug { "Total chunks: #{chunks.size}" }
         chunks
+      end
+
+      # Split one oversized Array attribute as a REPLACE-ALL prefix followed by
+      # list-index item reports. A scalar or indivisible list item is answered
+      # with ResourceExhausted rather than an oversized UDP datagram.
+      private def self.fit_attribute_report(report : InteractionModel::AttributeReportIB) : Array(InteractionModel::AttributeReportIB)
+        return [report] if report.to_slice.size <= MAX_REPORT_ITEM_SIZE
+        data = report.attribute_data
+        return [resource_exhausted_attribute(report)] unless data && data.data.header.element_type.array?
+
+        items = data.data.as_list
+        return [resource_exhausted_attribute(report)] if items.size > UInt16::MAX
+        prefix = TLV::List.new
+        first = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(data.path, TLV::Any.new(prefix, nil, as_array: true), data.data_version))
+        result = [first]
+
+        items.each_with_index do |item, index|
+          item_path = InteractionModel::AttributePath.new(endpoint: data.path.endpoint,
+            cluster: data.path.cluster, attribute: data.path.attribute, list_index: index.to_u16,
+            node: data.path.node, enable_tag_compression: data.path.enable_tag_compression,
+            wildcard_path_flags: data.path.wildcard_path_flags)
+          item_report = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(item_path, item, data.data_version))
+          if item_report.to_slice.size > MAX_REPORT_ITEM_SIZE
+            return [resource_exhausted_attribute(report)]
+          end
+
+          candidate = prefix + [item]
+          candidate_report = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(data.path, TLV::Any.new(candidate, nil, as_array: true), data.data_version))
+          if result.size == 1 && candidate_report.to_slice.size <= MAX_REPORT_ITEM_SIZE
+            prefix = candidate
+            result[0] = candidate_report
+          else
+            result << item_report
+          end
+        end
+        result
+      end
+
+      private def self.resource_exhausted_attribute(report : InteractionModel::AttributeReportIB) : InteractionModel::AttributeReportIB
+        path = report.attribute_data.try(&.path) || report.attribute_status.try(&.path)
+        raise Matter::ProtocolError.new("Attribute report has no path") unless path
+        status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
+        InteractionModel::AttributeReportIB.new(attribute_status: InteractionModel::AttributeStatusIB.new(path: path, status: status))
+      end
+
+      private def self.fit_event_report(report : InteractionModel::EventReportIB) : InteractionModel::EventReportIB
+        return report if report.to_slice.size <= MAX_REPORT_ITEM_SIZE
+        path = report.event_data.try(&.path) || report.event_status.try(&.path)
+        raise Matter::ProtocolError.new("Event report has no path") unless path
+        status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
+        InteractionModel::EventReportIB.new(event_status: InteractionModel::EventStatusIB.new(path: path, status: status))
       end
 
       # Encode SubscribeResponse
