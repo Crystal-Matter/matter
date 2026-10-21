@@ -33,6 +33,8 @@ module Matter
 
       # StatusReport general/protocol code for success (Matter spec 4.10.1.5).
       STATUS_REPORT_SUCCESS = 0_u16
+      STATUS_REPORT_FAILURE = 1_u16
+      PASE_INVALID_PARAM    = 2_u16
 
       # An in-flight handshake, remembered against the exchange it runs on.
       private abstract class Handshake
@@ -182,19 +184,22 @@ module Matter
         Log.trace { "PBKDF Request payload (#{msg.payload.size} bytes): #{msg.payload.hexstring}" }
 
         request_payload = msg.payload.dup
-        request = Session::Pase::Definitions::PbkdfParamRequest.from_slice(request_payload)
-
-        initiator_session_id = request.initiator_session_id
-        unless initiator_session_id
-          Log.error { "PBKDFParamRequest missing initiator session id" }
+        request = begin
+          Session::Pase::Definitions::PbkdfParamRequest.from_slice(request_payload)
+        rescue ex : BinData::ParseError
+          Log.warn { "Malformed PBKDFParamRequest: #{ex.message}" }
+          send_status_report_invalid_param(msg, peer)
           return
         end
 
-        initiator_random = request.initiator_random
-        unless initiator_random
-          Log.error { "PBKDFParamRequest missing initiator_random" }
+        unless request.valid?
+          Log.error { "Invalid PBKDFParamRequest" }
+          send_status_report_invalid_param(msg, peer)
           return
         end
+
+        initiator_session_id = request.initiator_session_id || return
+        initiator_random = request.initiator_random || return
         Log.debug { "  Initiator session ID: #{initiator_session_id}, random: #{initiator_random.size} bytes" }
 
         responder_session_id = Random::Secure.rand(UInt16)
@@ -202,8 +207,7 @@ module Matter
           initiator_random: initiator_random,
           responder_random: Random::Secure.random_bytes(RANDOM_LENGTH),
           responder_session_id: responder_session_id,
-          iterations: @iterations,
-          salt: @salt
+          pbkdf_parameters: request.has_pbkdf_parameters ? nil : Session::Pase::Definitions::PbkdfParametersTLV.new(@iterations, @salt)
         ).to_slice
         Log.debug { "PBKDF Response payload (#{response_payload.size} bytes): #{response_payload.hexstring}" }
 
@@ -556,13 +560,22 @@ module Matter
       private def send_status_report_success(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil
         Log.info { "Sending StatusReport (SUCCESS) unsecured to confirm the session" }
 
+        send_status_report(msg, peer, STATUS_REPORT_SUCCESS, STATUS_REPORT_SUCCESS)
+      end
+
+      private def send_status_report_invalid_param(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil
+        send_status_report(msg, peer, STATUS_REPORT_FAILURE, PASE_INVALID_PARAM)
+      end
+
+      private def send_status_report(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress,
+                                     general_status : UInt16, protocol_status : UInt16) : Nil
         @sender.send_secure_channel_response(
           original_msg: msg,
           peer: peer,
           message_type: SecureChannelMessageType::StatusReport.value,
           payload: Session::Pase::Definitions::StatusReport.new(
-            general_status: STATUS_REPORT_SUCCESS,
-            protocol_status: STATUS_REPORT_SUCCESS
+            general_status: general_status,
+            protocol_status: protocol_status
           ).to_bytes
         )
       end

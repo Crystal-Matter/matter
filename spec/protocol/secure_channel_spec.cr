@@ -87,6 +87,32 @@ describe Matter::Protocol::SecureChannel do
     parameters.salt.should eq(Bytes.new(32, 0x01_u8))
   end
 
+  it "reports InvalidParam without starting PASE for a request missing mandatory fields" do
+    original = pbkdf_param_request(3_u16, 0x3333_u16)
+    payloads = [
+      Matter::Session::Pase::Definitions::PbkdfParamRequest.new(
+        initiator_random: Bytes.new(32, 0x42_u8),
+        initiator_session_id: 0x3333_u16).to_slice,
+      Bytes.empty,
+    ]
+    payloads.each do |payload|
+      fixture = build_secure_channel
+      malformed = Matter::Codec::MessageCodec::Message.new(
+        packet_header: original.packet_header,
+        payload_header: original.payload_header,
+        payload: payload)
+
+      fixture.channel.handle(malformed, PEER).should be_true
+      fixture.channel.handshakes_in_flight.should eq(0)
+      packet = Matter::Codec::MessageCodec::Base.decode_packet(fixture.transport.sent_packets.first[0])
+      response = Matter::Codec::MessageCodec::Base.decode_payload(packet)
+      response.payload_header.message_type.should eq(Matter::Protocol::SecureChannelMessageType::StatusReport.value)
+      status = Matter::Session::Pase::Definitions::StatusReport.from_bytes(response.payload)
+      status.general_status.should eq(1_u16)
+      status.protocol_status.should eq(2_u16)
+    end
+  end
+
   it "forgets a handshake the commissioner abandoned" do
     fixture = build_secure_channel
 
