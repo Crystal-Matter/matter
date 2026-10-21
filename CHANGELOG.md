@@ -54,6 +54,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pending subscriptions from the same CASE node on the same fabric, including
   subscriptions carried by older secure sessions and persisted records. A true
   value retains those subscriptions.
+- Expose the SubscribeRequest KeepSubscriptions option on the controller's
+  mixed, event, and attribute subscription APIs. Existing calls continue to
+  send `false` by default.
 
 ### Joint Fabric recovery verification
 

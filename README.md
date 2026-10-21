@@ -311,6 +311,9 @@ list writes are sent as an empty replacement followed by append items in
 bounded WriteRequest chunks on one exchange. The client waits for each
 WriteResponse, stops after a failed status, and returns the collected statuses.
 Timed writes that would require multiple chunks fail before sending.
+`subscribe`, `subscribe_events`, `subscribe_attributes` and `subscribe_attribute`
+accept `keep_subscriptions: true` to set the SubscribeRequest KeepSubscriptions
+field. The default is `false`.
 `Commissioning::CommissioningWindowOpener` opens an enhanced commissioning window on an already
 commissioned node and hands back a manual pairing code for it.
 

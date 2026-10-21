@@ -72,8 +72,69 @@ describe Matter::Controller::AttributeSubscription do
     request = Matter::InteractionModel::SubscribeRequestMessage.from_slice(client.request_payloads.first)
     request.attribute_requests.should eq([attribute_path])
     request.event_requests.should eq([event_path])
+    request.keep_subscriptions?.should be_false
   ensure
     client.try(&.close)
+  end
+
+  it "passes KeepSubscriptions through mixed and event subscription APIs" do
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    attribute_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    event_path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16,
+      cluster: 6_u32, event: 0_u32)
+    clients = [] of SubscriptionSpecClient
+    2.times do
+      client = SubscriptionSpecClient.new
+      clients << client
+      client.scripted_messages << subscription_message(5_u8,
+        Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 7_u16, peer)
+      client.scripted_messages << subscription_message(4_u8,
+        Matter::InteractionModel::SubscribeResponseMessage.new(42_u32, 60_u16).to_slice, 7_u16, peer)
+    end
+
+    Matter::Controller::ImClient.new(clients[0]).subscribe(session, peer,
+      attribute_paths: [attribute_path], event_paths: [event_path], keep_subscriptions: true)
+    Matter::Controller::ImClient.new(clients[1]).subscribe_events(session, peer,
+      [event_path], keep_subscriptions: true)
+    clients.each do |client|
+      request = Matter::InteractionModel::SubscribeRequestMessage.from_slice(client.request_payloads.first)
+      request.keep_subscriptions?.should be_true
+    end
+  ensure
+    clients.try &.each(&.close)
+  end
+
+  it "passes KeepSubscriptions through attribute subscription APIs" do
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    clients = [] of SubscriptionSpecClient
+    2.times do
+      client = SubscriptionSpecClient.new
+      clients << client
+      client.scripted_messages << subscription_message(5_u8,
+        Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 7_u16, peer)
+      client.scripted_messages << subscription_message(4_u8,
+        Matter::InteractionModel::SubscribeResponseMessage.new(42_u32, 60_u16).to_slice, 7_u16, peer)
+    end
+
+    Matter::Controller::ImClient.new(clients[0]).subscribe_attributes(session, peer,
+      [path], keep_subscriptions: true)
+    Matter::Controller::ImClient.new(clients[1]).subscribe_attribute(session, peer,
+      1_u16, 6_u32, 0_u32, keep_subscriptions: true)
+    clients.each do |client|
+      request = Matter::InteractionModel::SubscribeRequestMessage.from_slice(client.request_payloads.first)
+      request.keep_subscriptions?.should be_true
+    end
+  ensure
+    clients.try &.each(&.close)
   end
 
   it "subscribes to events without attribute paths and rejects event status errors" do

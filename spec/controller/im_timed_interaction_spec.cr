@@ -112,6 +112,43 @@ private def timed_interaction_fixture : TimedInteractionFixture
 end
 
 describe Matter::Controller::ImClient do
+  it "encodes a DataVersion precondition on a single write" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    im.write_attribute(fixture.session, fixture.peer, 0_u16,
+      Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::ATTR_NODE_LABEL,
+      "Versioned label".to_tlv.to_slice, data_version: 123_u32)
+
+    request = Matter::InteractionModel::WriteRequestMessage.from_slice(fixture.client.sent.first.payload)
+    request.write_requests.try(&.first.data_version).should eq(123_u32)
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "encodes cluster-specific DataVersion preconditions on batch writes" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    writes = [
+      {0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+       Matter::Cluster::BasicInformation::ATTR_NODE_LABEL, "Versioned label".to_tlv.to_slice},
+      {1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
+       Matter::Cluster::OnOff::ATTR_ON_OFF, true.to_tlv.to_slice},
+    ]
+    versions = {
+      {0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID} => 11_u32,
+      {1_u16, Matter::Cluster::OnOff::CLUSTER_ID}            => 22_u32,
+    }
+    im.write_attributes(fixture.session, fixture.peer, writes, data_versions: versions)
+
+    request = Matter::InteractionModel::WriteRequestMessage.from_slice(fixture.client.sent.first.payload)
+    request.write_requests.try(&.map(&.data_version)).should eq([11_u32, 22_u32])
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
   it "writes a large list in bounded chunks on one exchange and collects all statuses" do
     fixture = timed_interaction_fixture
     im = Matter::Controller::ImClient.new(fixture.client)
