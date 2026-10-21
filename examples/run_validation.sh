@@ -131,7 +131,7 @@ chip_tool_supports_address=0
 
 echo "==> Commissioning with $CHIP_TOOL_BIN (storage: $STORAGE_A)"
 if [[ "$chip_tool_supports_address" -eq 1 ]]; then
-  "$CHIP_TOOL_BIN" pairing code 1 "$MANUAL_CODE" --address "$ADDRESS" --storage-directory "$STORAGE_A"
+  "$CHIP_TOOL_BIN" pairing code 1 "$MANUAL_CODE" --address "$ADDRESS" --allow-test-attestation --storage-directory "$STORAGE_A"
 else
   "$CHIP_TOOL_BIN" pairing code 1 "$MANUAL_CODE" --storage-directory "$STORAGE_A" --commissioner-name alpha
 fi
