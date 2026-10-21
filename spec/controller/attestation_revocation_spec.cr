@@ -7,7 +7,8 @@ private module AttestationCrlFixture
 
   def generate(issuer_der : Bytes, issuer_key : Matter::Crypto::Key,
                revoked_der : Bytes? = nil, stale : Bool = false,
-               numbered : Bool = true) : Bytes
+               numbered : Bool = true, distribution_url : String? = nil,
+               distribution_critical : Bool = true) : Bytes
     directory = File.join(Dir.tempdir, "matter-crl-#{Random::Secure.hex(8)}")
     Dir.mkdir(directory)
     Dir.mkdir(File.join(directory, "newcerts"))
@@ -37,6 +38,9 @@ private module AttestationCrlFixture
         commonName = supplied
         [ crl_ext ]
         authorityKeyIdentifier = keyid:always
+        #{distribution_url ? "issuingDistributionPoint = #{distribution_critical ? "critical," : ""}@idp" : ""}
+        [ idp ]
+        #{distribution_url ? "fullname = URI:#{distribution_url}" : ""}
         CONFIG
       if revoked_der
         File.write(File.join(directory, "revoked.pem"),
@@ -85,7 +89,7 @@ private def dcl_point(cert_der : Bytes, crl : Bytes, is_paa : Bool,
   skid = Slice.new(LibCrypto.asn1_string_get0_data(key_id).as(UInt8*), length).dup
   digest = OpenSSL::Digest.new("SHA256").update(crl).final
   Matter::Controller::DclRevocationPoint.new(skid, cert_der, nil, url, is_paa,
-    crl.size.to_i64, digest)
+    crl.size.to_i64, digest, 0xFFF1_u16, "primary")
 end
 
 describe Matter::Controller::DclAttestationRevocation do
@@ -105,11 +109,15 @@ describe Matter::Controller::DclAttestationRevocation do
       "dataDigestType"       => 0,
       "revocationType"       => 1,
       "isPAA"                => true,
+      "vid"                  => 0xFFF1,
+      "pid"                  => 0,
+      "label"                => "primary",
     }
     response = {"pkiRevocationDistributionPointsByIssuerSubjectKeyID" => {"points" => [record]}}.to_json
     source = Matter::Controller::HttpDclRevocationSource.new("https://dcl.example/",
       ->(url : String) { calls << url; response.to_slice })
-    source.points_for(point.issuer_skid).first.should eq(point.copy_with(size: nil, sha256: nil))
+    source.points_for(point.issuer_skid).first.should eq(point.copy_with(size: nil, sha256: nil,
+      vendor_id: 0xFFF1_u16, label: "primary"))
     calls.should eq(["https://dcl.example/dcl/pki/revocation-points/#{point.issuer_skid.hexstring.upcase}"])
     expect_raises(Matter::ConfigurationError) do
       Matter::Controller::HttpDclRevocationSource.new("http://dcl.example")
@@ -146,7 +154,111 @@ describe Matter::Controller::DclAttestationRevocation do
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Revoked)
   end
 
-  it "fails closed on missing, partitioned, delegated, unapproved, or altered CRLs" do
+  it "requires and combines every partition of a PAI revocation set" do
+    manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)
+    dac, _ = manager.get_dac_cert(0x8000_u16)
+    paa = manager.paa_cert
+    pai = manager.pai_cert
+    paa_crl = AttestationCrlFixture.generate(paa, manager.paa_key_pair)
+    first_url = "https://crl.example/part-a.crl"
+    second_url = "https://crl.example/part-b.crl"
+    first_crl = AttestationCrlFixture.generate(pai, manager.pai_key_pair,
+      distribution_url: first_url)
+    second_crl = AttestationCrlFixture.generate(pai, manager.pai_key_pair, dac,
+      distribution_url: second_url)
+    source = TestDclRevocationSource.new
+    paa_point = dcl_point(paa, paa_crl, true)
+    first_point = dcl_point(pai, first_crl, false, first_url)
+      .copy_with(vendor_id: 0xFFF1_u16, label: "first")
+    second_point = dcl_point(pai, second_crl, false, second_url)
+      .copy_with(vendor_id: 0xFFF1_u16, label: "second")
+    source.points[paa_point.issuer_skid.hexstring] = [paa_point]
+    source.points[first_point.issuer_skid.hexstring] = [first_point, second_point]
+    crls = {paa_point.url => paa_crl, first_url => first_crl, second_url => second_crl}
+    provider = Matter::Controller::DclAttestationRevocation.new(source, Set{"crl.example"},
+      ->(url : String) { crls[url] })
+
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Revoked)
+    mismatched_url = "https://crl.example/other.crl"
+    source.points[first_point.issuer_skid.hexstring] = [first_point,
+                                                        second_point.copy_with(url: mismatched_url)]
+    crls[mismatched_url] = second_crl
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    noncritical_crl = AttestationCrlFixture.generate(pai, manager.pai_key_pair, dac,
+      distribution_url: second_url, distribution_critical: false)
+    source.points[first_point.issuer_skid.hexstring] = [first_point,
+                                                        dcl_point(pai, noncritical_crl, false, second_url)
+                                                          .copy_with(vendor_id: 0xFFF1_u16, label: "second")]
+    crls[second_url] = noncritical_crl
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    crls[second_url] = second_crl
+    wrong_issuer_point = dcl_point(pai, paa_crl, false, second_url)
+      .copy_with(vendor_id: 0xFFF1_u16, label: "second")
+    source.points[first_point.issuer_skid.hexstring] = [first_point, wrong_issuer_point]
+    crls[second_url] = paa_crl
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    crls[second_url] = second_crl
+    source.points[first_point.issuer_skid.hexstring] = [first_point]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[first_point.issuer_skid.hexstring] = [first_point,
+                                                        second_point.copy_with(url: first_url)]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[first_point.issuer_skid.hexstring] = [first_point,
+                                                        second_point.copy_with(label: "first")]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+  end
+
+  it "validates PAA and PAI delegated signers against their issuing authorities" do
+    fixture = ->(name : String) { File.read(File.join(__DIR__, "../fixtures/attestation_crl", name)).to_slice }
+    paa = fixture.call("Chip-Test-PAA-FFF1-Cert.der")
+    pai = fixture.call("Chip-Test-PAI-FFF1-01-Cert.der")
+    dac = fixture.call("Chip-Test-DAC-FFF1-8001-Signed-By-Test-PAI-01-Cert.der")
+    paa_delegate = fixture.call("Chip-Test-PAA-Delegate-FFF1-Cert.der")
+    pai_delegate = fixture.call("Chip-Test-PAI-Delegate-FFF1-01-Cert.der")
+    paa_crl = fixture.call("Chip-Test-PAA-FFF1-Delegated-CRL.der")
+    pai_crl = fixture.call("Chip-Test-PAI-FFF1-Delegated-CRL.der")
+    paa_point = dcl_point(paa, paa_crl, true, "https://example.com/paa-delegated-crl.der")
+      .copy_with(crl_signer_der: paa_delegate)
+    pai_point = dcl_point(pai, pai_crl, false, "https://example.com/pai-delegated-crl.der")
+      .copy_with(crl_signer_der: pai_delegate, crl_signer_delegator_der: pai)
+    source = TestDclRevocationSource.new
+    source.points[paa_point.issuer_skid.hexstring] = [paa_point]
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
+    crls = {paa_point.url => paa_crl, pai_point.url => pai_crl}
+    provider = Matter::Controller::DclAttestationRevocation.new(source, Set{"example.com"},
+      ->(url : String) { crls[url] })
+
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Revoked)
+    inherited = fixture.call("Chip-Test-PAI-FFF1-Delegated-CRL-Only-First-Entry-With-Issuer-Ext.der")
+    inherited_point = dcl_point(pai, inherited, false, pai_point.url)
+      .copy_with(crl_signer_der: pai_delegate, crl_signer_delegator_der: pai)
+    source.points[pai_point.issuer_skid.hexstring] = [inherited_point]
+    crls[pai_point.url] = inherited
+    # Exercise the CRL issuer filter in isolation; the production callback
+    # receives a chain already authenticated by DeviceAttestationVerifier.
+    changed_serial = OpenSSL::X509::Certificate.from_der(dac)
+    changed_serial.serial = OpenSSL::BN.new(0x0EFCBECBABCD3CD9_u64)
+    provider.check(changed_serial.to_der, pai, paa).should eq(Matter::Controller::RevocationStatus::Good)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
+    crls[pai_point.url] = pai_crl
+    pai_three = fixture.call("Chip-Test-PAI-FFF1-03-Cert.der")
+    dac_three = fixture.call("Chip-Test-DAC-01-FFF1-8001-Signed-By-Test-PAI-03-Cert.der")
+    pai_three_crl = fixture.call("Chip-Test-PAI-FFF1-03-Direct-CRL.der")
+    pai_three_point = dcl_point(pai_three, pai_three_crl, false,
+      "https://example.com/pai-three-direct-crl.der")
+    source.points[pai_point.issuer_skid.hexstring] = [] of Matter::Controller::DclRevocationPoint
+    source.points[pai_three_point.issuer_skid.hexstring] = [pai_three_point]
+    crls[pai_three_point.url] = pai_three_crl
+    provider.check(dac_three, pai_three, paa).should eq(Matter::Controller::RevocationStatus::Revoked)
+    source.points[pai_three_point.issuer_skid.hexstring] = [] of Matter::Controller::DclRevocationPoint
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(crl_signer_delegator_der: paa)]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(vendor_id: 0x0001_u16)]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+  end
+
+  it "fails closed on missing, duplicate, mismatched, unapproved, or altered CRLs" do
     manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)
     dac, _ = manager.get_dac_cert(0x8000_u16)
     paa = manager.paa_cert
