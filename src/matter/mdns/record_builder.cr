@@ -113,13 +113,13 @@ module Matter
 
         # Parse IPv6 address string to 16 bytes
         # Handle compressed IPv6 format (e.g., "fe80::1")
-        addr = ip.address
+        addr = ip.address.split('%', 2)[0]
 
         # Expand :: notation
         if addr.includes?("::")
           parts = addr.split("::")
-          left = parts[0]?.try(&.split(':')) || [] of String
-          right = parts[1]?.try(&.split(':')) || [] of String
+          left = parts[0].empty? ? [] of String : parts[0].split(':')
+          right = parts[1].empty? ? [] of String : parts[1].split(':')
 
           # Calculate missing zero groups
           missing = 8 - left.size - right.size

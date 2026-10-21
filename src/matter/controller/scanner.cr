@@ -3,6 +3,18 @@ require "log"
 require "../mdns/service_type"
 require "../mdns/record_builder"
 
+{% unless flag?(:win32) %}
+  lib LibC
+    struct MatterIfNameIndex
+      if_index : UInt32
+      if_name : UInt8*
+    end
+
+    fun if_nameindex : MatterIfNameIndex*
+    fun if_freenameindex(pointer : MatterIfNameIndex*) : Void
+  end
+{% end %}
+
 module Matter
   module Controller
     # Discovered Matter device information
@@ -90,20 +102,27 @@ module Matter
     # - Processing unsolicited announcements
     # - Sending queries for specific services
     class Scanner
-      Log         = ::Log.for("matter.controller.scanner")
-      MDNS_PORT   = 5353
-      MDNS_IPV4   = Socket::IPAddress.new("224.0.0.251", MDNS_PORT)
-      MDNS_IPV6   = Socket::IPAddress.new("ff02::fb", MDNS_PORT)
-      CACHE_FLUSH = 0x8000_u16
-      CLASS_MASK  = 0x7FFF_u16
+      Log                    = ::Log.for("matter.controller.scanner")
+      MDNS_PORT              = 5353
+      MDNS_IPV4              = Socket::IPAddress.new("224.0.0.251", MDNS_PORT)
+      MDNS_IPV6              = Socket::IPAddress.new("ff02::fb", MDNS_PORT)
+      CACHE_FLUSH            = 0x8000_u16
+      CLASS_MASK             = 0x7FFF_u16
+      IPV6_LINK_LOCAL_MASK   = 0xFFC0_u16
+      IPV6_LINK_LOCAL_PREFIX = 0xFE80_u16
+      IPV6_MDNS_PREFIX       = 0xFF02_u16
+      IPV6_MDNS_GROUP        = 0x00FB_u16
 
       private alias HostAddress = NamedTuple(address: Socket::IPAddress, expires_at: Time)
 
       @devices : Hash(String, DiscoveredDevice)          # Key: lowercase instance name
       @host_addresses : Hash(String, Array(HostAddress)) # Key: SRV target hostname
       @socket : UDPSocket
+      @socket6 : UDPSocket?
+      @ipv6_interface_ids : Array(UInt32)
       @running : Bool
       @receive_fiber : Fiber?
+      @receive_fiber6 : Fiber?
 
       # Callback for discovered devices
       # Signature: (device : DiscoveredDevice) -> Nil
@@ -117,11 +136,11 @@ module Matter
       # Signature: (instance_name : String) -> Nil
       property on_device_removed : Proc(String, Nil)?
 
-      def initialize
+      def initialize(listen_port : Int32 = MDNS_PORT)
         @socket = UDPSocket.new
         @socket.reuse_address = true
         @socket.reuse_port = true
-        @socket.bind("0.0.0.0", MDNS_PORT)
+        @socket.bind("0.0.0.0", listen_port)
         @socket.read_timeout = 100.milliseconds
 
         # Join multicast groups
@@ -131,10 +150,27 @@ module Matter
           Log.warn(exception: ex) { "Could not join IPv4 multicast group" }
         end
 
+        @socket6 = nil
+        @ipv6_interface_ids = [] of UInt32
+        begin
+          socket6 = UDPSocket.new(:inet6)
+          socket6.ipv6_only = true
+          socket6.reuse_address = true
+          socket6.reuse_port = true
+          socket6.bind("::", listen_port)
+          socket6.read_timeout = 100.milliseconds
+          @ipv6_interface_ids = join_ipv6_interfaces(socket6)
+          @socket6 = socket6
+        rescue ex
+          socket6.try(&.close)
+          Log.warn(exception: ex) { "Could not create IPv6 mDNS scanner socket" }
+        end
+
         @devices = Hash(String, DiscoveredDevice).new
         @host_addresses = Hash(String, Array(HostAddress)).new
         @running = false
         @receive_fiber = nil
+        @receive_fiber6 = nil
       end
 
       # Start listening for mDNS announcements
@@ -143,7 +179,12 @@ module Matter
 
         @running = true
         @receive_fiber = spawn do
-          receive_loop
+          receive_loop(@socket)
+        end
+        if socket6 = @socket6
+          @receive_fiber6 = spawn do
+            receive_loop(socket6)
+          end
         end
 
         # Start cleanup fiber
@@ -155,14 +196,18 @@ module Matter
       # Stop listening
       def stop : Nil
         @running = false
-        sleep 200.milliseconds if @receive_fiber
+        sleep 200.milliseconds if @receive_fiber || @receive_fiber6
         @receive_fiber = nil
+        @receive_fiber6 = nil
       end
 
       # Close scanner
       def close : Nil
         stop
         @socket.close unless @socket.closed?
+        @socket6.try do |socket|
+          socket.close unless socket.closed?
+        end
       end
 
       # Query for commissioning devices
@@ -216,16 +261,63 @@ module Matter
         rescue ex
           Log.error(exception: ex) { "Error sending mDNS query (service=#{service})" }
         end
+        if socket6 = @socket6
+          @ipv6_interface_ids.each do |interface_id|
+            socket6.multicast_interface(interface_id)
+            destination = Socket::IPAddress.v6(IPV6_MDNS_PREFIX, 0, 0, 0, 0, 0, 0, IPV6_MDNS_GROUP,
+              port: MDNS_PORT, zone_id: interface_id.to_i)
+            socket6.send(data, destination)
+          rescue ex
+            Log.debug(exception: ex) { "Error sending IPv6 mDNS query (service=#{service} interface=#{interface_id})" }
+          end
+        end
       end
 
-      private def receive_loop : Nil
+      private def join_ipv6_interfaces(socket : UDPSocket) : Array(UInt32)
+        ids = [] of UInt32
+        {% unless flag?(:win32) %}
+          pointer = LibC.if_nameindex
+          unless pointer.null?
+            begin
+              entry = pointer
+              until entry.value.if_index == 0 || entry.value.if_name.null?
+                index = entry.value.if_index
+                begin
+                  request = LibC::Ipv6Mreq.new
+                  request.ipv6mr_multiaddr = MDNS_IPV6.to_unsafe.as(LibC::SockaddrIn6*).value.sin6_addr
+                  request.ipv6mr_interface = index
+                  result = LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
+                    pointerof(request).as(Void*), sizeof(LibC::Ipv6Mreq).to_u32)
+                  ids << index if result == 0
+                rescue ex
+                  Log.debug(exception: ex) { "Could not join IPv6 mDNS group on interface #{index}" }
+                end
+                entry += 1
+              end
+            ensure
+              LibC.if_freenameindex(pointer)
+            end
+          end
+        {% end %}
+        if ids.empty?
+          begin
+            socket.join_group(MDNS_IPV6)
+            ids << 0_u32
+          rescue ex
+            Log.warn(exception: ex) { "Could not join IPv6 multicast group" }
+          end
+        end
+        ids
+      end
+
+      private def receive_loop(socket : UDPSocket) : Nil
         buffer = Bytes.new(9000) # Max DNS packet size
         last_peer : Socket::IPAddress? = nil
         last_data : Bytes? = nil
 
         while @running
           begin
-            bytes_read, peer_address = @socket.receive(buffer)
+            bytes_read, peer_address = socket.receive(buffer)
             next if bytes_read == 0
 
             last_peer = peer_address
@@ -274,7 +366,7 @@ module Matter
         end
 
         address_records.each do |hostname, records|
-          update_host_addresses(hostname, records)
+          update_host_addresses(hostname, records, peer)
         end
 
         # Process each instance's records
@@ -291,7 +383,7 @@ module Matter
           device = @devices[instance]
           next unless hostnames.includes?(device.hostname.downcase)
           addresses = addresses_for_host(device.hostname)
-          next if device.addresses == addresses
+          next if same_addresses?(device.addresses, addresses)
 
           device.addresses = addresses
           @devices[instance] = device
@@ -299,31 +391,46 @@ module Matter
         end
       end
 
-      private def update_host_addresses(hostname : String, records : Array(DNS::Packet::ResourceRecord)) : Nil
+      private def same_addresses?(current : Array(Socket::IPAddress), updated : Array(Socket::IPAddress)) : Bool
+        return false unless current.size == updated.size
+        current.zip(updated).all? do |left, right|
+          left.family == right.family && left.address == right.address && left.port == right.port &&
+            left.zone_id == right.zone_id
+        end
+      end
+
+      private def update_host_addresses(hostname : String, records : Array(DNS::Packet::ResourceRecord), peer : Socket::IPAddress) : Nil
         now = Time.utc
         addresses = (@host_addresses[hostname]? || [] of HostAddress).reject { |entry| entry[:expires_at] <= now }
-        # Cache flush applies to a DNS record set (owner, type, class), so an
-        # A refresh must leave this host's AAAA records intact, and vice versa.
-        flush_ipv4 = records.any? do |record|
-          record.type == MDNS::RecordBuilder::TYPE_A && record.resource_data.size == 4 &&
-            record.ttl.total_seconds > 0 && (record.class_code & CACHE_FLUSH) != 0
-        end
-        flush_ipv6 = records.any? do |record|
-          record.type == MDNS::RecordBuilder::TYPE_AAAA && record.resource_data.size == 16 &&
-            record.ttl.total_seconds > 0 && (record.class_code & CACHE_FLUSH) != 0
-        end
-        addresses.reject! do |entry|
-          (flush_ipv4 && entry[:address].family.inet?) || (flush_ipv6 && entry[:address].family.inet6?)
-        end
-
-        records.each do |record|
+        candidates = records.compact_map do |record|
           address = case record.type
                     when MDNS::RecordBuilder::TYPE_A    then parse_a_record(record)
-                    when MDNS::RecordBuilder::TYPE_AAAA then parse_aaaa_record(record)
+                    when MDNS::RecordBuilder::TYPE_AAAA then parse_aaaa_record(record, peer)
                     end
-          next unless address
+          address ? {record: record, address: address} : nil
+        end
+        # Cache flush applies to a DNS record set (owner, type, class), so an
+        # A refresh must leave this host's AAAA records intact, and vice versa.
+        flush_addresses = candidates.select do |candidate|
+          candidate[:record].ttl.total_seconds > 0 && (candidate[:record].class_code & CACHE_FLUSH) != 0
+        end.map(&.[:address])
+        addresses.reject! do |entry|
+          flush_addresses.any? do |address|
+            next false unless entry[:address].family == address.family
+            # Link-local RRSets are interface-local. A reply received on one
+            # interface must not erase a route learned on another interface.
+            !address.family.inet6? || entry[:address].zone_id == address.zone_id
+          end
+        end
 
-          addresses.reject! { |entry| entry[:address] == address }
+        candidates.each do |candidate|
+          record = candidate[:record]
+          address = candidate[:address]
+
+          addresses.reject! do |entry|
+            entry[:address].family == address.family && entry[:address].address == address.address &&
+              entry[:address].zone_id == address.zone_id
+          end
           addresses << {address: address, expires_at: now + record.ttl} if record.ttl.total_seconds > 0
         end
 
@@ -469,7 +576,7 @@ module Matter
         nil
       end
 
-      private def parse_aaaa_record(record : DNS::Packet::ResourceRecord) : Socket::IPAddress?
+      private def parse_aaaa_record(record : DNS::Packet::ResourceRecord, peer : Socket::IPAddress) : Socket::IPAddress?
         return unless record.resource_data.size == 16
 
         # IPv6 address is 16 bytes
@@ -480,8 +587,15 @@ module Matter
           parts << part.to_s(16)
         end
 
-        ip_str = parts.join(":")
-        Socket::IPAddress.new(ip_str, 0)
+        # A link-local address is meaningful only on the interface that sent
+        # the IPv6 mDNS response. IPv4 mDNS and an unscoped IPv6 peer cannot
+        # establish that interface, so never publish an unroutable candidate.
+        first = (record.resource_data[0].to_u16 << 8) | record.resource_data[1].to_u16
+        link_local = (first & IPV6_LINK_LOCAL_MASK) == IPV6_LINK_LOCAL_PREFIX
+        return if link_local && (!peer.family.inet6? || peer.zone_id == 0)
+        fields = parts.map(&.to_u16(16))
+        Socket::IPAddress.v6(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], fields[7], port: 0,
+          zone_id: link_local ? peer.zone_id : 0)
       rescue
         nil
       end

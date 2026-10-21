@@ -5,13 +5,93 @@ require "../../src/matter/mdns/record_builder"
 
 class Matter::Controller::Scanner
   # Exercise the packet parser without depending on multicast delivery.
-  def process_packet_for_spec(packet : DNS::Packet) : Nil
-    process_mdns_packet(packet, Socket::IPAddress.new("127.0.0.1", MDNS_PORT))
+  def process_packet_for_spec(packet : DNS::Packet, peer : Socket::IPAddress = Socket::IPAddress.new("127.0.0.1", MDNS_PORT)) : Nil
+    process_mdns_packet(packet, peer)
+  end
+
+  def ipv6_port_for_spec : Int32?
+    @socket6.try(&.local_address.as(Socket::IPAddress).port)
   end
 end
 
 describe Matter::Controller::Scanner do
   describe "DNS-SD packet processing" do
+    it "scopes a link-local AAAA address to its IPv6 announcement interface" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "0123456789ABCDEF-0000000000000009._matter._tcp.local"
+      builder = Matter::MDNS::RecordBuilder
+      packet = DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(instance, 5540, "link.local", 120.seconds),
+        builder.build_aaaa("link.local", Socket::IPAddress.new("fe80::9", 0), 120.seconds),
+      ])
+
+      scanner.process_packet_for_spec(packet, Socket::IPAddress.new("fe80::1%1", 5353))
+      address = scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.first
+      address.address.should eq("fe80::9")
+      address.zone_id.should eq(1)
+      scanner.close
+    end
+
+    it "does not publish an unroutable link-local AAAA from an IPv4 announcement" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "0123456789ABCDEF-000000000000000A._matter._tcp.local"
+      builder = Matter::MDNS::RecordBuilder
+      packet = DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(instance, 5540, "link.local", 120.seconds),
+        builder.build_aaaa("link.local", Socket::IPAddress.new("fe80::a", 0), 120.seconds),
+      ])
+
+      scanner.process_packet_for_spec(packet)
+      scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.should be_empty
+      scanner.close
+    end
+
+    it "preserves a scoped link-local route across unscoped and other-interface announcements" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "0123456789ABCDEF-000000000000000C._matter._tcp.local"
+      builder = Matter::MDNS::RecordBuilder
+      first = DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(instance, 5540, "link.local", 120.seconds),
+        builder.build_aaaa("link.local", Socket::IPAddress.new("fe80::c", 0), 120.seconds),
+      ])
+      scanner.process_packet_for_spec(first, Socket::IPAddress.new("fe80::1%1", 5353))
+      scanner.process_packet_for_spec(DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_aaaa("link.local", Socket::IPAddress.new("fe80::d", 0), 120.seconds),
+      ]))
+      scanner.process_packet_for_spec(first, Socket::IPAddress.new("fe80::1%2", 5353))
+
+      zones = scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.zone_id).sort!
+      zones.should eq([1, 2])
+      scanner.close
+    end
+
+    it "receives an operational advertisement over IPv6 only" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new(0)
+      sender = UDPSocket.new(:inet6)
+      instance = "0123456789ABCDEF-000000000000000B._matter._tcp.local"
+      builder = Matter::MDNS::RecordBuilder
+      packet = DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(instance, 5540, "v6-only.local", 120.seconds),
+        builder.build_aaaa("v6-only.local", Socket::IPAddress.new("::1", 0), 120.seconds),
+      ])
+      scanner.start
+      port = scanner.ipv6_port_for_spec
+      port.should_not be_nil
+      if port
+        sender.send(packet.to_slice, Socket::IPAddress.new("::1", port))
+      end
+      deadline = Time.instant + 1.second
+      until scanner.get_device(instance) || Time.instant >= deadline
+        sleep 10.milliseconds
+      end
+      scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
+      sender.close
+      scanner.close
+    end
     it "resolves each operational SRV target from only its own host A/AAAA records" do
       require_udp_sockets!
       scanner = Matter::Controller::Scanner.new
