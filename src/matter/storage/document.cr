@@ -16,13 +16,14 @@ module Matter
 
     # Well-known collection and document names.
     module Collections
-      FABRICS       = "fabrics"
-      SESSIONS      = "sessions"
-      SUBSCRIPTIONS = "subscriptions"
-      DEVICE        = "device"
-      CLUSTERS      = "clusters"
-      APP           = "app"
-      META          = "meta"
+      FABRICS          = "fabrics"
+      SESSIONS         = "sessions"
+      CASE_RESUMPTIONS = "case_resumptions"
+      SUBSCRIPTIONS    = "subscriptions"
+      DEVICE           = "device"
+      CLUSTERS         = "clusters"
+      APP              = "app"
+      META             = "meta"
 
       # `meta/schema` records the on-disk layout version of a store.
       META_SCHEMA_ID     = "schema"

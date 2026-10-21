@@ -19,6 +19,7 @@ module Matter
       CaseSigma1         = 0x30
       CaseSigma2         = 0x31
       CaseSigma3         = 0x32
+      CaseSigma2Resume   = 0x33
       StatusReport       = 0x40
     end
   end

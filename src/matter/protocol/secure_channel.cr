@@ -5,6 +5,7 @@ require "../codec/message_codec"
 require "../fabric_table"
 require "../session/case/case"
 require "../session/case/definitions"
+require "../session/case/resumption_store"
 require "../session/context"
 require "../session/pase/pase"
 require "./message_type"
@@ -72,10 +73,27 @@ module Matter
         end
       end
 
+      private class CaseResumeHandshake < Handshake
+        getter record : Session::Case::ResumptionStore::Record
+        getter fabric : Fabric
+        getter initiator_random : Bytes
+        getter new_resumption_id : Bytes
+        getter initiator_session_id : UInt16
+        getter responder_session_id : UInt16
+
+        def initialize(@record, @fabric, @initiator_random, @new_resumption_id,
+                       @initiator_session_id, @responder_session_id)
+          super()
+        end
+      end
+
       alias HandshakeKey = Tuple(Socket::IPAddress, UInt16)
 
       @pase_handshakes : Hash(HandshakeKey, PaseHandshake) = {} of HandshakeKey => PaseHandshake
       @case_handshakes : Hash(HandshakeKey, CaseHandshake) = {} of HandshakeKey => CaseHandshake
+      @case_resume_handshakes : Hash(HandshakeKey, CaseResumeHandshake) = {} of HandshakeKey => CaseResumeHandshake
+
+      getter resumption_store : Session::Case::ResumptionStore
 
       private def handshake_key(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : HandshakeKey
         {peer, msg.payload_header.exchange_id}
@@ -84,6 +102,12 @@ module Matter
       private def evict_oldest_handshake : Nil
         pase = @pase_handshakes.min_by? { |_, handshake| handshake.created_at }
         case_entry = @case_handshakes.min_by? { |_, handshake| handshake.created_at }
+        resume_entry = @case_resume_handshakes.min_by? { |_, handshake| handshake.created_at }
+        if resume_entry && (!pase || resume_entry[1].created_at < pase[1].created_at) &&
+           (!case_entry || resume_entry[1].created_at < case_entry[1].created_at)
+          @case_resume_handshakes.delete(resume_entry[0])
+          return
+        end
         if pase && (!case_entry || pase[1].created_at <= case_entry[1].created_at)
           @pase_handshakes.delete(pase[0])
         elsif case_entry
@@ -121,6 +145,10 @@ module Matter
         @default_iterations = @iterations
         @default_salt = @salt.dup
         @passcode_verifier = nil
+        @resumption_store = Session::Case::ResumptionStore.new(@fabric_table.backend)
+        @fabric_table.on_fabric_removed = ->(fabric : Fabric) do
+          @resumption_store.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
+        end
       end
 
       # Handles a Secure Channel message. Returns whether it was one this
@@ -183,7 +211,7 @@ module Matter
 
       # The number of handshakes in flight, for specs and diagnostics.
       def handshakes_in_flight : Int32
-        @pase_handshakes.size + @case_handshakes.size
+        @pase_handshakes.size + @case_handshakes.size + @case_resume_handshakes.size
       end
 
       # Forgets handshakes a commissioner started and walked away from. Runs on
@@ -191,6 +219,7 @@ module Matter
       def prune_expired_handshakes(now : Time::Instant = Time.instant) : Nil
         @pase_handshakes.reject! { |_, handshake| handshake.expired?(now) }
         @case_handshakes.reject! { |_, handshake| handshake.expired?(now) }
+        @case_resume_handshakes.reject! { |_, handshake| handshake.expired?(now) }
       end
 
       # ----------------------------------------------------------------------
@@ -386,6 +415,16 @@ module Matter
           return
         end
 
+        if sigma1.resumption_id.nil? != sigma1.initiator_resume_mic.nil?
+          send_status_report_invalid_param(msg, peer)
+          return
+        end
+        if resumption_id = sigma1.resumption_id
+          if resume_mic = sigma1.initiator_resume_mic
+            return if handle_case_resume_sigma1(msg, peer, sigma1, fabric, resumption_id, resume_mic)
+          end
+        end
+
         Log.info { "Using fabric: #{fabric.fabric_id.to_s(16)} (NOC #{fabric.operational_cert.size} bytes)" }
         if icac = fabric.intermediate_cert
           Log.info { "  ICAC size: #{icac.size} bytes" }
@@ -425,6 +464,7 @@ module Matter
           initiator_session_id: sigma1.initiator_session_id,
           responder_session_id: sigma2_data[:session_id]
         )
+        @case_resume_handshakes.delete(key)
 
         Log.info { "  Generated Sigma2 response (responder session ID: #{sigma2_data[:session_id]})" }
 
@@ -445,6 +485,48 @@ module Matter
           "Error handling CASE Sigma1: peer=#{peer.address}:#{peer.port} session_id=#{msg.packet_header.session_id} " \
           "msg_id=#{msg.packet_header.message_id} exchange=#{msg.payload_header.exchange_id} payload_hex=#{msg.payload.hexstring}"
         end
+      end
+
+      # Return true only when an authenticated resumption record was used.
+      # Unknown or invalid records fall back to the full certificate exchange.
+      private def handle_case_resume_sigma1(msg : Codec::MessageCodec::Message,
+                                            peer : Socket::IPAddress,
+                                            sigma1 : Session::Case::Definitions::Sigma1,
+                                            fabric : Fabric, resumption_id : Bytes,
+                                            resume_mic : Bytes) : Bool
+        record = @resumption_store.find_by_id(resumption_id)
+        return false unless record
+        return false unless record.fabric_id == fabric.fabric_id &&
+                            record.root_public_key == fabric.root_public_key &&
+                            record.local_node_id == fabric.node_id
+        crypto = Crypto::StandardCrypto.new
+        return false unless Session::Case.valid_resume1_mic?(crypto, record.shared_secret,
+                              sigma1.initiator_random, resumption_id, resume_mic)
+
+        key = handshake_key(msg, peer)
+        evict_oldest_handshake if !@case_resume_handshakes.has_key?(key) &&
+                                  handshakes_in_flight >= MAX_HANDSHAKES_IN_FLIGHT
+        responder_session_id = Random::Secure.rand(UInt16)
+        while responder_session_id == 0 || @registry.session(responder_session_id)
+          responder_session_id = Random::Secure.rand(UInt16)
+        end
+        new_id = crypto.random_bytes(Session::Case::RESUMPTION_ID_LENGTH)
+        @case_resume_handshakes[key] = CaseResumeHandshake.new(record, fabric,
+          sigma1.initiator_random.dup, new_id, sigma1.initiator_session_id,
+          responder_session_id)
+        @case_handshakes.delete(key)
+        @sender.send_secure_channel_response(
+          original_msg: msg,
+          peer: peer,
+          message_type: SecureChannelMessageType::CaseSigma2Resume.value,
+          payload: Session::Case::Definitions::Sigma2Resume.new(
+            resumption_id: new_id,
+            resume_mic: Session::Case.resume2_mic(crypto, record.shared_secret,
+              sigma1.initiator_random, new_id),
+            responder_session_id: responder_session_id
+          ).to_slice
+        )
+        true
       end
 
       # The fabric whose destination id matches the one the initiator computed
@@ -541,6 +623,17 @@ module Matter
         @registry.establish_session(session)
         @case_handshakes.delete(key)
 
+        if id = responder.resumption_id
+          if secret = responder.shared_secret
+            if peer_node_id
+              save_resumption_record(Session::Case::ResumptionStore::Record.new(
+                fabric.fabric_id, fabric.root_public_key, fabric.node_id,
+                peer_node_id, id, secret, session.peer_subject_ids,
+                session.peer_icac))
+            end
+          end
+        end
+
         Log.info do
           "CASE secure session established (session_id=#{session.session_id}, " \
           "peer_session_id=#{handshake.initiator_session_id}, fabric_index=#{fabric.fabric_index})"
@@ -564,9 +657,12 @@ module Matter
         protocol = status_report.protocol_status
 
         if general == STATUS_REPORT_SUCCESS && protocol == STATUS_REPORT_SUCCESS
+          complete_case_resumption(handshake_key(msg, peer)) if msg.packet_header.session_id == 0
           Log.debug { "StatusReport: SUCCESS (peer=#{peer})" }
           return
         end
+
+        @case_resume_handshakes.delete(handshake_key(msg, peer))
 
         Log.warn { "StatusReport: general=#{Hex.u16(general)}, protocol=#{Hex.u16(protocol)} (peer=#{peer})" }
         return if general == STATUS_REPORT_SUCCESS
@@ -581,6 +677,46 @@ module Matter
         end
       rescue ex
         Log.error(exception: ex) { "Failed to parse StatusReport (#{msg.payload.size} bytes): #{msg.payload.hexstring}" }
+      end
+
+      private def complete_case_resumption(key : HandshakeKey) : Nil
+        handshake = @case_resume_handshakes.delete(key)
+        return unless handshake
+        record = handshake.record
+        fabric = @fabric_table.find_by_fabric_identity(record.fabric_id, record.root_public_key)
+        return unless fabric && fabric.node_id == record.local_node_id
+
+        keys = Session::Case.derive_session_keys(Crypto::StandardCrypto.new,
+          record.shared_secret, handshake.initiator_random + record.resumption_id,
+          Session::Case::Role::Responder)
+        session = Session::SecureContext.new(
+          session_id: handshake.responder_session_id,
+          peer_session_id: handshake.initiator_session_id,
+          session_type: Session::SessionType::Unicast,
+          encryption_key: keys[:encryption],
+          decryption_key: keys[:decryption],
+          attestation_challenge: keys[:attestation_challenge],
+          initiator: false,
+          local_node_id: DataType::NodeId.new(fabric.node_id),
+          peer_node_id: DataType::NodeId.new(record.peer_node_id),
+          case_session: true,
+          fabric_index: fabric.fabric_index
+        )
+        session.peer_subject_ids = record.peer_subject_ids.dup
+        session.peer_icac = record.peer_icac.try(&.dup)
+        @registry.establish_session(session)
+        save_resumption_record(Session::Case::ResumptionStore::Record.new(
+          record.fabric_id, record.root_public_key, record.local_node_id,
+          record.peer_node_id, handshake.new_resumption_id, record.shared_secret,
+          record.peer_subject_ids, record.peer_icac))
+      end
+
+      private def save_resumption_record(record : Session::Case::ResumptionStore::Record) : Nil
+        @resumption_store.save(record)
+      rescue ex : Matter::Error
+        # The authenticated session is already established; a storage error
+        # must not turn its successful CASE exchange into a timeout.
+        Log.warn(exception: ex) { "CASE session established without a saved resumption record" }
       end
 
       private def send_status_report_success(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil

@@ -37,6 +37,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   1 MiB streaming limit, timeouts, and no redirects. Injected DCL sources remain
   available for separately authenticated mirrors.
 
+### CASE session resumption
+
+- Resume controller and device CASE sessions using the Matter 1.6 Sigma1 and
+  Sigma2Resume MICs, derive matching session keys, and rotate the resumption ID
+  after the Success exchange. Invalid or stale IDs fall back to full CASE.
+- Persist peer-scoped resumption records across restarts, clear device and
+  controller records when their fabric is removed, and bound retained records
+  and pending handshakes.
+- Enable persisted resumption for the Crystal chip-tool commands.
+
 ### Attestation revocation
 
 - Validate Matter 1.6 partitioned and delegated DCL CRLs. Every partition

@@ -14,6 +14,11 @@ module ChipTool
     getter timeout : Time::Span
     getter state_store : Matter::Controller::StateStore
 
+    def case_pairing : Matter::Controller::Pairing::CasePairing
+      Matter::Controller::Pairing::CasePairing.new(
+        resumption_store: Matter::Session::Case::ResumptionStore.new(@state_store.backend))
+    end
+
     def initialize(@storage_directory : String, @timeout : Time::Span = DEFAULT_TIMEOUT)
       FileUtils.mkdir_p(@storage_directory)
       backend = Matter::Storage::YamlFile.new(File.join(@storage_directory, CONTROLLER_STATE_FILE))

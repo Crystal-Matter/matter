@@ -1,4 +1,5 @@
 require "../storage/backend"
+require "../session/case/resumption_store"
 require "./state"
 
 module Matter
@@ -31,7 +32,20 @@ module Matter
 
       def save(state : State) : Nil
         @backend.open unless @backend.open?
+        previous = @backend.read(COLLECTION, DOCUMENT_ID)
+        previous_fabrics = previous ? State.from_document(previous).fabrics : [] of FabricInfo
         @backend.write(COLLECTION, DOCUMENT_ID, state.to_document)
+        remaining = state.fabrics
+        resume_store = Session::Case::ResumptionStore.new(@backend)
+        previous_fabrics.each do |fabric|
+          next if remaining.any? do |installed|
+                    installed.fabric_id == fabric.fabric_id &&
+                    installed.root_public_key == fabric.root_public_key &&
+                    installed.controller_node_id == fabric.controller_node_id
+                  end
+          resume_store.remove_fabric(fabric.fabric_id, fabric.root_public_key,
+            fabric.controller_node_id)
+        end
       rescue ex : Matter::StorageError
         raise ex
       rescue ex

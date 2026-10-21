@@ -7,6 +7,7 @@ require "../../crypto/certificate"
 require "../../crypto/certificate_validation"
 require "../../fabric"
 require "../../session/case/definitions"
+require "../../session/case/resumption_store"
 require "../../session/pase/definitions"
 require "../client"
 require "../state"
@@ -18,10 +19,11 @@ module Matter
         record VerifiedResponder, subject_ids : Array(UInt64), icac : Bytes?
         Log = ::Log.for("matter.controller.pairing.case_pairing")
 
-        MSG_CASE_SIGMA1   = 0x30_u8
-        MSG_CASE_SIGMA2   = 0x31_u8
-        MSG_CASE_SIGMA3   = 0x32_u8
-        MSG_STATUS_REPORT = 0x40_u8
+        MSG_CASE_SIGMA1        = 0x30_u8
+        MSG_CASE_SIGMA2        = 0x31_u8
+        MSG_CASE_SIGMA3        = 0x32_u8
+        MSG_CASE_SIGMA2_RESUME = 0x33_u8
+        MSG_STATUS_REPORT      = 0x40_u8
 
         SIGMA2_INFO = "Sigma2".to_slice
         SIGMA3_INFO = "Sigma3".to_slice
@@ -31,7 +33,8 @@ module Matter
 
         SESSION_KEYS_INFO = "SessionKeys".to_slice
 
-        def initialize(@crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
+        def initialize(@crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                       @resumption_store : Session::Case::ResumptionStore? = nil)
         end
 
         # Select the controller identity explicitly when a state contains
@@ -82,17 +85,26 @@ module Matter
 
           initiator_random = @crypto.random_bytes(32)
           initiator_session_id = @crypto.random_uint16
+          while initiator_session_id == 0 || client.session?(initiator_session_id)
+            initiator_session_id = @crypto.random_uint16
+          end
 
           ephemeral_key = Crypto::ECDH.generate_key_pair
           initiator_eph_pub = ephemeral_key.public_key
 
           destination_id = compute_destination_id(controller_fabric.derived_ipk, initiator_random, fabric.root_public_key, fabric.fabric_id, peer_node_id)
 
+          resume_record = @resumption_store.try(&.find_by_peer(fabric.fabric_id,
+            fabric.root_public_key, fabric.controller_node_id, peer_node_id))
+
           sigma1 = Session::Case::Definitions::Sigma1.new(
             initiator_random: initiator_random,
             initiator_session_id: initiator_session_id,
             destination_id: destination_id,
-            initiator_eph_pub_key: initiator_eph_pub
+            initiator_eph_pub_key: initiator_eph_pub,
+            resumption_id: resume_record.try(&.resumption_id),
+            initiator_resume_mic: resume_record ? Session::Case.resume1_mic(@crypto,
+              resume_record.shared_secret, initiator_random, resume_record.resumption_id) : nil
           )
           sigma1_bytes = sigma1.to_slice
 
@@ -104,8 +116,20 @@ module Matter
             requires_ack: true
           )
 
-          sigma2 = client.wait_for(exchange_id, Client::PROTOCOL_SECURE_CHANNEL, MSG_CASE_SIGMA2, timeout)
+          sigma2 = client.wait_for_any(exchange_id, Client::PROTOCOL_SECURE_CHANNEL,
+            [MSG_CASE_SIGMA2, MSG_CASE_SIGMA2_RESUME], timeout)
           raise Matter::TimeoutError.new("CASE: timeout waiting for Sigma2") unless sigma2
+          unless sigma2.peer == peer
+            raise Matter::AuthenticationError.new("CASE: response came from another peer")
+          end
+
+          if sigma2.message.payload_header.message_type == MSG_CASE_SIGMA2_RESUME
+            unless resume_record
+              raise Matter::AuthenticationError.new("CASE: unsolicited Sigma2Resume")
+            end
+            return finish_resumed_case(client, peer, fabric, peer_node_id, exchange_id,
+              initiator_random, initiator_session_id, resume_record, sigma2.message.payload.to_slice)
+          end
 
           sigma2_msg = Session::Case::Definitions::Sigma2.from_slice(sigma2.message.payload.to_slice)
           sigma2_bytes = sigma2.message.payload.to_slice
@@ -167,6 +191,9 @@ module Matter
 
           status = client.wait_for(exchange_id, Client::PROTOCOL_SECURE_CHANNEL, MSG_STATUS_REPORT, timeout)
           raise Matter::TimeoutError.new("CASE: timeout waiting for StatusReport") unless status
+          unless status.peer == peer
+            raise Matter::AuthenticationError.new("CASE: status came from another peer")
+          end
 
           report = Session::Pase::Definitions::StatusReport.from_bytes(status.message.payload.to_slice)
           unless report.general_status == 0_u16 && report.protocol_status == 0_u16
@@ -197,7 +224,56 @@ module Matter
           secure_context.peer_icac = verified_responder.icac
 
           client.register_session(secure_context)
+          save_resumption_record(Session::Case::ResumptionStore::Record.new(
+            fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+            peer_node_id, encrypted_data2.resumption_id, shared_secret,
+            verified_responder.subject_ids, verified_responder.icac))
           secure_context
+        end
+
+        private def finish_resumed_case(client : Client, peer : Socket::IPAddress,
+                                        fabric : FabricInfo, peer_node_id : UInt64,
+                                        exchange_id : UInt16, initiator_random : Bytes,
+                                        initiator_session_id : UInt16,
+                                        record : Session::Case::ResumptionStore::Record,
+                                        payload : Bytes) : Session::SecureContext
+          sigma2 = Session::Case::Definitions::Sigma2Resume.from_slice(payload)
+          unless Session::Case.valid_resume2_mic?(@crypto, record.shared_secret,
+                   initiator_random, sigma2.resumption_id, sigma2.resume_mic)
+            raise Matter::AuthenticationError.new("CASE: Sigma2Resume MIC is invalid")
+          end
+          keys = Session::Case.derive_session_keys(@crypto, record.shared_secret,
+            initiator_random + record.resumption_id, Session::Case::Role::Initiator)
+          session = Session::SecureContext.new(
+            session_id: initiator_session_id,
+            peer_session_id: sigma2.responder_session_id,
+            session_type: Session::SessionType::Unicast,
+            encryption_key: keys[:encryption],
+            decryption_key: keys[:decryption],
+            attestation_challenge: keys[:attestation_challenge],
+            initiator: true,
+            local_node_id: DataType::NodeId.new(fabric.controller_node_id),
+            peer_node_id: DataType::NodeId.new(peer_node_id),
+            case_session: true)
+          session.peer_subject_ids = record.peer_subject_ids.dup
+          session.peer_icac = record.peer_icac.try(&.dup)
+          client.send_unsecured_on_exchange(peer: peer, exchange_id: exchange_id,
+            protocol_id: Client::PROTOCOL_SECURE_CHANNEL,
+            message_type: MSG_STATUS_REPORT,
+            payload: Session::Pase::Definitions::StatusReport.new.to_bytes,
+            initiator_message: true, requires_ack: true)
+          client.register_session(session)
+          save_resumption_record(Session::Case::ResumptionStore::Record.new(
+            fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+            peer_node_id, sigma2.resumption_id, record.shared_secret,
+            record.peer_subject_ids, record.peer_icac))
+          session
+        end
+
+        private def save_resumption_record(record : Session::Case::ResumptionStore::Record) : Nil
+          @resumption_store.try(&.save(record))
+        rescue ex : Matter::Error
+          Log.warn(exception: ex) { "CASE session established without a saved resumption record" }
         end
 
         private def compute_destination_id(
