@@ -62,6 +62,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Accept the official SDK's CSR ResponseStream for an outstanding ICAC request
   even when its optional transaction type is unset or inconsistent; verify the
   returned CSR against the pinned ICAC key before using it.
+- Exercise the unmodified Matter 1.6 SDK JFA and Datastore certification
+  scripts with a Crystal Anchor provisioned by SDK JFC. The separate CI job
+  retains logs for every case and reports individual failures.
 - Recover interrupted device migration commands after authenticated proof of
   completion or no effect. Verify both fabrics' Datastore ownership before
   declaring migration complete, and resume partially completed rollback.
