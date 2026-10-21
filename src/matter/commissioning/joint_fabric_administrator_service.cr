@@ -21,13 +21,12 @@ module Matter
 
       @committed_icac : Bytes?
       @last_csr_public_key : Bytes?
-      @csr_requester_session_id : UInt64?
+      @csr_requester_node_id : UInt64?
       @csr_requester_fabric_index : UInt8?
       @icac_attempt_fabric_indices = Set(UInt8?).new
       @icac_pending_commit : Bool = false
       @transfer_requester_node_id : UInt64?
       @transfer_requester_fabric_index : UInt8?
-      @verified_initiator_session_id : UInt64?
       @verified_initiator_node_id : UInt64?
       @verified_initiator_fabric_index : UInt8?
       @previous_administrator_fabric_index : UInt8?
@@ -100,10 +99,9 @@ module Matter
         # second AddICAC or replace the pre-window rollback snapshot.
         return if @icac_pending_commit
         @last_csr_public_key = nil
-        @csr_requester_session_id = nil
+        @csr_requester_node_id = nil
         @csr_requester_fabric_index = nil
         @icac_attempt_fabric_indices.clear
-        @verified_initiator_session_id = nil
         @verified_initiator_node_id = nil
         @verified_initiator_fabric_index = nil
       end
@@ -158,7 +156,7 @@ module Matter
               end
         Crypto::Pkcs10.verify(csr, public_key, @crypto)
         @last_csr_public_key = public_key
-        @csr_requester_session_id = cluster.request_session_id
+        @csr_requester_node_id = cluster.request_peer_node_id
         @csr_requester_fabric_index = cluster.request_fabric_index
         Admin::ICACCSRResponse.new(Admin::ICACCSRResponseStatusCodeEnum::OK,
           csr)
@@ -179,7 +177,7 @@ module Matter
           return Admin::ICACResponse.new(unprivileged_icac_status(cluster, request.icac_value))
         end
         return InteractionModel::Status.unsupported_access unless failsafe_fabric_matches?(cluster)
-        unless @csr_requester_session_id && @csr_requester_session_id == cluster.request_session_id &&
+        unless @csr_requester_node_id && @csr_requester_node_id == cluster.request_peer_node_id &&
                @csr_requester_fabric_index == cluster.request_fabric_index
           return InteractionModel::Status.unsupported_access
         end
@@ -277,21 +275,20 @@ module Matter
         verifier = @verify_anchor_initiator
         if node_id && fabric_index && peer_address && verifier && verifier.call(node_id, fabric_index, peer_address)
           @verified_initiator_node_id = node_id
-          @verified_initiator_session_id = cluster.request_session_id
           @verified_initiator_fabric_index = fabric_index
         else
           @verified_initiator_node_id = nil
-          @verified_initiator_session_id = nil
           @verified_initiator_fabric_index = nil
         end
         InteractionModel::Status.success
       end
 
+      # Operational VID verification belongs to the authenticated Anchor on
+      # this fabric, not to one transient CASE session. The SDK may establish
+      # a fresher CASE session between Announce and ICACCSRRequest.
       private def verified_initiator?(cluster : Admin) : Bool
         node_id = @verified_initiator_node_id
-        session_id = @verified_initiator_session_id
-        !!node_id && !!session_id && node_id == cluster.request_peer_node_id &&
-          session_id == cluster.request_session_id &&
+        !!node_id && node_id == cluster.request_peer_node_id &&
           @verified_initiator_fabric_index == cluster.request_fabric_index
       end
 

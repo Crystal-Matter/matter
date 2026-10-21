@@ -132,7 +132,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   listener. A shared controller client keeps outbound CASE and VID verification
   on the device's advertised port while an ordered device worker handles other
   requests, preventing a peer from routing later JCM commands to a temporary
-  verifier socket.
+  verifier socket. Retain a verified CASE session for subsequent JCM commands;
+  bind VID approval and CSR ownership to the authenticated Anchor node and
+  fabric across CASE refreshes.
 
 ### Controller discovery
 

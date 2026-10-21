@@ -237,6 +237,10 @@ adopts that CASE session into its device registry. The SDK may use the newest
 session for its next ICACCSRRequest; adopting it keeps the authenticated
 session available after the temporary controller client closes while the
 original Announce exchange finishes on its earlier session.
+The SDK may also refresh CASE between Announce, ICACCSRRequest, and AddICAC.
+Crystal keeps the VID decision and CSR owner bound to the authenticated
+Anchor node and fabric across those sessions; a different node or fabric
+cannot reuse either decision.
 
 ## Work required for interoperable Joint Commissioning
 
