@@ -26,4 +26,11 @@ describe Matter::Controller::Clusters::AccessControl do
     entry.targets.as(Array(Matter::Cluster::AccessControl::Target))[0].cluster.should eq 6_u32
     entry.targets.as(Array(Matter::Cluster::AccessControl::Target))[0].device_type.should be_nil
   end
+
+  it "does not discard a Matter 1.6 AuxiliaryType supplied to the primary ACL writer" do
+    json = %([{"privilege":5,"authMode":2,"subjects":[202],"targets":null,"auxiliaryType":1}])
+    expect_raises(ArgumentError, /AuxiliaryType/) do
+      Matter::Controller::Clusters::AccessControl.parse_acl_json(json)
+    end
+  end
 end

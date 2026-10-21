@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Access control interoperability
+
+- Decode Matter 1.6 AccessControlEntry AuxiliaryType (context tag 5), and
+  reject entries carrying it in primary ACL writes without changing existing
+  fabric ACLs. The controller ACL JSON helper also rejects this field instead
+  of silently discarding it. The provisional AUX feature remains disabled.
+
 ### Standard application clusters
 
 - Add Matter 1.6 Switch, Mode Select, and Valve Configuration and Control
