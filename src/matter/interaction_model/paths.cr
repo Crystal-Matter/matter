@@ -101,6 +101,10 @@ module Matter
       @[TLV::Field(tag: 5, fixed_size: true)]
       property list_index_raw : UInt16 | Bool?
 
+      # TLV null means append; an omitted tag means a whole-list path.
+      # TLV::Serializable decodes both into nil, so keep the wire distinction.
+      getter? list_index_null : Bool = false
+
       @[TLV::Field(tag: 6, optional: true, fixed_size: true)]
       property wildcard_path_flags_raw : UInt32?
 
@@ -110,6 +114,7 @@ module Matter
         attribute : UInt32? = nil,
         list_index : UInt16? = nil,
         *,
+        list_index_null : Bool = false,
         enable_tag_compression : Bool? = nil,
         node : UInt64? = nil,
         wildcard_path_flags : UInt32? = nil,
@@ -120,6 +125,7 @@ module Matter
         @cluster_raw = cluster
         @attribute_raw = attribute
         @list_index_raw = list_index
+        @list_index_null = list_index_null
         @wildcard_path_flags_raw = wildcard_path_flags
       end
 
@@ -171,6 +177,23 @@ module Matter
 
       def list_index=(value : UInt16?)
         @list_index_raw = value
+        @list_index_null = false
+      end
+
+      def self.from_tlv(any : TLV::Any) : self
+        path = previous_def
+        element = case value = any.value
+                  when TLV::List
+                    value.find { |item| item.header.ids == 5_u8 }
+                  when TLV::Structure
+                    value[5_u8]?
+                  end
+        path.set_list_index_null(element.try(&.header.element_type.null?) == true)
+        path
+      end
+
+      protected def set_list_index_null(value : Bool) : Nil
+        @list_index_null = value
       end
 
       def wildcard_path_flags=(value : UInt32?)
@@ -193,6 +216,8 @@ module Matter
         PathFormat.attribute(io, attribute)
         if index = list_index
           io << PathFormat::SEPARATOR << "[" << index << "]"
+        elsif @list_index_null
+          io << PathFormat::SEPARATOR << "[+]"
         end
       end
 
@@ -200,7 +225,8 @@ module Matter
         endpoint == other.endpoint &&
           cluster == other.cluster &&
           attribute == other.attribute &&
-          list_index == other.list_index
+          list_index == other.list_index &&
+          list_index_null? == other.list_index_null?
       end
     end
 
@@ -385,5 +411,43 @@ module Matter
           @list_index == other.list_index
       end
     end
+  end
+end
+
+struct Matter::InteractionModel::AttributePath
+  def to_tlv : TLV::Any
+    encode_path(nil)
+  end
+
+  def to_tlv(outer_tag : Nil) : TLV::Any
+    encode_path(outer_tag)
+  end
+
+  def to_tlv(outer_tag : UInt8) : TLV::Any
+    encode_path(outer_tag)
+  end
+
+  def to_tlv(outer_tag : {UInt16, UInt16}) : TLV::Any
+    encode_path(outer_tag)
+  end
+
+  def to_tlv(outer_tag : {UInt16, UInt16, UInt16}) : TLV::Any
+    encode_path(outer_tag)
+  end
+
+  private def encode_path(outer_tag : UInt8? | {UInt16, UInt16} | {UInt16, UInt16, UInt16}) : TLV::Any
+    list = TLV::List.new
+    list << TLV::Serializable.serialize_value(@enable_tag_compression, 0_u8) unless @enable_tag_compression.nil?
+    list << TLV::Serializable.serialize_value(@node_raw, 1_u8, true) unless @node_raw.nil?
+    list << TLV::Serializable.serialize_value(@endpoint_raw, 2_u8, true) unless @endpoint_raw.nil?
+    list << TLV::Serializable.serialize_value(@cluster_raw, 3_u8, true) unless @cluster_raw.nil?
+    list << TLV::Serializable.serialize_value(@attribute_raw, 4_u8, true) unless @attribute_raw.nil?
+    if @list_index_null
+      list << TLV::Serializable.serialize_value(nil, 5_u8)
+    elsif !@list_index_raw.nil?
+      list << TLV::Serializable.serialize_value(@list_index_raw, 5_u8, true)
+    end
+    list << TLV::Serializable.serialize_value(@wildcard_path_flags_raw, 6_u8, true) unless @wildcard_path_flags_raw.nil?
+    TLV::Any.new(list, outer_tag)
   end
 end

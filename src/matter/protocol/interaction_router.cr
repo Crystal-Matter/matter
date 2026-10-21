@@ -22,9 +22,15 @@ module Matter
     class InteractionRouter
       Log = ::Log.for("matter.protocol.interaction_router")
 
+      WRITE_CHUNK_TIMEOUT = 60.seconds
+
       # Deadlines of TimedRequests awaiting their Invoke or Write, keyed by
       # `{session_id, exchange_id}` so one session cannot consume another's.
       @timed_request_deadlines : Hash(Tuple(UInt16, UInt16), Time::Instant) = {} of Tuple(UInt16, UInt16) => Time::Instant
+
+      # A chunked WriteRequest receives one WriteResponse per chunk. The list
+      # operation begun by an earlier chunk remains scoped to that exchange.
+      @write_list_states : Hash(Tuple(UInt64, UInt16), Tuple(IMHandler::WriteListState, Time::Instant)) = {} of Tuple(UInt64, UInt16) => Tuple(IMHandler::WriteListState, Time::Instant)
 
       def initialize(
         @registry : SessionRegistry,
@@ -314,23 +320,28 @@ module Matter
 
         return unless timed_interaction_satisfied?(request.timed_request, original_msg, peer, session)
 
+        if request.more_chunked_messages && request.timed_request
+          send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
+          return
+        end
+
         Log.info { "WriteRequest: #{(request.write_requests || [] of InteractionModel::AttributeDataIB).size} attribute(s) to write" }
 
+        now = Time.instant
+        @write_list_states.reject! { |_key, state| state[1] <= now }
+        exchange_key = {session.object_id, original_msg.payload_header.exchange_id}
+        list_state = @write_list_states.delete(exchange_key).try(&.[0]) || IMHandler::WriteListState.new
         write_responses = IMHandler.write_attributes(
           request.write_requests,
           clusters,
           session_id: session.session_id,
           is_case_session: session.case_session?,
           fabric_index: session.fabric_index,
-          peer_subject_ids: peer_subject_ids(session)
+          peer_subject_ids: peer_subject_ids(session),
+          list_state: list_state
         )
+        @write_list_states[exchange_key] = {list_state, now + WRITE_CHUNK_TIMEOUT} if request.more_chunked_messages
         Log.debug { "WriteResponse: #{write_responses.size} status(es)" }
-
-        all_succeeded = write_responses.all? { |write_status| write_status.status.status == InteractionModel::StatusCode::Success.value }
-        if request.suppress_response && all_succeeded
-          Log.info { "Response suppressed per suppressResponse flag (all writes succeeded)" }
-          return
-        end
 
         @sender.send_im_response(
           original_msg: original_msg,

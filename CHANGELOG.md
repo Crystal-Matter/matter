@@ -32,6 +32,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   DataVersionMismatch without calling the cluster writer.
 - Let controller single and batch writes carry cluster data versions for
   compare-and-write requests.
+- Preserve a successful list replacement's original data version precondition
+  for its subsequent append chunks on the same exchange.
+
+### Interaction Model list writes
+
+- Preserve the wire distinction between omitted and null `AttributePath.ListIndex`.
+  Apply whole-list replacements and ordered list-item appends across chunked
+  WriteRequests on one exchange, with a WriteResponse per chunk. Reject numeric
+  list indices, orphan appends, and chunked timed writes with protocol statuses.
+  Unicast writes now return WriteResponse even when SuppressResponse is set, as
+  in the official SDK.
 
 ### Controller discovery
 
