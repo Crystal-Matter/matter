@@ -18,6 +18,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fabrics with legacy SHA-256-derived key identifiers internally consistent;
   their existing CA certificates still need reprovisioning for SDK conformance.
 
+### Joint Fabric operational VID trust
+
+- Bind a DCL OperationalPKI root to the candidate Matter RCAC by VID, RCAC ID,
+  public key, and SKID. Require a VIDSignerPKI leaf with the Matter VID signer
+  subject and a signed OperationalPKI Root/ICA CA path before accepting a VID
+  Verification Statement signature. Reject unsupported critical signer-chain
+  extensions and CA path length violations.
+- Fetch operational DCL records from an explicit HTTPS origin with the existing
+  1 MiB streaming limit, timeouts, and no redirects. Injected DCL sources remain
+  available for separately authenticated mirrors.
+
 ### Attestation revocation
 
 - Validate Matter 1.6 partitioned and delegated DCL CRLs. Every partition

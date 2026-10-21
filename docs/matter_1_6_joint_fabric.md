@@ -199,16 +199,16 @@ certification steps and assertions are unchanged.
 
 ## Work required for interoperable Joint Commissioning
 
-1. Integrate a DCL-backed operational VID trust source and exercise
-   independent consent decisions with real ecosystem policies. Matter 1.6
-   Core §6.4.10.1 requires looking up Operational Trust Anchors by VID and
-   SKID, then validating either a root entry (`IsRoot`) or a VID Verification
-   Statement signer (`IsVIDVerificationSigner`). The current
-   `StaticOperationalTrustAnchors` accepts only explicitly provisioned,
-   self-signed roots and cannot validate a VID Verification Statement. The
-   official SDK's `DeviceCommissioner::OnLookupOperationalTrustAnchor`
-   delegate is the reference integration point; authenticated DCL transport,
-   signer entries, and statement-chain validation remain follow-up work.
+1. Exercise independent consent decisions with real ecosystem policies and
+   confirm DCL-backed operational VID validation against independently issued
+   certificates. The explicit `HttpDclSource` reads VID-scoped DCL
+   OperationalPKI roots, ICAs, and VIDSignerPKI leaves. The local adapter binds
+   an RCAC to a DCL root by VID, RCAC ID, public key, and SKID, and validates
+   a VVS signature through a signer-specific leaf and a Root/ICA CA chain. The
+   official SDK v1.6 implements the root lookup path but marks its VVS path
+   unsupported, so independent VVS interoperability remains unproven.
+   Deployment must authenticate and freshen its DCL gateway, and the optional
+   Matter-TLV VVSC currently has only public-key/SKID equivalence checks.
 2. Run the JCM sequence against the official SDK `jf-control-app` and
    `jf-admin-app`. The current Docker test proves Crystal-to-Crystal JCM;
    the official `chip-tool` separately commissions the example device.
@@ -251,14 +251,24 @@ an explicit user consent decision for each ecosystem joining a fabric.
 
 For DCL-backed operational VID checks, construct
 `VidVerification::DclOperationalTrustAnchors.new(VidVerification::HttpDclSource.new("https://<trusted-dcl-gateway>"))`
-and pass it to the JCM verifier. The gateway URL is explicit. The adapter reads
-the DCL's active, VID-scoped NOC root, ICA, and signer indexes. It verifies the
-operational RCAC public key against an approved OperationalPKI root or validates
-a VVS signature through a VIDSignerPKI chain of at most three certificates.
+and pass it to the JCM verifier. The gateway URL is an explicit HTTPS origin.
+The adapter reads the DCL's active, VID-scoped NOC root, ICA, and signer indexes.
+It verifies the operational RCAC ID, public key, and SKID against an approved
+OperationalPKI root. For a VVS, it validates the signature through a
+VIDSignerPKI leaf issued by an
+OperationalPKI Root/ICA CA chain of at most three certificates. The signer
+must carry the Matter VID signer subject, use P-256 ECDSA-SHA256, and have the
+leaf digital-signature profile; CA parents need the Matter Root/ICA subject and
+certificate-signing profile. The built-in fetcher uses a 1 MiB streaming limit,
+five-second connection/read timeouts, and rejects redirects.
+CA path length constraints are enforced for the signer chain.
 Missing, malformed, expired, mismatched, or removed records fail closed.
 Applications may implement `DclSource` for a locally authenticated DCL mirror.
 An untrusted gateway can lie about the active/revoked status, so deploy with a
-gateway whose ledger synchronization and transport you trust.
+gateway whose ledger synchronization and transport you trust. The optional
+Matter-TLV VVSC is currently compared by public key and SKID only; this adapter
+does not yet validate its complete signed TLV certificate profile. The SDK
+v1.6 does not implement independent VVS path verification either.
 
 For administrator removal, Matter 1.6 recommends transferring to a fresh
 trusted root after rotating Administrator CAT credentials, because an ICAC

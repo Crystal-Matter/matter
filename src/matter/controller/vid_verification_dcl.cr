@@ -1,11 +1,13 @@
 require "http/client"
 require "json"
 require "base64"
+require "./dcl_attestation_revocation"
 require "./vid_verification"
 require "./device_attestation_verifier"
 
 lib LibCrypto
   fun x509_extension_get_critical = X509_EXTENSION_get_critical(extension : X509_EXTENSION) : Int32
+  fun x509_get_pathlen = X509_get_pathlen(cert : X509) : LibC::Long
 end
 
 module Matter
@@ -45,11 +47,19 @@ module Matter
 
         alias Fetch = Proc(String, String)
 
-        def initialize(@base_url : String, @fetch : Fetch = ->(url : String) { HTTP::Client.get(url).body })
-          unless @base_url.starts_with?("https://")
-            raise Matter::ConfigurationError.new("DCL gateway must use HTTPS")
+        def initialize(@base_url : String, @fetch : Fetch = ->(url : String) { String.new(DclAttestationRevocation.fetch_https(url)) })
+          uri = begin
+            URI.parse(@base_url)
+          rescue ex : URI::Error
+            raise Matter::ConfigurationError.new("Invalid DCL gateway URL", cause: ex)
           end
-          @base_url = @base_url.rstrip('/')
+          host = uri.host || ""
+          if uri.scheme != "https" || host.empty? || uri.user || uri.password ||
+             uri.query || uri.fragment || !(uri.path.empty? || uri.path == "/") ||
+             !(uri.port.nil? || uri.port == 443)
+            raise Matter::ConfigurationError.new("DCL gateway must be an HTTPS origin")
+          end
+          @base_url = uri.to_s.rstrip('/')
         end
 
         def roots_for(vendor_id : UInt16) : Array(DclCertificate)
@@ -90,7 +100,7 @@ module Matter
       end
 
       # Verifies an Operational RCAC against a VID-scoped DCL root, or a VVS
-      # against a VID Signer certificate chain rooted in a DCL VVSC root.
+      # through a VID Signer leaf issued by a DCL OperationalPKI Root/ICA.
       class DclOperationalTrustAnchors < OperationalTrustAnchors
         Log                         = ::Log.for("matter.controller.vid_verification_dcl")
         MAX_SIGNER_CHAIN_DEPTH      =        3
@@ -98,17 +108,28 @@ module Matter
         KEY_USAGE_CERT_SIGN         = 0x04_u32
         KEY_USAGE_CRL_SIGN          = 0x02_u32
         KEY_ID_SIZE                 =       20
+        ROOT_ID_OID                 = "1.3.6.1.4.1.37244.1.4"
+        ICA_ID_OID                  = "1.3.6.1.4.1.37244.1.3"
+        VID_SIGNER_ID_OID           = "1.3.6.1.4.1.37244.1.7"
+        MATTER_DN_OID_PREFIX        = "1.3.6.1.4.1.37244.1."
 
         def initialize(@source : DclSource, @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
         end
 
         def trusted_root?(vendor_id : UInt16, root_certificate : Bytes) : Bool
           Crypto::MatterCertificate::Validation.verify_root(root_certificate)
-          public_key = Crypto::MatterCertificate.public_key_from_tlv(root_certificate)
+          matter_root = Crypto::MatterCertificate.from_slice(root_certificate)
+          public_key = matter_root.ec_public_key
+          root_id = matter_root.subject.rcac_id
+          return false unless root_id
+          root_skid = matter_key_id(root_certificate)
+          return false unless root_skid && root_skid.size == KEY_ID_SIZE
           @source.roots_for(vendor_id).any? do |record|
             next false unless record.vendor_id == vendor_id && record.type.operational_pki? && record.root?
             cert = record.certificate
-            valid_root?(cert, ca: true) && cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes == public_key
+            valid_root?(cert) && matter_subject?(cert, ROOT_ID_OID, root_id) &&
+              valid_certificate_profile?(cert) && key_id(cert) == root_skid &&
+              cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes == public_key
           end
         rescue ex
           Log.debug(exception: ex) { "Operational root could not be authenticated against DCL" }
@@ -119,11 +140,11 @@ module Matter
                               statement_tbs : Bytes, signature : Bytes,
                               vvsc : Bytes?) : Bool
           return false unless signer_skid.size == KEY_ID_SIZE && signature.size == 64
-          roots = @source.roots_for(vendor_id).select { |record| signer_record?(record, vendor_id, root: true) }
-          intermediates = @source.intermediates_for(vendor_id).select { |record| signer_record?(record, vendor_id, root: false) }
+          roots = @source.roots_for(vendor_id).select { |record| ca_record?(record, vendor_id, root: true) }
+          intermediates = @source.intermediates_for(vendor_id).select { |record| ca_record?(record, vendor_id, root: false) }
           signers = @source.signers_for(vendor_id, signer_skid)
           signers.any? do |record|
-            next false unless signer_record?(record, vendor_id, root: false)
+            next false unless signer_record?(record, vendor_id)
             cert = record.certificate
             next false unless key_id(cert) == signer_skid
             next false if vvsc && !matches_matter_vvsc?(vvsc, cert, signer_skid)
@@ -148,16 +169,56 @@ module Matter
                               key_id(child, authority: true) == key_id(parent) &&
                               child.verify(parent.public_key)
             if parent_record.root?
-              valid_root?(parent, ca: false)
+              valid_root?(parent) && matter_subject?(parent, ROOT_ID_OID) &&
+                valid_path_length?(parent, depth - 1)
             else
               signer_chain?(parent, intermediates.reject(&.==(parent_record)), roots, depth + 1)
             end
           end
         end
 
-        private def signer_record?(record : DclCertificate, vendor_id : UInt16, root : Bool) : Bool
-          record.vendor_id == vendor_id && record.type.vid_signer_pki? && record.root? == root &&
-            valid_signer?(record.certificate)
+        private def ca_record?(record : DclCertificate, vendor_id : UInt16, root : Bool) : Bool
+          record.vendor_id == vendor_id && record.type.operational_pki? && record.root? == root &&
+            matter_subject?(record.certificate, root ? ROOT_ID_OID : ICA_ID_OID) &&
+            valid_certificate_profile?(record.certificate) && valid_ca?(record.certificate) &&
+            valid_time?(record.certificate)
+        end
+
+        private def signer_record?(record : DclCertificate, vendor_id : UInt16) : Bool
+          record.vendor_id == vendor_id && record.type.vid_signer_pki? && !record.root? &&
+            matter_subject?(record.certificate, VID_SIGNER_ID_OID) &&
+            valid_certificate_profile?(record.certificate) && valid_signer?(record.certificate)
+        end
+
+        private def matter_subject?(cert : OpenSSL::X509::Certificate, required_oid : String,
+                                    required_id : UInt64? = nil) : Bool
+          matter_entries = cert.subject.to_a.select do |entry|
+            entry[0].split('\0').first.starts_with?(MATTER_DN_OID_PREFIX)
+          end
+          return false unless matter_entries.size == 1
+          oid, value = matter_entries.first
+          oid.split('\0').first == required_oid && value.matches?(/\A[0-9A-Fa-f]{16}\z/) &&
+            (required_id.nil? || value.to_u64(16) == required_id)
+        end
+
+        private def valid_certificate_profile?(cert : OpenSSL::X509::Certificate) : Bool
+          return false unless cert.version == 2 &&
+                              LibCrypto.x509_get_signature_nid(cert) == LibCrypto.obj_txt2nid("ecdsa-with-SHA256")
+          key = cert.public_key
+          ec = LibCrypto.evp_pkey_get0_ec_key(key)
+          return false if ec.null?
+          group = LibCrypto.ec_key_get0_group(ec)
+          return false if group.null? || LibCrypto.ec_group_get_curve_name(group) != LibCrypto::NID_X9_62_prime256v1
+          cert.extensions.all? do |ext|
+            !critical?(ext) || ext.oid.in?("basicConstraints", "keyUsage", "subjectKeyIdentifier", "authorityKeyIdentifier")
+          end
+        end
+
+        # A root reached through an ICA has one subordinate CA; a signer
+        # issued directly by the root has none. An absent pathLen is unbounded.
+        private def valid_path_length?(cert : OpenSSL::X509::Certificate, subordinate_cas : Int32) : Bool
+          path_length = LibCrypto.x509_get_pathlen(cert)
+          path_length == -1 || path_length >= subordinate_cas
         end
 
         # NOCStruct carries the VVSC as a Matter TLV certificate, while the
@@ -166,16 +227,19 @@ module Matter
         private def matches_matter_vvsc?(vvsc : Bytes, cert : OpenSSL::X509::Certificate,
                                          signer_skid : Bytes) : Bool
           matter_cert = Crypto::MatterCertificate.from_slice(vvsc)
-          extensions = TLV::Any.from_slice(vvsc).as_structure[Crypto::MatterCertificate::Asn1::Field::Extensions.value].as_list
-          skid = extensions.find { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Extension::SubjectKeyIdentifier.value }
           matter_cert.ec_public_key == cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes &&
-            skid.try(&.as_bytes) == signer_skid
+            matter_key_id(vvsc) == signer_skid
         end
 
-        private def valid_root?(cert : OpenSSL::X509::Certificate, ca : Bool) : Bool
+        private def matter_key_id(certificate : Bytes) : Bytes?
+          extensions = TLV::Any.from_slice(certificate).as_structure[Crypto::MatterCertificate::Asn1::Field::Extensions.value].as_list
+          extensions.find { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Extension::SubjectKeyIdentifier.value }.try(&.as_bytes)
+        end
+
+        private def valid_root?(cert : OpenSSL::X509::Certificate) : Bool
           valid_time?(cert) && cert.subject.to_a == cert.issuer.to_a && cert.verify(cert.public_key) &&
             key_id(cert) == key_id(cert, authority: true) && key_id(cert).size == KEY_ID_SIZE &&
-            (ca ? valid_ca?(cert) : valid_signer?(cert))
+            valid_ca?(cert)
         end
 
         private def valid_ca?(cert : OpenSSL::X509::Certificate) : Bool
