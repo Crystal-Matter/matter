@@ -8,7 +8,8 @@ module Matter
       # Application-owned stream dispatcher for inbound BDX exchanges. The
       # callbacks are the authorization boundary: an unregistered designator
       # cannot create a transfer, and both receive the authenticated CASE peer.
-      # Every call runs under MessageHandler's session registry lock.
+      # MessageHandler serializes calls to this responder separately from its
+      # session registry. Application callbacks and stream IO may block.
       class Responder
         Log                        = ::Log.for("matter.protocol.bdx.responder")
         MAX_ACTIVE_TRANSFERS       =        4
@@ -61,6 +62,10 @@ module Matter
           @active.size
         end
 
+        def active_for_session?(session : Session::SecureContext) : Bool
+          @active.values.any?(&.session.same?(session))
+        end
+
         # Process one BDX message and return its protocol response. The caller
         # sends a BDX StatusReport for status, or a standalone ACK for an empty
         # step. Only authenticated CASE sessions may reach this method.
@@ -106,8 +111,20 @@ module Matter
           finish(Key.new(session_id, exchange_id))
         end
 
+        def abort(session : Session::SecureContext, exchange_id : UInt16) : Nil
+          key = Key.new(session.session_id, exchange_id)
+          finish(key) if @active[key]?.try(&.session.same?(session))
+        end
+
         def forget_session(session_id : UInt16) : Nil
           @active.keys.select { |key| key.session_id == session_id }.each { |key| finish(key) }
+        end
+
+        # Identity-aware cleanup cannot affect a newly established CASE
+        # session that happens to reuse the retired session's numeric ID.
+        def forget_session(session : Session::SecureContext) : Nil
+          @active.select { |_key, active| active.session.same?(session) }
+            .each_key { |key| finish(key) }
         end
 
         def sweep(now : Time::Instant = Time.instant) : Nil

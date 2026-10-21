@@ -20,6 +20,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and guarded OffWaitTime period. Timer ticks update attributes and turn the
   device off without an application scheduler; timer counters reset on restart.
 
+### BDX responder
+
+- Run authenticated BDX application callbacks and stream IO outside the global
+  session registry lock on a bounded worker queue. Other CASE exchanges can
+  proceed while a BDX stream waits; excess queued requests receive encrypted
+  ResponderBusy status, and session cleanup closes streams off the registry lock.
+  Handler shutdown stays bounded when an application callback remains blocked.
+
 ### Thread diagnostics
 
 - Add the Matter 1.6 Thread Network Diagnostics revision 3 server with typed

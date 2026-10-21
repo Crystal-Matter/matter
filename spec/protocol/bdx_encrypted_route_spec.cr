@@ -87,6 +87,10 @@ describe "BDX encrypted routing" do
     handler.handle_message(bdx_route_message(session, 1_u32, 7_u16, init.opcode, init.to_slice), BDX_PEER)
     handler.bdx.active_count.should eq(1)
     handler.delete_session(session.session_id).should be_true
+    deadline = Time.instant + 2.seconds
+    until stream.closed? || Time.instant >= deadline
+      sleep 1.millisecond
+    end
     handler.bdx.active_count.should eq(0)
     stream.closed?.should be_true
     handler.close

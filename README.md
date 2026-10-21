@@ -286,10 +286,14 @@ secure session is removed. The device also limits each stream to 64 MiB by
 default; set `device.message_handler.bdx.max_transfer_bytes` for a larger
 application-specific limit.
 
-The callback and each stream read or write run synchronously under the device's
-session registry lock. Keep callbacks and IO prompt; do not wait for another
-Matter exchange from inside them. The controller waits up to five minutes for
-each response by default; a caller can set a different `BdxClient` timeout.
+The device handles callbacks and stream reads or writes on a bounded BDX worker,
+outside its session registry lock. Other secure sessions can continue while an
+application stream waits. BDX work on that device is serialized, so keep the
+callback and stream IO prompt; a slow transfer can delay another BDX transfer.
+Shutdown returns after a short grace period if application IO remains blocked;
+the worker closes its stream when that IO returns.
+The controller waits up to five minutes for each response by default; a caller
+can set a different `BdxClient` timeout.
 
 ```crystal
 device.message_handler.bdx.on_download = ->(session : Matter::Session::SecureContext,
