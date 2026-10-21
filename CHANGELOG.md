@@ -10,9 +10,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Attestation revocation
 
 - Add an opt-in DCL adapter for complete, directly signed PAA and PAI CRLs.
-  It uses an explicit HTTPS DCL gateway and CRL host allowlist, bounds
-  downloads, rejects redirects, and fails closed on partitioned or delegated
-  CRLs.
+  It uses an explicit HTTPS DCL gateway and CRL host allowlist, permits
+  explicitly approved HTTP hosts for signed CRLs, bounds downloads, rejects
+  redirects, and fails closed on partitioned or delegated CRLs.
 
 ### Controller discovery
 

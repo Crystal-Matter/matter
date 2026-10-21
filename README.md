@@ -267,8 +267,8 @@ end
 
 `OfflineAttestationRevocation` accepts DER CRLs provisioned by the host. It
 verifies the issuer, authority key identifier, CRL signature, signing usage,
-CRL number, and update interval for both the PAA and PAI before deciding that a DAC chain
-is clear. Missing, stale, or invalid coverage returns `Unavailable` and blocks
+CRL number, and update interval for both the PAA and PAI before deciding that
+a DAC chain is clear. Missing, stale, or invalid coverage returns `Unavailable` and blocks
 commissioning. The host must obtain the CRLs through a trusted channel;
 automated DCL retrieval, partitioned CRLs, and indirect CRL signers are not
 implemented by this local provider.
@@ -285,14 +285,21 @@ trust = Matter::Controller::AttestationTrustStore.new(
   paa_certificates, cd_signers, revocation_check: revocation.callback)
 ```
 
-The downloader rejects redirects and reads at most 1 MiB before buffering a
-CRL. The DCL gateway must be authenticated and kept current by the deploying
+Some DCL records contain HTTP CRL URLs. A host may explicitly opt into those
+using `allowed_http_crl_hosts: Set{"<approved-http-crl-host>"}`. The default
+accepts HTTPS only. The downloader permits only the standard port for each
+scheme, rejects redirects, and reads at most 1 MiB before buffering a CRL.
+HTTP content is authenticated by the CRL signature and update interval, but
+an on-path attacker can withhold a newer CRL until the signed `nextUpdate`;
+the deployment must decide whether this tradeoff is acceptable.
+
+The DCL gateway must be authenticated and kept current by the deploying
 application. Missing coverage, multiple points for one issuer, delegated CRL
 signers, partitioned CRLs, and unknown DCL digest metadata return
 `Unavailable`; commissioning then fails closed. The library does not infer an
 approved CRL host from the DCL's `dataURL`. An injected `DclRevocationSource`
 can use a separately authenticated DCL mirror; an injected fetch callback must
-apply the same bounded HTTPS and redirect policy.
+apply the same byte limit, scheme/host/port allowlist, and redirect policy.
 
 `ImClient` also has `write_attribute`, `write_attributes` and `invoke`;
 `Commissioning::CommissioningWindowOpener` opens an enhanced commissioning window on an already

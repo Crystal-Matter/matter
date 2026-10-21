@@ -169,10 +169,27 @@ describe Matter::Controller::DclAttestationRevocation do
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
     source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(url: "http://127.0.0.1/private")]
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    http_paa = paa_point.copy_with(url: "http://crl.example/issuer.crl")
+    http_pai = pai_point.copy_with(url: "http://crl.example/pai.crl")
+    source.points[paa_point.issuer_skid.hexstring] = [http_paa]
+    source.points[pai_point.issuer_skid.hexstring] = [http_pai]
+    crls[http_paa.url] = paa_crl
+    crls[http_pai.url] = pai_crl
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    http_provider = Matter::Controller::DclAttestationRevocation.new(source, Set(String).new,
+      ->(url : String) { crls[url] }, allowed_http_crl_hosts: Set{"crl.example"})
+    http_provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Good)
+    source.points[pai_point.issuer_skid.hexstring] = [http_pai.copy_with(url: "http://crl.example:8080/private")]
+    http_provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[paa_point.issuer_skid.hexstring] = [paa_point]
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
     source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(url: "https://crl.example:8443/private")]
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
     source.points[pai_point.issuer_skid.hexstring] = [pai_point]
     crls[pai_point.url] = Bytes[0x30]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    crls[pai_point.url] = pai_crl
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(sha256: Bytes.new(32, 0_u8))]
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
   end
 end

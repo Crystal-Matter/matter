@@ -217,7 +217,8 @@ The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected
 HTTPS gateway. `DclAttestationRevocation` accepts one complete, directly
 signed CRL for each of the PAA and PAI only. It downloads from explicitly
-approved HTTPS hosts with a 1 MiB streaming limit and no redirects, then
+approved HTTPS hosts (or separately opted-in HTTP hosts) with a 1 MiB streaming
+limit and no redirects, then
 reuses the signed CRL verifier. Missing or duplicate points, indirect signers,
 partitioned CRLs, and unknown digest metadata return `Unavailable`. The host
 must authenticate and freshen its DCL gateway; this adapter does not establish

@@ -93,9 +93,12 @@ module Matter
       alias Fetch = Proc(String, Bytes)
 
       def initialize(@source : DclRevocationSource, @allowed_crl_hosts : Set(String),
-                     @fetch : Fetch = ->(url : String) { DclAttestationRevocation.fetch_https(url) })
-        raise Matter::ConfigurationError.new("No CRL hosts were approved") if @allowed_crl_hosts.empty?
-        @allowed_crl_hosts.each do |host|
+                     @fetch : Fetch = ->(url : String) { DclAttestationRevocation.fetch_crl(url) },
+                     @allowed_http_crl_hosts : Set(String) = Set(String).new)
+        if @allowed_crl_hosts.empty? && @allowed_http_crl_hosts.empty?
+          raise Matter::ConfigurationError.new("No CRL hosts were approved")
+        end
+        (@allowed_crl_hosts | @allowed_http_crl_hosts).each do |host|
           if host.empty? || host != host.downcase || host.includes?('/') || host.includes?(':')
             raise Matter::ConfigurationError.new("Invalid approved CRL host")
           end
@@ -107,6 +110,17 @@ module Matter
       def self.fetch_https(url : String) : Bytes
         uri = URI.parse(url)
         raise Matter::AuthenticationError.new("CRL URL must use HTTPS") unless uri.scheme == "https"
+        fetch_crl(url)
+      end
+
+      # This helper may receive HTTP only after the caller has checked its
+      # explicit HTTP host allowlist. CRL signatures and freshness are verified
+      # after download; the transport never follows redirects.
+      private def self.fetch_crl(url : String) : Bytes
+        uri = URI.parse(url)
+        unless uri.scheme.in?("https", "http")
+          raise Matter::AuthenticationError.new("Unsupported CRL URL scheme")
+        end
         HTTP::Client.new(uri) do |client|
           client.connect_timeout = FETCH_TIMEOUT
           client.read_timeout = FETCH_TIMEOUT
@@ -157,9 +171,11 @@ module Matter
         end
         uri = URI.parse(point.url)
         host = uri.host
-        unless uri.scheme == "https" && (uri.port.nil? || uri.port == 443) &&
-               host && @allowed_crl_hosts.includes?(host.downcase) &&
-               uri.user.nil? && uri.password.nil? && uri.fragment.nil?
+        approved_https = uri.scheme == "https" && (uri.port.nil? || uri.port == 443) &&
+                         host && @allowed_crl_hosts.includes?(host.downcase)
+        approved_http = uri.scheme == "http" && (uri.port.nil? || uri.port == 80) &&
+                        host && @allowed_http_crl_hosts.includes?(host.downcase)
+        unless (approved_https || approved_http) && uri.user.nil? && uri.password.nil? && uri.fragment.nil?
           raise Matter::AuthenticationError.new("CRL URL is not approved")
         end
         data = @fetch.call(point.url)
