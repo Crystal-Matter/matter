@@ -15,11 +15,14 @@ class LiveJcmHarnessTest(unittest.TestCase):
     def test_identity_probe_requires_nonce_and_public_chain(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jfa-command.yml"
+            request_fields = {}
 
             def device():
                 while not path.exists():
                     time.sleep(0.005)
-                nonce = yaml.safe_load(path.read_text())["jfa_command"]["request"]["nonce"]
+                request = yaml.safe_load(path.read_text())["jfa_command"]["request"]
+                request_fields.update(request)
+                nonce = request["nonce"]
                 path.write_text(yaml.safe_dump({"jfa_command": {"result": {
                     "status": "ok", "nonce": nonce, "fabric_present": True,
                     "inspected_fabric_id": 41216, "inspected_node_id": 11,
@@ -33,6 +36,8 @@ class LiveJcmHarnessTest(unittest.TestCase):
             worker.join(timeout=1)
             self.assertEqual(result["inspected_node_id"], 11)
             self.assertEqual(result["inspected_icac_certificate"], b"icac")
+            self.assertIs(request_fields["interrupt_after_remove_fabric"], False)
+            self.assertIs(request_fields["jcm"], False)
 
     def test_identity_probe_rejects_missing_chain(self):
         with tempfile.TemporaryDirectory() as directory:

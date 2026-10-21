@@ -48,6 +48,7 @@ def inspect_identity(path, timeout=20):
     nonce = uuid.uuid4().hex
     path.write_text(yaml.safe_dump({"jfa_command": {"request": {
         "operation": "inspect-anchor-identity", "node_id": 0, "nonce": nonce,
+        "interrupt_after_remove_fabric": False, "jcm": False,
     }}}))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
