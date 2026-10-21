@@ -25,7 +25,7 @@ The library is a stack of layers, each one depending only on the layers below it
 |---|---|---|
 | Device | `Matter::Device` | the runtime and the declarative DSL: lifecycle, advertisements, persistence |
 | Node | `Matter::Node`, `Matter::Endpoint`, `Matter::EventJournal` | endpoints, the clusters they own, the flat cluster index, the event rings |
-| Clusters | `Matter::Cluster` | 35 clusters built on the cluster DSL, plus `Cluster::Registry` |
+| Clusters | `Matter::Cluster` | Matter 1.6 clusters built on the cluster DSL, plus `Cluster::Registry` |
 | Protocol | `Matter::Protocol` | `MessageHandler` and the objects it routes through, the interaction model handler, subscriptions |
 | Commissioning | `Matter::Commissioning` | the failsafe, commissioning window and credential services |
 | Session | `Matter::Session` | PASE and CASE, `SecureContext`, `SecureMessage` framing |
@@ -120,6 +120,12 @@ yet query, download, or apply an update; applications must supply an update
 engine before advertising actual update capability.
 
 ### Cluster values
+
+The foundation cluster set includes Localization Configuration, Unit
+Localization, Power Source Configuration, Flow Measurement, and Air Quality.
+Applications can add these clusters to endpoints through the device DSL.
+Locale and temperature unit writes are checked against the supported values;
+sensor and power source values are updated by the application.
 
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;
 command requests and `CommandResponse#response` use `TLV::Any?`. Pass `TLV::Any.new(50_u8)` to
