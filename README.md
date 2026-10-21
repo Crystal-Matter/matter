@@ -288,10 +288,12 @@ secure session is removed. The device also limits each stream to 64 MiB by
 default; set `device.message_handler.bdx.max_transfer_bytes` for a larger
 application-specific limit.
 
-The device handles callbacks and stream reads or writes on a bounded BDX worker,
-outside its session registry lock. Other secure sessions can continue while an
-application stream waits. BDX work on that device is serialized, so keep the
-callback and stream IO prompt; a slow transfer can delay another BDX transfer.
+The device handles callbacks and stream reads or writes on bounded per-session
+BDX workers, outside its session registry lock. A waiting application stream
+does not block another CASE session's BDX transfer. Messages within one CASE
+session retain their order. The device admits at most four concurrent BDX
+workers and four active or opening transfers; extra requests receive
+ResponderBusy, so callbacks and stream IO should still be bounded.
 Shutdown returns after a short grace period if application IO remains blocked;
 the worker closes its stream when that IO returns.
 The controller waits up to five minutes for each response by default; a caller

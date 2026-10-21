@@ -38,6 +38,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BDX responder
 
+- Serve up to four independent CASE BDX sessions concurrently with ordered,
+  bounded work per session. Keep transfer reservations and stream state safe
+  across callbacks, aborts, idle expiry, and session removal.
 - Run authenticated BDX application callbacks and stream IO outside the global
   session registry lock on a bounded worker queue. Other CASE exchanges can
   proceed while a BDX stream waits; excess queued requests receive encrypted
