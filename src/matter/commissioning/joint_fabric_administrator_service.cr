@@ -219,8 +219,8 @@ module Matter
 
       def open_joint_commissioning_window(cluster : Admin, request : WindowRequest) : InteractionModel::Status
         return InteractionModel::Status.invalid_command unless cluster.request_is_case_session?
-        return InteractionModel::Status.unsupported_access unless administrator_principal?(cluster)
         return InteractionModel::Status.cluster_failure(Admin::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex) unless cluster.administrator_fabric_index
+        return InteractionModel::Status.unsupported_access unless administrator_principal?(cluster)
         return InteractionModel::Status.invalid_command unless valid_window_parameters?(request)
         result = @open_window.call(request)
         if result.status == InteractionModel::StatusCode::Busy
