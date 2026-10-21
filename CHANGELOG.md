@@ -66,6 +66,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resume from each stable stage. The existing B-to-A device migration matrix
   covers its five command boundaries and rollback stages.
 
+### Large Interaction Model reads
+
+- Split oversized list attributes into an initial array report followed by
+  append item reports that fit the IPv6 message budget. Return
+  ResourceExhausted for an indivisible attribute or event payload that cannot
+  fit, instead of sending an oversized datagram.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

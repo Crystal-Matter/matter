@@ -234,6 +234,9 @@ discards in-flight subscriptions and `SessionRegistry` removes active ones
 owned by that CASE node on the same fabric. Ownership is checked across secure
 session renewals, and removal deletes the persisted subscription document.
 
+Oversized list attributes are emitted as an initial array plus append item reports; an
+indivisible attribute or event larger than the message budget receives ResourceExhausted.
+
 ## Persistence
 
 `Device::Persistence` (`device/persistence.cr`) is the hub. It opens the backend, owns one
