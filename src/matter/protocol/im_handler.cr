@@ -481,6 +481,14 @@ module Matter
             end
           end
 
+          if version = request.data_version
+            if version != cluster.data_version
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::DataVersionMismatch.value)
+              write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+              next
+            end
+          end
+
           cluster.with_request_context do
             cluster.request_session_id = session_id.try(&.to_u64)
             cluster.request_is_case_session = is_case_session

@@ -182,6 +182,10 @@ Read and Subscribe requests pass typed DataVersionFilterIB values to
 attribute reports from the initial response. The controller can supply these
 filters through `ImClient#read` and `#subscribe`.
 
+When a WriteRequest carries an AttributeDataIB DataVersion, `IMHandler`
+compares it with the cluster's current version after access checking and
+returns DataVersionMismatch before invoking the writer if it is stale.
+
 ## Node, endpoints and clusters
 
 `Endpoint` (`endpoint.cr`) owns `clusters : Hash(UInt32, Cluster::Base)`. `Node#add_endpoint`
