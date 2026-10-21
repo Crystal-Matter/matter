@@ -2,7 +2,7 @@ module Matter
   module Transport
     # Matter Core §4.19.4 BTP wire frames carried by the Matter BLE GATT service.
     # This is framing only; a BTP session manages sequence windows, ACKs,
-    # segmentation, and GATT subscriptions.
+    # and segmentation. A platform adapter manages GATT subscriptions.
     module BtpCodec
       extend self
 

@@ -41,8 +41,12 @@ local initiator role, and peer address. Two controllers or opposite initiators
 may use the same numeric ID without taking over each other's exchange state.
 
 `Transport::BtpCodec` encodes and validates Matter BLE BTP handshakes and data
-segments. It does not manage a BLE connection or BTP send and receive windows;
-the current controller client still uses UDP for PASE and CASE.
+segments. `Transport::BtpSession` manages sequencing, fragmentation,
+reassembly, receive windows, acknowledgements, and timeouts after handshake
+negotiation. A platform adapter must write its outgoing frames in order, pass
+incoming GATT frames to the session, and poll its ACK deadlines. BLE discovery,
+GATT connection management, and PASE over BTP are not yet wired to the
+controller or device runtime; those paths still use UDP.
 
 Two rules keep the tree honest:
 

@@ -9,6 +9,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BLE transport framing
 
+- Add a GATT-independent BTP v4 session engine with ordered segmentation,
+  reassembly, bounded peer/local windows, cumulative ACKs, and ACK/idle timeouts.
+  A platform BLE adapter and PASE rendezvous remain follow-up work.
 - Add the Matter 1.6 BTP handshake and data-packet codec with low-nibble-first
   version negotiation, little-endian lengths, ACK and segment flags, and strict
   malformed-frame checks. BLE GATT discovery, BTP flow control, and PASE over
