@@ -22,7 +22,11 @@ describe "chip-tool GroupKeyMap list writes" do
       TLV::Any.from_tlv(([] of Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).to_tlv))
     # Actual chip-tool item TLV: context-tagged struct, GroupId tag 1,
     # GroupKeySetID tag 2, and no FabricIndex tag 254.
-    append = Matter::InteractionModel::AttributeDataIB.new(path,
+    append_path = Matter::InteractionModel::AttributePath.new(0_u16,
+      Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      Matter::Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP,
+      list_index_null: true)
+    append = Matter::InteractionModel::AttributeDataIB.new(append_path,
       TLV::Any.from_tlv("3502250101012502a10118".hexbytes))
 
     statuses = Matter::Protocol::IMHandler.write_attributes([clear, append], clusters,

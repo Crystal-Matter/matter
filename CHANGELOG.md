@@ -33,6 +33,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Let controller single and batch writes carry cluster data versions for
   compare-and-write requests.
 
+### Interaction Model list writes
+
+- Preserve the wire distinction between omitted and null `AttributePath.ListIndex`.
+  Apply whole-list replacements and ordered list-item appends across chunked
+  WriteRequests on one exchange, with a WriteResponse per chunk. Reject numeric
+  list indices, orphan appends, and chunked timed writes with protocol statuses.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

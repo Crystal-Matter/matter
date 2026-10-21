@@ -186,6 +186,15 @@ When a WriteRequest carries an AttributeDataIB DataVersion, `IMHandler`
 compares it with the cluster's current version after access checking and
 returns DataVersionMismatch before invoking the writer if it is stale.
 
+For list writes, the `AttributePath` TLV codec preserves an omitted ListIndex
+for whole-list replacement and an explicit null ListIndex for append. A numeric
+ListIndex receives `InvalidAction`, matching the SDK's supported write paths.
+`IMHandler` requires a successful replacement before an append to the same
+attribute; an orphan append receives `Busy`. `InteractionRouter` retains that
+list state across WriteRequest chunks on the same secure session and exchange,
+responds to each chunk, and drops the state after the final chunk or timeout.
+Timed writes cannot be chunked.
+
 ## Node, endpoints and clusters
 
 `Endpoint` (`endpoint.cr`) owns `clusters : Hash(UInt32, Cluster::Base)`. `Node#add_endpoint`

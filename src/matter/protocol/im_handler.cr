@@ -13,6 +13,12 @@ module Matter
     module IMHandler
       Log = ::Log.for("matter.protocol.im_handler")
 
+      # The SDK requires a list-item append to follow a successful whole-list
+      # replacement of that attribute on the same write exchange.
+      class WriteListState
+        property replacing_path : Tuple(UInt16, UInt32, UInt32)?
+      end
+
       private def self.access_control_cluster(clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base)) : Cluster::AccessControl?
         clusters[{0_u16, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
       end
@@ -439,6 +445,7 @@ module Matter
         is_case_session : Bool = false,
         fabric_index : UInt8? = nil,
         peer_subject_ids : Array(UInt64)? = nil,
+        list_state : WriteListState = WriteListState.new,
       ) : Array(InteractionModel::AttributeStatusIB)
         write_responses = [] of InteractionModel::AttributeStatusIB
         requests = write_requests || [] of InteractionModel::AttributeDataIB
@@ -464,6 +471,12 @@ module Matter
             next
           end
 
+          if path.list_index
+            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::InvalidAction.value)
+            write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+            next
+          end
+
           # Find cluster
           cluster = clusters[{endpoint_id, cluster_id}]?
           unless cluster
@@ -473,7 +486,8 @@ module Matter
             next
           end
 
-          if metadata = cluster.get_attribute_metadata(attribute_id)
+          metadata = cluster.get_attribute_metadata(attribute_id)
+          if metadata
             unless authorized?(clusters, metadata.write_access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
@@ -499,20 +513,41 @@ module Matter
             cluster.request_peer_icac = nil
             cluster.request_fabric_filtered = true
 
-            # Preserve the TLV type when passing the attribute to its cluster.
-            value = request.data
-            status = if group_keys = cluster.as?(Cluster::GroupKeyManagement)
-                       if attribute_id == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP
-                         if index = fabric_index
-                           group_keys.write_group_key_map(value, index)
-                         else
-                           InteractionModel::Status.unsupported_access
-                         end
+            path_key = {endpoint_id, cluster_id, attribute_id}
+            status = if !metadata || !metadata.writable?
+                       list_state.replacing_path = nil
+                       cluster.write_attribute(attribute_id, request.data)
+                     elsif path.list_index_null?
+                       if metadata.try(&.type) != :array
+                         InteractionModel::Status.invalid_action
+                       elsif list_state.replacing_path != path_key
+                         InteractionModel::Status.busy
                        else
-                         cluster.write_attribute(attribute_id, value)
+                         append_list_item(cluster, attribute_id, request.data, fabric_index)
                        end
                      else
-                       cluster.write_attribute(attribute_id, value)
+                       list_state.replacing_path = nil
+                       # Preserve the TLV type when passing the attribute to its cluster.
+                       value = request.data
+                       write_status = if metadata.type == :array && !value.header.element_type.array?
+                                        InteractionModel::Status.invalid_data_type
+                                      elsif group_keys = cluster.as?(Cluster::GroupKeyManagement)
+                                        if attribute_id == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP
+                                          if index = fabric_index
+                                            group_keys.write_group_key_map(value, index)
+                                          else
+                                            InteractionModel::Status.unsupported_access
+                                          end
+                                        else
+                                          cluster.write_attribute(attribute_id, value)
+                                        end
+                                      else
+                                        cluster.write_attribute(attribute_id, value)
+                                      end
+                       if metadata.type == :array && value.header.element_type.array? && write_status.success?
+                         list_state.replacing_path = path_key
+                       end
+                       write_status
                      end
 
             status_ib = InteractionModel::StatusIB.new(status: status.status.value, cluster_status: status.cluster_status)
@@ -521,6 +556,27 @@ module Matter
         end
 
         write_responses
+      end
+
+      private def self.append_list_item(
+        cluster : Cluster::Base,
+        attribute_id : UInt32,
+        item : TLV::Any,
+        fabric_index : UInt8?,
+      ) : InteractionModel::Status
+        if group_keys = cluster.as?(Cluster::GroupKeyManagement)
+          if attribute_id == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP
+            return fabric_index ? group_keys.write_group_key_map(item, fabric_index) : InteractionModel::Status.unsupported_access
+          end
+        end
+
+        current = cluster.read_attribute(attribute_id, fabric_index)
+        return current if current.is_a?(InteractionModel::Status)
+        entries = current.as_list?
+        return InteractionModel::Status.invalid_data_type unless entries
+
+        anonymous_item = TLV::Any.new(TLV::Header.new(item.header.element_type), item.value)
+        cluster.write_attribute(attribute_id, TLV::Any.new(entries + [anonymous_item], as_array: true))
       end
 
       # Parse SubscribeRequest from decrypted TLV payload
