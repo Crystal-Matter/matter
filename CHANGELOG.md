@@ -39,6 +39,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Bulk Data Exchange
 
+- Bind Diagnostic Logs RetrieveLogsRequest to device-initiated BDX uploads for
+  large logs. Send the InvokeResponse before the named transfer, enforce the
+  authenticated CASE peer and fabric, and clear transfers with their session.
+  Short BDX-requested logs use Exhausted with complete inline content.
 - Add Matter 1.6 BDX v0 binary message codecs for transfer negotiation, block
   data, acknowledgements, and skip queries, plus a synchronous stream transfer
   engine with block ordering and definite-length checks.

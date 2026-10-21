@@ -202,8 +202,10 @@ end
 This BDX service accepts synchronous v0 transfers over CASE. It supports both
 sender and receiver drive, choosing sender drive when both are proposed. A nonzero
 start offset, asynchronous mode, PASE transfer, and a designator with no callback
-are rejected. The Diagnostic Logs and OTA clusters do not register designators
-automatically; an application must bind its own stream and authorization.
+are rejected. The device Diagnostic Logs cluster initiates a named BDX upload
+for logs that exceed the inline command limit after answering RetrieveLogsRequest;
+the authenticated CASE session and requester's file designator are retained for
+that transfer. OTA file designators still require an application callback.
 
 For one-way group commands, use a controller store backed by a durable file.
 Provision the same epoch key and Group ID on each receiving device through

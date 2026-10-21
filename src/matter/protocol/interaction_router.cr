@@ -22,6 +22,9 @@ module Matter
     class InteractionRouter
       Log = ::Log.for("matter.protocol.interaction_router")
 
+      property on_invoke_response_sent : Proc(Nil)?
+      property on_invoke_response_failed : Proc(Nil)?
+
       WRITE_CHUNK_TIMEOUT = 60.seconds
 
       # Deadlines of TimedRequests awaiting their Invoke or Write, keyed by
@@ -412,8 +415,10 @@ module Matter
           @subscriptions.await_invoke(original_msg.payload_header.exchange_id,
             SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..]))
         end
+        @on_invoke_response_sent.try(&.call)
         Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
+        @on_invoke_response_failed.try(&.call)
         Log.error(exception: ex) do
           "Error handling InvokeRequest: peer=#{peer.address}:#{peer.port} session_id=#{session.session_id} " \
           "exchange=#{original_msg.payload_header.exchange_id} msg_id=#{original_msg.packet_header.message_id} " \

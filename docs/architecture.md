@@ -97,6 +97,13 @@ StatusReport and caches the packet against the incoming counter for MRP replay.
 `SessionRegistry` removes an active BDX stream with its secure session and
 sweeps idle streams. The controller entry point is
 `Controller::BdxClient#download` or `#upload` behind `require "matter/controller"`.
+For DiagnosticLogs, `Bdx::Initiator` queues a named device-to-controller
+SendInit while `IMHandler` dispatches RetrieveLogsRequest, then opens the BDX
+exchange after the InvokeResponse is sent. CASE session identity, fabric, and
+peer node are checked before queuing; pending and active streams end on session
+removal. Short logs remain in RetrieveLogsResponse with Exhausted status.
+If no BDX sender is installed on a standalone cluster, it follows the
+ResponsePayload command behavior.
 
 The response goes back the way it came: `IMHandler.encode_*` builds the payload,
 `ResponseSender#send_im_response` (`protocol/response_sender.cr`) encrypts it with
