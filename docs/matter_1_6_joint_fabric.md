@@ -83,6 +83,28 @@ item below as covered only to the extent of its cited tests.
   first commissions a Crystal switch with official chip-tool, then joins the
   Anchor fabric through the opt-in registrar; it observes the pending NodeList
   record before final CASE and the committed node, endpoint, and ACL afterward.
+- `JointFabricDeviceMigration` provides the post-JCM Fabric B device migration
+  sequence from Core §12.2.5. It keeps B's A-fabric operational ICAC separate
+  from the cross-signed ICAC used to issue device NOCs. It verifies the latter
+  against B's original ICAC key, the
+  current Administrator CAT on B's authenticated Datastore, and A's root and
+  IPK on A's authenticated Datastore. It then opens an enhanced commissioning
+  window over B CASE, attests and commissions A, verifies A CASE, waits for A
+  NodeList to commit, removes B from the device, and removes the B NodeList
+  entry. A per-device journal blocks automatic replay of uncertain commands;
+  read-only CASE checks allow explicit recovery. Rollback is available before
+  B removal. The JFA example now publishes its IPK as GroupKeySetID zero.
+  An opt-in second JFA Datastore endpoint remains bound to B after endpoint 1
+  joins A, so B's NodeList remains available until migration completes. The
+  Docker two-JFA test migrates a real switch from B201 to A201 and verifies A
+  CASE, absence of the B fabric, and NodeList movement in both Datastores.
+  The local `migrate-device` command requires explicit device consent and an
+  attestation trust configuration. An embedding application sets
+  `Device#migration_attestation_trust=` with an `AttestationTrustStore` holding
+  DER PAA certificates, CD signer SKI-to-public-key entries, and a revocation
+  callback. The callback must return `Good` only after its own trust source
+  confirms the DAC/PAI/PAA chain; `Unavailable` fails commissioning. The
+  example's Matter test-root option is enabled only in the Docker fixture.
 
 ## Work required for interoperable Joint Commissioning
 
@@ -97,6 +119,12 @@ item below as covered only to the extent of its cited tests.
    coverage.
 4. Run the [official Joint Fabric administrator tests](https://github.com/project-chip/connectedhomeip/tree/v1.6.0.0/src/python_testing)
    and real device interoperability before claiming Matter 1.6 conformance.
+5. Deploy a production PAA/CD signer and revocation trust source through the
+   JFA example's explicit injection point. The Docker fixture deliberately
+   opts into the Matter test PAA/CD roots. Provisioned Datastores created before IPK seeding need their
+   GroupKeySetID zero repaired before the fail-closed migration path can run.
+   Exercise restart and network interruption at each per-device journal stage
+   with independent ecosystem devices before claiming conformance.
 
 ## Security boundaries
 

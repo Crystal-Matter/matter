@@ -17,9 +17,40 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def select_anchor_administrator_fabric_for_spec(index : UInt8) : Nil
     select_anchor_administrator_fabric(index)
   end
+
+  def migration_verifier_for_spec : Matter::Controller::DeviceAttestationVerifier
+    migration_attestation_verifier
+  end
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "fails closed without migration attestation trust and accepts explicit production trust" do
+    previous = ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]?
+    ENV.delete("MATTER_JFA_MIGRATION_TEST_TRUST")
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    expect_raises(Matter::ConfigurationError, /not configured/) do
+      device.migration_verifier_for_spec
+    end
+    expect_raises(Matter::ConfigurationError, /revocation source/) do
+      device.migration_attestation_trust = Matter::Controller::AttestationTrustStore.new(
+        [Bytes[1]], {"signer" => Bytes[2]})
+    end
+    fixture = Matter::Controller::AttestationTrustStore.matter_test_fixture
+    production_trust = Matter::Controller::AttestationTrustStore.new(
+      fixture.paa_certificates, fixture.cd_signers,
+      revocation_check: fixture.revocation_check)
+    device.migration_attestation_trust = production_trust
+    device.migration_verifier_for_spec.should be_a(Matter::Controller::DeviceAttestationVerifier)
+    production_trust.allow_test_attestation?.should be_false
+  ensure
+    if previous
+      ENV["MATTER_JFA_MIGRATION_TEST_TRUST"] = previous
+    else
+      ENV.delete("MATTER_JFA_MIGRATION_TEST_TRUST")
+    end
+  end
+
   it "treats a legacy non-Anchor role record as transfer-complete" do
     document = Matter::Storage::Document.new
     document["anchor"] = false
@@ -36,6 +67,8 @@ describe MatterJointFabricAdministrator::Device do
     endpoint.has_cluster?(Matter::Cluster::JointFabricDatastore::CLUSTER_ID).should be_true
     endpoint.has_cluster?(Matter::Cluster::JointFabricAdministrator::CLUSTER_ID).should be_true
     endpoint.validate.should be_empty
+    device.node.endpoint(2_u16).as(Matter::Endpoint)
+      .has_cluster?(Matter::Cluster::JointFabricDatastore::CLUSTER_ID).should be_true
   end
 
   it "advertises only availability until provisioned as an Anchor" do
@@ -89,8 +122,10 @@ describe MatterJointFabricAdministrator::Device do
 
     previous = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
     previous_bootstrap = ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"]?
+    previous_bootstrap_datastore = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"] = bootstrap_path
+    ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
     wrong_key = crypto.create_key_pair
     wrong_backend = Matter::Storage::Memory.new
     wrong_device = InspectableJointFabricAdministratorDevice.new(storage: wrong_backend,
@@ -112,6 +147,14 @@ describe MatterJointFabricAdministrator::Device do
     admins.size.should eq(1)
     admins.first.node_id.should eq(node_id)
     admins.first.icac.should eq(icac)
+    bootstrap_datastore = device.bootstrap_joint_fabric_datastore
+    bootstrap_datastore.joint_fabric_index.should eq(1_u8)
+    bootstrap_datastore.admin_list.first.node_id.should eq(node_id)
+    bootstrap_datastore.request_is_case_session = true
+    bootstrap_datastore.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST, 1_u8)
+      .should be_a(TLV::Any)
+    bootstrap_datastore.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST, 2_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
     state_store = Matter::Controller::StateStore.new(backend)
     anchor_identity = state_store.load.fabric_for(fabric_id, root_key.public_key, node_id)
     anchor_identity.controller_noc.should eq(noc)
@@ -164,6 +207,7 @@ describe MatterJointFabricAdministrator::Device do
       .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
 
     device.remove_test_fabric(1_u8)
+    device.bootstrap_joint_fabric_datastore.joint_fabric_index.should be_nil
     state_store.load.fabrics.should be_empty
     device.advertised_joint_role.should eq(Matter::MDNS::JointFabricRole::Available)
     device.joint_fabric_datastore.anchor_root_ca.should be_empty
@@ -179,6 +223,11 @@ describe MatterJointFabricAdministrator::Device do
       ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"] = previous_bootstrap
     else
       ENV.delete("MATTER_JFA_BOOTSTRAP_STATE_PATH")
+    end
+    if previous_bootstrap_datastore
+      ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = previous_bootstrap_datastore
+    else
+      ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
     end
     File.delete?(bootstrap_path) if bootstrap_path
   end

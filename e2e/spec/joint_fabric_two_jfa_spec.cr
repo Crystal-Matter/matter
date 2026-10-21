@@ -38,6 +38,7 @@ end
 describe "two provisioned Joint Fabric Administrators" do
   anchor = E2E::Device["matter_joint_fabric_anchor"]
   joiner = E2E::Device["matter_joint_fabric_joiner"]
+  migration_target = E2E::Device["matter_joint_fabric_migration_target"]
 
   it "joint-commissions a second Administrator into the Anchor fabric" do
     anchor_bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
@@ -250,6 +251,93 @@ describe "two provisioned Joint Fabric Administrators" do
       attribute_id: Matter::Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX)
     index_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any).as_u8.should eq(2_u8)
+
+    # B's bootstrap Datastore remains on endpoint 2 after the JFA joins A.
+    # Commission an ordinary B device, grant B's Administrator CAT, and move
+    # it under A using B's locally held cross-signed ICAC signing key.
+    migration_peer = Socket::IPAddress.new(migration_target.address, E2E::DEVICE_PORT)
+    Matter::Controller::Commissioning::Commissioner.new(joiner_store, joiner_client,
+      timeout: E2E::COMMAND_TIMEOUT,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
+      0xB201_u64, migration_target.pairing_code, migration_peer,
+      fabric_id: joiner_bootstrap.fabric.fabric_id,
+      root_public_key: joiner_bootstrap.fabric.root_public_key,
+      controller_node_id: joiner_bootstrap.fabric.controller_node_id)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      migration_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    acl_report = joiner_im.read_attribute(session: b_target_session, peer: migration_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+    acl_data = acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_data.to_slice)
+    b_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(0xFFFF_u16, 1_u16)).id
+    acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      [b_admin_subject], nil)
+    acl_write = joiner_im.write_attribute(session: b_target_session, peer: migration_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AccessControl::ATTR_ACL, value: acl.to_tlv)
+    acl_write.write_responses.first.status.status.should eq(Matter::InteractionModel::StatusCode::Success.value)
+
+    b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    added_b = joiner_im.invoke(session: b_datastore_session, peer: joiner_peer,
+      endpoint_id: 2_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE,
+      fields: Matter::Cluster::JointFabricDatastore::AddPendingNodeRequest.new(
+        0xB201_u64, "B device").to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(added_b)
+    b_deadline = Time.instant + 90.seconds
+    loop do
+      report = joiner_im.read_attribute(session: b_datastore_session, peer: joiner_peer,
+        endpoint_id: 2_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+        attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST)
+      data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      entries = Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct).from_tlv(data.to_slice)
+      break if entries.any? { |entry| entry.node_id == 0xB201_u64 && entry.commissioning_status_entry.state.committed? }
+      raise Matter::TimeoutError.new("B Datastore did not commit the original device") if Time.instant >= b_deadline
+      sleep 500.milliseconds
+    end
+    migrated = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    migrated.status.should eq("ok"), migrated.error.to_s
+    a_target_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+      migration_peer, anchor_bootstrap.fabric,
+      peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    fabrics_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    fabrics_data = fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    target_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(fabrics_data.to_slice)
+    target_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
+    target_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_false
+    a_nodes_report = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST)
+    a_nodes_data = a_nodes_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    a_nodes = Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct).from_tlv(a_nodes_data.to_slice)
+    a_nodes.any? { |entry| entry.node_id == 0xA201_u64 && entry.commissioning_status_entry.state.committed? }.should be_true
+    b_nodes_report = joiner_im.read_attribute(session: b_datastore_session, peer: joiner_peer,
+      endpoint_id: 2_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST)
+    b_nodes_data = b_nodes_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    b_nodes = Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct).from_tlv(b_nodes_data.to_slice)
+    b_nodes.any?(&.node_id.==(0xB201_u64)).should be_false
 
     before_transfer = jfa_command("matter_joint_fabric_anchor",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-new-anchor", 0xA102_u64,
