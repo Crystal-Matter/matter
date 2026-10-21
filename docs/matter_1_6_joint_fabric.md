@@ -255,8 +255,8 @@ The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
    a VVS signature through a signer-specific leaf and a Root/ICA CA chain. The
    official SDK v1.6 implements the root lookup path but marks its VVS path
    unsupported, so independent VVS interoperability remains unproven.
-   Deployment must authenticate and freshen its DCL gateway, and the optional
-   Matter-TLV VVSC currently has only public-key/SKID equivalence checks.
+   Deployment must authenticate and freshen its DCL gateway. The optional
+   Matter-TLV VVSC is checked for its signed signer profile and issuer path.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer, A removal, B restart after a lost RemoveFabric
@@ -313,9 +313,11 @@ Missing, malformed, expired, mismatched, or removed records fail closed.
 Applications may implement `DclSource` for a locally authenticated DCL mirror.
 An untrusted gateway can lie about the active/revoked status, so deploy with a
 gateway whose ledger synchronization and transport you trust. The optional
-Matter-TLV VVSC is currently compared by public key and SKID only; this adapter
-does not yet validate its complete signed TLV certificate profile. The SDK
-v1.6 does not implement independent VVS path verification either.
+Matter-TLV VVSC is checked for the approved signer key and VVS identifier,
+ordered subject and issuer names, validity, digital-signature usage, non-CA
+status, SKID/AKID, and signature under its DCL-approved Root/ICA issuer. The
+SDK v1.6 does not implement independent VVS path verification, so this path
+still needs an independent ecosystem interoperability run.
 
 For administrator removal, Matter 1.6 recommends transferring to a fresh
 trusted root after rotating Administrator CAT credentials, because an ICAC

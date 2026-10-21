@@ -53,6 +53,7 @@ module Matter
                          root_certificate : Bytes? = nil) : Nil
           node = MatterCertificate.from_slice(noc)
           valid_noc_profile = node.subject.node_id && node.subject.fabric_id && !certificate_authority?(noc) &&
+                              node.subject.icac_id.nil? && node.subject.rcac_id.nil? && node.subject.vvs_id.nil? &&
                               key_usage?(noc, KEY_USAGE_DIGITAL_SIGNATURE) &&
                               extended_key_usage?(noc, KEY_PURPOSE_SERVER_AUTH)
           unless valid_noc_profile
@@ -86,7 +87,7 @@ module Matter
           intermediate = MatterCertificate.from_slice(certificate)
           valid_subject = !intermediate.subject.icac_id.nil? &&
                           intermediate.subject.node_id.nil? && intermediate.subject.rcac_id.nil? &&
-                          intermediate.subject.noc_cat.nil?
+                          intermediate.subject.noc_cat.nil? && intermediate.subject.vvs_id.nil?
           unless valid_subject
             raise Matter::AuthenticationError.new("Intermediate certificate has an invalid ICAC subject")
           end
@@ -103,6 +104,8 @@ module Matter
         def verify_root(certificate : Bytes) : Nil
           root = MatterCertificate.from_slice(certificate)
           valid_root = !root.subject.rcac_id.nil? &&
+                       root.subject.node_id.nil? && root.subject.icac_id.nil? && root.subject.vvs_id.nil? &&
+                       root.subject.noc_cat.nil? &&
                        issuer_matches_subject?(certificate, certificate) && certificate_authority?(certificate) &&
                        key_cert_sign?(certificate) && valid_root_path_length?(certificate)
           unless valid_root

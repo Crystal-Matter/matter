@@ -58,9 +58,18 @@ end
 
 # Re-encode a signed Matter TLV certificate with the VID signer profile.
 private def dcl_test_matter_vvsc(key : Matter::Crypto::Key, skid : Bytes,
+                                 issuer_key : Matter::Crypto::Key, issuer_skid : Bytes,
                                  crypto : Matter::Crypto::StandardCrypto) : Bytes
   certificate = Matter::Crypto::MatterCertificate::Builder.root(key, 5_u64, Bytes[0x05], crypto)
   fields = TLV::Any.from_slice(certificate).as_structure
+  fields[3_u8] = TLV::Any.new(TLV::List{
+    TLV::Any.new(2_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::IcacId.value),
+    TLV::Any.new("Intermediate CA", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+  }, 3_u8)
+  fields[6_u8] = TLV::Any.new(TLV::List{
+    TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
+    TLV::Any.new("VID signer", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+  }, 6_u8)
   constraints = TLV::Structure.new
   constraints[Matter::Crypto::MatterCertificate::Asn1::BASIC_CONSTRAINT_IS_CA] =
     TLV::Any.new(false, Matter::Crypto::MatterCertificate::Asn1::BASIC_CONSTRAINT_IS_CA)
@@ -68,10 +77,20 @@ private def dcl_test_matter_vvsc(key : Matter::Crypto::Key, skid : Bytes,
     TLV::Any.new(constraints, Matter::Crypto::MatterCertificate::Asn1::Extension::BasicConstraints.value),
     TLV::Any.new(1_u16, Matter::Crypto::MatterCertificate::Asn1::Extension::KeyUsage.value),
     TLV::Any.new(skid, Matter::Crypto::MatterCertificate::Asn1::Extension::SubjectKeyIdentifier.value),
-    TLV::Any.new(skid, Matter::Crypto::MatterCertificate::Asn1::Extension::AuthorityKeyIdentifier.value),
+    TLV::Any.new(issuer_skid, Matter::Crypto::MatterCertificate::Asn1::Extension::AuthorityKeyIdentifier.value),
   }, 10_u8)
   tbs = Matter::Crypto::MatterCertificate::Asn1.to_unsigned_asn1(TLV::Any.new(fields, nil))
-  fields[11_u8] = TLV::Any.new(crypto.sign_ecdsa(key, tbs), 11_u8)
+  fields[11_u8] = TLV::Any.new(crypto.sign_ecdsa(issuer_key, tbs), 11_u8)
+  TLV::Any.new(fields, nil).to_slice
+end
+
+private def dcl_test_reissue_vvsc(certificate : Bytes, issuer_key : Matter::Crypto::Key,
+                                  crypto : Matter::Crypto::StandardCrypto,
+                                  & : TLV::Structure ->) : Bytes
+  fields = TLV::Any.from_slice(certificate).as_structure
+  yield fields
+  tbs = Matter::Crypto::MatterCertificate::Asn1.to_unsigned_asn1(TLV::Any.new(fields, nil))
+  fields[11_u8] = TLV::Any.new(crypto.sign_ecdsa(issuer_key, tbs), 11_u8)
   TLV::Any.new(fields, nil).to_slice
 end
 
@@ -227,8 +246,55 @@ describe VidTrust::DclOperationalTrustAnchors do
     trust.verify_statement?(0x1234_u16, dcl_test_skid(critical_leaf), tbs, signature, nil).should be_false
     source.signers = [VidTrust::DclCertificate.new(leaf, 0x1234_u16,
       VidTrust::DclCertificate::Type::VIDSignerPKI, false)]
-    matter_vvsc = dcl_test_matter_vvsc(leaf_key, leaf_skid, crypto)
+    matter_vvsc = dcl_test_matter_vvsc(leaf_key, leaf_skid, middle_key, dcl_test_skid(middle), crypto)
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, matter_vvsc).should be_true
+    altered_fields = TLV::Any.from_slice(matter_vvsc).as_structure
+    altered_signature = altered_fields[11_u8].as_bytes.dup
+    altered_signature[0] ^= 1_u8
+    altered_fields[11_u8] = TLV::Any.new(altered_signature, 11_u8)
+    altered_vvsc = TLV::Any.new(altered_fields, nil).to_slice
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, altered_vvsc).should be_false
+    wrong_id_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      fields[6_u8] = TLV::Any.new(TLV::List{
+        TLV::Any.new(4_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
+        TLV::Any.new("VID signer", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+      }, 6_u8)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, wrong_id_vvsc).should be_false
+    wrong_name_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      fields[6_u8] = TLV::Any.new(TLV::List{
+        TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
+        TLV::Any.new("Other signer", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+      }, 6_u8)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, wrong_name_vvsc).should be_false
+    unknown_name_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      fields[6_u8] = TLV::Any.new(TLV::List{
+        TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
+        TLV::Any.new("VID signer", Matter::Crypto::MatterCertificate::Asn1::Dn::CommonName.value),
+        TLV::Any.new("ignored", 24_u8),
+      }, 6_u8)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, unknown_name_vvsc).should be_false
+    duplicate_id_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      fields[6_u8] = TLV::Any.new(TLV::List{
+        TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
+        TLV::Any.new(3_u64, Matter::Crypto::MatterCertificate::Asn1::Dn::VvsId.value),
+      }, 6_u8)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, duplicate_id_vvsc).should be_false
+    expired_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      fields[5_u8] = TLV::Any.new(1_u32, 5_u8)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, expired_vvsc).should be_false
+    ca_vvsc = dcl_test_reissue_vvsc(matter_vvsc, middle_key, crypto) do |fields|
+      extensions = fields[10_u8].as_list
+      basic = TLV::Structure.new
+      basic[Matter::Crypto::MatterCertificate::Asn1::BASIC_CONSTRAINT_IS_CA] =
+        TLV::Any.new(true, Matter::Crypto::MatterCertificate::Asn1::BASIC_CONSTRAINT_IS_CA)
+      extensions[0] = TLV::Any.new(basic, Matter::Crypto::MatterCertificate::Asn1::Extension::BasicConstraints.value)
+    end
+    trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, ca_vvsc).should be_false
     mixed_name = dcl_test_matter_name("1.3.6.1.4.1.37244.1.7", "0000000000000003")
     mixed_name.add_entry("1.3.6.1.4.1.37244.1.5", "0000000000000004")
     mixed_leaf = dcl_test_certificate(leaf_key, middle_key, mixed_name,
@@ -244,9 +310,11 @@ describe VidTrust::DclOperationalTrustAnchors do
     source.signers = [VidTrust::DclCertificate.new(leaf, 0x1234_u16,
       VidTrust::DclCertificate::Type::VIDSignerPKI, false)]
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, leaf).should be_false
-    unrelated_vvsc = dcl_test_matter_vvsc(crypto.create_key_pair, leaf_skid, crypto)
+    unrelated_vvsc = dcl_test_matter_vvsc(crypto.create_key_pair, leaf_skid,
+      middle_key, dcl_test_skid(middle), crypto)
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, unrelated_vvsc).should be_false
-    wrong_skid_vvsc = dcl_test_matter_vvsc(leaf_key, Bytes.new(20, 0xFF_u8), crypto)
+    wrong_skid_vvsc = dcl_test_matter_vvsc(leaf_key, Bytes.new(20, 0xFF_u8),
+      middle_key, dcl_test_skid(middle), crypto)
     trust.verify_statement?(0x1234_u16, leaf_skid, tbs, signature, wrong_skid_vvsc).should be_false
     trust.verify_statement?(0x4321_u16, leaf_skid, tbs, signature, matter_vvsc).should be_false
     tampered = signature.dup
