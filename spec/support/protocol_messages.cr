@@ -35,6 +35,7 @@ module Matter
         exchange_id : UInt16,
         protocol_id : UInt16 = Protocol::ProtocolId::InteractionModel.value,
         requires_acknowledge : Bool = true,
+        initiator_message : Bool = true,
       ) : Codec::MessageCodec::Message
         peer_node = session.peer_node_id.as(DataType::NodeId)
 
@@ -53,7 +54,7 @@ module Matter
           exchange_id: exchange_id,
           protocol_id: protocol_id,
           message_type: message_type,
-          initiator_message: true,
+          initiator_message: initiator_message,
           requires_acknowledge: requires_acknowledge
         )
 

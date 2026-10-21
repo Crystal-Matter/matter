@@ -77,6 +77,25 @@ module Matter
           message_type, payload, append_to_cache)
       end
 
+      # Opens or continues a device-initiated BDX exchange on a CASE session.
+      def send_bdx_request(
+        session : Session::SecureContext,
+        peer : Socket::IPAddress,
+        exchange_id : UInt16,
+        message_type : UInt8,
+        payload : Bytes,
+      ) : Nil
+        header = Codec::MessageCodec::PayloadHeader.new(
+          exchange_id: exchange_id,
+          protocol_id: ProtocolId::Bdx.value,
+          message_type: message_type,
+          initiator_message: true,
+          requires_acknowledge: true)
+        packet, counter = Session::SecureMessage.encode(session, header, payload,
+          source_node_id: session.local_node_id, destination_node_id: session.peer_node_id)
+        @transport.send_reliable_raw(packet, peer, session.session_id, exchange_id, counter)
+      end
+
       def send_bdx_status(
         original_msg : Codec::MessageCodec::Message,
         peer : Socket::IPAddress,

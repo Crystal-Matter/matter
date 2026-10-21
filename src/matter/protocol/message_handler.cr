@@ -12,6 +12,7 @@ require "../transport/group_multicast"
 require "../transport/udp_transport"
 require "./interaction_router"
 require "./bdx/responder"
+require "./bdx/initiator"
 require "./message_type"
 require "./mrp_cache"
 require "./persistence"
@@ -40,6 +41,7 @@ module Matter
 
       getter transport : Transport::UDPTransport
       getter bdx : Bdx::Responder
+      getter bdx_initiator : Bdx::Initiator
 
       # Network receive must remain free while a cluster handler performs a
       # controller exchange through the same socket. One worker preserves the
@@ -126,11 +128,16 @@ module Matter
 
         @sender = ResponseSender.new(@transport, @mrp_cache)
         @bdx = Bdx::Responder.new
+        @bdx_initiator = Bdx::Initiator.new(@sender)
         @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx.forget_session(id) })
+        @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx_initiator.forget_session(id) })
         @registry.add_sweep_hook(-> { @bdx.sweep })
+        @registry.add_sweep_hook(-> { @bdx_initiator.sweep })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
+        @router.on_invoke_response_sent = -> { @bdx_initiator.start_pending }
+        @router.on_invoke_response_failed = -> { @bdx_initiator.discard_pending }
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
         @inbound_messages = Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress)).new(INBOUND_QUEUE_LIMIT)
@@ -173,8 +180,25 @@ module Matter
           @inbound_messages.close
           @inbound_done.receive
         end
-        @registry.synchronize { @bdx.close }
+        @registry.synchronize do
+          @bdx.close
+          @bdx_initiator.close
+        end
         @registry.close
+      end
+
+      # The cluster supplies the authenticated command context. Resolve the
+      # actual CASE session here rather than trusting a request field alone.
+      def queue_bdx_transfer(session_id : UInt16, fabric_index : UInt8,
+                             peer_node_id : UInt64, peer : Socket::IPAddress,
+                             designator : Bytes, content : Bytes) : Bool
+        @registry.synchronize do
+          session = @registry.sessions[session_id]?
+          return false unless session && session.case_session? &&
+                              session.fabric_index == fabric_index &&
+                              session.peer_node_id.try(&.id) == peer_node_id
+          @bdx_initiator.queue(session, peer, designator, content)
+        end
       end
 
       # The clusters of the node, keyed by `{endpoint, cluster}`.
@@ -431,6 +455,7 @@ module Matter
               report = Session::Pase::Definitions::StatusReport.from_bytes(msg.payload)
               if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == 0
                 @bdx.abort(session.session_id, msg.payload_header.exchange_id)
+                @bdx_initiator.abort(session.session_id, msg.payload_header.exchange_id)
                 @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true) if msg.payload_header.requires_acknowledge?
                 return
               end
@@ -458,6 +483,16 @@ module Matter
           opcode = Bdx::Wire::Opcode.from_value?(msg.payload_header.message_type)
           unless opcode
             @sender.send_bdx_status(msg, peer, session, Bdx::Transfer::StatusCode::BadMessageContents)
+            return
+          end
+          if @bdx_initiator.handles?(session.session_id, msg.payload_header.exchange_id)
+            status = @bdx_initiator.receive(session, msg.payload_header.exchange_id, opcode,
+              msg.payload, msg.payload_header.initiator_message?)
+            if status
+              @sender.send_bdx_status(msg, peer, session, status)
+            else
+              @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true)
+            end
             return
           end
           step = @bdx.receive(session, msg.payload_header.exchange_id, opcode, msg.payload)

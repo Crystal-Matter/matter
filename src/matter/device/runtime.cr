@@ -424,6 +424,10 @@ module Matter
       group_key_management = Cluster::GroupKeyManagement.new(endpoint_0)
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)
       diagnostic_logs = Cluster::DiagnosticLogs.new(endpoint_0)
+      diagnostic_logs.on_bdx_transfer = ->(session_id : UInt16, fabric_index : UInt8, peer_node_id : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
+        @message_handler.queue_bdx_transfer(session_id, fabric_index,
+          peer_node_id, peer, designator, content)
+      end
       ethernet_diagnostics = include_ethernet_diagnostics? ? Cluster::EthernetNetworkDiagnostics.new(endpoint_0) : nil
 
       # Wire commissioning-window mDNS advertisement via the Responder.

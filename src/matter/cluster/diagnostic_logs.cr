@@ -81,11 +81,44 @@ module Matter
         @log_buffer = [] of String
       end
 
-      # Logs are always returned in the response payload; BDX is not offered.
+      # Keep enough room for the command path, status and enclosing IM TLV.
+      MAX_INLINE_LOG_BYTES = 700
+
+      # Queues a sender-initiated BDX transfer after the InvokeResponse has
+      # been emitted. The device runtime installs this callback.
+      property on_bdx_transfer : Proc(UInt16, UInt8, UInt64, Socket::IPAddress, Bytes, Bytes, Bool)?
+
       def retrieve_logs_request(request : RetrieveLogsRequest) : RetrieveLogsResponse
         log_content = build_log_content(request.intent)
-        status = log_content.empty? ? LogsStatus::NoLogs : LogsStatus::Success
-        RetrieveLogsResponse.new(status, log_content.to_slice)
+        return RetrieveLogsResponse.new(LogsStatus::NoLogs, Bytes.empty) if log_content.empty?
+
+        content = log_content.to_slice
+        if request.requested_protocol.bdx?
+          # The BDX designator is required by Core 11.11.5.1.3. A malformed
+          # request cannot be used to start an outbound transfer.
+          return RetrieveLogsResponse.new(LogsStatus::Denied, Bytes.empty) unless designator = request.transfer_file_designator
+          return RetrieveLogsResponse.new(LogsStatus::Denied, Bytes.empty) if designator.empty?
+
+          if content.size > MAX_INLINE_LOG_BYTES
+            callback = @on_bdx_transfer
+            # A cluster used without a device BDX sender follows the
+            # ResponsePayload behavior required by Core 11.11.5.1.2.
+            return RetrieveLogsResponse.new(LogsStatus::Success, content) unless callback
+            session_id = request_session_id
+            fabric_index = request_fabric_index
+            peer_node_id = request_peer_node_id
+            peer = request_peer_address
+            if callback && request_is_case_session? && session_id && fabric_index && peer_node_id && peer &&
+               callback.call(session_id.to_u16, fabric_index, peer_node_id, peer, designator.to_slice, content.dup)
+              return RetrieveLogsResponse.new(LogsStatus::Success, Bytes.empty)
+            end
+            return RetrieveLogsResponse.new(LogsStatus::Busy, Bytes.empty)
+          end
+
+          return RetrieveLogsResponse.new(LogsStatus::Exhausted, content)
+        end
+
+        RetrieveLogsResponse.new(LogsStatus::Success, content)
       end
 
       private def build_log_content(intent : Intent) : String
