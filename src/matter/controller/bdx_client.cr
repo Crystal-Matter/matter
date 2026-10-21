@@ -9,7 +9,9 @@ module Matter
     # their IO objects; the client never buffers the complete file in memory.
     class BdxClient(T)
       DEFAULT_BLOCK_SIZE = 1024_u16
-      DEFAULT_TIMEOUT    = 10.seconds
+      # A peer may pace synchronous blocks for up to its five-minute idle
+      # window; allow that interval for each response, including negotiation.
+      DEFAULT_TIMEOUT    = 5.minutes
       MAX_DOWNLOAD_BYTES = 64_u64 * 1024 * 1024
 
       class RemoteError < Protocol::Bdx::Transfer::Error

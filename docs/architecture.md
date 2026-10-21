@@ -97,6 +97,8 @@ StatusReport and caches the packet against the incoming counter for MRP replay.
 `SessionRegistry` removes an active BDX stream with its secure session and
 sweeps idle streams. The controller entry point is
 `Controller::BdxClient#download` or `#upload` behind `require "matter/controller"`.
+Device callbacks and stream IO run under the `SessionRegistry` protocol lock;
+they must finish promptly and must not wait for another Matter exchange.
 
 The response goes back the way it came: `IMHandler.encode_*` builds the payload,
 `ResponseSender#send_im_response` (`protocol/response_sender.cr`) encrypts it with

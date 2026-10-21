@@ -8,12 +8,14 @@ private BDX_CLIENT_PEER = Socket::IPAddress.new("127.0.0.1", 5540)
 private class BdxLoopbackClient
   getter responder : Matter::Protocol::Bdx::Responder
   getter statuses_sent : Array(UInt16)
+  getter timeouts : Array(Time::Span)
 
   @responses : Array(Matter::Controller::Client::ReceivedMessage)
 
   def initialize(@responder : Matter::Protocol::Bdx::Responder)
     @responses = [] of Matter::Controller::Client::ReceivedMessage
     @statuses_sent = [] of UInt16
+    @timeouts = [] of Time::Span
   end
 
   def next_exchange_id : UInt16
@@ -51,6 +53,7 @@ private class BdxLoopbackClient
   def wait_for_exchange_message(exchange_id : UInt16,
                                 message_types : Array(Tuple(UInt16, UInt8)),
                                 timeout : Time::Span) : Matter::Controller::Client::ReceivedMessage?
+    @timeouts << timeout
     @responses.shift?
   end
 
@@ -93,6 +96,8 @@ describe Matter::Controller::BdxClient do
     bytes.should eq(5_u64)
     sink.to_slice.should eq(Bytes[1, 2, 3, 4, 5])
     responder.active_count.should eq(0)
+    client.timeouts.should_not be_empty
+    client.timeouts.each(&.should(be >= 5.minutes))
   end
 
   it "uploads a named stream and reports remote authorization failures" do
