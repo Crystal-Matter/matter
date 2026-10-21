@@ -316,6 +316,117 @@ describe Matter::Transport::UDPTransport do
     transport.try(&.close)
   end
 
+  it "keeps ordinary unsecured replay protection while exempting ICD Check-In packet counters" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    received = [] of UInt8
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) do
+      received << message.payload_header.message_type
+      nil
+    end
+    peer = Socket::IPAddress.new("::1", 50001)
+    send = ->(counter : UInt32, message_type : UInt8) do
+      packet = Matter::Codec::MessageCodec::PacketHeader.new(
+        session_id: 0_u16,
+        session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+        message_id: counter)
+      header = Matter::Codec::MessageCodec::PayloadHeader.new(
+        exchange_id: counter.to_u16!, protocol_id: 0_u16,
+        message_type: message_type, initiator_message: true,
+        requires_acknowledge: false)
+      bytes = Matter::Codec::MessageCodec::Base.encode_message(packet, header, Bytes.empty)
+      transport.receive_for_spec(bytes, peer)
+    end
+    send.call(1000_u32, 0x20_u8)
+    send.call(1_u32, Matter::Protocol::SecureChannelMessageType::IcdCheckIn.value)
+    send.call(1_u32, 0x20_u8)
+    send.call(1001_u32, 0x20_u8)
+    received.should eq([0x20_u8,
+                        Matter::Protocol::SecureChannelMessageType::IcdCheckIn.value,
+                        0x20_u8])
+  ensure
+    transport.try(&.close)
+  end
+
+  it "accepts a reset CASE Sigma2 counter only for its active local peer and exchange" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    peer = Socket::IPAddress.new("::1", 50001)
+    other_peer = Socket::IPAddress.new("::1", 50002)
+    exchange = transport.send_request(
+      protocol_id: Matter::Protocol::ProtocolId::SecureChannel.value,
+      message_type: Matter::Protocol::SecureChannelMessageType::CaseSigma1.value,
+      payload: Bytes.empty, session_id: 0_u16, peer_address: peer,
+      requires_ack: false)
+    received = [] of UInt32
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) do
+      received << message.packet_header.message_id
+      nil
+    end
+    send = ->(counter : UInt32, address : Socket::IPAddress, exchange_id : UInt16, protocol_id : UInt16, message_type : UInt8, initiator : Bool) do
+      packet = Matter::Codec::MessageCodec::PacketHeader.new(
+        session_id: 0_u16, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+        message_id: counter)
+      header = Matter::Codec::MessageCodec::PayloadHeader.new(
+        exchange_id: exchange_id, protocol_id: protocol_id,
+        message_type: message_type, initiator_message: initiator,
+        requires_acknowledge: false)
+      transport.receive_for_spec(Matter::Codec::MessageCodec::Base.encode_message(packet, header, Bytes.empty), address)
+    end
+    send.call(1000_u32, peer, 1_u16, 0_u16, 0x20_u8, true)
+    send.call(1000_u32, other_peer, 1_u16, 0_u16, 0x20_u8, true)
+    send.call(1_u32, peer, exchange.exchange_id, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2.value, false)
+    send.call(2_u32, peer, exchange.exchange_id, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2Resume.value, false)
+    send.call(3_u32, peer, exchange.exchange_id, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::StatusReport.value, false)
+    send.call(4_u32, peer, exchange.exchange_id &+ 1_u16, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2.value, false)
+    send.call(5_u32, other_peer, exchange.exchange_id, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2.value, false)
+    send.call(6_u32, peer, exchange.exchange_id, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2.value, true)
+    send.call(7_u32, peer, exchange.exchange_id, 1_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2.value, false)
+    pase_exchange = transport.send_request(
+      protocol_id: Matter::Protocol::ProtocolId::SecureChannel.value,
+      message_type: Matter::Protocol::SecureChannelMessageType::PbkdfParamRequest.value,
+      payload: Bytes.empty, session_id: 0_u16, peer_address: peer,
+      requires_ack: false)
+    send.call(8_u32, peer, pase_exchange.exchange_id, 0_u16,
+      Matter::Protocol::SecureChannelMessageType::CaseSigma2.value, false)
+    received.should eq([1000_u32, 1000_u32, 1_u32, 2_u32, 3_u32])
+  ensure
+    transport.try(&.close)
+  end
+
+  it "dispatches an exact retransmitted CASE Sigma2 only once" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    peer = Socket::IPAddress.new("::1", 50001)
+    exchange = transport.send_request(
+      protocol_id: Matter::Protocol::ProtocolId::SecureChannel.value,
+      message_type: Matter::Protocol::SecureChannelMessageType::CaseSigma1.value,
+      payload: Bytes.empty, session_id: 0_u16, peer_address: peer,
+      requires_ack: false)
+    received = [] of UInt32
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) do
+      received << message.packet_header.message_id
+      nil
+    end
+    packet = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 0_u16, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 1_u32)
+    header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: exchange.exchange_id, protocol_id: 0_u16,
+      message_type: Matter::Protocol::SecureChannelMessageType::CaseSigma2.value,
+      initiator_message: false, requires_acknowledge: true)
+    bytes = Matter::Codec::MessageCodec::Base.encode_message(packet, header, Bytes.empty)
+    transport.receive_for_spec(bytes, peer)
+    transport.receive_for_spec(bytes, peer)
+    received.should eq([1_u32])
+  ensure
+    transport.try(&.close)
+  end
+
   it "bounds unsecured replay windows from distinct UDP sockets" do
     transport = AuthenticationBoundaryTransport.new(port: 0)
     transport.on_message = ->(_message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) { nil }

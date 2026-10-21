@@ -53,6 +53,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Intermittently connected devices
 
+- Add controller-side CASE RegisterClient/UnregisterClient, durable fabric-bound
+  Check-In keys and counters, pending-key rotation, replay protection, and an
+  unsolicited UDP Secure Channel Check-In observer. Fabric removal clears the
+  associated controller keys; applications receive authenticated wake events.
+  Accept a restarted ICD's fresh unsecured packet counter only for Check-In;
+  the authenticated Check-In counter still rejects replay.
+- Accept a restarted peer's CASE Sigma2/Sigma2Resume and final StatusReport
+  after an outer packet counter reset only on an active, locally initiated CASE
+  exchange for that peer. Keep exact-duplicate ACK handling and CASE
+  certificate or resume-MIC verification.
 - Implement Matter 1.6 ICD Management for explicitly configured ICD devices:
   feature-gated attributes and commands, fabric-scoped durable registrations,
   per-client Check-In backoff, StayActive responses, and registration cleanup

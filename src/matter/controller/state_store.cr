@@ -1,5 +1,6 @@
 require "../storage/backend"
 require "../session/case/resumption_store"
+require "./icd_peer_store"
 require "./state"
 
 module Matter
@@ -37,6 +38,7 @@ module Matter
         @backend.write(COLLECTION, DOCUMENT_ID, state.to_document)
         remaining = state.fabrics
         resume_store = Session::Case::ResumptionStore.new(@backend)
+        icd_peers = IcdPeerStore.new(@backend)
         previous_fabrics.each do |fabric|
           next if remaining.any? do |installed|
                     installed.fabric_id == fabric.fabric_id &&
@@ -44,6 +46,8 @@ module Matter
                     installed.controller_node_id == fabric.controller_node_id
                   end
           resume_store.remove_fabric(fabric.fabric_id, fabric.root_public_key,
+            fabric.controller_node_id)
+          icd_peers.remove_fabric(fabric.fabric_id, fabric.root_public_key,
             fabric.controller_node_id)
         end
       rescue ex : Matter::StorageError
