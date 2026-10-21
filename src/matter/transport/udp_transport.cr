@@ -36,15 +36,19 @@ module Matter
       # message counter.
       MIN_PACKET_SIZE = 8
 
+      UNSECURED_COUNTER_LIMIT          = 1024
+      UNSECURED_COUNTER_TTL            = 5.minutes
+      UNSECURED_COUNTER_SWEEP_INTERVAL = 1.minute
+
       getter socket : UDPSocket
       getter port : Int32
       getter message_counter : MessageCounter
       getter exchange_manager : ExchangeManager
 
-      # Per-source-node message counters for unsecured messages (session_id=0)
-      # Key is the source_node_id (UInt64), value is the MessageCounter
-      # This allows different nodes to have independent message counter windows
-      @unsecured_counters : Hash(UInt64, MessageCounter)
+      # Unsecured counters belong to a sender's UDP socket. Independent
+      # controller transports may use the same Node ID with fresh counters.
+      @unsecured_counters : Hash(Tuple(UInt64?, Socket::IPAddress), Tuple(MessageCounter, Time::Instant))
+      @last_unsecured_counter_sweep : Time::Instant
 
       # Callback for received messages
       # Signature: (message : Codec::MessageCodec::Message, peer_address : Socket::IPAddress) -> Nil
@@ -67,8 +71,8 @@ module Matter
         @port = @socket.local_address.port if @port == 0
 
         @message_counter = MessageCounter.new
-        # Initialize per-source-node counters for unsecured messages
-        @unsecured_counters = Hash(UInt64, MessageCounter).new
+        @unsecured_counters = Hash(Tuple(UInt64?, Socket::IPAddress), Tuple(MessageCounter, Time::Instant)).new
+        @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = ExchangeManager.new
         @running = false
         @receive_fiber = nil
@@ -271,12 +275,14 @@ module Matter
         # Check for duplicate messages
         session_id = packet.header.session_id
         if session_id == 0
-          # For unsecured messages (session_id=0), track per source_node_id when present,
-          # otherwise fall back to the peer socket identity. This avoids unrelated peers
-          # sharing a single message counter window when they omit the node id.
+          # A new transport can reuse its Node ID while starting a fresh counter.
+          # Keep replay windows separate for each source socket, including when
+          # the packet omits a source Node ID.
           source_node_id = packet.header.source_node_id.try(&.id)
-          source_key = source_node_id || peer_address.hash
-          counter = @unsecured_counters[source_key] ||= MessageCounter.new
+          source_key = {source_node_id, peer_address}
+          now = Time.instant
+          sweep_unsecured_counters(now, source_key)
+          counter = @unsecured_counters[source_key]?.try(&.[0]) || MessageCounter.new
           unless counter.valid?(packet.header.message_id)
             # Duplicate message - ignore
             Log.warn do
@@ -285,6 +291,7 @@ module Matter
             end
             return
           end
+          @unsecured_counters[source_key] = {counter, now}
         end
 
         # For encrypted messages (session_id != 0), do NOT decode the payload yet
@@ -350,6 +357,22 @@ module Matter
       rescue ex : Exception
         # Decode / processing errors for a single datagram
         Log.debug(exception: ex) { "Error handling received data (peer=#{peer_address.address}:#{peer_address.port} bytes=#{data.size})" }
+      end
+
+      private def sweep_unsecured_counters(now : Time::Instant,
+                                           incoming_key : Tuple(UInt64?, Socket::IPAddress)) : Nil
+        new_sender_at_limit = !@unsecured_counters.has_key?(incoming_key) &&
+                              @unsecured_counters.size >= UNSECURED_COUNTER_LIMIT
+        return unless new_sender_at_limit || now - @last_unsecured_counter_sweep >= UNSECURED_COUNTER_SWEEP_INTERVAL
+
+        @last_unsecured_counter_sweep = now
+        @unsecured_counters.reject! do |_key, entry|
+          now - entry[1] >= UNSECURED_COUNTER_TTL
+        end
+        if new_sender_at_limit && @unsecured_counters.size >= UNSECURED_COUNTER_LIMIT
+          oldest_key = @unsecured_counters.min_by { |_key, entry| entry[1] }[0]
+          @unsecured_counters.delete(oldest_key)
+        end
       end
 
       private def send_acknowledgment(

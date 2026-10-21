@@ -22,6 +22,7 @@ module Matter
       property device_type : UInt32?
       property device_name : String?
       property commissioning_mode : UInt8?
+      property joint_fabric_role : MDNS::JointFabricRole?
 
       # Operational-specific fields
       property fabric_id : UInt64?
@@ -61,6 +62,9 @@ module Matter
         @device_type = @txt_records["DT"]?.try(&.to_u32?)
         @device_name = @txt_records["DN"]?
         @commissioning_mode = @txt_records["CM"]?.try(&.to_u8?)
+        @joint_fabric_role = @txt_records["JF"]?.try(&.to_u8?).try do |value|
+          MDNS::JointFabricRole.from_value?(value)
+        end
       end
 
       private def parse_operational_txt : Nil

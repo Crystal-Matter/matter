@@ -34,7 +34,7 @@ COPY examples ./examples
 # shared between the roots -- the cache is per program either way.
 RUN --mount=type=cache,target=/root/.cache/crystal,sharing=locked \
     mkdir -p bin && \
-    jobs="$(nproc)"; [ "$jobs" -gt 4 ] && jobs=4; \
+    jobs="$(nproc)"; [ "$jobs" -gt 2 ] && jobs=2; \
     ls examples/matter_*_device.cr examples/device_validation.cr | \
       xargs -P "$jobs" -I{} sh -c 'name="$(basename {} .cr | sed "s/_device$//")"; echo "==> building bin/$name"; CRYSTAL_CACHE_DIR="/root/.cache/crystal/$name" crystal build {} -o "bin/$name" --error-trace' && \
     ls -la bin

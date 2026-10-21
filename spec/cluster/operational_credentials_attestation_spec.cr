@@ -353,7 +353,7 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Request CSR first
         nonce = Bytes.new(32, 0_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce, false)
         )
@@ -371,7 +371,8 @@ describe Matter::Cluster::OperationalCredentials do
         )
 
         # Create NOC with same public key as root
-        noc = create_mock_noc_with_key(0x1111111111111111_u64, 0x1234567890_u64, public_key)
+        noc = create_mock_noc_with_key(0x1111111111111111_u64, 0x1234567890_u64,
+          csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)), 0x1234567890_u64)
 
         # Invoke AddNOC - should successfully extract public key from TLV certificate
         ipk = Bytes.new(16, 0_u8)
@@ -392,7 +393,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.fabrics[0].root_public_key.should eq(public_key)
       end
 
-      it "processes AddNOC with DER root certificate" do
+      it "processes AddNOC with a Matter root generated from an OpenSSL key" do
         fabric_table = Matter::FabricTable.new(Matter::Storage::Memory.new)
         cluster = Matter::Cluster::OperationalCredentials.new(fabric_table, endpoint(0), nil)
 
@@ -402,46 +403,33 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Request CSR
         nonce = Bytes.new(32, 0_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce, false)
         )
 
-        # Generate a real DER certificate using OpenSSL's native key generation
-        # This ensures the certificate has a proper EC public key structure
+        # Generate the signing key with OpenSSL, then encode it as the Matter
+        # TLV RCAC required by AddTrustedRootCertificate.
         pkey = OpenSSL::PKey::EC.generate_by_curve_name("prime256v1")
         root_key = Matter::Crypto::Key.new(Matter::Crypto::KeyType::EC, Matter::Crypto::CurveType::P256)
         root_key.private_bits = pkey.private_key_bytes
         root_key.public_bits = pkey.public_key_bytes
 
-        cert = OpenSSL::X509::Certificate.new
-        cert.version = 2
-        cert.serial = OpenSSL::BN.new(1)
-        cert.not_before = OpenSSL::ASN1::Time.days_from_now(-1)
-        cert.not_after = OpenSSL::ASN1::Time.days_from_now(365)
-
-        name = OpenSSL::X509::Name.new
-        name.add_entry("CN", "Test Root")
-        cert.subject = name
-        cert.issuer = name
-        cert.public_key = pkey
-
-        cert.sign(pkey, OpenSSL::Digest.new("SHA256"))
-
-        der_cert = cert.to_der.to_slice
+        root_cert = Matter::Crypto::MatterCertificate::Builder.root(
+          root_key, TestCertificateAuthority::ROOT_CERTIFICATE_ID, Bytes[1])
 
         # Extract the public key bytes from the generated key for NOC
         public_key_bytes = pkey.public_key_bytes
 
-        # Add DER root certificate
+        # Add the root certificate
         invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
-          create_add_trusted_root_cert_request_tlv(der_cert)
+          create_add_trusted_root_cert_request_tlv(root_cert)
         )
 
-        # A node certificate the DER root actually issued
+        # A node certificate the Matter root actually issued
         noc = Matter::Crypto::MatterCertificate::Builder.node(
-          public_key: public_key_bytes,
+          public_key: csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)),
           fabric_id: 0x9876543210_u64,
           node_id: 0x2222222222222222_u64,
           issuer_key: root_key,
@@ -449,14 +437,14 @@ describe Matter::Cluster::OperationalCredentials do
           serial: Bytes[0x01]
         )
 
-        # Invoke AddNOC - should successfully extract public key from DER certificate
+        # Invoke AddNOC - should successfully extract public key from the root certificate
         ipk = Bytes.new(16, 1_u8)
         result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_ADD_NOC,
           create_add_noc_request_tlv(noc, nil, ipk, 0xBCDE_u64, 0xFFF2_u16)
         )
 
-        # Should succeed - verifying that DER certificate processing worked
+        # Should succeed - verifying that the OpenSSL key and Matter certificate interoperate
         result.should be_a(Matter::Cluster::CommandResponse)
         parsed = result.as(Matter::Cluster::CommandResponse).response.as(TLV::Any)
         response = parsed.value.as(TLV::Structure)
@@ -478,7 +466,7 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Request CSR
         nonce = Bytes.new(32, 0_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce, false)
         )
@@ -495,7 +483,7 @@ describe Matter::Cluster::OperationalCredentials do
         )
 
         # Create NOC with same public key
-        noc = create_mock_noc_with_key(0x1_u64, 0x1_u64, public_key)
+        noc = create_mock_noc_with_key(0x1_u64, 0x1_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         ipk = Bytes.new(16, 0_u8)
         invoke(cluster,

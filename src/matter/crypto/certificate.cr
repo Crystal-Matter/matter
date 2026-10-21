@@ -58,7 +58,8 @@ module Matter
     struct MatterCertificate
       include TLV::Serializable
 
-      Log = ::Log.for("matter.crypto.certificate")
+      Log                             = ::Log.for("matter.crypto.certificate")
+      ANCHOR_ICAC_ORGANIZATIONAL_UNIT = "jf-anchor-icac"
 
       # Context tags the raw-TLV helpers below reach for. A certificate that
       # `TLV::Serializable` cannot decode (a truncated or vendor-extended NOC)
@@ -225,6 +226,21 @@ module Matter
 
         subject_ids.uniq!
         subject_ids
+      end
+
+      # Joint Fabric Anchor authority marker in the ICAC Subject DN. CASE
+      # certificate-chain verification is a separate prerequisite; callers
+      # use this after the peer's chain has already been authenticated.
+      def self.anchor_icac?(cert_tlv : Bytes) : Bool
+        parsed = TLV::Any.from_slice(cert_tlv)
+        subject = parsed.as_structure?.try(&.[Asn1::Field::Subject.value]?).try(&.as_list?)
+        return false unless subject
+        subject.any? do |attribute|
+          attribute.header.ids == Asn1::Dn::OrgUnitName.value &&
+            attribute.as_s? == ANCHOR_ICAC_ORGANIZATIONAL_UNIT
+        end
+      rescue
+        false
       end
 
       # Recursively search a decoded TLV certificate for a field by context tag

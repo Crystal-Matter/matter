@@ -69,6 +69,24 @@ describe Matter::MDNS::Responder do
       txt_records["PH"].should eq("1")
       txt_records["PI"].should eq("Scan QR code")
     end
+
+    it "advertises a Joint Commissioning Method window and JF roles" do
+      info = Matter::MDNS::CommissioningInfo.new(
+        device_name: "Anchor",
+        vendor_id: 0xFFF1_u16,
+        product_id: 0x8000_u16,
+        discriminator: 3840_u16,
+        device_type: 0x0016_u32,
+        commissioning_mode: Matter::MDNS::CommissioningMode::Joint,
+        joint_fabric_role: Matter::MDNS::JointFabricRole::Administrator |
+                           Matter::MDNS::JointFabricRole::Anchor |
+                           Matter::MDNS::JointFabricRole::Datastore
+      )
+
+      info.to_txt_records["CM"].should eq("3")
+      info.to_txt_records["JF"].should eq("14")
+      info.to_txt_records["VP"].should eq("65521+32768")
+    end
   end
 
   describe "operational advertisement" do

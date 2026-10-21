@@ -244,9 +244,57 @@ class AuthenticationBoundaryTransport < Matter::Transport::UDPTransport
   def receive_for_spec(data : Bytes, peer : Socket::IPAddress)
     handle_received_data(data, peer)
   end
+
+  def unsecured_counter_count_for_spec : Int32
+    @unsecured_counters.size
+  end
 end
 
 describe Matter::Transport::UDPTransport do
+  it "accepts a fresh unsecured counter from the same Node ID on another UDP socket" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    received = [] of UInt32
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) {
+      received << message.packet_header.message_id
+      nil
+    }
+    payload_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 1_u16, protocol_id: 0_u16, message_type: 1_u8,
+      initiator_message: true, requires_acknowledge: false)
+    [
+      {1000_u32, Socket::IPAddress.new("::1", 50001)},
+      {1_u32, Socket::IPAddress.new("::1", 50002)},
+      {1_u32, Socket::IPAddress.new("::1", 50002)},
+    ].each do |counter, peer|
+      packet_header = Matter::Codec::MessageCodec::PacketHeader.new(
+        session_id: 0_u16, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+        message_id: counter, source_node_id: Matter::DataType::NodeId.new(10_u64))
+      bytes = Matter::Codec::MessageCodec::Base.encode_message(packet_header, payload_header, Bytes.empty)
+      transport.receive_for_spec(bytes, peer)
+    end
+    received.should eq([1000_u32, 1_u32])
+  ensure
+    transport.try(&.close)
+  end
+
+  it "bounds unsecured replay windows from distinct UDP sockets" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    transport.on_message = ->(_message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) { nil }
+    payload_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 1_u16, protocol_id: 0_u16, message_type: 1_u8,
+      initiator_message: true, requires_acknowledge: false)
+    packet_header = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: 0_u16, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 1_u32, source_node_id: Matter::DataType::NodeId.new(10_u64))
+    bytes = Matter::Codec::MessageCodec::Base.encode_message(packet_header, payload_header, Bytes.empty)
+    (1..(Matter::Transport::UDPTransport::UNSECURED_COUNTER_LIMIT + 1)).each do |port|
+      transport.receive_for_spec(bytes, Socket::IPAddress.new("::1", port))
+    end
+    transport.unsecured_counter_count_for_spec.should eq(Matter::Transport::UDPTransport::UNSECURED_COUNTER_LIMIT)
+  ensure
+    transport.try(&.close)
+  end
+
   it "forwards secure packets and their exact headers before deciding replay state" do
     transport = AuthenticationBoundaryTransport.new(port: 0)
     received = [] of Matter::Codec::MessageCodec::Message

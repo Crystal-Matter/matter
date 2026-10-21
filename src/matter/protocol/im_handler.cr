@@ -88,6 +88,8 @@ module Matter
         fabric_index : UInt8? = nil,
         is_case_session : Bool = false,
         peer_subject_ids : Array(UInt64)? = nil,
+        fabric_filtered : Bool = true,
+        session_id : UInt64? = nil,
       ) : Array(InteractionModel::AttributeReportIB)
         attribute_reports = [] of InteractionModel::AttributeReportIB
         requests = attribute_requests || [] of InteractionModel::AttributePath
@@ -159,10 +161,18 @@ module Matter
                 next
               end
 
-              cluster.request_fabric_index = fabric_index
-              cluster.request_is_case_session = !fabric_index.nil?
-              result = safe_read_attribute(cluster, attribute_id, fabric_index, concrete_path, endpoint_id, cluster_id)
-              attribute_reports << build_attribute_report(concrete_path, result, cluster_id, endpoint_id, cluster.data_version)
+              cluster.with_request_context do
+                cluster.request_fabric_index = fabric_index
+                cluster.request_session_id = session_id
+                cluster.request_is_case_session = is_case_session
+                cluster.request_peer_subject_ids = peer_subject_ids
+                cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
+                cluster.request_peer_address = nil
+                cluster.request_peer_icac = nil
+                cluster.request_fabric_filtered = fabric_filtered
+                result = safe_read_attribute(cluster, attribute_id, fabric_index, concrete_path, endpoint_id, cluster_id)
+                attribute_reports << build_attribute_report(concrete_path, result, cluster_id, endpoint_id, cluster.data_version)
+              end
             end
 
             next
@@ -192,10 +202,18 @@ module Matter
           end
 
           # Read attribute from cluster
-          cluster.request_fabric_index = fabric_index
-          cluster.request_is_case_session = !fabric_index.nil?
-          result = safe_read_attribute(cluster, attribute_id, fabric_index, path, endpoint_id, cluster_id)
-          attribute_reports << build_attribute_report(path, result, cluster_id, endpoint_id, cluster.data_version)
+          cluster.with_request_context do
+            cluster.request_fabric_index = fabric_index
+            cluster.request_session_id = session_id
+            cluster.request_is_case_session = is_case_session
+            cluster.request_peer_subject_ids = peer_subject_ids
+            cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
+            cluster.request_peer_address = nil
+            cluster.request_peer_icac = nil
+            cluster.request_fabric_filtered = fabric_filtered
+            result = safe_read_attribute(cluster, attribute_id, fabric_index, path, endpoint_id, cluster_id)
+            attribute_reports << build_attribute_report(path, result, cluster_id, endpoint_id, cluster.data_version)
+          end
         end
 
         attribute_reports
@@ -445,17 +463,23 @@ module Matter
             end
           end
 
-          cluster.request_session_id = session_id.try(&.to_u64)
-          cluster.request_is_case_session = is_case_session
-          cluster.request_fabric_index = fabric_index
-          cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
+          cluster.with_request_context do
+            cluster.request_session_id = session_id.try(&.to_u64)
+            cluster.request_is_case_session = is_case_session
+            cluster.request_fabric_index = fabric_index
+            cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
+            cluster.request_peer_subject_ids = peer_subject_ids
+            cluster.request_peer_address = nil
+            cluster.request_peer_icac = nil
+            cluster.request_fabric_filtered = true
 
-          # Preserve the TLV type when passing the attribute to its cluster.
-          value = request.data
-          status = cluster.write_attribute(attribute_id, value)
+            # Preserve the TLV type when passing the attribute to its cluster.
+            value = request.data
+            status = cluster.write_attribute(attribute_id, value)
 
-          status_ib = InteractionModel::StatusIB.new(status: status.status.value, cluster_status: status.cluster_status)
-          write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+            status_ib = InteractionModel::StatusIB.new(status: status.status.value, cluster_status: status.cluster_status)
+            write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+          end
         end
 
         write_responses
@@ -641,6 +665,8 @@ module Matter
         is_case_session : Bool = false,
         fabric_index : UInt8? = nil,
         peer_subject_ids : Array(UInt64)? = nil,
+        peer_address : Socket::IPAddress? = nil,
+        peer_icac : Bytes? = nil,
       ) : Array(InteractionModel::InvokeResponseIB)
         invoke_responses = [] of InteractionModel::InvokeResponseIB
 
@@ -670,7 +696,14 @@ module Matter
             end
           end
 
-          result = safe_invoke_command(cluster, path, cmd_data.command_fields, session_id, is_case_session, fabric_index)
+          result = cluster.with_request_context do
+            cluster.request_peer_subject_ids = peer_subject_ids
+            cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
+            cluster.request_peer_address = peer_address
+            cluster.request_peer_icac = peer_icac
+            cluster.request_fabric_filtered = true
+            safe_invoke_command(cluster, path, cmd_data.command_fields, session_id, is_case_session, fabric_index)
+          end
 
           if result.is_a?(InteractionModel::Status)
             # Error status

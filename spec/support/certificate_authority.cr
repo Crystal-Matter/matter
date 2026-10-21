@@ -42,13 +42,14 @@ class TestCertificateAuthority
     fabric_id : UInt64 = DEFAULT_FABRIC_ID,
     node_id : UInt64 = DEFAULT_NODE_ID,
     public_key : Bytes = node_public_key,
+    rcac_id : UInt64 = ROOT_CERTIFICATE_ID,
   ) : Bytes
     Matter::Crypto::MatterCertificate::Builder.node(
       public_key: public_key,
       fabric_id: fabric_id,
       node_id: node_id,
       issuer_key: @key,
-      issuer_rcac_id: ROOT_CERTIFICATE_ID,
+      issuer_rcac_id: rcac_id,
       serial: serial,
       crypto: @crypto
     )

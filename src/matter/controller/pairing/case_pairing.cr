@@ -4,6 +4,7 @@ require "../../crypto/crypto"
 require "../../crypto/ecdh"
 require "../../crypto/key"
 require "../../crypto/certificate"
+require "../../crypto/certificate_validation"
 require "../../fabric"
 require "../../session/case/definitions"
 require "../../session/pase/definitions"
@@ -14,6 +15,7 @@ module Matter
   module Controller
     module Pairing
       class CasePairing
+        record VerifiedResponder, subject_ids : Array(UInt64), icac : Bytes?
         Log = ::Log.for("matter.controller.pairing.case_pairing")
 
         MSG_CASE_SIGMA1   = 0x30_u8
@@ -30,6 +32,28 @@ module Matter
         SESSION_KEYS_INFO = "SessionKeys".to_slice
 
         def initialize(@crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
+        end
+
+        # Select the controller identity explicitly when a state contains
+        # multiple fabrics. The original FabricInfo overload remains available.
+        def pair(
+          client : Client,
+          peer : Socket::IPAddress,
+          state : State,
+          peer_node_id : UInt64,
+          fabric_id : UInt64? = nil,
+          root_public_key : Bytes? = nil,
+          controller_node_id : UInt64? = nil,
+          timeout : Time::Span = 10.seconds,
+        ) : Session::SecureContext
+          if (root_public_key || controller_node_id) && fabric_id.nil?
+            raise Matter::ConfigurationError.new("Selecting a fabric by root public key or controller Node ID also requires a fabric ID")
+          end
+          fabric = fabric_id ? state.fabric_for(fabric_id, root_public_key, controller_node_id) : state.fabric
+          unless fabric
+            raise Matter::ConfigurationError.new("No controller fabric is installed")
+          end
+          pair(client, peer, fabric, peer_node_id: peer_node_id, timeout: timeout)
         end
 
         def pair(
@@ -52,7 +76,8 @@ module Matter
             operational_key: controller_key,
             ipk: fabric.ipk_value,
             vendor_id: fabric.admin_vendor_id,
-            label: "controller"
+            label: "controller",
+            intermediate_cert: fabric.intermediate_cert
           )
 
           initiator_random = @crypto.random_bytes(32)
@@ -99,11 +124,12 @@ module Matter
           decrypted2 = @crypto.decrypt(sigma2_key, sigma2_msg.encrypted2, TBE_DATA2_NONCE)
           encrypted_data2 = Session::Case::Definitions::EncryptedDataSigma2.from_slice(decrypted2)
 
-          verify_sigma2_signature(encrypted_data2, sigma2_msg.responder_eph_pub_key, initiator_eph_pub)
+          verified_responder = verify_sigma2_signature(encrypted_data2,
+            sigma2_msg.responder_eph_pub_key, initiator_eph_pub, fabric, peer_node_id)
 
           signed_data3 = Session::Case::Definitions::SignedData.new(
             responder_noc: fabric.controller_noc,
-            responder_icac: nil,
+            responder_icac: fabric.intermediate_cert,
             responder_public_key: initiator_eph_pub,
             initiator_public_key: sigma2_msg.responder_eph_pub_key
           )
@@ -112,7 +138,7 @@ module Matter
 
           encrypted_data3 = Session::Case::Definitions::EncryptedDataSigma3.new(
             responder_noc: fabric.controller_noc,
-            responder_icac: nil,
+            responder_icac: fabric.intermediate_cert,
             signature: signature3
           )
           encrypted_data3_bytes = encrypted_data3.to_slice
@@ -167,6 +193,8 @@ module Matter
             peer_node_id: DataType::NodeId.new(peer_node_id),
             case_session: true
           )
+          secure_context.peer_subject_ids = verified_responder.subject_ids
+          secure_context.peer_icac = verified_responder.icac
 
           client.register_session(secure_context)
           secure_context
@@ -194,11 +222,14 @@ module Matter
           Crypto.sign_hmac(derived_ipk, data.to_slice)
         end
 
-        private def verify_sigma2_signature(
+        # Authenticate the responder's certificate as well as its handshake signature.
+        def verify_sigma2_signature(
           encrypted_data2 : Session::Case::Definitions::EncryptedDataSigma2,
           responder_eph_pub : Bytes,
           initiator_eph_pub : Bytes,
-        ) : Nil
+          fabric : FabricInfo,
+          peer_node_id : UInt64,
+        ) : VerifiedResponder
           signed_data = Session::Case::Definitions::SignedData.new(
             responder_noc: encrypted_data2.responder_noc,
             responder_icac: encrypted_data2.responder_icac,
@@ -207,10 +238,23 @@ module Matter
           )
 
           noc = Crypto::MatterCertificate.from_slice(encrypted_data2.responder_noc)
+          unless noc.fabric_id == fabric.fabric_id && noc.node_id == peer_node_id
+            raise Matter::AuthenticationError.new("CASE: responder fabric or node ID does not match the requested peer")
+          end
+          Crypto::MatterCertificate::Validation.verify_chain(
+            encrypted_data2.responder_noc,
+            encrypted_data2.responder_icac,
+            fabric.root_public_key,
+            fabric.root_cert
+          )
           public_key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
           public_key.public_bits = noc.ec_public_key
 
           @crypto.verify_ecdsa(public_key, signed_data.to_slice, encrypted_data2.signature)
+          VerifiedResponder.new(Crypto::MatterCertificate.subject_ids_from_tlv(
+            encrypted_data2.responder_noc), encrypted_data2.responder_icac.try(&.dup))
+        rescue ex : Matter::AuthenticationError
+          raise ex
         rescue ex
           raise Matter::AuthenticationError.new("CASE: Sigma2 signature verification failed: #{ex.message}", cause: ex)
         end

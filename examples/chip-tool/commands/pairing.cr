@@ -6,6 +6,15 @@ module ChipTool
       extend self
 
       def register : Nil
+        Registry.register("pairing", "fabrics", "List installed controller fabric identities") do |ctx, _args|
+          state = ctx.state_store.load
+          state.fabrics.each do |fabric|
+            selected = state.fabric.try { |active| active.fabric_id == fabric.fabric_id && active.root_public_key == fabric.root_public_key && active.controller_node_id == fabric.controller_node_id } ? "*" : " "
+            puts "#{selected} fabric=0x#{fabric.fabric_id.to_s(16)} controller=0x#{fabric.controller_node_id.to_s(16)} root=#{fabric.root_public_key.hexstring}"
+          end
+          0
+        end
+
         Registry.register("pairing", "code", "Commission over IP using manual pairing code") do |_ctx, _args|
           ctx = _ctx
           args = _args.dup
@@ -14,10 +23,11 @@ module ChipTool
           manual_code = args.shift?
 
           unless node_id_str && manual_code
-            STDERR.puts "Usage: pairing code <node-id> <manual-code> [--address <ip[:port]>]"
+            STDERR.puts "Usage: pairing code <node-id> <manual-code> [--address <ip[:port]>] [--new-fabric]"
             next 2
           end
 
+          new_fabric = !!args.delete("--new-fabric")
           peer = nil.as(Socket::IPAddress?)
           if idx = args.index("--address")
             addr = args[idx + 1]?
@@ -46,7 +56,7 @@ module ChipTool
           )
           commissioner = Matter::Controller::Commissioning::Commissioner.new(store, controller, timeout: ctx.timeout)
           begin
-            commissioner.pairing_code(node_id, manual_code, peer: peer)
+            commissioner.pairing_code(node_id, manual_code, peer: peer, new_fabric: new_fabric)
           ensure
             latest = store.load
             latest.unsecured_message_counter = controller.transport.message_counter.counter
@@ -162,7 +172,7 @@ module ChipTool
 
         deadline = Time.instant + timeout
         loop do
-          if dev = scanner.operational_devices.find { |device| device.fabric_id == fabric.fabric_id && device.node_id == node_id }
+          if dev = scanner.operational_devices.find { |device| device.fabric_id == fabric.compressed_fabric_id && device.node_id == node_id }
             address = dev.addresses.find(&.family.inet?) || dev.addresses.first?
             if addr = address
               return Socket::IPAddress.new(addr.address, dev.port)

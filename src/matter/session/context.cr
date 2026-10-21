@@ -45,6 +45,8 @@ module Matter
       # All authenticated Subject IDs for the peer (NodeId + any CATs).
       # Used for AccessControl evaluation (ACL subjects can be Node IDs or CATs).
       property peer_subject_ids : Array(UInt64) = [] of UInt64
+      # The validated CASE peer intermediate certificate, when presented.
+      property peer_icac : Bytes? = nil
 
       # Encryption keys
       property encryption_key : Bytes # i2r (initiator to responder) or encryption key
@@ -148,6 +150,8 @@ module Matter
         getter peer_node_id : UInt64?
         getter local_node_id : UInt64?
         getter fabric_index : UInt8?
+        getter peer_subject_ids : Array(UInt64) = [] of UInt64
+        getter peer_icac : Bytes? = nil
         getter created_at : Time
         getter last_activity_at : Time
 
@@ -167,6 +171,8 @@ module Matter
           @fabric_index : UInt8?,
           @created_at : Time,
           @last_activity_at : Time,
+          @peer_subject_ids : Array(UInt64) = [] of UInt64,
+          @peer_icac : Bytes? = nil,
         )
         end
       end
@@ -187,7 +193,9 @@ module Matter
           local_node_id: @local_node_id.try(&.id),
           fabric_index: @fabric_index,
           created_at: @creation_time,
-          last_activity_at: @last_activity_time
+          last_activity_at: @last_activity_time,
+          peer_subject_ids: @peer_subject_ids,
+          peer_icac: @peer_icac
         )
       end
 
@@ -209,6 +217,8 @@ module Matter
         context.peer_message_counter = record.peer_message_counter
         context.creation_time = record.created_at
         context.last_activity_time = record.last_activity_at
+        context.peer_subject_ids = record.peer_subject_ids.dup
+        context.peer_icac = record.peer_icac.try(&.dup)
         context
       end
     end

@@ -5,6 +5,16 @@ module Matter
       Disabled = 0 # Not accepting commissioning
       Basic    = 1 # Basic commissioning window (default passcode)
       Enhanced = 2 # Enhanced commissioning window (custom verifier)
+      Joint    = 3 # Joint Commissioning Method window
+    end
+
+    # Matter 1.6 Core §4.3.1.13, JF commissioning TXT bitmap.
+    @[Flags]
+    enum JointFabricRole : UInt8
+      Available     = 0x01
+      Administrator = 0x02
+      Anchor        = 0x04
+      Datastore     = 0x08
     end
 
     # Pairing Hint Bitmap (PH TXT key, 20 bits total)
@@ -130,6 +140,7 @@ module Matter
       property commissioning_mode : CommissioningMode
       property pairing_hint : UInt16?
       property pairing_instruction : String?
+      property joint_fabric_role : JointFabricRole?
 
       def initialize(
         @device_name : String,
@@ -140,6 +151,7 @@ module Matter
         @commissioning_mode : CommissioningMode = CommissioningMode::Disabled,
         @pairing_hint : UInt16? = nil,
         @pairing_instruction : String? = nil,
+        @joint_fabric_role : JointFabricRole? = nil,
       )
       end
 
@@ -159,6 +171,10 @@ module Matter
 
         if instruction = @pairing_instruction
           records["PI"] = instruction
+        end
+
+        if role = @joint_fabric_role
+          records["JF"] = role.value.to_s
         end
 
         records

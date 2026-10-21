@@ -235,6 +235,7 @@ module Matter
         request : OpenCommissioningWindowRequest,
         session_fabric_index : UInt8?,
         session_vendor_id : UInt16?,
+        joint : Bool = false,
       ) : Nil
         window.open_enhanced(
           timeout_seconds: request.commissioning_timeout,
@@ -243,7 +244,8 @@ module Matter
           iterations: request.iterations,
           salt: request.salt,
           admin_fabric_index: session_fabric_index,
-          admin_vendor_id: session_vendor_id
+          admin_vendor_id: session_vendor_id,
+          joint: joint
         )
       end
 

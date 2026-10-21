@@ -10,7 +10,16 @@ module Matter
     #
     # Matter Spec: Core 11.1
     class BasicInformation < Base
-      cluster 0x0028, revision: 5
+      cluster 0x0028, revision: 6
+
+      # Matter 1.6's data model revision is independent of a product's
+      # certification version. An uncertified device reports zero for the
+      # latter until its application supplies the version it was certified for.
+      DATA_MODEL_REVISION_1_6           =         21_u16
+      MATTER_1_6_SPECIFICATION_VERSION  = 0x01060000_u32
+      UNSPECIFIED_SPECIFICATION_VERSION =          0_u32
+      DEFAULT_MAX_PATHS_PER_INVOKE      =          1_u16
+      INITIAL_CONFIGURATION_VERSION     =          1_u32
 
       # NodeLabel is at most 32 bytes; Location is an ISO 3166-1 alpha-2 code
       # (two ASCII letters, or "XX" for an unknown region).
@@ -121,7 +130,7 @@ module Matter
         end
       end
 
-      attribute 0x0000, :data_model_revision, UInt16, default: 1_u16, fixed: true
+      attribute 0x0000, :data_model_revision, UInt16, default: DATA_MODEL_REVISION_1_6, fixed: true
       attribute 0x0001, :vendor_name, String, default: "", fixed: true
       attribute 0x0002, :vendor_id, UInt16, default: 0_u16, fixed: true
       attribute 0x0003, :product_name, String, default: "", fixed: true
@@ -142,6 +151,10 @@ module Matter
       attribute 0x0012, :unique_id, String, default: "", fixed: true
       attribute 0x0013, :capability_minima, CapabilityMinimaStruct, default: CapabilityMinimaStruct.new, fixed: true
       attribute 0x0014, :product_appearance, ProductAppearanceStruct, nullable: true, fixed: true, optional: true, present_if: :product_appearance
+      attribute 0x0015, :specification_version, UInt32, default: UNSPECIFIED_SPECIFICATION_VERSION, fixed: true
+      attribute 0x0016, :max_paths_per_invoke, UInt16, default: DEFAULT_MAX_PATHS_PER_INVOKE, fixed: true
+      attribute 0x0018, :configuration_version, UInt32, default: INITIAL_CONFIGURATION_VERSION,
+        persist: true, persist_default: INITIAL_CONFIGURATION_VERSION
 
       # Location is validated as a country code and stored upper case.
       before_write :location do |code|
@@ -154,7 +167,7 @@ module Matter
       event 0x03, :reachable_changed, priority: :info
 
       def initialize(endpoint_id : DataType::EndpointNumber,
-                     @data_model_revision : UInt16 = 1_u16,
+                     @data_model_revision : UInt16 = DATA_MODEL_REVISION_1_6,
                      @vendor_name : String = "",
                      @vendor_id : UInt16 = 0_u16,
                      @product_name : String = "",
@@ -174,8 +187,13 @@ module Matter
                      @reachable : Bool = true,
                      @unique_id : String = "",
                      @capability_minima : CapabilityMinimaStruct = CapabilityMinimaStruct.new,
-                     @product_appearance : ProductAppearanceStruct? = nil)
+                     @product_appearance : ProductAppearanceStruct? = nil,
+                     @specification_version : UInt32 = UNSPECIFIED_SPECIFICATION_VERSION,
+                     @max_paths_per_invoke : UInt16 = DEFAULT_MAX_PATHS_PER_INVOKE,
+                     @configuration_version : UInt32 = INITIAL_CONFIGURATION_VERSION)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+        raise Matter::ConfigurationError.new("MaxPathsPerInvoke must be positive") if @max_paths_per_invoke == 0_u16
+        raise Matter::ConfigurationError.new("ConfigurationVersion must be positive") if @configuration_version == 0_u32
 
         # Default node_label to product_name if not explicitly set
         # This ensures iOS/controllers show a meaningful device name

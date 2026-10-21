@@ -18,6 +18,7 @@ describe Matter::Cluster::BasicInformation do
     cluster.node_label = "Kitchen"
     cluster.location = "AU"
     cluster.local_config_disabled = true
+    cluster.configuration_version = 3_u32
     cluster.data_version = 42_u32
 
     document = cluster.save_state.as(Matter::Storage::Document)
@@ -25,6 +26,7 @@ describe Matter::Cluster::BasicInformation do
       "node_label"            => "Kitchen",
       "location"              => "AU",
       "local_config_disabled" => true,
+      "configuration_version" => 3_i64,
       "data_version"          => 42_i64,
       "features"              => 0_i64,
     })
@@ -43,6 +45,23 @@ describe Matter::Cluster::BasicInformation do
     cluster2.node_label.should eq("Kitchen")
     cluster2.location.should eq("AU")
     cluster2.local_config_disabled?.should be_true
+    cluster2.configuration_version.should eq(3_u32)
     cluster2.data_version.should eq(42_u32)
+  end
+
+  it "restores older documents that predate ConfigurationVersion" do
+    cluster = Matter::Cluster::BasicInformation.new(endpoint(0), product_name: "Old product")
+    cluster.restore_state(Matter::Storage::Document{
+      "node_label"            => "Persisted name",
+      "location"              => "AU",
+      "local_config_disabled" => false,
+      "data_version"          => 7_i64,
+    })
+
+    cluster.node_label.should eq("Persisted name")
+    cluster.location.should eq("AU")
+    cluster.configuration_version.should eq(Matter::Cluster::BasicInformation::INITIAL_CONFIGURATION_VERSION)
+    cluster.data_version.should eq(7_u32)
+    cluster.save_state.as(Matter::Storage::Document)["configuration_version"].should eq(1_i64)
   end
 end

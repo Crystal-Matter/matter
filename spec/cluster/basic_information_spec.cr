@@ -14,7 +14,10 @@ describe Matter::Cluster::BasicInformation do
     it "initializes with default values" do
       cluster = build(Matter::Cluster::BasicInformation, 0)
 
-      cluster.data_model_revision.should eq(1_u16)
+      cluster.data_model_revision.should eq(Matter::Cluster::BasicInformation::DATA_MODEL_REVISION_1_6)
+      cluster.specification_version.should eq(0_u32)
+      cluster.max_paths_per_invoke.should eq(1_u16)
+      cluster.configuration_version.should eq(1_u32)
       cluster.vendor_name.should eq("")
       cluster.vendor_id.should eq(0_u16)
       cluster.product_name.should eq("")
@@ -58,6 +61,37 @@ describe Matter::Cluster::BasicInformation do
       node_label = attributes.find { |attr| attr.id.id == Matter::Cluster::BasicInformation::ATTR_NODE_LABEL }
       node_label.should_not be_nil
       node_label.as(Matter::Cluster::AttributeMetadata).writable?.should be_true # User can set node label
+    end
+  end
+
+  describe "Matter 1.6 version and capability metadata" do
+    it "advertises revision 6 and the required version and capacity attributes" do
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+
+      read(cluster, Matter::Cluster::Base::GLOBAL_CLUSTER_REVISION).should eq(6_u16)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_DATA_MODEL_REVISION).should eq(21_u16)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_SPECIFICATION_VERSION).should eq(0_u32)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_MAX_PATHS_PER_INVOKE).should eq(1_u16)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_CONFIGURATION_VERSION).should eq(1_u32)
+
+      ids = attribute_ids(cluster)
+      ids.should contain(Matter::Cluster::BasicInformation::ATTR_SPECIFICATION_VERSION)
+      ids.should contain(Matter::Cluster::BasicInformation::ATTR_MAX_PATHS_PER_INVOKE)
+      ids.should contain(Matter::Cluster::BasicInformation::ATTR_CONFIGURATION_VERSION)
+      write(cluster, Matter::Cluster::BasicInformation::ATTR_CONFIGURATION_VERSION, 2_u32).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedWrite)
+    end
+
+    it "allows a certified application to report its exact specification version" do
+      version = Matter::Cluster::BasicInformation::MATTER_1_6_SPECIFICATION_VERSION
+      cluster = build(Matter::Cluster::BasicInformation, 0, specification_version: version, max_paths_per_invoke: 4_u16)
+
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_SPECIFICATION_VERSION).should eq(version)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_MAX_PATHS_PER_INVOKE).should eq(4_u16)
+    end
+
+    it "rejects zero capacity and configuration versions" do
+      expect_raises(Matter::ConfigurationError) { build(Matter::Cluster::BasicInformation, 0, max_paths_per_invoke: 0_u16) }
+      expect_raises(Matter::ConfigurationError) { build(Matter::Cluster::BasicInformation, 0, configuration_version: 0_u32) }
     end
   end
 

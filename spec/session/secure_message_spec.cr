@@ -131,4 +131,27 @@ describe Matter::Session::SecureMessage do
     restored.check_peer_message_counter(100_u32).stale?.should be_true
     restored.check_peer_message_counter(101_u32).accept?.should be_true
   end
+
+  it "restores authenticated CASE subjects including CATs" do
+    session = wire_session
+    subjects = [0x1234_u64, 0xFFFF_FFFD_FFFF_0001_u64]
+    session.peer_subject_ids = subjects
+    session.peer_icac = Bytes[1, 2, 3]
+
+    restored = Matter::Session::SecureContext.from_record(
+      Matter::Session::SecureContext::SessionRecord.from_document(session.to_record.to_document)
+    )
+    restored.peer_subject_ids.should eq(subjects)
+    restored.peer_icac.should eq(Bytes[1, 2, 3])
+
+    # Existing records have no peer_subject_ids field.
+    legacy_document = session.to_record.to_document
+    legacy_document.delete("peer_subject_ids")
+    legacy_document.delete("peer_icac")
+    legacy = Matter::Session::SecureContext.from_record(
+      Matter::Session::SecureContext::SessionRecord.from_document(legacy_document)
+    )
+    legacy.peer_subject_ids.should be_empty
+    legacy.peer_icac.should be_nil
+  end
 end

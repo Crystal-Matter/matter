@@ -25,6 +25,9 @@ module ChipTool
 
       storage_dir = ENV[STORAGE_DIR_ENV]? || File.join(Dir.current, DEFAULT_STORAGE_DIR)
       timeout = DEFAULT_TIMEOUT
+      fabric_id = nil.as(UInt64?)
+      root_public_key = nil.as(Bytes?)
+      controller_node_id = nil.as(UInt64?)
 
       i = 0
       while i < args.size
@@ -43,11 +46,52 @@ module ChipTool
           args.delete_at(i)
           args.delete_at(i)
           next
+        when "--fabric-id"
+          value = args[i + 1]?
+          raise ArgumentError.new("missing value for --fabric-id") unless value
+          fabric_id = parse_node_id(value)
+          args.delete_at(i)
+          args.delete_at(i)
+          next
+        when "--root-public-key"
+          value = args[i + 1]?
+          raise ArgumentError.new("missing value for --root-public-key") unless value
+          root_public_key = value.hexbytes
+          raise ArgumentError.new("root public key must be a 65-byte uncompressed P-256 point") unless root_public_key.size == 65 && root_public_key[0] == 0x04_u8
+          args.delete_at(i)
+          args.delete_at(i)
+          next
+        when "--controller-node-id"
+          value = args[i + 1]?
+          raise ArgumentError.new("missing value for --controller-node-id") unless value
+          controller_node_id = parse_node_id(value)
+          args.delete_at(i)
+          args.delete_at(i)
+          next
         end
         i += 1
       end
 
-      {new(storage_dir, timeout), args}
+      if (root_public_key || controller_node_id) && fabric_id.nil?
+        raise ArgumentError.new("--root-public-key and --controller-node-id require --fabric-id")
+      end
+
+      context = new(storage_dir, timeout)
+      if id = fabric_id
+        state = context.state_store.load
+        state.select_fabric(id, root_public_key, controller_node_id)
+        context.state_store.save(state)
+      end
+      {context, args}
+    end
+
+    private def self.parse_node_id(value : String) : UInt64
+      id = if value.starts_with?("0x") || value.starts_with?("0X")
+             value[2..].to_u64?(16)
+           else
+             value.to_u64?
+           end
+      id || raise ArgumentError.new("invalid fabric or controller Node ID: #{value}")
     end
   end
 end

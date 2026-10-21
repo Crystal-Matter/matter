@@ -43,21 +43,11 @@ module Matter
 
         if fabric = state.fabric
           if state.commissioner_node_id != fabric.controller_node_id
-            state = State.new(
-              fabric: state.fabric,
-              nodes: state.nodes,
-              commissioner_node_id: fabric.controller_node_id,
-              unsecured_message_counter: state.unsecured_message_counter
-            )
+            state.commissioner_node_id = fabric.controller_node_id
             dirty = true
           end
         elsif state.commissioner_node_id == 0_u64
-          state = State.new(
-            fabric: state.fabric,
-            nodes: state.nodes,
-            commissioner_node_id: random_nonzero_u64,
-            unsecured_message_counter: state.unsecured_message_counter
-          )
+          state.commissioner_node_id = random_nonzero_u64
           dirty = true
         end
 

@@ -59,6 +59,7 @@ module Matter
       # Request is for an event the cluster instance does not support
       # (Matter Core 8.10.1, another general code inside the 0xC0-0xFF range)
       UnsupportedEvent = 0xC7
+      FailsafeRequired = 0xCA
 
       # Cluster-specific range 0xC0-0xFF
       # Applications can define cluster-specific error codes in this range
@@ -93,6 +94,7 @@ module Matter
         when Busy                  then "Busy"
         when UnsupportedCluster    then "Unsupported Cluster"
         when UnsupportedEvent      then "Unsupported Event"
+        when FailsafeRequired      then "Failsafe Required"
         else                            "Unknown Status (#{Hex.u8(value)})"
         end
       end

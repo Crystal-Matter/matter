@@ -1,0 +1,493 @@
+require "../spec_helper"
+
+alias Datastore = Matter::Cluster::JointFabricDatastore
+
+private def jf_cat_subject(cat : UInt16, version : UInt16) : UInt64
+  Matter::DataType::NodeId.from_case_authenticated_tag(
+    Matter::DataType::CaseAuthenticatedTag.create(cat, version)).id
+end
+
+describe Matter::Cluster::JointFabricDatastore do
+  it "publishes the Matter 1.6 Datastore command and attribute schema" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.cluster_revision.should eq(1_u16)
+    cluster.attributes.size.should eq(14)
+    cluster.commands.size.should eq(20)
+    cluster.get_attribute_metadata(Datastore::ATTR_NODE_ACL_LIST).as(Matter::Cluster::AttributeMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+  end
+
+  it "limits a bound datastore to its CASE fabric" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.joint_fabric_index = 2_u8
+    cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 1_u8).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 2_u8).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    cluster.request_is_case_session = true
+    cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 2_u8).should be_a(TLV::Any)
+    request = Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")
+    cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, request.to_tlv(nil), fabric_index: 2_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, request.to_tlv(nil), is_case_session: true, fabric_index: 2_u8)
+      .as(Matter::InteractionModel::Status).success?.should be_true
+  end
+
+  it "rejects wire reads and commands before the Datastore is bound to a fabric" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.request_is_case_session = true
+    cluster.read_attribute(Datastore::ATTR_GROUP_LIST, 1_u8).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    request = Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")
+    cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    cluster.node_list.should be_empty
+  end
+
+  it "permits only GroupList to a PASE JCM reader while its gate is active" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.joint_fabric_index = 1_u8
+    armed = false
+    cluster.allow_jcm_pase_group_list = -> { armed }
+    cluster.read_attribute(Datastore::ATTR_GROUP_LIST).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    armed = true
+    cluster.read_attribute(Datastore::ATTR_GROUP_LIST).should be_a(TLV::Any)
+    cluster.read_attribute(Datastore::ATTR_ADMIN_LIST).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    cluster.read_attribute(Datastore::ATTR_GROUP_LIST, 2_u8).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+  end
+
+  it "isolates JCM GroupList reads to the PASE session that armed the fail-safe" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.joint_fabric_index = 1_u8
+    owner_session_id = 7_u64
+    cluster.allow_jcm_pase_group_list = -> { cluster.request_session_id == owner_session_id }
+    clusters = Hash(Tuple(UInt16, UInt32), Matter::Cluster::Base).new
+    clusters[{1_u16, Datastore::CLUSTER_ID}] = cluster
+    path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Datastore::CLUSTER_ID, attribute: Datastore::ATTR_GROUP_LIST)
+
+    owner = Matter::Protocol::IMHandler.read_attributes([path], clusters, session_id: owner_session_id)
+    owner.first.attribute_data.should_not be_nil
+    other = Matter::Protocol::IMHandler.read_attributes([path], clusters, session_id: 8_u64)
+    other.first.attribute_data.should be_nil
+    other.first.attribute_status.as(Matter::InteractionModel::AttributeStatusIB).status.status
+      .should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
+  end
+
+  it "adds and removes nodes with persisted state" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
+    wire_request = Datastore::AddPendingNodeRequest.new(43_u64, "Hall")
+    cluster.joint_fabric_index = 1_u8
+    cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, wire_request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      .as(Matter::InteractionModel::Status).success?.should be_true
+    cluster.node_list.first.node_id.should eq(42_u64)
+    restored = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    restored.node_list.first.friendly_name.should eq("Kitchen")
+    restored.remove_node(Datastore::RemoveNodeRequest.new(42_u64)).success?.should be_true
+    restored.node_list.map(&.node_id).should eq([43_u64])
+  end
+
+  it "round trips a typed group and rejects duplicate group ids" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    request = Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)
+    parsed = Datastore::AddGroupRequest.from_tlv(request.to_tlv(nil))
+    parsed.group_id.should eq(1_u16)
+    cluster.add_group(parsed).success?.should be_true
+    cluster.add_group(parsed).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.add_group(Datastore::AddGroupRequest.new(2_u16, "Bad CAT", nil, 0_u16, 1_u16,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.update_group(Datastore::UpdateGroupRequest.new(1_u16, nil, nil, 0_u16, nil, nil))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+  end
+
+  it "accepts an unprovisioned but valid group key set reference as TC_JFDS_2_3 does" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", 11_u16, 1_u16, 1_u16, privilege)).success?.should be_true
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, "Updated", 12_u16, 1_u16, 2_u16, privilege)).success?.should be_true
+    cluster.group_list.first.group_key_set_id.should eq(12_u16)
+    cluster.remove_group(Datastore::RemoveGroupRequest.new(10_u16)).success?.should be_true
+  end
+
+  it "enforces GroupCAT version and privileged group key set constraints" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    manage = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Manage
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Invalid version", nil, nil, 1_u16, view))
+      .status.should eq(constraint)
+    cluster.add_group(Datastore::AddGroupRequest.new(11_u16, "Invalid key", 10_u16, nil, nil, manage))
+      .status.should eq(constraint)
+
+    cluster.add_group(Datastore::AddGroupRequest.new(12_u16, "Valid", 10_u16, nil, nil, view)).success?.should be_true
+    cluster.update_group(Datastore::UpdateGroupRequest.new(12_u16, nil, nil, nil, 1_u16, nil))
+      .status.should eq(constraint)
+    cluster.update_group(Datastore::UpdateGroupRequest.new(12_u16, nil, nil, nil, nil, manage))
+      .status.should eq(constraint)
+    cluster.group_list.first.group_permission.should eq(view)
+  end
+
+  it "persists an inferred association for a single CASE CAT subject" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, 1_u16, 2_u16, view)).success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16)], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    cluster.node_acl_list.first.associated_group_id.should eq(10_u16)
+    Datastore::DatastoreACLEntryStruct.from_slice(cluster.node_acl_list.first.to_slice).associated_group_id.should be_nil
+    restored = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    restored.node_acl_list.first.associated_group_id.should eq(10_u16)
+  end
+
+  it "rotates the bound CAT subject and privilege while keeping the prior ACL for delivery" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    operate = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, 1_u16, 1_u16, view)).success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16)], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    cluster.complete_acl(42_u64, cluster.node_acl_list.first.list_id).should be_true
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 2_u16, 2_u16, operate)).success?.should be_true
+    updated = cluster.node_acl_list.first
+    updated.acl_entry.subjects.should eq([jf_cat_subject(2_u16, 2_u16)])
+    updated.acl_entry.privilege.should eq(operate)
+    updated.prior_acl_entry.try(&.subjects).should eq([jf_cat_subject(1_u16, 1_u16)])
+    updated.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+    cluster.group_list.first.group_cat.should eq(2_u16)
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 3_u16, 3_u16, view)).success?.should be_true
+    updated = cluster.node_acl_list.first
+    updated.acl_entry.subjects.should eq([jf_cat_subject(3_u16, 3_u16)])
+    updated.prior_acl_entry.try(&.subjects).should eq([jf_cat_subject(1_u16, 1_u16)])
+  end
+
+  it "allows explicit binding of a uniquely attributable legacy ACL" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, 1_u16, 2_u16, view)).success?.should be_true
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16)], nil)
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    cluster.node_acl_list = [Datastore::DatastoreACLEntryStruct.new(42_u64, 7_u16, acl, committed)]
+    cluster.associate_acl_with_group(42_u64, 7_u16, 10_u16).success?.should be_true
+    cluster.node_acl_list.first.associated_group_id.should eq(10_u16)
+    cluster.associate_acl_with_group(42_u64, 7_u16, 10_u16).success?.should be_true
+    cluster.associate_acl_with_group(42_u64, 7_u16, 11_u16)
+      .status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+  end
+
+  it "rejects malformed group binding targets before staging delivery" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
+    cluster.record_endpoint(42_u64, 1_u16, "Endpoint")
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+    [
+      Datastore::DatastoreBindingTargetStruct.new(group: 0_u16),
+      Datastore::DatastoreBindingTargetStruct.new(group: 1_u16, endpoint: 2_u16),
+    ].each do |binding|
+      cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, binding))
+        .status.should eq(constraint)
+    end
+    cluster.endpoint_binding_list.should be_empty
+  end
+
+  it "uses target snapshots to prune stale committed records while preserving pending work" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
+    cluster.record_endpoint(42_u64, 1_u16, "Endpoint")
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    cluster.endpoint_group_id_list = [
+      Datastore::DatastoreEndpointGroupIDEntryStruct.new(42_u64, 1_u16, 1_u16, committed),
+      Datastore::DatastoreEndpointGroupIDEntryStruct.new(42_u64, 1_u16, 2_u16, pending),
+    ]
+    cluster.node_key_set_list = [
+      Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 1_u16, committed),
+      Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 2_u16, pending),
+    ]
+
+    cluster.reconcile_node_groups(42_u64, 1_u16, [] of UInt16).success?.should be_true
+    cluster.reconcile_node_key_sets(42_u64, [] of UInt16).success?.should be_true
+    cluster.endpoint_group_id_list.map(&.group_id).should eq([2_u16])
+    cluster.node_key_set_list.map(&.group_key_set_id).should eq([2_u16])
+  end
+
+  it "refuses ambiguous Group CAT ACL rewrites without mutating state" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "First", nil, 1_u16, 1_u16, view)).success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(11_u16, "Second", nil, 1_u16, 2_u16, view)).success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16)], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    cluster.node_acl_list.first.associated_group_id.should be_nil
+    before = cluster.save_state
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 2_u16, 2_u16, nil))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.save_state.should eq(before)
+  end
+
+  it "recovers a unique ACL association after wire-only Anchor transfer" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, 1_u16, 1_u16, view)).success?.should be_true
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16)], nil)
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    cluster.node_acl_list = [Datastore::DatastoreACLEntryStruct.from_slice(
+      Datastore::DatastoreACLEntryStruct.new(42_u64, 7_u16, acl, committed).to_slice)]
+    cluster.node_acl_list.first.associated_group_id.should be_nil
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 2_u16, 2_u16, nil)).success?.should be_true
+    cluster.node_acl_list.first.associated_group_id.should eq(10_u16)
+    cluster.node_acl_list.first.acl_entry.subjects.should eq([jf_cat_subject(2_u16, 2_u16)])
+  end
+
+  it "rejects multi-subject ACLs and a destination CAT shared with another group" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "First", nil, 1_u16, 1_u16, view)).success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(11_u16, "Second", nil, 2_u16, 1_u16, view)).success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16), 42_u64], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    cluster.node_acl_list.first.associated_group_id.should be_nil
+    before = cluster.save_state
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 3_u16, 2_u16, nil))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.save_state.should eq(before)
+
+    single = Datastore::DatastoreAccessControlEntryStruct.new(view,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [jf_cat_subject(1_u16, 1_u16)], nil)
+    cluster.node_acl_list = [Datastore::DatastoreACLEntryStruct.new(42_u64, 7_u16, single,
+      Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8))]
+    before = cluster.save_state
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 2_u16, 2_u16, nil))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.save_state.should eq(before)
+  end
+
+  it "protects the reserved Administrator and Anchor CAT groups" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer
+    cluster.seed_reserved_cat_group(1_u16, "Admin", 0xFFFF_u16, 1_u16).success?.should be_true
+    cluster.seed_reserved_cat_group(2_u16, "Anchor", 0xFFFE_u16, 1_u16).success?.should be_true
+    cluster.seed_reserved_cat_group(1_u16, "Admin", 0xFFFF_u16, 1_u16).success?.should be_true
+    {0xFFFF_u16, 0xFFFE_u16}.each do |cat|
+      cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Reserved", nil, cat, 1_u16, privilege))
+        .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    end
+    {1_u16, 2_u16}.each do |id|
+      cluster.update_group(Datastore::UpdateGroupRequest.new(id, "Changed", nil, 1_u16, 2_u16, privilege))
+        .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.remove_group(Datastore::RemoveGroupRequest.new(id))
+        .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    end
+    cluster.group_list.map(&.friendly_name).should eq(["Admin", "Anchor"])
+  end
+
+  it "validates key set epochs and keeps ACL list identifiers unique" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    key = Datastore::DatastoreGroupKeySetStruct.new(1_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0xAA_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key)).success?.should be_true
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen"))
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [42_u64], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    cluster.node_acl_list.map(&.list_id).should eq([0_u16, 1_u16])
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 42_u64, endpoint: 1_u16)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, binding)).success?.should be_true
+    cluster.endpoint_binding_list.first.list_id.should eq(2_u16)
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+    cluster.complete_acl(42_u64, 0_u16).should be_true
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    cluster.remove_acl_from_node(Datastore::RemoveACLFromNodeRequest.new(0_u16, 42_u64)).success?.should be_true
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    cluster.complete_acl(42_u64, 0_u16).should be_true
+    cluster.node_acl_list.map(&.list_id).should eq([1_u16])
+  end
+
+  it "reserves key set zero when an Anchor Datastore is initialized" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor").success?.should be_true
+    cluster.group_key_set_list.map(&.group_key_set_id).should eq([0_u16])
+    reserved = cluster.group_key_set_list.first
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(reserved)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(reserved)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(0_u16)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    invalid = Datastore::DatastoreGroupKeySetStruct.new(UInt16::MAX,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      nil, nil, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(invalid)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(UInt16::MAX)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+  end
+
+  it "allows removing a key set when every node reference is DeletePending" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    key = Datastore::DatastoreGroupKeySetStruct.new(10_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 1_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key)).success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", 10_u16, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)).success?.should be_true
+    cluster.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 10_u16,
+      Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8))]
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(10_u16)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+
+    cluster.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 10_u16,
+      Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8))]
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(10_u16)).success?.should be_true
+    cluster.group_key_set_list.should be_empty
+  end
+
+  it "marks affected node key sets Pending when key material changes" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    key = Datastore::DatastoreGroupKeySetStruct.new(10_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 1_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key)).success?.should be_true
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
+    cluster.node_key_set_list = [
+      Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 10_u16, committed),
+      Datastore::DatastoreNodeKeySetEntryStruct.new(43_u64, 10_u16, deleting),
+      Datastore::DatastoreNodeKeySetEntryStruct.new(44_u64, 11_u16, committed),
+    ]
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(key)).success?.should be_true
+    cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    updated = Datastore::DatastoreGroupKeySetStruct.new(10_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 2_u8), 2_u64, nil, nil, nil, nil)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(updated)).success?.should be_true
+    cluster.node_key_set_list.map(&.status_entry.state).should eq([
+      Datastore::DatastoreStateEnum::Pending,
+      Datastore::DatastoreStateEnum::DeletePending,
+      Datastore::DatastoreStateEnum::Committed,
+    ])
+  end
+
+  it "marks an unused previous key set DeletePending after UpdateGroup" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Light"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", 10_u16, nil, nil, privilege))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 10_u16))
+    cluster.node_key_set_list.first.status_entry = Datastore::DatastoreStatusEntryStruct.new(
+      Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, 11_u16, nil, nil, nil)).success?.should be_true
+    old_key = cluster.node_key_set_list.find(&.group_key_set_id.==(10_u16)).as(Datastore::DatastoreNodeKeySetEntryStruct)
+    new_key = cluster.node_key_set_list.find(&.group_key_set_id.==(11_u16)).as(Datastore::DatastoreNodeKeySetEntryStruct)
+    old_key.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    new_key.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+  end
+
+  it "retains group membership until device removal is confirmed" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    cluster.add_group(Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16))
+    cluster.remove_group(Datastore::RemoveGroupRequest.new(1_u16)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16)).success?.should be_true
+    cluster.remove_group(Datastore::RemoveGroupRequest.new(1_u16)).success?.should be_true
+    cluster.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    cluster.complete_group_membership(42_u64, 1_u16, 1_u16).should be_true
+    cluster.endpoint_group_id_list.should be_empty
+  end
+
+  it "rearms failed deletions when the node is refreshed" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    cluster.add_group(Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16))
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16))
+    cluster.remove_group(Datastore::RemoveGroupRequest.new(1_u16))
+    cluster.complete_group_membership(42_u64, 1_u16, 1_u16, 1_u8)
+    failed = cluster.endpoint_group_id_list.first.status_entry
+    failed.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    failed.failure_code.should eq(1_u8)
+
+    cluster.refresh_node(Datastore::RefreshNodeRequest.new(42_u64)).success?.should be_true
+    retried = cluster.endpoint_group_id_list.first.status_entry
+    retried.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    retried.failure_code.should eq(0_u8)
+  end
+
+  it "freezes a committed Datastore as DeletePending during Anchor transfer" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor").success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(43_u64, "Light"))
+    cluster.begin_anchor_transfer.should be_false
+    cluster.complete_node(43_u64)
+    cluster.begin_anchor_transfer.should be_true
+    cluster.status.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    cluster.add_group(Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)).status.should eq(Matter::InteractionModel::StatusCode::Busy)
+    cluster.refresh_node(Datastore::RefreshNodeRequest.new(43_u64)).status.should eq(Matter::InteractionModel::StatusCode::Busy)
+    restored = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    restored.status.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+  end
+end
+
+describe Matter::Cluster::JointFabricAdministrator do
+  it "publishes the Matter 1.6 Administrator schema" do
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.cluster_revision.should eq(1_u16)
+    cluster.attributes.size.should eq(1)
+    cluster.commands.size.should eq(6)
+    expect_raises(Matter::ConfigurationError, /1\.\.254/) { cluster.administrator_fabric_index = 0_u8 }
+    expect_raises(Matter::ConfigurationError, /1\.\.254/) { cluster.administrator_fabric_index = 255_u8 }
+    cluster.administrator_fabric_index = 1_u8
+    cluster.administrator_fabric_index.should eq(1_u8)
+    cluster.invoke_command(Matter::Cluster::JointFabricAdministrator::CMD_ICACCSR_REQUEST)
+      .as(Matter::InteractionModel::Status).success?.should be_false
+  end
+end
+
+describe "joint commissioning advertisement" do
+  it "uses CM=3 and the anchor/datastore JF bitmap" do
+    cluster = Matter::Cluster::AdministratorCommissioning.new(Matter::DataType::EndpointNumber.new(0_u16))
+    advertised_mode = nil.as(Matter::MDNS::CommissioningMode?)
+    cluster.on_start_commissioning_advertising = ->(_discriminator : UInt16?, mode : Matter::MDNS::CommissioningMode) do
+      advertised_mode = mode
+    end
+    request = Matter::Cluster::AdministratorCommissioning::OpenCommissioningWindowRequest.new(
+      180_u16, Bytes.new(97), 3840_u16, 1000_u32, Bytes.new(16))
+    cluster.open_commissioning_window(request, 1_u8, 0xFFF1_u16, joint: true)
+    advertised_mode.should eq(Matter::MDNS::CommissioningMode::Joint)
+    cluster.window.close
+
+    roles = Matter::MDNS::JointFabricRole::Administrator |
+            Matter::MDNS::JointFabricRole::Anchor |
+            Matter::MDNS::JointFabricRole::Datastore
+    info = Matter::MDNS::CommissioningInfo.new("Anchor", 0xFFF1_u16, 0x0130_u16,
+      3840_u16, Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR,
+      commissioning_mode: Matter::MDNS::CommissioningMode::Joint,
+      joint_fabric_role: roles)
+    info.to_txt_records["CM"].should eq("3")
+    info.to_txt_records["JF"].should eq("14")
+  end
+end

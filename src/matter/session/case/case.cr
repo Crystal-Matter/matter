@@ -328,6 +328,7 @@ module Matter
           @ipk : Bytes,
           @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
           @root_public_key : Bytes? = nil,
+          @root_certificate : Bytes? = nil,
         )
           @peer_ephemeral_key = nil
           @shared_secret = nil
@@ -604,7 +605,7 @@ module Matter
             raise Matter::AuthenticationError.new("CASE: no fabric root to check the peer certificate against")
           end
 
-          Crypto::MatterCertificate::Validation.verify_chain(peer_noc, peer_icac, root)
+          Crypto::MatterCertificate::Validation.verify_chain(peer_noc, peer_icac, root, @root_certificate)
         end
 
         # Derive session keys after successful CASE

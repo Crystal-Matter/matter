@@ -11,6 +11,7 @@ module ChipTool
 
       io.puts "Usage:"
       io.puts "  crystal run examples/chip-tool.cr -- <cluster|command-set> <command> [args...] [--storage-directory <dir>] [--timeout <seconds>]"
+      io.puts "  Optional fabric selection: --fabric-id <id> [--root-public-key <hex>] [--controller-node-id <id>]"
       io.puts
       io.puts "Command Sets / Clusters:"
 

@@ -85,6 +85,10 @@ module Matter
     # This is the full TLV-encoded certificate, not just the public key
     property root_cert : Bytes?
 
+    # Vendor ID verification metadata (Matter 1.6 Operational Credentials).
+    property vid_verification_statement : Bytes?
+    property vvsc : Bytes?
+
     # When this fabric was created
     property created_at : Time
 
@@ -112,6 +116,8 @@ module Matter
       @label : String = "",
       @intermediate_cert : Bytes? = nil,
       @root_cert : Bytes? = nil,
+      @vid_verification_statement : Bytes? = nil,
+      @vvsc : Bytes? = nil,
       @created_at : Time = Time.utc,
       @last_used_at : Time = Time.utc,
       cats : Array(DataType::CaseAuthenticatedTag) = [] of DataType::CaseAuthenticatedTag,
@@ -160,6 +166,12 @@ module Matter
     # Case Authenticated Tags carried by this fabric's NOC (up to 3).
     def cats : Array(DataType::CaseAuthenticatedTag)
       @cats ||= @cat_values.map { |value| DataType::CaseAuthenticatedTag.new(value) }
+    end
+
+    def cats=(values : Array(DataType::CaseAuthenticatedTag)) : Array(DataType::CaseAuthenticatedTag)
+      raise ArgumentError.new("cats must have <= #{MAX_CATS} entries") if values.size > MAX_CATS
+      @cat_values = values.map(&.value)
+      @cats = values
     end
 
     # Update the last used timestamp

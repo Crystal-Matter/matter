@@ -100,6 +100,7 @@ module Matter
       getter discriminator : UInt16?
       getter iterations : UInt32?
       getter salt : Bytes?
+      getter? joint_window : Bool = false
 
       # Accepted CommissioningTimeout range
       property minimum_timeout : UInt16
@@ -166,12 +167,14 @@ module Matter
         salt : Bytes,
         admin_fabric_index : UInt8?,
         admin_vendor_id : UInt16?,
+        joint : Bool = false,
       ) : Nil
         Log.info { "OpenCommissioningWindow: timeout=#{timeout_seconds}s, discriminator=#{discriminator}" }
 
         validate_pake_parameters(verifier, iterations, salt)
         validate_timeout(timeout_seconds)
         ensure_closed
+        @joint_window = joint
 
         open_window(
           timeout_seconds: timeout_seconds,
@@ -276,6 +279,7 @@ module Matter
         @discriminator = nil
         @iterations = nil
         @salt = nil
+        @joint_window = false
 
         if callback = @on_stop_pase_server
           callback.call
@@ -393,7 +397,7 @@ module Matter
                when WindowStatus::BasicWindowOpen
                  MDNS::CommissioningMode::Basic
                when WindowStatus::EnhancedWindowOpen
-                 MDNS::CommissioningMode::Enhanced
+                 @joint_window ? MDNS::CommissioningMode::Joint : MDNS::CommissioningMode::Enhanced
                else
                  MDNS::CommissioningMode::Disabled
                end

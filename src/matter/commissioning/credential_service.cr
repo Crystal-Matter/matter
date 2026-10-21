@@ -7,6 +7,7 @@ require "../fabric_table"
 require "../crypto/key"
 require "../crypto/crypto"
 require "../crypto/certificate"
+require "../crypto/certificate_validation"
 require "../certificate/attestation_certificate_manager"
 require "../certificate/certification_declaration"
 require "../interaction_model/status_code"
@@ -278,6 +279,12 @@ module Matter
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Invalid root certificate format")
         end
 
+        begin
+          Crypto::MatterCertificate::Validation.verify_root(root_certificate)
+        rescue ex : Matter::AuthenticationError
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Invalid root certificate: #{ex.message}")
+        end
+
         @target.trusted_root_certificates << root_certificate
         @pending.root_cert_set = true
         Log.info { "AddTrustedRootCertificate succeeded, root_cert_set=true" }
@@ -364,10 +371,14 @@ module Matter
         # same failsafe. Without this the node id and CASE authenticated tags
         # it names are whatever the commissioner chose to write.
         begin
-          Crypto::MatterCertificate::Validation.verify_chain(noc, icac, root_public_key)
+          Crypto::MatterCertificate::Validation.verify_chain(noc, icac, root_public_key, root_cert)
         rescue ex : Matter::AuthenticationError
           Log.error(exception: ex) { "AddNOC: NOC does not chain to the trusted root" }
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "NOC is not issued by the trusted root: #{ex.message}")
+        end
+
+        unless Crypto::MatterCertificate.public_key_from_tlv(noc) == @pending_noc_key.as(Crypto::Key).public_key
+          return NocOutcome.new(NocStatus::InvalidPublicKey, debug_text: "NOC public key does not match CSR")
         end
 
         fabric = @fabric_table.add_fabric_auto_index(
@@ -450,10 +461,24 @@ module Matter
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failed to parse NOC: #{ex.message}")
         end
 
+        begin
+          Crypto::MatterCertificate::Validation.verify_chain(noc, icac, fabric.root_public_key, fabric.root_cert)
+        rescue ex : Matter::AuthenticationError
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "NOC is not issued by the fabric root: #{ex.message}")
+        end
+
+        unless Crypto::MatterCertificate.public_key_from_tlv(noc) == @pending_noc_key.as(Crypto::Key).public_key
+          return NocOutcome.new(NocStatus::InvalidPublicKey, debug_text: "NOC public key does not match CSR")
+        end
+
         fabric.operational_cert = noc
         fabric.intermediate_cert = icac
         fabric.operational_key = @pending_noc_key.as(Crypto::Key)
         fabric.node_id = node_id
+        fabric.cats = Crypto::MatterCertificate.subject_ids_from_tlv(noc).compact_map do |subject_id|
+          cat_node = DataType::NodeId.new(subject_id)
+          cat_node.extract_as_case_authenticated_tag if cat_node.case_authenticated_tag?
+        end
 
         @fabric_table.update_fabric(fabric)
 
