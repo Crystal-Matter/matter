@@ -115,11 +115,44 @@ module Matter
         extend self
 
         def decode_packet(data : Slice(UInt8)) : Packet
+          decode_packet_internal(data, false)
+        end
+
+        # Deobfuscates a group packet header using a candidate privacy key.
+        # The returned packet is unauthenticated; callers must verify its
+        # AES-CCM MIC with the matching operational group key before use.
+        def decode_private_packet(data : Bytes, privacy_key : Bytes) : Packet
+          raise Matter::CodecError.new("Private packet is too short") if data.size < 8 + MessagePrivacy::MIC_LENGTH
+          flags = data[FLAGS_OFFSET]
+          security_flags = data[SECURITY_FLAGS_OFFSET]
+          unless (security_flags & SecurityFlag::HasPrivacyEnhancements.value) != 0 &&
+                 (security_flags & SecurityFlag::SessionTypeMask.value) == SessionType::Group.value
+            raise Matter::CodecError.new("Privacy requires a group packet")
+          end
+          has_source = (flags & PacketHeaderFlag::HasSourceNodeId.value) != 0
+          has_group = (flags & PacketHeaderFlag::HasDestGroupId.value) != 0
+          has_node = (flags & PacketHeaderFlag::HasDestNodeId.value) != 0
+          if !has_source || !has_group || has_node
+            raise Matter::CodecError.new("Private group packet requires source and group IDs")
+          end
+          header_length = 8 + 8 + 2
+          raise Matter::CodecError.new("Private packet has no MIC") if data.size < header_length + MessagePrivacy::MIC_LENGTH
+
+          session_id = IO::ByteFormat::LittleEndian.decode(UInt16, data[SESSION_ID_OFFSET, 2])
+          mic = data[data.size - MessagePrivacy::MIC_LENGTH, MessagePrivacy::MIC_LENGTH]
+          privacy_nonce = MessagePrivacy.nonce(session_id, mic)
+          region = MessagePrivacy.obfuscate(privacy_key, data[MESSAGE_COUNTER_OFFSET, header_length - MESSAGE_COUNTER_OFFSET], privacy_nonce)
+          clear = data.dup
+          clear[MESSAGE_COUNTER_OFFSET, region.size].copy_from(region)
+          decode_packet_internal(clear, true)
+        end
+
+        private def decode_packet_internal(data : Slice(UInt8), allow_private : Bool) : Packet
           io = IO::Memory.new
 
           io.write(data)
           io.rewind
-          header = decode_packet_header(io)
+          header = decode_packet_header(io, allow_private: allow_private)
 
           header_bytes = data[0, io.pos.to_i].dup
           Packet.new(header, io.getb_to_end, header_bytes)
@@ -153,10 +186,30 @@ module Matter
         end
 
         def encode_packet(packet : Packet) : Slice(UInt8)
+          if packet.header.privacy_enhancements?
+            raise Matter::CodecError.new("Use encode_private_packet for a privacy-enhanced packet")
+          end
           io = IO::Memory.new
           encode_packet_header(packet.header, io)
 
           Slice.join([io.rewind.to_slice, packet.payload])
+        end
+
+        # The payload must already be AES-CCM encrypted and include its MIC.
+        def encode_private_packet(packet : Packet, privacy_key : Bytes) : Bytes
+          header = packet.header
+          if !header.session_type.group? || !header.privacy_enhancements? ||
+             !header.source_node_id || !header.destination_group_id || header.destination_node_id
+            raise Matter::CodecError.new("Privacy requires a group packet with source and group IDs")
+          end
+          raise Matter::CodecError.new("Private packet has no MIC") if packet.payload.size < MessagePrivacy::MIC_LENGTH
+          clear_header = encode_packet_header(header)
+          mic = packet.payload[packet.payload.size - MessagePrivacy::MIC_LENGTH, MessagePrivacy::MIC_LENGTH]
+          privacy_nonce = MessagePrivacy.nonce(header.session_id, mic)
+          region = MessagePrivacy.obfuscate(privacy_key, clear_header[MESSAGE_COUNTER_OFFSET, clear_header.size - MESSAGE_COUNTER_OFFSET], privacy_nonce)
+          wire_header = clear_header.dup
+          wire_header[MESSAGE_COUNTER_OFFSET, region.size].copy_from(region)
+          Slice.join([wire_header, packet.payload])
         end
 
         def encode_packet_header(packet_header : PacketHeader, io : IO::Memory, byte_format : IO::ByteFormat = IO::ByteFormat::LittleEndian)
@@ -193,7 +246,7 @@ module Matter
           byte_format.encode(UInt32.new(payload_header.acknowledged_message_id.as(UInt32)), io) if payload_header.acknowledged_message_id
         end
 
-        private def decode_packet_header(io : IO::Memory, byte_format : IO::ByteFormat = IO::ByteFormat::LittleEndian) : PacketHeader
+        private def decode_packet_header(io : IO::Memory, byte_format : IO::ByteFormat = IO::ByteFormat::LittleEndian, allow_private : Bool = false) : PacketHeader
           flags = io.read_bytes(UInt8, byte_format)
           version = (flags & PacketHeaderFlag::VersionMask.value) >> VERSION_SHIFT
 
@@ -217,7 +270,7 @@ module Matter
           raise Matter::CodecError.new("Unsupported session type #{session_type}") if session_type != SessionType::Group.value && session_type != SessionType::Unicast.value
 
           has_privacy_enhancements = (security_flags & SecurityFlag::HasPrivacyEnhancements.value) != 0
-          raise Matter::CodecError.new("Privacy enhancements not supported") if has_privacy_enhancements
+          raise Matter::CodecError.new("Privacy key required") if has_privacy_enhancements && !allow_private
 
           is_control_message = (security_flags & SecurityFlag::IsControlMessage.value) != 0
           # Control messages are valid - used for MRP standalone ACKs and other control functions

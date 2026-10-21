@@ -89,6 +89,22 @@ answered from cache, and writes it with `UDPTransport#send_raw`.
 message. There is one definition of the authenticated data — the complete packet header, including
 the optional node ids — used by both `encode` and `decode`.
 
+Groupcast is not yet routed through this inbound path. The codec implements the
+Matter 1.6 §§3.7/4.9 group privacy transform: `MessagePrivacy` derives the
+privacy key, builds the MIC-based nonce, and obfuscates the counter and optional
+IDs. `MessageCodec::Base.encode_private_packet` requires an already encrypted
+AES-CCM payload and MIC. `decode_private_packet` recovers only a **candidate**
+header; its fields must be authenticated with the operational group key and
+clear-header AAD before any replay or application processing. The ordinary
+codec rejects private packets without an explicit privacy key.
+
+To complete groupcast, the session layer still needs group key lookup across
+all session-ID collisions, AES-CCM validation, per-source replay windows and
+message counter synchronization. Transport and device runtime then need IPv6
+multicast membership, outbound group counters persisted across restart, and
+group interaction routing. No group message is accepted or emitted through the
+runtime until those pieces are connected.
+
 ### Who owns what in the protocol layer
 
 `MessageHandler` is 364 lines and does nothing but route. It constructs and holds:
