@@ -47,7 +47,9 @@ describe "matter_level_control example" do
   end
 
   it "ignores ordinary level commands while off unless ExecuteIfOff is set" do
-    expect_success(device.invoke("levelcontrol", "move-to-level", ["255", "0", "0", "0"]))
+    # A preceding groupcast test may leave the default Options bit enabled.
+    # Override it per command so this assertion is independent of test order.
+    expect_success(device.invoke("levelcontrol", "move-to-level", ["255", "0", "1", "0"]))
     read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 1
     expect_success(device.invoke("levelcontrol", "move-to-level", ["255", "0", "1", "1"]))
     read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 254
