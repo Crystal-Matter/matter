@@ -15,7 +15,7 @@ module Matter
     #
     # Note: Wired and Battery features are mutually exclusive.
     #
-    # Specification: Matter 1.4 § 11.7
+    # Specification: Matter 1.6 Power Source cluster
     class PowerSource < Base
       cluster 0x002F, revision: 3
 
@@ -94,6 +94,10 @@ module Matter
       attribute 0x001B, :bat_time_to_full_charge, UInt32, nullable: true, optional: true, requires: :rechargeable, present_if: :bat_time_to_full_charge
       attribute 0x001C, :bat_functional_while_charging, Bool, nullable: true, optional: true, requires: :rechargeable, present_if: :bat_functional_while_charging
 
+      # The endpoint numbers powered by this source are required on every
+      # Power Source instance, regardless of its feature map.
+      attribute 0x001F, :endpoint_list, Array(UInt16), default: [] of UInt16
+
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::Battery,
                      @status : PowerSourceStatus = PowerSourceStatus::Active,
@@ -118,8 +122,12 @@ module Matter
                      # Rechargeable feature
                      @bat_charge_state : BatChargeState? = nil,
                      @bat_time_to_full_charge : UInt32? = nil,
-                     @bat_functional_while_charging : Bool? = nil)
+                     @bat_functional_while_charging : Bool? = nil,
+                     @endpoint_list : Array(UInt16) = [] of UInt16)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+
+        raise ArgumentError.new("endpoint_list must not contain duplicates") unless @endpoint_list.uniq.size == @endpoint_list.size
+        @endpoint_list = @endpoint_list.dup
 
         raise ArgumentError.new("description must be <= #{DESCRIPTION_MAX_LENGTH} characters") if @description.size > DESCRIPTION_MAX_LENGTH
 
@@ -175,6 +183,13 @@ module Matter
         return unless @feature_map.battery?
 
         self.bat_replacement_needed = needed
+      end
+
+      # Update the endpoints supplied by this source when the node's power
+      # mapping changes. Copy the caller's list before storing it.
+      def update_endpoint_list(endpoints : Array(UInt16)) : Nil
+        raise ArgumentError.new("endpoint_list must not contain duplicates") unless endpoints.uniq.size == endpoints.size
+        self.endpoint_list = endpoints.dup
       end
 
       # Check if Battery feature is enabled (for backward compatibility)

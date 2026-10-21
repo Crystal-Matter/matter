@@ -29,6 +29,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   declarations and flags attributes declared optional in Crystal. Its stated
   limits distinguish declaration coverage from protocol conformance.
 
+### Power Source endpoint mapping
+
+- Expose the Matter 1.6 mandatory `EndpointList` (0x001F) on every Power
+  Source instance, and let applications update the powered endpoint mapping.
+
 ### Standard application clusters
 
 - Add Matter 1.6 Switch, Mode Select, and Valve Configuration and Control
