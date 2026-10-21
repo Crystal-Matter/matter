@@ -158,15 +158,20 @@ module Matter
 
       # Registers a freshly established session.
       #
-      # Makes room for it, stores it, migrates any subscriptions from sessions
-      # it supersedes, then persists it and announces it.
-      def establish_session(session : Session::SecureContext) : Nil
+      # Makes room for it, stores it, then persists and announces it. Normally
+      # this also migrates subscriptions from sessions it supersedes. Keep an
+      # in-flight exchange on the earlier peer session alive when a verified
+      # controller CASE session is adopted by this device listener.
+      def establish_session(session : Session::SecureContext, preserve_existing : Bool = false) : Nil
         @mutex.synchronize do
+          if @sessions.has_key?(session.session_id)
+            raise Matter::ProtocolError.new("Secure session ID #{session.session_id} is already in use")
+          end
           enforce_session_limit
           @sessions[session.session_id] = session
 
           # After storing, so the cleanup sees the new session as the replacement.
-          cleanup_superseded_sessions(session)
+          cleanup_superseded_sessions(session) unless preserve_existing
 
           persist(&.session_established(self, session))
           @on_session_established.try(&.call(session))

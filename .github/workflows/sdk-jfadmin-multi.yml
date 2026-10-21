@@ -74,6 +74,8 @@ jobs:
           ninja -C out/host chip-cert
           out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
       - name: Run unmodified TC_JFADMIN_2_2 against Crystal joining JFA
+        id: jfadmin_2_2
+        continue-on-error: true
         timeout-minutes: 25
         env:
           MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
@@ -82,6 +84,8 @@ jobs:
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --case TC_JFADMIN_2_2 --log-dir tmp/interop-jfadmin-multi
       - name: Run unmodified TC_JFADMIN_2_1 against Crystal Anchor JFA
+        id: jfadmin_2_1
+        continue-on-error: true
         timeout-minutes: 25
         env:
           MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
@@ -89,6 +93,15 @@ jobs:
           python3 e2e/interop/sdk_jfadmin_multi.py \
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --case TC_JFADMIN_2_1 --log-dir tmp/interop-jfadmin-multi
+      - name: Require both official JFADMIN cases to pass
+        if: always()
+        env:
+          JFADMIN_2_2: ${{ steps.jfadmin_2_2.outcome }}
+          JFADMIN_2_1: ${{ steps.jfadmin_2_1.outcome }}
+        run: |
+          echo "TC_JFADMIN_2_2: $JFADMIN_2_2"
+          echo "TC_JFADMIN_2_1: $JFADMIN_2_1"
+          test "$JFADMIN_2_2" = success && test "$JFADMIN_2_1" = success
       - name: Upload official test and device logs
         if: always()
         uses: actions/upload-artifact@v4

@@ -224,6 +224,19 @@ For `2_2`, the fixture holds the Crystal JFA's commissionable mDNS record
 until the official SDK has commissioned its first test device. Both devices
 share the CI host address, and advertising the external DUT before that step
 can make the SDK's on-network pairing select the wrong listener.
+When Crystal B verifies the SDK Anchor's operational Vendor ID after an
+authenticated Announce, its controller client shares the JFA device's UDP
+listener. This keeps the verifier's fresh CASE handshake on the same source
+port as the JFA's commissioned operational address; an ephemeral source port
+can cause the SDK peer route to point away from the JFA. The shared client
+claims only its own CASE exchange and secure session replies. Device requests
+remain on an ordered worker so the verifier can receive its replies while the
+Announce command waits. Missing operational trust or a failed CASE/VID check
+still leaves the initiator unverified. Once verification succeeds, the JFA
+adopts that CASE session into its device registry. The SDK may use the newest
+session for its next ICACCSRRequest; adopting it keeps the authenticated
+session available after the temporary controller client closes while the
+original Announce exchange finishes on its earlier session.
 
 ## Work required for interoperable Joint Commissioning
 

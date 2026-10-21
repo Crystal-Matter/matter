@@ -6,6 +6,31 @@ require "../support/session_registry_helpers"
 # cleanup paths live in `session_registry_cleanup_triggers_spec.cr`.
 describe Matter::Protocol::SessionRegistry do
   describe "session supersession/cleanup" do
+    it "retains the active Announce session when adopting a verified outbound CASE session" do
+      registry = SessionRegistryTestHelpers.create_test_registry
+      announce = SessionRegistryTestHelpers.create_case_session(100_u16, 1_u8, 15_u64, 1.second)
+      registry.establish_session(announce)
+      verifier = SessionRegistryTestHelpers.create_case_session(200_u16, 1_u8, 15_u64)
+      verifier.initiator = true
+
+      registry.establish_session(verifier, preserve_existing: true)
+
+      registry.session(announce.session_id).should be(announce)
+      registry.session(verifier.session_id).should be(verifier)
+    end
+
+    it "rejects an adopted session ID already owned by an active device session" do
+      registry = SessionRegistryTestHelpers.create_test_registry
+      active = SessionRegistryTestHelpers.create_case_session(100_u16, 1_u8, 15_u64)
+      registry.establish_session(active)
+      verifier = SessionRegistryTestHelpers.create_case_session(100_u16, 1_u8, 15_u64)
+
+      expect_raises(Matter::ProtocolError, /already in use/) do
+        registry.establish_session(verifier, preserve_existing: true)
+      end
+      registry.session(active.session_id).should be(active)
+    end
+
     it "cleans up sessions without subscriptions immediately" do
       registry = SessionRegistryTestHelpers.create_test_registry
 

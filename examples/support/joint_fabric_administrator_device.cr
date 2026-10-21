@@ -2040,7 +2040,13 @@ module MatterJointFabricAdministrator
       client = anchor_verification_client(fabric.node_id)
       begin
         Matter::Controller::JointCommissioning.verify_anchor_from_fabric(fabric, node_id, peer, trust,
-          timeout: 15.seconds, client: client)
+          timeout: 15.seconds, client: client,
+          on_verified_session: ->(session : Matter::Session::SecureContext) {
+            # SDK Administrators can reuse this newly authenticated CASE
+            # session for ICACCSRRequest immediately after Announce. The
+            # listener must continue to receive it once this client closes.
+            message_handler.registry.establish_session(session, preserve_existing: true)
+          })
       ensure
         client.close
       end

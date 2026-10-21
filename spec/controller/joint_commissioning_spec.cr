@@ -296,11 +296,13 @@ describe Matter::Controller::JointCommissioning do
     listener.bind("::1", 0)
     listener.read_timeout = 2.seconds
     peer = Socket::IPAddress.new("::1", listener.local_address.port)
+    adopted = false
     result = Channel(Exception?).new(1)
     spawn do
       Matter::Controller::JointCommissioning.verify_anchor_from_fabric(
         fabric, 9_u64, peer, JointTestTrust.new,
-        timeout: 100.milliseconds, client: client
+        timeout: 100.milliseconds, client: client,
+        on_verified_session: ->(_session : Matter::Session::SecureContext) { adopted = true }
       )
       result.send(nil)
     rescue ex
@@ -309,6 +311,7 @@ describe Matter::Controller::JointCommissioning do
     _, sender = listener.receive(Bytes.new(1280))
     sender.port.should eq(client.transport.port)
     result.receive.should be_a(Matter::TimeoutError)
+    adopted.should be_false
     client.transport.socket.closed?.should be_false
   ensure
     listener.try(&.close)

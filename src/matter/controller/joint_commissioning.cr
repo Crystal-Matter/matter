@@ -780,7 +780,8 @@ module Matter
                                     trust : VidVerification::OperationalTrustAnchors,
                                     timeout : Time::Span = 10.seconds,
                                     crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
-                                    client : Client? = nil) : VidVerification::VerifiedFabric
+                                    client : Client? = nil,
+                                    on_verified_session : Proc(Session::SecureContext, Nil)? = nil) : VidVerification::VerifiedFabric
         root = fabric.root_cert || raise Matter::ConfigurationError.new("Joining fabric has no RCAC")
         identity = FabricInfo.new(fabric_id: fabric.fabric_id,
           controller_node_id: fabric.node_id,
@@ -796,8 +797,16 @@ module Matter
         begin
           session = Pairing::CasePairing.new(crypto).pair(client, peer, identity,
             peer_node_id: peer_node_id, timeout: timeout)
-          verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
+          verified = verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
             fabric.root_public_key, fabric.fabric_id, trust, crypto)
+          # Retain this CASE session only after the Anchor's operational VID and
+          # original-fabric binding have both been verified. A peer may reuse
+          # the newest CASE session for its following JCM command.
+          if on_verified_session
+            session.fabric_index = fabric.fabric_index
+            on_verified_session.call(session)
+          end
+          verified
         ensure
           client.close if owns_client
         end
