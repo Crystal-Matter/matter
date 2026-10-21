@@ -309,6 +309,10 @@ module Matter
       # Platform backend for network operations (required)
       property backend : Network::Backend?
 
+      # General Commissioning owns Breadcrumb. The device wires this callback
+      # so a successful network command can update it atomically.
+      property on_breadcrumb_success : Proc(UInt64, Nil)?
+
       # Additional state for connected network tracking
       @connected_network_index : Int32?
 
@@ -395,6 +399,7 @@ module Matter
         # Update state
         @last_networking_status = NetworkCommissioningStatus::Success
         @last_network_id = cmd.ssid
+        set_breadcrumb_on_success(cmd.breadcrumb)
 
         ScanNetworksResponse.new(
           networking_status: NetworkCommissioningStatus::Success,
@@ -482,6 +487,7 @@ module Matter
         # Update state
         @last_networking_status = NetworkCommissioningStatus::Success
         @last_network_id = cmd.ssid
+        set_breadcrumb_on_success(cmd.breadcrumb)
 
         NetworkConfigResponse.new(
           networking_status: NetworkCommissioningStatus::Success,
@@ -563,6 +569,7 @@ module Matter
         # Update state
         @last_networking_status = NetworkCommissioningStatus::Success
         @last_network_id = network_id
+        set_breadcrumb_on_success(cmd.breadcrumb)
 
         NetworkConfigResponse.new(
           networking_status: NetworkCommissioningStatus::Success,
@@ -623,6 +630,7 @@ module Matter
         # Update state
         @last_networking_status = NetworkCommissioningStatus::Success
         @last_network_id = cmd.network_id
+        set_breadcrumb_on_success(cmd.breadcrumb)
 
         NetworkConfigResponse.new(
           networking_status: NetworkCommissioningStatus::Success,
@@ -691,6 +699,7 @@ module Matter
         @last_networking_status = NetworkCommissioningStatus::Success
         @last_network_id = cmd.network_id
         @last_connect_error_value = nil
+        set_breadcrumb_on_success(cmd.breadcrumb)
 
         ConnectNetworkResponse.new(
           networking_status: NetworkCommissioningStatus::Success,
@@ -736,6 +745,7 @@ module Matter
         # Update state
         @last_networking_status = NetworkCommissioningStatus::Success
         @last_network_id = cmd.network_id
+        set_breadcrumb_on_success(cmd.breadcrumb)
 
         NetworkConfigResponse.new(
           networking_status: NetworkCommissioningStatus::Success,
@@ -1004,6 +1014,12 @@ module Matter
       end
 
       # Helper methods
+
+      private def set_breadcrumb_on_success(value : UInt64?) : Nil
+        return unless value
+
+        @on_breadcrumb_success.try(&.call(value))
+      end
 
       private def perform_wifi_scan(ssid : Bytes?) : Array(WiFiInterfaceScanResult)
         backend = @backend

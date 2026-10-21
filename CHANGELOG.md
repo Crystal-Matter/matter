@@ -16,6 +16,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Network commissioning
 
+- Apply Network Commissioning command Breadcrumb values to General Commissioning
+  only after successful scan, provisioning, removal, connection, or reordering.
+  Failed commands and omitted Breadcrumb fields leave the attribute unchanged.
 - Pass a platform network backend through the device constructor to the root
   Network Commissioning cluster. Wi-Fi and Thread scans, provisioning, removal,
   and connection now fail when no backend is configured, rather than reporting
