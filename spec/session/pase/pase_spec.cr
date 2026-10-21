@@ -168,13 +168,14 @@ describe Matter::Session::Pase do
       responder.spake.should be_nil
     end
 
-    it "processes PBKDF param request" do
+    it "rejects an empty PBKDF param request" do
       responder = Matter::Session::Pase::PaseResponder.new(
         pin_code: 12345678_u32
       )
 
-      response = responder.process_pbkdf_param_request(Bytes.new(0))
-      response.should be_a(Bytes)
+      expect_raises(Matter::ProtocolError) do
+        responder.process_pbkdf_param_request(Bytes.new(0))
+      end
     end
 
     it "processes pake1 and generates pake2 (pB)" do

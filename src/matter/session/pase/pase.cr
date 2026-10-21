@@ -49,9 +49,9 @@ module Matter
         # Step 1: Request PBKDF parameters from responder
         def create_pbkdf_param_request : Bytes
           request = Definitions::PbkdfParamRequest.new(
-            initiator_random: @crypto.random_bytes(32),
+            initiator_random: @crypto.random_bytes(Definitions::PbkdfParamRequest::INITIATOR_RANDOM_SIZE),
             initiator_session_id: @crypto.random_uint16,
-            passcode_id: 0_u16,
+            passcode_id: Definitions::PbkdfParamRequest::DEFAULT_PASSCODE_ID,
             has_pbkdf_parameters: false)
           request.to_slice
         end
@@ -202,13 +202,10 @@ module Matter
 
         # Step 1: Process PBKDF parameter request and return parameters
         def process_pbkdf_param_request(request : Bytes) : Bytes
-          # Parse the TLV-encoded request (if not empty)
-          initiator_random = if request.size > 0
-                               req = Definitions::PbkdfParamRequest.from_slice(request)
-                               req.initiator_random || Random::Secure.random_bytes(32)
-                             else
-                               Random::Secure.random_bytes(32)
-                             end
+          raise Matter::ProtocolError.new("Invalid PBKDFParamRequest") if request.empty?
+          req = Definitions::PbkdfParamRequest.from_slice(request)
+          raise Matter::ProtocolError.new("Invalid PBKDFParamRequest") unless req.valid?
+          initiator_random = req.initiator_random || raise Matter::ProtocolError.new("Invalid PBKDFParamRequest")
 
           # Generate responder random
           responder_random = Random::Secure.random_bytes(32)
@@ -219,10 +216,11 @@ module Matter
             initiator_random: initiator_random,
             responder_random: responder_random,
             responder_session_id: responder_session_id,
-            iterations: @pbkdf_params.iterations.to_u32,
-            salt: @pbkdf_params.salt
+            pbkdf_parameters: req.has_pbkdf_parameters ? nil : Definitions::PbkdfParametersTLV.new(@pbkdf_params.iterations.to_u32, @pbkdf_params.salt)
           )
           response.to_slice
+        rescue ex : BinData::ParseError
+          raise Matter::ProtocolError.new("Malformed PBKDFParamRequest", cause: ex)
         end
 
         # Step 2: Initialize SPAKE2+ with w0 and L

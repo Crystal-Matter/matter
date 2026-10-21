@@ -44,6 +44,9 @@ module Matter
         struct PbkdfParamRequest
           include TLV::Serializable
 
+          INITIATOR_RANDOM_SIZE =    32
+          DEFAULT_PASSCODE_ID   = 0_u16
+
           # Initiator random (mandatory on the wire, tag 1)
           @[TLV::Field(tag: 1, optional: true)]
           property initiator_random : Bytes?
@@ -71,6 +74,12 @@ module Matter
             @has_pbkdf_parameters = nil,
             @mrp_parameters = nil,
           )
+          end
+
+          def valid? : Bool
+            random = @initiator_random
+            !!random && random.size == INITIATOR_RANDOM_SIZE && !@initiator_session_id.nil? &&
+              @passcode_id == DEFAULT_PASSCODE_ID && !@has_pbkdf_parameters.nil?
           end
         end
 
