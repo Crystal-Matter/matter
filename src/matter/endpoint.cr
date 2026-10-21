@@ -3,6 +3,8 @@ require "./error"
 require "./hex"
 require "./cluster/cluster"
 require "./cluster/descriptor"
+require "./cluster/level_control"
+require "./cluster/on_off"
 require "./cluster/scenes_management"
 require "./datatype/endpoint_number"
 
@@ -47,6 +49,10 @@ module Matter
       end
 
       @clusters[cluster.cluster_id.id] = cluster
+      if level = get_cluster(Cluster::LevelControl)
+        level.bind_on_off(get_cluster(Cluster::OnOff))
+      end
+      cluster
     end
 
     # Get a cluster by ID
