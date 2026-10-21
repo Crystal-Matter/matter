@@ -108,6 +108,13 @@ describe Matter::Controller::VidVerification do
     im.non_filtered_reads.should eq(3)
     joiner = Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, 1_u8, trust)
     joiner.icac_public_key.should eq(icac_key.public_key)
+
+    both = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(noc, icac, 1_u8, Bytes[0x01])
+    im_both = VidTestIm.new(client, descriptor, both, root, node_key)
+    expect_raises(Matter::AuthenticationError, /ICAC and VVSC/) do
+      Matter::Controller::VidVerification.verify(im_both, session, peer, 1_u8, trust)
+    end
+
     trust.allow_root = false
     expect_raises(Matter::AuthenticationError) do
       Matter::Controller::VidVerification.verify(im, session, peer, 1_u8, trust)

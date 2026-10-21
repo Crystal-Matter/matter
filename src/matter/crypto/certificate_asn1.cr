@@ -47,7 +47,7 @@ module Matter
         end
 
         # Distinguished name attributes. 1 to 16 are the X.520 attributes, 17 to
-        # 22 the Matter ones, and 129 upwards repeat the X.520 set for values
+        # 23 the Matter ones, and 129 upwards repeat the X.520 set for values
         # that must be written as a PrintableString rather than a UTF8String.
         enum Dn : UInt8
           CommonName           =   1
@@ -72,6 +72,7 @@ module Matter
           RcacId               =  20
           FabricId             =  21
           CaseAuthenticatedTag =  22
+          VvsId                =  23
           CommonNamePs         = 129
           SurNamePs            = 130
           SerialNumPs          = 131
@@ -102,6 +103,7 @@ module Matter
         MATTER_ARCS = {
           Dn::NodeId => 1, Dn::FirmwareSigningId => 2, Dn::IcacId => 3,
           Dn::RcacId => 4, Dn::FabricId => 5, Dn::CaseAuthenticatedTag => 6,
+          Dn::VvsId => 7,
         }
 
         OID_X520_PREFIX   = "2.5.4."
@@ -171,6 +173,12 @@ module Matter
             ]),
             Der.encode_explicit(EXTENSIONS_TAG, extensions(field(fields, Field::Extensions))),
           ])
+        end
+
+        # Preserve the signed RDN order when binding Matter TLV names to the
+        # corresponding X.509 certificate names.
+        def distinguished_name_der(name : TLV::Any) : Bytes
+          distinguished_name(name)
         end
 
         # A distinguished name is a SEQUENCE of single-attribute SETs, in the

@@ -23,6 +23,7 @@ module Matter
       # Tag 20 (0x14): matter-rcac-id
       # Tag 21 (0x15): matter-fabric-id
       # Tag 22 (0x16): matter-noc-cat
+      # Tag 23 (0x17): matter-vvs-id
 
       @[TLV::Field(tag: 17, optional: true)]
       property node_id : UInt64?
@@ -42,6 +43,9 @@ module Matter
       @[TLV::Field(tag: 22, optional: true)]
       property noc_cat : UInt32?
 
+      @[TLV::Field(tag: 23, optional: true)]
+      property vvs_id : UInt64?
+
       def initialize(
         @node_id : UInt64? = nil,
         @fabric_id : UInt64? = nil,
@@ -49,6 +53,7 @@ module Matter
         @rcac_id : UInt64? = nil,
         @firmware_signing_id : UInt64? = nil,
         @noc_cat : UInt32? = nil,
+        @vvs_id : UInt64? = nil,
       )
       end
     end

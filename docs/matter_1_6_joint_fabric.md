@@ -255,8 +255,8 @@ The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
    a VVS signature through a signer-specific leaf and a Root/ICA CA chain. The
    official SDK v1.6 implements the root lookup path but marks its VVS path
    unsupported, so independent VVS interoperability remains unproven.
-   Deployment must authenticate and freshen its DCL gateway, and the optional
-   Matter-TLV VVSC currently has only public-key/SKID equivalence checks.
+   Deployment must authenticate and freshen its DCL gateway. The optional
+   Matter-TLV VVSC is checked for its signed signer profile and issuer path.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer, A removal, B restart after a lost RemoveFabric
@@ -301,21 +301,25 @@ For DCL-backed operational VID checks, construct
 and pass it to the JCM verifier. The gateway URL is an explicit HTTPS origin.
 The adapter reads the DCL's active, VID-scoped NOC root, ICA, and signer indexes.
 It verifies the operational RCAC ID, public key, and SKID against an approved
-OperationalPKI root. For a VVS, it validates the signature through a
-VIDSignerPKI leaf issued by an
-OperationalPKI Root/ICA CA chain of at most three certificates. The signer
-must carry the Matter VID signer subject, use P-256 ECDSA-SHA256, and have the
-leaf digital-signature profile; CA parents need the Matter Root/ICA subject and
-certificate-signing profile. The built-in fetcher uses a 1 MiB streaming limit,
+OperationalPKI root. Without a supplied VVSC, it validates a VVS signature
+through a DCL VIDSignerPKI leaf issued by an OperationalPKI Root/ICA CA chain
+of at most three certificates. That signer must carry the Matter VID signer
+subject, use P-256 ECDSA-SHA256, and have the leaf digital-signature profile.
+With a supplied VVSC, it validates the signed Matter certificate through the
+DCL OperationalPKI Root/ICA CA path without requiring a duplicate DCL signer
+leaf. CA parents need the Matter Root/ICA subject and certificate-signing
+profile. The built-in fetcher uses a 1 MiB streaming limit,
 five-second connection/read timeouts, and rejects redirects.
 CA path length constraints are enforced for the signer chain.
 Missing, malformed, expired, mismatched, or removed records fail closed.
 Applications may implement `DclSource` for a locally authenticated DCL mirror.
 An untrusted gateway can lie about the active/revoked status, so deploy with a
 gateway whose ledger synchronization and transport you trust. The optional
-Matter-TLV VVSC is currently compared by public key and SKID only; this adapter
-does not yet validate its complete signed TLV certificate profile. The SDK
-v1.6 does not implement independent VVS path verification either.
+Matter-TLV VVSC is checked for its VVS identifier, issuer name, validity,
+digital-signature usage, non-CA status, SKID/AKID, and signature under its
+DCL-approved Root/ICA issuer. The
+SDK v1.6 does not implement independent VVS path verification, so this path
+still needs an independent ecosystem interoperability run.
 
 For administrator removal, Matter 1.6 recommends transferring to a fresh
 trusted root after rotating Administrator CAT credentials, because an ICAC

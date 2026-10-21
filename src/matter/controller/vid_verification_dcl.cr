@@ -8,6 +8,7 @@ require "./device_attestation_verifier"
 lib LibCrypto
   fun x509_extension_get_critical = X509_EXTENSION_get_critical(extension : X509_EXTENSION) : Int32
   fun x509_get_pathlen = X509_get_pathlen(cert : X509) : LibC::Long
+  fun matter_i2d_x509_name = i2d_X509_NAME(name : X509_NAME, out : UInt8**) : Int32
 end
 
 module Matter
@@ -100,18 +101,22 @@ module Matter
       end
 
       # Verifies an Operational RCAC against a VID-scoped DCL root, or a VVS
-      # through a VID Signer leaf issued by a DCL OperationalPKI Root/ICA.
+      # through a supplied VVSC or DCL VID Signer leaf issued by a DCL
+      # OperationalPKI Root/ICA.
       class DclOperationalTrustAnchors < OperationalTrustAnchors
-        Log                         = ::Log.for("matter.controller.vid_verification_dcl")
-        MAX_SIGNER_CHAIN_DEPTH      =        3
-        KEY_USAGE_DIGITAL_SIGNATURE = 0x80_u32
-        KEY_USAGE_CERT_SIGN         = 0x04_u32
-        KEY_USAGE_CRL_SIGN          = 0x02_u32
-        KEY_ID_SIZE                 =       20
-        ROOT_ID_OID                 = "1.3.6.1.4.1.37244.1.4"
-        ICA_ID_OID                  = "1.3.6.1.4.1.37244.1.3"
-        VID_SIGNER_ID_OID           = "1.3.6.1.4.1.37244.1.7"
-        MATTER_DN_OID_PREFIX        = "1.3.6.1.4.1.37244.1."
+        Log                                = ::Log.for("matter.controller.vid_verification_dcl")
+        MAX_SIGNER_CHAIN_DEPTH             =          3
+        KEY_USAGE_DIGITAL_SIGNATURE        =   0x80_u32
+        MATTER_KEY_USAGE_DIGITAL_SIGNATURE = 0x0001_u16
+        MATTER_CERTIFICATE_ALGORITHM       =       1_u8
+        MAX_VVSC_SIZE                      =        400
+        KEY_USAGE_CERT_SIGN                =   0x04_u32
+        KEY_USAGE_CRL_SIGN                 =   0x02_u32
+        KEY_ID_SIZE                        =         20
+        ROOT_ID_OID                        = "1.3.6.1.4.1.37244.1.4"
+        ICA_ID_OID                         = "1.3.6.1.4.1.37244.1.3"
+        VID_SIGNER_ID_OID                  = "1.3.6.1.4.1.37244.1.7"
+        MATTER_DN_OID_PREFIX               = "1.3.6.1.4.1.37244.1."
 
         def initialize(@source : DclSource, @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
         end
@@ -142,12 +147,18 @@ module Matter
           return false unless signer_skid.size == KEY_ID_SIZE && signature.size == 64
           roots = @source.roots_for(vendor_id).select { |record| ca_record?(record, vendor_id, root: true) }
           intermediates = @source.intermediates_for(vendor_id).select { |record| ca_record?(record, vendor_id, root: false) }
+          if vvsc
+            return false unless valid_matter_vvsc?(vvsc, signer_skid, intermediates, roots)
+            key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
+            key.public_bits = Crypto::MatterCertificate.public_key_from_tlv(vvsc)
+            @crypto.verify_ecdsa(key, statement_tbs, signature)
+            return true
+          end
           signers = @source.signers_for(vendor_id, signer_skid)
           signers.any? do |record|
             next false unless signer_record?(record, vendor_id)
             cert = record.certificate
             next false unless key_id(cert) == signer_skid
-            next false if vvsc && !matches_matter_vvsc?(vvsc, cert, signer_skid)
             next false unless signer_chain?(cert, intermediates, roots, 1)
             key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
             key.public_bits = cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes
@@ -221,19 +232,90 @@ module Matter
           path_length == -1 || path_length >= subordinate_cas
         end
 
-        # NOCStruct carries the VVSC as a Matter TLV certificate, while the
-        # DCL publishes its X.509 form. The approved signing key and SKID must
-        # describe the same signer in both encodings.
-        private def matches_matter_vvsc?(vvsc : Bytes, cert : OpenSSL::X509::Certificate,
-                                         signer_skid : Bytes) : Bool
+        # NOCStruct carries the VVSC as a Matter TLV certificate. The DCL
+        # supplies its issuer path; a separate DCL VID Signer leaf is not
+        # required when the VVSC is present.
+        private def valid_matter_vvsc?(vvsc : Bytes, signer_skid : Bytes,
+                                       intermediates : Array(DclCertificate),
+                                       roots : Array(DclCertificate)) : Bool
+          return false if vvsc.size > MAX_VVSC_SIZE
           matter_cert = Crypto::MatterCertificate.from_slice(vvsc)
-          matter_cert.ec_public_key == cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes &&
-            matter_key_id(vvsc) == signer_skid
+          subject = matter_cert.subject
+          vvs_id = subject.vvs_id
+          return false unless vvs_id && subject.node_id.nil? && subject.fabric_id.nil? &&
+                              subject.noc_cat.nil? && subject.icac_id.nil? && subject.rcac_id.nil? &&
+                              subject.firmware_signing_id.nil?
+          certificate_fields = TLV::Any.from_slice(vvsc).as_structure
+          matter_subject = certificate_fields[Crypto::MatterCertificate::Asn1::Field::Subject.value]
+          subject_fields = matter_subject.as_list
+          return false unless valid_matter_name?(matter_subject) &&
+                              subject_fields.count { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Dn::VvsId.value } == 1
+          return false unless matter_key_id(vvsc) == signer_skid &&
+                              @crypto.compute_sha1(matter_cert.ec_public_key) == signer_skid
+          valid_profile = matter_cert.signature_algorithm == MATTER_CERTIFICATE_ALGORITHM &&
+                          matter_cert.public_key_algorithm == MATTER_CERTIFICATE_ALGORITHM &&
+                          matter_cert.elliptic_curve_id == MATTER_CERTIFICATE_ALGORITHM &&
+                          !Crypto::MatterCertificate::Validation.certificate_authority?(vvsc)
+          return false unless valid_profile
+          extensions = TLV::Any.from_slice(vvsc).as_structure[Crypto::MatterCertificate::Asn1::Field::Extensions.value].as_list
+          tags = extensions.map(&.header.ids)
+          return false unless tags.uniq.size == tags.size &&
+                              tags.all?(&.in?(1_u8, 2_u8, 3_u8, 4_u8, 5_u8)) &&
+                              tags.includes?(Crypto::MatterCertificate::Asn1::Extension::BasicConstraints.value) &&
+                              tags.includes?(Crypto::MatterCertificate::Asn1::Extension::KeyUsage.value) &&
+                              tags.includes?(Crypto::MatterCertificate::Asn1::Extension::SubjectKeyIdentifier.value) &&
+                              tags.includes?(Crypto::MatterCertificate::Asn1::Extension::AuthorityKeyIdentifier.value)
+          usage = extensions.find! { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Extension::KeyUsage.value }
+          return false unless usage.as_u16 == MATTER_KEY_USAGE_DIGITAL_SIGNATURE
+          constraints = extensions.find! { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Extension::BasicConstraints.value }
+          return false unless constraints.as_structure[Crypto::MatterCertificate::Asn1::BASIC_CONSTRAINT_IS_CA].as_bool == false
+          Crypto::MatterCertificate::Validation.verify_validity(vvsc)
+          issuer = matter_cert.issuer
+          return false unless issuer.vvs_id.nil? && issuer.node_id.nil? && issuer.noc_cat.nil? &&
+                              issuer.firmware_signing_id.nil?
+          matter_issuer = certificate_fields[Crypto::MatterCertificate::Asn1::Field::Issuer.value]
+          return false unless valid_matter_name?(matter_issuer)
+
+          (intermediates + roots).any? do |parent_record|
+            parent = parent_record.certificate
+            next false unless Crypto::MatterCertificate::Asn1.distinguished_name_der(matter_issuer) == name_der(parent.subject) &&
+                              matter_key_id(vvsc, authority: true) == key_id(parent)
+            next false unless parent_record.root? ? (!issuer.rcac_id.nil? && issuer.icac_id.nil? &&
+                              matter_subject?(parent, ROOT_ID_OID, issuer.rcac_id)) : (!issuer.icac_id.nil? && issuer.rcac_id.nil? &&
+                              matter_subject?(parent, ICA_ID_OID, issuer.icac_id))
+            next false unless parent_record.root? ? valid_root?(parent) && valid_path_length?(parent, 0) : signer_chain?(parent, intermediates.reject(&.==(parent_record)), roots, 2)
+            begin
+              Crypto::MatterCertificate::Validation.verify_signature(vvsc,
+                parent.public_key.as(OpenSSL::PKey::EC).public_key_bytes)
+              true
+            rescue Matter::AuthenticationError
+              false
+            end
+          end
         end
 
-        private def matter_key_id(certificate : Bytes) : Bytes?
+        private def matter_key_id(certificate : Bytes, authority : Bool = false) : Bytes?
           extensions = TLV::Any.from_slice(certificate).as_structure[Crypto::MatterCertificate::Asn1::Field::Extensions.value].as_list
-          extensions.find { |item| item.header.ids == Crypto::MatterCertificate::Asn1::Extension::SubjectKeyIdentifier.value }.try(&.as_bytes)
+          tag = authority ? Crypto::MatterCertificate::Asn1::Extension::AuthorityKeyIdentifier.value : Crypto::MatterCertificate::Asn1::Extension::SubjectKeyIdentifier.value
+          extensions.find { |item| item.header.ids == tag }.try(&.as_bytes)
+        end
+
+        private def name_der(name : OpenSSL::X509::Name) : Bytes
+          size = LibCrypto.matter_i2d_x509_name(name.to_unsafe, Pointer(Pointer(UInt8)).null)
+          raise Matter::CertificateError.new("Invalid X.509 name") unless size > 0
+          encoded = Bytes.new(size)
+          cursor = encoded.to_unsafe
+          written = LibCrypto.matter_i2d_x509_name(name.to_unsafe, pointerof(cursor))
+          raise Matter::CertificateError.new("X.509 name could not be encoded") unless written == size
+          encoded
+        end
+
+        private def valid_matter_name?(name : TLV::Any) : Bool
+          elements = name.as_list
+          elements.size <= 5 && elements.all? do |element|
+            tag = element.header.ids
+            tag.is_a?(UInt8) && !Crypto::MatterCertificate::Asn1::Dn.from_value?(tag).nil?
+          end
         end
 
         private def valid_root?(cert : OpenSSL::X509::Certificate) : Bool
