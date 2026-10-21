@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Time synchronization
+
+- Add the Matter 1.6 Time Synchronization base server: nullable UTC before sync,
+  administrator SetUtcTime, monotonic time advancement, Granularity and
+  TimeSource reporting, and a rate-limited TimeFailure event. Time state is
+  discarded after restart until a trusted source updates it again.
+
 ### Thread diagnostics
 
 - Add the Matter 1.6 Thread Network Diagnostics revision 3 server with typed

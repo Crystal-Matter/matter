@@ -54,6 +54,12 @@ connection and notifications, and the BTP handshake before creating this
 transport. `Controller::Client.new(transport: btp_transport)` can then use the
 existing PASE and Interaction Model clients over that channel.
 
+The optional `Cluster::TimeSynchronization` server accepts administrator UTC
+time and advances it with a monotonic clock. It starts unsynchronized after
+each restart. Applications add it explicitly to a root endpoint; TZ, NTP, and
+trusted-time-source features are not advertised until platform services for
+them are available.
+
 ## Building a device
 
 A device is a `Matter::Device` subclass that declares what it is. This is the switch example in
