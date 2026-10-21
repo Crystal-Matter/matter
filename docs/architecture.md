@@ -20,7 +20,7 @@ no glob requires, so a layer can only reach downwards.
                               |
                      Matter::Session            session/{pase,case}/*.cr, secure_message.cr, context.cr
                               |
-                    Matter::Transport           transport/{udp_transport,exchange,message_counter}.cr
+                    Matter::Transport           transport/{udp_transport,btp_codec,exchange,message_counter}.cr
                               |
    Matter::MDNS   Matter::Network   Matter::Storage   Matter::Codec / Crypto / Certificate
    mdns/*.cr      network/*.cr      storage/*.cr      codec/*.cr, crypto/*.cr, certificate/*.cr
@@ -39,6 +39,10 @@ outbound route probes until native interface enumeration is available there.
 `Transport::ExchangeManager` keys each exchange by session, numeric exchange ID,
 local initiator role, and peer address. Two controllers or opposite initiators
 may use the same numeric ID without taking over each other's exchange state.
+
+`Transport::BtpCodec` encodes and validates Matter BLE BTP handshakes and data
+segments. It does not manage a BLE connection or BTP send and receive windows;
+the current controller client still uses UDP for PASE and CASE.
 
 Two rules keep the tree honest:
 

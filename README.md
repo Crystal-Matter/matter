@@ -29,7 +29,7 @@ The library is a stack of layers, each one depending only on the layers below it
 | Protocol | `Matter::Protocol` | `MessageHandler` and the objects it routes through, the interaction model handler, subscriptions |
 | Commissioning | `Matter::Commissioning` | the failsafe, commissioning window and credential services |
 | Session | `Matter::Session` | PASE and CASE, `SecureContext`, `SecureMessage` framing |
-| Transport | `Matter::Transport` | the UDP transport, exchanges, message counters |
+| Transport | `Matter::Transport` | the UDP transport, exchanges, message counters, and BTP wire framing |
 | Discovery | `Matter::MDNS` | the responder that answers commissionable and operational queries |
 | Storage | `Matter::Storage` | backends, documents, records, the migrator — depends on nothing else |
 | Primitives | `Matter::Codec`, `Crypto`, `Certificate`, `Datatype`, `InteractionModel`, `Error` | the wire codec, cryptography, certificates, id wrappers, statuses and paths |
