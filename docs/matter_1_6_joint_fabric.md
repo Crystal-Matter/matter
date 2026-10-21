@@ -197,12 +197,17 @@ sequence before Joint Commissioning; it does not cover the controller's JCM
 or the Datastore scenarios. The runner inserts one missing `jf_admin = None`
 initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
 certification steps and assertions are unchanged.
+The [integrated SDK run](https://github.com/Crystal-Matter/matter/actions/runs/39691585152)
+passed `TC_JFADMIN_1_2` against the merged Crystal JFA.
 
 `e2e/interop/sdk_jf_cert_matrix.py` runs the official SDK v1.6.0.0
 `TC_JFADMIN_1_1`, `1_4`, and `TC_JFDS_2_1` through `2_3` scripts unchanged
 against Crystal. `TC_JFDS_2_4` inherits every official step and assertion but
 converts the SDK fixture's 410-byte X.509 DER ICAC input to Matter TLV before
 AddAdmin's 400-byte field. The dedicated Linux workflow passed all six cases.
+The [integrated matrix run](https://github.com/Crystal-Matter/matter/actions/runs/39688721274)
+passed all six cases against the expanded two-controller Joint Fabric E2E
+branch, which was subsequently merged as PR #112.
 
 `e2e/interop/sdk_jfc_jcm_live.py` separately commissions a Crystal B JFA
 with the official v1.6 JFC, verifies its SDK-held Anchor ICAC CSR, then has a
@@ -210,6 +215,9 @@ Crystal A Anchor complete JCM and validate the cross-signed ICAC and Datastore
 registration. Its dedicated Linux workflow passed with the official SDK
 JFC/JFA binaries. This checks an independent JCM implementation; the official
 multi-ecosystem certification cases are separate coverage.
+The [integrated JCM run](https://github.com/Crystal-Matter/matter/actions/runs/39691566828)
+passed against merged `develop`, including a streamed Anchor ICAC CSR signature
+and Datastore registration.
 
 `e2e/interop/sdk_jfadmin_multi.py` supplies isolated SDK issuer stores and a
 Crystal JFA to the unmodified official `TC_JFADMIN_2_2.py` and
