@@ -73,7 +73,8 @@ def close_bridge(bridge, bridge_log):
 
 
 def preseed_sdk_issuer(jfc, storage_dir, case_logs):
-    """Start JFC once so the official test reuses its persisted issuer keys."""
+    """Initialize a JFC commissioner so the official test reuses its issuer keys."""
+    config_path = storage_dir / "chip_tool_config.alpha.ini"
     bridge, bridge_log = start_bridge(case_logs)
     try:
         preflight = ManagedProcess(
@@ -85,13 +86,27 @@ def preseed_sdk_issuer(jfc, storage_dir, case_logs):
         )
         try:
             preflight.expect(r">>>\s*$", 90)
+            # JFC creates the issuer in InitializeCommissioner, which happens
+            # only after dispatching a command. This unreachable pairing can
+            # be interrupted once its issuer key is safely persisted.
+            preflight.command("pairing onnetwork 1 20202021 --anchor true")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                preflight.drain(0.2)
+                config = ConfigParser()
+                if config.read(config_path) and config.has_option("Default", "ExampleOpCredsCAKey0"):
+                    break
+                if preflight.process.poll() is not None:
+                    raise RuntimeError("SDK JFC exited before persisting its CA keypair")
+            else:
+                raise RuntimeError("SDK JFC did not persist its CA keypair after pairing")
         finally:
             preflight.close()
     finally:
         close_bridge(bridge, bridge_log)
 
     config = ConfigParser()
-    if not config.read(storage_dir / "chip_tool_config.alpha.ini"):
+    if not config.read(config_path):
         raise RuntimeError("SDK JFC did not persist its CA keypair")
     serialized = base64.b64decode(config.get("Default", "ExampleOpCredsCAKey0"), validate=True)
     if len(serialized) != P256_SERIALIZED_KEYPAIR_LENGTH or serialized[0] != 0x04:
