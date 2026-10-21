@@ -12,6 +12,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from configparser import ConfigParser
 from pathlib import Path
@@ -23,6 +24,44 @@ RPC_PORT = 33033
 P256_SERIALIZED_KEYPAIR_LENGTH = 97
 P256_PUBLIC_KEY_LENGTH = 65
 CASES = ("TC_JFADMIN_2_1", "TC_JFADMIN_2_2")
+
+
+def sdk_cert_to_chip(sdk, certificate, private):
+    """The JFC INI stores DER; Crystal trust and the JFDS wire require TLV."""
+    python = sdk / "out/python_env/bin/python3"
+    helper = Path(__file__).with_name("sdk_cert_to_chip.py")
+    with tempfile.TemporaryDirectory(dir=private) as directory:
+        source = Path(directory) / "certificate.der"
+        target = Path(directory) / "certificate.tlv"
+        source.write_bytes(certificate)
+        result = subprocess.run([str(python), str(helper), str(source), str(target)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                check=False)
+        if result.returncode:
+            raise RuntimeError("SDK certificate conversion failed: " +
+                               result.stderr.decode(errors="replace"))
+        converted = target.read_bytes()
+    if not converted or len(converted) > 400:
+        raise RuntimeError("SDK certificate conversion produced invalid Matter TLV length")
+    return converted
+
+
+def run_official_with_discovery_gate(command, sdk, log_path, gate):
+    """Expose the external DUT once SDK DEV1 has been commissioned."""
+    marker = b"Commissioning complete for node ID 0x0000000000000002: success"
+    with log_path.open("wb") as output:
+        process = subprocess.Popen(command, cwd=sdk, stdout=output,
+                                   stderr=subprocess.STDOUT, env=os.environ.copy())
+        deadline = time.monotonic() + 900
+        while process.poll() is None:
+            if not gate.exists() and marker in log_path.read_bytes():
+                gate.touch()
+            if time.monotonic() >= deadline:
+                process.kill()
+                process.wait()
+                raise subprocess.TimeoutExpired(command, 900)
+            time.sleep(0.2)
+        return process.returncode
 
 
 def await_bridge(process, timeout=20):
@@ -119,7 +158,7 @@ def preseed_sdk_issuer(jfc, storage_dir, logs, commissioner_name):
     return serialized[:P256_PUBLIC_KEY_LENGTH], root_certificate
 
 
-def write_sdk_issuer_fixture(storage_dir, commissioner_name, private, fixture):
+def write_sdk_issuer_fixture(sdk, storage_dir, commissioner_name, private, fixture):
     """Import only the SDK issuer needed by a test-only Crystal Anchor."""
     config = ConfigParser()
     path = storage_dir / f"chip_tool_config.{commissioner_name}.ini"
@@ -133,6 +172,9 @@ def write_sdk_issuer_fixture(storage_dir, commissioner_name, private, fixture):
     for label, key in keys.items():
         encoded = config.get("Default", key)
         base64.b64decode(encoded, validate=True)
+        if label.endswith("_certificate"):
+            encoded = base64.b64encode(
+                sdk_cert_to_chip(sdk, base64.b64decode(encoded, validate=True), private)).decode()
         record[label] = encoded
     source = private / "sdk-a-issuer.json"
     source.write_text(json.dumps(record))
@@ -171,9 +213,9 @@ def run_2_1(sdk, jfa, logs):
     a_root_public_key, _ = preseed_sdk_issuer(jfc, a_store, case_logs, "alpha")
     _, b_root = preseed_sdk_issuer(jfc, b_store, case_logs, "beta")
     bootstrap = private / "a-bootstrap.yml"
-    write_sdk_issuer_fixture(a_store, "alpha", private, bootstrap)
+    write_sdk_issuer_fixture(sdk, a_store, "alpha", private, bootstrap)
     b_root_path = private / "b-root.tlv"
-    b_root_path.write_bytes(b_root)
+    b_root_path.write_bytes(sdk_cert_to_chip(sdk, b_root, private))
     csr_mailbox = private / "a-icac-csr.json"
     handoff_command = private / "a-handoff.yml"
     csr_mailbox.unlink(missing_ok=True)
@@ -252,9 +294,11 @@ def run_2_2(sdk, jfa, logs):
     _, a_root = preseed_sdk_issuer(jfc, a_store, case_logs, "alpha")
     b_root_public_key, _ = preseed_sdk_issuer(jfc, b_store, case_logs, "beta")
     a_root_path = private / "a-root.tlv"
-    a_root_path.write_bytes(a_root)
+    a_root_path.write_bytes(sdk_cert_to_chip(sdk, a_root, private))
     csr_mailbox = private / "b-icac-csr.json"
     csr_mailbox.unlink(missing_ok=True)
+    discovery_gate = private / "allow-crystal-discovery"
+    discovery_gate.unlink(missing_ok=True)
     bridge, bridge_log = start_bridge(case_logs, csr_mailbox=csr_mailbox,
                                       fabric_id=2, root_public_key=b_root_public_key)
     device = None
@@ -262,7 +306,8 @@ def run_2_2(sdk, jfa, logs):
         env = os.environ.copy()
         env.update(MATTER_JFA_PORT="5541", MATTER_JFA_PROVISIONED_ANCHOR="1",
                    MATTER_JFA_ALLOW_JCM="1", MATTER_JFA_ICAC_CSR_MAILBOX_PATH=str(csr_mailbox),
-                   MATTER_JFA_VID_TRUST_ROOT_PATH=str(a_root_path))
+                   MATTER_JFA_VID_TRUST_ROOT_PATH=str(a_root_path),
+                   MATTER_JFA_DISCOVERY_GATE_PATH=str(discovery_gate))
         device = ManagedProcess("crystal-b", [str(jfa), "--no-interactive"],
                                 device_state, case_logs, env)
         pin = device.expect(SETUP_PIN_PATTERN, 60).group(1)
@@ -287,13 +332,12 @@ def run_2_2(sdk, jfa, logs):
             "--string-arg", "dut_rpc_server_ip:127.0.0.1",
             "--string-arg", f"dut_rpc_server_port:{RPC_PORT}",
         ]
-        with (case_logs / "official-test.log").open("wb") as output:
-            result = subprocess.run(command, cwd=sdk, stdout=output,
-                                    stderr=subprocess.STDOUT, timeout=900, check=False,
-                                    env=os.environ.copy())
-        if result.returncode:
+        official_log = case_logs / "official-test.log"
+        result_code = run_official_with_discovery_gate(command, sdk, official_log,
+                                                       discovery_gate)
+        if result_code:
             tail = (case_logs / "official-test.log").read_text(errors="replace")[-14000:]
-            raise RuntimeError(f"official {name} failed with exit {result.returncode}:\n{tail}")
+            raise RuntimeError(f"official {name} failed with exit {result_code}:\n{tail}")
         print(f"PASS: official Matter 1.6 {name} against Crystal JFA", flush=True)
     finally:
         if device is not None:

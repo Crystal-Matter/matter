@@ -206,6 +206,20 @@ registration. Its dedicated Linux workflow passed with the official SDK
 JFC/JFA binaries. This checks an independent JCM implementation; the official
 multi-ecosystem certification cases are separate coverage.
 
+`e2e/interop/sdk_jfadmin_multi.py` supplies isolated SDK issuer stores and a
+Crystal JFA to the unmodified official `TC_JFADMIN_2_2.py` and
+`TC_JFADMIN_2_1.py` scripts. The latter imports the SDK issuer's private key
+into a test-only Crystal Anchor fixture; its private input and state stay
+outside the uploaded CI artifact. The SDK persists issuer certificates as
+X.509 DER, so the fixture converts them with the SDK's certificate converter
+before passing Matter TLV certificates to Crystal. The converter checks that
+the round trip retains the certificate subject and public key, and the Crystal
+fixture checks each certificate against its corresponding private key.
+For `2_2`, the fixture holds the Crystal JFA's commissionable mDNS record
+until the official SDK has commissioned its first test device. Both devices
+share the CI host address, and advertising the external DUT before that step
+can make the SDK's on-network pairing select the wrong listener.
+
 ## Work required for interoperable Joint Commissioning
 
 1. Exercise independent consent decisions with real ecosystem policies and

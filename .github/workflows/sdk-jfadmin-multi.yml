@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/sdk-jfadmin-multi.yml
       - e2e/interop/sdk_jfadmin_multi.py
+      - e2e/interop/sdk_cert_to_chip.py
       - e2e/interop/sdk_jfadmin_issuer_fixture.cr
       - e2e/interop/joint_fabric_rpc_bridge.py
       - examples/support/joint_fabric_administrator_device.cr
@@ -13,7 +14,7 @@ on:
       - src/matter/controller/joint_commissioning.cr
 
 jobs:
-  tc-jfadmin-2-2:
+  tc-jfadmin-2-x:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:

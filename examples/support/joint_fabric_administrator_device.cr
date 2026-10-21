@@ -317,8 +317,25 @@ module MatterJointFabricAdministrator
       attach_unprovisioned_administrator(fabric)
     end
 
+    protected def started_commissioning_mode : Nil
+      super
+      # The official multi-ecosystem fixture starts this external DUT before
+      # its first SDK test device. Keep it out of SDK on-network discovery
+      # until that device has completed commissioning.
+      @responder.stop_commissioning if ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
+    end
+
     protected def on_started : Nil
       super
+      if gate = ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
+        discovery_enabled = false
+        every(1.second) do
+          if !discovery_enabled && File.exists?(gate) && @fabric_table.empty?
+            discovery_enabled = true
+            @lifecycle.sync_advertisements
+          end
+        end
+      end
       @propagation_started = true
       @datastore_propagator.try(&.start) if joint_fabric_datastore.access_mode.active?
       @bootstrap_datastore_propagator.try(&.start) if bootstrap_joint_fabric_datastore.access_mode.active?

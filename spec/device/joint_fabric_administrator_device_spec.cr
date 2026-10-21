@@ -32,6 +32,27 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "keeps a fixture DUT out of SDK discovery until its gate opens" do
+    gate = File.join(Dir.tempdir, "matter-jfa-discovery-#{Random::Secure.hex(6)}")
+    previous = ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
+    ENV["MATTER_JFA_DISCOVERY_GATE_PATH"] = gate
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.start
+    device.responder.advertised_commissioning_info.should be_nil
+    File.write(gate, "ready")
+    sleep 1.2.seconds
+    device.responder.advertised_commissioning_info.should_not be_nil
+  ensure
+    device.try(&.shutdown!)
+    File.delete(gate) if gate && File.exists?(gate)
+    if previous
+      ENV["MATTER_JFA_DISCOVERY_GATE_PATH"] = previous
+    else
+      ENV.delete("MATTER_JFA_DISCOVERY_GATE_PATH")
+    end
+  end
+
   it "does not expose an unprovisioned second JFA to wildcard commissioning reads" do
     previous = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
     ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
