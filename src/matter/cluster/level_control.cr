@@ -223,7 +223,7 @@ module Matter
       attribute 0x0006, :max_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
       attribute 0x000F, :options, UInt8, default: 0_u8, writable: true
       attribute 0x0010, :on_off_transition_time, UInt16, default: 0_u16, writable: true, optional: true, requires: :lighting
-      attribute 0x0011, :on_level, UInt8, nullable: true, writable: true, optional: true
+      attribute 0x0011, :on_level, UInt8, nullable: true, writable: true
       attribute 0x0012, :on_transition_time, UInt16, nullable: true, writable: true, optional: true, requires: :lighting
       attribute 0x0013, :off_transition_time, UInt16, nullable: true, writable: true, optional: true, requires: :lighting
       attribute 0x0014, :default_move_rate, UInt8, nullable: true, writable: true, optional: true, requires: :lighting
@@ -262,6 +262,7 @@ module Matter
         @transition_fiber_running = false
         @on_off_cluster = nil
         @turn_off_on_completion = false
+        @suppress_on_effect = false
       end
 
       @transition_started_at : Time::Instant?
@@ -272,10 +273,20 @@ module Matter
       @transition_fiber_running : Bool
       @on_off_cluster : OnOff?
       @turn_off_on_completion : Bool
+      @suppress_on_effect : Bool
 
       # Endpoint wires the sibling OnOff server when the OO feature is enabled.
       def bind_on_off(cluster : OnOff?) : Nil
         @on_off_cluster = feature_map.on_off? ? cluster : nil
+        @on_off_cluster.try do |on_off|
+          on_off.bind_level_on_effect do
+            unless @suppress_on_effect
+              if level = @on_level
+                transition_to(level, @on_transition_time || @on_off_transition_time)
+              end
+            end
+          end
+        end
       end
 
       # ------------------------------------------------------------------------
@@ -375,7 +386,12 @@ module Matter
         @turn_off_on_completion = false
         if with_on_off && (on_off = @on_off_cluster)
           if target > @min_level
-            on_off.on
+            @suppress_on_effect = true
+            begin
+              on_off.on
+            ensure
+              @suppress_on_effect = false
+            end
           else
             @turn_off_on_completion = true
           end

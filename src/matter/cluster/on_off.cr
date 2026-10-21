@@ -10,7 +10,7 @@ module Matter
     # - DeadFrontBehavior (DF): Device exhibits "dead front" when off
     # - OffOnly: Device can only be turned off (On/Toggle not supported)
     #
-    # Matter Spec: Application Clusters 1.5
+    # Matter Spec: Application Clusters 1.6
     class OnOff < Base
       cluster 0x0006, revision: 6
 
@@ -92,10 +92,18 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @next_timed_tick = nil
         @timed_fiber_running = false
+        @level_on_effect = nil
       end
 
       @next_timed_tick : Time::Instant?
       @timed_fiber_running : Bool
+      @level_on_effect : Proc(Nil)?
+
+      # Internal endpoint hook for the LevelControl OnLevel effect. This is
+      # separate from the application-facing OnOff attribute change callback.
+      def bind_level_on_effect(&block : -> Nil) : Nil
+        @level_on_effect = block
+      end
 
       # ------------------------------------------------------------------------
       # Commands
@@ -117,6 +125,7 @@ module Matter
       end
 
       def on : InteractionModel::Status
+        was_off = !@on_off
         self.on_off = true
         if feature_map.lighting?
           self.global_scene_control = true
@@ -125,6 +134,7 @@ module Matter
             @next_timed_tick = nil
           end
         end
+        @level_on_effect.try &.call if was_off
         InteractionModel::Status.success
       end
 

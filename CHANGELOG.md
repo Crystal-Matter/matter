@@ -15,6 +15,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Return InvalidCommand for a Mode Select ChangeToMode request naming an
   unadvertised mode, as required by the Matter 1.6 command definition.
 
+### OnOff command level effect
+
+- Apply LevelControl OnLevel when a sibling OnOff `On` command turns the device
+  on. Use OnTransitionTime or OnOffTransitionTime for the level movement, while
+  preserving the explicit target of LevelControl WithOnOff commands.
+
 ### Level and OnOff coordination
 
 - Wire sibling OnOff and LevelControl servers on an endpoint. Ordinary level
