@@ -1,13 +1,18 @@
 import sys
+import re
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-from sdk_jfc_switch_smoke import ManagedProcess
+from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN
 
 
 class ManagedProcessTest(unittest.TestCase):
+    def test_setup_pin_can_have_fewer_than_eight_decimal_digits(self):
+        match = re.search(SETUP_PIN_PATTERN, "  Setup PIN: 2204847\n")
+        self.assertEqual(match.group(1), "2204847")
+
     def test_background_drain_keeps_noninteractive_device_running(self):
         with tempfile.TemporaryDirectory() as directory:
             script = (

@@ -17,6 +17,8 @@ import threading
 import time
 from pathlib import Path
 
+SETUP_PIN_PATTERN = r"Setup PIN:\s*(\d{1,8})(?!\d)"
+
 
 class ManagedProcess:
     def __init__(self, name, argv, cwd, log_dir, env=None):
@@ -138,7 +140,7 @@ def run(args):
         switch = ManagedProcess("switch", [str(switch_bin), "--no-interactive"],
                                 switch_state, logs, switch_env)
         processes.append(switch)
-        pin = switch.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
+        pin = switch.expect(SETUP_PIN_PATTERN, 60).group(1)
         switch.expect(r"Starting in Commissioning Mode", 60)
         switch.start_background_drain()
 
