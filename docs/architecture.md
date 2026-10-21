@@ -92,6 +92,32 @@ the optional node ids and opaque Message Extensions — used by both `encode` an
 vendor-qualified protocol IDs as a 32-bit vendor/protocol pair. Group privacy enhancements
 remain unsupported because they need header deobfuscation before packet parsing.
 
+Groupcast is not yet routed through this inbound path. The codec implements the
+Matter 1.6 §§3.7/4.9 group privacy transform: `MessagePrivacy` derives the
+privacy key, builds the MIC-based nonce, and obfuscates the counter and optional
+IDs. `MessageCodec::Base.encode_private_packet` requires an already encrypted
+AES-CCM payload and MIC. `decode_private_packet` recovers only a **candidate**
+header; its fields must be authenticated with the operational group key and
+clear-header AAD before any replay or application processing. The ordinary
+codec rejects private packets without an explicit privacy key.
+
+`Session::GroupSecurePacket` takes installed and mapped operational keys,
+derives their privacy keys and session IDs, tries every colliding session ID,
+authenticates the AES-CCM payload, then checks the mapped Group ID. It tracks
+separate data and control replay windows per fabric/source, retaining peer
+entries until restart as the TrustFirst policy requires. The caller must supply
+only currently installed epoch keys. `Session::GroupOutgoingCounters` reserves
+blocks of node-global data and control counters in durable storage before use;
+it skips unused values after restart and refuses wraparound. A sender passes
+the returned value to `GroupSecurePacket#encode`.
+
+To complete groupcast, the runtime needs key candidates from each fabric's
+GroupKeyManagement state, IPv6 multicast membership, and group interaction
+routing. CacheAndSync policy
+and its message counter synchronization protocol remain unsupported. No group
+message is accepted or emitted through the runtime until those pieces are
+connected.
+
 ### Who owns what in the protocol layer
 
 `MessageHandler` is 364 lines and does nothing but route. It constructs and holds:
