@@ -70,10 +70,10 @@ controller, so hardware commissioning has not yet been verified. The default
 controller and device runtimes continue to use UDP.
 
 The optional `Cluster::TimeSynchronization` server accepts administrator UTC
-time and advances it with a monotonic clock. It starts unsynchronized after
-each restart. Applications add it explicitly to a root endpoint; TZ, NTP, and
-trusted-time-source features are not advertised until platform services for
-them are available.
+time with nonzero granularity and advances it with a monotonic clock. It starts
+unsynchronized after each restart. Applications add it explicitly to a root
+endpoint; TZ, NTP, and trusted-time-source features are not advertised until
+platform services for them are available.
 
 ## Building a device
 

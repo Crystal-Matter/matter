@@ -13,6 +13,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   administrator SetUtcTime, monotonic time advancement, Granularity and
   TimeSource reporting, and a rate-limited TimeFailure event. Time state is
   discarded after restart until a trusted source updates it again.
+- Reject SetUTCTime with NoTime granularity and preserve accepted source
+  granularity, matching the Matter 1.6 SDK command behavior.
 
 ### On/Off timed lighting
 
