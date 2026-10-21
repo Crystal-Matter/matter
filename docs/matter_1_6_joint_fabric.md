@@ -58,6 +58,12 @@ item below as covered only to the extent of its cited tests.
 - A dedicated Docker RefreshNode test observes an offline node fail propagation,
   then commissions it and confirms live endpoint and ACL reconciliation to
   Committed over CASE.
+- Opt-in controller Datastore registration journals AddPendingNode before the
+  device's final CASE, then RefreshNode after acknowledged commissioning. The
+  Anchor CASE adapter reads NodeList before retrying a command; known failures
+  remove the pending entry. A lost CommissioningComplete result requires
+  explicit reconciliation before removal. Focused controller specs cover the
+  journal, retry, and network command behavior.
 
 ## Work required for interoperable Joint Commissioning
 

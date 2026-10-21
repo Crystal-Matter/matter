@@ -39,6 +39,35 @@ module Matter
       end
     end
 
+    # A Datastore operation can outlive the commissioning exchange. Persist
+    # this before AddPendingNode so a restart can reconcile its network effect.
+    struct PendingDatastoreNode
+      include Storage::Record
+
+      enum Stage : UInt8
+        Pending
+        Registered
+        Completing
+        Completed
+      end
+
+      getter fabric_id : UInt64
+      getter root_public_key : Bytes
+      getter controller_node_id : UInt64
+      getter node_id : UInt64
+      getter friendly_name : String
+      getter expires_at_unix : Int64
+      getter peer_address : String?
+      getter peer_port : Int32
+      property stage : Stage
+
+      def initialize(@fabric_id, @root_public_key, @controller_node_id, @node_id,
+                     @friendly_name, @expires_at_unix : Int64 = 0_i64,
+                     @peer_address : String? = nil, @peer_port : Int32 = NodeInfo::DEFAULT_PORT,
+                     @stage : Stage = Stage::Pending)
+      end
+    end
+
     struct FabricInfo
       include Storage::Record
 
@@ -141,6 +170,7 @@ module Matter
       property other_fabrics : Hash(String, FabricInfo) = {} of String => FabricInfo
       property other_nodes : Hash(String, Hash(UInt64, NodeInfo)) = {} of String => Hash(UInt64, NodeInfo)
       property pending_handoffs : Array(PendingCommissioningHandoff) = [] of PendingCommissioningHandoff
+      property pending_datastore_nodes : Array(PendingDatastoreNode) = [] of PendingDatastoreNode
 
       # Commissioner node id used for unsecured message source_node_id and as the
       # controller node id when creating a new fabric.
@@ -158,6 +188,7 @@ module Matter
         @other_fabrics : Hash(String, FabricInfo) = {} of String => FabricInfo,
         @other_nodes : Hash(String, Hash(UInt64, NodeInfo)) = {} of String => Hash(UInt64, NodeInfo),
         @pending_handoffs : Array(PendingCommissioningHandoff) = [] of PendingCommissioningHandoff,
+        @pending_datastore_nodes : Array(PendingDatastoreNode) = [] of PendingDatastoreNode,
       )
       end
 

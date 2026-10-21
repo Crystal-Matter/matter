@@ -239,7 +239,11 @@ root. `DatastoreSynchronizer` and `DatastorePropagator` apply the Anchor
 Datastore to participant nodes. `AnchorDatastoreSubscription` tracks the new
 Anchor's authenticated Datastore after transfer. `AnchorTransfer` and
 `AdministratorRemoval` record lifecycle stages before network or credential
-changes so an interrupted operation can be reconciled. The device-facing services are
+changes so an interrupted operation can be reconciled. The opt-in
+`DatastoreNodeRegistrar` journals AddPendingNode before final CASE and
+RefreshNode after acknowledged completion; its CASE network delivery talks
+to the Anchor Datastore and retries interrupted registration. The
+device-facing services are
 `Commissioning::JointFabricAdministratorService` and the Joint Fabric
 Administrator and Datastore clusters. The worked device is
 `examples/support/joint_fabric_administrator_device.cr`; its provisioning,

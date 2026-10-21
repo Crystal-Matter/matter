@@ -15,6 +15,7 @@ require "../pairing/case_pairing"
 require "../pairing/pase_pairing"
 require "../state"
 require "../state_store"
+require "../datastore_node_registrar"
 
 module Matter
   module Controller
@@ -109,6 +110,7 @@ module Matter
           @controller_cats : Array(UInt32) = [] of UInt32,
           @fail_safe_expiry_seconds : UInt16 = 60_u16,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
+          @datastore_registrar : DatastoreNodeRegistrar? = nil,
         )
           if @fail_safe_expiry_seconds == 0_u16 ||
              @fail_safe_expiry_seconds > ::Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS
@@ -129,7 +131,11 @@ module Matter
           controller_node_id : UInt64? = nil,
           new_fabric : Bool = false,
           defer_completion : Bool = false,
+          friendly_name : String? = nil,
         ) : PendingCommissioningHandoff?
+          if @datastore_registrar && friendly_name.nil?
+            raise Matter::ConfigurationError.new("Datastore registration requires a friendly name")
+          end
           if defer_completion && @hooks && !@hooks.as(Hooks).supports_deferred_handoff?
             raise Matter::ConfigurationError.new("JCM hooks require an explicit Anchor handoff workflow before deferring CommissioningComplete")
           end
@@ -152,6 +158,10 @@ module Matter
           end
           verifier = @attestation_verifier ||
                      raise Matter::ConfigurationError.new("Device attestation requires an explicitly configured verifier and trust store")
+          if @datastore_registrar && state.nodes_for(fabric.fabric_id, fabric.root_public_key,
+               fabric.controller_node_id).has_key?(node_id)
+            raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
+          end
           @store.save(state)
 
           peer_addr = peer || discover_commissionable(discriminator)
@@ -262,53 +272,94 @@ module Matter
             raise Matter::CommissioningError.new("AddNOC failed (status=#{noc_resp.status_code} debug=#{noc_resp.debug_text})")
           end
 
-          if defer_completion
-            handoff = PendingCommissioningHandoff.new(
-              fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
-              node_id, peer_addr.address, peer_addr.port,
-              fail_safe_expires_at_unix, @crypto.random_bytes(16).hexstring)
-            state.add_pending_handoff(handoff)
+          registrar = @datastore_registrar
+          registration_attempted = false
+          begin
+            if registrar
+              registration_attempted = true
+              name = friendly_name || raise Matter::ConfigurationError.new("Datastore registration requires a friendly name")
+              registrar.add_pending(fabric, node_id, name, fail_safe_expires_at_unix, peer_addr)
+            end
+
+            if defer_completion
+              handoff = PendingCommissioningHandoff.new(
+                fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+                node_id, peer_addr.address, peer_addr.port,
+                fail_safe_expires_at_unix, @crypto.random_bytes(16).hexstring)
+              state = @store.load
+              state.add_pending_handoff(handoff)
+              state.unsecured_message_counter = @client.transport.message_counter.counter
+              @store.save(state)
+              if hooks = @hooks
+                registrar.try(&.completing(fabric, node_id))
+                hooks.finalize_deferred_handoff(fabric, node_id, im, pase_session, peer_addr, handoff)
+                hooks.complete_acknowledged(fabric, node_id, peer_addr)
+                registrar.try(&.complete(fabric, node_id))
+                state = @store.load
+                state.complete_pending_handoff(fabric.fabric_id, fabric.root_public_key,
+                  fabric.controller_node_id, node_id, handoff.nonce)
+                @store.save(state)
+                hooks.after_deferred_handoff(fabric, node_id, peer_addr)
+                registrar.try(&.refresh(fabric, node_id))
+                return
+              end
+              registrar.try(&.completing(fabric, node_id))
+              return handoff
+            end
+
+            case_pairing = Pairing::CasePairing.new(@crypto)
+            case_session = case_pairing.pair(@client, peer_addr, fabric, peer_node_id: node_id, timeout: @timeout)
+            if hooks = @hooks
+              hooks.before_complete(fabric, node_id, im, case_session, peer_addr)
+            end
+
+            registrar.try(&.completing(fabric, node_id))
+
+            commissioning_complete_resp = im.invoke(
+              session: case_session,
+              peer: peer_addr,
+              endpoint_id: 0_u16,
+              cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
+              command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
+              fields: Bytes.empty
+            )
+            begin
+              assert_commissioning_complete!(commissioning_complete_resp)
+            rescue ex : Matter::CommissioningError
+              # An explicit failed response proves that this invocation did not
+              # commission the node. A missing response remains ambiguous.
+              begin
+                registrar.try(&.abort(fabric, node_id, confirmed_failure: true))
+              rescue error
+                Log.error(exception: error) { "Datastore RemoveNode cleanup failed for node 0x#{node_id.to_s(16)}" }
+              end
+              raise ex
+            end
+            registrar.try(&.complete(fabric, node_id))
+
+            if hooks = @hooks
+              hooks.complete_acknowledged(fabric, node_id, peer_addr)
+            end
+
+            state = @store.load
+            state.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id, address: peer_addr.address, port: peer_addr.port), fabric.root_public_key, fabric.controller_node_id)
             state.unsecured_message_counter = @client.transport.message_counter.counter
             @store.save(state)
             if hooks = @hooks
-              hooks.finalize_deferred_handoff(fabric, node_id, im, pase_session, peer_addr, handoff)
-              hooks.complete_acknowledged(fabric, node_id, peer_addr)
-              state.complete_pending_handoff(fabric.fabric_id, fabric.root_public_key,
-                fabric.controller_node_id, node_id, handoff.nonce)
-              @store.save(state)
-              hooks.after_deferred_handoff(fabric, node_id, peer_addr)
-              return
+              hooks.after_complete(fabric, node_id, im, case_session, peer_addr)
             end
-            return handoff
+            registrar.try(&.refresh(fabric, node_id))
+            nil
+          rescue ex
+            if registration_attempted
+              begin
+                registrar.try(&.abort(fabric, node_id))
+              rescue error
+                Log.error(exception: error) { "Datastore RemoveNode cleanup was deferred for node 0x#{node_id.to_s(16)}" }
+              end
+            end
+            raise ex
           end
-
-          case_pairing = Pairing::CasePairing.new(@crypto)
-          case_session = case_pairing.pair(@client, peer_addr, fabric, peer_node_id: node_id, timeout: @timeout)
-          if hooks = @hooks
-            hooks.before_complete(fabric, node_id, im, case_session, peer_addr)
-          end
-
-          commissioning_complete_resp = im.invoke(
-            session: case_session,
-            peer: peer_addr,
-            endpoint_id: 0_u16,
-            cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
-            command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
-            fields: Bytes.empty
-          )
-          assert_commissioning_complete!(commissioning_complete_resp)
-
-          if hooks = @hooks
-            hooks.complete_acknowledged(fabric, node_id, peer_addr)
-          end
-
-          state.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id, address: peer_addr.address, port: peer_addr.port), fabric.root_public_key, fabric.controller_node_id)
-          state.unsecured_message_counter = @client.transport.message_counter.counter
-          @store.save(state)
-          if hooks = @hooks
-            hooks.after_complete(fabric, node_id, im, case_session, peer_addr)
-          end
-          nil
         end
 
         # The JFA must first report that its own CASE CommissioningComplete
@@ -321,6 +372,11 @@ module Matter
           node = state.complete_pending_handoff(fabric_id, root_public_key,
             controller_node_id, node_id, nonce)
           @store.save(state)
+          if registrar = @datastore_registrar
+            fabric = state.fabric_for(fabric_id, root_public_key, controller_node_id)
+            registrar.complete(fabric, node_id)
+            registrar.refresh(fabric, node_id)
+          end
           node
         end
 
