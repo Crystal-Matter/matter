@@ -24,6 +24,103 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "keeps the bootstrap and joined Administrator services bound to distinct fabrics" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    b_root_key = crypto.create_key_pair
+    b_icac_key = crypto.create_key_pair
+    b_noc_key = crypto.create_key_pair
+    b_root = Matter::Crypto::MatterCertificate::Builder.root(b_root_key, 1_u64, Bytes[1], crypto)
+    b_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      b_icac_key.public_key, 0xB100_u64, 2_u64, b_root_key, 1_u64, Bytes[2], crypto, anchor: true)
+    b_noc = Matter::Crypto::MatterCertificate::Builder.node(
+      b_noc_key.public_key, 0xB100_u64, 0xB102_u64, b_icac_key, 1_u64, Bytes[3], crypto,
+      issuer_icac_id: 2_u64, issuer_certificate: b_icac,
+      case_authenticated_tag: 0xFFFE_0001_u32)
+    b_fabric = Matter::Fabric.new(0xB100_u64, 1_u8, 0xB102_u64, b_root_key.public_key,
+      b_noc, b_noc_key, Bytes.new(16, 1_u8), intermediate_cert: b_icac, root_cert: b_root,
+      cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0001_u32)])
+    bootstrap_path = File.join(Dir.tempdir, "matter-jfa-concurrent-#{Random::Secure.hex(6)}.yml")
+    bootstrap_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(bootstrap_path))
+    bootstrap_store.save(Matter::Controller::State.new(fabric: Matter::Controller::FabricInfo.new(
+      0xB100_u64, 0xB102_u64, b_fabric.ipk, b_root, b_root_key.public_key,
+      b_noc, b_noc_key.private_key, root_private_key: b_root_key.private_key,
+      intermediate_cert: b_icac, intermediate_private_key: b_icac_key.private_key)))
+    bootstrap_store.backend.close
+
+    a_root_key = crypto.create_key_pair
+    a_noc_key = crypto.create_key_pair
+    a_root = Matter::Crypto::MatterCertificate::Builder.root(a_root_key, 3_u64, Bytes[4], crypto)
+    a_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      b_icac_key.public_key, 0xA100_u64, 4_u64, a_root_key, 3_u64, Bytes[5], crypto)
+    a_noc = Matter::Crypto::MatterCertificate::Builder.node(
+      a_noc_key.public_key, 0xA100_u64, 0xA103_u64, b_icac_key, 2_u64, Bytes[6], crypto,
+      issuer_icac_id: 4_u64, issuer_certificate: a_icac,
+      case_authenticated_tag: 0xFFFF_0001_u32)
+    a_fabric = Matter::Fabric.new(0xA100_u64, 2_u8, 0xA103_u64, a_root_key.public_key,
+      a_noc, a_noc_key, Bytes.new(16, 2_u8), intermediate_cert: a_icac, root_cert: a_root,
+      cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFF_0001_u32)])
+
+    previous_provisioned = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_bootstrap = ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"]?
+    previous_keep = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
+    ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
+    ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"] = bootstrap_path
+    ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
+    backend = Matter::Storage::Memory.new
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.install_test_fabric(b_fabric)
+    device.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    device.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(a_icac).to_document)
+    device.install_test_fabric(a_fabric)
+    device.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
+    device.joint_fabric_administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
+      .cross_signed_icac.should eq(a_icac)
+    device.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    device.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
+    device.bootstrap_joint_fabric_datastore.joint_fabric_index.should eq(1_u8)
+    device.joint_fabric_datastore.joint_fabric_index.should eq(2_u8)
+    device.joint_fabric_datastore.access_mode.should eq(Matter::Cluster::JointFabricDatastore::AccessMode::Inactive)
+
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.install_test_fabric(b_fabric)
+    restored.install_test_fabric(a_fabric)
+    restored.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
+    restored.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    restored.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
+    restored.remove_test_fabric(2_u8)
+    restored.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
+    restored.advertised_joint_role.should eq(
+      Matter::MDNS::JointFabricRole::Administrator |
+      Matter::MDNS::JointFabricRole::Anchor |
+      Matter::MDNS::JointFabricRole::Datastore)
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should_not be_nil
+    device.remove_test_fabric(1_u8)
+    device.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
+    device.joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
+    device.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should_not be_nil
+  ensure
+    if previous_provisioned
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_provisioned
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_bootstrap
+      ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"] = previous_bootstrap
+    else
+      ENV.delete("MATTER_JFA_BOOTSTRAP_STATE_PATH")
+    end
+    if previous_keep
+      ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = previous_keep
+    else
+      ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    end
+    File.delete?(bootstrap_path) if bootstrap_path
+  end
+
   it "fails closed without migration attestation trust and accepts explicit production trust" do
     previous = ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]?
     ENV.delete("MATTER_JFA_MIGRATION_TEST_TRUST")
@@ -150,6 +247,9 @@ describe MatterJointFabricAdministrator::Device do
     bootstrap_datastore = device.bootstrap_joint_fabric_datastore
     bootstrap_datastore.joint_fabric_index.should eq(1_u8)
     bootstrap_datastore.admin_list.first.node_id.should eq(node_id)
+    bootstrap_administrator = device.bootstrap_joint_fabric_administrator
+    bootstrap_administrator.administrator_fabric_index.should eq(1_u8)
+    bootstrap_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
     bootstrap_datastore.request_is_case_session = true
     bootstrap_datastore.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST, 1_u8)
       .should be_a(TLV::Any)

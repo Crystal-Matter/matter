@@ -94,8 +94,12 @@ item below as covered only to the extent of its cited tests.
   entry. A per-device journal blocks automatic replay of uncertain commands;
   read-only CASE checks allow explicit recovery. Rollback is available before
   B removal. The JFA example now publishes its IPK as GroupKeySetID zero.
-  An opt-in second JFA Datastore endpoint remains bound to B after endpoint 1
-  joins A, so B's NodeList remains available until migration completes. The
+  With `MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE=1`, endpoint 2 keeps both B's JFA
+  service and Datastore bound to B after endpoint 1 joins A. The two services
+  retain separate AdministratorFabricIndex, ICAC and Anchor role records, and
+  B's NodeList remains available until migration completes. On restart, the
+  bootstrap fabric is restored before the joined fabric; removal of A keeps
+  B's JFA credentials and endpoint available. The
   Docker two-JFA test migrates a real switch from B201 to A201 and verifies A
   CASE, absence of the B fabric, and NodeList movement in both Datastores.
   The local `migrate-device` command requires explicit device consent and an

@@ -17,21 +17,24 @@ module MatterJointFabricAdministrator
     alias Admin = Matter::Cluster::JointFabricAdministrator
     alias Datastore = Matter::Cluster::JointFabricDatastore
 
-    APP_KEY_DOCUMENT            = "joint-fabric-admin-key"
-    APP_ICAC_DOCUMENT           = "joint-fabric-admin-icac"
-    APP_ROLE_DOCUMENT           = "joint-fabric-admin-role"
-    APP_TRANSFER_DOCUMENT       = "joint-fabric-anchor-transfer"
-    APP_TRANSFER_WATCH_DOCUMENT = "joint-fabric-transfer-watch"
-    APP_FOLLOW_UP_PREFIX        = "joint-fabric-anchor-follow-up-"
-    APP_REMOVAL_PREFIX          = "joint-fabric-administrator-removal-"
-    JCM_RPC_COLLECTION          = "jcm_anchor_exchange"
-    JCM_RPC_REQUEST             = "request"
-    JCM_RPC_RESULT              = "result"
-    COMMAND_RPC_COLLECTION      = "jfa_command"
-    ANCHOR_CAT                  = Matter::DataType::CaseAuthenticatedTag.create(0xFFFE_u16, 1_u16)
-    DEFAULT_OPERATIONAL_PORT    =  5540
-    ADMIN_GROUP_ID              = 1_u16
-    ANCHOR_GROUP_ID             = 2_u16
+    APP_KEY_DOCUMENT                      = "joint-fabric-admin-key"
+    APP_ICAC_DOCUMENT                     = "joint-fabric-admin-icac"
+    APP_ROLE_DOCUMENT                     = "joint-fabric-admin-role"
+    APP_BOOTSTRAP_ROLE_DOCUMENT           = "joint-fabric-bootstrap-role"
+    APP_BOOTSTRAP_ICAC_DOCUMENT           = "joint-fabric-bootstrap-icac"
+    APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT = "joint-fabric-bootstrap-transfer-watch"
+    APP_TRANSFER_DOCUMENT                 = "joint-fabric-anchor-transfer"
+    APP_TRANSFER_WATCH_DOCUMENT           = "joint-fabric-transfer-watch"
+    APP_FOLLOW_UP_PREFIX                  = "joint-fabric-anchor-follow-up-"
+    APP_REMOVAL_PREFIX                    = "joint-fabric-administrator-removal-"
+    JCM_RPC_COLLECTION                    = "jcm_anchor_exchange"
+    JCM_RPC_REQUEST                       = "request"
+    JCM_RPC_RESULT                        = "result"
+    COMMAND_RPC_COLLECTION                = "jfa_command"
+    ANCHOR_CAT                            = Matter::DataType::CaseAuthenticatedTag.create(0xFFFE_u16, 1_u16)
+    DEFAULT_OPERATIONAL_PORT              =  5540
+    ADMIN_GROUP_ID                        = 1_u16
+    ANCHOR_GROUP_ID                       = 2_u16
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -287,11 +290,14 @@ module MatterJointFabricAdministrator
     protected def before_start : Nil
       super
       connect_failsafe_lifecycle
-      fabric_table.all_fabrics.each { |fabric| attach_joint_fabric(fabric) }
+      fabrics = fabric_table.all_fabrics
+      fabrics.select { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joint_fabric(fabric) }
+      fabrics.reject { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joined_fabric(fabric) }
     end
 
     protected def fabric_added(fabric : Matter::Fabric) : Nil
       attach_joint_fabric(fabric)
+      attach_joined_fabric(fabric)
     end
 
     protected def on_started : Nil
@@ -321,7 +327,24 @@ module MatterJointFabricAdministrator
         @bootstrap_datastore_propagator.try(&.stop!)
         @bootstrap_datastore_propagator = nil
         bootstrap_joint_fabric_datastore.clear_fabric_state
+        bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
+        bootstrap_joint_fabric_administrator.service = nil
         persistence.forget_cluster(2_u16, Datastore::CLUSTER_ID)
+        persistence.delete_app_document(APP_BOOTSTRAP_ROLE_DOCUMENT)
+        persistence.delete_app_document(APP_BOOTSTRAP_ICAC_DOCUMENT)
+        persistence.delete_app_document(APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT)
+        persistence.delete_app_document(APP_KEY_DOCUMENT) unless joint_fabric_datastore.joint_fabric_index
+        if propagation = @propagation_fabric
+          if propagation.fabric_index == fabric_index && joint_fabric_datastore.joint_fabric_index != fabric_index
+            if store = @controller_store
+              state = store.load
+              state.remove_fabric(propagation.fabric_id, propagation.root_public_key, propagation.node_id)
+              store.save(state)
+            end
+            @propagation_fabric = nil
+            @controller_store = nil
+          end
+        end
       end
       @participant_view_current = false
       close_new_anchor_subscription
@@ -329,35 +352,43 @@ module MatterJointFabricAdministrator
         @datastore_propagator.try(&.stop!)
         @datastore_propagator = nil
         if fabric = @propagation_fabric
-          if store = @controller_store
-            state = store.load
-            state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
-            store.save(state)
+          if fabric.fabric_index == fabric_index
+            if store = @controller_store
+              state = store.load
+              state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
+              store.save(state)
+            end
           end
         end
-        @propagation_fabric = nil
-        @controller_store = nil
+        if @propagation_fabric.try(&.fabric_index) == fabric_index
+          @propagation_fabric = nil
+          @controller_store = nil
+        end
         joint_fabric_datastore.clear_fabric_state
         joint_fabric_datastore.allow_jcm_pase_group_list = nil
         @jcm_failsafe_session_id = nil
         persistence.forget_cluster(1_u16, Datastore::CLUSTER_ID)
         joint_fabric_administrator.administrator_fabric_index = nil
         joint_fabric_administrator.service = nil
-        @joint_fabric_provisioned = false
+        @joint_fabric_provisioned = !bootstrap_joint_fabric_datastore.joint_fabric_index.nil?
         @anchor_role = false
         persistence.delete_app_document(APP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_ICAC_DOCUMENT)
-        persistence.delete_app_document(APP_KEY_DOCUMENT)
+        persistence.delete_app_document(APP_KEY_DOCUMENT) unless bootstrap_joint_fabric_datastore.joint_fabric_index
       end
     end
 
     protected def commissioning_info_for(mode : Matter::MDNS::CommissioningMode) : Matter::MDNS::CommissioningInfo
       info = super
-      info.joint_fabric_role = if joint_fabric_datastore.status.state == Datastore::DatastoreStateEnum::DeletePending
+      bootstrap_active = bootstrap_joint_fabric_datastore.access_mode.active? &&
+                         (bootstrap_joint_fabric_datastore.joint_fabric_index != joint_fabric_datastore.joint_fabric_index ||
+                          joint_fabric_datastore.status.state != Datastore::DatastoreStateEnum::DeletePending)
+      info.joint_fabric_role = if joint_fabric_datastore.status.state == Datastore::DatastoreStateEnum::DeletePending &&
+                                  !bootstrap_active
                                  nil
                                elsif !@joint_fabric_provisioned
                                  Matter::MDNS::JointFabricRole::Available
-                               elsif @anchor_role
+                               elsif @anchor_role || bootstrap_active
                                  Matter::MDNS::JointFabricRole::Administrator |
                                    Matter::MDNS::JointFabricRole::Anchor |
                                    Matter::MDNS::JointFabricRole::Datastore
@@ -438,7 +469,14 @@ module MatterJointFabricAdministrator
         transfer_authorized: ->(_node_id : UInt64) { ENV["MATTER_JFA_ALLOW_TRANSFER"]? == "1" },
         datastore_busy: -> { joint_fabric_datastore.transfer_busy? },
         begin_transfer: -> { begin_anchor_transfer },
-        complete_transfer: -> { persist_anchor_role(false, transfer_complete: true); lifecycle.sync_advertisements; nil },
+        complete_transfer: -> {
+          persist_anchor_role(false, transfer_complete: true)
+          if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric.fabric_index
+            persist_bootstrap_anchor_role(false, transfer_complete: true)
+          end
+          lifecycle.sync_advertisements
+          nil
+        },
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: persisted_icac,
@@ -460,10 +498,11 @@ module MatterJointFabricAdministrator
         }
       )
       configure_propagator(fabric, root)
-      configure_bootstrap_datastore(fabric, root, icac)
+      configure_bootstrap_datastore(fabric, root, icac, key)
     end
 
-    private def configure_bootstrap_datastore(fabric : Matter::Fabric, root : Bytes, icac : Bytes) : Nil
+    private def configure_bootstrap_datastore(fabric : Matter::Fabric, root : Bytes, icac : Bytes,
+                                              key : Matter::Crypto::Key?) : Nil
       return unless ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
       bootstrap = begin
         provisioned_anchor_bootstrap(fabric).fabric
@@ -474,12 +513,66 @@ module MatterJointFabricAdministrator
                     bootstrap.root_public_key == fabric.root_public_key
 
       datastore = bootstrap_joint_fabric_datastore
-      bootstrap_joint_fabric_administrator.administrator_fabric_index = fabric.fabric_index
+      administrator = bootstrap_joint_fabric_administrator
+      administrator.administrator_fabric_index = fabric.fabric_index
+      remote_csr_provider = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?.try do |path|
+        Matter::Commissioning::RemoteIcacCsrProvider.new(path, fabric.fabric_id, fabric.root_public_key)
+      end
       datastore.joint_fabric_index = fabric.fabric_index
-      datastore.access_mode = Datastore::AccessMode::Active
+      role = bootstrap_role_state
+      datastore.access_mode = if role.anchor?
+                                Datastore::AccessMode::Active
+                              elsif role.transfer_complete?
+                                Datastore::AccessMode::Inactive
+                              else
+                                Datastore::AccessMode::Frozen
+                              end
       datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Bootstrap Anchor", fabric.ipk)
       seed_joint_fabric_groups(datastore)
       seed_anchor_administrator(datastore, fabric, icac)
+      administrator.service = Matter::Commissioning::JointFabricAdministratorService.new(
+        icac_private_key: key,
+        root_certificate: root,
+        fabric_id: fabric.fabric_id,
+        failsafe_armed: -> { general_commissioning.failsafe_armed? },
+        vendor_id_verified: ->(_index : UInt8) { true },
+        open_window: ->(request : Admin::OpenJointCommissioningWindowRequest) {
+          open_bootstrap_joint_window(request, fabric)
+        },
+        transfer_authorized: ->(_node_id : UInt64) { ENV["MATTER_JFA_ALLOW_TRANSFER"]? == "1" },
+        datastore_busy: -> { datastore.transfer_busy? },
+        begin_transfer: -> { begin_bootstrap_anchor_transfer },
+        complete_transfer: -> {
+          persist_bootstrap_anchor_role(false, transfer_complete: true)
+          if joint_fabric_datastore.joint_fabric_index == fabric.fabric_index
+            persist_anchor_role(false, transfer_complete: true)
+          end
+          lifecycle.sync_advertisements
+          nil
+        },
+        on_transfer_requested: ->(node_id : UInt64, index : UInt8) {
+          record_bootstrap_transfer_candidate(node_id, index)
+        },
+        initial_transfer_requester: persisted_transfer_requester(fabric, datastore,
+          APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT),
+        initial_icac: persisted_icac(APP_BOOTSTRAP_ICAC_DOCUMENT),
+        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_BOOTSTRAP_ICAC_DOCUMENT) },
+        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
+          verify_anchor_initiator(node_id, index, source)
+        },
+        resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
+        existing_icac_certificate: icac,
+        icac_csr_provider: remote_csr_provider,
+        failsafe_fabric_matches: ->(index : UInt8?) {
+          if context = general_commissioning.failsafe_context
+            context.armed? && !index.nil? &&
+            (context.associated_fabric_index == index ||
+             (context.associated_fabric_index.nil? && context.added_fabric_index == index))
+          else
+            false
+          end
+        }
+      )
       unless persistence.save_cluster(datastore)
         raise Matter::StorageError.new("Could not persist bootstrap Joint Fabric Datastore")
       end
@@ -494,6 +587,70 @@ module MatterJointFabricAdministrator
       )
       @bootstrap_datastore_propagator = Matter::Controller::DatastorePropagator.new(datastore, delivery)
       @bootstrap_datastore_propagator.try(&.start) if @propagation_started
+    end
+
+    # JCM leaves the bootstrap fabric in place. Its JFA stays on endpoint 2,
+    # while endpoint 1 follows the committed cross-signed ICAC onto the joined
+    # fabric. Match both fabric identity and certificate before rebinding.
+    private def attach_joined_fabric(fabric : Matter::Fabric) : Nil
+      certificate = persisted_icac
+      return unless certificate && fabric.intermediate_cert == certificate
+      return if compliant_anchor_fabric?(fabric)
+      root = fabric.root_cert || raise Matter::ConfigurationError.new("Joined Joint Fabric root is unavailable")
+      key = provisioned_icac_key(fabric, certificate) ||
+            raise Matter::ConfigurationError.new("Joined JFA ICAC private key is unavailable")
+      return if joint_fabric_datastore.joint_fabric_index == fabric.fabric_index &&
+                joint_fabric_administrator.administrator_fabric_index == fabric.fabric_index &&
+                joint_fabric_service.try(&.cross_signed_icac) == certificate
+
+      grant_administrator_cat_access(fabric)
+      unless persistence.app_document(APP_ROLE_DOCUMENT)
+        persistence.write_app_document(APP_ROLE_DOCUMENT, JointFabricRoleState.new(false).to_document)
+      end
+      @anchor_role = persisted_anchor_role
+      @joint_fabric_provisioned = true
+      datastore = joint_fabric_datastore
+      @datastore_propagator.try(&.stop!)
+      @datastore_propagator = nil
+      datastore.clear_fabric_state if datastore.joint_fabric_index != fabric.fabric_index
+      datastore.joint_fabric_index = fabric.fabric_index
+      datastore.access_mode = @anchor_role ? Datastore::AccessMode::Active : Datastore::AccessMode::Inactive
+      administrator = joint_fabric_administrator
+      administrator.administrator_fabric_index = fabric.fabric_index
+      administrator.service = Matter::Commissioning::JointFabricAdministratorService.new(
+        icac_private_key: key,
+        root_certificate: root,
+        fabric_id: fabric.fabric_id,
+        failsafe_armed: -> { general_commissioning.failsafe_armed? },
+        vendor_id_verified: ->(_index : UInt8) { true },
+        open_window: ->(request : Admin::OpenJointCommissioningWindowRequest) { open_joint_window(request, fabric) },
+        transfer_authorized: ->(_node_id : UInt64) { ENV["MATTER_JFA_ALLOW_TRANSFER"]? == "1" },
+        datastore_busy: -> { datastore.transfer_busy? },
+        begin_transfer: -> { begin_anchor_transfer },
+        complete_transfer: -> { persist_anchor_role(false, transfer_complete: true); lifecycle.sync_advertisements; nil },
+        on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
+        initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
+        initial_icac: certificate,
+        persist_icac: ->(value : Bytes?) { persist_icac(value) },
+        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
+          verify_anchor_initiator(node_id, index, source)
+        },
+        resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
+        existing_icac_certificate: certificate,
+        failsafe_fabric_matches: ->(index : UInt8?) {
+          if context = general_commissioning.failsafe_context
+            context.armed? && !index.nil? &&
+            (context.associated_fabric_index == index ||
+             (context.associated_fabric_index.nil? && context.added_fabric_index == index))
+          else
+            false
+          end
+        }
+      )
+      unless persistence.save_cluster(administrator) && persistence.save_cluster(datastore)
+        raise Matter::StorageError.new("Could not persist joined Joint Fabric Administrator endpoints")
+      end
+      persistence.flush
     end
 
     private def grant_administrator_cat_access(fabric : Matter::Fabric) : Nil
@@ -530,7 +687,11 @@ module MatterJointFabricAdministrator
           candidate.controller_node_id == fabric.node_id
       end
       bootstrap_info = if (path = ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"]?) && File.exists?(path)
-                         provisioned_anchor_bootstrap(fabric).fabric
+                         begin
+                           provisioned_anchor_bootstrap(fabric).fabric
+                         rescue Matter::ConfigurationError
+                           existing
+                         end
                        else
                          existing
                        end
@@ -596,16 +757,20 @@ module MatterJointFabricAdministrator
           @jcm_failsafe_session_id = general_commissioning.request_session_id
         end
         joint_fabric_service.try(&.reset_failsafe)
+        bootstrap_joint_fabric_service.try(&.reset_failsafe)
       end
       general_commissioning.on_failsafe_expired = -> do
         expired.try(&.call)
         @jcm_failsafe_session_id = nil
         joint_fabric_service.try(&.on_failsafe_expired)
+        bootstrap_joint_fabric_service.try(&.on_failsafe_expired)
       end
       general_commissioning.on_failsafe_success = -> do
         succeeded.try(&.call)
         @jcm_failsafe_session_id = nil
         joint_fabric_service.try(&.on_commissioning_complete)
+        bootstrap_joint_fabric_service.try(&.on_commissioning_complete)
+        fabric_table.all_fabrics.each { |fabric| attach_joined_fabric(fabric) }
       end
     end
 
@@ -613,17 +778,71 @@ module MatterJointFabricAdministrator
       joint_fabric_administrator.service.as?(Matter::Commissioning::JointFabricAdministratorService)
     end
 
-    private def persisted_icac : Bytes?
-      document = persistence.app_document(APP_ICAC_DOCUMENT)
+    private def bootstrap_joint_fabric_service : Matter::Commissioning::JointFabricAdministratorService?
+      bootstrap_joint_fabric_administrator.service.as?(Matter::Commissioning::JointFabricAdministratorService)
+    end
+
+    private def persisted_icac(document_name : String = APP_ICAC_DOCUMENT) : Bytes?
+      document = persistence.app_document(document_name)
       document ? IcacCertificateState.from_document(document).certificate : nil
     end
 
-    private def persist_icac(certificate : Bytes?) : Nil
+    private def persist_icac(certificate : Bytes?, document_name : String = APP_ICAC_DOCUMENT) : Nil
       if certificate
-        persistence.write_app_document(APP_ICAC_DOCUMENT, IcacCertificateState.new(certificate).to_document)
+        persistence.write_app_document(document_name, IcacCertificateState.new(certificate).to_document)
       else
-        persistence.delete_app_document(APP_ICAC_DOCUMENT)
+        persistence.delete_app_document(document_name)
       end
+    end
+
+    private def bootstrap_anchor_role? : Bool
+      bootstrap_role_state.anchor?
+    end
+
+    private def bootstrap_role_state : JointFabricRoleState
+      document = persistence.app_document(APP_BOOTSTRAP_ROLE_DOCUMENT)
+      document ? JointFabricRoleState.from_document(document) : JointFabricRoleState.new(true)
+    end
+
+    private def persist_bootstrap_anchor_role(anchor : Bool, transfer_complete : Bool = false) : Nil
+      persistence.write_app_document(APP_BOOTSTRAP_ROLE_DOCUMENT,
+        JointFabricRoleState.new(anchor, transfer_complete).to_document)
+      bootstrap_joint_fabric_datastore.access_mode = if anchor
+                                                       Datastore::AccessMode::Active
+                                                     elsif transfer_complete
+                                                       Datastore::AccessMode::Inactive
+                                                     else
+                                                       Datastore::AccessMode::Frozen
+                                                     end
+      @bootstrap_datastore_propagator.try(&.start) if anchor && @propagation_started
+    end
+
+    private def begin_bootstrap_anchor_transfer : Nil
+      unless bootstrap_joint_fabric_datastore.begin_anchor_transfer
+        raise Matter::ConfigurationError.new("Bootstrap Datastore changed while Anchor transfer was starting")
+      end
+      @bootstrap_datastore_propagator.try(&.stop!)
+      if joint_fabric_datastore.joint_fabric_index == bootstrap_joint_fabric_datastore.joint_fabric_index
+        unless joint_fabric_datastore.status.state.delete_pending? || joint_fabric_datastore.begin_anchor_transfer
+          raise Matter::ConfigurationError.new("Joint Datastore changed while bootstrap Anchor transfer was starting")
+        end
+        @datastore_propagator.try(&.stop!)
+        persist_anchor_role(false)
+      end
+      persist_bootstrap_anchor_role(false)
+      lifecycle.sync_advertisements
+    end
+
+    private def record_bootstrap_transfer_candidate(node_id : UInt64, fabric_index : UInt8) : Nil
+      fabric = fabric_table.get_fabric(fabric_index) ||
+               raise Matter::AuthenticationError.new("Bootstrap transfer requester fabric is unavailable")
+      unless bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index && node_id != 0_u64
+        raise Matter::AuthenticationError.new("Transfer requester is not on the bootstrap fabric")
+      end
+      persistence.write_app_document(APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT,
+        TransferWatchState.new(node_id, fabric.fabric_id, fabric.root_public_key,
+          configured_new_anchor_node_id(node_id)).to_document)
+      persistence.flush
     end
 
     private def persisted_anchor_role : Bool
@@ -654,6 +873,9 @@ module MatterJointFabricAdministrator
         raise Matter::ConfigurationError.new("Datastore changed while Anchor transfer was starting")
       end
       @datastore_propagator.try(&.stop!)
+      if bootstrap_joint_fabric_datastore.joint_fabric_index == joint_fabric_datastore.joint_fabric_index
+        begin_bootstrap_anchor_transfer
+      end
       persist_anchor_role(false)
       lifecycle.sync_advertisements
     end
@@ -675,9 +897,10 @@ module MatterJointFabricAdministrator
     end
 
     private def persisted_transfer_requester(fabric : Matter::Fabric,
-                                             datastore : Datastore) : Tuple(UInt64, UInt8)?
+                                             datastore : Datastore,
+                                             document_name : String = APP_TRANSFER_WATCH_DOCUMENT) : Tuple(UInt64, UInt8)?
       return unless datastore.status.state.delete_pending?
-      document = persistence.app_document(APP_TRANSFER_WATCH_DOCUMENT)
+      document = persistence.app_document(document_name)
       return unless document
       watch = TransferWatchState.from_document(document)
       return unless watch.old_fabric_id == fabric.fabric_id &&
@@ -1726,6 +1949,20 @@ module MatterJointFabricAdministrator
         ::Log.for("matter.example.joint_fabric_administrator").info { "Joint Commissioning window denied by local consent policy" }
         return Matter::InteractionModel::Status.unsupported_access
       end
+      open_joint_window_on_fabric(request, fabric)
+    end
+
+    private def open_bootstrap_joint_window(request : Admin::OpenJointCommissioningWindowRequest,
+                                            fabric : Matter::Fabric) : Matter::InteractionModel::Status
+      unless bootstrap_anchor_role? && bootstrap_joint_fabric_datastore.access_mode.active? &&
+             ENV["MATTER_JFA_ALLOW_JCM"]? == "1"
+        return Matter::InteractionModel::Status.unsupported_access
+      end
+      open_joint_window_on_fabric(request, fabric)
+    end
+
+    private def open_joint_window_on_fabric(request : Admin::OpenJointCommissioningWindowRequest,
+                                            fabric : Matter::Fabric) : Matter::InteractionModel::Status
       normal = Matter::Cluster::AdministratorCommissioning::OpenCommissioningWindowRequest.new(
         request.commissioning_timeout,
         request.pake_passcode_verifier,
