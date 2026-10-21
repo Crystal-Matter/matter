@@ -15,12 +15,16 @@ module AttestationCMSFixture
   def signed_cd(vendor_id : UInt16, product_id : UInt16, digest : Bytes? = nil,
                 content_type : Bytes = Matter::Controller::DeviceAttestationVerifier::DATA_OID,
                 include_digest : Bool = true, tamper_signature : Bool = false,
-                include_signing_time : Bool = false) : Bytes
+                include_signing_time : Bool = false,
+                origin_vendor_id : UInt16? = nil, origin_product_id : UInt16? = nil,
+                authorized_paa_list : Array(Bytes)? = nil) : Bytes
     declaration = Matter::Certificate::CertificationDeclaration::CDContent.new(
       format_version: 1_u8, vendor_id: vendor_id, product_ids: [product_id],
       device_type_id: 22_u32, certificate_id: "CSA00000SWC00000-00",
       security_level: 0_u8, security_information: 0_u16,
-      version_number: 1_u16, certification_type: 0_u8).to_slice
+      version_number: 1_u16, certification_type: 0_u8,
+      dac_origin_vendor_id: origin_vendor_id, dac_origin_product_id: origin_product_id,
+      authorized_paa_list: authorized_paa_list).to_slice
     verifier = Matter::Crypto::StandardCrypto.new
     content_type_oid = Matter::Controller::DeviceAttestationVerifier::CONTENT_TYPE_ATTRIBUTE_OID
     digest_oid = Matter::Controller::DeviceAttestationVerifier::MESSAGE_DIGEST_ATTRIBUTE_OID
@@ -69,6 +73,66 @@ describe Matter::Controller::DeviceAttestationVerifier do
   good_revocation = ->(_dac : Bytes, _pai : Bytes, _paa : Bytes) {
     Matter::Controller::RevocationStatus::Good
   }
+
+  it "enforces the CD authorized PAA list and paired DAC origin fields" do
+    manager = Matter::Certificate::AttestationCertificateManager.new(vendor_id)
+    dac, dac_key = manager.get_dac_cert(product_id)
+    signer_private = Matter::Certificate::CertificationDeclaration::TEST_CMS_SIGNER_PRIVATE_KEY.hexbytes
+    signer_public = OpenSSL::PKey::EC.from_private_bytes(signer_private,
+      Matter::Crypto::CRYPTO_EC_CURVE_NIST).public_key_bytes
+    trust = Matter::Controller::AttestationTrustStore.new([manager.paa_cert],
+      {Matter::Certificate::CertificationDeclaration::TEST_CMS_SIGNER_SKI => signer_public},
+      allow_test_attestation: true, revocation_check: good_revocation)
+    verifier = Matter::Controller::DeviceAttestationVerifier.new(trust)
+    paa_skid = Slice.new(LibCrypto.asn1_string_get0_data(
+      LibCrypto.x509_get0_subject_key_id(OpenSSL::X509::Certificate.from_der(manager.paa_cert))), 20).dup
+    nonce = Bytes.new(32, 0x41_u8)
+    challenge = Bytes.new(16, 0x42_u8)
+    verify_cd = ->(cd : Bytes, basic_vendor : UInt16) {
+      elements = Matter::Commissioning::CredentialService::AttestationElements.new(cd, nonce, 0_u32).to_slice
+      signature = Matter::Crypto.sign_ecdsa(dac_key, elements + challenge)
+      verifier.verify_attestation(dac, manager.pai_cert, elements, signature,
+        nonce, challenge, basic_vendor, product_id)
+    }
+
+    authorized = AttestationCMSFixture.signed_cd(vendor_id, product_id,
+      authorized_paa_list: [paa_skid])
+    verify_cd.call(authorized, vendor_id).should eq(dac_key.public_key)
+    expect_raises(Matter::AuthenticationError, /authorized PAA/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(vendor_id, product_id,
+        authorized_paa_list: [Bytes.new(20, 0xAA_u8)]), vendor_id)
+    end
+    expect_raises(Matter::AuthenticationError, /authorized PAA/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(vendor_id, product_id,
+        authorized_paa_list: [] of Bytes), vendor_id)
+    end
+    expect_raises(Matter::AuthenticationError, /authorized PAA/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(vendor_id, product_id,
+        authorized_paa_list: [paa_skid[0, 19]]), vendor_id)
+    end
+    expect_raises(Matter::AuthenticationError, /origin/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(vendor_id, product_id,
+        origin_vendor_id: vendor_id), vendor_id)
+    end
+    expect_raises(Matter::AuthenticationError, /origin/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(vendor_id, product_id,
+        origin_vendor_id: vendor_id + 1_u16, origin_product_id: product_id), vendor_id)
+    end
+    expect_raises(Matter::AuthenticationError, /origin/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(vendor_id, product_id,
+        origin_vendor_id: vendor_id, origin_product_id: product_id + 1_u16), vendor_id)
+    end
+
+    # A different certified vendor may use this manufacturer's DAC chain when
+    # the signed CD explicitly names the manufacturing origin.
+    certified_vendor = vendor_id + 1_u16
+    verify_cd.call(AttestationCMSFixture.signed_cd(certified_vendor, product_id,
+      origin_vendor_id: vendor_id, origin_product_id: product_id,
+      authorized_paa_list: [paa_skid]), certified_vendor).should eq(dac_key.public_key)
+    expect_raises(Matter::AuthenticationError, /origin|VID/) do
+      verify_cd.call(AttestationCMSFixture.signed_cd(certified_vendor, product_id), certified_vendor)
+    end
+  end
 
   it "accepts an explicitly trusted test chain, CD signer, nonce, and PASE signature" do
     manager = Matter::Certificate::AttestationCertificateManager.new(vendor_id)

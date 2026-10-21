@@ -188,6 +188,8 @@ begin
   # runs PASE, installs the fabric's credentials and stores the node.
   # Supply DER PAA roots and CD signer P-256 public keys (uncompressed bytes)
   # from your own trust bundle. Test credentials are never loaded by default.
+  # The verifier also checks the signed CD's optional DAC origin VID/PID and
+  # authorized PAA SKID list against the attestation chain.
   paa_certificates = [File.read("trusted-paa.der").to_slice]
   cd_signers = {"CD_SIGNER_SKI_HEX" => File.read("cd-signer-p256.bin").to_slice}
   revocation_check = ->(_dac : Bytes, _pai : Bytes, _paa : Bytes) {

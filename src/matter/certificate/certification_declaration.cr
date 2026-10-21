@@ -49,6 +49,15 @@ module Matter
         @[TLV::Field(tag: 8)]
         property certification_type : UInt8
 
+        @[TLV::Field(tag: 9, optional: true)]
+        property dac_origin_vendor_id : UInt16?
+
+        @[TLV::Field(tag: 10, optional: true)]
+        property dac_origin_product_id : UInt16?
+
+        @[TLV::Field(tag: 11, optional: true)]
+        property authorized_paa_list : Array(Bytes)?
+
         def initialize(
           @format_version : UInt8,
           @vendor_id : UInt16,
@@ -59,6 +68,9 @@ module Matter
           @security_information : UInt16,
           @version_number : UInt16,
           @certification_type : UInt8,
+          @dac_origin_vendor_id : UInt16? = nil,
+          @dac_origin_product_id : UInt16? = nil,
+          @authorized_paa_list : Array(Bytes)? = nil,
         )
         end
       end
