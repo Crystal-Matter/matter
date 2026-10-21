@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### ICD advertisement
+
+- Default always-on devices no longer advertise ICD Management. Matter 1.6
+  treats that cluster's presence as an intermittently connected device; the
+  cluster class remains available to devices that explicitly implement ICD
+  behavior.
+
 ### Commissioning interoperability
 
 - Accept zero-valued RCAC and ICAC identifiers, which Matter 1.6 permits and

@@ -416,7 +416,6 @@ module Matter
       @administrator_commissioning = administrator_commissioning
 
       general_diagnostics = Cluster::GeneralDiagnostics.new(endpoint_0)
-      icd_management = Cluster::IcdManagement.new(endpoint_0)
       network_commissioning = Cluster::NetworkCommissioning.new(
         endpoint_0,
         network_type: commissioning_network_type,
@@ -468,7 +467,6 @@ module Matter
         operational_credentials,
         administrator_commissioning,
         general_diagnostics,
-        icd_management,
         network_commissioning,
         group_key_management,
         ota_requestor,
