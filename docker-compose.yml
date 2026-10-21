@@ -55,7 +55,7 @@ services:
       MATTER_JFA_JCM_REQUEST_PATH: /e2e/logs/matter_joint_fabric_anchor.jcm-rpc.yml
       MATTER_JFA_ALLOW_TRANSFER: "1"
       MATTER_JFA_TRANSFER_CANDIDATE_IDS: a103=b102
-      MATTER_JFA_TRANSFER_PEERS: a103=joint-fabric-joiner,b102=joint-fabric-joiner
+      MATTER_JFA_TRANSFER_PEERS: a103=joint-fabric-joiner,b102=joint-fabric-joiner,a201=joint-fabric-migration-target
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_anchor.command.yml
 
   joint-fabric-joiner:
@@ -68,7 +68,11 @@ services:
       MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_joiner.trust-root.tlv
       MATTER_JFA_ALLOW_JCM: "1"
       MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
-      MATTER_JFA_TRANSFER_PEERS: a102=joint-fabric-anchor
+      MATTER_JFA_TRANSFER_PEERS: a102=joint-fabric-anchor,b201=joint-fabric-migration-target
+      MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE: "1"
+      MATTER_JFA_CONSENTED_MIGRATIONS: b201
+      MATTER_JFA_MIGRATION_TEST_TRUST: "1"
+      MATTER_JFA_ANCHOR_NODE_ID: a102
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_joiner.command.yml
       MATTER_JFA_CONSENTED_REMOVALS: a102
       MATTER_JFA_OUTGOING_INSPECTION_PATH: /e2e/logs/matter_joint_fabric_anchor.command.yml
@@ -101,6 +105,12 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_joint_fabric_lifecycle_target
+      E2E_BINARY: matter_switch
+
+  joint-fabric-migration-target:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_migration_target
       E2E_BINARY: matter_switch
 
   level-control:
@@ -164,6 +174,7 @@ services:
       joint-fabric-refresh-target: { condition: service_healthy }
       joint-fabric-lifecycle-anchor: { condition: service_healthy }
       joint-fabric-lifecycle-target: { condition: service_healthy }
+      joint-fabric-migration-target: { condition: service_healthy }
       level-control: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }

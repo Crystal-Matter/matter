@@ -8,6 +8,14 @@ private def jf_cat_subject(cat : UInt16, version : UInt16) : UInt64
 end
 
 describe Matter::Cluster::JointFabricDatastore do
+  it "publishes the Anchor fabric IPK in GroupKeySetID zero for JCM device migration" do
+    cluster = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    ipk = Bytes.new(16, 0xA5_u8)
+    cluster.configure_anchor(Bytes[1], 7_u64, 0xFFF1_u16, "Anchor", ipk).success?.should be_true
+    key_set = cluster.group_key_set_list.find!(&.group_key_set_id.==(0_u16))
+    key_set.epoch_key0.should eq(ipk)
+    key_set.epoch_start_time0.should eq(0_u64)
+  end
   it "publishes the Matter 1.6 Datastore command and attribute schema" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.cluster_revision.should eq(1_u16)

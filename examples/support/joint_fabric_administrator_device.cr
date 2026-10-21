@@ -5,6 +5,7 @@ require "../../src/matter/controller/anchor_datastore_subscription"
 require "../../src/matter/controller/joint_commissioning"
 require "../../src/matter/controller/anchor_transfer"
 require "../../src/matter/controller/administrator_removal"
+require "../../src/matter/controller/joint_fabric_device_migration"
 
 # Joint Fabric Administrator endpoint for interoperability work. Commission
 # this device onto an Anchor fabric first; its JF service binds to that fabric
@@ -122,12 +123,17 @@ module MatterJointFabricAdministrator
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
+      getter anchor_node_id : UInt64?
+      getter peer_address : String?
+      getter peer_port : Int32?
 
       def initialize(@operation : String, @node_id : UInt64,
                      @fabric_id : UInt64? = nil, @root_public_key : Bytes? = nil,
                      @nonce : String? = nil, @interrupt_after_remove_fabric : Bool = false,
                      @jcm : Bool = false, @trusted_icac_public_key_b : Bytes? = nil,
-                     @peer_admin_jfa_endpoint_id : UInt16? = nil)
+                     @peer_admin_jfa_endpoint_id : UInt16? = nil,
+                     @anchor_node_id : UInt64? = nil, @peer_address : String? = nil,
+                     @peer_port : Int32? = nil)
       end
     end
 
@@ -189,9 +195,19 @@ module MatterJointFabricAdministrator
       cluster Datastore, as: :joint_fabric_datastore
     end
 
+    # A joining Administrator retains its bootstrap fabric's Datastore while
+    # endpoint 1 is rebound to the joined Anchor fabric. The two instances
+    # enforce their own CASE fabric indices.
+    endpoint 2, device_type: Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR do
+      cluster Admin, as: :bootstrap_joint_fabric_administrator
+      cluster Datastore, as: :bootstrap_joint_fabric_datastore
+    end
+
     @anchor_role : Bool = false
     @joint_fabric_provisioned : Bool = false
     @datastore_propagator : Matter::Controller::DatastorePropagator?
+    @bootstrap_datastore_propagator : Matter::Controller::DatastorePropagator?
+    @migration_attestation_trust : Matter::Controller::AttestationTrustStore?
     @controller_store : Matter::Controller::StateStore?
     @propagation_fabric : Matter::Fabric?
     @propagation_started : Bool = false
@@ -208,6 +224,22 @@ module MatterJointFabricAdministrator
 
     def console_notes : Array(String)
       ["Endpoint 1: Joint Fabric Administrator and Joint Fabric Datastore"]
+    end
+
+    # Applications can supply their own PAA and CD signer trust, together with
+    # a revocation decision source. No test trust is installed by default.
+    def migration_attestation_trust=(trust : Matter::Controller::AttestationTrustStore) : Nil
+      if trust.paa_certificates.empty? || trust.cd_signers.empty? || !trust.revocation_check
+        raise Matter::ConfigurationError.new("Migration trust requires PAA, CD signer, and revocation source")
+      end
+      @migration_attestation_trust = trust
+    end
+
+    private def migration_attestation_verifier : Matter::Controller::DeviceAttestationVerifier
+      trust = @migration_attestation_trust ||
+              (ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]? == "1" ? Matter::Controller::AttestationTrustStore.matter_test_fixture : nil)
+      raise Matter::ConfigurationError.new("Migration attestation trust is not configured") unless trust
+      Matter::Controller::DeviceAttestationVerifier.new(trust)
     end
 
     def commands : Array(Tuple(String, String))
@@ -266,6 +298,7 @@ module MatterJointFabricAdministrator
       super
       @propagation_started = true
       @datastore_propagator.try(&.start) if joint_fabric_datastore.access_mode.active?
+      @bootstrap_datastore_propagator.try(&.start) if bootstrap_joint_fabric_datastore.access_mode.active?
       if ENV["MATTER_JFA_JCM_REQUEST_PATH"]?
         every(1.second) { process_anchor_exchange_request }
       end
@@ -279,10 +312,17 @@ module MatterJointFabricAdministrator
       @watch_stopped = true
       close_new_anchor_subscription
       @datastore_propagator.try(&.stop!)
+      @bootstrap_datastore_propagator.try(&.stop!)
       super
     end
 
     protected def fabric_removed(fabric_index : UInt8) : Nil
+      if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index
+        @bootstrap_datastore_propagator.try(&.stop!)
+        @bootstrap_datastore_propagator = nil
+        bootstrap_joint_fabric_datastore.clear_fabric_state
+        persistence.forget_cluster(2_u16, Datastore::CLUSTER_ID)
+      end
       @participant_view_current = false
       close_new_anchor_subscription
       if joint_fabric_datastore.joint_fabric_index == fabric_index
@@ -378,7 +418,7 @@ module MatterJointFabricAdministrator
         administrator_commissioning.window_open?
       }
       unless datastore.status.state == Datastore::DatastoreStateEnum::DeletePending
-        datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor")
+        datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor", fabric.ipk)
         seed_joint_fabric_groups(datastore)
         seed_anchor_administrator(datastore, fabric, icac)
       end
@@ -420,6 +460,40 @@ module MatterJointFabricAdministrator
         }
       )
       configure_propagator(fabric, root)
+      configure_bootstrap_datastore(fabric, root, icac)
+    end
+
+    private def configure_bootstrap_datastore(fabric : Matter::Fabric, root : Bytes, icac : Bytes) : Nil
+      return unless ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
+      bootstrap = begin
+        provisioned_anchor_bootstrap(fabric).fabric
+      rescue Matter::ConfigurationError
+        return
+      end
+      return unless bootstrap.fabric_id == fabric.fabric_id &&
+                    bootstrap.root_public_key == fabric.root_public_key
+
+      datastore = bootstrap_joint_fabric_datastore
+      bootstrap_joint_fabric_administrator.administrator_fabric_index = fabric.fabric_index
+      datastore.joint_fabric_index = fabric.fabric_index
+      datastore.access_mode = Datastore::AccessMode::Active
+      datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Bootstrap Anchor", fabric.ipk)
+      seed_joint_fabric_groups(datastore)
+      seed_anchor_administrator(datastore, fabric, icac)
+      unless persistence.save_cluster(datastore)
+        raise Matter::StorageError.new("Could not persist bootstrap Joint Fabric Datastore")
+      end
+      @bootstrap_datastore_propagator.try(&.stop!)
+      store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
+      delivery = Matter::Controller::DatastorePropagator::NetworkDelivery.new(
+        store,
+        fabric_id: fabric.fabric_id,
+        root_public_key: fabric.root_public_key,
+        controller_node_id: fabric.node_id,
+        peer_hints: configured_peer_hints
+      )
+      @bootstrap_datastore_propagator = Matter::Controller::DatastorePropagator.new(datastore, delivery)
+      @bootstrap_datastore_propagator.try(&.start) if @propagation_started
     end
 
     private def grant_administrator_cat_access(fabric : Matter::Fabric) : Nil
@@ -1215,6 +1289,9 @@ module MatterJointFabricAdministrator
           when "finalize-commissioning"
             certificate = finalize_commissioning(request)
             CommandResult.new("ok", nonce: request.nonce, certificate: certificate)
+          when "migrate-device", "reconcile-device-migration", "rollback-device-migration"
+            migrate_device(request)
+            CommandResult.new("ok", nonce: request.nonce)
           else
             raise Matter::ConfigurationError.new("Unknown Joint Fabric command")
           end
@@ -1229,6 +1306,136 @@ module MatterJointFabricAdministrator
       end
     rescue ex : Matter::Error | IO::Error | ArgumentError
       ::Log.for("matter.example.joint_fabric_administrator").error(exception: ex) { "Joint Fabric command request failed" }
+    end
+
+    # A local, consented command. Neither B's ICAC signing key nor A's joined
+    # operational private key crosses the command channel.
+    private def migrate_device(request : CommandRequest) : Nil
+      allowed = ENV["MATTER_JFA_CONSENTED_MIGRATIONS"]?.to_s.split(',').any? do |id|
+        id.to_u64?(16) == request.node_id
+      end
+      raise Matter::CommissioningError.new("Device migration consent is missing") unless allowed
+      verifier = migration_attestation_verifier
+      anchor_fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Anchor fabric ID is required")
+      anchor_root = request.root_public_key || raise Matter::ConfigurationError.new("Anchor root public key is required")
+      anchor_node_id = request.anchor_node_id || raise Matter::ConfigurationError.new("Anchor device Node ID is required")
+      address = request.peer_address || raise Matter::ConfigurationError.new("Device address is required")
+      target_peer = Socket::IPAddress.new(address, request.peer_port || 5540)
+      old_device_fabric = fabric_table.all_fabrics.find do |fabric|
+        provisioned_bootstrap_fabric?(fabric)
+      end || raise Matter::ConfigurationError.new("Bootstrap Fabric B is not installed")
+      joined_device_fabric = fabric_table.all_fabrics.find do |fabric|
+        fabric.fabric_id == anchor_fabric_id && fabric.root_public_key == anchor_root
+      end || raise Matter::ConfigurationError.new("Joined Anchor fabric is not installed")
+      unless bootstrap_joint_fabric_datastore.joint_fabric_index == old_device_fabric.fabric_index &&
+             bootstrap_joint_fabric_datastore.access_mode.active?
+        raise Matter::ConfigurationError.new("Fabric B Datastore is unavailable")
+      end
+      bootstrap = provisioned_anchor_bootstrap(old_device_fabric).fabric
+      old_fabric = migration_identity(old_device_fabric, bootstrap)
+      anchor_fabric = migration_identity(joined_device_fabric)
+      cross_icac = persisted_icac || raise Matter::ConfigurationError.new("Cross-signed ICAC is unavailable")
+      issuer_key = bootstrap.intermediate_private_key ||
+                   raise Matter::ConfigurationError.new("Fabric B ICAC signer is unavailable")
+      issuer = Matter::Controller::JointFabricDeviceMigration.cross_signed_issuer(
+        old_fabric, anchor_fabric, cross_icac, issuer_key)
+      # The trusted Anchor Node ID is published by the provisioned controller
+      # fixture. It is resolved to an address only after the identity is fixed.
+      anchor_datastore_node_id = ENV["MATTER_JFA_ANCHOR_NODE_ID"]?.try(&.to_u64?(16)) ||
+                                 raise Matter::ConfigurationError.new("Anchor Node ID is required")
+      anchor_peer = configured_peer_hints[anchor_datastore_node_id]? ||
+                    raise Matter::ConfigurationError.new("Anchor operational address is unavailable")
+      admin_group = bootstrap_joint_fabric_datastore.group_list.find(&.group_cat.==(0xFFFF_u16)) ||
+                    raise Matter::ConfigurationError.new("Fabric B Administrator CAT group is missing")
+      admin_version = admin_group.group_cat_version ||
+                      raise Matter::ConfigurationError.new("Fabric B Administrator CAT version is missing")
+      admin_cat = (0xFFFF_u32 << 16) | admin_version.to_u32
+      store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
+      state = store.load
+      [old_fabric, anchor_fabric].each do |identity|
+        existing = state.fabrics.find do |fabric|
+          fabric.fabric_id == identity.fabric_id &&
+            fabric.root_public_key == identity.root_public_key &&
+            fabric.controller_node_id == identity.controller_node_id
+        end
+        state.install_fabric(identity) unless existing
+      end
+      store.save(state)
+      journal_store = Matter::Controller::JointFabricDeviceMigration::JournalStore.new(persistence.backend)
+      stored_journal = journal_store.load(old_fabric.fabric_id, old_fabric.root_public_key,
+        request.node_id, anchor_fabric.fabric_id, anchor_fabric.root_public_key,
+        anchor_node_id)
+      if request.operation != "migrate-device" && !stored_journal
+        raise Matter::ConfigurationError.new("No device migration journal exists to recover")
+      end
+      journal = stored_journal || Matter::Controller::JointFabricDeviceMigration::Journal.new(
+        old_fabric.fabric_id, anchor_fabric.fabric_id, request.node_id, anchor_node_id,
+        old_fabric.root_public_key, anchor_fabric.root_public_key)
+      local_peer = Socket::IPAddress.new("127.0.0.1", port)
+      network = Matter::Controller::JointFabricDeviceMigration::NetworkPort.new(
+        store, old_fabric, anchor_fabric, issuer, request.node_id, anchor_node_id,
+        target_peer, old_device_fabric.node_id, local_peer, 2_u16,
+        anchor_datastore_node_id, anchor_peer, 1_u16, "Migrated device", admin_cat,
+        verifier,
+        timeout: 30.seconds)
+      begin
+        workflow = Matter::Controller::JointFabricDeviceMigration::Workflow.new(
+          journal, network, -> { true },
+          ->(entry : Matter::Controller::JointFabricDeviceMigration::Journal) {
+            journal_store.save(entry)
+          })
+        case request.operation
+        when "migrate-device"
+          workflow.run
+        when "rollback-device-migration"
+          workflow.rollback!
+        when "reconcile-device-migration"
+          stage = case workflow.journal.stage
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor
+                    Matter::Controller::JointFabricDeviceMigration::Stage::AnchorCommissioned
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::VerifyingAnchor
+                    Matter::Controller::JointFabricDeviceMigration::Stage::AnchorVerified
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::AddingAnchorNode
+                    Matter::Controller::JointFabricDeviceMigration::Stage::AnchorNodeAdded
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldFabric
+                    Matter::Controller::JointFabricDeviceMigration::Stage::OldFabricRemoved
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldNode
+                    Matter::Controller::JointFabricDeviceMigration::Stage::Complete
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::RollingBack
+                    Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack
+                  else
+                    raise Matter::ConfigurationError.new("Migration journal does not need reconciliation")
+                  end
+          workflow.reconcile!(stage)
+        end
+      ensure
+        network.close
+      end
+    end
+
+    private def migration_identity(fabric : Matter::Fabric,
+                                   bootstrap : Matter::Controller::FabricInfo? = nil) : Matter::Controller::FabricInfo
+      root = fabric.root_cert || raise Matter::ConfigurationError.new("Migration fabric root is unavailable")
+      Matter::Controller::FabricInfo.new(
+        fabric_id: fabric.fabric_id,
+        controller_node_id: fabric.node_id,
+        ipk_value: fabric.ipk,
+        root_cert: root,
+        root_public_key: fabric.root_public_key,
+        controller_noc: fabric.operational_cert,
+        controller_private_key: fabric.operational_private_key,
+        root_private_key: bootstrap.try(&.root_private_key),
+        admin_vendor_id: fabric.vendor_id,
+        intermediate_cert: fabric.intermediate_cert,
+        intermediate_private_key: bootstrap.try(&.intermediate_private_key)
+      )
+    end
+
+    private def provisioned_bootstrap_fabric?(fabric : Matter::Fabric) : Bool
+      provisioned_anchor_bootstrap(fabric)
+      true
+    rescue Matter::ConfigurationError
+      false
     end
 
     private def finalize_commissioning(request : CommandRequest) : Bytes?

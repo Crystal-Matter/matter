@@ -879,9 +879,11 @@ module Matter
         @status.state == DatastoreStateEnum::DeletePending
       end
 
-      def configure_anchor(root_ca : Bytes, node_id : UInt64, vendor_id : UInt16, name : String) : InteractionModel::Status
+      def configure_anchor(root_ca : Bytes, node_id : UInt64, vendor_id : UInt16, name : String,
+                           ipk : Bytes? = nil) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.constraint_error if root_ca.empty? || root_ca.size > 400 || !valid_name?(name)
+        return InteractionModel::Status.constraint_error if ipk && ipk.size != Fabric::IPK_SIZE
         self.anchor_root_ca = root_ca
         self.anchor_node_id = node_id
         self.anchor_vendor_id = vendor_id
@@ -889,6 +891,15 @@ module Matter
         unless @group_key_set_list.any?(&.group_key_set_id.==(0_u16))
           self.group_key_set_list = [DatastoreGroupKeySetStruct.new(0_u16,
             DatastoreGroupKeySecurityPolicyEnum::TrustFirst, nil, nil, nil, nil, nil, nil)] + @group_key_set_list
+        end
+        if key = ipk
+          entries = @group_key_set_list.dup
+          index = entries.index!(&.group_key_set_id.==(0_u16))
+          ipk_entry = entries[index]
+          ipk_entry.epoch_key0 = key.dup
+          ipk_entry.epoch_start_time0 = 0_u64
+          entries[index] = ipk_entry
+          self.group_key_set_list = entries
         end
         commit!
       end
