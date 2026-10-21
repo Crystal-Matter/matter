@@ -47,8 +47,25 @@ module Matter
       # controller exchange through the same socket. One worker preserves the
       # device's inbound message ordering.
       INBOUND_QUEUE_LIMIT = 256
+      BDX_QUEUE_LIMIT     =  16
+      BDX_SHUTDOWN_GRACE  = 100.milliseconds
       @inbound_messages : Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress))
       @inbound_done : Channel(Nil)
+
+      private record BdxTask, message : Codec::MessageCodec::Message,
+        peer : Socket::IPAddress, session : Session::SecureContext,
+        opcode : Bdx::Wire::Opcode
+      private record BdxAbort, session : Session::SecureContext, exchange_id : UInt16
+      private alias BdxWork = BdxTask | BdxAbort
+
+      @bdx_tasks : Channel(BdxWork)
+      @bdx_aborts : Channel(BdxAbort)
+      @bdx_done : Channel(Nil)
+      @bdx_cleanup_signal : Channel(Nil)
+      @bdx_cleanup : Array(Session::SecureContext)
+      @bdx_active_sessions : Hash(UInt16, Session::SecureContext)
+      @bdx_lock : Mutex
+      @bdx_closing : Bool
 
       # Sessions, subscriptions and the lock every protocol fiber shares.
       getter registry : SessionRegistry
@@ -129,9 +146,16 @@ module Matter
         @sender = ResponseSender.new(@transport, @mrp_cache)
         @bdx = Bdx::Responder.new
         @bdx_initiator = Bdx::Initiator.new(@sender)
-        @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx.forget_session(id) })
+        @bdx_lock = Mutex.new
+        @bdx_tasks = Channel(BdxWork).new(BDX_QUEUE_LIMIT)
+        @bdx_aborts = Channel(BdxAbort).new(Bdx::Responder::MAX_ACTIVE_TRANSFERS)
+        @bdx_done = Channel(Nil).new(1)
+        @bdx_cleanup_signal = Channel(Nil).new(1)
+        @bdx_cleanup = [] of Session::SecureContext
+        @bdx_active_sessions = {} of UInt16 => Session::SecureContext
+        @bdx_closing = false
+        @registry.add_session_cleanup_hook(->(id : UInt16) { queue_bdx_session_cleanup(id) })
         @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx_initiator.forget_session(id) })
-        @registry.add_sweep_hook(-> { @bdx.sweep })
         @registry.add_sweep_hook(-> { @bdx_initiator.sweep })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
@@ -144,10 +168,32 @@ module Matter
         @inbound_done = Channel(Nil).new(1)
         spawn do
           while entry = @inbound_messages.receive?
-            handle_message(entry[0], entry[1])
+            handle_message(entry[0], entry[1], background_bdx: true)
           end
         ensure
           @inbound_done.send(nil)
+        end
+
+        spawn do
+          loop do
+            select
+            when work = @bdx_tasks.receive?
+              break unless work
+              begin
+                process_bdx_work(work)
+              rescue ex
+                Log.warn(exception: ex) { "Failed processing queued BDX work" }
+              end
+            when abort = @bdx_aborts.receive?
+              process_bdx_work(abort) if abort
+            when @bdx_cleanup_signal.receive?
+            when timeout(SessionRegistry::SWEEP_INTERVAL)
+            end
+            process_bdx_cleanup
+            @bdx_lock.synchronize { @bdx.sweep }
+          end
+        ensure
+          @bdx_done.send(nil)
         end
 
         # Set ourselves as the message handler
@@ -182,8 +228,27 @@ module Matter
           @inbound_messages.close
           @inbound_done.receive
         end
+        unless @bdx_tasks.closed?
+          @registry.synchronize { @bdx_closing = true }
+          @bdx_tasks.close
+          finished = false
+          select
+          when @bdx_done.receive
+            finished = true
+          when timeout(BDX_SHUTDOWN_GRACE)
+          end
+          if finished
+            finish_bdx_shutdown
+          else
+            # A blocked application callback cannot be cancelled safely. The
+            # worker releases its stream once that callback eventually exits.
+            spawn do
+              @bdx_done.receive
+              finish_bdx_shutdown
+            end
+          end
+        end
         @registry.synchronize do
-          @bdx.close
           @bdx_initiator.close
         end
         @registry.close
@@ -329,12 +394,13 @@ module Matter
         @subscriptions.notify_batched(attributes)
       end
 
-      # Decrypts, classifies and routes one inbound message.
-      #
-      # Runs under the registry lock: controllers send messages back to back,
-      # and subscription reports are raised from other fibers entirely.
-      def handle_message(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil
-        @registry.synchronize do
+      # Decrypts and classifies under the registry lock so replay counters and
+      # encrypted responses stay ordered. BDX responder callbacks and stream IO
+      # run after releasing that lock. The transport worker queues them so a
+      # blocked application stream cannot stall another secure session.
+      def handle_message(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress,
+                         background_bdx : Bool = false) : Nil
+        work = @registry.synchronize do
           session = nil
           session_id = msg.packet_header.session_id
 
@@ -372,6 +438,13 @@ module Matter
           Log.debug { "Received message: protocol=0x#{msg.payload_header.protocol_id.to_s(16)}, type=0x#{msg.payload_header.message_type.to_s(16)}" }
           route(msg, peer, session)
         end
+        return unless work
+
+        if background_bdx
+          enqueue_bdx_work(work)
+        else
+          process_bdx_work(work)
+        end
       rescue ex
         Log.debug(exception: ex) do
           "Error handling message: peer=#{peer.address}:#{peer.port} session_id=#{msg.packet_header.session_id} " \
@@ -379,6 +452,106 @@ module Matter
           "type=0x#{msg.payload_header.message_type.to_s(16)} exchange=#{msg.payload_header.exchange_id} " \
           "payload_bytes=#{msg.payload.size}"
         end
+      end
+
+      # The queue is bounded independently of the general inbound queue.
+      # A full queue gets a protocol busy response without waiting on an
+      # application callback while holding the registry lock.
+      private def enqueue_bdx_work(work : BdxWork) : Nil
+        if abort = work.as?(BdxAbort)
+          # This small separate queue lets an abort reach the responder when
+          # ordinary BDX work is saturated.
+          select
+          when @bdx_aborts.send(abort)
+          else
+          end
+          return
+        end
+        select
+        when @bdx_tasks.send(work)
+        else
+          return unless task = work.as?(BdxTask)
+          @registry.synchronize do
+            if @registry.sessions[task.session.session_id]?.same?(task.session)
+              @sender.send_bdx_status(task.message, task.peer, task.session,
+                Bdx::Transfer::StatusCode::ResponderBusy)
+            end
+          end
+        end
+      rescue Channel::ClosedError
+        # The handler is shutting down.
+      end
+
+      private def process_bdx_work(abort : BdxAbort) : Nil
+        @bdx_lock.synchronize { @bdx.abort(abort.session, abort.exchange_id) }
+      end
+
+      private def process_bdx_work(task : BdxTask) : Nil
+        return unless @registry.synchronize do
+                        !@bdx_closing && @registry.sessions[task.session.session_id]?.same?(task.session)
+                      end
+        step, active = @bdx_lock.synchronize do
+          result = @bdx.receive(task.session, task.message.payload_header.exchange_id,
+            task.opcode, task.message.payload)
+          {result, @bdx.active_for_session?(task.session)}
+        end
+
+        live = false
+        @registry.synchronize do
+          session_id = task.session.session_id
+          if !@bdx_closing && @registry.sessions[session_id]?.same?(task.session)
+            live = true
+            if active
+              @bdx_active_sessions[session_id] = task.session
+            else
+              @bdx_active_sessions.delete(session_id)
+            end
+            if status = step.status
+              @sender.send_bdx_status(task.message, task.peer, task.session, status)
+            elsif message = step.message
+              @sender.send_bdx_response(task.message, task.peer, task.session,
+                message.opcode.value, message.to_slice)
+              if follow_up = step.follow_up
+                @sender.send_bdx_response(task.message, task.peer, task.session,
+                  follow_up.opcode.value, follow_up.to_slice, append_to_cache: true)
+              end
+            else
+              @sender.send_encrypted_ack(task.message, task.peer, task.session, cache_for_mrp: true)
+            end
+          else
+            @bdx_active_sessions.delete(session_id)
+          end
+        end
+        @bdx_lock.synchronize { @bdx.forget_session(task.session) } unless live
+      end
+
+      # Called by SessionRegistry while its lock is held. Only record a
+      # session whose responder has live streams; closing an application IO
+      # may block and is delegated to the separate BDX worker.
+      private def queue_bdx_session_cleanup(session_id : UInt16) : Nil
+        if session = @bdx_active_sessions.delete(session_id)
+          @bdx_cleanup << session
+          select
+          when @bdx_cleanup_signal.send(nil)
+          else
+          end
+        end
+      end
+
+      private def process_bdx_cleanup : Nil
+        sessions = @registry.synchronize do
+          pending = @bdx_cleanup
+          @bdx_cleanup = [] of Session::SecureContext
+          pending
+        end
+        sessions.each do |session|
+          @bdx_lock.synchronize { @bdx.forget_session(session) }
+        end
+      end
+
+      private def finish_bdx_shutdown : Nil
+        process_bdx_cleanup
+        @bdx_lock.synchronize { @bdx.close }
       end
 
       # Authenticated Group packets bypass unicast session lookup and never
@@ -449,17 +622,16 @@ module Matter
         msg : Codec::MessageCodec::Message,
         peer : Socket::IPAddress,
         session : Session::SecureContext?,
-      ) : Nil
+      ) : BdxWork?
         case msg.payload_header.protocol_id
         when ProtocolId::SecureChannel.value
           if session && msg.payload_header.message_type == SecureChannelMessageType::StatusReport.value
             begin
               report = Session::Pase::Definitions::StatusReport.from_bytes(msg.payload)
               if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == 0
-                @bdx.abort(session.session_id, msg.payload_header.exchange_id)
                 @bdx_initiator.abort(session.session_id, msg.payload_header.exchange_id)
                 @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true) if msg.payload_header.requires_acknowledge?
-                return
+                return BdxAbort.new(session, msg.payload_header.exchange_id)
               end
             rescue ex : IO::EOFError
               Log.debug(exception: ex) { "Malformed encrypted status report on BDX exchange" }
@@ -500,18 +672,7 @@ module Matter
             end
             return
           end
-          step = @bdx.receive(session, msg.payload_header.exchange_id, opcode, msg.payload)
-          if status = step.status
-            @sender.send_bdx_status(msg, peer, session, status)
-          elsif message = step.message
-            @sender.send_bdx_response(msg, peer, session, message.opcode.value, message.to_slice)
-            if follow_up = step.follow_up
-              @sender.send_bdx_response(msg, peer, session, follow_up.opcode.value,
-                follow_up.to_slice, append_to_cache: true)
-            end
-          else
-            @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true)
-          end
+          BdxTask.new(msg, peer, session, opcode)
         else
           Log.warn { "Unsupported protocol: 0x#{msg.payload_header.protocol_id.to_s(16)}" }
         end
