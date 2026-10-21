@@ -58,11 +58,16 @@ item below as covered only to the extent of its cited tests.
 - Anchor transfer has a persisted candidate journal and participant follow-up
   for cross-signing and removal of the old fabric. Administrator removal has a
   consent gate, persisted journal, Datastore update, and Administrator CAT/NOC
-  rotation. The Docker two-administrator test exercises both paths over the
-  network, including a lost RemoveFabric acknowledgement, reconciliation, and
-  an idempotent removal retry. The former Anchor subscribes to the new
-  Anchor's authenticated Datastore and suspends Joint Commissioning when that
-  view is stale. The subscription is invalidated if its fabric changes.
+  rotation. The Docker three-administrator test jointly commissions B and C,
+  transfers the Anchor from A to B, and removes A. It restarts B after a lost
+  RemoveFabric acknowledgement, verifies the persisted journal blocks replay,
+  reconciles the result, and confirms B and C remain registered. The former
+  Anchor subscribes to the new Anchor's authenticated Datastore and suspends
+  Joint Commissioning when that view is stale. The subscription discovers the
+  active Datastore endpoint through Descriptor reads and verifies its root and
+  Node ID over CASE; promotion binds the copied store to B's fabric and retires
+  B's bootstrap store. A rotated nonzero Anchor CAT version remains valid after
+  restart. The subscription is invalidated if its fabric changes.
   The transfer journal records each completed Administrator credential rotation
   and identifies an uncertain in-flight rotation. After restart, the caller
   must inspect that Administrator's NOC/CAT and reconcile the rotation before

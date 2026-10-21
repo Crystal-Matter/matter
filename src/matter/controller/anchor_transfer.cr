@@ -437,7 +437,12 @@ module Matter
             entry.command_data.try(&.command_path.command) == command_id
           end.try(&.command_data)
           fields = command.try(&.command_fields)
-          raise Matter::ProtocolError.new("Missing Anchor transfer response for command #{command_id}") unless fields
+          unless fields
+            if status = response.invoke_responses.find(&.command_status).try(&.command_status)
+              raise Matter::CommissioningError.new("Anchor transfer command #{command_id} failed with IM status #{status.status.status}")
+            end
+            raise Matter::ProtocolError.new("Missing Anchor transfer response for command #{command_id}")
+          end
           fields.to_slice
         end
       end

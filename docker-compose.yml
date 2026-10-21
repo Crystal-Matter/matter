@@ -50,12 +50,12 @@ services:
       E2E_BINARY: matter_joint_fabric_administrator
       MATTER_JFA_PROVISIONED_ANCHOR: "1"
       MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_anchor.bootstrap.yml
-      MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_anchor.trust-root.tlv
+      MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_anchor.trust-root.tlv,/e2e/logs/matter_joint_fabric_anchor.third-trust-root.tlv
       MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
       MATTER_JFA_JCM_REQUEST_PATH: /e2e/logs/matter_joint_fabric_anchor.jcm-rpc.yml
       MATTER_JFA_ALLOW_TRANSFER: "1"
       MATTER_JFA_TRANSFER_CANDIDATE_IDS: a103=b102
-      MATTER_JFA_TRANSFER_PEERS: a103=joint-fabric-joiner,b102=joint-fabric-joiner,a201=joint-fabric-migration-target
+      MATTER_JFA_TRANSFER_PEERS: a103=joint-fabric-joiner,a104=joint-fabric-third,b102=joint-fabric-joiner,a201=joint-fabric-migration-target
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_anchor.command.yml
 
   joint-fabric-joiner:
@@ -68,7 +68,7 @@ services:
       MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_joiner.trust-root.tlv
       MATTER_JFA_ALLOW_JCM: "1"
       MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
-      MATTER_JFA_TRANSFER_PEERS: a102=joint-fabric-anchor,b201=joint-fabric-migration-target
+      MATTER_JFA_TRANSFER_PEERS: a102=joint-fabric-anchor,a104=joint-fabric-third,b201=joint-fabric-migration-target
       MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE: "1"
       MATTER_JFA_CONSENTED_MIGRATIONS: b201
       MATTER_JFA_MIGRATION_TEST_TRUST: "1"
@@ -76,6 +76,21 @@ services:
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_joiner.command.yml
       MATTER_JFA_CONSENTED_REMOVALS: a102
       MATTER_JFA_OUTGOING_INSPECTION_PATH: /e2e/logs/matter_joint_fabric_anchor.command.yml
+
+  joint-fabric-third:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_third
+      E2E_BINARY: matter_joint_fabric_administrator
+      MATTER_JFA_PROVISIONED_ANCHOR: "1"
+      MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_third.bootstrap.yml
+      MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_third.trust-root.tlv,/e2e/logs/matter_joint_fabric_third.new-anchor-root.tlv
+      MATTER_JFA_ALLOW_JCM: "1"
+      MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
+      MATTER_JFA_TRANSFER_PEERS: a102=joint-fabric-anchor,a103=joint-fabric-joiner,b102=joint-fabric-joiner
+      MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE: "1"
+      MATTER_JFA_ANCHOR_NODE_ID: a102
+      MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_third.command.yml
 
   joint-fabric-refresh-anchor:
     <<: *device
@@ -178,6 +193,7 @@ services:
       joint-fabric-administrator: { condition: service_healthy }
       joint-fabric-anchor: { condition: service_healthy }
       joint-fabric-joiner: { condition: service_healthy }
+      joint-fabric-third: { condition: service_healthy }
       joint-fabric-refresh-anchor: { condition: service_healthy }
       joint-fabric-refresh-target: { condition: service_healthy }
       joint-fabric-lifecycle-anchor: { condition: service_healthy }

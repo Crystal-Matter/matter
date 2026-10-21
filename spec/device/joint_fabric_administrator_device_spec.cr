@@ -74,6 +74,17 @@ describe MatterJointFabricAdministrator::Device do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     device.anchor_profile_for_spec(fabric).should be_true
+    rotated_noc = Matter::Crypto::MatterCertificate::Builder.node(
+      noc_key.public_key, 0xA100_u64, 3_u64, icac_key, 2_u64, Bytes[4], crypto,
+      issuer_icac_id: 2_u64, issuer_certificate: icac,
+      case_authenticated_tag: 0xFFFE_0002_u32)
+    rotated = Matter::Fabric.new(0xA100_u64, 1_u8, 3_u64, root_key.public_key,
+      rotated_noc, noc_key, Bytes.new(16, 1_u8), intermediate_cert: icac, root_cert: root,
+      cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0002_u32)])
+    device.anchor_profile_for_spec(rotated).should be_true
+    expect_raises(ArgumentError, /version number must not be 0/) do
+      Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0000_u32)
+    end
   ensure
     if previous
       ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous
@@ -106,12 +117,15 @@ describe MatterJointFabricAdministrator::Device do
     bootstrap_store.backend.close
 
     a_root_key = crypto.create_key_pair
+    a_operational_icac_key = crypto.create_key_pair
     a_noc_key = crypto.create_key_pair
     a_root = Matter::Crypto::MatterCertificate::Builder.root(a_root_key, 3_u64, Bytes[4], crypto)
     a_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
-      b_icac_key.public_key, 0xA100_u64, 4_u64, a_root_key, 3_u64, Bytes[5], crypto)
+      a_operational_icac_key.public_key, 0xA100_u64, 4_u64, a_root_key, 3_u64, Bytes[5], crypto)
+    committed_a_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      b_icac_key.public_key, 0xA100_u64, 4_u64, a_root_key, 3_u64, Bytes[7], crypto)
     a_noc = Matter::Crypto::MatterCertificate::Builder.node(
-      a_noc_key.public_key, 0xA100_u64, 0xA103_u64, b_icac_key, 2_u64, Bytes[6], crypto,
+      a_noc_key.public_key, 0xA100_u64, 0xA103_u64, a_operational_icac_key, 2_u64, Bytes[6], crypto,
       issuer_icac_id: 4_u64, issuer_certificate: a_icac,
       case_authenticated_tag: 0xFFFF_0001_u32)
     a_fabric = Matter::Fabric.new(0xA100_u64, 2_u8, 0xA103_u64, a_root_key.public_key,
@@ -131,16 +145,32 @@ describe MatterJointFabricAdministrator::Device do
     device.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
     device.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
     device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
-      MatterJointFabricAdministrator::Device::IcacCertificateState.new(a_icac).to_document)
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(committed_a_icac).to_document)
     device.install_test_fabric(a_fabric)
     device.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
     device.joint_fabric_administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
-      .cross_signed_icac.should eq(a_icac)
+      .cross_signed_icac.should eq(committed_a_icac)
+    device.access_control.acl(2_u8).flat_map(&.subjects).should contain(0xFFFF_FFFD_FFFF_0001_u64)
     device.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
     device.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
     device.bootstrap_joint_fabric_datastore.joint_fabric_index.should eq(1_u8)
     device.joint_fabric_datastore.joint_fabric_index.should eq(2_u8)
     device.joint_fabric_datastore.access_mode.should eq(Matter::Cluster::JointFabricDatastore::AccessMode::Inactive)
+
+    wrong_joined = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    wrong_joined.install_test_fabric(b_fabric)
+    unrelated_key = crypto.create_key_pair
+    wrong_joined.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacKeyState.new(
+        unrelated_key.private_key, unrelated_key.public_key).to_document)
+    wrong_joined.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(committed_a_icac).to_document)
+    expect_raises(Matter::ConfigurationError, "Joined JFA ICAC private key is unavailable") do
+      wrong_joined.install_test_fabric(a_fabric)
+    end
+    wrong_joined.access_control.acl(2_u8).flat_map(&.subjects)
+      .should_not contain(0xFFFF_FFFD_FFFF_0001_u64)
 
     restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
