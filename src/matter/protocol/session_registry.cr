@@ -101,6 +101,9 @@ module Matter
       # Called when a subscription is removed (expired, renewed or with its session).
       property on_subscription_removed : Proc(UInt32, Nil)?
 
+      @session_cleanup_hooks = [] of Proc(UInt16, Nil)
+      @sweep_hooks = [] of Proc(Nil)
+
       @mutex : Mutex = Mutex.new(:reentrant)
       @stop : Channel(Nil) = Channel(Nil).new
       @running : Bool = false
@@ -122,6 +125,16 @@ module Matter
       # handled.
       def synchronize(&)
         @mutex.synchronize { yield }
+      end
+
+      # Internal protocol users can release exchange state when a secure
+      # session disappears without replacing the application's event callback.
+      def add_session_cleanup_hook(callback : Proc(UInt16, Nil)) : Nil
+        @mutex.synchronize { @session_cleanup_hooks << callback }
+      end
+
+      def add_sweep_hook(callback : Proc(Nil)) : Nil
+        @mutex.synchronize { @sweep_hooks << callback }
       end
 
       # Starts the background sweep that expires subscriptions, runs deferred
@@ -380,6 +393,7 @@ module Matter
 
           process_expired_subscriptions
           process_pending_cleanups
+          @mutex.synchronize { @sweep_hooks.each(&.call) }
 
           since_persist += SWEEP_INTERVAL
           if since_persist >= SESSION_PERSIST_INTERVAL
@@ -503,6 +517,8 @@ module Matter
 
         session = @sessions.delete(session_id)
         return unless session
+
+        @session_cleanup_hooks.each(&.call(session_id))
 
         persist(&.session_removed(self, session_id))
         Log.info { "Removed session #{session_id} (fabric=#{session.fabric_index}, peer=#{session.peer_node_id.try(&.id)})" }

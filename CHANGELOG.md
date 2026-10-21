@@ -40,8 +40,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add Matter 1.6 BDX v0 binary message codecs for transfer negotiation, block
   data, acknowledgements, and skip queries, plus a synchronous stream transfer
-  engine with block ordering and definite-length checks. This does not yet
-  route encrypted BDX sessions or provide a file service.
+  engine with block ordering and definite-length checks.
+- Route BDX over authenticated CASE exchanges with MRP response replay,
+  StatusReport errors, file-designator authorization callbacks, bounded
+  concurrent streams, idle cleanup, and session-removal cleanup. Add controller
+  upload and download streaming APIs. The application supplies the source or
+  sink for each authorized designator; no files are exposed by default.
 
 ### CASE session resumption
 
