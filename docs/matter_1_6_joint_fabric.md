@@ -156,6 +156,18 @@ CAT check. The controller's `OperationalTrustAnchors` implementation must
 validate the source of an operational root or VID Verification Statement. An
 absent trust decision fails the JCM verification step. Applications must make
 an explicit user consent decision for each ecosystem joining a fabric.
+
+For DCL-backed operational VID checks, construct
+`VidVerification::DclOperationalTrustAnchors.new(VidVerification::HttpDclSource.new("https://<trusted-dcl-gateway>"))`
+and pass it to the JCM verifier. The gateway URL is explicit. The adapter reads
+the DCL's active, VID-scoped NOC root, ICA, and signer indexes. It verifies the
+operational RCAC public key against an approved OperationalPKI root or validates
+a VVS signature through a VIDSignerPKI chain of at most three certificates.
+Missing, malformed, expired, mismatched, or removed records fail closed.
+Applications may implement `DclSource` for a locally authenticated DCL mirror.
+An untrusted gateway can lie about the active/revoked status, so deploy with a
+gateway whose ledger synchronization and transport you trust.
+
 For administrator removal, Matter 1.6 recommends transferring to a fresh
 trusted root after rotating Administrator CAT credentials, because an ICAC
 issued under the old root cannot be revoked. The removal coordinator does not
