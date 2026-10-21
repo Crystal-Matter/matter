@@ -67,6 +67,18 @@ module Matter
       UNSECURED_COUNTER_LIMIT          = 1024
       UNSECURED_COUNTER_TTL            = 5.minutes
       UNSECURED_COUNTER_SWEEP_INTERVAL = 1.minute
+      UNSECURED_REPLAY_LIMIT           = 512
+      UNSECURED_REPLAY_TTL             = 1.minute
+
+      private class UnsecuredReplayEntry
+        getter request : Bytes
+        getter created_at : Time::Instant
+        property response : Bytes?
+
+        def initialize(@request : Bytes, @created_at : Time::Instant,
+                       @response : Bytes? = nil)
+        end
+      end
 
       getter socket : UDPSocket
       getter port : Int32
@@ -76,6 +88,7 @@ module Matter
       # Unsecured counters belong to a sender's UDP socket. Independent
       # controller transports may use the same Node ID with fresh counters.
       @unsecured_counters : Hash(Tuple(UInt64?, Socket::IPAddress), Tuple(MessageCounter, Time::Instant))
+      @unsecured_replay : Hash(Tuple(UInt64?, Socket::IPAddress, UInt32), UnsecuredReplayEntry)
       @last_unsecured_counter_sweep : Time::Instant
 
       # Callback for received messages
@@ -117,6 +130,7 @@ module Matter
 
         @message_counter = MessageCounter.new
         @unsecured_counters = Hash(Tuple(UInt64?, Socket::IPAddress), Tuple(MessageCounter, Time::Instant)).new
+        @unsecured_replay = {} of Tuple(UInt64?, Socket::IPAddress, UInt32) => UnsecuredReplayEntry
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = ExchangeManager.new
         @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
@@ -156,7 +170,7 @@ module Matter
       def send_message(
         message : Codec::MessageCodec::Message,
         peer_address : Socket::IPAddress,
-      ) : Nil
+      ) : Bytes
         # Update message ID if not set
         if message.packet_header.message_id == 0
           updated_header = Codec::MessageCodec::PacketHeader.new(
@@ -192,6 +206,21 @@ module Matter
             message.payload_header.exchange_id, message.packet_header.message_id)
         else
           transmit(data, peer_address)
+        end
+        data
+      end
+
+      # Secure Channel replies are keyed to the exact unsecured request bytes
+      # already accepted from this sender. A retransmission may replay only
+      # that packet, never re-enter the PASE or CASE handshake.
+      def cache_unsecured_response(original : Codec::MessageCodec::Message,
+                                   peer : Socket::IPAddress, response : Bytes) : Nil
+        return unless original.packet_header.session_id == 0_u16
+
+        key = {original.packet_header.source_node_id.try(&.id), peer,
+               original.packet_header.message_id}
+        if entry = @unsecured_replay[key]?
+          entry.response = response.dup
         end
       end
 
@@ -271,6 +300,10 @@ module Matter
         @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
         @reliable_mutex = Mutex.new
         @reliable_fiber = nil
+      end
+
+      protected def initialize_unsecured_replay : Nil
+        @unsecured_replay = {} of Tuple(UInt64?, Socket::IPAddress, UInt32) => UnsecuredReplayEntry
       end
 
       protected def clear_reliable : Nil
@@ -439,15 +472,17 @@ module Matter
           now = Time.instant
           sweep_unsecured_counters(now, source_key)
           counter = @unsecured_counters[source_key]?.try(&.[0]) || MessageCounter.new
-          unless counter.valid?(packet.header.message_id)
-            # Duplicate message - ignore
-            Log.warn do
-              "Duplicate message ignored (unsecured): session_id=#{session_id} source_node_id=#{source_node_id || "nil"} " \
-              "peer=#{peer_address.address}:#{peer_address.port} message_id=#{packet.header.message_id}"
-            end
+          replay_key = {source_node_id, peer_address, packet.header.message_id}
+          case counter.check(packet.header.message_id)
+          when MessageCounter::CheckResult::Duplicate
+            replay_unsecured_duplicate(packet, data, peer_address, replay_key)
+            return
+          when MessageCounter::CheckResult::Stale
             return
           end
           @unsecured_counters[source_key] = {counter, now}
+          @unsecured_replay[replay_key] = UnsecuredReplayEntry.new(data.dup, now)
+          prune_unsecured_replay(now)
         end
 
         # For encrypted messages (session_id != 0), do NOT decode the payload yet
@@ -531,6 +566,40 @@ module Matter
         if new_sender_at_limit && @unsecured_counters.size >= UNSECURED_COUNTER_LIMIT
           oldest_key = @unsecured_counters.min_by { |_key, entry| entry[1] }[0]
           @unsecured_counters.delete(oldest_key)
+        end
+      end
+
+      private def replay_unsecured_duplicate(packet : Codec::MessageCodec::Packet,
+                                             data : Bytes, peer : Socket::IPAddress,
+                                             key : Tuple(UInt64?, Socket::IPAddress, UInt32)) : Nil
+        entry = @unsecured_replay[key]?
+        return unless entry && entry.request == data
+        if Time.instant - entry.created_at > UNSECURED_REPLAY_TTL
+          @unsecured_replay.delete(key)
+          return
+        end
+
+        message = Codec::MessageCodec::Base.decode_payload(packet)
+        if message.payload_header.requires_acknowledge?
+          exchange = @exchange_manager.get_or_create_exchange(
+            exchange_id: message.payload_header.exchange_id,
+            protocol_id: message.payload_header.protocol_id,
+            session_id: 0_u16,
+            peer_address: peer,
+            peer_node_id: packet.header.source_node_id,
+            initiator: !message.payload_header.initiator_message?)
+          send_acknowledgment(message, peer, exchange)
+        end
+        if response = entry.response
+          transmit(response, peer)
+        end
+      end
+
+      private def prune_unsecured_replay(now : Time::Instant) : Nil
+        @unsecured_replay.reject! { |_, entry| now - entry.created_at > UNSECURED_REPLAY_TTL }
+        while @unsecured_replay.size > UNSECURED_REPLAY_LIMIT
+          oldest = @unsecured_replay.min_by { |_, entry| entry.created_at }[0]
+          @unsecured_replay.delete(oldest)
         end
       end
 

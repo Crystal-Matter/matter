@@ -99,6 +99,13 @@ The table also covers unsecured controller handshake requests. Four retries
 are allowed before removal. Session removal clears that session's entries,
 and transport shutdown clears the table.
 
+Unsecured Secure Channel replies use a separate bounded replay cache keyed by
+the sending socket, optional source Node ID, and request counter. The transport
+keeps the exact request and response datagrams for one minute. If an identical
+PASE or CASE request is retransmitted, it sends a new MRP acknowledgement when
+requested and replays the original response bytes without entering the
+handshake again. Altered or stale packets never solicit a cached response.
+
 `Session::SecureMessage` (`session/secure_message.cr`) encrypts and decrypts unicast
 secure messages. There is one definition of the authenticated data — the complete packet
 header, including the optional node ids and opaque Message Extensions — used by both

@@ -23,6 +23,7 @@ module Matter
         @receive_fiber = nil
         @message_counter = Transport::MessageCounter.new
         @unsecured_counters = {} of Tuple(UInt64?, Socket::IPAddress) => Tuple(Transport::MessageCounter, Time::Instant)
+        initialize_unsecured_replay
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = Transport::ExchangeManager.new
         initialize_reliable_messages

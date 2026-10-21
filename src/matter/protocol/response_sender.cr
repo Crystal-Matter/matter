@@ -130,7 +130,7 @@ module Matter
           requires_acknowledge: false
         )
 
-        @transport.send_message(
+        packet = @transport.send_message(
           Codec::MessageCodec::Message.new(
             packet_header: packet_header,
             payload_header: payload_header,
@@ -138,6 +138,7 @@ module Matter
           ),
           peer
         )
+        @transport.cache_unsecured_response(original_msg, peer, packet)
       end
     end
   end

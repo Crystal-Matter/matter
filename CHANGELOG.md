@@ -22,6 +22,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Reliable messaging
 
+- Replay the original unsecured PASE or CASE response when a byte-identical
+  request is retransmitted after response loss. Duplicate requests receive a
+  fresh MRP ACK where required, while the handshake state and response packet
+  counter remain unchanged. A bounded cache rejects altered and stale packets.
 - Retransmit outbound unicast messages that request an MRP acknowledgement,
   retaining the exact encoded datagram and message counter. Device responses,
   subscription reports, controller requests, and unsecured commissioning
