@@ -2,6 +2,7 @@
 # objects that turn an inbound datagram into a cluster call and back.
 require "./protocol/message_type"
 require "./protocol/bdx/wire"
+require "./protocol/bdx/transfer"
 require "./protocol/subscription"
 require "./protocol/mrp_cache"
 require "./protocol/persistence"

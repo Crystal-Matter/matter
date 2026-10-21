@@ -44,7 +44,7 @@ describe BdxWire do
       BdxWire::Init.decode(BdxWire::Opcode::SendInit, Bytes[0, 0, 0, 0, 2, 0, 1])
     end
     expect_raises(Matter::CodecError) do
-      BdxWire::Accept.decode(BdxWire::Opcode::ReceiveAccept, Bytes[0x40, 0, 1, 0])
+      BdxWire::Accept.decode(BdxWire::Opcode::ReceiveAccept, Bytes[0x41, 0, 1, 0])
     end
     expect_raises(Matter::CodecError) do
       BdxWire::BlockData.decode(BdxWire::Opcode::Block, Bytes[0, 0, 0, 0], max_block_size: 512)
@@ -58,5 +58,11 @@ describe BdxWire do
     expect_raises(Matter::CodecError) do
       BdxWire::Init.decode(BdxWire::Opcode::ReceiveInit, Bytes[0x20, 0x80, 1, 0, 0, 0])
     end
+  end
+
+  it "parses the provisional asynchronous Accept mode without selecting it for a transfer" do
+    accept = BdxWire::Accept.decode(BdxWire::Opcode::ReceiveAccept, Bytes[0x40, 0, 0x00, 0x04])
+    accept.transfer_control.should eq BdxWire::TransferControl::Async
+    accept.max_block_size.should eq 1024_u16
   end
 end
