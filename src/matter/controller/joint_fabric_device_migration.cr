@@ -384,7 +384,8 @@ module Matter
               verify_handoff_baseline!
               verify_anchor!
               state.record_node(@anchor_fabric.fabric_id,
-                NodeInfo.new(node_id: @anchor_node_id, address: @device_peer.address,
+                NodeInfo.new(node_id: @anchor_node_id,
+                  address: OperationalPeerResolver.address_hint(@device_peer),
                   port: @device_peer.port), @anchor_fabric.root_public_key,
                 @anchor_fabric.controller_node_id)
               @store.save(state)

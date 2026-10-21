@@ -403,7 +403,9 @@ module Matter
             end
 
             state = @store.load
-            state.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id, address: peer_addr.address, port: peer_addr.port), fabric.root_public_key, fabric.controller_node_id)
+            state.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id,
+              address: OperationalPeerResolver.address_hint(peer_addr), port: peer_addr.port),
+              fabric.root_public_key, fabric.controller_node_id)
             state.unsecured_message_counter = @client.transport.message_counter.counter
             @store.save(state)
             if hooks = @hooks
@@ -492,7 +494,7 @@ module Matter
 
           handoff = PendingCommissioningHandoff.new(
             fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
-            node_id, peer.address, peer.port,
+            node_id, OperationalPeerResolver.address_hint(peer), peer.port,
             window.expires_at_unix, @crypto.random_bytes(16).hexstring)
           state = @store.load
           state.add_pending_handoff(handoff)
@@ -560,9 +562,9 @@ module Matter
               short_only && SetupPayload.short_discriminator(disc) == short_discriminator
             end
             if dev
-              address = dev.addresses.find(&.family.inet?) || dev.addresses.first?
+              address = dev.addresses.find(&.family.inet6?) || dev.addresses.first?
               if addr = address
-                return Socket::IPAddress.new(addr.address, dev.port)
+                return Socket::IPAddress.new(OperationalPeerResolver.address_hint(addr), dev.port)
               end
             end
 

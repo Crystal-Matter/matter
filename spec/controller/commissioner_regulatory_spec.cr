@@ -202,6 +202,36 @@ describe Matter::Controller::Commissioning::Commissioner do
     commissioner.try(&.close)
   end
 
+  it "retains a link-local interface scope across pending commissioning records" do
+    im = RegulatoryImClient.new
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = regulatory_fabric
+    state = store.load
+    state.install_fabric(fabric)
+    store.save(state)
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, RegulatoryNodeDelivery.new)
+    commissioner = RegulatoryCommissioner.new(store, datastore_registrar: registrar)
+    peer = Socket::IPAddress.new("fe80::1234%1", 5540)
+    now = Time.utc.to_unix
+    window = RegulatoryCommissioner::FailSafeWindow.new(Time.instant + 60.seconds, now + 60, now + 600)
+    commissioner.checkpoint(fabric, 0x201_u64, peer,
+      im, regulatory_session, window, true)
+
+    saved = store.load
+    saved.pending_datastore_nodes.first.peer_address.should eq("fe80::1234%1")
+    saved.pending_handoffs.first.address.should eq("fe80::1234%1")
+    registrar.add_pending(fabric, 0x201_u64, "Test node", window.expires_at_unix, peer)
+    commissioner.record_handoff_success(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id, 0x201_u64, saved.pending_handoffs.first.nonce)
+    saved_node = store.load.nodes_for(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id)[0x201_u64]
+    saved_node.address.should eq("fe80::1234%1")
+    Socket::IPAddress.new(saved_node.address.as(String), saved_node.port).zone_id.should eq(1)
+  ensure
+    im.try(&.close)
+    commissioner.try(&.close)
+  end
+
   it "bounds the refreshed fail-safe deadline by the ArmFailSafe send time" do
     im = RegulatoryImClient.new
     im.arm_response_delay = 1.1.seconds

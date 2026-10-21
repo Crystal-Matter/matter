@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the cluster at endpoint 0; applications provide observed Thread state and
   counters through the cluster API.
 
+### Scoped IPv6 peer hints
+
+- Preserve link-local interface scope in commissioner handoffs, Joint Fabric
+  pending registrations, Datastore recovery, and migrated node records.
+- Select an IPv6 address when commissioning or subscribing to an Anchor
+  Datastore discovered on a dual-stack network.
+
 ### BLE transport framing
 
 - Add a GATT-independent BTP v4 session engine with ordered segmentation,

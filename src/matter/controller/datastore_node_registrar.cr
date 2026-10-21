@@ -1,5 +1,6 @@
 require "../cluster/joint_fabric_datastore"
 require "./im_client"
+require "./operational_peer_resolver"
 require "./pairing/case_pairing"
 require "./state_store"
 
@@ -114,13 +115,14 @@ module Matter
         if entry = entry_for(state, fabric, node_id)
           unless entry.friendly_name == friendly_name && entry.stage.in?(PendingDatastoreNode::Stage::Pending,
                    PendingDatastoreNode::Stage::Registered) &&
-                 (peer.nil? || (entry.peer_address == peer.address && entry.peer_port == peer.port))
+                 (peer.nil? || (entry.peer_address == OperationalPeerResolver.address_hint(peer) && entry.peer_port == peer.port))
             raise Matter::CommissioningError.new("Datastore node registration conflicts with a previous attempt")
           end
         else
           state.pending_datastore_nodes << PendingDatastoreNode.new(fabric.fabric_id,
             fabric.root_public_key.dup, fabric.controller_node_id, node_id, friendly_name, expires_at_unix,
-            peer.try(&.address), peer.try(&.port) || NodeInfo::DEFAULT_PORT)
+            peer.try { |address| OperationalPeerResolver.address_hint(address) },
+            peer.try(&.port) || NodeInfo::DEFAULT_PORT)
           @store.save(state)
         end
         @delivery.add_pending_node(fabric, node_id, friendly_name)
