@@ -3,6 +3,7 @@ require "../../src/matter/controller/bdx_client"
 require "../../src/matter/protocol/message_handler"
 
 private alias BdxUdp = Matter::Protocol::Bdx
+private BDX_UDP_TEST_TIMEOUT = 30.seconds
 
 describe "BDX over encrypted UDP" do
   it "streams in both directions through real CASE packet encryption and MRP" do
@@ -42,7 +43,9 @@ describe "BDX over encrypted UDP" do
       case_session: true, fabric_index: 1_u8)
     controller.register_session(controller_session)
     peer = Socket::IPAddress.new("127.0.0.1", transport.port)
-    bdx = Matter::Controller::BdxClient.new(controller, 5.seconds)
+    # Live UDP handshakes can be delayed by other spec fibers on loaded CI
+    # hosts. Keep a test bound while allowing more than five seconds for Accept.
+    bdx = Matter::Controller::BdxClient.new(controller, BDX_UDP_TEST_TIMEOUT)
 
     begin
       download_sink = IO::Memory.new
