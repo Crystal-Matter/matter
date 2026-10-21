@@ -119,8 +119,13 @@ removes an entry when its fabric is removed. `Controller::OtaRequestorClient`
 can query a provider on an established CASE session and stage a BDX image in
 caller-owned seekable storage. It checks the provider's BDX URI node ID,
 streams with a size limit, and verifies the Matter OTA image header and payload
-digest. The application still owns install and rollback policy and must not
-advertise `UpdatePossible` until those paths are ready.
+digest. Provider QueryImage delays are enforced per fabric and provider; the
+application can inspect `next_query_at(session)` before scheduling a retry.
+`request_apply` then asks the provider when the staged version may be
+installed, and `notify_applied` reports a version after the application boots
+it. The application owns the storage, installer, token persistence across a
+reboot, and rollback policy. It must not advertise `UpdatePossible` until
+those paths are ready.
 
 Applications can add the optional `Cluster::OtaProvider` to an endpoint and
 register `on_query_image`, `on_apply_update`, and

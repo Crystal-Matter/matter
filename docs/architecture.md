@@ -297,7 +297,10 @@ uses the shared controller's IM and BDX clients to query and stage an image on
 the provider's CASE session. `Protocol::OtaImage` validates the staged file in
 bounded reads, including its header identity, version, size, and payload
 digest. The staging IO belongs to the application; installing a validated
-image and surviving rollback remain application responsibilities.
+image and surviving rollback remain application responsibilities. The client
+can send ApplyUpdateRequest and NotifyUpdateApplied over the same fabric;
+provider scheduling is returned to the application, which persists the token
+and reports success only after the new image is running.
 
 On start, `Protocol::Persistence::StorageBackend#restore` brings back only CASE sessions whose
 fabric still exists, and only subscriptions whose session came back. `Device#shutdown!` persists

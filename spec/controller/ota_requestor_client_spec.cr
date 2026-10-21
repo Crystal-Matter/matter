@@ -147,6 +147,31 @@ describe "OTA Requestor controller download" do
     cluster.update_state.should eq(OtaRequestorSpec::UpdateState::Idle)
   end
 
+  it "respects an available offer's delayed action time before querying or downloading again" do
+    im = OtaImFake.new(OtaProviderSpec::QueryImageResponse.new(
+      OtaProviderSpec::QueryStatus::UpdateAvailable,
+      delayed_action_time: 60_u32,
+      image_uri: "bdx://0000000000001234/image",
+      software_version: 11_u32,
+      software_version_string: "11.0",
+      update_token: Bytes[1, 2, 3, 4, 5, 6, 7, 8]))
+    bdx = OtaBdxFake.new(ota_controller_image)
+    cluster = OtaRequestorSpec.new
+    client = OtaRequestorClientSpec.new(im, bdx, cluster)
+    session = ota_controller_session
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+
+    client.query_and_download(session, peer, 0_u16,
+      0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new).should be_nil
+    cluster.update_state.should eq(OtaRequestorSpec::UpdateState::DelayedOnQuery)
+    client.next_query_at(session).should_not be_nil
+    bdx.designators.should be_empty
+
+    client.query_and_download(session, peer, 0_u16,
+      0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new).should be_nil
+    im.requests.size.should eq(1)
+  end
+
   it "uses only the default provider stored for the CASE fabric" do
     cluster = OtaRequestorSpec.new
     cluster.default_ota_providers = [

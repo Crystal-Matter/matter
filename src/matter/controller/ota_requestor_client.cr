@@ -20,6 +20,15 @@ module Matter
         bytes_downloaded : UInt64
 
       def initialize(@im : I, @bdx : B, @requestor : Requestor)
+        @next_query_deadlines = {} of Tuple(UInt8, UInt64) => Time::Instant
+      end
+
+      # A provider's DelayedActionTime is local to its node and fabric. The
+      # monotonic deadline need not survive a restart (Core §11.20.6.5.2).
+      def next_query_at(session : Session::SecureContext) : Time::Instant?
+        fabric = session.fabric_index
+        node = session.peer_node_id.try(&.id)
+        @next_query_deadlines[{fabric, node}]? if fabric && node
       end
 
       # Use the DefaultOTAProviders entry scoped to this CASE fabric. An
@@ -50,11 +59,21 @@ module Matter
                              current_version : UInt32, sink : IO,
                              max_image_bytes : UInt64 = Protocol::OtaImage::DEFAULT_MAX_TOTAL) : StagedUpdate?
         provider_node_id = session.peer_node_id.try(&.id)
-        unless session.case_session? && session.fabric_index && provider_node_id
+        fabric_index = session.fabric_index
+        unless session.case_session? && fabric_index && provider_node_id
           raise Matter::SessionError.new("OTA QueryImage requires an authenticated CASE provider")
         end
         if max_image_bytes < Protocol::OtaImage::PREFIX_SIZE
           raise Matter::ConfigurationError.new("OTA image size limit is too small")
+        end
+        provider_key = {fabric_index, provider_node_id}
+        if deadline = @next_query_deadlines[provider_key]?
+          if Time.instant < deadline
+            @requestor.transition_to(Requestor::UpdateState::DelayedOnQuery,
+              Requestor::ChangeReason::DelayByProvider)
+            return
+          end
+          @next_query_deadlines.delete(provider_key)
         end
 
         @requestor.transition_to(Requestor::UpdateState::Querying, Requestor::ChangeReason::Unknown)
@@ -63,14 +82,20 @@ module Matter
         response = @im.invoke(session, peer, provider_endpoint, Provider::CLUSTER_ID,
           Provider::CMD_QUERY_IMAGE, request.to_slice)
         offer = response_fields(response, provider_endpoint, Provider::CMD_QUERY_IMAGE_RESPONSE)
+        if offer.status.busy? && offer.delayed_action_time.nil?
+          raise Matter::ProtocolError.new("OTA busy response omitted delay")
+        end
+        if (delay = offer.delayed_action_time) && delay > 0
+          @next_query_deadlines[provider_key] = Time.instant + delay.to_i64.seconds
+          @requestor.transition_to(Requestor::UpdateState::DelayedOnQuery,
+            Requestor::ChangeReason::DelayByProvider)
+          return
+        end
         case offer.status
         when Provider::QueryStatus::NotAvailable
           @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Success)
           return
         when Provider::QueryStatus::Busy
-          unless offer.delayed_action_time
-            raise Matter::ProtocolError.new("OTA busy response omitted delay")
-          end
           @requestor.transition_to(Requestor::UpdateState::DelayedOnQuery,
             Requestor::ChangeReason::DelayByProvider)
           return
