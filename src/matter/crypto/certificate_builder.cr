@@ -22,6 +22,7 @@ module Matter
 
         # A key identifier is the leading bytes of the SHA-256 of the public key
         KEY_IDENTIFIER_LENGTH       = 20
+        MAX_SERIAL_NUMBER_LENGTH    = 20
         MAX_CASE_AUTHENTICATED_TAGS =  3
 
         # Key usage bits, Matter specification table 6.5.11.2
@@ -184,7 +185,7 @@ module Matter
         ) : TLV::Structure
           now = Time.utc
           fields = TLV::Structure.new
-          fields[Asn1::Field::SerialNumber.value] = TLV::Any.new(serial, Asn1::Field::SerialNumber.value)
+          fields[Asn1::Field::SerialNumber.value] = TLV::Any.new(canonical_serial(serial), Asn1::Field::SerialNumber.value)
           fields[Asn1::Field::SignatureAlgorithm.value] = TLV::Any.new(SIGNATURE_ALGORITHM, Asn1::Field::SignatureAlgorithm.value)
           fields[Asn1::Field::Issuer.value] = TLV::Any.new(issuer, Asn1::Field::Issuer.value)
           fields[Asn1::Field::NotBefore.value] = TLV::Any.new(matter_seconds(now - VALIDITY_BACKDATE), Asn1::Field::NotBefore.value)
@@ -202,6 +203,24 @@ module Matter
           signature = crypto.sign_ecdsa(key, Asn1.to_unsigned_asn1(TLV::Any.new(fields, nil)))
           fields[Asn1::Field::Signature.value] = TLV::Any.new(signature, Asn1::Field::Signature.value)
           TLV::Any.new(fields, nil).to_slice
+        end
+
+        # The SDK copies TLV serial bytes directly into the DER INTEGER before
+        # hashing the TBS certificate. Preserve a positive, minimally encoded
+        # INTEGER on both sides, including the sign byte when bit 7 is set.
+        private def canonical_serial(serial : Bytes) : Bytes
+          raise Matter::CertificateError.new("Certificate serial number is empty") if serial.empty?
+
+          first = 0
+          while first < serial.size - 1 && serial[first] == 0_u8 && serial[first + 1] < 0x80_u8
+            first += 1
+          end
+          value = serial[first..]
+          value = Bytes[0_u8] + value if value[0] >= 0x80_u8
+          if value.size > MAX_SERIAL_NUMBER_LENGTH
+            raise Matter::CertificateError.new("Certificate serial number exceeds #{MAX_SERIAL_NUMBER_LENGTH} bytes")
+          end
+          value
         end
 
         private def basic_constraints(certificate_authority : Bool) : TLV::Any

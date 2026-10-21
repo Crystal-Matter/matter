@@ -19,6 +19,24 @@ describe Matter::Crypto::MatterCertificate::Builder do
     Matter::Crypto::MatterCertificate::Validation.certificate_authority?(root).should be_true
   end
 
+  it "puts DER-positive serial bytes on the wire for SDK certificate verification" do
+    high_bit_serial = Bytes[0xff, 0x80, 0x01]
+    expected = Bytes[0x00, 0xff, 0x80, 0x01]
+    issued = [
+      Matter::Crypto::MatterCertificate::Builder.root(root_key, RCAC_ID, high_bit_serial, crypto),
+      Matter::Crypto::MatterCertificate::Builder.node(
+        node_key.public_key, FABRIC_ID, NODE_ID, root_key, RCAC_ID, high_bit_serial, crypto),
+      Matter::Crypto::MatterCertificate::Builder.intermediate(
+        node_key.public_key, FABRIC_ID, 3_u64, root_key, RCAC_ID, high_bit_serial, crypto),
+    ]
+
+    issued.each do |certificate|
+      fields = TLV::Any.from_slice(certificate).as_structure
+      fields[Matter::Crypto::MatterCertificate::Asn1::Field::SerialNumber.value].as_bytes.should eq(expected)
+      Matter::Crypto::MatterCertificate::Validation.verify_signature(certificate, root_key.public_key)
+    end
+  end
+
   it "issues a node certificate that chains to the root" do
     Matter::Crypto::MatterCertificate::Validation.verify_chain(node, nil, root_key.public_key)
     Matter::Crypto::MatterCertificate.node_id_from_tlv(node).should eq(NODE_ID)
