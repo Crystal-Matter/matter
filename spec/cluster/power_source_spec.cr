@@ -121,15 +121,41 @@ describe Matter::Cluster::PowerSource do
   end
 
   describe "attributes" do
+    it "always exposes the mandatory Matter 1.6 EndpointList" do
+      cluster = build(Matter::Cluster::PowerSource,
+        feature_map: Matter::Cluster::PowerSource::Feature::None
+      )
+      cluster.attributes.map(&.name).should contain("endpointList")
+      read_tlv(cluster, 0x001F_u32).as_list.should be_empty
+    end
+
+    it "reads and updates the endpoints supplied by this power source" do
+      endpoints = [1_u16, 3_u16]
+      cluster = build(Matter::Cluster::PowerSource,
+        feature_map: Matter::Cluster::PowerSource::Feature::None,
+        endpoint_list: endpoints
+      )
+      endpoints << 5_u16
+      read_tlv(cluster, Matter::Cluster::PowerSource::ATTR_ENDPOINT_LIST).as_list.map(&.as_u16).should eq([1_u16, 3_u16])
+
+      replacement = [2_u16]
+      cluster.update_endpoint_list(replacement)
+      replacement << 4_u16
+      read_tlv(cluster, Matter::Cluster::PowerSource::ATTR_ENDPOINT_LIST).as_list.map(&.as_u16).should eq([2_u16])
+      write(cluster, Matter::Cluster::PowerSource::ATTR_ENDPOINT_LIST, [3_u16]).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedWrite)
+      expect_raises(ArgumentError, /duplicates/) { cluster.update_endpoint_list([2_u16, 2_u16]) }
+    end
+
     it "has base attributes only when no features enabled" do
       cluster = build(Matter::Cluster::PowerSource,
         feature_map: Matter::Cluster::PowerSource::Feature::None
       )
       attrs = cluster.attributes
-      attrs.size.should eq(3)
+      attrs.size.should eq(4)
       attrs.map(&.name).should contain("status")
       attrs.map(&.name).should contain("order")
       attrs.map(&.name).should contain("description")
+      attrs.map(&.name).should contain("endpointList")
     end
 
     it "has Battery feature attributes when enabled" do
@@ -140,7 +166,7 @@ describe Matter::Cluster::PowerSource do
         bat_replaceability: Matter::Cluster::PowerSource::BatReplaceability::UserReplaceable
       )
       attrs = cluster.attributes
-      attrs.size.should eq(6)
+      attrs.size.should eq(7)
       attrs.map(&.name).should contain("batChargeLevel")
       attrs.map(&.name).should contain("batReplacementNeeded")
       attrs.map(&.name).should contain("batReplaceability")
@@ -156,7 +182,7 @@ describe Matter::Cluster::PowerSource do
         bat_quantity: 2_u8
       )
       attrs = cluster.attributes
-      attrs.size.should eq(8)
+      attrs.size.should eq(9)
       attrs.map(&.name).should contain("batReplacementDescription")
       attrs.map(&.name).should contain("batQuantity")
     end
