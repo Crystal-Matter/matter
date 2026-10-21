@@ -406,6 +406,29 @@ module Matter
         end
       end
 
+      # Decode the policy as an integer before the strict enum request decoder.
+      # The certification test sends an unrecognized policy and requires the
+      # cluster's ConstraintError rather than a TLV InvalidCommand.
+      struct KeySetPolicyWire
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1)]
+        property group_key_security_policy : UInt8
+
+        def initialize(@group_key_security_policy : UInt8)
+        end
+      end
+
+      struct KeySetRequestPolicyWire
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property group_key_set : KeySetPolicyWire
+
+        def initialize(@group_key_set : KeySetPolicyWire)
+        end
+      end
+
       struct RemoveKeySetRequest
         include TLV::Serializable
         include Storage::Record
@@ -828,7 +851,14 @@ module Matter
       def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
                          is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
         return InteractionModel::Status.unsupported_access unless @access_mode.active? && is_case_session && accessing_fabric?(fabric_index)
+        if (command_id == CMD_ADD_KEY_SET || command_id == CMD_UPDATE_KEY_SET) && fields
+          policy = KeySetRequestPolicyWire.from_tlv(fields).group_key_set.group_key_security_policy
+          return InteractionModel::Status.constraint_error unless policy == DatastoreGroupKeySecurityPolicyEnum::TrustFirst.value
+        end
         super
+      rescue ex : TLV::DeserializationError | TypeCastError | ArgumentError
+        Log.warn(exception: ex) { "Invalid Joint Fabric key set policy request" }
+        InteractionModel::Status.invalid_command
       end
 
       private def accessing_fabric?(fabric_index : UInt8?) : Bool

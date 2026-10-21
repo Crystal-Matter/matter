@@ -13,6 +13,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 ### Shared fabric and certificate validation
 
+- Add local command-sequence parity specs drawn from seven Matter 1.6 JFA/JFD
+  certification scenarios. Return `ConstraintError` for an unknown Joint Fabric key
+  security policy on the command wire, as `TC_JFDS_2_2` requires.
 - Enforce signed Certification Declaration DAC origin VID/PID and authorized
   PAA identifiers during device attestation, including legitimate OEM chains.
 - Accept length-delimited Matter Message Extensions and Secured Extensions as
