@@ -215,12 +215,17 @@ certification steps and assertions are unchanged.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected
-HTTPS gateway. `DclAttestationRevocation` accepts one complete, directly
-signed CRL for each of the PAA and PAI only. It downloads from explicitly
+HTTPS gateway. `DclAttestationRevocation` validates direct and delegated
+PAA/PAI CRLs, including complete partition sets indexed by the issuer SKID.
+Each partition needs a distinct DCL label and URL, and its critical IDP URI
+must match the URL byte for byte. The signer must be the candidate PAA/PAI or
+a certificate signed by it with the delegated CRL signer profile. It downloads from explicitly
 approved HTTPS hosts (or separately opted-in HTTP hosts) with a 1 MiB streaming
-limit and no redirects, then
-reuses the signed CRL verifier. Missing or duplicate points, indirect signers,
-partitioned CRLs, and unknown digest metadata return `Unavailable`. The host
+limit and no redirects, then checks every CRL signature, freshness, extensions,
+issuer mapping, and serial. Missing coverage, malformed partitions, unmatched
+delegators, unsupported IDP scope flags, delta CRLs, and unknown critical CRL
+extensions return `Unavailable`. CRLs with more than 32 points for one issuer
+are outside this bounded profile. The host
 must authenticate and freshen its DCL gateway; this adapter does not establish
 the gateway's ledger synchronization or replace production PAA/CD provisioning.
 

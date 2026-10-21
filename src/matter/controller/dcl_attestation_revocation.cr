@@ -16,7 +16,10 @@ module Matter
       url : String,
       is_paa : Bool,
       size : Int64?,
-      sha256 : Bytes?
+      sha256 : Bytes?,
+      vendor_id : UInt16? = nil,
+      label : String? = nil,
+      product_id : UInt16? = nil
 
     abstract class DclRevocationSource
       abstract def points_for(issuer_skid : Bytes) : Array(DclRevocationPoint)
@@ -63,9 +66,14 @@ module Matter
           # represents its absence as zero in the JSON response.
           raise Matter::AuthenticationError.new("Unexpected DCL CRL size metadata") unless size_text == "0"
           delegator_text = record["crlSignerDelegator"]?.try(&.as_s) || ""
+          vendor_id = record["vid"].raw.to_s.to_u16
+          product_id = record["pid"]?.try(&.raw.to_s.to_u16)
+          product_id = nil if product_id == 0
+          label = record["label"].as_s
+          raise Matter::AuthenticationError.new("Invalid DCL CRL label") if label.empty? || label.bytesize > 64
           DclRevocationPoint.new(skid, pem_der(record["crlSignerCertificate"].as_s),
             delegator_text.empty? ? nil : pem_der(delegator_text), record["dataURL"].as_s,
-            record["isPAA"].as_bool, nil, nil)
+            record["isPAA"].as_bool, nil, nil, vendor_id, label, product_id)
         end
       rescue ex : Matter::Error
         raise ex
@@ -83,10 +91,8 @@ module Matter
       end
     end
 
-    # Conservative online adapter for complete, directly signed CRLs. The
-    # application supplies an authenticated DCL source and a bounded fetcher;
-    # it explicitly allowlists CRL hosts. Partitioned and delegated CRLs are
-    # unsupported and return Unavailable rather than an incomplete Good.
+    # Online adapter for bounded direct, partitioned, and delegated CRLs. The
+    # application supplies an authenticated DCL source and approved CRL hosts.
     class DclAttestationRevocation
       MAX_CRL_SIZE  = OfflineAttestationRevocation::MAX_CRL_SIZE
       FETCH_TIMEOUT = 5.seconds
@@ -145,9 +151,11 @@ module Matter
         pai_cert = OpenSSL::X509::Certificate.from_der(pai)
         paa_cert = OpenSSL::X509::Certificate.from_der(paa)
         crls = [] of Bytes
-        collect(paa_cert, true, crls)
-        collect(pai_cert, false, crls)
-        OfflineAttestationRevocation.new(crls).check(dac, pai, paa)
+        distribution_urls = [] of String?
+        validations = [] of OfflineAttestationRevocation::CrlValidation
+        collect(paa_cert, true, crls, distribution_urls, validations)
+        collect(pai_cert, false, crls, distribution_urls, validations)
+        OfflineAttestationRevocation.new(crls, distribution_urls, validations).check(dac, pai, paa)
       rescue ex
         ::Log.for("matter.controller.dcl_attestation_revocation").warn(exception: ex) do
           "DCL attestation revocation check unavailable"
@@ -156,39 +164,119 @@ module Matter
       end
 
       private def collect(issuer : OpenSSL::X509::Certificate, is_paa : Bool,
-                          crls : Array(Bytes)) : Nil
+                          crls : Array(Bytes), distribution_urls : Array(String?),
+                          validations : Array(OfflineAttestationRevocation::CrlValidation)) : Nil
         key_id = LibCrypto.x509_get0_subject_key_id(issuer)
         raise Matter::AuthenticationError.new("CRL issuer has no SKID") if key_id.null?
         length = LibCrypto.asn1_string_length(key_id)
         raise Matter::AuthenticationError.new("Invalid CRL issuer SKID") unless length == 20
         skid = Slice.new(LibCrypto.asn1_string_get0_data(key_id).as(UInt8*), length).dup
         points = @source.points_for(skid)
-        raise Matter::AuthenticationError.new("No DCL revocation coverage") unless points.size == 1
-        point = points.first
-        unless point.issuer_skid == skid && point.is_paa == is_paa &&
-               point.crl_signer_delegator_der.nil? && point.crl_signer_der == issuer.to_der
-          raise Matter::AuthenticationError.new("Unsupported or mismatched DCL CRL signer")
+        raise Matter::AuthenticationError.new("No DCL revocation coverage") unless points.size.in?(1..32)
+        partitioned = points.size > 1
+        if partitioned
+          labels = points.map(&.label)
+          vendors = points.map(&.vendor_id)
+          urls = points.map(&.url)
+          unless labels.all? { |label| label && !label.empty? } && labels.uniq.size == points.size &&
+                 vendors.all?(&.!=(nil)) && vendors.uniq.size == 1 && urls.uniq.size == points.size
+            raise Matter::AuthenticationError.new("Invalid DCL CRL partition metadata")
+          end
         end
-        uri = URI.parse(point.url)
-        host = uri.host
-        approved_https = uri.scheme == "https" && (uri.port.nil? || uri.port == 443) &&
-                         host && @allowed_crl_hosts.includes?(host.downcase)
-        approved_http = uri.scheme == "http" && (uri.port.nil? || uri.port == 80) &&
-                        host && @allowed_http_crl_hosts.includes?(host.downcase)
-        unless (approved_https || approved_http) && uri.user.nil? && uri.password.nil? && uri.fragment.nil?
-          raise Matter::AuthenticationError.new("CRL URL is not approved")
+        points.each do |point|
+          unless point.issuer_skid == skid && point.is_paa == is_paa
+            raise Matter::AuthenticationError.new("Unsupported or mismatched DCL CRL signer")
+          end
+          vendor_id = check_issuer_metadata!(point, issuer, is_paa)
+          delegated = point.crl_signer_der != issuer.to_der
+          if delegated
+            if is_paa
+              raise Matter::AuthenticationError.new("Unexpected PAA CRL delegator") if point.crl_signer_delegator_der
+            else
+              unless point.crl_signer_delegator_der == issuer.to_der
+                raise Matter::AuthenticationError.new("Invalid PAI CRL delegator")
+              end
+            end
+            validate_delegate!(point.crl_signer_der, issuer, is_paa, vendor_id)
+          elsif point.crl_signer_delegator_der
+            raise Matter::AuthenticationError.new("Unexpected direct CRL delegator")
+          end
+          unless point.url.bytesize.in?(1..256) && point.url.each_byte.all?(&.in?(0x21..0x7e))
+            raise Matter::AuthenticationError.new("Invalid DCL CRL URL")
+          end
+          uri = URI.parse(point.url)
+          host = uri.host
+          approved_https = uri.scheme == "https" && (uri.port.nil? || uri.port == 443) &&
+                           host && @allowed_crl_hosts.includes?(host.downcase)
+          approved_http = uri.scheme == "http" && (uri.port.nil? || uri.port == 80) &&
+                          host && @allowed_http_crl_hosts.includes?(host.downcase)
+          unless (approved_https || approved_http) && uri.user.nil? && uri.password.nil? && uri.fragment.nil?
+            raise Matter::AuthenticationError.new("CRL URL is not approved")
+          end
+          data = @fetch.call(point.url)
+          raise Matter::AuthenticationError.new("CRL is too large") unless data.size.in?(1..MAX_CRL_SIZE)
+          if size = point.size
+            raise Matter::AuthenticationError.new("CRL size mismatch") unless data.size.to_i64 == size
+          end
+          if digest = point.sha256
+            raise Matter::AuthenticationError.new("Invalid CRL digest") unless digest.size == 32
+            hash = OpenSSL::Digest.new("SHA256").update(data).final
+            raise Matter::AuthenticationError.new("CRL digest mismatch") unless hash == digest
+          end
+          crls << data
+          distribution_urls << (partitioned || delegated ? point.url : nil)
+          validations << OfflineAttestationRevocation::CrlValidation.new(
+            issuer.to_der, point.crl_signer_der, partitioned || delegated ? point.url : nil)
         end
-        data = @fetch.call(point.url)
-        raise Matter::AuthenticationError.new("CRL is too large") unless data.size.in?(1..MAX_CRL_SIZE)
-        if size = point.size
-          raise Matter::AuthenticationError.new("CRL size mismatch") unless data.size.to_i64 == size
+      end
+
+      private def check_issuer_metadata!(point : DclRevocationPoint,
+                                         issuer : OpenSSL::X509::Certificate,
+                                         is_paa : Bool) : UInt16
+        vendor_id = point.vendor_id
+        label = point.label
+        if vendor_id.nil? || label.nil? || label.empty? || label.bytesize > 64
+          raise Matter::AuthenticationError.new("Missing DCL CRL issuer metadata")
         end
-        if digest = point.sha256
-          raise Matter::AuthenticationError.new("Invalid CRL digest") unless digest.size == 32
-          hash = OpenSSL::Digest.new("SHA256").update(data).final
-          raise Matter::AuthenticationError.new("CRL digest mismatch") unless hash == digest
+        if certificate_vendor = subject_id(issuer, DeviceAttestationVerifier::VENDOR_ID_OID)
+          unless vendor_id == certificate_vendor
+            raise Matter::AuthenticationError.new("DCL CRL vendor mismatch")
+          end
+        elsif !is_paa
+          raise Matter::AuthenticationError.new("PAI lacks vendor ID")
         end
-        crls << data
+        certificate_product = subject_id(issuer, DeviceAttestationVerifier::PRODUCT_ID_OID)
+        if is_paa
+          raise Matter::AuthenticationError.new("Unexpected PAA product ID") if point.product_id || certificate_product
+        elsif point.product_id != certificate_product
+          raise Matter::AuthenticationError.new("DCL CRL product mismatch")
+        end
+        vendor_id
+      end
+
+      private def subject_id(cert : OpenSSL::X509::Certificate, oid : String) : UInt16?
+        text = cert.subject.to_a.find { |entry| entry[0].split('\0').first == oid }.try(&.[1])
+        return unless text
+        unless text.matches?(/\A[0-9A-Fa-f]{4}\z/)
+          raise Matter::AuthenticationError.new("Invalid attestation subject identifier")
+        end
+        text.to_u16(16)
+      end
+
+      private def validate_delegate!(der : Bytes, issuer : OpenSSL::X509::Certificate,
+                                     is_paa : Bool, vendor_id : UInt16) : Nil
+        raise Matter::AuthenticationError.new("Delegated CRL signer is too large") if der.size > 2048
+        delegate = OpenSSL::X509::Certificate.from_der(der)
+        if is_paa && subject_id(delegate, DeviceAttestationVerifier::PRODUCT_ID_OID)
+          raise Matter::AuthenticationError.new("PAA CRL delegate has product ID")
+        end
+        if is_paa && (signer_vendor = subject_id(delegate, DeviceAttestationVerifier::VENDOR_ID_OID)) &&
+           signer_vendor != vendor_id
+          raise Matter::AuthenticationError.new("PAA CRL delegate vendor mismatch")
+        end
+        unless OfflineAttestationRevocation.valid_delegate_chain?(delegate, issuer)
+          raise Matter::AuthenticationError.new("Invalid delegated CRL signer chain or profile")
+        end
       end
     end
   end
