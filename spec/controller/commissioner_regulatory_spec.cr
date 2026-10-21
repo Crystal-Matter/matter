@@ -11,6 +11,8 @@ private class RegulatoryImClient < Matter::Controller::ImClient
   property breadcrumb = 11_u64
   property arm_error = Matter::Commissioning::ErrorCode::OK
   property regulatory_error = Matter::Commissioning::ErrorCode::OK
+  property arm_response_delay = 0.seconds
+  getter arm_invoked_at_unix : Int64?
 
   def initialize
     super(Matter::Controller::Client.new)
@@ -43,6 +45,10 @@ private class RegulatoryImClient < Matter::Controller::ImClient
              endpoint_id : UInt16, cluster_id : UInt32, command_id : UInt32,
              fields : Bytes = Bytes.empty) : IM::InvokeResponseMessage
     @calls << {cluster_id, command_id, fields}
+    if command_id == GC::CMD_ARM_FAIL_SAFE
+      @arm_invoked_at_unix = Time.utc.to_unix
+      sleep @arm_response_delay
+    end
     response_id = command_id == GC::CMD_ARM_FAIL_SAFE ? GC::CMD_ARM_FAIL_SAFE_RESPONSE : GC::CMD_SET_REGULATORY_CONFIG_RESPONSE
     response = if command_id == GC::CMD_ARM_FAIL_SAFE
                  GC::ArmFailSafeResponse.new(@arm_error).to_slice
@@ -191,6 +197,21 @@ describe Matter::Controller::Commissioning::Commissioner do
     handoff.expires_at_unix.should eq(refreshed.expires_at_unix)
     store.load.pending_datastore_nodes.first.expires_at_unix.should eq(refreshed.expires_at_unix)
     store.load.pending_handoffs.first.expires_at_unix.should eq(refreshed.expires_at_unix)
+  ensure
+    im.try(&.close)
+    commissioner.try(&.close)
+  end
+
+  it "bounds the refreshed fail-safe deadline by the ArmFailSafe send time" do
+    im = RegulatoryImClient.new
+    im.arm_response_delay = 1.1.seconds
+    commissioner = RegulatoryCommissioner.new(Matter::Controller::StateStore.new(Matter::Storage::Memory.new),
+      fail_safe_expiry_seconds: 60_u16)
+    now = Time.utc.to_unix
+    expiring = RegulatoryCommissioner::FailSafeWindow.new(Time.instant + 5.seconds, now + 5, now + 600)
+    refreshed = commissioner.refresh(im, regulatory_session, Socket::IPAddress.new("127.0.0.1", 5540), expiring)
+    invoked_at = im.arm_invoked_at_unix.as(Int64)
+    refreshed.expires_at_unix.should be <= invoked_at + 60
   ensure
     im.try(&.close)
     commissioner.try(&.close)

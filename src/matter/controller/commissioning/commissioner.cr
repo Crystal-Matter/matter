@@ -202,6 +202,8 @@ module Matter
             breadcrumb: 0_u64,
             timeout_ms: 0_u32
           )
+          armed_at_unix = Time.utc.to_unix
+          armed_at_instant = Time.instant
           arm_resp = im.invoke(
             session: pase_session,
             peer: peer_addr,
@@ -222,10 +224,9 @@ module Matter
           if info.max_cumulative_failsafe_seconds == 0_u16
             raise Matter::CommissioningError.new("Device reported no maximum cumulative fail-safe duration")
           end
-          now_unix = Time.utc.to_unix
-          cumulative_expires_at_unix = now_unix + info.max_cumulative_failsafe_seconds.to_i64
-          fail_safe_window = FailSafeWindow.new(Time.instant + @fail_safe_expiry_seconds.seconds,
-            {now_unix + @fail_safe_expiry_seconds.to_i64, cumulative_expires_at_unix}.min,
+          cumulative_expires_at_unix = armed_at_unix + info.max_cumulative_failsafe_seconds.to_i64
+          fail_safe_window = FailSafeWindow.new(armed_at_instant + @fail_safe_expiry_seconds.seconds,
+            {armed_at_unix + @fail_safe_expiry_seconds.to_i64, cumulative_expires_at_unix}.min,
             cumulative_expires_at_unix)
 
           configure_regulatory_information(im, pase_session, peer_addr)
@@ -504,13 +505,14 @@ module Matter
           request = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
             expiry_length_seconds: @fail_safe_expiry_seconds,
             breadcrumb: breadcrumb)
+          armed_at_unix = Time.utc.to_unix
+          armed_at_instant = Time.instant
           response = im.invoke(session, peer, 0_u16, Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE, request.to_slice)
           assert_commissioning_response!(response,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE, "ArmFailSafe")
-          now_unix = Time.utc.to_unix
-          FailSafeWindow.new(Time.instant + @fail_safe_expiry_seconds.seconds,
-            {now_unix + @fail_safe_expiry_seconds.to_i64, window.cumulative_expires_at_unix}.min,
+          FailSafeWindow.new(armed_at_instant + @fail_safe_expiry_seconds.seconds,
+            {armed_at_unix + @fail_safe_expiry_seconds.to_i64, window.cumulative_expires_at_unix}.min,
             window.cumulative_expires_at_unix)
         end
 

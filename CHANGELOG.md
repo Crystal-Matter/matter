@@ -49,7 +49,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   timeout falls below half the requested duration. Preserve the device's
   current Breadcrumb, reject command-level ArmFailSafe errors, and carry the
   refreshed deadline into durable Datastore registration and deferred JFA
-  handoff records without exceeding the device's cumulative limit.
+  handoff records without exceeding the device's cumulative limit. Bound local
+  deadlines from the ArmFailSafe send time, including delayed responses.
 
 ### Commissioning interoperability
 
