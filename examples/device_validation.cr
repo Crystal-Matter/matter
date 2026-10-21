@@ -473,6 +473,7 @@ if pairing_code && b_storage_ready
     supports_address = "1" if supports_address.nil? && File.basename(chip_tool) == "chip-tool-crystal"
     if supports_address == "1"
       pairing_args += ["--address", addr]
+      pairing_args << "--allow-test-attestation"
     end
   end
 

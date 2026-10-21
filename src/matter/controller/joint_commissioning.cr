@@ -394,6 +394,7 @@ module Matter
           @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
           anchor_finalize : CommissionerHooks::AnchorFinalize? = nil,
           @handoff_result : HandoffResultLookup? = nil,
+          @attestation_verifier : DeviceAttestationVerifier? = nil,
         )
           fabric = @store.load.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
           validate_anchor_fabric(fabric, anchor_cat_version)
@@ -428,7 +429,8 @@ module Matter
             raise Matter::CommissioningError.new("A Joint Commissioning Anchor handoff needs reconciliation")
           end
           commissioner = Commissioning::Commissioner.new(@store, @client,
-            crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: 900_u16)
+            crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: 900_u16,
+            attestation_verifier: @attestation_verifier)
           commissioner.pairing_code(node_id, manual_code, peer,
             fabric_id: @fabric_id, root_public_key: @root_public_key,
             controller_node_id: @controller_node_id,
