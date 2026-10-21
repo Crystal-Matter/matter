@@ -11,6 +11,32 @@ The 0.2 refactor. Every layer of the library was reworked: storage, the device A
 clusters, the interaction model and the protocol objects. It is a breaking release, and
 **device storage written by 0.1 will not load** — see [Migrating from 0.1](#migrating-from-01).
 
+### Shared fabric and certificate validation
+
+- Add delegated controller identities on an existing fabric, a separate
+  certificate issuer for commissioning, and an ACL grant helper for shared
+  controller access.
+- Validate controller CASE peer certificates and device NOC updates against
+  the fabric trust root, signed validity period, and intermediate fabric ID;
+  bind commissioned NOCs to the device CSR key.
+- Store multiple controller fabrics with explicit selection and fabric-scoped
+  known nodes; retain authenticated CASE CATs across session persistence.
+- Complete the TimedRequest handshake for controller writes and invokes, and
+  expose Matter 1.6 Basic Information revision and version attributes.
+- Add Matter 1.6 Joint Fabric Administrator and Datastore cluster schemas,
+  VID verification commands, a persistent Joint Commissioning workflow,
+  Datastore propagation, and a dedicated administrator example. Two Crystal
+  administrators complete JCM in Docker, including mutual VID verification
+  and ICAC cross-signing. Add journaled Anchor transfer participant follow-up
+  and consent-gated Administrator removal with CAT/NOC rotation. A two-JFA
+  Docker test covers network transfer, removal, and lost-acknowledgement
+  reconciliation. The Anchor JFA now completes the deferred JCM handoff, and
+  the former Anchor subscribes to the new Anchor Datastore after transfer.
+  A separate Docker test covers offline propagation failure and live
+  RefreshNode endpoint/ACL reconciliation. Broader lifecycle and official SDK
+  JFA interoperability remain to be verified; see
+  [the status page](docs/matter_1_6_joint_fabric.md).
+
 ### Added
 
 #### Device API

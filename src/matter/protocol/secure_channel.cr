@@ -379,7 +379,8 @@ module Matter
           crypto: Crypto::StandardCrypto.new,
           # Sigma1 already pinned the fabric via the destination id; the peer's
           # node certificate has to chain to that fabric's root.
-          root_public_key: fabric.root_public_key
+          root_public_key: fabric.root_public_key,
+          root_certificate: fabric.root_cert
         )
 
         sigma2_data = responder.process_sigma1(
@@ -496,6 +497,7 @@ module Matter
         # ACL subjects: the node id plus any CATs, which is how iOS installs
         # its entries.
         session.peer_subject_ids = responder.peer_subject_ids.dup
+        session.peer_icac = responder.peer_icac.try(&.dup)
         if session.peer_subject_ids.empty?
           if peer_node = session.peer_node_id
             session.peer_subject_ids = [peer_node.id]

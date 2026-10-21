@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/commissioning/credential_service"
+require "../../src/matter/controller/certificate_util"
 
 # The credential flow on its own: no cluster, no wire.
 CSR_NONCE_SIZE =     32
@@ -12,14 +13,42 @@ private def credential_service(target : RecordingCredentialTarget, max_fabrics :
 end
 
 # Walks the commissioning credential exchange up to (but not including) AddNOC
-private def commission(service : Matter::Commissioning::CredentialService, session_id : UInt64 = TEST_SESSION) : Nil
-  service.create_csr(
+private def commission(service : Matter::Commissioning::CredentialService, session_id : UInt64 = TEST_SESSION) : Bytes
+  result = service.create_csr(
     nonce: Bytes.new(CSR_NONCE_SIZE, 0x42_u8),
     session_id: session_id,
     is_for_update_noc: false,
     pase_session: true
   )
   service.add_trusted_root_certificate(CommissioningCertificates.root_certificate)
+  elements = Matter::Commissioning::CredentialService::CSRElements.from_slice(result.as(Tuple(Bytes, Bytes))[0])
+  Matter::Controller::CertificateUtil.extract_uncompressed_public_key_from_csr(elements.csr)
+end
+
+private def update_csr(service : Matter::Commissioning::CredentialService) : Bytes
+  result = service.create_csr(
+    nonce: Bytes.new(CSR_NONCE_SIZE, 0x43_u8),
+    session_id: TEST_SESSION,
+    is_for_update_noc: true,
+    pase_session: false
+  )
+  elements = Matter::Commissioning::CredentialService::CSRElements.from_slice(result.as(Tuple(Bytes, Bytes))[0])
+  Matter::Controller::CertificateUtil.extract_uncompressed_public_key_from_csr(elements.csr)
+end
+
+private def commissioned_service : {Matter::Commissioning::CredentialService, UInt8}
+  service = credential_service(RecordingCredentialTarget.new)
+  public_key = commission(service)
+  outcome = service.add_noc(
+    noc: TestCertificateAuthority.default.issue(public_key: public_key),
+    icac: nil,
+    ipk: Bytes.new(IPK_SIZE, 0_u8),
+    case_admin_subject: 0x9999_u64,
+    admin_vendor_id: 0xFFF1_u16,
+    session_id: TEST_SESSION
+  )
+  service.reset_pending
+  {service, outcome.fabric_index.as(UInt8)}
 end
 
 module Matter::Commissioning
@@ -102,10 +131,10 @@ module Matter::Commissioning
         service = credential_service(target)
         added = [] of Fabric
         service.on_fabric_added = ->(fabric : Fabric) { added << fabric; nil }
-        commission(service)
+        public_key = commission(service)
 
         outcome = service.add_noc(
-          noc: CommissioningCertificates.noc,
+          noc: TestCertificateAuthority.default.issue(public_key: public_key),
           icac: nil,
           ipk: Bytes.new(IPK_SIZE, 0_u8),
           case_admin_subject: 0x9999_u64,
@@ -134,6 +163,23 @@ module Matter::Commissioning
 
         outcome.ok?.should be_false
         outcome.status.should eq(Matter::Commissioning::NocStatus::InvalidNoc)
+        service.fabric_table.size.should eq(0)
+      end
+
+      it "refuses a trusted NOC whose public key differs from the CSR" do
+        service = credential_service(RecordingCredentialTarget.new)
+        commission(service)
+
+        outcome = service.add_noc(
+          noc: CommissioningCertificates.noc,
+          icac: nil,
+          ipk: Bytes.new(IPK_SIZE, 0_u8),
+          case_admin_subject: 0x9999_u64,
+          admin_vendor_id: 0xFFF1_u16,
+          session_id: TEST_SESSION
+        )
+
+        outcome.status.should eq(NocStatus::InvalidPublicKey)
         service.fabric_table.size.should eq(0)
       end
 
@@ -193,9 +239,9 @@ module Matter::Commissioning
 
       it "refuses to join the same fabric twice" do
         service = credential_service(RecordingCredentialTarget.new)
-        commission(service)
+        public_key = commission(service)
         service.add_noc(
-          noc: CommissioningCertificates.noc,
+          noc: TestCertificateAuthority.default.issue(public_key: public_key),
           icac: nil,
           ipk: Bytes.new(IPK_SIZE, 0_u8),
           case_admin_subject: 0x9999_u64,
@@ -219,15 +265,70 @@ module Matter::Commissioning
       end
     end
 
+    describe "#update_noc" do
+      it "accepts a replacement certificate issued to the update CSR key" do
+        service, index = commissioned_service
+        public_key = update_csr(service)
+        replacement = TestCertificateAuthority.default.issue(public_key: public_key)
+
+        outcome = service.update_noc(replacement, nil, index, TEST_SESSION)
+
+        outcome.status.should eq(NocStatus::Ok)
+        service.fabric_table.get_fabric(index).as(Fabric).operational_cert.should eq(replacement)
+      end
+
+      it "replaces the fabric CATs with those in the validated replacement NOC" do
+        service, index = commissioned_service
+        public_key = update_csr(service)
+        authority = TestCertificateAuthority.default
+        replacement = Matter::Crypto::MatterCertificate::Builder.node(
+          public_key: public_key,
+          fabric_id: TestCertificateAuthority::DEFAULT_FABRIC_ID,
+          node_id: TestCertificateAuthority::DEFAULT_NODE_ID,
+          issuer_key: authority.key,
+          issuer_rcac_id: TestCertificateAuthority::ROOT_CERTIFICATE_ID,
+          serial: Bytes[1, 2, 3, 4, 5, 6, 7, 8],
+          crypto: Matter::Crypto::StandardCrypto.new,
+          case_authenticated_tags: [0xFFFF_0002_u32, 0xFFFE_0002_u32]
+        )
+
+        service.update_noc(replacement, nil, index, TEST_SESSION).status.should eq(NocStatus::Ok)
+        service.fabric_table.get_fabric(index).as(Fabric).cats.map(&.value)
+          .should eq([0xFFFF_0002_u32, 0xFFFE_0002_u32])
+      end
+
+      it "refuses a replacement certificate issued by a different root" do
+        service, index = commissioned_service
+        public_key = update_csr(service)
+        original = service.fabric_table.get_fabric(index).as(Fabric).operational_cert
+
+        outcome = service.update_noc(TestCertificateAuthority.new.issue(public_key: public_key), nil, index, TEST_SESSION)
+
+        outcome.status.should eq(NocStatus::InvalidNoc)
+        service.fabric_table.get_fabric(index).as(Fabric).operational_cert.should eq(original)
+      end
+
+      it "refuses a replacement certificate with a key different from the update CSR" do
+        service, index = commissioned_service
+        update_csr(service)
+        original = service.fabric_table.get_fabric(index).as(Fabric).operational_cert
+
+        outcome = service.update_noc(CommissioningCertificates.noc, nil, index, TEST_SESSION)
+
+        outcome.status.should eq(NocStatus::InvalidPublicKey)
+        service.fabric_table.get_fabric(index).as(Fabric).operational_cert.should eq(original)
+      end
+    end
+
     describe "#remove_fabric" do
       it "leaves the fabric and drops what was scoped to it" do
         target = RecordingCredentialTarget.new
         service = credential_service(target)
         removed = [] of UInt8
         service.on_fabric_removed = ->(fabric_index : UInt8) { removed << fabric_index; nil }
-        commission(service)
+        public_key = commission(service)
         added = service.add_noc(
-          noc: CommissioningCertificates.noc,
+          noc: TestCertificateAuthority.default.issue(public_key: public_key),
           icac: nil,
           ipk: Bytes.new(IPK_SIZE, 0_u8),
           case_admin_subject: 0x9999_u64,

@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/cluster/boolean_state"
+require "../../src/matter/cluster/basic_information"
 require "../../src/matter/cluster/color_control"
 require "../../src/matter/cluster/descriptor"
 require "../../src/matter/cluster/door_lock"
@@ -26,6 +27,7 @@ describe "Cluster::Base ClusterRevision" do
   end
 
   {% for pair in [
+                   {Matter::Cluster::BasicInformation, 6_u16},
                    {Matter::Cluster::ColorControl, 7_u16},
                    {Matter::Cluster::Descriptor, 3_u16},
                    {Matter::Cluster::DoorLock, 9_u16},

@@ -39,6 +39,8 @@ module Matter
       # Invoked when a new failsafe context is armed, so that per-failsafe state
       # elsewhere (the pending credentials of `CredentialService`) is reset
       property on_failsafe_armed : Proc(Nil)?
+      property on_failsafe_expired : Proc(Nil)?
+      property on_failsafe_success : Proc(Nil)?
 
       # Invoked with the breadcrumb the commissioner's progress moved to
       property on_breadcrumb_changed : Proc(UInt64, Nil)?
@@ -198,6 +200,7 @@ module Matter
         @admin_fabric_index = nil
         self.breadcrumb = 0_u64
         @targets.close_commissioning_window
+        @on_failsafe_success.try(&.call)
 
         Outcome.new
       end
@@ -265,6 +268,8 @@ module Matter
           @context = nil
           @admin_fabric_index = nil
         end
+
+        @on_failsafe_expired.try(&.call)
 
         @commissioning_window_open = false
         self.breadcrumb = 0_u64

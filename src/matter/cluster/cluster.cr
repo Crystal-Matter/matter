@@ -1,4 +1,5 @@
 require "tlv"
+require "socket"
 require "../interaction_model/status_code"
 require "../storage/record"
 require "../interaction_model/paths"
@@ -117,8 +118,22 @@ module Matter
       # These are intentionally prefixed to avoid colliding with cluster-specific state.
       property request_session_id : UInt64? = nil
       property request_peer_node_id : UInt64? = nil
+      # Authenticated CASE NOC subjects (node ID and CATs) for this request.
+      property request_peer_subject_ids : Array(UInt64)? = nil
+      property request_peer_address : Socket::IPAddress? = nil
+      property request_peer_icac : Bytes? = nil
       property? request_is_case_session : Bool = false
       property request_fabric_index : UInt8? = nil
+      property? request_fabric_filtered : Bool = true
+
+      # IMHandler sets request_* fields immediately before dispatch. A fiber
+      # waiting in a cluster callback must retain its own authenticated
+      # context until that operation finishes.
+      @request_context_mutex : Mutex = Mutex.new(:reentrant)
+
+      def with_request_context(&)
+        @request_context_mutex.synchronize { yield }
+      end
 
       # Callback for attribute change notifications (used by subscription system)
       # Parameters: endpoint_id, cluster_id, attribute_id

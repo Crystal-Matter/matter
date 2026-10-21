@@ -12,6 +12,8 @@ module Matter
       module Builder
         extend self
 
+        ANCHOR_ICAC_ORGANIZATIONAL_UNIT = MatterCertificate::ANCHOR_ICAC_ORGANIZATIONAL_UNIT
+
         # Matter certificates are ECDSA with SHA-256 over a P-256 key, and the
         # TLV records that as three enumerations of one
         SIGNATURE_ALGORITHM  = 1_u8
@@ -19,7 +21,8 @@ module Matter
         ELLIPTIC_CURVE_ID    = 1_u8
 
         # A key identifier is the leading bytes of the SHA-256 of the public key
-        KEY_IDENTIFIER_LENGTH = 20
+        KEY_IDENTIFIER_LENGTH       = 20
+        MAX_CASE_AUTHENTICATED_TAGS =  3
 
         # Key usage bits, Matter specification table 6.5.11.2
         KEY_USAGE_DIGITAL_SIGNATURE = 1 << 0
@@ -67,20 +70,86 @@ module Matter
           issuer_rcac_id : UInt64,
           serial : Bytes,
           crypto : CryptoBase = Crypto.instance,
+          case_authenticated_tag : UInt32? = nil,
+          issuer_icac_id : UInt64? = nil,
+          case_authenticated_tags : Array(UInt32) = [] of UInt32,
+          issuer_certificate : Bytes? = nil,
         ) : Bytes
+          tags = case_authenticated_tags.dup
+          tags.unshift(case_authenticated_tag) if case_authenticated_tag
+          if tags.size > MAX_CASE_AUTHENTICATED_TAGS || tags.uniq.size != tags.size ||
+             tags.any? { |tag| (tag & 0xffff_u32) == 0_u32 }
+            raise Matter::CertificateError.new("Invalid CASE authenticated tags for NOC")
+          end
+          issuer = if certificate = issuer_certificate
+                     identity = MatterCertificate.from_slice(certificate)
+                     expected_id = issuer_icac_id || issuer_rcac_id
+                     actual_id = issuer_icac_id ? identity.subject.icac_id : identity.subject.rcac_id
+                     unless actual_id == expected_id && identity.ec_public_key == issuer_key.public_key
+                       raise Matter::CertificateError.new("Node issuer certificate does not match signing key or ID")
+                     end
+                     TLV::Any.from_slice(certificate).as_structure[Asn1::Field::Subject.value].as_list.dup
+                   elsif icac_id = issuer_icac_id
+                     TLV::List{TLV::Any.new(icac_id, Asn1::Dn::IcacId.value),
+                               TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value)}
+                   else
+                     TLV::List{TLV::Any.new(issuer_rcac_id, Asn1::Dn::RcacId.value)}
+                   end
+          subject = TLV::List{
+            TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value),
+            TLV::Any.new(node_id, Asn1::Dn::NodeId.value),
+          }
+          tags.each do |tag|
+            subject << TLV::Any.new(tag, Asn1::Dn::CaseAuthenticatedTag.value)
+          end
           sign(
             certificate(
               serial: serial,
-              issuer: TLV::List{TLV::Any.new(issuer_rcac_id, Asn1::Dn::RcacId.value)},
-              subject: TLV::List{
-                TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value),
-                TLV::Any.new(node_id, Asn1::Dn::NodeId.value),
-              },
+              issuer: issuer,
+              subject: subject,
               public_key: public_key,
               extensions: TLV::List{
                 basic_constraints(certificate_authority: false),
                 key_usage(KEY_USAGE_DIGITAL_SIGNATURE),
                 extended_key_usage(NODE_EXTENDED_KEY_USAGE),
+                key_identifier_extension(Asn1::Extension::SubjectKeyIdentifier, key_identifier(public_key, crypto)),
+                key_identifier_extension(Asn1::Extension::AuthorityKeyIdentifier, key_identifier(issuer_key.public_key, crypto)),
+              }
+            ),
+            issuer_key,
+            crypto
+          )
+        end
+
+        # Issue an intermediate CA under the Anchor root. A joining ecosystem
+        # uses the same public key as its existing ICAC, retaining its private
+        # key while receiving an ICAC trusted by the Anchor fabric.
+        def intermediate(
+          public_key : Bytes,
+          fabric_id : UInt64,
+          icac_id : UInt64,
+          issuer_key : Key,
+          issuer_rcac_id : UInt64,
+          serial : Bytes,
+          crypto : CryptoBase = Crypto.instance,
+          anchor : Bool = false,
+        ) : Bytes
+          subject = TLV::List{
+            TLV::Any.new(icac_id, Asn1::Dn::IcacId.value),
+            TLV::Any.new(fabric_id, Asn1::Dn::FabricId.value),
+          }
+          if anchor
+            subject << TLV::Any.new(ANCHOR_ICAC_ORGANIZATIONAL_UNIT, Asn1::Dn::OrgUnitName.value)
+          end
+          sign(
+            certificate(
+              serial: serial,
+              issuer: TLV::List{TLV::Any.new(issuer_rcac_id, Asn1::Dn::RcacId.value)},
+              subject: subject,
+              public_key: public_key,
+              extensions: TLV::List{
+                basic_constraints(certificate_authority: true),
+                key_usage(KEY_USAGE_KEY_CERT_SIGN | KEY_USAGE_CRL_SIGN),
                 key_identifier_extension(Asn1::Extension::SubjectKeyIdentifier, key_identifier(public_key, crypto)),
                 key_identifier_extension(Asn1::Extension::AuthorityKeyIdentifier, key_identifier(issuer_key.public_key, crypto)),
               }

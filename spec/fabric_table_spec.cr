@@ -1,5 +1,6 @@
 require "./spec_helper"
 require "log/spec"
+require "../src/matter/controller/joint_commissioning"
 
 private def build_fabric(fabric_index : UInt8, fabric_id : UInt64 = fabric_index.to_u64) : Matter::Fabric
   Matter::Fabric.new(
@@ -94,6 +95,28 @@ describe Matter::FabricTable do
       fabric.should_not be_nil
       fabric.as(Matter::Fabric).fabric_index.should eq(1_u8)
       table.size.should eq(1)
+    end
+
+    it "retains NOC CATs when adding and reloading an automatically indexed fabric" do
+      bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+        0xA100_u64, 0xA101_u64, 0xFFF1_u16)
+      key = Matter::Crypto::Key.generate_key_pair
+      noc = bootstrap.issue_anchor_administrator_noc(0xA102_u64, key.public_key)
+      storage = Matter::Storage::Memory.new
+      table = Matter::FabricTable.new(storage)
+      fabric = table.add_fabric_auto_index(
+        fabric_id: bootstrap.fabric.fabric_id,
+        node_id: 0xA102_u64,
+        root_public_key: bootstrap.fabric.root_public_key,
+        operational_cert: noc,
+        operational_key: key,
+        ipk: bootstrap.fabric.ipk_value,
+        intermediate_cert: bootstrap.fabric.intermediate_cert,
+        root_cert: bootstrap.fabric.root_cert
+      ).as(Matter::Fabric)
+      fabric.cats.map(&.value).should eq([0xFFFF_0001_u32, 0xFFFE_0001_u32])
+      Matter::FabricTable.new(storage).get_fabric(fabric.fabric_index).as(Matter::Fabric)
+        .cats.map(&.value).should eq([0xFFFF_0001_u32, 0xFFFE_0001_u32])
     end
 
     it "prevents duplicate fabric indices" do

@@ -233,7 +233,7 @@ describe Matter::Cluster::OperationalCredentials do
         # Complete full commissioning
         nonce = Bytes.new(32, 0x42_u8)
         csr_request_tlv = create_csr_request_tlv(nonce, false)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           csr_request_tlv
         )
@@ -246,7 +246,7 @@ describe Matter::Cluster::OperationalCredentials do
           add_root_tlv
         )
 
-        noc_bytes = create_mock_noc(0x1234567890ABCDEF_u64, 0x0011223344556677_u64)
+        noc_bytes = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         ipk = Bytes.new(16, 0x02_u8)
         add_noc_tlv = create_add_noc_request_tlv(noc_bytes, nil, ipk, 0xABCD_u64, 0xFFF1_u16)
@@ -313,7 +313,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.failsafe_armed = true
 
         nonce1 = Bytes.new(32, 0x11_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce1, false)
         )
@@ -325,7 +325,8 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_trusted_root_cert_request_tlv(root_cert1)
         )
 
-        noc1 = create_mock_noc(0x1111111111111111_u64, 0xAAAAAAAAAAAAAAAA_u64)
+        noc1 = create_mock_noc_with_key(0x1111111111111111_u64, 0xAAAAAAAAAAAAAAAA_u64,
+          csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)), 0xAAAAAAAAAAAAAAAA_u64)
 
         ipk1 = Bytes.new(16, 0x01_u8)
         invoke(cluster,
@@ -340,7 +341,7 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Add second fabric
         nonce2 = Bytes.new(32, 0x22_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce2, false)
         )
@@ -352,7 +353,8 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_trusted_root_cert_request_tlv(root_cert2)
         )
 
-        noc2 = authority2.issue(0xBBBBBBBBBBBBBBBB_u64, 0x2222222222222222_u64)
+        noc2 = authority2.issue(0xBBBBBBBBBBBBBBBB_u64, 0x2222222222222222_u64,
+          csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)), 0xBBBBBBBBBBBBBBBB_u64)
 
         ipk2 = Bytes.new(16, 0x02_u8)
         invoke(cluster,
@@ -379,7 +381,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.failsafe_armed = true
 
         nonce1 = Bytes.new(32, 0x11_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce1, false)
         )
@@ -393,7 +395,8 @@ describe Matter::Cluster::OperationalCredentials do
 
         same_fabric_id = 0xAAAAAAAAAAAAAAAA_u64
 
-        noc1 = create_mock_noc(0x1111111111111111_u64, same_fabric_id)
+        noc1 = create_mock_noc_with_key(0x1111111111111111_u64, same_fabric_id,
+          csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)), 0xAAAAAAAAAAAAAAAA_u64)
 
         ipk1 = Bytes.new(16, 0x01_u8)
         invoke(cluster,
@@ -407,7 +410,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.failsafe_armed = true
 
         nonce2 = Bytes.new(32, 0x22_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce2, false)
         )
@@ -419,7 +422,8 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_trusted_root_cert_request_tlv(root_cert2)
         )
 
-        noc2 = authority2.issue(same_fabric_id, 0x2222222222222222_u64)
+        noc2 = authority2.issue(same_fabric_id, 0x2222222222222222_u64,
+          csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)), 0xBBBBBBBBBBBBBBBB_u64)
 
         ipk2 = Bytes.new(16, 0x02_u8)
         result = invoke(cluster,
@@ -444,7 +448,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.failsafe_armed = true
 
         nonce1 = Bytes.new(32, 0x11_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce1, false)
         )
@@ -457,7 +461,8 @@ describe Matter::Cluster::OperationalCredentials do
         )
 
         same_fabric_id = 0xAAAAAAAAAAAAAAAA_u64
-        noc1 = create_mock_noc(0x1111111111111111_u64, same_fabric_id)
+        noc1 = create_mock_noc_with_key(0x1111111111111111_u64, same_fabric_id,
+          csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)), 0xAAAAAAAAAAAAAAAA_u64)
 
         ipk1 = Bytes.new(16, 0x01_u8)
         invoke(cluster,
@@ -508,7 +513,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.failsafe_armed = true
 
         nonce = Bytes.new(32, 0x42_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce, false)
         )
@@ -520,7 +525,7 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_trusted_root_cert_request_tlv(root_cert)
         )
 
-        noc = create_mock_noc(0x1234567890ABCDEF_u64, 0x0011223344556677_u64)
+        noc = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         ipk = Bytes.new(16, 0x02_u8)
         invoke(cluster,
@@ -555,7 +560,7 @@ describe Matter::Cluster::OperationalCredentials do
           cluster.failsafe_armed = true
 
           nonce = Bytes.new(32, i.to_u8)
-          invoke(cluster,
+          csr_result = invoke(cluster,
             Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
             create_csr_request_tlv(nonce, false)
           )
@@ -567,7 +572,7 @@ describe Matter::Cluster::OperationalCredentials do
             create_add_trusted_root_cert_request_tlv(root_cert)
           )
 
-          noc = create_mock_noc(0x1111111111111111_u64 + i, 0xAAAAAAAAAAAAAAAA_u64 + i)
+          noc = create_mock_noc_with_key(0x1111111111111111_u64 + i, 0xAAAAAAAAAAAAAAAA_u64 + i, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
           ipk = Bytes.new(16, i.to_u8)
           invoke(cluster,

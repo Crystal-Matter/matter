@@ -60,6 +60,13 @@ jobs:
         run: crystal build ./examples/chip-tool.cr -o ./bin/chip-tool --error-trace
       - name: Validate
         run: ./examples/run_validation.sh --chip-tool ./bin/chip-tool
+  docker_interoperability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Commission example devices with official chip-tool
+        run: ./test --e2e-only
   test:
     strategy:
       fail-fast: false

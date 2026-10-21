@@ -399,6 +399,8 @@ module Matter
       # Ensure OperationalCredentials resets its internal per-failsafe state when a
       # new failsafe context is armed (required for follow-up CSR/UpdateNOC flows).
       general_commissioning.on_failsafe_armed = -> { operational_credentials.on_failsafe_armed }
+      general_commissioning.on_failsafe_expired = -> { operational_credentials.on_failsafe_expired }
+      general_commissioning.on_failsafe_success = -> { operational_credentials.on_failsafe_success }
 
       # Ensure attestation signatures can access the PASE session's attestation_challenge.
       sessions = @message_handler.sessions

@@ -3,6 +3,18 @@
 require "../spec_helper"
 require "../../src/matter/cluster/operational_credentials"
 require "../../src/matter/crypto/certificate"
+require "../../src/matter/controller/certificate_util"
+
+def csr_public_key(result : Matter::Cluster::CommandResponse) : Bytes
+  response = Matter::Cluster::OperationalCredentials::Tlv::CsrResponse.from_slice(result.response.as(TLV::Any).to_slice)
+  elements = Matter::Commissioning::CredentialService::CSRElements.from_slice(response.nocsr_elements)
+  Matter::Controller::CertificateUtil.extract_uncompressed_public_key_from_csr(elements.csr)
+end
+
+def csr_public_key(result : Matter::Cluster::OperationalCredentials::CSRResponse) : Bytes
+  elements = Matter::Commissioning::CredentialService::CSRElements.from_slice(result.nocsr_elements)
+  Matter::Controller::CertificateUtil.extract_uncompressed_public_key_from_csr(elements.csr)
+end
 
 # Helper functions for TLV encoding command data
 def build_op_creds_cluster(endpoint_id : Matter::DataType::EndpointNumber = endpoint(0))
@@ -65,8 +77,9 @@ def create_mock_noc(node_id : UInt64, fabric_id : UInt64) : Bytes
 end
 
 # The same, for a node holding `public_key`
-def create_mock_noc_with_key(node_id : UInt64, fabric_id : UInt64, public_key : Bytes) : Bytes
-  TestCertificateAuthority.default.issue(fabric_id, node_id, public_key)
+def create_mock_noc_with_key(node_id : UInt64, fabric_id : UInt64, public_key : Bytes,
+                             rcac_id : UInt64 = TestCertificateAuthority::ROOT_CERTIFICATE_ID) : Bytes
+  TestCertificateAuthority.default.issue(fabric_id, node_id, public_key, rcac_id)
 end
 
 # Helper to create UpdateFabricLabel request TLV

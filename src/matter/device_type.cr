@@ -9,12 +9,13 @@ module Matter
     # Common Matter Device Types (Spec Chapter 7)
 
     # Utility Device Types
-    ROOT_NODE     = 0x0016_u32 # Root Node (endpoint 0)
-    POWER_SOURCE  = 0x0011_u32 # Power Source
-    OTA_REQUESTOR = 0x0012_u32 # OTA Requestor
-    OTA_PROVIDER  = 0x0014_u32 # OTA Provider
-    AGGREGATOR    = 0x000E_u32 # Aggregator
-    BRIDGED_NODE  = 0x0013_u32 # Bridged Node
+    ROOT_NODE                  = 0x0016_u32 # Root Node (endpoint 0)
+    POWER_SOURCE               = 0x0011_u32 # Power Source
+    OTA_REQUESTOR              = 0x0012_u32 # OTA Requestor
+    OTA_PROVIDER               = 0x0014_u32 # OTA Provider
+    AGGREGATOR                 = 0x000E_u32 # Aggregator
+    BRIDGED_NODE               = 0x0013_u32 # Bridged Node
+    JOINT_FABRIC_ADMINISTRATOR = 0x0130_u32 # Joint Fabric Administrator
 
     # Lighting Device Types
     ON_OFF_LIGHT            = 0x0100_u32 # On/Off Light
@@ -97,6 +98,15 @@ module Matter
         optional_server_clusters: [
           0x0003_u32, # Identify
         ]
+      )
+    end
+
+    def self.joint_fabric_administrator : DeviceType
+      new(
+        DataType::DeviceTypeId.new(JOINT_FABRIC_ADMINISTRATOR),
+        "Joint Fabric Administrator",
+        1_u16,
+        required_server_clusters: [0x0752_u32, 0x0753_u32]
       )
     end
 
@@ -269,17 +279,18 @@ module Matter
     # refuses to boot.
     def self.for(device_type : UInt32) : DeviceType
       case device_type
-      when ROOT_NODE           then root_node
-      when ON_OFF_LIGHT        then on_off_light
-      when DIMMABLE_LIGHT      then dimmable_light
-      when ON_OFF_PLUG_IN_UNIT then on_off_plug_in_unit
-      when ON_OFF_LIGHT_SWITCH then on_off_light_switch
-      when DIMMER_SWITCH       then dimmer_switch
-      when CONTACT_SENSOR      then contact_sensor
-      when TEMPERATURE_SENSOR  then temperature_sensor
-      when DOOR_LOCK           then door_lock
-      when THERMOSTAT          then thermostat
-      when FAN                 then fan
+      when ROOT_NODE                  then root_node
+      when JOINT_FABRIC_ADMINISTRATOR then joint_fabric_administrator
+      when ON_OFF_LIGHT               then on_off_light
+      when DIMMABLE_LIGHT             then dimmable_light
+      when ON_OFF_PLUG_IN_UNIT        then on_off_plug_in_unit
+      when ON_OFF_LIGHT_SWITCH        then on_off_light_switch
+      when DIMMER_SWITCH              then dimmer_switch
+      when CONTACT_SENSOR             then contact_sensor
+      when TEMPERATURE_SENSOR         then temperature_sensor
+      when DOOR_LOCK                  then door_lock
+      when THERMOSTAT                 then thermostat
+      when FAN                        then fan
       else
         new(
           DataType::DeviceTypeId.new(device_type),
@@ -293,6 +304,7 @@ module Matter
     def self.name(device_type : UInt32) : String?
       case device_type
       when ROOT_NODE                  then "Root Node"
+      when JOINT_FABRIC_ADMINISTRATOR then "Joint Fabric Administrator"
       when POWER_SOURCE               then "Power Source"
       when OTA_REQUESTOR              then "OTA Requestor"
       when OTA_PROVIDER               then "OTA Provider"

@@ -483,7 +483,7 @@ if pairing_code && b_storage_ready
   fabric_index_a = nil.as(UInt8?)
   fabric_index_b = nil.as(UInt8?)
 
-  run_check(checks, chip_tool, storage_dir_a, "operationalcredentials.fabrics", ["operationalcredentials", "read", "fabrics", node_id, "0"]) do |cmd_result|
+  run_check(checks, chip_tool, storage_dir_a, "operationalcredentials.fabrics", ["operationalcredentials", "read", "fabrics", node_id, "0", "--fabric-filtered", "false"]) do |cmd_result|
     next check_command_ok("operationalcredentials.fabrics", cmd_result) unless cmd_result.ok?
     infos = extract_fabric_indices(cmd_result.output)
     if node_id_a_u64 && (idx = infos.find { |fabric_info| fabric_info.node_id == node_id_a_u64 })

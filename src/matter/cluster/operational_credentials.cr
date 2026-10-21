@@ -71,6 +71,8 @@ module Matter
       command 0x09, :update_fabric_label, request: Tlv::UpdateFabricLabelRequest, response: Tlv::TlvNocResponse, response_id: 0x08, access: :administer
       command 0x0A, :remove_fabric, request: Tlv::RemoveFabricRequest, response: Tlv::TlvNocResponse, response_id: 0x08, access: :administer
       command 0x0B, :add_trusted_root_certificate, request: Tlv::AddTrustedRootCertificateRequest, access: :administer
+      command 0x0C, :set_vid_verification_statement, request: Tlv::SetVIDVerificationStatementRequest, access: :administer
+      command 0x0D, :sign_vid_verification_request, request: Tlv::SignVIDVerificationRequest, response: Tlv::SignVIDVerificationResponse, response_id: 0x0E, access: :administer
 
       struct NOCStruct
         property noc : Bytes          # Node Operational Certificate (DER encoded)
@@ -233,6 +235,7 @@ module Matter
       # service publishes back onto this cluster, and an object cannot hand
       # itself out of its own constructor.
       @credentials : Commissioning::CredentialService? = nil
+      @vid_failsafe_snapshot = Hash(UInt8, Tuple(UInt16, Bytes?, Bytes?)).new
 
       def credentials : Commissioning::CredentialService
         @credentials ||= Commissioning::CredentialService.new(self, @fabric_table)
@@ -273,22 +276,33 @@ module Matter
 
       # NOCs attribute (0x00): the operational certificates of every fabric
       def nocs : Array(Tlv::NOC)
-        fabric_table.all_fabrics.map do |fabric|
-          Tlv::NOC.new(noc: fabric.operational_cert, icac: fabric.intermediate_cert, fabric_index: fabric.fabric_index)
+        visible_fabrics.map do |fabric|
+          Tlv::NOC.new(noc: fabric.operational_cert, icac: fabric.intermediate_cert,
+            fabric_index: fabric.fabric_index, vvsc: fabric.vvsc)
         end
       end
 
       # Fabrics attribute (0x01): a descriptor per fabric
       def fabrics : Array(Tlv::FabricDescriptor)
-        fabric_table.fabric_descriptors.map do |fabric|
+        visible_fabrics.map do |fabric|
           Tlv::FabricDescriptor.new(
             root_public_key: fabric.root_public_key,
             vendor_id: fabric.vendor_id,
             fabric_id: fabric.fabric_id,
             node_id: fabric.node_id,
             label: fabric.label,
-            fabric_index: fabric.fabric_index
+            fabric_index: fabric.fabric_index,
+            vid_verification_statement: fabric.vid_verification_statement
           )
+        end
+      end
+
+      private def visible_fabrics : Array(Fabric)
+        all = fabric_table.all_fabrics
+        if request_fabric_filtered? && (index = request_fabric_index)
+          all.select { |fabric| fabric.fabric_index == index }
+        else
+          all
         end
       end
 
@@ -398,6 +412,73 @@ module Matter
         outcome = credentials.add_trusted_root_certificate(request.root_certificate)
         Log.warn { "AddTrustedRootCertificate failed: #{outcome.debug_text}" } unless outcome.ok?
         InteractionModel::Status.success
+      end
+
+      # Wire command name is fixed by the Matter specification.
+      # ameba:disable Naming/AccessorMethodName
+      def set_vid_verification_statement(request : Tlv::SetVIDVerificationStatementRequest) : InteractionModel::Status
+        index = request_fabric_index
+        return InteractionModel::Status.unsupported_access unless index
+        fabric = @fabric_table.get_fabric(index)
+        return InteractionModel::Status.constraint_error unless fabric
+        return InteractionModel::Status.invalid_command if request.vendor_id.nil? &&
+                                                           request.vid_verification_statement.nil? && request.vvsc.nil?
+        if statement = request.vid_verification_statement
+          return InteractionModel::Status.constraint_error unless statement.empty? || statement.size == 85
+        end
+        if vvsc = request.vvsc
+          return InteractionModel::Status.constraint_error if vvsc.size > 400
+          return InteractionModel::Status.invalid_command if fabric.intermediate_cert
+        end
+
+        if credentials.failsafe_armed? && credentials.pending.noc_added_or_updated?
+          @vid_failsafe_snapshot[index] ||= {
+            fabric.vendor_id,
+            fabric.vid_verification_statement.try(&.dup),
+            fabric.vvsc.try(&.dup),
+          }
+        end
+
+        if vendor_id = request.vendor_id
+          fabric.vendor_id = vendor_id
+        end
+        if statement = request.vid_verification_statement
+          fabric.vid_verification_statement = statement.empty? ? nil : statement.dup
+        end
+        if vvsc = request.vvsc
+          fabric.vvsc = vvsc.empty? ? nil : vvsc.dup
+        end
+        @fabric_table.update_fabric(fabric)
+        increment_version
+        InteractionModel::Status.success
+      end
+
+      # ameba:enable Naming/AccessorMethodName
+
+      def sign_vid_verification_request(request : Tlv::SignVIDVerificationRequest) : Tlv::SignVIDVerificationResponse | InteractionModel::Status
+        return InteractionModel::Status.invalid_command unless request.client_challenge.size == 32
+        fabric = @fabric_table.get_fabric(request.fabric_index)
+        return InteractionModel::Status.constraint_error unless fabric
+        session_id = request_session_id
+        return InteractionModel::Status.failure unless session_id
+        challenge = credentials.session_lookup.try(&.call(session_id))
+        return InteractionModel::Status.failure unless challenge
+
+        version = 1_u8
+        tbs = IO::Memory.new
+        tbs.write_byte version
+        tbs.write request.client_challenge
+        tbs.write challenge
+        tbs.write_byte request.fabric_index
+        tbs.write_byte version
+        tbs.write fabric.root_public_key
+        tbs.write_bytes fabric.fabric_id, IO::ByteFormat::BigEndian
+        tbs.write_bytes fabric.vendor_id, IO::ByteFormat::BigEndian
+        if statement = fabric.vid_verification_statement
+          tbs.write statement
+        end
+        signature = Crypto.sign_ecdsa(fabric.operational_key, tbs.to_slice)
+        Tlv::SignVIDVerificationResponse.new(request.fabric_index, version, signature)
       end
 
       private def noc_response(outcome : Commissioning::NocOutcome) : Tlv::TlvNocResponse
@@ -539,11 +620,20 @@ module Matter
 
       # Failsafe timer expired - drop everything that was pending
       def on_failsafe_expired
+        @vid_failsafe_snapshot.each do |index, previous|
+          next unless fabric = @fabric_table.get_fabric(index)
+          fabric.vendor_id = previous[0]
+          fabric.vid_verification_statement = previous[1]
+          fabric.vvsc = previous[2]
+          @fabric_table.update_fabric(fabric)
+        end
+        @vid_failsafe_snapshot.clear
         credentials.reset_pending
       end
 
       # Failsafe disarmed successfully - the credentials are committed
       def on_failsafe_success
+        @vid_failsafe_snapshot.clear
         credentials.reset_pending
       end
 
@@ -551,6 +641,7 @@ module Matter
       # must not interfere with this one. Called by GeneralCommissioning.
       def on_failsafe_armed
         Log.info { "Resetting failsafe context for new commissioning session" }
+        @vid_failsafe_snapshot.clear
         credentials.reset_pending
       end
 

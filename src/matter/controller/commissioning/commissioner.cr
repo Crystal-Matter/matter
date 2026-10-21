@@ -21,9 +21,80 @@ module Matter
       class Commissioner
         Log = ::Log.for("matter.controller.commissioning.commissioner")
 
+        # fabric ID, device Node ID, CSR public key -> issued Matter NOC.
+        alias CertificateIssuer = Proc(UInt64, UInt64, Bytes, Bytes)
+
+        # Credentials and administrator metadata sent with AddNOC. Joint
+        # commissioning may replace these after authenticating the anchor.
+        struct OperationalCredentials
+          getter noc : Bytes
+          getter icac : Bytes?
+          getter ipk : Bytes
+          getter case_admin_subject : UInt64
+          getter admin_vendor_id : UInt16
+
+          def initialize(@noc, @icac, @ipk, @case_admin_subject, @admin_vendor_id)
+          end
+        end
+
+        abstract class Hooks
+          abstract def prepare_credentials(
+            fabric : FabricInfo,
+            node_id : UInt64,
+            csr_public_key : Bytes,
+            im : ImClient,
+            pase_session : Session::SecureContext,
+            peer : Socket::IPAddress,
+          ) : OperationalCredentials
+
+          abstract def before_complete(
+            fabric : FabricInfo,
+            node_id : UInt64,
+            im : ImClient,
+            case_session : Session::SecureContext,
+            peer : Socket::IPAddress,
+          ) : Nil
+
+          def after_complete(
+            fabric : FabricInfo,
+            node_id : UInt64,
+            im : ImClient,
+            case_session : Session::SecureContext,
+            peer : Socket::IPAddress,
+          ) : Nil
+          end
+
+          # Called only after the peer acknowledged CommissioningComplete, and
+          # before saving the controller node. Hooks may persist this boundary
+          # so a failed controller-state write can be recovered after restart.
+          def complete_acknowledged(
+            fabric : FabricInfo,
+            node_id : UInt64,
+            peer : Socket::IPAddress,
+          ) : Nil
+          end
+
+          def supports_deferred_handoff? : Bool
+            false
+          end
+
+          def finalize_deferred_handoff(fabric : FabricInfo, node_id : UInt64,
+                                        im : ImClient, pase_session : Session::SecureContext,
+                                        peer : Socket::IPAddress,
+                                        handoff : PendingCommissioningHandoff) : Nil
+            raise Matter::ConfigurationError.new("Commissioner hooks do not support deferred handoff")
+          end
+
+          def after_deferred_handoff(fabric : FabricInfo, node_id : UInt64,
+                                     peer : Socket::IPAddress) : Nil
+          end
+        end
+
         # This controller runs one certificate authority per fabric, so the root
         # certificate it issues is always the first one.
-        ROOT_CERTIFICATE_ID = 1_u64
+        ROOT_CERTIFICATE_ID =      1_u64
+        ANCHOR_ICAC_ID      =      3_u64
+        ANCHOR_CAT_ID       = 0xFFFE_u32
         # Serial numbers only have to be distinguishable within a fabric
         CERTIFICATE_SERIAL_BYTES = 8
 
@@ -32,7 +103,15 @@ module Matter
           @client : Client = Client.new,
           @timeout : Time::Span = 15.seconds,
           @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+          @certificate_issuer : CertificateIssuer? = nil,
+          @hooks : Hooks? = nil,
+          @controller_cats : Array(UInt32) = [] of UInt32,
+          @fail_safe_expiry_seconds : UInt16 = 60_u16,
         )
+          if @fail_safe_expiry_seconds == 0_u16 ||
+             @fail_safe_expiry_seconds > ::Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS
+            raise Matter::ConfigurationError.new("Commissioning fail-safe expiry must be between 1 and #{::Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS} seconds")
+          end
         end
 
         def close : Nil
@@ -43,14 +122,31 @@ module Matter
           node_id : UInt64,
           manual_code : String,
           peer : Socket::IPAddress? = nil,
-        ) : Nil
+          fabric_id : UInt64? = nil,
+          root_public_key : Bytes? = nil,
+          controller_node_id : UInt64? = nil,
+          new_fabric : Bool = false,
+          defer_completion : Bool = false,
+        ) : PendingCommissioningHandoff?
+          if defer_completion && @hooks && !@hooks.as(Hooks).supports_deferred_handoff?
+            raise Matter::ConfigurationError.new("JCM hooks require an explicit Anchor handoff workflow before deferring CommissioningComplete")
+          end
           discriminator, pin_code = SetupPayload.parse_manual_code(manual_code)
           state = @store.load
 
-          fabric = state.fabric
+          if (root_public_key || controller_node_id) && fabric_id.nil?
+            raise Matter::ConfigurationError.new("Selecting a fabric by root public key or controller Node ID also requires a fabric ID")
+          end
+          if new_fabric && fabric_id
+            raise Matter::ConfigurationError.new("Cannot select an existing fabric while creating a new one")
+          end
+          fabric = new_fabric ? nil : (fabric_id ? state.fabric_for(fabric_id, root_public_key, controller_node_id) : state.fabric)
           unless fabric
             fabric = create_fabric(controller_node_id: state.commissioner_node_id)
-            state.fabric = fabric
+            state.install_fabric(fabric)
+          end
+          if fabric.root_private_key.nil? && fabric.intermediate_private_key.nil? && @certificate_issuer.nil? && @hooks.nil?
+            raise Matter::ConfigurationError.new("Commissioning on this fabric requires a certificate issuer")
           end
           @store.save(state)
 
@@ -64,8 +160,9 @@ module Matter
 
           im = ImClient.new(@client, @timeout)
 
+          fail_safe_expires_at_unix = Time.utc.to_unix + @fail_safe_expiry_seconds.to_i64
           arm = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
-            expiry_length_seconds: 60_u16,
+            expiry_length_seconds: @fail_safe_expiry_seconds,
             breadcrumb: 0_u64,
             timeout_ms: 0_u32
           )
@@ -110,19 +207,25 @@ module Matter
           csr_elements = Cluster::OperationalCredentials::CSRElements.from_slice(csr_resp.nocsr_elements)
 
           device_pub_key = CertificateUtil.extract_uncompressed_public_key_from_csr(csr_elements.csr)
-          device_noc = issue_noc(
-            root_key: fabric.certificate_authority_key,
-            fabric_id: fabric.fabric_id,
-            node_id: node_id,
-            public_key: device_pub_key
-          )
+          credentials = if hooks = @hooks
+                          hooks.prepare_credentials(fabric, node_id, device_pub_key, im, pase_session, peer_addr)
+                        else
+                          OperationalCredentials.new(
+                            issue_device_noc(fabric, node_id, device_pub_key),
+                            fabric.intermediate_cert,
+                            fabric.ipk_value,
+                            fabric.controller_node_id,
+                            fabric.admin_vendor_id
+                          )
+                        end
+          validate_credentials(credentials, fabric, node_id, device_pub_key)
 
           add_noc_req = Cluster::OperationalCredentials::Tlv::AddNocRequest.new(
-            noc_value: device_noc.to_slice,
-            icac_value: nil,
-            ipk_value: fabric.ipk_value.to_slice,
-            case_admin_subject: fabric.controller_node_id,
-            admin_vendor_id: fabric.admin_vendor_id
+            noc_value: credentials.noc.to_slice,
+            icac_value: credentials.icac,
+            ipk_value: credentials.ipk.to_slice,
+            case_admin_subject: credentials.case_admin_subject,
+            admin_vendor_id: credentials.admin_vendor_id
           )
           add_noc_resp_msg = im.invoke(
             session: pase_session,
@@ -138,8 +241,31 @@ module Matter
             raise Matter::CommissioningError.new("AddNOC failed (status=#{noc_resp.status_code} debug=#{noc_resp.debug_text})")
           end
 
+          if defer_completion
+            handoff = PendingCommissioningHandoff.new(
+              fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+              node_id, peer_addr.address, peer_addr.port,
+              fail_safe_expires_at_unix, @crypto.random_bytes(16).hexstring)
+            state.add_pending_handoff(handoff)
+            state.unsecured_message_counter = @client.transport.message_counter.counter
+            @store.save(state)
+            if hooks = @hooks
+              hooks.finalize_deferred_handoff(fabric, node_id, im, pase_session, peer_addr, handoff)
+              hooks.complete_acknowledged(fabric, node_id, peer_addr)
+              state.complete_pending_handoff(fabric.fabric_id, fabric.root_public_key,
+                fabric.controller_node_id, node_id, handoff.nonce)
+              @store.save(state)
+              hooks.after_deferred_handoff(fabric, node_id, peer_addr)
+              return
+            end
+            return handoff
+          end
+
           case_pairing = Pairing::CasePairing.new(@crypto)
           case_session = case_pairing.pair(@client, peer_addr, fabric, peer_node_id: node_id, timeout: @timeout)
+          if hooks = @hooks
+            hooks.before_complete(fabric, node_id, im, case_session, peer_addr)
+          end
 
           commissioning_complete_resp = im.invoke(
             session: case_session,
@@ -149,11 +275,32 @@ module Matter
             command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
             fields: Bytes.empty
           )
-          assert_invoke_ok!(commissioning_complete_resp, "CommissioningComplete")
+          assert_commissioning_complete!(commissioning_complete_resp)
 
-          state.nodes[node_id] = NodeInfo.new(node_id: node_id, address: peer_addr.address, port: peer_addr.port)
+          if hooks = @hooks
+            hooks.complete_acknowledged(fabric, node_id, peer_addr)
+          end
+
+          state.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id, address: peer_addr.address, port: peer_addr.port), fabric.root_public_key, fabric.controller_node_id)
           state.unsecured_message_counter = @client.transport.message_counter.counter
           @store.save(state)
+          if hooks = @hooks
+            hooks.after_complete(fabric, node_id, im, case_session, peer_addr)
+          end
+          nil
+        end
+
+        # The JFA must first report that its own CASE CommissioningComplete
+        # succeeded. This method records that trusted handoff result; it never
+        # sends CommissioningComplete from the controller identity.
+        def record_handoff_success(fabric_id : UInt64, root_public_key : Bytes,
+                                   controller_node_id : UInt64, node_id : UInt64,
+                                   nonce : String) : NodeInfo
+          state = @store.load
+          node = state.complete_pending_handoff(fabric_id, root_public_key,
+            controller_node_id, node_id, nonce)
+          @store.save(state)
+          node
         end
 
         private def discover_commissionable(discriminator : UInt16) : Socket::IPAddress
@@ -188,7 +335,10 @@ module Matter
           scanner.try(&.close)
         end
 
-        private def create_fabric(controller_node_id : UInt64) : FabricInfo
+        # Create an identity before commissioning when a controller requires a
+        # specific CAT, such as the Joint Fabric Anchor Administrator CAT.
+        # Install the result with SharedFabric.install before use.
+        def create_fabric(controller_node_id : UInt64) : FabricInfo
           fabric_id = loop do
             id = @crypto.random_uint64
             break id unless id == 0_u64
@@ -205,12 +355,37 @@ module Matter
           root_cert = Crypto::MatterCertificate::Builder.root(root_key, ROOT_CERTIFICATE_ID, serial_number, @crypto)
 
           controller_key = Crypto::Key.generate_key_pair
-          controller_noc = issue_noc(
-            root_key: root_key,
-            fabric_id: fabric_id,
-            node_id: controller_node_id,
-            public_key: controller_key.public_key
-          )
+          anchor_cat = @controller_cats.any? { |cat| cat >> 16 == ANCHOR_CAT_ID }
+          intermediate_key = anchor_cat ? Crypto::Key.generate_key_pair : nil
+          intermediate_cert = if key = intermediate_key
+                                Crypto::MatterCertificate::Builder.intermediate(
+                                  key.public_key, fabric_id, ANCHOR_ICAC_ID, root_key,
+                                  ROOT_CERTIFICATE_ID, serial_number, @crypto, anchor: true
+                                )
+                              end
+          controller_noc = if key = intermediate_key
+                             Crypto::MatterCertificate::Builder.node(
+                               public_key: controller_key.public_key,
+                               fabric_id: fabric_id,
+                               node_id: controller_node_id,
+                               issuer_key: key,
+                               issuer_rcac_id: ROOT_CERTIFICATE_ID,
+                               issuer_icac_id: ANCHOR_ICAC_ID,
+                               issuer_certificate: intermediate_cert,
+                               serial: serial_number,
+                               crypto: @crypto,
+                               case_authenticated_tags: @controller_cats
+                             )
+                           else
+                             issue_noc(
+                               root_key: root_key,
+                               root_certificate: root_cert,
+                               fabric_id: fabric_id,
+                               node_id: controller_node_id,
+                               public_key: controller_key.public_key,
+                               case_authenticated_tags: @controller_cats
+                             )
+                           end
 
           FabricInfo.new(
             fabric_id: fabric_id,
@@ -220,21 +395,72 @@ module Matter
             root_public_key: root_public_key,
             controller_noc: controller_noc,
             controller_private_key: controller_key.private_key,
-            root_private_key: root_key.private_key
+            root_private_key: root_key.private_key,
+            intermediate_cert: intermediate_cert,
+            intermediate_private_key: intermediate_key.try(&.private_key)
           )
         end
 
         # Issue a node certificate under this fabric's root
-        private def issue_noc(root_key : Crypto::Key, fabric_id : UInt64, node_id : UInt64, public_key : Bytes) : Bytes
+        private def issue_noc(root_key : Crypto::Key, fabric_id : UInt64, node_id : UInt64, public_key : Bytes,
+                              root_certificate : Bytes,
+                              case_authenticated_tags : Array(UInt32) = [] of UInt32) : Bytes
+          rcac_id = Crypto::MatterCertificate.from_slice(root_certificate).subject.rcac_id ||
+                    raise Matter::CertificateError.new("Root certificate has no RCAC ID")
           Crypto::MatterCertificate::Builder.node(
             public_key: public_key,
             fabric_id: fabric_id,
             node_id: node_id,
             issuer_key: root_key,
-            issuer_rcac_id: ROOT_CERTIFICATE_ID,
+            issuer_rcac_id: rcac_id,
+            issuer_certificate: root_certificate,
             serial: serial_number,
-            crypto: @crypto
+            crypto: @crypto,
+            case_authenticated_tags: case_authenticated_tags
           )
+        end
+
+        private def issue_device_noc(fabric : FabricInfo, node_id : UInt64, public_key : Bytes) : Bytes
+          noc = if issuer = @certificate_issuer
+                  issuer.call(fabric.fabric_id, node_id, public_key)
+                elsif icac = fabric.intermediate_cert
+                  icac_id = Crypto::MatterCertificate.from_slice(icac).subject.icac_id ||
+                            raise Matter::CertificateError.new("Intermediate CA certificate has no ICAC ID")
+                  Crypto::MatterCertificate::Builder.node(
+                    public_key: public_key,
+                    fabric_id: fabric.fabric_id,
+                    node_id: node_id,
+                    issuer_key: fabric.intermediate_authority_key,
+                    issuer_rcac_id: ROOT_CERTIFICATE_ID,
+                    issuer_icac_id: icac_id,
+                    issuer_certificate: icac,
+                    serial: serial_number,
+                    crypto: @crypto
+                  )
+                else
+                  issue_noc(fabric.certificate_authority_key, fabric.fabric_id, node_id, public_key,
+                    fabric.root_cert)
+                end
+
+          Crypto::MatterCertificate::Validation.verify_chain(noc, fabric.intermediate_cert, fabric.root_public_key, fabric.root_cert)
+          certificate = Crypto::MatterCertificate.from_slice(noc)
+          unless certificate.fabric_id == fabric.fabric_id && certificate.node_id == node_id &&
+                 certificate.ec_public_key == public_key
+            raise Matter::CertificateError.new("Issued NOC does not match the device CSR and fabric")
+          end
+          noc
+        end
+
+        private def validate_credentials(credentials : OperationalCredentials, fabric : FabricInfo, node_id : UInt64, public_key : Bytes) : Nil
+          unless credentials.ipk.size == Fabric::IPK_SIZE && credentials.case_admin_subject != 0_u64
+            raise Matter::CertificateError.new("Joint commissioning credentials have invalid IPK or administrator subject")
+          end
+          Crypto::MatterCertificate::Validation.verify_chain(credentials.noc, credentials.icac, fabric.root_public_key, fabric.root_cert)
+          certificate = Crypto::MatterCertificate.from_slice(credentials.noc)
+          unless certificate.fabric_id == fabric.fabric_id && certificate.node_id == node_id &&
+                 certificate.ec_public_key == public_key
+            raise Matter::CertificateError.new("Issued NOC does not match the device CSR and fabric")
+          end
         end
 
         # Certificates only have to be distinguishable within this fabric
@@ -260,6 +486,22 @@ module Matter
           end
 
           raise Matter::ProtocolError.new("#{name} failed (empty InvokeResponse)") unless saw_any
+        end
+
+        protected def assert_commissioning_complete!(response : InteractionModel::InvokeResponseMessage) : Nil
+          response.invoke_responses.each do |entry|
+            if status = entry.command_status
+              unless status.status.status == InteractionModel::StatusCode::Success.value
+                raise Matter::CommissioningError.new("CommissioningComplete failed (status=#{status.status.status})")
+              end
+            end
+          end
+          fields = first_command_fields(response,
+            Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE)
+          result = Cluster::GeneralCommissioning::CommissioningCompleteResponse.from_slice(fields)
+          unless result.error_code.ok?
+            raise Matter::CommissioningError.new("CommissioningComplete failed (error=#{result.error_code} debug=#{result.debug_text})")
+          end
         end
 
         private def first_command_fields(response : InteractionModel::InvokeResponseMessage, command_id : UInt32) : Bytes

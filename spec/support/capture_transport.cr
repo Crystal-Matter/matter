@@ -22,7 +22,8 @@ module Matter
         @running = false
         @receive_fiber = nil
         @message_counter = Transport::MessageCounter.new
-        @unsecured_counters = {} of UInt64 => Transport::MessageCounter
+        @unsecured_counters = {} of Tuple(UInt64?, Socket::IPAddress) => Tuple(Transport::MessageCounter, Time::Instant)
+        @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = Transport::ExchangeManager.new
         @sent_packets = [] of Tuple(Bytes, Socket::IPAddress)
       end

@@ -66,6 +66,107 @@ describe Matter::Cluster::OperationalCredentials do
   end
 
   describe "AddNOC command" do
+    it "rejects a NOC after its certificate validity interval" do
+      authority = TestCertificateAuthority.default
+      cluster = build_op_creds_cluster
+      cluster.set_attestation_credentials(Bytes.new(100, 1_u8), Bytes.new(100, 2_u8),
+        Matter::Crypto::Key.generate_key_pair)
+      csr = cluster.handle_csr_request(
+        Matter::Cluster::OperationalCredentials::CSRRequestCommand.new(csr_nonce: Bytes.new(32)),
+        session_id: 1_u64, is_pase_session: true, failsafe_armed: true).as(Matter::Cluster::OperationalCredentials::CSRResponse)
+      cluster.handle_add_trusted_root_certificate(
+        Matter::Cluster::OperationalCredentials::AddTrustedRootCertificateCommand.new(
+          root_ca_certificate: authority.root_certificate), failsafe_armed: true)
+      noc = authority.issue(TestCertificateAuthority::DEFAULT_FABRIC_ID,
+        TestCertificateAuthority::DEFAULT_NODE_ID, csr_public_key(csr))
+      request = Matter::Cluster::OperationalCredentials::AddNOCCommand.new(
+        noc_value: noc, icac_value: nil, ipk_value: Bytes.new(16),
+        case_admin_subject: 1_u64, admin_vendor_id: 0xFFF1_u16)
+
+      Timecop.travel(Time.utc + 11.years) do
+        outcome = cluster.handle_add_noc(request, session_id: 1_u64, failsafe_armed: true)
+        outcome.status_code.should eq(Matter::Cluster::OperationalCredentials::NodeOperationalCertStatus::InvalidNoc)
+      end
+    end
+
+    it "rejects a NOC chained through an ICAC for another fabric" do
+      authority = TestCertificateAuthority.default
+      cluster = build_op_creds_cluster
+      cluster.set_attestation_credentials(Bytes.new(100, 1_u8), Bytes.new(100, 2_u8),
+        Matter::Crypto::Key.generate_key_pair)
+      csr = cluster.handle_csr_request(
+        Matter::Cluster::OperationalCredentials::CSRRequestCommand.new(csr_nonce: Bytes.new(32)),
+        session_id: 1_u64, is_pase_session: true, failsafe_armed: true).as(Matter::Cluster::OperationalCredentials::CSRResponse)
+      cluster.handle_add_trusted_root_certificate(
+        Matter::Cluster::OperationalCredentials::AddTrustedRootCertificateCommand.new(
+          root_ca_certificate: authority.root_certificate), failsafe_armed: true)
+      intermediate_key = Matter::Crypto::Key.generate_key_pair
+      icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+        public_key: intermediate_key.public_key,
+        fabric_id: TestCertificateAuthority::DEFAULT_FABRIC_ID + 1_u64,
+        icac_id: 2_u64, issuer_key: authority.key,
+        issuer_rcac_id: TestCertificateAuthority::ROOT_CERTIFICATE_ID,
+        serial: Bytes.new(TestCertificateAuthority::SERIAL_BYTES, 1_u8))
+      noc = Matter::Crypto::MatterCertificate::Builder.node(
+        public_key: csr_public_key(csr),
+        fabric_id: TestCertificateAuthority::DEFAULT_FABRIC_ID,
+        node_id: TestCertificateAuthority::DEFAULT_NODE_ID,
+        issuer_key: intermediate_key,
+        issuer_rcac_id: TestCertificateAuthority::ROOT_CERTIFICATE_ID,
+        issuer_icac_id: 2_u64,
+        serial: Bytes.new(TestCertificateAuthority::SERIAL_BYTES, 2_u8))
+      request = Matter::Cluster::OperationalCredentials::AddNOCCommand.new(
+        noc_value: noc, icac_value: icac, ipk_value: Bytes.new(16),
+        case_admin_subject: 1_u64, admin_vendor_id: 0xFFF1_u16)
+
+      outcome = cluster.handle_add_noc(request, session_id: 1_u64, failsafe_armed: true)
+      outcome.status_code.should eq(Matter::Cluster::OperationalCredentials::NodeOperationalCertStatus::InvalidNoc)
+    end
+
+    it "rejects an ICAC whose KeyUsage excludes keyCertSign" do
+      authority = TestCertificateAuthority.default
+      cluster = build_op_creds_cluster
+      cluster.set_attestation_credentials(Bytes.new(100, 1_u8), Bytes.new(100, 2_u8),
+        Matter::Crypto::Key.generate_key_pair)
+      csr = cluster.handle_csr_request(
+        Matter::Cluster::OperationalCredentials::CSRRequestCommand.new(csr_nonce: Bytes.new(32)),
+        session_id: 1_u64, is_pase_session: true, failsafe_armed: true).as(Matter::Cluster::OperationalCredentials::CSRResponse)
+      cluster.handle_add_trusted_root_certificate(
+        Matter::Cluster::OperationalCredentials::AddTrustedRootCertificateCommand.new(
+          root_ca_certificate: authority.root_certificate), failsafe_armed: true)
+      intermediate_key = Matter::Crypto::Key.generate_key_pair
+      icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+        public_key: intermediate_key.public_key,
+        fabric_id: TestCertificateAuthority::DEFAULT_FABRIC_ID,
+        icac_id: 2_u64, issuer_key: authority.key,
+        issuer_rcac_id: TestCertificateAuthority::ROOT_CERTIFICATE_ID,
+        serial: Bytes.new(TestCertificateAuthority::SERIAL_BYTES, 1_u8))
+      fields = TLV::Any.from_slice(icac).as_structure
+      usage_tag = Matter::Crypto::MatterCertificate::Asn1::Extension::KeyUsage.value
+      extensions = fields[Matter::Crypto::MatterCertificate::Asn1::Field::Extensions.value].as_list
+      index = extensions.index { |extension| extension.header.ids == usage_tag }.as(Int32)
+      extensions[index] = TLV::Any.new(1_u16, usage_tag)
+      unsigned = Matter::Crypto::MatterCertificate::Asn1.to_unsigned_asn1(TLV::Any.new(fields, nil))
+      fields[Matter::Crypto::MatterCertificate::Asn1::Field::Signature.value] = TLV::Any.new(
+        Matter::Crypto::StandardCrypto.new.sign_ecdsa(authority.key, unsigned),
+        Matter::Crypto::MatterCertificate::Asn1::Field::Signature.value)
+      restricted_icac = TLV::Any.new(fields, nil).to_slice
+      noc = Matter::Crypto::MatterCertificate::Builder.node(
+        public_key: csr_public_key(csr),
+        fabric_id: TestCertificateAuthority::DEFAULT_FABRIC_ID,
+        node_id: TestCertificateAuthority::DEFAULT_NODE_ID,
+        issuer_key: intermediate_key,
+        issuer_rcac_id: TestCertificateAuthority::ROOT_CERTIFICATE_ID,
+        issuer_icac_id: 2_u64,
+        serial: Bytes.new(TestCertificateAuthority::SERIAL_BYTES, 2_u8))
+      request = Matter::Cluster::OperationalCredentials::AddNOCCommand.new(
+        noc_value: noc, icac_value: restricted_icac, ipk_value: Bytes.new(16),
+        case_admin_subject: 1_u64, admin_vendor_id: 0xFFF1_u16)
+
+      outcome = cluster.handle_add_noc(request, session_id: 1_u64, failsafe_armed: true)
+      outcome.status_code.should eq(Matter::Cluster::OperationalCredentials::NodeOperationalCertStatus::InvalidNoc)
+    end
+
     it "validates IPK length" do
       expect_raises(ArgumentError, "ipk_value must be 16 bytes") do
         Matter::Cluster::OperationalCredentials::AddNOCCommand.new(
@@ -109,7 +210,7 @@ describe Matter::Cluster::OperationalCredentials do
       csr_cmd = Matter::Cluster::OperationalCredentials::CSRRequestCommand.new(
         csr_nonce: Bytes.new(32, 0_u8)
       )
-      cluster.handle_csr_request(csr_cmd, session_id: 1_u64, is_pase_session: true, failsafe_armed: true)
+      csr_result = cluster.handle_csr_request(csr_cmd, session_id: 1_u64, is_pase_session: true, failsafe_armed: true)
 
       # Root cert
       root_cmd = Matter::Cluster::OperationalCredentials::AddTrustedRootCertificateCommand.new(
@@ -118,7 +219,9 @@ describe Matter::Cluster::OperationalCredentials do
       cluster.handle_add_trusted_root_certificate(root_cmd, failsafe_armed: true)
 
       # AddNOC with valid TLV-encoded NOC
-      noc = OpCredsTestHelpers.create_test_noc(fabric_id: 0x1234567890_u64, node_id: 0xABCDEF_u64)
+      noc = TestCertificateAuthority.default.issue(
+        0x1234567890_u64, 0xABCDEF_u64, csr_public_key(csr_result.as(Matter::Cluster::OperationalCredentials::CSRResponse))
+      )
       admin_subject = 0x9999_u64
       cmd = Matter::Cluster::OperationalCredentials::AddNOCCommand.new(
         noc_value: noc,
@@ -223,7 +326,7 @@ describe Matter::Cluster::OperationalCredentials do
         cluster.trusted_root_certificates.size.should eq(1)
 
         # Step 3: Create a mock NOC with embedded fabric_id and node_id
-        noc_bytes = create_mock_noc(0x1234567890ABCDEF_u64, 0x0011223344556677_u64)
+        noc_bytes = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         # Step 4: Add NOC
         ipk = Bytes.new(16, 0x02_u8)
@@ -296,13 +399,13 @@ describe Matter::Cluster::OperationalCredentials do
         # Generate CSR
         nonce = Bytes.new(32, 0x42_u8)
         csr_request_tlv = create_csr_request_tlv(nonce, false)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           csr_request_tlv
         )
 
         # Try to add NOC without trusted root
-        noc_bytes = create_mock_noc(0x1234567890ABCDEF_u64, 0x0011223344556677_u64)
+        noc_bytes = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         ipk = Bytes.new(16, 0x02_u8)
         add_noc_tlv = create_add_noc_request_tlv(noc_bytes, nil, ipk, 0xABCD_u64, 0xFFF1_u16)
@@ -332,7 +435,7 @@ describe Matter::Cluster::OperationalCredentials do
         # Initial commissioning
         nonce = Bytes.new(32, 0x42_u8)
         csr_request_tlv = create_csr_request_tlv(nonce, false)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           csr_request_tlv
         )
@@ -345,7 +448,7 @@ describe Matter::Cluster::OperationalCredentials do
           add_root_tlv
         )
 
-        original_noc = create_mock_noc(0x1234567890ABCDEF_u64, 0x0011223344556677_u64)
+        original_noc = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         ipk = Bytes.new(16, 0x02_u8)
         add_noc_tlv = create_add_noc_request_tlv(original_noc, nil, ipk, 0xABCD_u64, 0xFFF1_u16)
@@ -367,7 +470,7 @@ describe Matter::Cluster::OperationalCredentials do
         update_nonce = Bytes.new(32, 0x99_u8)
         update_csr_request_tlv = create_csr_request_tlv(update_nonce, true) # is_for_update = true
         # An UpdateNOC CSR is only valid on the CASE session of the fabric it updates
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           update_csr_request_tlv,
           session_id: 54321_u64,
@@ -376,7 +479,7 @@ describe Matter::Cluster::OperationalCredentials do
         )
 
         # Step 2: Update NOC with new certificate (same fabric_id)
-        new_noc = create_mock_noc(0xFEDCBA0987654321_u64, 0x0011223344556677_u64)
+        new_noc = create_mock_noc_with_key(0xFEDCBA0987654321_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         update_noc_tlv = create_update_noc_request_tlv(new_noc, nil, initial_fabric_index)
         result = invoke(cluster,
@@ -412,7 +515,7 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Initial commissioning
         nonce1 = Bytes.new(32, 0x11_u8)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           create_csr_request_tlv(nonce1, false)
         )
@@ -424,7 +527,14 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_trusted_root_cert_request_tlv(root_cert1)
         )
 
-        noc1 = create_mock_noc(0x1111111111111111_u64, 0xAAAAAAAAAAAAAAAA_u64)
+        noc1 = Matter::Crypto::MatterCertificate::Builder.node(
+          public_key: csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)),
+          fabric_id: 0xAAAAAAAAAAAAAAAA_u64,
+          node_id: 0x1111111111111111_u64,
+          issuer_key: authority1.key,
+          issuer_rcac_id: 0xAAAAAAAAAAAAAAAA_u64,
+          issuer_certificate: root_cert1,
+          serial: Bytes[1])
 
         ipk1 = Bytes.new(16, 0x01_u8)
         invoke(cluster,
@@ -496,7 +606,7 @@ describe Matter::Cluster::OperationalCredentials do
         # Step 1: Generate CSR
         nonce = Bytes.new(32, 0x42_u8)
         csr_request_tlv = create_csr_request_tlv(nonce, false)
-        invoke(cluster,
+        csr_result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
           csr_request_tlv
         )
@@ -512,7 +622,7 @@ describe Matter::Cluster::OperationalCredentials do
         )
 
         # Step 3: Create and add NOC
-        noc_bytes = create_mock_noc(0x1234567890ABCDEF_u64, 0x0011223344556677_u64)
+        noc_bytes = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
         ipk = Bytes.new(16, 0x02_u8)
         add_noc_tlv = create_add_noc_request_tlv(

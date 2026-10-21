@@ -220,6 +220,8 @@ module Matter
       # to the service.
       delegate terms_conditions_required?, :terms_conditions_required=,
         terms_conditions_accepted?, on_failsafe_armed, :on_failsafe_armed=,
+        on_failsafe_expired, :on_failsafe_expired=,
+        on_failsafe_success, :on_failsafe_success=,
         record_added_fabric,
         to: failsafe
 

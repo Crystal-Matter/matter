@@ -112,7 +112,11 @@ module Matter
         vendor_id: vendor_id,
         label: label,
         intermediate_cert: intermediate_cert,
-        root_cert: root_cert
+        root_cert: root_cert,
+        cats: Crypto::MatterCertificate.subject_ids_from_tlv(operational_cert).compact_map do |subject_id|
+          node_id = DataType::NodeId.new(subject_id)
+          node_id.extract_as_case_authenticated_tag if node_id.case_authenticated_tag?
+        end
       )
 
       # Add fabric

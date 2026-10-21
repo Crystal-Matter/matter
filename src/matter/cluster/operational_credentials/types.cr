@@ -70,10 +70,13 @@ module Matter
           @[TLV::Field(tag: 2)]
           property icac : Slice(UInt8)?
 
+          @[TLV::Field(tag: 3, optional: true)]
+          property vvsc : Bytes?
+
           @[TLV::Field(tag: 254)]
           property fabric_index : UInt8
 
-          def initialize(@noc : Slice(UInt8), @icac : Slice(UInt8)?, @fabric_index : UInt8)
+          def initialize(@noc : Slice(UInt8), @icac : Slice(UInt8)?, @fabric_index : UInt8, @vvsc : Bytes? = nil)
           end
         end
 
@@ -106,6 +109,9 @@ module Matter
           @[TLV::Field(tag: 5)]
           property label : String
 
+          @[TLV::Field(tag: 6, optional: true)]
+          property vid_verification_statement : Bytes?
+
           @[TLV::Field(tag: 254)]
           property fabric_index : UInt8
 
@@ -116,7 +122,53 @@ module Matter
             @node_id : UInt64,
             @label : String,
             @fabric_index : UInt8,
+            @vid_verification_statement : Bytes? = nil,
           )
+          end
+        end
+
+        struct SetVIDVerificationStatementRequest
+          include TLV::Serializable
+
+          @[TLV::Field(tag: 0, optional: true)]
+          property vendor_id : UInt16?
+
+          @[TLV::Field(tag: 1, optional: true)]
+          property vid_verification_statement : Bytes?
+
+          @[TLV::Field(tag: 2, optional: true)]
+          property vvsc : Bytes?
+
+          def initialize(@vendor_id : UInt16? = nil, @vid_verification_statement : Bytes? = nil, @vvsc : Bytes? = nil)
+          end
+        end
+
+        struct SignVIDVerificationRequest
+          include TLV::Serializable
+
+          @[TLV::Field(tag: 0)]
+          property fabric_index : UInt8
+
+          @[TLV::Field(tag: 1)]
+          property client_challenge : Bytes
+
+          def initialize(@fabric_index : UInt8, @client_challenge : Bytes)
+          end
+        end
+
+        struct SignVIDVerificationResponse
+          include TLV::Serializable
+
+          @[TLV::Field(tag: 0)]
+          property fabric_index : UInt8
+
+          @[TLV::Field(tag: 1)]
+          property fabric_binding_version : UInt8
+
+          @[TLV::Field(tag: 2)]
+          property signature : Bytes
+
+          def initialize(@fabric_index : UInt8, @fabric_binding_version : UInt8, @signature : Bytes)
           end
         end
 

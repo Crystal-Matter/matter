@@ -16,8 +16,10 @@ module Matter
       PROTOCOL_SECURE_CHANNEL    = 0x0000_u16
       PROTOCOL_INTERACTION_MODEL = 0x0001_u16
 
-      MSG_STANDALONE_ACK = 0x10_u8
-      MAX_CACHED_ACKS    = Transport::MessageCounter::WINDOW_SIZE
+      MSG_STANDALONE_ACK      = 0x10_u8
+      MAX_CACHED_ACKS         = Transport::MessageCounter::WINDOW_SIZE
+      MAX_DEFERRED_MESSAGES   = 256
+      DEFERRED_CHECK_INTERVAL = 10.milliseconds
 
       record ReceivedMessage, message : Codec::MessageCodec::Message, peer : Socket::IPAddress
 
@@ -27,6 +29,8 @@ module Matter
       @sessions = {} of UInt16 => Session::SecureContext
       @ack_packets = {} of {UInt16, UInt32} => Bytes
       @inbox : Channel(ReceivedMessage)
+      @deferred_messages : Array(ReceivedMessage)
+      @deferred_mutex : Mutex
       @next_exchange_id : UInt16
       @unsecured_source_node_id : DataType::NodeId?
 
@@ -48,6 +52,8 @@ module Matter
           @transport.message_counter.reset(Random::Secure.rand(UInt32))
         end
         @inbox = Channel(ReceivedMessage).new(256)
+        @deferred_messages = [] of ReceivedMessage
+        @deferred_mutex = Mutex.new
         @next_exchange_id = Random.rand(UInt16).to_u16
 
         @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) { handle_transport_message(msg, peer) }
@@ -172,23 +178,87 @@ module Matter
         message_type : UInt8,
         timeout : Time::Span,
       ) : ReceivedMessage?
+        wait_for_any(exchange_id, protocol_id, [message_type], timeout)
+      end
+
+      # Wait for one of several valid responses to an exchange. A device may
+      # answer a timed Write/Invoke with StatusResponse instead of its normal
+      # response when the timed window expires. Messages for other exchanges
+      # are retained for their own waiters, with a bounded backlog.
+      def wait_for_any(
+        exchange_id : UInt16,
+        protocol_id : UInt16,
+        message_types : Array(UInt8),
+        timeout : Time::Span,
+      ) : ReceivedMessage?
         deadline = Time.instant + timeout
 
         loop do
+          if deferred = take_deferred do |rec|
+               matches?(rec, exchange_id, protocol_id, message_types)
+             end
+            return deferred
+          end
+
           remaining = deadline - Time.instant
           return if remaining <= 0.seconds
 
           select
           when rec = @inbox.receive
             ack_encrypted_if_needed(rec)
-            msg = rec.message
-            next unless msg.payload_header.exchange_id == exchange_id
-            next unless msg.payload_header.protocol_id == protocol_id
-            next unless msg.payload_header.message_type == message_type
-            return rec
-          when timeout(remaining)
-            return
+            return rec if matches?(rec, exchange_id, protocol_id, message_types)
+            defer(rec) unless standalone_ack?(rec)
+          when timeout({remaining, DEFERRED_CHECK_INTERVAL}.min)
           end
+        end
+      end
+
+      # Receive the next decrypted message without an exchange filter. Use a
+      # dedicated Client when consuming subscriptions so another interaction
+      # cannot lose a response to this reader.
+      def receive_message(timeout_span : Time::Span) : ReceivedMessage?
+        if deferred = take_deferred { true }
+          return deferred
+        end
+        select
+        when rec = @inbox.receive
+          ack_encrypted_if_needed(rec)
+          rec
+        when timeout(timeout_span)
+          nil
+        end
+      end
+
+      private def matches?(rec : ReceivedMessage, exchange_id : UInt16,
+                           protocol_id : UInt16, message_types : Array(UInt8)) : Bool
+        header = rec.message.payload_header
+        header.exchange_id == exchange_id && header.protocol_id == protocol_id &&
+          message_types.includes?(header.message_type)
+      end
+
+      private def standalone_ack?(rec : ReceivedMessage) : Bool
+        header = rec.message.payload_header
+        header.protocol_id == PROTOCOL_SECURE_CHANNEL && header.message_type == MSG_STANDALONE_ACK
+      end
+
+      private def take_deferred(&block : ReceivedMessage -> Bool) : ReceivedMessage?
+        @deferred_mutex.synchronize do
+          if index = @deferred_messages.index { |rec| block.call(rec) }
+            @deferred_messages.delete_at(index)
+          end
+        end
+      end
+
+      private def defer(rec : ReceivedMessage) : Nil
+        @deferred_mutex.synchronize do
+          if @deferred_messages.size >= MAX_DEFERRED_MESSAGES
+            dropped = @deferred_messages.shift
+            Log.warn do
+              "Dropping oldest deferred controller message " \
+              "(exchange=#{dropped.message.payload_header.exchange_id}, protocol=#{dropped.message.payload_header.protocol_id})"
+            end
+          end
+          @deferred_messages << rec
         end
       end
 

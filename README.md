@@ -226,6 +226,53 @@ end
 `Commissioning::CommissioningWindowOpener` opens an enhanced commissioning window on an already
 commissioned node and hands back a manual pairing code for it.
 
+### Sharing a fabric between controllers
+
+An existing controller that owns a fabric's root signing key can issue a
+separate operational identity to another controller. Both identities use the
+same fabric ID, trust root, and IPK, but have distinct Node IDs and private
+keys. Provision the second controller into an empty store:
+
+```crystal
+authority = authority_store.load.fabric || raise Matter::ConfigurationError.new("no authority fabric")
+delegate = Matter::Controller::SharedFabric.delegate(authority, 0x102_u64)
+Matter::Controller::SharedFabric.install(delegate_store, delegate)
+```
+
+Use `delegate_store.load.fabric` with `Pairing::CasePairing#pair` to connect
+to a device on the fabric. An existing administrator must grant the new
+controller access on each device. With its active administrator CASE session:
+
+```crystal
+Matter::Controller::SharedFabric.grant_admin(im, session, peer, delegate.controller_node_id)
+```
+
+The delegated store intentionally has no CA signing key. To commission a new
+device from that controller, keep the authority in a separate store and pass
+a certificate issuer to `Commissioning::Commissioner`:
+
+```crystal
+commissioner = Matter::Controller::Commissioning::Commissioner.new(
+  delegate_store,
+  client,
+  certificate_issuer: Matter::Controller::SharedFabric.issuer(authority)
+)
+commissioner.pairing_code(new_device_node_id, pairing_code)
+```
+
+Grant each controller access to the new device with `SharedFabric.grant_admin`
+over the commissioning controller's CASE session. The ACL has a minimum of
+four entries per fabric; large controller groups need an ACL strategy that
+fits the target device's limits.
+
+This provides shared trust and explicit ACL administration for a locally owned
+fabric. Matter 1.6 Joint Fabric support is in progress: the Administrator and
+Datastore clusters, VID verification, CAT-aware commissioning, Anchor-led
+Joint Commissioning, Datastore RefreshNode, and Anchor transfer are exercised
+between Crystal devices in Docker. See
+[Joint Fabric status](docs/matter_1_6_joint_fabric.md) for current coverage and
+the remaining interoperability work.
+
 ## Error handling
 
 Everything the library raises on its own behalf descends from `Matter::Error`:

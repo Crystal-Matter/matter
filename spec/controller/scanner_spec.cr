@@ -72,6 +72,25 @@ describe Matter::Controller::Scanner do
   end
 
   describe "DiscoveredDevice" do
+    it "parses Joint Fabric capabilities from commissioning TXT" do
+      device = Matter::Controller::DiscoveredDevice.new(
+        instance_name: "Anchor._matterc._udp.local",
+        hostname: "anchor.local",
+        addresses: [Socket::IPAddress.new("::1", 5540)],
+        port: 5540,
+        txt_records: {"VP" => "65521+32768", "CM" => "3", "JF" => "14"},
+        service_type: Matter::MDNS::ServiceType::Commissioning,
+        expires_at: Time.utc + 120.seconds
+      )
+
+      device.commissioning_mode.should eq(Matter::MDNS::CommissioningMode::Joint.value)
+      device.joint_fabric_role.should eq(
+        Matter::MDNS::JointFabricRole::Administrator |
+        Matter::MDNS::JointFabricRole::Anchor |
+        Matter::MDNS::JointFabricRole::Datastore
+      )
+    end
+
     it "creates discovered device" do
       ip = Socket::IPAddress.new("192.168.1.100", 5540)
 

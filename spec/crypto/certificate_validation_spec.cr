@@ -56,11 +56,15 @@ end
 describe Matter::Crypto::MatterCertificate::Validation do
   CERTIFICATE_CHAINS.each do |chain|
     it "accepts the #{chain[:name]} chain" do
-      Matter::Crypto::MatterCertificate::Validation.verify_chain(
-        chain[:noc].hexbytes,
-        chain[:icac].try(&.hexbytes),
-        root_public_key(chain)
-      )
+      noc = chain[:noc].hexbytes
+      icac = chain[:icac].try(&.hexbytes)
+      starts = [Matter::Crypto::MatterCertificate.from_slice(noc).not_before]
+      starts << Matter::Crypto::MatterCertificate.from_slice(icac).not_before if icac
+      # Some published interoperability vectors are expired now; exercise
+      # their chain profile and signature at a time within their lifetime.
+      Timecop.travel(Time.unix(Matter::Crypto::MatterCertificate::Asn1::MATTER_EPOCH_OFFSET + starts.max + 1)) do
+        Matter::Crypto::MatterCertificate::Validation.verify_chain(noc, icac, root_public_key(chain), chain[:root].hexbytes)
+      end
     end
   end
 
@@ -103,7 +107,7 @@ describe Matter::Crypto::MatterCertificate::Validation do
   it "rejects an intermediate certificate that is not a certificate authority" do
     chain = CERTIFICATE_CHAINS.find! { |candidate| candidate[:name] == "Amazon Certificates" }
 
-    expect_raises(Matter::AuthenticationError, /not a certificate authority/) do
+    expect_raises(Matter::AuthenticationError, /cannot sign certificates/) do
       Matter::Crypto::MatterCertificate::Validation.verify_chain(
         chain[:noc].hexbytes,
         chain[:noc].hexbytes,

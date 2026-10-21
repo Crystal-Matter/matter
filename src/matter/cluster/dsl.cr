@@ -75,6 +75,9 @@ module Matter
     #   nullable attribute instead (`present_if: :tolerance`) means "while
     #   `@tolerance` is not nil". Unsupported attributes are left out of the
     #   tables and answer `UnsupportedAttribute`.
+    # * `persist_default: value` — for a persisted attribute added to an
+    #   existing cluster schema, use this value when an older stored document
+    #   lacks the field. The attribute still saves normally thereafter.
     # * `command id, :name, **options` — see `COMMAND_OPTIONS`. Generates
     #   `CMD_NAME` and dispatches to the handler method `name` (`name(request)`
     #   when `request:` is given), or to `handler:` when that is set. A handler
@@ -122,7 +125,7 @@ module Matter
     # it emits calls `dsl_generate` once the class body is complete.
     module DSL
       ATTRIBUTE_OPTIONS = [
-        :default, :writable, :persist, :nullable, :fixed, :optional, :requires,
+        :default, :writable, :persist, :persist_default, :nullable, :fixed, :optional, :requires,
         :read_access, :write_access, :min, :max, :max_length, :scene,
         :omit_changes, :timed, :fabric_scoped, :callback, :computed, :present_if,
       ]
@@ -204,28 +207,29 @@ module Matter
         {% raise "#{@type}: attribute :#{name.id} declared twice" if @type.constant("ATTRIBUTE_DECLS").any? { |attribute| attribute[:name] == name } %}
 
         {% @type.constant("ATTRIBUTE_DECLS") << {
-             id:            id,
-             name:          name,
-             type:          type,
-             default:       options[:default],
-             writable:      writable,
-             persist:       options[:persist],
-             nullable:      nullable,
-             fixed:         options[:fixed],
-             optional:      options[:optional],
-             requires:      requires,
-             present_if:    present_if,
-             computed:      computed,
-             read_access:   options[:read_access],
-             write_access:  options[:write_access],
-             min:           options[:min],
-             max:           options[:max],
-             max_length:    options[:max_length],
-             scene:         options[:scene],
-             omit_changes:  options[:omit_changes],
-             timed:         options[:timed],
-             fabric_scoped: options[:fabric_scoped],
-             callback:      callback,
+             id:              id,
+             name:            name,
+             type:            type,
+             default:         options[:default],
+             writable:        writable,
+             persist:         options[:persist],
+             persist_default: options[:persist_default],
+             nullable:        nullable,
+             fixed:           options[:fixed],
+             optional:        options[:optional],
+             requires:        requires,
+             present_if:      present_if,
+             computed:        computed,
+             read_access:     options[:read_access],
+             write_access:    options[:write_access],
+             min:             options[:min],
+             max:             options[:max],
+             max_length:      options[:max_length],
+             scene:           options[:scene],
+             omit_changes:    options[:omit_changes],
+             timed:           options[:timed],
+             fabric_scoped:   options[:fabric_scoped],
+             callback:        callback,
            } %}
 
         {% value_type = nullable ? "#{type}?".id : type %}
@@ -801,7 +805,11 @@ module Matter
               include ::Matter::Storage::Record
 
               {% for decl in persisted %}
-                getter {{ decl[:name].id }} : {{ decl[:type] }}{{ "?".id if decl[:nullable] }}
+                {% unless decl[:persist_default].nil? %}
+                  getter {{ decl[:name].id }} : {{ decl[:type] }}{{ "?".id if decl[:nullable] }} = {{ decl[:persist_default] }}
+                {% else %}
+                  getter {{ decl[:name].id }} : {{ decl[:type] }}{{ "?".id if decl[:nullable] }}
+                {% end %}
               {% end %}
               getter data_version : UInt32
               # FeatureMap the state was saved under; absent in documents that

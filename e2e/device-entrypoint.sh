@@ -22,6 +22,7 @@
 set -eu
 
 name="${E2E_DEVICE:?E2E_DEVICE must name an example binary, e.g. matter_switch}"
+binary="${E2E_BINARY:-$name}"
 
 log_dir="${E2E_LOG_DIR:-/e2e/logs}"
 log="$log_dir/$name.log"
@@ -60,7 +61,7 @@ trap stop TERM INT
 restarts=0
 status=0
 while :; do
-  "/app/bin/$name" --no-interactive "$@" </dev/null >>"$log" 2>&1 &
+  "/app/bin/$binary" --no-interactive "$@" </dev/null >>"$log" 2>&1 &
   device_pid=$!
 
   # Watcher for this run: exits 0 once it has consumed a restart marker and

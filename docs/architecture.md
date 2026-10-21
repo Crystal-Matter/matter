@@ -13,7 +13,7 @@ no glob requires, so a layer can only reach downwards.
                               |
         Matter::Node / Endpoint / EventJournal   node.cr, endpoint.cr, event_journal.cr
                               |
-                     Matter::Cluster            cluster/*.cr (35 clusters + dsl.cr + registry)
+                     Matter::Cluster            cluster/*.cr (38 clusters + dsl.cr + registry)
                               |
         Matter::Protocol      |      Matter::Commissioning
    protocol/*.cr              |      commissioning/*.cr
@@ -102,6 +102,10 @@ the optional node ids — used by both `encode` and `decode`.
 | `InteractionRouter` | `protocol/interaction_router.cr` | interaction model message types, timed-request bookkeeping, access control context |
 | `ResponseSender` | `protocol/response_sender.cr` | encrypt, cache, send — the single outbound seam |
 | `Node` | `node.cr` | endpoints, the flat cluster index and the event journal |
+
+`IMHandler` serializes request-context assignment and handler execution per
+cluster. This keeps a concurrent request from replacing the authenticated
+session, fabric, or CASE subject while a cluster operation is in progress.
 
 ## Node, endpoints and clusters
 
@@ -226,3 +230,18 @@ Controller::StateStore         the fabric, its certificates and known nodes, ove
 
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.
+
+### Joint Fabric
+
+`Controller::JointCommissioning::Workflow` performs the Matter 1.6 joining
+sequence. `SharedFabric` holds controller identities issued under an existing
+root. `DatastoreSynchronizer` and `DatastorePropagator` apply the Anchor
+Datastore to participant nodes. `AnchorDatastoreSubscription` tracks the new
+Anchor's authenticated Datastore after transfer. `AnchorTransfer` and
+`AdministratorRemoval` record lifecycle stages before network or credential
+changes so an interrupted operation can be reconciled. The device-facing services are
+`Commissioning::JointFabricAdministratorService` and the Joint Fabric
+Administrator and Datastore clusters. The worked device is
+`examples/support/joint_fabric_administrator_device.cr`; its provisioning,
+trust, consent, and lifecycle limits are tracked in
+[Matter 1.6 Joint Fabric status](matter_1_6_joint_fabric.md).

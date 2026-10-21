@@ -1,0 +1,2 @@
+# Only needed for the optional Crystal inspect-fabric YAML probe.
+PyYAML>=6,<7
