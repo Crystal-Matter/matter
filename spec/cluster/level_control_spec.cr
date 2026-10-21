@@ -106,7 +106,7 @@ describe Matter::Cluster::LevelControl do
 
       request = Matter::Cluster::LevelControl::MoveToLevelRequest.new(
         level: 200_u8,
-        transition_time: 10_u16,
+        transition_time: 0_u16,
         mask: 0_u8,
         override: 0_u8
       )
@@ -144,7 +144,7 @@ describe Matter::Cluster::LevelControl do
       request = Matter::Cluster::LevelControl::StepRequest.new(
         step_mode: Matter::Cluster::LevelControl::StepMode::Up,
         step_size: 20_u8,
-        transition_time: 5_u16,
+        transition_time: 0_u16,
         mask: 0_u8,
         override: 0_u8
       )
@@ -400,7 +400,7 @@ describe Matter::Cluster::LevelControl do
       restored.max_level.should eq(200_u8)
       restored.on_level.should eq(42_u8)
       restored.options.should eq(3_u8)
-      restored.remaining_time.should eq(9_u16)
+      restored.remaining_time.should eq(0_u16)
       restored.on_off_transition_time.should eq(5_u16)
       restored.on_transition_time.should eq(7_u16)
       restored.off_transition_time.should eq(8_u16)
@@ -479,7 +479,7 @@ describe Matter::Cluster::LevelControl do
         Matter::Cluster::LevelControl::CMD_MOVE_TO_LEVEL,
         Matter::Cluster::LevelControl::MoveToLevelRequest.new(
           level: 127_u8,
-          transition_time: 10_u16,
+          transition_time: 0_u16,
           mask: 0_u8,
           override: 0_u8
         )
@@ -488,7 +488,7 @@ describe Matter::Cluster::LevelControl do
       light.current_level.should eq(127_u8)
     end
 
-    it "brightens a light gradually" do
+    it "brightens a light in repeated steps" do
       light = build(Matter::Cluster::LevelControl, current_level: 50_u8)
 
       5.times do
@@ -497,7 +497,7 @@ describe Matter::Cluster::LevelControl do
           Matter::Cluster::LevelControl::StepRequest.new(
             step_mode: Matter::Cluster::LevelControl::StepMode::Up,
             step_size: 10_u8,
-            transition_time: 2_u16,
+            transition_time: 0_u16,
             mask: 0_u8,
             override: 0_u8
           )
@@ -517,7 +517,7 @@ describe Matter::Cluster::LevelControl do
         Matter::Cluster::LevelControl::CMD_MOVE_TO_LEVEL,
         Matter::Cluster::LevelControl::MoveToLevelRequest.new(
           level: 10_u8,
-          transition_time: 20_u16,
+          transition_time: 0_u16,
           mask: 0_u8,
           override: 0_u8
         )
