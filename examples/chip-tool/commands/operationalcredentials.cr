@@ -31,6 +31,14 @@ module ChipTool
 
           node_id = parse_u64(node_id_str) || raise ArgumentError.new("invalid node-id: #{node_id_str}")
           endpoint_id = endpoint_str.to_u16
+          fabric_filtered = true
+          unless args.empty?
+            if args.size != 2 || args[0] != "--fabric-filtered" || (args[1] != "true" && args[1] != "false")
+              STDERR.puts "Usage: operationalcredentials read fabrics <node-id> <endpoint-id> [--fabric-filtered <true|false>]"
+              next 2
+            end
+            fabric_filtered = args[1] == "true"
+          end
 
           store = ctx.state_store
           state = store.load
@@ -52,7 +60,8 @@ module ChipTool
               peer: peer,
               endpoint_id: endpoint_id,
               cluster_id: cluster_id,
-              attribute_id: attribute_id
+              attribute_id: attribute_id,
+              fabric_filtered: fabric_filtered
             )
 
             fabrics = extract_fabrics(report, cluster_id, attribute_id) || raise Matter::ProtocolError.new("ReportData missing fabrics")
