@@ -200,8 +200,8 @@ end
 ```
 
 This BDX service accepts synchronous v0 transfers over CASE. It supports both
-sender and receiver drive, choosing sender drive when both are proposed. A nonzero start
-offset, asynchronous mode, PASE transfer, and a designator with no callback
+sender and receiver drive, choosing sender drive when both are proposed. A nonzero
+start offset, asynchronous mode, PASE transfer, and a designator with no callback
 are rejected. The Diagnostic Logs and OTA clusters do not register designators
 automatically; an application must bind its own stream and authorization.
 
