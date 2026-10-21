@@ -35,20 +35,25 @@ describe "matter_level_control example" do
   end
 
   it "moves to a level" do
-    expect_success(device.invoke("levelcontrol", "move-to-level", ["200", "0", "0", "0"]))
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", ["200", "0", "0", "0"]))
     read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 200
     read_bool(device, "onoff", "on-off", "OnOff").should be_true
   end
 
   it "turns the light off when moved to the minimum level" do
-    expect_success(device.invoke("levelcontrol", "move-to-level", ["1", "0", "0", "0"]))
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", ["1", "0", "0", "0"]))
     read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 1
     read_bool(device, "onoff", "on-off", "OnOff").should be_false
   end
 
-  it "clamps out of range levels" do
-    expect_success(device.invoke("levelcontrol", "move-to-level", ["255", "0", "0", "0"]))
+  it "ignores ordinary level commands while off unless ExecuteIfOff is set" do
+    # A preceding groupcast test may leave the default Options bit enabled.
+    # Override it per command so this assertion is independent of test order.
+    expect_success(device.invoke("levelcontrol", "move-to-level", ["255", "0", "1", "0"]))
+    read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 1
+    expect_success(device.invoke("levelcontrol", "move-to-level", ["255", "0", "1", "1"]))
     read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 254
+    read_bool(device, "onoff", "on-off", "OnOff").should be_false
   end
 
   it "writes the OnLevel attribute" do

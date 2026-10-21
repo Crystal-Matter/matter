@@ -1,5 +1,6 @@
 require "log"
 require "./cluster"
+require "./on_off"
 
 module Matter
   module Cluster
@@ -18,7 +19,8 @@ module Matter
       Log = ::Log.for("matter.cluster.level_control")
 
       TRANSITION_TICK = 100.milliseconds
-      DECISECOND_MS   = 100.0
+      DECISECOND_MS   =   100.0
+      EXECUTE_IF_OFF  = 0x01_u8
 
       cluster 0x0008, revision: 6
 
@@ -258,6 +260,8 @@ module Matter
         @transition_target = nil
         @transition_origin = @current_level
         @transition_fiber_running = false
+        @on_off_cluster = nil
+        @turn_off_on_completion = false
       end
 
       @transition_started_at : Time::Instant?
@@ -266,37 +270,48 @@ module Matter
       @transition_target : UInt8?
       @transition_origin : UInt8
       @transition_fiber_running : Bool
+      @on_off_cluster : OnOff?
+      @turn_off_on_completion : Bool
+
+      # Endpoint wires the sibling OnOff server when the OO feature is enabled.
+      def bind_on_off(cluster : OnOff?) : Nil
+        @on_off_cluster = feature_map.on_off? ? cluster : nil
+      end
 
       # ------------------------------------------------------------------------
       # Commands
       # ------------------------------------------------------------------------
 
       def move_to_level(request : MoveToLevelRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         transition_to(request.level, request.transition_time)
       end
 
       def move(request : MoveRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         move_towards(request.move_mode, request.rate)
       end
 
       def step(request : StepRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         step_by(request.step_mode, request.step_size, request.transition_time)
       end
 
       def stop(request : StopRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
         halt
       end
 
       def move_to_level_with_on_off(request : MoveToLevelWithOnOffRequest) : InteractionModel::Status
-        transition_to(request.level, request.transition_time)
+        transition_to(request.level, request.transition_time, with_on_off: true)
       end
 
       def move_with_on_off(request : MoveWithOnOffRequest) : InteractionModel::Status
-        move_towards(request.move_mode, request.rate)
+        move_towards(request.move_mode, request.rate, with_on_off: true)
       end
 
       def step_with_on_off(request : StepWithOnOffRequest) : InteractionModel::Status
-        step_by(request.step_mode, request.step_size, request.transition_time)
+        step_by(request.step_mode, request.step_size, request.transition_time, with_on_off: true)
       end
 
       def stop_with_on_off(request : StopWithOnOffRequest) : InteractionModel::Status
@@ -308,20 +323,20 @@ module Matter
         InteractionModel::Status.success
       end
 
-      private def move_towards(mode : MoveMode, requested_rate : UInt8?) : InteractionModel::Status
+      private def move_towards(mode : MoveMode, requested_rate : UInt8?, with_on_off : Bool = false) : InteractionModel::Status
         rate = requested_rate || @default_move_rate
         return InteractionModel::Status.invalid_command if rate == 0
 
         target = mode.up? ? @max_level : @min_level
-        return transition_to(target, 0_u16) unless rate
+        return transition_to(target, 0_u16, with_on_off: with_on_off) unless rate
 
         advance_transition
         distance = (target.to_i - @current_level.to_i).abs
         duration = ((distance.to_f * 1000.0) / rate).ceil.to_i.milliseconds
-        start_transition(target, duration)
+        start_transition(target, duration, with_on_off: with_on_off)
       end
 
-      private def step_by(mode : StepMode, step_size : UInt8, transition_time : UInt16?) : InteractionModel::Status
+      private def step_by(mode : StepMode, step_size : UInt8, transition_time : UInt16?, with_on_off : Bool = false) : InteractionModel::Status
         advance_transition
         # A null Step transition is immediate; OnOffTransitionTime supplies
         # the default only for MoveToLevel commands.
@@ -329,10 +344,10 @@ module Matter
         case mode
         when .up?
           target = @current_level.to_u16 + step_size
-          transition_to([target, @max_level.to_u16].min.to_u8, step_time)
+          transition_to([target, @max_level.to_u16].min.to_u8, step_time, with_on_off: with_on_off)
         when .down?
           target = @current_level.to_i16 - step_size
-          transition_to([target, @min_level.to_i16].max.to_u8, step_time)
+          transition_to([target, @min_level.to_i16].max.to_u8, step_time, with_on_off: with_on_off)
         else
           InteractionModel::Status.invalid_command
         end
@@ -344,18 +359,27 @@ module Matter
         @transition_last_advanced_at = nil
         @transition_duration = nil
         @transition_target = nil
+        @turn_off_on_completion = false
         self.remaining_time = 0_u16
         InteractionModel::Status.success
       end
 
-      private def transition_to(level : UInt8, transition_time : UInt16? = nil) : InteractionModel::Status
+      private def transition_to(level : UInt8, transition_time : UInt16? = nil, with_on_off : Bool = false) : InteractionModel::Status
         ticks = transition_time || @on_off_transition_time
         duration = (ticks.to_i * 100).milliseconds
-        start_transition(level.clamp(@min_level, @max_level), duration)
+        start_transition(level.clamp(@min_level, @max_level), duration, with_on_off: with_on_off)
       end
 
-      private def start_transition(target : UInt8, duration : Time::Span) : InteractionModel::Status
+      private def start_transition(target : UInt8, duration : Time::Span, with_on_off : Bool = false) : InteractionModel::Status
         advance_transition
+        @turn_off_on_completion = false
+        if with_on_off && (on_off = @on_off_cluster)
+          if target > @min_level
+            on_off.on
+          else
+            @turn_off_on_completion = true
+          end
+        end
         if duration <= 0.seconds || target == @current_level
           @transition_started_at = nil
           @transition_last_advanced_at = nil
@@ -363,6 +387,7 @@ module Matter
           @transition_target = nil
           self.current_level = target
           self.remaining_time = 0_u16
+          finish_on_off_coupling
           return InteractionModel::Status.success
         end
 
@@ -396,6 +421,7 @@ module Matter
           @transition_last_advanced_at = nil
           @transition_duration = nil
           @transition_target = nil
+          finish_on_off_coupling
           return
         end
 
@@ -417,6 +443,20 @@ module Matter
         ensure
           @transition_fiber_running = false
         end
+      end
+
+      private def finish_on_off_coupling : Nil
+        return unless @turn_off_on_completion
+        @turn_off_on_completion = false
+        @on_off_cluster.try &.off
+      end
+
+      private def execute_if_off?(mask : UInt8, override : UInt8) : Bool
+        on_off = @on_off_cluster
+        return true unless on_off && on_off.off?
+
+        effective_options = (@options & ~mask) | (override & mask)
+        (effective_options & EXECUTE_IF_OFF) != 0
       end
 
       # Called with the previous and the new level whenever CurrentLevel changes

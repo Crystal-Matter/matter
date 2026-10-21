@@ -70,14 +70,6 @@ module MatterLevelControl
     end
 
     on(:level_control, :level_changed) do |old_level, new_level|
-      # Apple Home treats `currentLevel == minLevel` as OFF for dimmable lights.
-      # Align the OnOff state so controllers don't interpret a "minimum on" level as 100%.
-      if new_level <= level_control.min_level
-        on_off.on = false if on_off.on?
-      elsif on_off.off?
-        on_off.on = true
-      end
-
       notify "Level changed: #{old_level} -> #{new_level} (#{level_percent(new_level)}%)",
         "Data version: #{level_control.data_version}"
     end
