@@ -105,7 +105,7 @@ item below as covered only to the extent of its cited tests.
   GroupKeySetID zero.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
-  crashes in that window, recovery validates A CASE and the A fabric
+  crashes in that window, recovery validates B CASE, A CASE, and the A fabric
   descriptor before restoring the local node record. A missing acknowledgement
   remains fail closed; a visible A fabric alone does not prove the fail-safe
   was disarmed.

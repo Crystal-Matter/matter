@@ -342,6 +342,7 @@ module Matter
               unless @journal.try(&.commissioning_acknowledged?)
                 raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement for Fabric A")
               end
+              require_old_fabric_present!
               verify_anchor!
               state.record_node(@anchor_fabric.fabric_id,
                 NodeInfo.new(node_id: @anchor_node_id, address: @device_peer.address,

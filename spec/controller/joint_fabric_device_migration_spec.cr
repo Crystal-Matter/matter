@@ -67,9 +67,14 @@ end
 
 private class MigrationRecoveryNetworkPort < Migration::NetworkPort
   property? anchor_verified : Bool = false
+  property? old_verified : Bool = false
 
   def verify_anchor! : Nil
     raise Matter::AuthenticationError.new("A CASE verification failed") unless anchor_verified?
+  end
+
+  private def require_old_fabric_present! : Nil
+    raise Matter::AuthenticationError.new("B CASE verification failed") unless old_verified?
   end
 end
 
@@ -506,6 +511,10 @@ describe Migration do
     expect_raises(Matter::CommissioningError, /Durable CommissioningComplete/) do
       port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
     end
+    expect_raises(Matter::AuthenticationError, /B CASE/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    port.old_verified = true
     expect_raises(Matter::AuthenticationError, /A CASE/) do
       port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
     end
