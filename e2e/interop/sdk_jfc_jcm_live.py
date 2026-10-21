@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from sdk_jfc_switch_smoke import ManagedProcess
+from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN
 
 
 def run_command(argv, log_path, timeout=300):
@@ -106,7 +106,7 @@ def run(args):
                      MATTER_JFA_ANCHOR_OPERATIONAL_PORT="5540")
         b = ManagedProcess("crystal-b", [str(args.jfa), "--no-interactive"], b_state, logs, b_env)
         processes.append(b)
-        b_pin = b.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
+        b_pin = b.expect(SETUP_PIN_PATTERN, 60).group(1)
         b_discriminator = b.expect(r"Discriminator:\s*(\d+)", 10).group(1)
         b.expect(r"Starting in Commissioning Mode", 60)
         b.start_background_drain()
@@ -148,7 +148,7 @@ def run(args):
                      MATTER_JFA_TRANSFER_PEERS="a103=127.0.0.1")
         a = ManagedProcess("crystal-a", [str(args.jfa), "--no-interactive"], a_state, logs, a_env)
         processes.append(a)
-        a.expect(r"Setup PIN:\s*(\d{8})", 60)
+        a.expect(SETUP_PIN_PATTERN, 60)
         a.expect(r"Discriminator:\s*(\d+)", 10)
         a.expect(r"Starting in Commissioning Mode", 60)
         a_code = a.expect(r"chip-tool pairing code 1 ([\d-]+)", 20).group(1)
