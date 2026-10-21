@@ -87,7 +87,10 @@ answered from cache, and writes it with `UDPTransport#send_raw`.
 
 `Session::SecureMessage` (`session/secure_message.cr`) is the only place that encrypts or decrypts a
 message. There is one definition of the authenticated data — the complete packet header, including
-the optional node ids — used by both `encode` and `decode`.
+the optional node ids and opaque Message Extensions — used by both `encode` and `decode`.
+`MessageCodec` also skips length-delimited Secured Extensions after decryption, and carries
+vendor-qualified protocol IDs as a 32-bit vendor/protocol pair. Group privacy enhancements
+remain unsupported because they need header deobfuscation before packet parsing.
 
 ### Who owns what in the protocol layer
 

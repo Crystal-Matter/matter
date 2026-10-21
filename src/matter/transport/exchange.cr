@@ -16,7 +16,7 @@ module Matter
       end
 
       getter exchange_id : UInt16
-      getter protocol_id : UInt16
+      getter protocol_id : UInt32
       getter? initiator : Bool
       getter state : State
       getter peer_address : Socket::IPAddress?
@@ -30,12 +30,13 @@ module Matter
 
       def initialize(
         @exchange_id : UInt16,
-        @protocol_id : UInt16,
+        protocol_id : UInt16 | UInt32,
         @session_id : UInt16,
         @initiator : Bool,
         @peer_address : Socket::IPAddress? = nil,
         @peer_node_id : DataType::NodeId? = nil,
       )
+        @protocol_id = protocol_id.to_u32
         @state = State::Active
         @last_activity = Time.utc
       end
@@ -76,7 +77,7 @@ module Matter
 
       # Create new exchange as initiator
       def create_exchange(
-        protocol_id : UInt16,
+        protocol_id : UInt16 | UInt32,
         session_id : UInt16,
         peer_address : Socket::IPAddress,
         peer_node_id : DataType::NodeId? = nil,
@@ -100,7 +101,7 @@ module Matter
       # Get or create exchange for received message
       def get_or_create_exchange(
         exchange_id : UInt16,
-        protocol_id : UInt16,
+        protocol_id : UInt16 | UInt32,
         session_id : UInt16,
         peer_address : Socket::IPAddress,
         peer_node_id : DataType::NodeId? = nil,

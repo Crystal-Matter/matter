@@ -122,6 +122,13 @@ end
 
 describe Matter::Transport::ExchangeManager do
   describe "#create_exchange" do
+    it "retains vendor-qualified protocol IDs" do
+      manager = Matter::Transport::ExchangeManager.new
+      peer_address = Socket::IPAddress.new("192.168.1.100", 5540)
+      exchange = manager.create_exchange(0x1234_5678_u32, 100_u16, peer_address)
+      exchange.protocol_id.should eq(0x1234_5678_u32)
+    end
+
     it "creates new exchange as initiator" do
       manager = Matter::Transport::ExchangeManager.new
       peer_address = Socket::IPAddress.new("192.168.1.100", 5540)

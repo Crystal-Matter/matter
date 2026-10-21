@@ -94,6 +94,35 @@ describe Matter::Session::SecureMessage do
     Matter::Session::SecureMessage.decode(session, packet).payload.should eq(Bytes[1])
   end
 
+  it "authenticates packet extensions and parses secured extensions after decryption" do
+    session = wire_session
+    header = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: session.session_id, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 1_u32, message_extension_data: Bytes[0xAA, 0xBB])
+    payload_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 1_u16, protocol_id: 1_u16, message_type: 1_u8,
+      initiator_message: true, requires_acknowledge: false,
+      secured_extensions: Bytes[0xCC])
+    aad = Matter::Codec::MessageCodec::Base.encode_packet_header(header)
+    plaintext = Matter::Codec::MessageCodec::Base.encode_payload(
+      Matter::Codec::MessageCodec::Message.new(header, payload_header, Bytes[0xDD])).payload
+    nonce = Matter::Session::SecureMessage.build_nonce(0_u64, header.message_id, header.security_flags)
+    encrypted = Matter::Crypto::StandardCrypto.new.encrypt(session.encryption_key, plaintext, nonce, aad)
+    encoded = Slice.join([aad, encrypted])
+
+    message = Matter::Session::SecureMessage.decode(session,
+      Matter::Codec::MessageCodec::Base.decode_packet(encoded))
+    message.packet_header.message_extension_data.should eq(Bytes[0xAA, 0xBB])
+    message.payload_header.secured_extensions.should eq(Bytes[0xCC])
+    message.payload.should eq(Bytes[0xDD])
+
+    encoded[aad.size - 1] ^= 1_u8
+    expect_raises(Matter::AuthenticationError) do
+      Matter::Session::SecureMessage.decode(wire_session,
+        Matter::Codec::MessageCodec::Base.decode_packet(encoded))
+    end
+  end
+
   it "allocates one outgoing counter and uses it in the packet" do
     session = wire_session
     session.local_message_counter = 10_u32
