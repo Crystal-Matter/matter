@@ -654,8 +654,13 @@ module MatterJointFabricAdministrator
       end
       return if compliant_anchor_fabric?(fabric)
       root = fabric.root_cert || raise Matter::ConfigurationError.new("Joined Joint Fabric root is unavailable")
-      key = provisioned_icac_key(fabric, certificate) ||
-            raise Matter::ConfigurationError.new("Joined JFA ICAC private key is unavailable")
+      remote_csr_provider = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?.try do |path|
+        Matter::Commissioning::RemoteIcacCsrProvider.new(path, fabric.fabric_id, fabric.root_public_key)
+      end
+      key = remote_csr_provider ? nil : provisioned_icac_key(fabric, certificate)
+      unless key || remote_csr_provider
+        raise Matter::ConfigurationError.new("Joined JFA ICAC private key is unavailable")
+      end
       return if joint_fabric_datastore.joint_fabric_index == fabric.fabric_index &&
                 joint_fabric_administrator.administrator_fabric_index == fabric.fabric_index &&
                 joint_fabric_service.try(&.cross_signed_icac) == certificate
@@ -694,6 +699,7 @@ module MatterJointFabricAdministrator
         },
         resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
         existing_icac_certificate: certificate,
+        icac_csr_provider: remote_csr_provider,
         failsafe_fabric_matches: ->(index : UInt8?) {
           if context = general_commissioning.failsafe_context
             context.armed? && !index.nil? &&
@@ -712,16 +718,19 @@ module MatterJointFabricAdministrator
     end
 
     # The operational NOC chains through the Anchor ICAC, while the JFA's
-    # committed cross-signed ICAC certifies its separate signing key. Bind it
-    # to this fabric's root and ICAC ID; provisioned_icac_key then proves the
-    # device holds the corresponding JFA private key.
+    # committed cross-signed ICAC certifies the JFA signing key. A local JFA
+    # proves possession with its private key; an SDK-owned JFA delegates CSR
+    # signing to its authenticated remote provider and retains the operational
+    # ICAC public key while allowing the cross-signer a distinct ICAC ID.
     private def joined_icac_matches_fabric?(certificate : Bytes, fabric : Matter::Fabric) : Bool
       installed = fabric.intermediate_cert || return false
       root = fabric.root_cert || return false
       committed_icac = Matter::Crypto::MatterCertificate.from_slice(certificate)
       installed_icac = Matter::Crypto::MatterCertificate.from_slice(installed)
+      remote_signer = !!ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+      expected_identity = remote_signer ? committed_icac.ec_public_key == installed_icac.ec_public_key : committed_icac.subject.icac_id == installed_icac.subject.icac_id
       unless committed_icac.subject.fabric_id == fabric.fabric_id &&
-             committed_icac.subject.icac_id == installed_icac.subject.icac_id
+             committed_icac.subject.icac_id && expected_identity
         ::Log.for("matter.example.joint_fabric_administrator").info { "Joined JFA committed and installed ICAC identities differ" }
         return false
       end

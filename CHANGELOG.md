@@ -16,9 +16,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bootstrap Datastore, and discover the active Datastore endpoint over a
   verified CASE session. Restore the promoted role after restart with a
   rotated nonzero Anchor CAT version.
-- Bind a joined Administrator's committed cross-signed ICAC to its fabric,
-  issuer root, and ICAC ID while allowing the operational ICAC to use a
-  separate signing key. Require proof of possession of the committed key.
+- Bind a joined Administrator's committed cross-signed ICAC to its fabric and
+  issuer root. Locally signed ICACs require the expected ICAC ID and private-key
+  proof; SDK-owned signers may use a distinct ICAC ID when the cross-signed key
+  matches the commissioned ICAC and CSR signing remains remote.
 
 ### Controller groupcast
 

@@ -67,7 +67,11 @@ item below as covered only to the extent of its cited tests.
   active Datastore endpoint through Descriptor reads and verifies its root and
   Node ID over CASE; promotion binds the copied store to B's fabric and retires
   B's bootstrap store. A rotated nonzero Anchor CAT version remains valid after
-  restart. The subscription is invalidated if its fabric changes.
+  restart. The subscription is invalidated if its fabric changes. A joined
+  Crystal JFA verifies its committed cross-signed ICAC against the fabric root.
+  A local signer must prove possession of the committed key; an SDK-owned
+  remote signer may use a different ICAC ID when the cross-signed public key
+  matches its commissioned ICAC public key.
   The transfer journal records each completed Administrator credential rotation
   and identifies an uncertain in-flight rotation. After restart, the caller
   must inspect that Administrator's NOC/CAT and reconcile the rotation before

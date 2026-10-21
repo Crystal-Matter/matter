@@ -172,6 +172,35 @@ describe MatterJointFabricAdministrator::Device do
     wrong_joined.access_control.acl(2_u8).flat_map(&.subjects)
       .should_not contain(0xFFFF_FFFD_FFFF_0001_u64)
 
+    # The official SDK JFC owns the ICAC signer remotely. Its cross-signed
+    # ICAC reuses the commissioned ICAC key but can have a different ICAC ID.
+    remote_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      a_operational_icac_key.public_key, 0xA100_u64, 5_u64, a_root_key, 3_u64, Bytes[8], crypto)
+    previous_remote = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = File.join(Dir.tempdir, "remote-jfa-csr-#{Random::Secure.hex(6)}")
+    remote_joined = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    remote_joined.install_test_fabric(b_fabric)
+    remote_joined.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(remote_icac).to_document)
+    remote_joined.install_test_fabric(a_fabric)
+    remote_joined.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
+    remote_joined.joint_fabric_administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
+      .cross_signed_icac.should eq(remote_icac)
+
+    wrong_remote = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    wrong_remote.install_test_fabric(b_fabric)
+    wrong_remote.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(committed_a_icac).to_document)
+    wrong_remote.install_test_fabric(a_fabric)
+    wrong_remote.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    if previous_remote
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_remote
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+
     restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     restored.install_test_fabric(b_fabric)
