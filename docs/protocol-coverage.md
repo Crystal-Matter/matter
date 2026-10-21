@@ -12,7 +12,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Standard XML clusters: 135
 - Crystal declarations for those IDs: 54
 - Matching known revisions: 37
-- Clusters with mandatory attributes absent or optional in Crystal: 3
+- Clusters with mandatory attributes absent or optional in Crystal: 2
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
 
@@ -33,7 +33,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x002C | Time Format Localization Cluster | 1 | 1 | — |
 | 0x002D | Unit Localization Cluster | 2 | 2 | — |
 | 0x002E | Power Source Configuration Cluster | 1 | 1 | — |
-| 0x002F | Power Source Cluster | 3 | 3 | 0x001F |
+| 0x002F | Power Source Cluster | 3 | 3 | — |
 | 0x0030 | General Commissioning Cluster | 2 | 2 | — |
 | 0x0031 | Network Commissioning Cluster | 2 | 2 | — |
 | 0x0032 | Diagnostic Logs Cluster | 1 | 1 | — |
