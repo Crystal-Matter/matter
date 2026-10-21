@@ -22,6 +22,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Remove group keys, mappings, names, and multicast memberships when a fabric
   is removed, before its local FabricIndex can be reused.
 
+### PASE interoperability
+
+- Include the required PasscodeID and HasPBKDFParameters fields in commissioner
+  PBKDFParamRequest messages. Strict connectedhomeip responders previously
+  rejected the incomplete request before PASE could begin.
+
 The 0.2 refactor. Every layer of the library was reworked: storage, the device API, all 35
 clusters, the interaction model and the protocol objects. It is a breaking release, and
 **device storage written by 0.1 will not load** — see [Migrating from 0.1](#migrating-from-01).
