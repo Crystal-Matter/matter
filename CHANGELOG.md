@@ -13,6 +13,8 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 ### Shared fabric and certificate validation
 
+- Verify Certification Declarations with CMS signed attributes, including their
+  signed content type, encapsulated-content digest, and signature.
 - Add delegated controller identities on an existing fabric, a separate
   certificate issuer for commissioning, and an ACL grant helper for shared
   controller access.
