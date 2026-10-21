@@ -180,9 +180,8 @@ outcomes, JFA fail-safe statuses, and Joint Commissioning window parameter
 boundaries. The `TC_JFDS_2_2` invalid security policy is injected as raw TLV:
 the handler returns `ConstraintError` as the certification test requires.
 
-These are local parity checks. Independent SDK testing of discovery, CASE
-ACLs, mDNS window expiry, controller certificate stores, and full
-commissioning is tracked separately below.
+These are local parity checks. The independent SDK cases and their exact
+coverage are tracked below and in `docs/official_joint_fabric_certification.md`.
 
 ## Official SDK certification runner
 
@@ -198,6 +197,12 @@ sequence before Joint Commissioning; it does not cover the controller's JCM
 or the Datastore scenarios. The runner inserts one missing `jf_admin = None`
 initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
 certification steps and assertions are unchanged.
+
+`e2e/interop/sdk_jf_cert_matrix.py` runs the official SDK v1.6.0.0
+`TC_JFADMIN_1_1`, `1_4`, and `TC_JFDS_2_1` through `2_3` scripts unchanged
+against Crystal. `TC_JFDS_2_4` inherits every official step and assertion but
+converts the SDK fixture's 410-byte X.509 DER ICAC input to Matter TLV before
+AddAdmin's 400-byte field. The dedicated Linux workflow passed all six cases.
 
 `e2e/interop/sdk_jfc_jcm_live.py` separately commissions a Crystal B JFA
 with the official v1.6 JFC, verifies its SDK-held Anchor ICAC CSR, then has a
@@ -232,14 +237,12 @@ can make the SDK's on-network pairing select the wrong listener.
    unsupported, so independent VVS interoperability remains unproven.
    Deployment must authenticate and freshen its DCL gateway, and the optional
    Matter-TLV VVSC currently has only public-key/SKID equivalence checks.
-2. Run the JCM sequence against the official SDK `jf-control-app` and
-   `jf-admin-app`. The current Docker test proves Crystal-to-Crystal JCM;
-   the official `chip-tool` separately commissions the example device.
-3. Extend Anchor transfer and administrator removal network tests beyond two
-   administrators and exercise interruption at each journal transition. The
-   three-Administrator rotation and restart path currently has local spec
-   coverage.
-4. Deploy production PAA/CD signers and a trusted CRL distribution source
+2. Exercise interruption at each remaining Anchor transfer and administrator
+   removal journal transition. The Docker three-administrator scenario covers
+   A-to-B transfer, A removal, B restart after a lost RemoveFabric
+   acknowledgement, and B/C registration; local specs cover interrupted
+   second credential rotation. Other network interruption points remain.
+3. Deploy production PAA/CD signers and a trusted CRL distribution source
    through the JFA example's explicit injection point. The bundled
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
    scope for host-provisioned DER CRLs; automated DCL CRL retrieval is outside
