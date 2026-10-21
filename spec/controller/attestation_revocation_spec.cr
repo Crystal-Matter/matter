@@ -11,6 +11,7 @@ private module AttestationCrlFixture
     Dir.mkdir(directory)
     Dir.mkdir(File.join(directory, "newcerts"))
     begin
+      config_directory = directory.gsub('\\', '/')
       issuer = OpenSSL::X509::Certificate.from_der(issuer_der)
       File.write(File.join(directory, "issuer.pem"), issuer.to_pem)
       key = OpenSSL::PKey::EC.from_private_bytes(issuer_key.private_key,
@@ -23,10 +24,10 @@ private module AttestationCrlFixture
         [ ca ]
         default_ca = CA_default
         [ CA_default ]
-        database = #{directory}/index.txt
-        new_certs_dir = #{directory}/newcerts
-        serial = #{directory}/serial
-        crlnumber = #{directory}/crlnumber
+        database = #{config_directory}/index.txt
+        new_certs_dir = #{config_directory}/newcerts
+        serial = #{config_directory}/serial
+        crlnumber = #{config_directory}/crlnumber
         default_md = sha256
         default_crl_days = 30
         policy = policy_any
