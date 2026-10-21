@@ -18,7 +18,8 @@ module Matter
       Log = ::Log.for("matter.transport.udp_transport")
 
       # Matter default port
-      MATTER_PORT = 5540
+      MATTER_PORT        = 5540
+      IPV4_MAPPED_PREFIX = "::ffff:"
 
       # How long the receive loop waits for a datagram before looping.
       RECEIVE_TIMEOUT = 100.milliseconds
@@ -281,7 +282,7 @@ module Matter
           key = {session_id, exchange_id, message_counter}
           pending = @pending_reliable[key]?
           return false unless pending
-          return false if peer && pending.peer != peer
+          return false if peer && canonical_peer(pending.peer) != canonical_peer(peer)
           !!@pending_reliable.delete(key)
         end
       end
@@ -360,6 +361,13 @@ module Matter
                         peer_address
                       end
         @socket.send(data, destination)
+      end
+
+      private def canonical_peer(peer : Socket::IPAddress) : Socket::IPAddress
+        address = peer.address
+        return peer unless address.starts_with?(IPV4_MAPPED_PREFIX)
+
+        Socket::IPAddress.new(address[IPV4_MAPPED_PREFIX.size..], peer.port)
       end
 
       # Create and send a message on a new exchange
