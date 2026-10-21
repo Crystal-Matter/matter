@@ -12,7 +12,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory event IDs absent: 1
 - Conditional command/event declarations for review: 103
 - Feature or complex conditional IDs absent from Crystal: 28
-- Feature or complex conditional IDs declared without literal `requires:`: 13
+- Feature or complex conditional IDs declared without literal `requires:`: 12
   (Neither count alone establishes a conformance failure.)
 
 | Cluster ID | XML name | XML rev | Crystal rev | Mandatory server commands absent | Mandatory events absent |
@@ -48,7 +48,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x003F | Group Key Management Cluster | 3 | 2 | — | — |
 | 0x0040 | Fixed Label Cluster | 1 | 1 | — | — |
 | 0x0041 | User Label Cluster | 1 | 1 | — | — |
-| 0x0045 | Boolean State Cluster | 3 | 1 | — | — |
+| 0x0045 | Boolean State Cluster | 3 | 3 | — | — |
 | 0x0046 | ICD Management Cluster | 3 | 3 | — | — |
 | 0x0050 | Mode Select Cluster | 2 | 2 | — | — |
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
@@ -121,7 +121,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x003B | event | 0x0005 | (feature(MSM) and not(feature(AS))) | declared; requires `—` |
 | 0x003B | event | 0x0006 | feature(MSM) | declared; requires `—` |
 | 0x003C | command | 0x0001 | feature(BC) | declared; requires `:basic` |
-| 0x0045 | event | 0x0000 | feature(CHGEVENT) | declared; requires `—` |
+| 0x0045 | event | 0x0000 | feature(CHGEVENT) | declared; requires `:change_event` |
 | 0x0046 | command | 0x0000 | feature(CIP) | declared; requires `:check_in_protocol_support` |
 | 0x0046 | command | 0x0002 | feature(CIP) | declared; requires `:check_in_protocol_support` |
 | 0x0046 | command | 0x0003 | feature(LITS) | declared; requires `—` |
