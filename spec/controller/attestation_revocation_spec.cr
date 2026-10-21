@@ -116,6 +116,10 @@ describe Matter::Controller::DclAttestationRevocation do
     record["dataDigestType"] = 7
     response = {"pkiRevocationDistributionPointsByIssuerSubjectKeyID" => {"points" => [record]}}.to_json
     expect_raises(Matter::AuthenticationError, /digest/) { source.points_for(point.issuer_skid) }
+    record["dataDigestType"] = 0
+    record["dataFileSize"] = "100"
+    response = {"pkiRevocationDistributionPointsByIssuerSubjectKeyID" => {"points" => [record]}}.to_json
+    expect_raises(Matter::AuthenticationError, /size metadata/) { source.points_for(point.issuer_skid) }
   end
 
   it "accepts complete direct signed CRLs and rejects revoked devices" do

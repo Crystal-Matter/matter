@@ -46,23 +46,26 @@ module Matter
         items = JSON.parse(String.new(body)).as_h["pkiRevocationDistributionPointsByIssuerSubjectKeyID"].as_h["points"].as_a
         items.map do |item|
           record = item.as_h
-          skid = record["issuerSubjectKeyID"].as_s.delete(":").hexbytes
+          skid_text = record["issuerSubjectKeyID"].as_s
+          raise Matter::AuthenticationError.new("Invalid DCL issuer SKID") unless skid_text.matches?(/\A[0-9A-F]{40}\z/)
+          skid = skid_text.hexbytes
           raise Matter::AuthenticationError.new("DCL issuer SKID mismatch") unless skid == issuer_skid
           raise Matter::AuthenticationError.new("Unsupported DCL revocation type") unless record["revocationType"].raw.to_s == "1"
-          digest_type = record["dataDigestType"].raw.to_s
-          digest_text = record["dataDigest"].as_s
+          digest_type = record["dataDigestType"]?.try(&.raw.to_s) || "0"
+          digest_text = record["dataDigest"]?.try(&.as_s) || ""
           # The v1.6 DCL commonly omits digest metadata (type 0). Unknown
           # digest algorithms cannot be silently ignored.
           unless digest_type == "0" && digest_text.empty?
             raise Matter::AuthenticationError.new("Unsupported DCL CRL digest metadata")
           end
-          size_text = record["dataFileSize"].raw.to_s
-          size = size_text.to_i64
-          raise Matter::AuthenticationError.new("Invalid DCL CRL size") if size < 0 || size > DclAttestationRevocation::MAX_CRL_SIZE
+          size_text = record["dataFileSize"]?.try(&.raw.to_s) || "0"
+          # Matter 1.6 §11.23.9.9 forbids DataFileSize for signed CRLs. Proto3
+          # represents its absence as zero in the JSON response.
+          raise Matter::AuthenticationError.new("Unexpected DCL CRL size metadata") unless size_text == "0"
           delegator_text = record["crlSignerDelegator"]?.try(&.as_s) || ""
           DclRevocationPoint.new(skid, pem_der(record["crlSignerCertificate"].as_s),
             delegator_text.empty? ? nil : pem_der(delegator_text), record["dataURL"].as_s,
-            record["isPAA"].as_bool, size == 0 ? nil : size, nil)
+            record["isPAA"].as_bool, nil, nil)
         end
       rescue ex : Matter::Error
         raise ex
