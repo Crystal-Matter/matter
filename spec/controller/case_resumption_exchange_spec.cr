@@ -7,6 +7,7 @@ require "../../src/matter/protocol/secure_channel"
 private class ResumeExchangeClient < Matter::Controller::Client
   getter sent_types = [] of UInt8
   property handler : Matter::Protocol::MessageHandler?
+  property response_peer : Socket::IPAddress?
   @counter = 0_u32
   @encrypted_counter = 17_u32
 
@@ -55,7 +56,7 @@ private class ResumeExchangeClient < Matter::Controller::Client
                 end
       next unless message.payload_header.exchange_id == exchange_id
       next unless message_types.includes?(message.payload_header.message_type)
-      return ReceivedMessage.new(message, sent[1])
+      return ReceivedMessage.new(message, @response_peer || sent[1])
     end
     nil
   end
@@ -120,6 +121,8 @@ describe "controller and device CASE resumption exchange" do
     controller_store = Matter::Session::Case::ResumptionStore.new(controller_backend)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     client = ResumeExchangeClient.new(channel, capture, peer)
+    # A dual-stack UDP socket may report the IPv4 peer as IPv4-mapped IPv6.
+    client.response_peer = Socket::IPAddress.new("::ffff:127.0.0.1", 5540)
 
     pairing = Matter::Controller::Pairing::CasePairing.new(crypto, controller_store)
     first_session = pairing.pair(client, peer, controller_fabric, device_node)
@@ -141,6 +144,7 @@ describe "controller and device CASE resumption exchange" do
     controller_store = Matter::Session::Case::ResumptionStore.new(controller_backend)
     pairing = Matter::Controller::Pairing::CasePairing.new(crypto, controller_store)
     client = ResumeExchangeClient.new(channel, capture, peer)
+    client.response_peer = Socket::IPAddress.new("::ffff:127.0.0.1", 5540)
 
     session = pairing.pair(client, peer, controller_fabric, device_node)
 
@@ -167,6 +171,12 @@ describe "controller and device CASE resumption exchange" do
       Matter::Cluster::BasicInformation::ATTR_VENDOR_NAME)
     report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.should_not be_nil
+
+    # Normalizing mapped IPv4 must not admit a different network peer.
+    client.response_peer = Socket::IPAddress.new("127.0.0.2", 5540)
+    expect_raises(Matter::AuthenticationError, /another peer/) do
+      pairing.pair(client, peer, controller_fabric, device_node)
+    end
   ensure
     client.try(&.close)
     handler.try(&.close)

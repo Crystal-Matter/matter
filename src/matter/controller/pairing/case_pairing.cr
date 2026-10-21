@@ -31,7 +31,8 @@ module Matter
         TBE_DATA2_NONCE = "NCASE_Sigma2N".to_slice
         TBE_DATA3_NONCE = "NCASE_Sigma3N".to_slice
 
-        SESSION_KEYS_INFO = "SessionKeys".to_slice
+        SESSION_KEYS_INFO  = "SessionKeys".to_slice
+        IPV4_MAPPED_PREFIX = "::ffff:"
 
         def initialize(@crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @resumption_store : Session::Case::ResumptionStore? = nil)
@@ -119,7 +120,7 @@ module Matter
           sigma2 = client.wait_for_any(exchange_id, Client::PROTOCOL_SECURE_CHANNEL,
             [MSG_CASE_SIGMA2, MSG_CASE_SIGMA2_RESUME], timeout)
           raise Matter::TimeoutError.new("CASE: timeout waiting for Sigma2") unless sigma2
-          unless sigma2.peer == peer
+          unless same_peer?(sigma2.peer, peer)
             raise Matter::AuthenticationError.new("CASE: response came from another peer")
           end
 
@@ -191,7 +192,7 @@ module Matter
 
           status = client.wait_for(exchange_id, Client::PROTOCOL_SECURE_CHANNEL, MSG_STATUS_REPORT, timeout)
           raise Matter::TimeoutError.new("CASE: timeout waiting for StatusReport") unless status
-          unless status.peer == peer
+          unless same_peer?(status.peer, peer)
             raise Matter::AuthenticationError.new("CASE: status came from another peer")
           end
 
@@ -275,6 +276,15 @@ module Matter
           @resumption_store.try(&.save(record))
         rescue ex : Matter::Error
           Log.warn(exception: ex) { "CASE session established without a saved resumption record" }
+        end
+
+        private def same_peer?(received : Socket::IPAddress, expected : Socket::IPAddress) : Bool
+          return false unless received.port == expected.port
+          received_address = received.address
+          expected_address = expected.address
+          received_address = received_address[IPV4_MAPPED_PREFIX.size..] if received_address.starts_with?(IPV4_MAPPED_PREFIX)
+          expected_address = expected_address[IPV4_MAPPED_PREFIX.size..] if expected_address.starts_with?(IPV4_MAPPED_PREFIX)
+          received_address == expected_address
         end
 
         private def compute_destination_id(
