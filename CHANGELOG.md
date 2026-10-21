@@ -15,6 +15,10 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 - Enforce signed Certification Declaration DAC origin VID/PID and authorized
   PAA identifiers during device attestation, including legitimate OEM chains.
+- Accept length-delimited Matter Message Extensions and Secured Extensions as
+  opaque bytes, preserving packet extension bytes in authenticated headers;
+  round-trip vendor-qualified protocol IDs. Privacy enhancements still require
+  the separate group-header deobfuscation path.
 - Issue locally signed Joint Fabric controller CAT NOCs and grant device access
   through Anchor Datastore groups, with idempotent retries and RefreshNode
   recovery. A live device test verifies CASE access before and after propagation.

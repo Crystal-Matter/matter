@@ -10,8 +10,9 @@ module Matter
       VERSION_SHIFT = 4
 
       # A protocol id is `vendor id << 16 | protocol number`
-      VENDOR_ID_MASK  = 0xFFFF0000_u32
-      VENDOR_ID_SHIFT =             16
+      VENDOR_ID_MASK   = 0xFFFF0000_u32
+      VENDOR_ID_SHIFT  =             16
+      PROTOCOL_ID_MASK =     0xFFFF_u32
 
       # Byte offsets of the fixed part of the packet header
       FLAGS_OFFSET           = 0
@@ -56,11 +57,13 @@ module Matter
         getter? privacy_enhancements : Bool
         getter? control_message : Bool
         getter? message_extensions : Bool
+        getter message_extension_data : Bytes?
 
-        def initialize(@session_id : UInt16, @session_type : SessionType, @message_id : UInt32, @privacy_enhancements : Bool = false, @control_message : Bool = false, @message_extensions : Bool = false, @source_node_id : DataType::NodeId? = nil, @destination_node_id : DataType::NodeId? = nil, @destination_group_id : DataType::GroupId? = nil)
+        def initialize(@session_id : UInt16, @session_type : SessionType, @message_id : UInt32, @privacy_enhancements : Bool = false, @control_message : Bool = false, @message_extensions : Bool = false, @source_node_id : DataType::NodeId? = nil, @destination_node_id : DataType::NodeId? = nil, @destination_group_id : DataType::GroupId? = nil, @message_extension_data : Bytes? = nil)
           if @destination_node_id && @destination_group_id
             raise Matter::CodecError.new("The header cannot contain destination group and node at the same time")
           end
+          @message_extensions = true if @message_extension_data
         end
 
         def flags : UInt8
@@ -82,13 +85,15 @@ module Matter
 
       struct PayloadHeader
         getter exchange_id : UInt16
-        getter protocol_id : UInt16
+        getter protocol_id : UInt32
         getter message_type : UInt8
         getter? initiator_message : Bool
         getter? requires_acknowledge : Bool
         getter acknowledged_message_id : UInt32?
+        getter secured_extensions : Bytes?
 
-        def initialize(@exchange_id : UInt16, @protocol_id : UInt16, @message_type : UInt8, @initiator_message : Bool, @requires_acknowledge : Bool, @acknowledged_message_id : UInt32? = nil)
+        def initialize(@exchange_id : UInt16, protocol_id : UInt16 | UInt32, @message_type : UInt8, @initiator_message : Bool, @requires_acknowledge : Bool, @acknowledged_message_id : UInt32? = nil, @secured_extensions : Bytes? = nil)
+          @protocol_id = protocol_id.to_u32
         end
       end
 
@@ -175,6 +180,9 @@ module Matter
           byte_format.encode(UInt64.new(source_node_id.as(DataType::NodeId).id), io) if source_node_id
           byte_format.encode(UInt64.new(dest_node_id.as(DataType::NodeId).id), io) if dest_node_id
           byte_format.encode(UInt16.new(packet_header.destination_group_id.as(DataType::GroupId).id), io) if packet_header.destination_group_id
+          if packet_header.message_extensions?
+            encode_extension(io, packet_header.message_extension_data || Bytes.empty, "Message extension", byte_format)
+          end
         end
 
         def encode_payload_header(payload_header : PayloadHeader, io : IO::Memory, byte_format : IO::ByteFormat = IO::ByteFormat::LittleEndian)
@@ -183,14 +191,19 @@ module Matter
           flags = (payload_header.initiator_message? ? PayloadHeaderFlag::IsInitiatorMessage.value : 0) | \
             (payload_header.acknowledged_message_id.nil? ? 0 : PayloadHeaderFlag::IsAckMessage.value) | \
             (payload_header.requires_acknowledge? ? PayloadHeaderFlag::RequiresAck.value : 0) | \
+            (payload_header.secured_extensions.nil? ? 0 : PayloadHeaderFlag::HasSecureExtension.value) | \
             (vendor_id != COMMON_VENDOR_ID ? PayloadHeaderFlag::HasVendorId.value : 0)
 
           byte_format.encode(UInt8.new(flags), io)
           byte_format.encode(UInt8.new(payload_header.message_type), io)
           byte_format.encode(UInt16.new(payload_header.exchange_id), io)
 
-          vendor_id != COMMON_VENDOR_ID ? byte_format.encode(UInt32.new(payload_header.protocol_id), io) : byte_format.encode(UInt16.new(payload_header.protocol_id), io)
+          byte_format.encode(vendor_id.to_u16, io) if vendor_id != COMMON_VENDOR_ID
+          byte_format.encode((payload_header.protocol_id & PROTOCOL_ID_MASK).to_u16, io)
           byte_format.encode(UInt32.new(payload_header.acknowledged_message_id.as(UInt32)), io) if payload_header.acknowledged_message_id
+          if extension = payload_header.secured_extensions
+            encode_extension(io, extension, "Secured extension", byte_format)
+          end
         end
 
         private def decode_packet_header(io : IO::Memory, byte_format : IO::ByteFormat = IO::ByteFormat::LittleEndian) : PacketHeader
@@ -223,7 +236,7 @@ module Matter
           # Control messages are valid - used for MRP standalone ACKs and other control functions
 
           has_message_extensions = (security_flags & SecurityFlag::HasMessageExtension.value) != 0
-          raise Matter::CodecError.new("Message extensions not supported") if has_message_extensions
+          message_extension_data = has_message_extensions ? decode_extension(io, "Message extension", byte_format) : nil
 
           PacketHeader.new(session_id: session_id,
             session_type: SessionType.from_value(session_type),
@@ -231,6 +244,7 @@ module Matter
             privacy_enhancements: has_privacy_enhancements,
             control_message: is_control_message,
             message_extensions: has_message_extensions,
+            message_extension_data: message_extension_data,
             source_node_id: source_node_id,
             destination_node_id: destination_node_id,
             destination_group_id: destination_group_id)
@@ -245,20 +259,43 @@ module Matter
           has_secured_extension = (flags & PayloadHeaderFlag::HasSecureExtension.value) != 0
           has_vendor_id = (flags & PayloadHeaderFlag::HasVendorId.value) != 0
 
-          raise Matter::CodecError.new("Secured extension is not supported") if has_secured_extension
-
           message_type = io.read_bytes(UInt8, byte_format)
           exchange_id = io.read_bytes(UInt16, byte_format)
           vendor_id = has_vendor_id ? io.read_bytes(UInt16, byte_format) : COMMON_VENDOR_ID
-          protocol_id = (vendor_id << VENDOR_ID_SHIFT) | io.read_bytes(UInt16, byte_format)
+          protocol_id = (vendor_id.to_u32 << VENDOR_ID_SHIFT) | io.read_bytes(UInt16, byte_format).to_u32
           acknowledged_message_id = is_acknowledge_message ? io.read_bytes(UInt32, byte_format) : nil
+          secured_extensions = has_secured_extension ? decode_extension(io, "Secured extension", byte_format) : nil
 
           PayloadHeader.new(exchange_id: exchange_id,
             protocol_id: protocol_id,
             message_type: message_type,
             initiator_message: is_initiator_message,
             requires_acknowledge: requires_acknowledge,
-            acknowledged_message_id: acknowledged_message_id)
+            acknowledged_message_id: acknowledged_message_id,
+            secured_extensions: secured_extensions)
+        end
+
+        private def encode_extension(io : IO::Memory, extension : Bytes, label : String,
+                                     byte_format : IO::ByteFormat) : Nil
+          if extension.size > UInt16::MAX
+            raise Matter::CodecError.new("#{label} exceeds 65535 bytes")
+          end
+          byte_format.encode(extension.size.to_u16, io)
+          io.write(extension)
+        end
+
+        private def decode_extension(io : IO::Memory, label : String,
+                                     byte_format : IO::ByteFormat) : Bytes
+          if io.size - io.pos < sizeof(UInt16)
+            raise Matter::CodecError.new("#{label} length is truncated")
+          end
+          length = io.read_bytes(UInt16, byte_format)
+          if length > io.size - io.pos
+            raise Matter::CodecError.new("#{label} exceeds received bytes")
+          end
+          extension = Bytes.new(length)
+          io.read_fully(extension)
+          extension
         end
       end
     end
