@@ -65,6 +65,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   apply OptionsMask and OptionsOverride to the Options attribute and leave
   color state unchanged while off unless ExecuteIfOff is set.
 
+### Joint Fabric end-to-end coverage
+
+- Verify a group-CAT controller can change an ordinary device's OnOff state
+  after Datastore ACL propagation, retain access across a device restart, and
+  observe changes made by the Anchor controller on the same fabric.
+
 ### Level control transitions
 
 - Apply MoveToLevel and Step transition times in deciseconds and Move rates in
