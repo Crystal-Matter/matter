@@ -1,6 +1,12 @@
 require "../spec_helper"
 require "../../src/matter/transport/exchange"
 
+class Matter::Transport::ExchangeManager
+  def next_exchange_id_for_spec=(id : UInt16) : Nil
+    @next_exchange_id = id
+  end
+end
+
 describe Matter::Transport::Exchange do
   describe "#initialize" do
     it "creates active exchange" do
@@ -122,6 +128,18 @@ end
 
 describe Matter::Transport::ExchangeManager do
   describe "#create_exchange" do
+    it "does not overwrite an active local exchange when its ID counter wraps" do
+      manager = Matter::Transport::ExchangeManager.new
+      peer = Socket::IPAddress.new("::1", 5540)
+      first = manager.create_exchange(0_u16, 1_u16, peer)
+      manager.next_exchange_id_for_spec = first.exchange_id
+
+      second = manager.create_exchange(0_u16, 1_u16, peer)
+      second.exchange_id.should_not eq(first.exchange_id)
+      manager.get_exchange(first.exchange_id).should be(first)
+      manager.get_exchange(second.exchange_id).should be(second)
+    end
+
     it "retains vendor-qualified protocol IDs" do
       manager = Matter::Transport::ExchangeManager.new
       peer_address = Socket::IPAddress.new("192.168.1.100", 5540)
@@ -161,6 +179,38 @@ describe Matter::Transport::ExchangeManager do
   end
 
   describe "#get_or_create_exchange" do
+    it "separates the same exchange ID by session, peer, and initiator" do
+      manager = Matter::Transport::ExchangeManager.new
+      peer_a = Socket::IPAddress.new("::1", 5540)
+      peer_b = Socket::IPAddress.new("::1", 5541)
+      id = 42_u16
+      outbound = manager.get_or_create_exchange(id, 0_u16, 1_u16, peer_a, initiator: true)
+      inbound = manager.get_or_create_exchange(id, 0_u16, 1_u16, peer_a, initiator: false)
+      other_peer = manager.get_or_create_exchange(id, 0_u16, 1_u16, peer_b, initiator: false)
+      other_session = manager.get_or_create_exchange(id, 0_u16, 2_u16, peer_a, initiator: false)
+
+      manager.active_count.should eq(4)
+      outbound.should_not be(inbound)
+      inbound.should_not be(other_peer)
+      other_peer.should_not be(other_session)
+      manager.get_exchange(id, 1_u16, peer_a, true).should be(outbound)
+      manager.get_exchange(id, 1_u16, peer_a, false).should be(inbound)
+      manager.get_exchange(id, 1_u16, peer_b, false).should be(other_peer)
+      manager.get_exchange(id, 2_u16, peer_a, false).should be(other_session)
+      expect_raises(Matter::ProtocolError, /Ambiguous/) { manager.get_exchange(id) }
+    end
+
+    it "treats IPv4 and its dual-stack mapped address as one peer" do
+      manager = Matter::Transport::ExchangeManager.new
+      ipv4 = Socket::IPAddress.new("127.0.0.1", 5540)
+      mapped = Socket::IPAddress.new("::ffff:127.0.0.1", 5540)
+      exchange = manager.get_or_create_exchange(7_u16, 0_u16, 0_u16, ipv4)
+
+      manager.get_or_create_exchange(7_u16, 0_u16, 0_u16, mapped).should be(exchange)
+      manager.get_exchange(7_u16, 0_u16, mapped, false).should be(exchange)
+      manager.active_count.should eq(1)
+    end
+
     it "creates new exchange if not exists" do
       manager = Matter::Transport::ExchangeManager.new
       peer_address = Socket::IPAddress.new("192.168.1.100", 5540)
@@ -246,6 +296,21 @@ describe Matter::Transport::ExchangeManager do
   end
 
   describe "#close_exchange" do
+    it "closes only the selected peer exchange when IDs are shared" do
+      manager = Matter::Transport::ExchangeManager.new
+      peer_a = Socket::IPAddress.new("::1", 5540)
+      peer_b = Socket::IPAddress.new("::1", 5541)
+      first = manager.get_or_create_exchange(7_u16, 0_u16, 0_u16, peer_a)
+      second = manager.get_or_create_exchange(7_u16, 0_u16, 0_u16, peer_b)
+
+      manager.close_exchange(7_u16, 0_u16, peer_a, false)
+
+      first.state.should eq(Matter::Transport::Exchange::State::Closed)
+      second.state.should eq(Matter::Transport::Exchange::State::Active)
+      manager.get_exchange(7_u16, 0_u16, peer_a, false).should be_nil
+      manager.get_exchange(7_u16, 0_u16, peer_b, false).should be(second)
+    end
+
     it "closes and removes exchange" do
       manager = Matter::Transport::ExchangeManager.new
       peer_address = Socket::IPAddress.new("192.168.1.100", 5540)
