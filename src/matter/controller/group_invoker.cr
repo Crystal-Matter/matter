@@ -17,8 +17,12 @@ module Matter
       def initialize(@client : Client, @store : StateStore,
                      sender : Protocol::GroupMessageSender? = nil)
         @store.load
-        @sender = sender || Protocol::GroupMessageSender.new(@client.transport,
-          Session::GroupOutgoingCounters.new(@store.backend))
+        @sender = sender || begin
+          udp = @client.transport.as?(Transport::UDPTransport) ||
+                raise Matter::ConfigurationError.new("Group multicast requires UDP transport")
+          Protocol::GroupMessageSender.new(udp,
+            Session::GroupOutgoingCounters.new(@store.backend))
+        end
       end
 
       # Derive and retain only the operational key for the current epoch. Call

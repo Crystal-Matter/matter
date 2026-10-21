@@ -3,6 +3,7 @@ require "log"
 require "../codec/message_codec"
 require "./message_counter"
 require "./exchange"
+require "./packet_transport"
 
 module Matter
   module Transport
@@ -14,7 +15,7 @@ module Matter
     # - Exchange management (request/response correlation) and acknowledgement
     #
     # Uses a single dual-stack IPv6 socket that accepts both IPv4 and IPv6 connections.
-    class UDPTransport
+    class UDPTransport < PacketTransport
       Log = ::Log.for("matter.transport.udp_transport")
 
       # Matter default port
@@ -82,9 +83,6 @@ module Matter
       end
 
       getter socket : UDPSocket
-      getter port : Int32
-      getter message_counter : MessageCounter
-      getter exchange_manager : ExchangeManager
 
       # Unsecured counters belong to a sender's UDP socket. Independent
       # controller transports may use the same Node ID with fresh counters.
@@ -94,8 +92,6 @@ module Matter
 
       # Callback for received messages
       # Signature: (message : Codec::MessageCodec::Message, peer_address : Socket::IPAddress) -> Nil
-      property on_message : Proc(Codec::MessageCodec::Message, Socket::IPAddress, Nil)?
-      property on_group_packet : Proc(Bytes, Socket::IPAddress, Nil)?
 
       # A controller sharing this socket may claim its own CASE exchange or
       # secure session before the device's default handler sees the packet.
@@ -134,6 +130,10 @@ module Matter
       @running : Bool
       @receive_fiber : Fiber?
       @last_exchange_sweep : Time = Time.utc
+
+      getter port : Int32
+      getter message_counter : MessageCounter
+      getter exchange_manager : ExchangeManager
 
       def initialize(@port : Int32 = MATTER_PORT)
         # Create dual-stack IPv6 socket (accepts both IPv4 and IPv6)

@@ -39,7 +39,7 @@ module Matter
       DEFAULT_PBKDF_ITERATIONS = 1000_u32
       PBKDF_SALT_LENGTH        =       32
 
-      getter transport : Transport::UDPTransport
+      getter transport : Transport::PacketTransport
       getter bdx : Bdx::Responder
       getter bdx_initiator : Bdx::Initiator
 
@@ -98,7 +98,7 @@ module Matter
       delegate on_get_fabric, :on_get_fabric=, to: @secure_channel
 
       def initialize(
-        @transport : Transport::UDPTransport,
+        @transport : Transport::PacketTransport,
         setup_pin : UInt32,
         @discriminator : UInt16,
         @fabric_table : FabricTable,
@@ -156,6 +156,8 @@ module Matter
           header_bytes = msg.header_bytes.try(&.dup)
           detached = Codec::MessageCodec::Message.new(msg.packet_header, msg.payload_header, payload, header_bytes)
           @inbound_messages.send({detached, peer})
+      rescue Channel::ClosedError
+          # A transport receive fiber can finish a packet while the handler is closing.
         end
         @transport.on_group_packet = ->(wire : Bytes, peer : Socket::IPAddress) do
           handle_group_packet(wire, peer)

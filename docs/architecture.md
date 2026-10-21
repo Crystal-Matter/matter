@@ -20,7 +20,7 @@ no glob requires, so a layer can only reach downwards.
                               |
                      Matter::Session            session/{pase,case}/*.cr, secure_message.cr, context.cr
                               |
-                    Matter::Transport           transport/{udp_transport,btp_codec,exchange,message_counter}.cr
+                    Matter::Transport           transport/{packet_transport,udp_transport,btp_message_transport,btp_codec,exchange,message_counter}.cr
                               |
    Matter::MDNS   Matter::Network   Matter::Storage   Matter::Codec / Crypto / Certificate
    mdns/*.cr      network/*.cr      storage/*.cr      codec/*.cr, crypto/*.cr, certificate/*.cr
@@ -40,13 +40,17 @@ outbound route probes until native interface enumeration is available there.
 local initiator role, and peer address. Two controllers or opposite initiators
 may use the same numeric ID without taking over each other's exchange state.
 
-`Transport::BtpCodec` encodes and validates Matter BLE BTP handshakes and data
-segments. `Transport::BtpSession` manages sequencing, fragmentation,
-reassembly, receive windows, acknowledgements, and timeouts after handshake
-negotiation. A platform adapter must write its outgoing frames in order, pass
-incoming GATT frames to the session, and poll its ACK deadlines. BLE discovery,
-GATT connection management, and PASE over BTP are not yet wired to the
-controller or device runtime; those paths still use UDP.
+`Transport::PacketTransport` is the complete Matter packet boundary shared by
+UDP and BTP. `Transport::BtpCodec` encodes and validates Matter BLE BTP
+handshakes and data segments. `Transport::BtpSession` manages sequencing,
+fragmentation, reassembly, receive windows, acknowledgements, and timeouts after
+handshake negotiation. `Transport::BtpMessageTransport` binds that session to a
+`GattFragmentChannel`, so a controller `Client` and device `MessageHandler` can
+exchange PASE and encrypted Interaction Model packets over an established BTP
+link. The adapter must write and read complete GATT fragments in order. A
+platform implementation still needs BLE discovery, connection management,
+notification subscriptions, and BTP handshake negotiation before constructing
+the packet transport. The default controller and device runtime use UDP.
 
 Two rules keep the tree honest:
 

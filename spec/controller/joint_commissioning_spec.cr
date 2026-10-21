@@ -312,7 +312,7 @@ describe Matter::Controller::JointCommissioning do
     sender.port.should eq(client.transport.port)
     result.receive.should be_a(Matter::TimeoutError)
     adopted.should be_false
-    client.transport.socket.closed?.should be_false
+    client.transport.as(Matter::Transport::UDPTransport).socket.closed?.should be_false
   ensure
     listener.try(&.close)
     client.try(&.close)

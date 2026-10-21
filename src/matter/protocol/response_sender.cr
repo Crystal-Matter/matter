@@ -25,7 +25,7 @@ module Matter
       # collide with the exchanges a controller opens.
       property next_exchange_id : UInt16 = Random.rand(UInt16).to_u16
 
-      def initialize(@transport : Transport::UDPTransport, @mrp_cache : MrpCache)
+      def initialize(@transport : Transport::PacketTransport, @mrp_cache : MrpCache)
       end
 
       # Sends an Interaction Model message on the exchange *original_msg*
