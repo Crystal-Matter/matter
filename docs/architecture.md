@@ -276,6 +276,10 @@ persistence, so everything dirtied in a burst is written once, in one transactio
 | `app/<id>` | the application, and `endpoint_template` parameters | on write |
 | `meta/schema` | the backend itself | on open |
 
+The endpoint 0 OTA Requestor keeps one DefaultOTAProviders entry per fabric
+in its cluster document. It binds an administrator's write to that request's
+fabric and removes the entry before the local FabricIndex can be reused.
+
 On start, `Protocol::Persistence::StorageBackend#restore` brings back only CASE sessions whose
 fabric still exists, and only subscriptions whose session came back. `Device#shutdown!` persists
 sessions, closes the handler, flushes and closes persistence, then closes the transport and the

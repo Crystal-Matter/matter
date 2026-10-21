@@ -112,6 +112,13 @@ The declarations are:
 The DSL rules are documented at the top of `src/matter/device/dsl.cr`, and the cluster DSL that
 backs the cluster classes at the top of `src/matter/cluster/dsl.cr`.
 
+Every device includes the OTA Software Update Requestor cluster on endpoint 0.
+An administrator can write one DefaultOTAProviders entry on each fabric. The
+device keeps those entries separate, saves them with its cluster state, and
+removes an entry when its fabric is removed. This provider registry does not
+yet query, download, or apply an update; applications must supply an update
+engine before advertising actual update capability.
+
 ### Cluster values
 
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;
