@@ -291,6 +291,13 @@ An optional OTA Provider cluster routes QueryImage, ApplyUpdateRequest, and
 NotifyUpdateApplied to application callbacks with the authenticated fabric
 and peer Node ID. Its command handlers do not own image files or update tokens;
 the application supplies those and registers any BDX file designator separately.
+The Requestor cluster declares AnnounceOTAProvider and the StateTransition,
+VersionApplied, and DownloadError events. `Controller::OtaRequestorClient`
+uses the shared controller's IM and BDX clients to query and stage an image on
+the provider's CASE session. `Protocol::OtaImage` validates the staged file in
+bounded reads, including its header identity, version, size, and payload
+digest. The staging IO belongs to the application; installing a validated
+image and surviving rollback remain application responsibilities.
 
 On start, `Protocol::Persistence::StorageBackend#restore` brings back only CASE sessions whose
 fabric still exists, and only subscriptions whose session came back. `Device#shutdown!` persists
