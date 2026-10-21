@@ -13,12 +13,16 @@ import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
+SETUP_PIN_PATTERN = r"Setup PIN:\s*(\d{1,8})(?!\d)"
+JFC_PROMPT_PATTERN = r">>>[ \t]*(?:\r|$)"
+
 
 class ManagedProcess:
-    def __init__(self, name, argv, cwd, log_dir):
+    def __init__(self, name, argv, cwd, log_dir, env=None):
         self.name = name
         self.master, slave = pty.openpty()
         self.log = (log_dir / f"{name}.log").open("wb")
@@ -28,11 +32,14 @@ class ManagedProcess:
             stdin=slave,
             stdout=slave,
             stderr=slave,
+            env=env,
             start_new_session=True,
             close_fds=True,
         )
         os.close(slave)
         self.output = ""
+        self.reader = None
+        self.reader_stop = threading.Event()
 
     def drain(self, seconds=0.2):
         readable, _, _ = select.select([self.master], [], [], seconds)
@@ -67,6 +74,18 @@ class ManagedProcess:
         os.write(self.master, (value + "\n").encode())
         return start
 
+    def start_background_drain(self):
+        """Keep a chatty device from blocking when another process is awaited."""
+        if self.reader is not None:
+            return
+
+        def read_until_stopped():
+            while not self.reader_stop.is_set():
+                self.drain(0.2)
+
+        self.reader = threading.Thread(target=read_until_stopped, daemon=True)
+        self.reader.start()
+
     def close(self):
         if self.process.poll() is None:
             os.killpg(self.process.pid, signal.SIGTERM)
@@ -75,6 +94,9 @@ class ManagedProcess:
             except subprocess.TimeoutExpired:
                 os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait(timeout=5)
+        self.reader_stop.set()
+        if self.reader is not None:
+            self.reader.join(timeout=2)
         self.drain(0)
         os.close(self.master)
         self.log.close()
@@ -108,16 +130,20 @@ def run(args):
             jfa_state, logs,
         )
         processes.append(jfa)
+        jfa.start_background_drain()
         # The SDK JFA starts its Pigweed server before the JFC connects.
         time.sleep(3)
-        jfa.drain(0)
         if jfa.process.poll() is not None:
             raise RuntimeError("official JFA exited during startup")
 
-        switch = ManagedProcess("switch", [str(switch_bin), "--no-interactive"], switch_state, logs)
+        switch_env = os.environ.copy()
+        switch_env["MATTER_SWITCH_IP_ADDRESS"] = "fd42:4d41:5454::2"
+        switch = ManagedProcess("switch", [str(switch_bin), "--no-interactive"],
+                                switch_state, logs, switch_env)
         processes.append(switch)
-        pin = switch.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
+        pin = switch.expect(SETUP_PIN_PATTERN, 60).group(1)
         switch.expect(r"Starting in Commissioning Mode", 60)
+        switch.start_background_drain()
 
         jfc_state = logs / "jfc-state"
         jfc_state.mkdir(exist_ok=True)
@@ -128,19 +154,19 @@ def run(args):
             jfc_state, logs,
         )
         processes.append(jfc)
-        jfc.expect(r">>>\s*$", 90)
+        jfc.expect(JFC_PROMPT_PATTERN, 90)
 
         anchor_start = jfc.command("pairing onnetwork-long 1 11022033 3840 --anchor true")
         jfc.expect(r"Anchor Administrator \(nodeId=1\) commissioned with success", 180, anchor_start)
-        jfc.expect(r">>>\s*$", 30, anchor_start)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, anchor_start)
 
         device_start = jfc.command(f"pairing onnetwork 2 {pin} --regular 1")
         jfc.expect(r"Device \(nodeId=2\) commissioned with success", 180, device_start)
-        jfc.expect(r">>>\s*$", 30, device_start)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, device_start)
 
         fabric_start = jfc.command("operationalcredentials read fabrics 2 0")
         jfc.expect(r"Fabrics:\s*[1-9]\d*\s+entries", 90, fabric_start)
-        jfc.expect(r">>>\s*$", 30, fabric_start)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, fabric_start)
 
         acl_start = jfc.command("accesscontrol read acl 2 0")
         jfc.expect(r"ACL:\s*[1-9]\d*\s+entries", 90, acl_start)

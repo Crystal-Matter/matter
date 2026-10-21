@@ -69,4 +69,9 @@ module MatterSwitch
   end
 end
 
-Examples.main("Matter Switch Device") { MatterSwitch::Device.new }
+Examples.main("Matter Switch Device") do
+  ip_addresses = ENV["MATTER_SWITCH_IP_ADDRESS"]?.try do |address|
+    [Socket::IPAddress.new(address, Matter::Network::UNSPECIFIED_PORT)]
+  end
+  MatterSwitch::Device.new(ip_addresses: ip_addresses)
+end
