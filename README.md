@@ -159,11 +159,15 @@ group.install_epoch_key(fabric.fabric_id, fabric.root_public_key,
 group.invoke(fabric.fabric_id, 0x1234_u16,
   Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
   root_public_key: fabric.root_public_key)
+group.write(fabric.fabric_id, 0x1234_u16,
+  Matter::Cluster::LevelControl::CLUSTER_ID,
+  Matter::Cluster::LevelControl::ATTR_OPTIONS, TLV::Any.new(1_u8, nil),
+  root_public_key: fabric.root_public_key)
 ```
 
-`invoke` selects the controller identity on that fabric, reserves a durable
-message counter, and sends an authenticated private InvokeRequest to the
-fabric and group multicast address. It has no response; confirm effects with a
+`invoke` and `write` select the controller identity on that fabric, reserve a durable
+message counter, and send an authenticated private request to the fabric and
+group multicast address. They have no response; confirm effects with a
 separate CASE read if needed. Specify `controller_node_id:` as well when
 multiple controller identities share a fabric. Install the new epoch key before
 rotating a group's key set; `remove_group_key` erases the stored key.
