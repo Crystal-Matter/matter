@@ -17,6 +17,7 @@ module Matter
       PROTOCOL_INTERACTION_MODEL = 0x0001_u16
 
       MSG_STANDALONE_ACK      = 0x10_u8
+      MSG_REPORT_DATA         = 0x05_u8
       MAX_CACHED_ACKS         = Transport::MessageCounter::WINDOW_SIZE
       MAX_DEFERRED_MESSAGES   = 256
       DEFERRED_CHECK_INTERVAL = 10.milliseconds
@@ -298,6 +299,10 @@ module Matter
         msg = rec.message
         return unless msg.payload_header.requires_acknowledge?
         return if msg.packet_header.session_id == 0
+        # ReportData uses the Interaction Model StatusResponse ladder. Sending
+        # an MRP ACK here as well would advance a chunked publisher twice.
+        return if msg.payload_header.protocol_id == PROTOCOL_INTERACTION_MODEL &&
+                  msg.payload_header.message_type == MSG_REPORT_DATA
 
         session = @sessions[msg.packet_header.session_id]?
         return unless session
