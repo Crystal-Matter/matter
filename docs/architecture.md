@@ -283,6 +283,10 @@ persistence, so everything dirtied in a burst is written once, in one transactio
 The endpoint 0 OTA Requestor keeps one DefaultOTAProviders entry per fabric
 in its cluster document. It binds an administrator's write to that request's
 fabric and removes the entry before the local FabricIndex can be reused.
+An optional OTA Provider cluster routes QueryImage, ApplyUpdateRequest, and
+NotifyUpdateApplied to application callbacks with the authenticated fabric
+and peer Node ID. Its command handlers do not own image files or update tokens;
+the application supplies those and registers any BDX file designator separately.
 
 On start, `Protocol::Persistence::StorageBackend#restore` brings back only CASE sessions whose
 fabric still exists, and only subscriptions whose session came back. `Device#shutdown!` persists
