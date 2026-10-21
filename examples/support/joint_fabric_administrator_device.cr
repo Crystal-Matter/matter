@@ -386,6 +386,7 @@ module MatterJointFabricAdministrator
         begin_transfer: -> { begin_anchor_transfer },
         complete_transfer: -> { persist_anchor_role(false); lifecycle.sync_advertisements; nil },
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
+        initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: persisted_icac,
         persist_icac: ->(certificate : Bytes?) { persist_icac(certificate) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
@@ -568,6 +569,18 @@ module MatterJointFabricAdministrator
       ::Log.for("matter.example.joint_fabric_administrator").info do
         "Recorded authenticated Anchor transfer requester 0x#{node_id.to_s(16)}"
       end
+    end
+
+    private def persisted_transfer_requester(fabric : Matter::Fabric,
+                                             datastore : Datastore) : Tuple(UInt64, UInt8)?
+      return unless datastore.status.state.delete_pending?
+      document = persistence.app_document(APP_TRANSFER_WATCH_DOCUMENT)
+      return unless document
+      watch = TransferWatchState.from_document(document)
+      return unless watch.old_fabric_id == fabric.fabric_id &&
+                    watch.old_root_public_key == fabric.root_public_key &&
+                    watch.requester_node_id != 0_u64
+      {watch.requester_node_id, fabric.fabric_index}
     end
 
     # The wire request identifies B on the old fabric. A local, provisioned

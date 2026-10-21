@@ -121,6 +121,23 @@ describe MatterJointFabricAdministrator::Device do
     device.joint_fabric_datastore.begin_anchor_transfer.should be_true
     device.advertised_joint_role.should be_nil
 
+    watch = MatterJointFabricAdministrator::Device::TransferWatchState.new(
+      0x44_u64, fabric_id, root_key.public_key, nil)
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_WATCH_DOCUMENT,
+      watch.to_document)
+    device.persistence.save_cluster(device.joint_fabric_datastore).should be_true
+    device.persistence.flush
+    restarted = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restarted.install_test_fabric(fabric)
+    administrator = restarted.joint_fabric_administrator
+    administrator.request_is_case_session = true
+    administrator.request_peer_subject_ids = [0x44_u64, 0xFFFF_FFFD_FFFF_0001_u64]
+    administrator.request_peer_node_id = 0x44_u64
+    administrator.request_fabric_index = 1_u8
+    service = administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
+    service.transfer_anchor_complete(administrator).should eq(Matter::InteractionModel::Status.success)
+
     device.remove_test_fabric(1_u8)
     state_store.load.fabrics.should be_empty
     device.advertised_joint_role.should eq(Matter::MDNS::JointFabricRole::Available)

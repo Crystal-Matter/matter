@@ -880,6 +880,7 @@ module Matter
                Crypto::MatterCertificate::Validation.certificate_authority?(icac)
           raise Matter::CertificateError.new("Anchor exchange returned an ICAC with the wrong identity")
         end
+        Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, fabric.fabric_id)
         Crypto::MatterCertificate::Validation.verify_issued_by(icac, fabric.root_cert)
         Crypto::MatterCertificate::Validation.verify_signature(icac, fabric.root_public_key)
       end

@@ -1,6 +1,44 @@
 require "../spec_helper"
 require "../../src/matter/commissioning/joint_fabric_administrator_service"
 
+private def jfa_icac_install_status(certificate : Bytes, root : Bytes,
+                                    icac_key : Matter::Crypto::Key,
+                                    anchor_icac : Bytes) : Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum
+  service = Matter::Commissioning::JointFabricAdministratorService.new(
+    icac_key, root, 0x1234_u64,
+    -> { true }, ->(_index : UInt8) { true },
+    ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+    ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil },
+    verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+    failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
+  cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+  cluster.administrator_fabric_index = 1_u8
+  cluster.request_is_case_session = true
+  cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0001_u64]
+  cluster.request_peer_icac = anchor_icac
+  cluster.request_peer_node_id = 7_u64
+  cluster.request_fabric_index = 2_u8
+  cluster.request_session_id = 3_u64
+  cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+  service.announce_joint_fabric_administrator(cluster,
+    Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
+  service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+    Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+  service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(certificate))
+    .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code
+end
+
+private def jfa_resign_certificate(certificate : Bytes, issuer_key : Matter::Crypto::Key,
+                                   & : TLV::Structure -> Nil) : Bytes
+  fields = TLV::Any.from_slice(certificate).as_structure
+  yield fields
+  signature = Matter::Crypto::StandardCrypto.new.sign_ecdsa(issuer_key,
+    Matter::Crypto::MatterCertificate::Asn1.to_unsigned_asn1(TLV::Any.new(fields, nil)))
+  fields[Matter::Crypto::MatterCertificate::Asn1::Field::Signature.value] =
+    TLV::Any.new(signature, Matter::Crypto::MatterCertificate::Asn1::Field::Signature.value)
+  TLV::Any.new(fields, nil).to_slice
+end
+
 describe Matter::Commissioning::JointFabricAdministratorService do
   crypto = Matter::Crypto::StandardCrypto.new
   root_key = crypto.create_key_pair
@@ -10,6 +48,30 @@ describe Matter::Commissioning::JointFabricAdministratorService do
   anchor_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
     icac_key.public_key, fabric_id, 3_u64, root_key, 1_u64, Bytes[0x06], crypto, anchor: true
   )
+
+  it "rejects expired, non-signing, and wrong-fabric cross-signed ICACs" do
+    certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[0x02], crypto)
+    ok = Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK
+    invalid = Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidICAC
+    jfa_icac_install_status(certificate, root, icac_key, anchor_icac).should eq(ok)
+
+    Timecop.travel(Time.utc + 11.years) do
+      jfa_icac_install_status(certificate, root, icac_key, anchor_icac).should eq(invalid)
+    end
+
+    usage_tag = Matter::Crypto::MatterCertificate::Asn1::Extension::KeyUsage.value
+    non_signing = jfa_resign_certificate(certificate, root_key) do |fields|
+      extensions = fields[Matter::Crypto::MatterCertificate::Asn1::Field::Extensions.value].as_list
+      index = extensions.index { |extension| extension.header.ids == usage_tag }.as(Int32)
+      extensions[index] = TLV::Any.new(1_u16, usage_tag)
+    end
+    jfa_icac_install_status(non_signing, root, icac_key, anchor_icac).should eq(invalid)
+
+    wrong_fabric = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      icac_key.public_key, fabric_id + 1_u64, 2_u64, root_key, 1_u64, Bytes[0x03], crypto)
+    jfa_icac_install_status(wrong_fabric, root, icac_key, anchor_icac).should eq(invalid)
+  end
 
   it "rejects a CSR key unrelated to the existing Administrator ICAC" do
     other = crypto.create_key_pair
@@ -131,7 +193,32 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.unsupported_access)
     cluster.request_fabric_index = 1_u8
     service.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.success)
-    service.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.unsupported_access)
+    service.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.success)
+  end
+
+  it "completes a transfer after restoring its authenticated requester on restart" do
+    completions = 0
+    make_service = -> {
+      Matter::Commissioning::JointFabricAdministratorService.new(
+        icac_key, root, fabric_id,
+        -> { true }, ->(_index : UInt8) { true },
+        ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+        ->(_node : UInt64) { true }, -> { false }, -> { nil },
+        -> { completions += 1; nil }, crypto,
+        initial_transfer_requester: {0x44_u64, 1_u8})
+    }
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.request_is_case_session = true
+    cluster.request_peer_subject_ids = [0x44_u64, 0xFFFF_FFFD_FFFF_0001_u64]
+    cluster.request_peer_node_id = 0x44_u64
+    cluster.request_fabric_index = 2_u8
+    restored = make_service.call
+    restored.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.unsupported_access)
+    cluster.request_fabric_index = 1_u8
+    restored.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.success)
+    # Simulate the acknowledgement being lost and the service restarting.
+    make_service.call.transfer_anchor_complete(cluster).should eq(Matter::InteractionModel::Status.success)
+    completions.should eq(2)
   end
 
   it "returns the JFA statuses required for OpenJointCommissioningWindow" do

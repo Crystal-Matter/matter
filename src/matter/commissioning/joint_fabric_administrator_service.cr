@@ -60,7 +60,12 @@ module Matter
         existing_icac_certificate : Bytes? = nil,
         @failsafe_fabric_matches : Proc(UInt8?, Bool)? = nil,
         @on_transfer_requested : Proc(UInt64, UInt8, Nil)? = nil,
+        initial_transfer_requester : Tuple(UInt64, UInt8)? = nil,
       )
+        if requester = initial_transfer_requester
+          @transfer_requester_node_id = requester[0]
+          @transfer_requester_fabric_index = requester[1]
+        end
         @cross_signed_icac = initial_icac.try(&.dup)
         @committed_icac = initial_icac.try(&.dup)
         root = Crypto::MatterCertificate.from_slice(@root_certificate)
@@ -172,6 +177,8 @@ module Matter
                Crypto::MatterCertificate::Validation.certificate_authority?(request.icac_value)
           return Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::InvalidICAC)
         end
+        Crypto::MatterCertificate::Validation.verify_intermediate_profile(request.icac_value,
+          identity.fabric_id)
         root_key = Crypto::MatterCertificate.public_key_from_tlv(identity.root_certificate)
         Crypto::MatterCertificate::Validation.verify_issued_by(request.icac_value, identity.root_certificate)
         Crypto::MatterCertificate::Validation.verify_signature(request.icac_value, root_key)
@@ -231,8 +238,8 @@ module Matter
                                                                   cluster.request_peer_node_id == requester &&
                                                                   cluster.request_fabric_index == @transfer_requester_fabric_index
         @complete_transfer.call
-        @transfer_requester_node_id = nil
-        @transfer_requester_fabric_index = nil
+        # Retain the authenticated requester for an idempotent retry if the
+        # response is lost, including after the host restores it on restart.
         InteractionModel::Status.success
       end
 
@@ -290,6 +297,7 @@ module Matter
         certificate = Crypto::MatterCertificate.from_slice(icac)
         return Admin::ICACResponseStatusEnum::InvalidICAC unless certificate.subject.fabric_id == identity.fabric_id && certificate.subject.icac_id &&
                                                                  Crypto::MatterCertificate::Validation.certificate_authority?(icac)
+        Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, identity.fabric_id)
         root_key = Crypto::MatterCertificate.public_key_from_tlv(identity.root_certificate)
         Crypto::MatterCertificate::Validation.verify_issued_by(icac, identity.root_certificate)
         Crypto::MatterCertificate::Validation.verify_signature(icac, root_key)

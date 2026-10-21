@@ -65,20 +65,7 @@ module Matter
             end
           end
           if icac
-            unless certificate_authority?(icac) && key_cert_sign?(icac)
-              raise Matter::AuthenticationError.new("Intermediate certificate cannot sign certificates")
-            end
-
-            intermediate = MatterCertificate.from_slice(icac)
-            unless intermediate.subject.icac_id && intermediate.subject.icac_id != 0_u64 &&
-                   intermediate.subject.node_id.nil? && intermediate.subject.rcac_id.nil? &&
-                   intermediate.subject.noc_cat.nil?
-              raise Matter::AuthenticationError.new("Intermediate certificate has an invalid ICAC subject")
-            end
-            if intermediate.subject.fabric_id && node.subject.fabric_id != intermediate.subject.fabric_id
-              raise Matter::AuthenticationError.new("Intermediate and node certificates name different fabrics")
-            end
-            verify_validity(icac)
+            verify_intermediate_profile(icac, node.subject.fabric_id)
 
             verify_issued_by(icac, root) if root
             verify_signature(icac, root_public_key)
@@ -88,6 +75,24 @@ module Matter
             verify_issued_by(noc, root) if root
             verify_signature(noc, root_public_key)
           end
+        end
+
+        # Check the ICAC profile independently of a NOC. AddICAC installs a
+        # cross-signed authority before that authority has issued any nodes.
+        def verify_intermediate_profile(certificate : Bytes, fabric_id : UInt64? = nil) : Nil
+          unless certificate_authority?(certificate) && key_cert_sign?(certificate)
+            raise Matter::AuthenticationError.new("Intermediate certificate cannot sign certificates")
+          end
+          intermediate = MatterCertificate.from_slice(certificate)
+          unless intermediate.subject.icac_id && intermediate.subject.icac_id != 0_u64 &&
+                 intermediate.subject.node_id.nil? && intermediate.subject.rcac_id.nil? &&
+                 intermediate.subject.noc_cat.nil?
+            raise Matter::AuthenticationError.new("Intermediate certificate has an invalid ICAC subject")
+          end
+          if fabric_id && intermediate.subject.fabric_id && fabric_id != intermediate.subject.fabric_id
+            raise Matter::AuthenticationError.new("Intermediate and node certificates name different fabrics")
+          end
+          verify_validity(certificate)
         end
 
         # An RCAC installed as a trust anchor must have the root profile and
