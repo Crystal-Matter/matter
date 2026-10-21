@@ -341,8 +341,9 @@ module MatterJointFabricAdministrator
         ::Log.for("matter.example.joint_fabric_administrator").info { "JFA activation skipped: no Anchor ICAC" }
         return
       end
-      key = provisioned_icac_key(fabric, icac)
-      unless key
+      remote_csr_path = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+      key = remote_csr_path ? nil : provisioned_icac_key(fabric, icac)
+      unless key || remote_csr_path
         ::Log.for("matter.example.joint_fabric_administrator").warn do
           "JFA activation skipped: Anchor ICAC private key unavailable or mismatched (fabric_id=0x#{fabric.fabric_id.to_s(16)})"
         end
@@ -374,6 +375,9 @@ module MatterJointFabricAdministrator
 
       administrator = joint_fabric_administrator
       administrator.administrator_fabric_index = fabric.fabric_index
+      remote_csr_provider = remote_csr_path.try do |path|
+        Matter::Commissioning::RemoteIcacCsrProvider.new(path, fabric.fabric_id, fabric.root_public_key)
+      end
       administrator.service = Matter::Commissioning::JointFabricAdministratorService.new(
         icac_private_key: key,
         root_certificate: root,
@@ -394,6 +398,7 @@ module MatterJointFabricAdministrator
         },
         resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
         existing_icac_certificate: icac,
+        icac_csr_provider: remote_csr_provider,
         failsafe_fabric_matches: ->(index : UInt8?) {
           if context = general_commissioning.failsafe_context
             context.armed? && !index.nil? &&
@@ -1218,6 +1223,9 @@ module MatterJointFabricAdministrator
       identity = store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
       unless identity.controller_node_id == own_fabric.node_id && identity.controller_noc == own_fabric.operational_cert
         raise Matter::AuthenticationError.new("Anchor CASE identity does not match its operational fabric")
+      end
+      if jcm_parameters && identity.root_private_key.nil?
+        raise Matter::ConfigurationError.new("JCM Anchor signing requires a local root issuer")
       end
 
       scanner = Matter::Controller::Scanner.new

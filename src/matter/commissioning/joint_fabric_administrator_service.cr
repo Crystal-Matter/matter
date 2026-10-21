@@ -1,6 +1,7 @@
 require "../cluster/joint_fabric_administrator"
 require "../crypto/certificate_validation"
 require "../crypto/pkcs10"
+require "./remote_icac_csr_provider"
 
 module Matter
   module Commissioning
@@ -31,13 +32,14 @@ module Matter
       @verified_initiator_fabric_index : UInt8?
       @previous_administrator_fabric_index : UInt8?
       @administrator_cluster : Admin?
+      @authenticated_icac_public_key : Bytes?
 
       ADMINISTRATOR_CAT_SUBJECT_PREFIX = 0xFFFF_FFFD_FFFF_0000_u64
       ANCHOR_CAT_SUBJECT_PREFIX        = 0xFFFF_FFFD_FFFE_0000_u64
       MAX_ICAC_BYTES                   =                       400
 
       def initialize(
-        @icac_private_key : Crypto::Key,
+        @icac_private_key : Crypto::Key?,
         @root_certificate : Bytes,
         @fabric_id : UInt64,
         @failsafe_armed : Proc(Bool),
@@ -61,7 +63,12 @@ module Matter
         @failsafe_fabric_matches : Proc(UInt8?, Bool)? = nil,
         @on_transfer_requested : Proc(UInt64, UInt8, Nil)? = nil,
         initial_transfer_requester : Tuple(UInt64, UInt8)? = nil,
+        @icac_csr_provider : RemoteIcacCsrProvider? = nil,
       )
+        @authenticated_icac_public_key = nil
+        if @icac_private_key.nil? == @icac_csr_provider.nil?
+          raise Matter::ConfigurationError.new("Configure exactly one JFA ICAC CSR signer")
+        end
         if requester = initial_transfer_requester
           @transfer_requester_node_id = requester[0]
           @transfer_requester_fabric_index = requester[1]
@@ -74,11 +81,16 @@ module Matter
         end
         Crypto::MatterCertificate::Validation.verify_signature(@root_certificate, root.ec_public_key)
         if existing_icac = existing_icac_certificate
-          unless Crypto::MatterCertificate.public_key_from_tlv(existing_icac) == @icac_private_key.public_key
+          expected_key = @icac_private_key.try(&.public_key) || Crypto::MatterCertificate.public_key_from_tlv(existing_icac)
+          unless Crypto::MatterCertificate.public_key_from_tlv(existing_icac) == expected_key
             raise Matter::ConfigurationError.new("JFA CSR key differs from its existing ICAC key")
           end
           Crypto::MatterCertificate::Validation.verify_issued_by(existing_icac, @root_certificate)
           Crypto::MatterCertificate::Validation.verify_signature(existing_icac, root.ec_public_key)
+          @authenticated_icac_public_key = expected_key
+        end
+        if @icac_csr_provider && existing_icac_certificate.nil?
+          raise Matter::ConfigurationError.new("Remote JFA CSR signer requires an authenticated existing ICAC")
         end
       end
 
@@ -135,11 +147,23 @@ module Matter
         return InteractionModel::Status.unsupported_access unless anchor_principal?(cluster)
         return InteractionModel::Status.unsupported_access unless failsafe_fabric_matches?(cluster)
 
-        @last_csr_public_key = @icac_private_key.public_key
+        public_key = @icac_private_key.try(&.public_key) || @authenticated_icac_public_key ||
+                     raise Matter::ConfigurationError.new("JFA ICAC public key is unavailable")
+        csr = if provider = @icac_csr_provider
+                provider.request
+              elsif key = @icac_private_key
+                Crypto::Pkcs10.create(key, @crypto)
+              else
+                raise Matter::ConfigurationError.new("JFA ICAC CSR signer is unavailable")
+              end
+        Crypto::Pkcs10.verify(csr, public_key, @crypto)
+        @last_csr_public_key = public_key
         @csr_requester_session_id = cluster.request_session_id
         @csr_requester_fabric_index = cluster.request_fabric_index
         Admin::ICACCSRResponse.new(Admin::ICACCSRResponseStatusCodeEnum::OK,
-          Crypto::Pkcs10.create(@icac_private_key, @crypto))
+          csr)
+      rescue Matter::Error
+        InteractionModel::Status.cluster_failure(Admin::ICACCSRResponseStatusCodeEnum::Busy)
       end
 
       def add_icac(cluster : Admin, request : Admin::AddICACRequest) : Admin::ICACResponse | InteractionModel::Status

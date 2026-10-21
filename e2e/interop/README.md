@@ -51,12 +51,23 @@ python3 e2e/interop/joint_fabric_rpc_bridge.py \
 peer JFA endpoint from the RPC request. The JFA device verifies their shape,
 uses CASE to the expected Node ID, runs its device-originated Anchor exchange,
 checks the returned ICAC, then invokes `CommissioningComplete`.
-`ResponseStream` still returns Pigweed `UNIMPLEMENTED`; the bidirectional
-ICAC CSR stream remains unavailable. The existing
-`transfer-anchor` operation is a different protocol step and must not be used
-as a substitute. SDK JFC also issues its own Anchor ICAC key during bootstrap;
-Crystal JFA requires that private key to activate. A full SDK JFC → Crystal
-JFA test therefore also needs a credential import or CSR/signing handoff path.
+`ResponseStream` returns Pigweed `UNIMPLEMENTED` unless `--csr-mailbox-path`
+is configured. With that path, the bridge sends `RequestOptions(ICAC_CSR)`
+on the SDK's open `GetStream` call, accepts one bounded CSR response, and
+writes a nonce-bound JSON result for Crystal. Set
+`MATTER_JFA_ICAC_CSR_MAILBOX_PATH` to the same path on the JFA to activate
+an SDK-owned Anchor ICAC without importing its private key. The device verifies
+the CSR signature and exact public key from its installed ICAC. A request has
+`operation`, `nonce`, `fabric_id`, and `root_public_key` (hex); an `ok` result
+adds base64 `csr`. Only one CSR is accepted per SDK stream because
+`ResponseStream` has no transaction nonce. Reconnect the SDK stream before
+another request. The existing `transfer-anchor` operation is a different
+protocol step and must not be used as a substitute.
+
+The SDK JFC keeps its Anchor ICAC private key. Crystal JFA still needs its own
+operational NOC private key for CASE. JCM with the SDK-owned fabric as signing
+Anchor requires a root issuer signing API; the example rejects it before
+network work when that issuer is absent.
 
 The SDK JFA implementation checks JCM ownership requests for a 65-byte ICAC
 public key and a valid peer endpoint before scheduling work. The bridge makes
@@ -72,11 +83,11 @@ To complete this mapping, the interop setup needs:
    Announce, ICAC CSR/AddICAC, and `CommissioningComplete` result. The RPC
    acknowledgement proves only durable queue acceptance; check the YAML
    `result` for completion.
-2. A headless way to request an ICAC CSR from SDK JFC over `GetStream` and
-   consume its `ResponseStream` payload, or a credential import that proves
-   the existing Crystal ICAC private key matches JFC's commissioned ICAC.
-   The current `jcm_anchor_exchange` file starts after controller-side JCM
-   verification and does not implement this SDK JFC stream.
+2. Run the SDK JFC as ecosystem B with `--csr-mailbox-path` and the Crystal
+   JFA's matching mailbox environment variable. The bridge can now request
+   an ICAC CSR, but an official SDK-generated CSR and a live two-JFA exchange
+   still need integration coverage. The `jcm_anchor_exchange` file starts
+   after controller-side JCM verification and is a separate operation.
 3. An explicit provisioned Anchor identity for the official JFC's issued
    NOC/ICAC and root, so Crystal's JFA activation and CASE credential checks
    agree with that ecosystem.
@@ -97,7 +108,7 @@ would be a false success.
 | --- | --- | --- |
 | `TransferOwnership(node_id, jcm=false)` | JFA originates CASE to that Node ID and invokes General Commissioning `CommissioningComplete`. | The test JFA now accepts a one-shot `finalize-commissioning` headless request with fabric selectors and nonce, originates CASE as its Anchor identity, checks the target Node ID, and records the IM outcome. |
 | `TransferOwnership(node_id, jcm=true, trustedIcacPublicKeyB, peerAdminJFAdminClusterEndpointId)` | JFA originates CASE as Anchor, invokes Announce on B's JFA endpoint, checks B's ICAC CSR public key against `trustedIcacPublicKeyB`, then invokes `CommissioningComplete`. | The bridge queues the key and endpoint. The JFA command validates them, runs its Anchor exchange, verifies the returned ICAC, then sends `CommissioningComplete`. |
-| `GetStream` / `ResponseStream` | JFC opens a server stream. When JFA needs its ICAC CSR, JFA emits `RequestOptions(ICAC_CSR)`; JFC generates a CSR with its persisted Anchor intermediate key and returns `Response(ICAC_CSR, csr_bytes)` through `ResponseStream`. | Add a CSR provider on the JFA service that can await that RPC exchange and validate the returned CSR key against the commissioned ICAC. The current service signs its own CSR with a locally provisioned private key. |
+| `GetStream` / `ResponseStream` | JFC opens a server stream. When JFA needs its ICAC CSR, JFA emits `RequestOptions(ICAC_CSR)`; JFC generates a CSR with its persisted Anchor intermediate key and returns `Response(ICAC_CSR, csr_bytes)` through `ResponseStream`. | The test bridge and JFA mailbox provider now perform this exchange; the service validates PKCS#10 proof and the installed ICAC public key. Live SDK coverage remains. |
 
 There is a second credential gap for full JCM. Crystal's Anchor exchange signs
 B's cross-signed ICAC using a locally stored A CA key. SDK JFC keeps its A

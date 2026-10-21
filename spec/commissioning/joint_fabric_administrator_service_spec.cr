@@ -39,6 +39,16 @@ private def jfa_resign_certificate(certificate : Bytes, issuer_key : Matter::Cry
   TLV::Any.new(fields, nil).to_slice
 end
 
+class StubRemoteIcacCsrProvider < Matter::Commissioning::RemoteIcacCsrProvider
+  def initialize(@csr : Bytes, root_public_key : Bytes)
+    super("/tmp/unused-jfa-csr", 0x1234_u64, root_public_key)
+  end
+
+  def request : Bytes
+    @csr
+  end
+end
+
 describe Matter::Commissioning::JointFabricAdministratorService do
   crypto = Matter::Crypto::StandardCrypto.new
   root_key = crypto.create_key_pair
@@ -71,6 +81,49 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     wrong_fabric = Matter::Crypto::MatterCertificate::Builder.intermediate(
       icac_key.public_key, fabric_id + 1_u64, 2_u64, root_key, 1_u64, Bytes[0x03], crypto)
     jfa_icac_install_status(wrong_fabric, root, icac_key, anchor_icac).should eq(invalid)
+  end
+
+  it "checks remote CSR proof and pinned existing ICAC before returning bytes" do
+    provider = StubRemoteIcacCsrProvider.new(Matter::Crypto::Pkcs10.create(icac_key, crypto), root_key.public_key)
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      nil, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      failsafe_fabric_matches: ->(_index : UInt8?) { true },
+      existing_icac_certificate: anchor_icac,
+      icac_csr_provider: provider
+    )
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0001_u64]
+    cluster.request_peer_icac = anchor_icac
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 2_u8
+    cluster.request_session_id = 3_u64
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+    service.announce_joint_fabric_administrator(cluster,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
+    response = service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse)
+    response.icaccsr.should eq(provider.request)
+
+    bad_provider = StubRemoteIcacCsrProvider.new(Matter::Crypto::Pkcs10.create(crypto.create_key_pair, crypto), root_key.public_key)
+    bad_service = Matter::Commissioning::JointFabricAdministratorService.new(
+      nil, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      failsafe_fabric_matches: ->(_index : UInt8?) { true },
+      existing_icac_certificate: anchor_icac,
+      icac_csr_provider: bad_provider
+    )
+    bad_service.announce_joint_fabric_administrator(cluster,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
+    bad_service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::Busy))
   end
 
   it "rejects a CSR key unrelated to the existing Administrator ICAC" do
