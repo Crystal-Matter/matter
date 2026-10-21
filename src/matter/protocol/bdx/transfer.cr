@@ -12,14 +12,28 @@ module Matter
         end
 
         enum StatusCode : UInt16
-          LengthMismatch     = 0x0014
-          BadMessageContents = 0x0016
-          BadBlockCounter    = 0x0017
-          UnexpectedMessage  = 0x0018
+          LengthTooLarge             = 0x0012
+          LengthTooShort             = 0x0013
+          LengthMismatch             = 0x0014
+          LengthRequired             = 0x0015
+          BadMessageContents         = 0x0016
+          BadBlockCounter            = 0x0017
+          UnexpectedMessage          = 0x0018
+          ResponderBusy              = 0x0019
+          TransferFailed             = 0x001f
+          TransferMethodNotSupported = 0x0050
+          FileDesignatorUnknown      = 0x0051
+          StartOffsetNotSupported    = 0x0052
+          VersionNotSupported        = 0x0053
+          Unknown                    = 0x005f
         end
 
         class Error < Matter::Error
           getter status : StatusCode
+
+          def initialize(message : String)
+            initialize(StatusCode::Unknown, message)
+          end
 
           def initialize(@status : StatusCode, message : String)
             super(message)

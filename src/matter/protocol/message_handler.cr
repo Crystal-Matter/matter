@@ -11,6 +11,7 @@ require "../session/group_secure_packet"
 require "../transport/group_multicast"
 require "../transport/udp_transport"
 require "./interaction_router"
+require "./bdx/responder"
 require "./message_type"
 require "./mrp_cache"
 require "./persistence"
@@ -38,6 +39,7 @@ module Matter
       PBKDF_SALT_LENGTH        =       32
 
       getter transport : Transport::UDPTransport
+      getter bdx : Bdx::Responder
 
       # Sessions, subscriptions and the lock every protocol fiber shares.
       getter registry : SessionRegistry
@@ -116,6 +118,9 @@ module Matter
         initialize_clusters
 
         @sender = ResponseSender.new(@transport, @mrp_cache)
+        @bdx = Bdx::Responder.new
+        @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx.forget_session(id) })
+        @registry.add_sweep_hook(-> { @bdx.sweep })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
@@ -144,6 +149,7 @@ module Matter
       # Stops the registry background sweep. The transport is closed by its
       # owner; this releases what the handler itself started.
       def close : Nil
+        @registry.synchronize { @bdx.close }
         @registry.close
       end
 
@@ -396,6 +402,18 @@ module Matter
       ) : Nil
         case msg.payload_header.protocol_id
         when ProtocolId::SecureChannel.value
+          if session && msg.payload_header.message_type == SecureChannelMessageType::StatusReport.value
+            begin
+              report = Session::Pase::Definitions::StatusReport.from_bytes(msg.payload)
+              if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == 0
+                @bdx.abort(session.session_id, msg.payload_header.exchange_id)
+                @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true) if msg.payload_header.requires_acknowledge?
+                return
+              end
+            rescue ex : IO::EOFError
+              Log.debug(exception: ex) { "Malformed encrypted status report on BDX exchange" }
+            end
+          end
           handle_secure_channel(msg, peer)
         when ProtocolId::InteractionModel.value
           unless session
@@ -404,6 +422,32 @@ module Matter
           end
 
           @router.handle(msg, peer, session)
+        when ProtocolId::Bdx.value
+          unless session && session.case_session?
+            Log.warn { "Dropping BDX message without CASE session" }
+            return
+          end
+          unless msg.payload_header.requires_acknowledge?
+            @sender.send_bdx_status(msg, peer, session, Bdx::Transfer::StatusCode::BadMessageContents)
+            return
+          end
+          opcode = Bdx::Wire::Opcode.from_value?(msg.payload_header.message_type)
+          unless opcode
+            @sender.send_bdx_status(msg, peer, session, Bdx::Transfer::StatusCode::BadMessageContents)
+            return
+          end
+          step = @bdx.receive(session, msg.payload_header.exchange_id, opcode, msg.payload)
+          if status = step.status
+            @sender.send_bdx_status(msg, peer, session, status)
+          elsif message = step.message
+            @sender.send_bdx_response(msg, peer, session, message.opcode.value, message.to_slice)
+            if follow_up = step.follow_up
+              @sender.send_bdx_response(msg, peer, session, follow_up.opcode.value,
+                follow_up.to_slice, append_to_cache: true)
+            end
+          else
+            @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true)
+          end
         else
           Log.warn { "Unsupported protocol: 0x#{msg.payload_header.protocol_id.to_s(16)}" }
         end

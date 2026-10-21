@@ -3,6 +3,7 @@
 require "./protocol/message_type"
 require "./protocol/bdx/wire"
 require "./protocol/bdx/transfer"
+require "./protocol/bdx/responder"
 require "./protocol/subscription"
 require "./protocol/mrp_cache"
 require "./protocol/persistence"

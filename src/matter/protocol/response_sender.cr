@@ -4,8 +4,10 @@ require "socket"
 require "../codec/message_codec"
 require "../session/context"
 require "../session/secure_message"
+require "../session/pase/definitions"
 require "../transport/udp_transport"
 require "./message_type"
+require "./bdx/transfer"
 require "./mrp_cache"
 
 module Matter
@@ -60,11 +62,70 @@ module Matter
           payload_header.exchange_id, counter)
       end
 
+      # Sends one BDX message on the same encrypted exchange as the request.
+      # The reply is cached so an MRP retransmission cannot advance a stream
+      # twice or leave the peer waiting for a block already produced.
+      def send_bdx_response(
+        original_msg : Codec::MessageCodec::Message,
+        peer : Socket::IPAddress,
+        session : Session::SecureContext,
+        message_type : UInt8,
+        payload : Bytes,
+        append_to_cache : Bool = false,
+      ) : Nil
+        send_bdx_payload(original_msg, peer, session, ProtocolId::Bdx.value,
+          message_type, payload, append_to_cache)
+      end
+
+      def send_bdx_status(
+        original_msg : Codec::MessageCodec::Message,
+        peer : Socket::IPAddress,
+        session : Session::SecureContext,
+        status : Bdx::Transfer::StatusCode,
+      ) : Nil
+        report = Session::Pase::Definitions::StatusReport.new(
+          general_status: 1_u16,
+          protocol_id: ProtocolId::Bdx.value,
+          protocol_status: status.value)
+        send_bdx_payload(original_msg, peer, session, ProtocolId::SecureChannel.value,
+          SecureChannelMessageType::StatusReport.value, report.to_bytes)
+      end
+
+      private def send_bdx_payload(
+        original_msg : Codec::MessageCodec::Message,
+        peer : Socket::IPAddress,
+        session : Session::SecureContext,
+        protocol_id : UInt16,
+        message_type : UInt8,
+        payload : Bytes,
+        append_to_cache : Bool = false,
+      ) : Nil
+        payload_header = Codec::MessageCodec::PayloadHeader.new(
+          exchange_id: original_msg.payload_header.exchange_id,
+          protocol_id: protocol_id,
+          message_type: message_type,
+          initiator_message: !original_msg.payload_header.initiator_message?,
+          requires_acknowledge: true,
+          acknowledged_message_id: original_msg.payload_header.requires_acknowledge? ? original_msg.packet_header.message_id : nil)
+        packet, counter = Session::SecureMessage.encode(session, payload_header, payload,
+          source_node_id: session.local_node_id, destination_node_id: session.peer_node_id)
+        if append_to_cache
+          @mrp_cache.append(original_msg.packet_header.session_id,
+            original_msg.packet_header.message_id, packet.dup)
+        else
+          @mrp_cache.store(original_msg.packet_header.session_id,
+            original_msg.packet_header.message_id, packet.dup)
+        end
+        @transport.send_reliable_raw(packet, peer, session.session_id,
+          payload_header.exchange_id, counter)
+      end
+
       # Acknowledges *original_msg* when there is no response to carry the ACK.
       def send_encrypted_ack(
         original_msg : Codec::MessageCodec::Message,
         peer : Socket::IPAddress,
         session : Session::SecureContext,
+        cache_for_mrp : Bool = false,
       ) : Nil
         payload_header = Codec::MessageCodec::PayloadHeader.new(
           exchange_id: original_msg.payload_header.exchange_id,
@@ -76,6 +137,10 @@ module Matter
         )
         udp_packet, _ = Session::SecureMessage.encode(session, payload_header, Bytes.empty,
           source_node_id: session.local_node_id, destination_node_id: session.peer_node_id)
+        if cache_for_mrp
+          @mrp_cache.store(original_msg.packet_header.session_id,
+            original_msg.packet_header.message_id, udp_packet.dup)
+        end
         @transport.send_raw(udp_packet, peer)
       end
 
