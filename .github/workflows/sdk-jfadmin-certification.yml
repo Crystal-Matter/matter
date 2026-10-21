@@ -30,7 +30,9 @@ jobs:
       - name: Install Crystal dependencies
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Build Crystal JFA
-        run: crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
+        run: |
+          mkdir -p tmp
+          crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
       - name: Build official Matter 1.6 Python controller
         timeout-minutes: 105
         run: |
