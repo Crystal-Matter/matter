@@ -526,8 +526,8 @@ describe Matter::Controller::AnchorTransfer::AdministratorRotation do
 
     im.commands.should eq([
       Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
-      Matter::Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
       Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
+      Matter::Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
       Matter::Cluster::OperationalCredentials::CMD_ADD_NOC,
       Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
     ])

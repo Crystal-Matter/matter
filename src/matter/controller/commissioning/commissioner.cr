@@ -234,19 +234,6 @@ module Matter
           dac_public_key = verifier.verify_attestation(dac, pai, attestation.attestation_elements,
             attestation.attestation_signature, attestation_nonce, challenge, vendor_id, product_id)
 
-          add_root_req = Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(
-            root_certificate: fabric.root_cert.to_slice
-          )
-          add_root_resp = im.invoke(
-            session: pase_session,
-            peer: peer_addr,
-            endpoint_id: 0_u16,
-            cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
-            command_id: Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
-            fields: add_root_req.to_slice
-          )
-          assert_invoke_ok!(add_root_resp, "AddTrustedRootCertificate")
-
           csr_nonce = @crypto.random_bytes(32)
           csr_req = Cluster::OperationalCredentials::Tlv::CsrRequest.new(
             csr_nonce: csr_nonce.to_slice,
@@ -263,6 +250,20 @@ module Matter
           csr_fields = first_command_fields(csr_resp_msg, Cluster::OperationalCredentials::CMD_CSR_REQUEST_RESPONSE)
           csr_resp = Cluster::OperationalCredentials::Tlv::CsrResponse.from_slice(csr_fields)
           device_pub_key = verifier.verify_csr(csr_resp, csr_nonce, challenge, dac_public_key)
+
+          add_root_req = Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(
+            root_certificate: fabric.root_cert.to_slice
+          )
+          add_root_resp = im.invoke(
+            session: pase_session,
+            peer: peer_addr,
+            endpoint_id: 0_u16,
+            cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
+            command_id: Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
+            fields: add_root_req.to_slice
+          )
+          assert_invoke_ok!(add_root_resp, "AddTrustedRootCertificate")
+
           credentials = if hooks = @hooks
                           hooks.prepare_credentials(fabric, node_id, device_pub_key, im, pase_session, peer_addr)
                         else
