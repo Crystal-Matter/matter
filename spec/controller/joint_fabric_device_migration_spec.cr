@@ -18,6 +18,7 @@ private class MigrationPort < Migration::Port
   getter calls = [] of String
   property fail_at : String? = nil
   property? no_effect : Bool = true
+  property? postcondition : Bool = true
 
   def commission_anchor! : Nil
     call("commission")
@@ -45,6 +46,7 @@ private class MigrationPort < Migration::Port
 
   def verify_postcondition!(stage : Migration::Stage) : Nil
     call("reconcile-#{stage}")
+    raise Matter::CommissioningError.new("postcondition not proven") unless postcondition?
   end
 
   def verify_no_effect!(stage : Migration::Stage) : Nil
@@ -147,6 +149,7 @@ describe Migration do
       restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
         0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
         -> { true }, ->(item : Migration::Journal) { store.save(item) })
+      port.postcondition = false if command == "commission"
       expect_raises(Matter::CommissioningError) { restarted.run }
       port.no_effect = false
       expect_raises(Matter::CommissioningError) { restarted.reconcile_no_effect! }
@@ -183,6 +186,13 @@ describe Migration do
         0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
         -> { true }, ->(item : Migration::Journal) { store.save(item) })
       restarted.journal.stage.should eq(uncertain)
+      if command == "commission"
+        port.fail_at = nil
+        restarted.run
+        restarted.journal.stage.should eq(Migration::Stage::Complete)
+        port.calls.count(command).should eq(1)
+        next
+      end
       expect_raises(Matter::CommissioningError) { restarted.run }
       port.no_effect = false
       expect_raises(Matter::CommissioningError) { restarted.reconcile_no_effect! }
@@ -192,6 +202,28 @@ describe Migration do
       restarted.journal.stage.should eq(Migration::Stage::Complete)
       port.calls.count(command).should eq(1)
     end
+  end
+
+  it "automatically resumes commissioning after restart only after a verified postcondition" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    store.save(journal)
+    port = MigrationPort.new
+    port.fail_at = "reconcile-AnchorCommissioned"
+    restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+      -> { true }, ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { restarted.run }
+    restarted.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+    port.calls.should eq(["reconcile-AnchorCommissioned"])
+    port.fail_at = nil
+    restarted.run
+    restarted.journal.stage.should eq(Migration::Stage::Complete)
+    port.calls.count("commission").should eq(0)
+    port.calls.should eq(["reconcile-AnchorCommissioned", "reconcile-AnchorCommissioned",
+                          "verify", "add-anchor", "remove-fabric", "remove-old"])
   end
 
   it "persists an interrupted migration across a fresh file backend" do

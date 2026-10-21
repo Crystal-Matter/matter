@@ -112,7 +112,9 @@ item below as covered only to the extent of its cited tests.
   fail-safe duration immediately after ArmFailSafe. If CommissioningComplete's
   reply is lost, the same authenticated checks can establish durable A
   ownership only after that deadline. Before it, A fabric visibility alone
-  does not prove the fail-safe was disarmed.
+  does not prove the fail-safe was disarmed. A restarted `migrate-device`
+  automatically performs this read-only proof and continues if it succeeds;
+  other uncertain mutation stages still require explicit reconciliation.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and

@@ -737,7 +737,14 @@ module Matter
 
         def run : Nil
           return if @journal.stage.complete? || @journal.stage.rolled_back?
-          if @journal.stage.in?(Stage::CommissioningAnchor, Stage::VerifyingAnchor,
+          if @journal.stage.commissioning_anchor?
+            # Recovery after a lost CommissioningComplete response only reads
+            # authenticated state. The port enforces the durable acknowledgement
+            # or elapsed fail-safe deadline before this can advance.
+            @port.verify_postcondition!(Stage::AnchorCommissioned)
+            advance(Stage::AnchorCommissioned)
+          end
+          if @journal.stage.in?(Stage::VerifyingAnchor,
                Stage::AddingAnchorNode, Stage::RemovingOldFabric, Stage::RemovingOldNode,
                Stage::RollingBack)
             raise Matter::CommissioningError.new("Migration stage #{@journal.stage} needs authenticated reconciliation")
