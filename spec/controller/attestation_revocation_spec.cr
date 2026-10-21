@@ -68,6 +68,108 @@ private module AttestationCrlFixture
   end
 end
 
+private class TestDclRevocationSource < Matter::Controller::DclRevocationSource
+  property points = {} of String => Array(Matter::Controller::DclRevocationPoint)
+
+  def points_for(issuer_skid : Bytes) : Array(Matter::Controller::DclRevocationPoint)
+    @points[issuer_skid.hexstring]? || [] of Matter::Controller::DclRevocationPoint
+  end
+end
+
+private def dcl_point(cert_der : Bytes, crl : Bytes, is_paa : Bool,
+                      url : String = "https://crl.example/issuer.crl") : Matter::Controller::DclRevocationPoint
+  cert = OpenSSL::X509::Certificate.from_der(cert_der)
+  key_id = LibCrypto.x509_get0_subject_key_id(cert)
+  length = LibCrypto.asn1_string_length(key_id)
+  skid = Slice.new(LibCrypto.asn1_string_get0_data(key_id).as(UInt8*), length).dup
+  digest = OpenSSL::Digest.new("SHA256").update(crl).final
+  Matter::Controller::DclRevocationPoint.new(skid, cert_der, nil, url, is_paa,
+    crl.size.to_i64, digest)
+end
+
+describe Matter::Controller::DclAttestationRevocation do
+  it "parses the DCL issuer index from an explicit HTTPS gateway" do
+    manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)
+    paa = manager.paa_cert
+    crl = AttestationCrlFixture.generate(paa, manager.paa_key_pair)
+    point = dcl_point(paa, crl, true)
+    calls = [] of String
+    record = {
+      "issuerSubjectKeyID"   => point.issuer_skid.hexstring.upcase,
+      "crlSignerCertificate" => OpenSSL::X509::Certificate.from_der(paa).to_pem,
+      "crlSignerDelegator"   => "",
+      "dataURL"              => point.url,
+      "dataFileSize"         => "0",
+      "dataDigest"           => "",
+      "dataDigestType"       => 0,
+      "revocationType"       => 1,
+      "isPAA"                => true,
+    }
+    response = {"pkiRevocationDistributionPointsByIssuerSubjectKeyID" => {"points" => [record]}}.to_json
+    source = Matter::Controller::HttpDclRevocationSource.new("https://dcl.example/",
+      ->(url : String) { calls << url; response.to_slice })
+    source.points_for(point.issuer_skid).first.should eq(point.copy_with(size: nil, sha256: nil))
+    calls.should eq(["https://dcl.example/dcl/pki/revocation-points/#{point.issuer_skid.hexstring.upcase}"])
+    expect_raises(Matter::ConfigurationError) do
+      Matter::Controller::HttpDclRevocationSource.new("http://dcl.example")
+    end
+    record["dataDigestType"] = 7
+    response = {"pkiRevocationDistributionPointsByIssuerSubjectKeyID" => {"points" => [record]}}.to_json
+    expect_raises(Matter::AuthenticationError, /digest/) { source.points_for(point.issuer_skid) }
+  end
+
+  it "accepts complete direct signed CRLs and rejects revoked devices" do
+    manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)
+    dac, _ = manager.get_dac_cert(0x8000_u16)
+    paa = manager.paa_cert
+    pai = manager.pai_cert
+    paa_crl = AttestationCrlFixture.generate(paa, manager.paa_key_pair)
+    pai_crl = AttestationCrlFixture.generate(pai, manager.pai_key_pair)
+    source = TestDclRevocationSource.new
+    paa_point = dcl_point(paa, paa_crl, true)
+    pai_point = dcl_point(pai, pai_crl, false, "https://crl.example/pai.crl")
+    source.points[paa_point.issuer_skid.hexstring] = [paa_point]
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
+    crls = {paa_point.url => paa_crl, pai_point.url => pai_crl}
+    provider = Matter::Controller::DclAttestationRevocation.new(source, Set{"crl.example"},
+      ->(url : String) { crls[url] })
+    provider.callback.call(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Good)
+    revoked = AttestationCrlFixture.generate(pai, manager.pai_key_pair, dac)
+    revoked_point = dcl_point(pai, revoked, false, pai_point.url)
+    source.points[pai_point.issuer_skid.hexstring] = [revoked_point]
+    crls[pai_point.url] = revoked
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Revoked)
+  end
+
+  it "fails closed on missing, partitioned, delegated, unapproved, or altered CRLs" do
+    manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)
+    dac, _ = manager.get_dac_cert(0x8000_u16)
+    paa = manager.paa_cert
+    pai = manager.pai_cert
+    paa_crl = AttestationCrlFixture.generate(paa, manager.paa_key_pair)
+    pai_crl = AttestationCrlFixture.generate(pai, manager.pai_key_pair)
+    source = TestDclRevocationSource.new
+    paa_point = dcl_point(paa, paa_crl, true)
+    pai_point = dcl_point(pai, pai_crl, false, "https://crl.example/pai.crl")
+    source.points[paa_point.issuer_skid.hexstring] = [paa_point]
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
+    crls = {paa_point.url => paa_crl, pai_point.url => pai_crl}
+    provider = Matter::Controller::DclAttestationRevocation.new(source, Set{"crl.example"},
+      ->(url : String) { crls[url] })
+    source.points[pai_point.issuer_skid.hexstring] = [] of Matter::Controller::DclRevocationPoint
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point, pai_point]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(crl_signer_delegator_der: paa)]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(url: "http://127.0.0.1/private")]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point]
+    crls[pai_point.url] = Bytes[0x30]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+  end
+end
+
 describe Matter::Controller::OfflineAttestationRevocation do
   it "requires current direct CRLs for both issuers and finds revoked PAI and DAC serials" do
     manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)

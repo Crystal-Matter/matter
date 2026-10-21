@@ -273,6 +273,27 @@ commissioning. The host must obtain the CRLs through a trusted channel;
 automated DCL retrieval, partitioned CRLs, and indirect CRL signers are not
 implemented by this local provider.
 
+For DCL revocation points with one complete, directly signed CRL per PAA and
+PAI, `DclAttestationRevocation` can query an explicitly selected HTTPS DCL
+gateway and download CRLs from explicitly approved HTTPS hosts:
+
+```crystal
+source = Matter::Controller::HttpDclRevocationSource.new("https://<trusted-dcl-gateway>")
+revocation = Matter::Controller::DclAttestationRevocation.new(
+  source, Set{"<approved-crl-host>"})
+trust = Matter::Controller::AttestationTrustStore.new(
+  paa_certificates, cd_signers, revocation_check: revocation.callback)
+```
+
+The downloader rejects redirects and reads at most 1 MiB before buffering a
+CRL. The DCL gateway must be authenticated and kept current by the deploying
+application. Missing coverage, multiple points for one issuer, delegated CRL
+signers, partitioned CRLs, and unknown DCL digest metadata return
+`Unavailable`; commissioning then fails closed. The library does not infer an
+approved CRL host from the DCL's `dataURL`. An injected `DclRevocationSource`
+can use a separately authenticated DCL mirror; an injected fetch callback must
+apply the same bounded HTTPS and redirect policy.
+
 `ImClient` also has `write_attribute`, `write_attributes` and `invoke`;
 `Commissioning::CommissioningWindowOpener` opens an enhanced commissioning window on an already
 commissioned node and hands back a manual pairing code for it.
