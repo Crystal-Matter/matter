@@ -20,6 +20,14 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "treats a legacy non-Anchor role record as transfer-complete" do
+    document = Matter::Storage::Document.new
+    document["anchor"] = false
+    role = MatterJointFabricAdministrator::Device::JointFabricRoleState.from_document(document)
+    role.anchor?.should be_false
+    role.transfer_complete?.should be_true
+  end
+
   it "exposes both mandatory JFA clusters on device type 0x0130" do
     device = MatterJointFabricAdministrator::Device.new(storage: Matter::Storage::Memory.new,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
@@ -136,7 +144,24 @@ describe MatterJointFabricAdministrator::Device do
     administrator.request_peer_node_id = 0x44_u64
     administrator.request_fabric_index = 1_u8
     service = administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
+    frozen_datastore = restarted.joint_fabric_datastore
+    frozen_datastore.request_is_case_session = true
+    frozen_datastore.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_ANCHOR_NODE_ID, 1_u8).should be_a(TLV::Any)
     service.transfer_anchor_complete(administrator).should eq(Matter::InteractionModel::Status.success)
+    frozen_datastore.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_ANCHOR_NODE_ID, 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+
+    after_transfer = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    after_transfer.install_test_fabric(fabric)
+    inactive_datastore = after_transfer.joint_fabric_datastore
+    inactive_datastore.request_is_case_session = true
+    inactive_datastore.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_ANCHOR_NODE_ID, 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    request = Matter::Cluster::JointFabricDatastore::AddPendingNodeRequest.new(0x99_u64, "Rejected")
+    inactive_datastore.invoke_command(Matter::Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE,
+      request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
 
     device.remove_test_fabric(1_u8)
     state_store.load.fabrics.should be_empty

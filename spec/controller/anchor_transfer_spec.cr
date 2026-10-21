@@ -48,6 +48,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
     super(Matter::Controller::Client.new)
     @source.joint_fabric_index = 1_u8
+    @source.access_mode = @source.status.state.delete_pending? ? Matter::Cluster::JointFabricDatastore::AccessMode::Frozen : Matter::Cluster::JointFabricDatastore::AccessMode::Active
     @source.request_is_case_session = true
   end
 

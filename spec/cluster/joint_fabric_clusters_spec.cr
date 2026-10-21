@@ -19,6 +19,7 @@ describe Matter::Cluster::JointFabricDatastore do
   it "limits a bound datastore to its CASE fabric" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.joint_fabric_index = 2_u8
+    cluster.access_mode = Datastore::AccessMode::Active
     cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 1_u8).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
     cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 2_u8).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
     cluster.request_is_case_session = true
@@ -28,6 +29,27 @@ describe Matter::Cluster::JointFabricDatastore do
       .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
     cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, request.to_tlv(nil), is_case_session: true, fabric_index: 2_u8)
       .as(Matter::InteractionModel::Status).success?.should be_true
+  end
+
+  it "allows a frozen Anchor snapshot but closes CASE reads and commands after transfer" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.configure_anchor(Bytes[1], 7_u64, 0xFFF1_u16, "Anchor").success?.should be_true
+    cluster.joint_fabric_index = 1_u8
+    cluster.access_mode = Datastore::AccessMode::Active
+    cluster.request_is_case_session = true
+    cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 1_u8).should be_a(TLV::Any)
+    cluster.begin_anchor_transfer.should be_true
+    cluster.access_mode.should eq(Datastore::AccessMode::Frozen)
+    cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 1_u8).should be_a(TLV::Any)
+    request = Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")
+    cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+
+    cluster.access_mode = Datastore::AccessMode::Inactive
+    cluster.read_attribute(Datastore::ATTR_ANCHOR_NODE_ID, 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
+    cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
   end
 
   it "rejects wire reads and commands before the Datastore is bound to a fabric" do
@@ -43,6 +65,7 @@ describe Matter::Cluster::JointFabricDatastore do
   it "permits only GroupList to a PASE JCM reader while its gate is active" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.joint_fabric_index = 1_u8
+    cluster.access_mode = Datastore::AccessMode::Active
     armed = false
     cluster.allow_jcm_pase_group_list = -> { armed }
     cluster.read_attribute(Datastore::ATTR_GROUP_LIST).as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
@@ -55,6 +78,7 @@ describe Matter::Cluster::JointFabricDatastore do
   it "isolates JCM GroupList reads to the PASE session that armed the fail-safe" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.joint_fabric_index = 1_u8
+    cluster.access_mode = Datastore::AccessMode::Active
     owner_session_id = 7_u64
     cluster.allow_jcm_pase_group_list = -> { cluster.request_session_id == owner_session_id }
     clusters = Hash(Tuple(UInt16, UInt32), Matter::Cluster::Base).new
@@ -75,6 +99,7 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
     wire_request = Datastore::AddPendingNodeRequest.new(43_u64, "Hall")
     cluster.joint_fabric_index = 1_u8
+    cluster.access_mode = Datastore::AccessMode::Active
     cluster.invoke_command(Datastore::CMD_ADD_PENDING_NODE, wire_request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
       .as(Matter::InteractionModel::Status).success?.should be_true
     cluster.node_list.first.node_id.should eq(42_u64)
