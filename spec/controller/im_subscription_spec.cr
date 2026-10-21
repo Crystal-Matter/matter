@@ -3,6 +3,7 @@ require "../../src/matter/controller/im_subscription"
 
 private class SubscriptionSpecClient < Matter::Controller::Client
   getter sent = [] of {UInt8, UInt16, Bool}
+  getter request_payloads = [] of Bytes
   property scripted_messages = [] of ReceivedMessage
 
   def send_encrypted_request(session : Matter::Session::SecureContext,
@@ -13,6 +14,7 @@ private class SubscriptionSpecClient < Matter::Controller::Client
                              requires_ack : Bool = true,
                              acknowledged_message_id : UInt32? = nil) : UInt16
     @sent << {message_type, exchange_id, initiator_message}
+    @request_payloads << payload.to_slice
     exchange_id
   end
 
@@ -32,6 +34,80 @@ private def subscription_message(type : UInt8, payload : Bytes, exchange_id : UI
 end
 
 describe Matter::Controller::AttributeSubscription do
+  it "bounds a priming stream that never finishes its ReportData chunks" do
+    client = SubscriptionSpecClient.new
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 0_u32)
+    report = Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32,
+      more_chunked_messages: true).to_slice
+    (Matter::Controller::AttributeSubscription::MAX_REPORT_CHUNKS + 1).times do
+      client.scripted_messages << subscription_message(5_u8, report, 7_u16, peer)
+    end
+    expect_raises(Matter::ProtocolError, /priming exceeded chunk limit/) do
+      Matter::Controller::ImClient.new(client).subscribe_events(session, peer, [path])
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "requests attributes and events in one subscription" do
+    client = SubscriptionSpecClient.new
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    attribute_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    event_path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16,
+      cluster: 6_u32, event: 0_u32)
+    client.scripted_messages << subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 7_u16, peer)
+    client.scripted_messages << subscription_message(4_u8,
+      Matter::InteractionModel::SubscribeResponseMessage.new(42_u32, 60_u16).to_slice, 7_u16, peer)
+    Matter::Controller::ImClient.new(client).subscribe(session, peer,
+      attribute_paths: [attribute_path], event_paths: [event_path])
+    request = Matter::InteractionModel::SubscribeRequestMessage.from_slice(client.request_payloads.first)
+    request.attribute_requests.should eq([attribute_path])
+    request.event_requests.should eq([event_path])
+  ensure
+    client.try(&.close)
+  end
+
+  it "subscribes to events without attribute paths and rejects event status errors" do
+    client = SubscriptionSpecClient.new
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 0_u32)
+    event = Matter::InteractionModel::EventDataIB.new(path, 8_u64,
+      Matter::InteractionModel::EventPriority::Info)
+    report = Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32,
+      event_reports: [Matter::InteractionModel::EventReportIB.new(event_data: event)])
+    client.scripted_messages << subscription_message(5_u8, report.to_slice, 7_u16, peer)
+    response = Matter::InteractionModel::SubscribeResponseMessage.new(42_u32, 60_u16)
+    client.scripted_messages << subscription_message(4_u8, response.to_slice, 7_u16, peer)
+    subscription = Matter::Controller::ImClient.new(client).subscribe_events(session, peer,
+      [path], event_min: 8_u64)
+    subscription.initial_reports.first.event_reports.try(&.first.event_data.try(&.event_number)).should eq(8_u64)
+    request = Matter::InteractionModel::SubscribeRequestMessage.from_slice(client.request_payloads.first)
+    request.attribute_requests.should be_nil
+    request.event_requests.should eq([path])
+    request.event_filters.try(&.first.event_min).should eq(8_u64)
+
+    failed = Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32,
+      event_reports: [Matter::InteractionModel::EventReportIB.new(
+        event_status: Matter::InteractionModel::EventStatusIB.new(path,
+          Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::UnsupportedEvent.value)))])
+    client.scripted_messages << subscription_message(5_u8, failed.to_slice, 9_u16, peer, true)
+    expect_raises(Matter::ProtocolError, /Subscription event status/) { subscription.next_report }
+  ensure
+    client.try(&.close)
+  end
+
   it "completes the priming handshake and checks notification identity" do
     client = SubscriptionSpecClient.new
     peer = Socket::IPAddress.new("127.0.0.1", 5540)

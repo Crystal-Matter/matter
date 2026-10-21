@@ -80,6 +80,29 @@ private def chunked_read_session : Matter::Session::SecureContext
 end
 
 describe Matter::Controller::ImClient do
+  it "reads event reports across chunks and sends an EventMin filter" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 0_u32)
+    [8_u64, 9_u64].each_with_index do |number, index|
+      event = Matter::InteractionModel::EventDataIB.new(path, number,
+        Matter::InteractionModel::EventPriority::Info)
+      client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+        event_reports: [Matter::InteractionModel::EventReportIB.new(event_data: event)],
+        more_chunked_messages: index == 0).to_slice, message_id: number.to_u32)
+    end
+
+    report = Matter::Controller::ImClient.new(client).read_events(chunked_read_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), [path], event_min: 8_u64)
+    report.event_reports.try(&.compact_map(&.event_data).map(&.event_number)).should eq([8_u64, 9_u64])
+    request = Matter::InteractionModel::ReadRequestMessage.from_slice(client.sent.first[2])
+    request.event_requests.should eq([path])
+    request.event_filters.try(&.first.event_min).should eq(8_u64)
+    client.sent.map(&.[1]).should eq([0x02_u8, 0x01_u8, 0x01_u8])
+  ensure
+    client.try(&.close)
+  end
+
   it "leaves ReportData for the IM acknowledgement ladder without an early MRP ACK" do
     require_udp_sockets!
     client = ReportAckClient.new

@@ -2,11 +2,14 @@ require "./im_client"
 
 module Matter
   module Controller
-    # A dedicated CASE client owns one subscription. The controller acknowledges
-    # each ReportData at the Interaction Model layer and checks the subscription
-    # id on every subsequent report. Call #next_report before MaxInterval elapses.
+    # A dedicated CASE client owns one attribute/event subscription. The
+    # controller acknowledges each ReportData at the Interaction Model layer
+    # and checks the subscription id on every subsequent report. Call
+    # #next_report before MaxInterval elapses.
     class AttributeSubscription
       alias Report = InteractionModel::ReportDataMessage
+      MAX_REPORT_CHUNKS = ImClient::MAX_READ_REPORT_CHUNKS
+      MAX_REPORT_BYTES  = ImClient::MAX_READ_REPORT_BYTES
 
       getter subscription_id : UInt32
       getter max_interval : UInt16
@@ -16,15 +19,19 @@ module Matter
       def initialize(@client : Client, @session : Session::SecureContext,
                      @peer : Socket::IPAddress, paths : Array(InteractionModel::AttributePath),
                      min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
-                     @timeout : Time::Span = 10.seconds)
-        if paths.empty? || max_interval == 0_u16 || max_interval < min_interval
+                     @timeout : Time::Span = 10.seconds,
+                     event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
+                     event_filters : Array(InteractionModel::EventFilterIB)? = nil)
+        if (paths.empty? && event_paths.empty?) || max_interval == 0_u16 || max_interval < min_interval
           raise Matter::ConfigurationError.new("Invalid subscription intervals")
         end
         request = InteractionModel::SubscribeRequestMessage.new(
           keep_subscriptions: false,
           min_interval_floor: min_interval,
           max_interval_ceiling: max_interval,
-          attribute_requests: paths,
+          attribute_requests: paths.empty? ? nil : paths,
+          event_requests: event_paths.empty? ? nil : event_paths,
+          event_filters: event_filters,
           is_fabric_filtered: true,
           interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION)
         exchange_id = @client.send_encrypted_request(@session, @peer,
@@ -74,9 +81,16 @@ module Matter
         end
         exchange_id = first.message.payload_header.exchange_id
         reports = [] of Report
-        record_report(first, reports, exchange_id)
-        while reports.last.more_chunked_messages
-          record_report(receive_relevant(@timeout), reports, exchange_id)
+        bytes_received = 0
+        received = first
+        loop do
+          bytes_received += received.message.payload.size
+          if reports.size >= MAX_REPORT_CHUNKS || bytes_received > MAX_REPORT_BYTES
+            raise Matter::ProtocolError.new("Subscription report exceeded chunk limit")
+          end
+          record_report(received, reports, exchange_id)
+          break unless reports.last.more_chunked_messages
+          received = receive_relevant(@timeout)
         end
         reports
       end
@@ -92,6 +106,7 @@ module Matter
       end
 
       private def receive_initial(exchange_id : UInt16) : Nil
+        bytes_received = 0
         loop do
           received = receive_relevant(@timeout)
           message = received.message
@@ -100,6 +115,10 @@ module Matter
           end
           case message.payload_header.message_type
           when InteractionModel::MessageType::ReportData.value
+            bytes_received += message.payload.size
+            if @initial_reports.size >= MAX_REPORT_CHUNKS || bytes_received > MAX_REPORT_BYTES
+              raise Matter::ProtocolError.new("Subscription priming exceeded chunk limit")
+            end
             record_report(received, @initial_reports, exchange_id)
           when InteractionModel::MessageType::SubscribeResponse.value
             if @initial_reports.empty? || @initial_reports.last.more_chunked_messages
@@ -133,6 +152,9 @@ module Matter
         end
         if status = report.attribute_reports.try(&.find(&.attribute_status)).try(&.attribute_status)
           raise Matter::ProtocolError.new("Subscription attribute status #{status.status.status}")
+        end
+        if status = report.event_reports.try(&.find(&.event_status)).try(&.event_status)
+          raise Matter::ProtocolError.new("Subscription event status #{status.status.status}")
         end
         reports << report
         @last_report_at = Time.instant
@@ -170,6 +192,24 @@ module Matter
     end
 
     class ImClient
+      def subscribe_events(session : Session::SecureContext, peer : Socket::IPAddress,
+                           paths : Array(InteractionModel::EventPath),
+                           event_min : UInt64? = nil,
+                           min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
+        filters = event_min.try { |number| [InteractionModel::EventFilterIB.new(number)] }
+        AttributeSubscription.new(@client, session, peer, [] of InteractionModel::AttributePath,
+          min_interval, max_interval, @timeout, paths, filters)
+      end
+
+      def subscribe(session : Session::SecureContext, peer : Socket::IPAddress,
+                    attribute_paths : Array(InteractionModel::AttributePath) = [] of InteractionModel::AttributePath,
+                    event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
+                    event_filters : Array(InteractionModel::EventFilterIB)? = nil,
+                    min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
+        AttributeSubscription.new(@client, session, peer, attribute_paths,
+          min_interval, max_interval, @timeout, event_paths, event_filters)
+      end
+
       def subscribe_attributes(session : Session::SecureContext, peer : Socket::IPAddress,
                                paths : Array(InteractionModel::AttributePath),
                                min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
