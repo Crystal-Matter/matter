@@ -224,12 +224,18 @@ Controller::Scanner            mDNS discovery of commissionable and operational 
 Controller::Client             the UDP client and its unsecured message counter
 Controller::Pairing::PasePairing / CasePairing
 Controller::Commissioning::Commissioner / CommissioningWindowOpener
-Controller::ImClient           read_attribute, write_attribute(s), invoke
+Controller::ImClient           read attributes/events, subscribe, write_attribute(s), invoke
 Controller::StateStore         the fabric, its certificates and known nodes, over Storage::Backend
 ```
 
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.
+
+Controller reads accept attribute paths, event paths, or both. `read_events`
+adds an optional minimum event number; the same bounded ReportData chunk
+ladder collects event and attribute reports. `subscribe_events` and `subscribe`
+allow event-only or mixed subscriptions, including EventFilterIB values.
+Subscription reports check both attribute and event status entries.
 
 ### Joint Fabric
 

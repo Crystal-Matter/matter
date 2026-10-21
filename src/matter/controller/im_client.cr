@@ -40,10 +40,41 @@ module Matter
           attribute: attribute_id
         )
 
+        read(session, peer, attribute_paths: [path], fabric_filtered: fabric_filtered)
+      end
+
+      def read_events(
+        session : Session::SecureContext,
+        peer : Socket::IPAddress,
+        paths : Array(InteractionModel::EventPath),
+        event_min : UInt64? = nil,
+        fabric_filtered : Bool = true,
+      ) : InteractionModel::ReportDataMessage
+        filters = event_min.try { |number| [InteractionModel::EventFilterIB.new(number)] }
+        read(session, peer, event_paths: paths, event_filters: filters,
+          fabric_filtered: fabric_filtered)
+      end
+
+      # Read arbitrary attribute and event paths in one IM exchange. Wildcard
+      # paths and event filters are passed through to the server unchanged.
+      def read(
+        session : Session::SecureContext,
+        peer : Socket::IPAddress,
+        attribute_paths : Array(InteractionModel::AttributePath) = [] of InteractionModel::AttributePath,
+        event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
+        event_filters : Array(InteractionModel::EventFilterIB)? = nil,
+        fabric_filtered : Bool = true,
+      ) : InteractionModel::ReportDataMessage
+        if attribute_paths.empty? && event_paths.empty?
+          raise Matter::ConfigurationError.new("Read requires an attribute or event path")
+        end
+
         request = InteractionModel::ReadRequestMessage.new(
-          attribute_requests: [path],
+          attribute_requests: attribute_paths.empty? ? nil : attribute_paths,
+          event_requests: event_paths.empty? ? nil : event_paths,
+          event_filters: event_filters,
           fabric_filtered: fabric_filtered,
-          interaction_model_revision: 12_u8
+          interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION
         )
 
         payload = request.to_slice
@@ -56,11 +87,11 @@ module Matter
           requires_ack: true
         )
 
-        read_report_data(session, peer, exchange_id, path)
+        read_report_data(session, peer, exchange_id, attribute_paths.size == 1 ? attribute_paths.first : nil)
       end
 
       private def read_report_data(session : Session::SecureContext, peer : Socket::IPAddress,
-                                   exchange_id : UInt16, path : InteractionModel::AttributePath) : InteractionModel::ReportDataMessage
+                                   exchange_id : UInt16, path : InteractionModel::AttributePath?) : InteractionModel::ReportDataMessage
         deadline = Time.instant + @timeout
         attributes = [] of InteractionModel::AttributeReportIB
         events = [] of InteractionModel::EventReportIB
@@ -104,7 +135,8 @@ module Matter
               acknowledged_message_id: message.packet_header.message_id)
           end
           unless report.more_chunked_messages
-            return InteractionModel::ReportDataMessage.new(attribute_reports: normalize_read_attribute(attributes, path),
+            normalized = path ? normalize_read_attribute(attributes, path) : attributes
+            return InteractionModel::ReportDataMessage.new(attribute_reports: normalized,
               event_reports: events, more_chunked_messages: false,
               suppress_response: report.suppress_response,
               interaction_model_revision: report.interaction_model_revision)

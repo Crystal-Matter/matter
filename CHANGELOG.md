@@ -57,6 +57,8 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
   RefreshNode endpoint/ACL reconciliation. Broader lifecycle and official SDK
   JFA interoperability remain to be verified; see
   [the status page](docs/matter_1_6_joint_fabric.md).
+- Expose controller event reads and event-only or mixed subscriptions, with
+  event-number filters, chunked reports, and event status validation.
 
 ### Added
 
