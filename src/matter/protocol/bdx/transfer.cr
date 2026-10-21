@@ -39,6 +39,7 @@ module Matter
         @counter : UInt32
         @last_sent : UInt32?
         @sent_eof : Bool
+        @skip_past_eof : Bool
         @started : Bool
         @complete : Bool
 
@@ -48,6 +49,7 @@ module Matter
           @counter = 0_u32
           @last_sent = nil
           @sent_eof = false
+          @skip_past_eof = false
           @started = false
           @complete = false
           @bytes_transferred = 0_u64
@@ -105,8 +107,11 @@ module Matter
               expect_counter!(message.counter, @last_sent)
               return
             end
-            require_opcode!(message.opcode, Wire::Opcode::BlockQuery)
+            unless message.opcode.block_query? || message.opcode.block_query_with_skip?
+              raise Error.new(StatusCode::UnexpectedMessage, "Sender expected a BDX BlockQuery")
+            end
             expect_counter!(message.counter, @counter)
+            skip_bytes(message.bytes_to_skip || 0_u64) if message.opcode.block_query_with_skip?
             result = next_block
             @counter = @counter &+ 1_u32
             result
@@ -139,6 +144,11 @@ module Matter
 
         private def next_block : Wire::BlockData
           source = @source || raise Error.new(StatusCode::UnexpectedMessage, "Sender source is missing")
+          if @skip_past_eof
+            @sent_eof = true
+            @last_sent = @counter
+            return Wire::BlockData.new(Wire::Opcode::BlockEOF, @counter, Bytes.empty)
+          end
           buffer = Bytes.new(@block_size)
           count = source.read(buffer)
           data = buffer[0, count]
@@ -154,6 +164,26 @@ module Matter
           @sent_eof = eof
           @last_sent = @counter
           Wire::BlockData.new(eof ? Wire::Opcode::BlockEOF : Wire::Opcode::Block, @counter, data)
+        end
+
+        private def skip_bytes(requested : UInt64) : Nil
+          source = @source || raise Error.new(StatusCode::UnexpectedMessage, "Sender source is missing")
+          remaining = requested
+          if limit = @length
+            available = limit > @bytes_transferred ? limit - @bytes_transferred : 0_u64
+            remaining = available if remaining > available
+            @skip_past_eof = true if requested > available
+          end
+          buffer = Bytes.new(4096)
+          while remaining > 0
+            count = source.read(buffer[0, {remaining, buffer.size.to_u64}.min.to_i])
+            if count == 0
+              @skip_past_eof = true
+              break
+            end
+            @bytes_transferred += count.to_u64
+            remaining -= count.to_u64
+          end
         end
 
         private def expect_counter!(actual : UInt32, expected : UInt32?) : Nil

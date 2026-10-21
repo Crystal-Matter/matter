@@ -58,6 +58,9 @@ describe BdxWire do
     expect_raises(Matter::CodecError) do
       BdxWire::Init.decode(BdxWire::Opcode::ReceiveInit, Bytes[0x20, 0x80, 1, 0, 0, 0])
     end
+    expect_raises(Matter::CodecError) do
+      BdxWire::Accept.decode(BdxWire::Opcode::ReceiveAccept, Bytes[0x10, 0x02, 1, 0])
+    end
   end
 
   it "parses the provisional asynchronous Accept mode without selecting it for a transfer" do

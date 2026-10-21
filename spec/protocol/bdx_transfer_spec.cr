@@ -72,4 +72,23 @@ describe BdxTransfer do
       sender.receive(BdxWire::BlockCounterMessage.new(BdxWire::Opcode::BlockAck, 0_u32))
     end
   end
+
+  it "skips forward before a receiver-driven block, including past EOF" do
+    sender = BdxTransfer.sender(IO::Memory.new(Bytes[1, 2, 3, 4, 5, 6]), 4_u16,
+      BdxTransfer::Drive::Receiver, length: 6_u64)
+    sender.start.should be_nil
+    query = BdxWire::BlockCounterMessage.new(BdxWire::Opcode::BlockQueryWithSkip, 0_u32, 4_u64)
+    block = sender.receive(query).as(BdxWire::BlockData)
+    block.opcode.should eq BdxWire::Opcode::BlockEOF
+    block.data.should eq Bytes[5, 6]
+    sender.receive(BdxWire::BlockCounterMessage.new(BdxWire::Opcode::BlockAckEOF, 0_u32)).should be_nil
+
+    sender = BdxTransfer.sender(IO::Memory.new(Bytes[1, 2]), 4_u16,
+      BdxTransfer::Drive::Receiver)
+    sender.start.should be_nil
+    past_eof = BdxWire::BlockCounterMessage.new(BdxWire::Opcode::BlockQueryWithSkip, 0_u32, 100_u64)
+    block = sender.receive(past_eof).as(BdxWire::BlockData)
+    block.opcode.should eq BdxWire::Opcode::BlockEOF
+    block.data.should be_empty
+  end
 end
