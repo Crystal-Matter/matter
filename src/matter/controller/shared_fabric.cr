@@ -119,7 +119,7 @@ module Matter
         if group_id == 0_u16 || device_node_id == 0_u64 || group_name.empty?
           raise Matter::ConfigurationError.new("Invalid Joint Fabric group or target node")
         end
-        unless session.case_session? && session.fabric_index
+        unless session.case_session?
           raise Matter::AuthenticationError.new("Joint Fabric Datastore grant requires CASE")
         end
         icac = controller.intermediate_cert || raise Matter::ConfigurationError.new("Joint Fabric controller has no ICAC")

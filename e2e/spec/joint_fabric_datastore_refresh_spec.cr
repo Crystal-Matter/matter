@@ -41,6 +41,23 @@ private def wait_refresh_status(im : Matter::Controller::ImClient, session : Mat
   end
 end
 
+private def wait_joint_acl(im : Matter::Controller::ImClient, session : Matter::Session::SecureContext,
+                           peer : Socket::IPAddress, node_id : UInt64, subject : UInt64,
+                           timeout : Time::Span) : Nil
+  deadline = Time.instant + timeout
+  loop do
+    entry = refresh_datastore_list(JFD::DatastoreACLEntryStruct, im, session, peer,
+      JFD::ATTR_NODE_ACL_LIST).find do |candidate|
+      candidate.node_id == node_id && candidate.acl_entry.subjects.try(&.includes?(subject))
+    end
+    return if entry && entry.status_entry.state == JFD::DatastoreStateEnum::Committed
+    if Time.instant >= deadline
+      raise Matter::TimeoutError.new("Joint Fabric CAT ACL for 0x#{node_id.to_s(16)} remained #{entry.try(&.status_entry.state)}")
+    end
+    sleep 1.second
+  end
+end
+
 # A dedicated Anchor and switch keep this scenario independent of the JCM,
 # shared-switch and ordinary switch specs. The pending node starts offline;
 # RefreshNode retries after it joins the fabric and reconciles its live state.
@@ -125,7 +142,38 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
     acls.any? do |entry|
       entry.node_id == target_node_id && entry.acl_entry.subjects.try(&.includes?(admin_subject))
     end.should be_true
+
+    # A second Crystal controller carries a group CAT in its NOC. It can
+    # establish CASE before authorization, but its IM read is denied until the
+    # Anchor Datastore propagates the CAT ACL to this switch.
+    delegate_id = 0xC103_u64
+    group_cat = 0x1234_u16
+    group_version = 2_u16
+    delegated = Matter::Controller::SharedFabric.delegate_joint(bootstrap.fabric,
+      delegate_id, group_cat, group_version)
+    delegate_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    Matter::Controller::SharedFabric.install(delegate_store, delegated)
+    delegate_client = Matter::Controller::Client.new(unsecured_source_node_id: delegate_id)
+    delegate_session = Matter::Controller::Pairing::CasePairing.new.pair(delegate_client,
+      target_peer, delegated, peer_node_id: target_node_id, timeout: E2E::COMMAND_TIMEOUT)
+    delegate_im = Matter::Controller::ImClient.new(delegate_client, E2E::COMMAND_TIMEOUT)
+    before = delegate_im.read_attribute(session: delegate_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    before.attribute_reports.as(Array(IM::AttributeReportIB)).first.attribute_status
+      .as(IM::AttributeStatusIB).status.status.should eq(IM::StatusCode::UnsupportedAccess.value)
+
+    Matter::Controller::SharedFabric.grant_joint_admin(im, anchor_session, anchor_peer,
+      1_u16, target_node_id, 1_u16, 10_u16, "Joint controllers", delegated)
+    cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(group_cat, group_version)).id
+    wait_joint_acl(im, anchor_session, anchor_peer, target_node_id, cat_subject, 120.seconds)
+    after = delegate_im.read_attribute(session: delegate_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    after.attribute_reports.as(Array(IM::AttributeReportIB)).first.attribute_data.should_not be_nil
   ensure
+    delegate_client.try(&.close)
     client.try(&.close)
     store.try(&.backend.close)
   end

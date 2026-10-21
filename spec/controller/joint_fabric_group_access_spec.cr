@@ -78,7 +78,8 @@ describe Matter::Controller::SharedFabric do
       session_id: 1_u16, peer_session_id: 1_u16,
       session_type: Matter::Session::SessionType::Unicast,
       encryption_key: Bytes.new(16), decryption_key: Bytes.new(16),
-      case_session: true, fabric_index: 1_u8)
+      # Initiator CASE contexts do not know the remote fabric index.
+      case_session: true)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
 
     Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
