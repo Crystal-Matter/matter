@@ -44,16 +44,18 @@ module Matter
     end
 
     class DeviceAttestationVerifier
-      MAX_CERTIFICATE_SIZE        = 2048
-      MAX_DECLARATION_SIZE        = 4096
-      NONCE_SIZE                  =   32
-      P256_PUBLIC_KEY_SIZE        =   65
-      VENDOR_ID_OID               = "1.3.6.1.4.1.37244.2.1"
-      PRODUCT_ID_OID              = "1.3.6.1.4.1.37244.2.2"
-      SIGNED_DATA_OID             = Bytes[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]
-      DATA_OID                    = Bytes[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]
-      KEY_USAGE_DIGITAL_SIGNATURE = 0x80_u32
-      KEY_USAGE_CERT_SIGN         = 0x04_u32
+      MAX_CERTIFICATE_SIZE         = 2048
+      MAX_DECLARATION_SIZE         = 4096
+      NONCE_SIZE                   =   32
+      P256_PUBLIC_KEY_SIZE         =   65
+      VENDOR_ID_OID                = "1.3.6.1.4.1.37244.2.1"
+      PRODUCT_ID_OID               = "1.3.6.1.4.1.37244.2.2"
+      SIGNED_DATA_OID              = Bytes[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]
+      DATA_OID                     = Bytes[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]
+      CONTENT_TYPE_ATTRIBUTE_OID   = Bytes[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03]
+      MESSAGE_DIGEST_ATTRIBUTE_OID = Bytes[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04]
+      KEY_USAGE_DIGITAL_SIGNATURE  = 0x80_u32
+      KEY_USAGE_CERT_SIGN          = 0x04_u32
 
       def initialize(@trust : AttestationTrustStore, @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
       end
@@ -177,8 +179,9 @@ module Matter
         end
       end
 
-      # This recognizes the compact CMS SignedData profile emitted by Matter
-      # devices without signed attributes. Other profiles fail closed.
+      # The signature covers the payload directly when signedAttrs is absent;
+      # otherwise RFC 5652 requires a DER SET OF signedAttrs and a digest of
+      # the encapsulated payload inside those attributes.
       private def verify_declaration(cms : Bytes, vendor_id : UInt16, product_id : UInt16) : Nil
         raise Matter::AuthenticationError.new("Certification Declaration is too large") if cms.size > MAX_DECLARATION_SIZE
         outer = DerReader.new(cms)
@@ -211,8 +214,20 @@ module Matter
         signed.finished!
         signer.read(0x02_u8)
         ski = signer.read(0x80_u8)
-        unless signer.read(0x30_u8) == DerReader.new(digest_algorithm).read(0x30_u8) &&
-               signer.read(0x30_u8) == DerReader.new(
+        unless signer.read(0x30_u8) == DerReader.new(digest_algorithm).read(0x30_u8)
+          raise Matter::AuthenticationError.new("Unsupported Certification Declaration digest algorithm")
+        end
+        signed_content = payload
+        if signer.next_tag == 0xa0_u8
+          attributes = signer.read(0xa0_u8)
+          verify_signed_attributes(attributes, payload)
+          io = IO::Memory.new
+          io.write_byte(0x31_u8)
+          io.write(Codec::DERCodec::Base.encode_length_bytes(attributes.size))
+          io.write(attributes)
+          signed_content = io.to_slice
+        end
+        unless signer.read(0x30_u8) == DerReader.new(
                  Codec::DERCodec::Base.encode(Codec::DERCodec::ECDSA_WITH_SHA256_X962.call)).read(0x30_u8)
           raise Matter::AuthenticationError.new("Unsupported Certification Declaration signature algorithm")
         end
@@ -222,11 +237,44 @@ module Matter
                      raise Matter::AuthenticationError.new("Untrusted Certification Declaration signer")
         key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
         key.public_bits = public_key
-        @crypto.verify_ecdsa(key, payload, signature, "der")
+        @crypto.verify_ecdsa(key, signed_content, signature, "der")
         declaration = Certificate::CertificationDeclaration::CDContent.from_slice(payload)
         unless declaration.format_version == 1_u8 && declaration.vendor_id == vendor_id &&
                declaration.product_ids.includes?(product_id) && declaration.certification_type <= 2_u8
           raise Matter::AuthenticationError.new("Certification Declaration VID/PID or type mismatch")
+        end
+      end
+
+      private def verify_signed_attributes(bytes : Bytes, payload : Bytes) : Nil
+        attributes = DerReader.new(bytes)
+        content_type_count = 0
+        digest_count = 0
+        until attributes.finished?
+          attribute = DerReader.new(attributes.read(0x30_u8))
+          oid = attribute.read(0x06_u8)
+          values = DerReader.new(attribute.read(0x31_u8))
+          attribute.finished!
+          if oid == CONTENT_TYPE_ATTRIBUTE_OID
+            content_type_count += 1
+            unless values.read(0x06_u8) == DATA_OID
+              raise Matter::AuthenticationError.new("Certification Declaration signed content type mismatch")
+            end
+          elsif oid == MESSAGE_DIGEST_ATTRIBUTE_OID
+            digest_count += 1
+            unless values.read(0x04_u8) == @crypto.compute_sha256(payload)
+              raise Matter::AuthenticationError.new("Certification Declaration signed digest mismatch")
+            end
+          else
+            # Other CMS attributes, such as signingTime, are covered by the
+            # signature but do not change the two required content bindings.
+            while tag = values.next_tag
+              values.read(tag)
+            end
+          end
+          values.finished!
+        end
+        unless content_type_count == 1 && digest_count == 1
+          raise Matter::AuthenticationError.new("Certification Declaration signed attributes are incomplete")
         end
       end
 
@@ -255,6 +303,14 @@ module Matter
           content = @bytes[@offset, length]
           @offset += length
           content
+        end
+
+        def next_tag : UInt8?
+          @bytes[@offset]?
+        end
+
+        def finished? : Bool
+          @offset == @bytes.size
         end
 
         def finished! : Nil
