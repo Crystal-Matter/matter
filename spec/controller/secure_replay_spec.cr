@@ -24,9 +24,9 @@ describe Matter::Controller::Client do
       Matter::Controller::Client::PROTOCOL_INTERACTION_MODEL, 2_u8, Bytes[1])
     first, _ = peer.receive
     counter = Matter::Codec::MessageCodec::Base.decode_packet(first.to_slice).header.message_id
-    client.transport.pending_reliable_count.should eq(1)
+    client.transport.as(Matter::Transport::UDPTransport).pending_reliable_count.should eq(1)
 
-    client.transport.retransmit_due(Time.instant + 2.seconds)
+    client.transport.as(Matter::Transport::UDPTransport).retransmit_due(Time.instant + 2.seconds)
     second, _ = peer.receive
     second.should eq(first)
     session.local_message_counter.should eq(counter)
@@ -42,7 +42,7 @@ describe Matter::Controller::Client do
     packet = Matter::Codec::MessageCodec::Base.decode_packet(ack)
     client.receive_for_spec(Matter::Codec::MessageCodec::Message.new(packet.header,
       ack_header, packet.payload, packet.header_bytes), peer.local_address)
-    client.transport.pending_reliable_count.should eq(0)
+    client.transport.as(Matter::Transport::UDPTransport).pending_reliable_count.should eq(0)
   ensure
     client.try(&.close)
     peer.try(&.close)

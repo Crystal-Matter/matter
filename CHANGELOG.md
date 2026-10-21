@@ -9,6 +9,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BLE transport framing
 
+- Add a packet transport boundary shared by UDP and a GATT fragment channel.
+  The BTP adapter now carries controller PASE and encrypted Interaction Model
+  exchanges over an established BLE connection. Platform GATT discovery,
+  connection setup, and BTP handshake negotiation still need an adapter.
 - Add a GATT-independent BTP v4 session engine with ordered segmentation,
   reassembly, bounded peer/local windows, cumulative ACKs, and ACK/idle timeouts.
   A platform BLE adapter and PASE rendezvous remain follow-up work.

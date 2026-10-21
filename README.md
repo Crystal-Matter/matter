@@ -29,7 +29,7 @@ The library is a stack of layers, each one depending only on the layers below it
 | Protocol | `Matter::Protocol` | `MessageHandler` and the objects it routes through, the interaction model handler, subscriptions |
 | Commissioning | `Matter::Commissioning` | the failsafe, commissioning window and credential services |
 | Session | `Matter::Session` | PASE and CASE, `SecureContext`, `SecureMessage` framing |
-| Transport | `Matter::Transport` | the UDP transport, exchanges, message counters, and BTP framing and session windows |
+| Transport | `Matter::Transport` | UDP and BTP packet transports, exchanges, message counters, and BTP framing and session windows |
 | Discovery | `Matter::MDNS` | the responder that answers commissionable and operational queries |
 | Storage | `Matter::Storage` | backends, documents, records, the migrator — depends on nothing else |
 | Primitives | `Matter::Codec`, `Crypto`, `Certificate`, `Datatype`, `InteractionModel`, `Error` | the wire codec, cryptography, certificates, id wrappers, statuses and paths |
@@ -46,6 +46,13 @@ require "matter/controller" # also commission and talk to other devices
 Two more modules stay out of the default tree and are required explicitly:
 `matter/storage/legacy` (the 0.1 storage importer) and `matter/storage/cli` (the `matter-storage`
 binary). [docs/architecture.md](docs/architecture.md) follows a datagram through the whole stack.
+
+`Matter::Transport::BtpMessageTransport` accepts a `GattFragmentChannel` and
+carries PASE and encrypted Interaction Model packets over an established,
+negotiated BTP connection. A platform adapter must supply BLE discovery, GATT
+connection and notifications, and the BTP handshake before creating this
+transport. `Controller::Client.new(transport: btp_transport)` can then use the
+existing PASE and Interaction Model clients over that channel.
 
 ## Building a device
 

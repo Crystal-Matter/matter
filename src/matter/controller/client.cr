@@ -25,7 +25,7 @@ module Matter
 
       record ReceivedMessage, message : Codec::MessageCodec::Message, peer : Socket::IPAddress
 
-      getter transport : Transport::UDPTransport
+      getter transport : Transport::PacketTransport
       getter crypto : Crypto::CryptoBase
 
       @sessions = {} of UInt16 => Session::SecureContext
@@ -45,7 +45,7 @@ module Matter
         @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
         unsecured_source_node_id : UInt64? = nil,
         initial_unsecured_message_counter : UInt32? = nil,
-        transport : Transport::UDPTransport? = nil,
+        transport : Transport::PacketTransport? = nil,
         @session_id_in_use : Proc(UInt16, Bool)? = nil,
       )
         @owns_transport = transport.nil?

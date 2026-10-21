@@ -27,7 +27,7 @@ module Matter
 
       @entries : Hash(Tuple(UInt16, UInt32), Entry) = {} of Tuple(UInt16, UInt32) => Entry
 
-      def initialize(@transport : Transport::UDPTransport)
+      def initialize(@transport : Transport::PacketTransport)
       end
 
       # Number of cached responses.
