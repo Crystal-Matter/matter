@@ -124,6 +124,7 @@ module Matter
       port : Int32 = DEFAULT_PORT,
       hostname : String? = nil,
       max_fabrics : UInt8 = FabricTable::DEFAULT_MAX_FABRICS,
+      @network_backend : Network::Backend? = nil,
     )
       @ip_addresses = ip_addresses || default_ip_addresses
 
@@ -419,7 +420,8 @@ module Matter
       network_commissioning = Cluster::NetworkCommissioning.new(
         endpoint_0,
         network_type: commissioning_network_type,
-        feature_map: commissioning_network_feature_map
+        feature_map: commissioning_network_feature_map,
+        backend: @network_backend
       )
       group_key_management = Cluster::GroupKeyManagement.new(endpoint_0)
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)

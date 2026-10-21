@@ -74,6 +74,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "requires WiFi feature" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::ThreadNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::AddOrUpdateWiFiNetworkRequest.new(
@@ -87,6 +88,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "rejects empty SSID" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::AddOrUpdateWiFiNetworkRequest.new(
@@ -100,6 +102,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "adds new WiFi network successfully" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       ssid = "TestSSID".to_slice
@@ -119,6 +122,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "updates existing WiFi network" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       ssid = "TestSSID".to_slice
@@ -144,6 +148,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "rejects when max networks limit reached" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         max_networks: 2_u8,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
@@ -169,6 +174,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "updates state attributes after add" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       ssid = "TestSSID".to_slice
@@ -205,6 +211,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "requires Thread feature" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::AddOrUpdateThreadNetworkRequest.new(
@@ -217,6 +224,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "adds new Thread network successfully" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::ThreadNetworkInterface
       )
       dataset = Bytes[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA]
@@ -233,6 +241,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "updates existing Thread network" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::ThreadNetworkInterface
       )
       dataset = Bytes[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA]
@@ -281,6 +290,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "returns NetworkIdNotFound for non-existent network" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::RemoveNetworkRequest.new(
@@ -293,6 +303,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "removes network successfully" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       ssid = "TestSSID".to_slice
@@ -317,6 +328,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "maintains relative order of remaining networks after removal" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface,
         max_networks: 4_u8
       )
@@ -365,6 +377,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "returns NetworkIdNotFound for non-existent network" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
       cmd = Matter::Cluster::NetworkCommissioning::ReorderNetworkRequest.new(
@@ -378,6 +391,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "returns OutOfRange for invalid network_index" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
 
@@ -400,6 +414,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "reorders network successfully" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface,
         max_networks: 4_u8
       )
@@ -431,6 +446,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "maintains relative order of other networks during reorder" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface,
         max_networks: 4_u8
       )
@@ -459,6 +475,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
     it "allows reordering to same position (no-op)" do
       cluster = Matter::Cluster::NetworkCommissioning.new(
+        backend: Matter::Network::TestBackend.new,
         features: Matter::Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface
       )
 

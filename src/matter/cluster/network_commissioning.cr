@@ -372,6 +372,14 @@ module Matter
           )
         end
 
+        unless @backend
+          @last_networking_status = NetworkCommissioningStatus::UnknownError
+          return ScanNetworksResponse.new(
+            networking_status: NetworkCommissioningStatus::UnknownError,
+            debug_text: "Network backend not configured"
+          )
+        end
+
         # Perform scan based on enabled features
         wifi_results = nil
         thread_results = nil
@@ -421,6 +429,15 @@ module Matter
           return NetworkConfigResponse.new(
             networking_status: NetworkCommissioningStatus::OutOfRange,
             debug_text: "SSID cannot be empty"
+          )
+        end
+
+        unless @backend
+          @last_networking_status = NetworkCommissioningStatus::UnknownError
+          @last_network_id = cmd.ssid
+          return NetworkConfigResponse.new(
+            networking_status: NetworkCommissioningStatus::UnknownError,
+            debug_text: "Network backend not configured"
           )
         end
 
@@ -496,6 +513,15 @@ module Matter
         # Extract XPAN ID from operational dataset
         network_id = extract_thread_network_id(cmd.operational_dataset)
 
+        unless @backend
+          @last_networking_status = NetworkCommissioningStatus::UnknownError
+          @last_network_id = network_id
+          return NetworkConfigResponse.new(
+            networking_status: NetworkCommissioningStatus::UnknownError,
+            debug_text: "Network backend not configured"
+          )
+        end
+
         # Check if network already exists
         existing_index = @networks.index { |net| net.network_id == network_id }
 
@@ -567,6 +593,15 @@ module Matter
           )
         end
 
+        unless @backend
+          @last_networking_status = NetworkCommissioningStatus::UnknownError
+          @last_network_id = cmd.network_id
+          return NetworkConfigResponse.new(
+            networking_status: NetworkCommissioningStatus::UnknownError,
+            debug_text: "Network backend not configured"
+          )
+        end
+
         # Use backend to remove network configuration
         if backend = @backend
           success = backend.remove_network(cmd.network_id)
@@ -615,6 +650,15 @@ module Matter
           return ConnectNetworkResponse.new(
             networking_status: NetworkCommissioningStatus::NetworkIdNotFound,
             debug_text: "Network not found"
+          )
+        end
+
+        unless @backend
+          @last_networking_status = NetworkCommissioningStatus::UnknownError
+          @last_network_id = cmd.network_id
+          return ConnectNetworkResponse.new(
+            networking_status: NetworkCommissioningStatus::UnknownError,
+            debug_text: "Network backend not configured"
           )
         end
 

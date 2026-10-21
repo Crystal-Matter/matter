@@ -158,6 +158,14 @@ describe Matter::Device::DSL do
       # Ethernet diagnostics belong to an ethernet device only.
       device.node.get_cluster(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::EthernetNetworkDiagnostics).should be_nil
     end
+
+    it "passes a platform backend to Network Commissioning" do
+      backend = Matter::Network::TestBackend.new
+      device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT, network_backend: backend)
+      network = device.node.get_cluster!(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::NetworkCommissioning)
+
+      network.backend.should be(backend)
+    end
   end
 
   describe "endpoint" do

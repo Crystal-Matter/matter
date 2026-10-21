@@ -215,6 +215,7 @@ module Matter
           port : Int32 = ::Matter::Device::DEFAULT_PORT,
           hostname : String? = nil,
           max_fabrics : UInt8 = ::Matter::FabricTable::DEFAULT_MAX_FABRICS,
+          network_backend : ::Matter::Network::Backend? = nil,
         )
           super
         end
