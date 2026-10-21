@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Run unmodified Matter 1.6 Joint Fabric certification cases against Crystal JFA.
+"""Run Matter 1.6 Joint Fabric certification cases against Crystal JFA.
 
 Each case gets fresh device, RPC bridge, controller, and persistence state. The
-official SDK test owns commissioning and all protocol assertions.
+official SDK test owns commissioning and all protocol assertions. TC_JFDS_2_4
+uses a narrow DER-to-Matter-certificate input adapter for its ICAC field.
 """
 
 import argparse
@@ -133,8 +134,10 @@ def report_sdk_icac_size(storage_dir, name):
 def run_case(sdk, jfa, logs, name):
     python = sdk / "out/python_env/bin/python3"
     script = sdk / "src/python_testing" / f"{name}.py"
+    adapted = name == "TC_JFDS_2_4"
+    test_script = Path(__file__).with_name("sdk_jfds_2_4_adapter.py") if adapted else script
     jfc = sdk / "objdir-jf/linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang/jfc-app"
-    for path in (python, script, jfc, jfa):
+    for path in (python, script, test_script, jfc, jfa):
         if not path.is_file():
             raise RuntimeError(f"missing official test prerequisite: {path}")
 
@@ -191,7 +194,7 @@ def run_case(sdk, jfa, logs, name):
         drain_thread.start()
 
         command = [
-            str(python), str(script),
+            str(python), str(test_script),
             "--dut-node-id", "1",
             "--passcode", pin,
             "--discriminator", discriminator,
@@ -204,16 +207,20 @@ def run_case(sdk, jfa, logs, name):
             "--string-arg", "dut_rpc_server_ip:127.0.0.1",
             "--string-arg", f"dut_rpc_server_port:{RPC_PORT}",
         ]
+        test_env = os.environ.copy()
+        if adapted:
+            test_env["MATTER_SDK_PYTHON_TESTING"] = str(script.parent)
         timeout = 760 if name == "TC_JFADMIN_1_4" else 420
         with (case_logs / "official-test.log").open("wb") as output:
             result = subprocess.run(command, cwd=sdk, stdout=output,
                                     stderr=subprocess.STDOUT, timeout=timeout, check=False,
-                                    env=os.environ.copy())
+                                    env=test_env)
         report_sdk_icac_size(issuer_dir, name)
         if result.returncode:
             tail = (case_logs / "official-test.log").read_text(errors="replace")[-14000:]
             raise RuntimeError(f"official {name} failed with exit {result.returncode}:\n{tail}")
-        print(f"PASS: official Matter 1.6 {name} against Crystal JFA", flush=True)
+        label = "adapted" if adapted else "unmodified"
+        print(f"PASS: {label} official Matter 1.6 {name} against Crystal JFA", flush=True)
     finally:
         stop_drain.set()
         if drain_thread is not None:
