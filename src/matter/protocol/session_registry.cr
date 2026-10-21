@@ -194,6 +194,21 @@ module Matter
         end
       end
 
+      # KeepSubscriptions=false replaces every active subscription from this
+      # CASE node on this fabric, even when the node has established a new
+      # secure session since the original subscription.
+      def remove_subscriptions_for_subscriber(fabric_index : UInt8, peer_node_id : UInt64) : Nil
+        @mutex.synchronize do
+          @active_subscriptions.values.select do |subscription|
+            owner = subscription.session
+            owner.case_session? && owner.fabric_index == fabric_index && owner.peer_node_id.try(&.id) == peer_node_id
+          end.each do |subscription|
+            @active_subscriptions.delete(subscription.subscription_id)
+            forget_subscription(subscription.subscription_id)
+          end
+        end
+      end
+
       # Claims the next subscription id.
       def allocate_subscription_id : UInt32
         @mutex.synchronize do
