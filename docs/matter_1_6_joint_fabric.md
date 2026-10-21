@@ -86,8 +86,16 @@ item below as covered only to the extent of its cited tests.
 
 ## Work required for interoperable Joint Commissioning
 
-1. Integrate a production operational trust anchor source and exercise
-   independent consent decisions with real ecosystem policies.
+1. Integrate a DCL-backed operational VID trust source and exercise
+   independent consent decisions with real ecosystem policies. Matter 1.6
+   Core §6.4.10.1 requires looking up Operational Trust Anchors by VID and
+   SKID, then validating either a root entry (`IsRoot`) or a VID Verification
+   Statement signer (`IsVIDVerificationSigner`). The current
+   `StaticOperationalTrustAnchors` accepts only explicitly provisioned,
+   self-signed roots and cannot validate a VID Verification Statement. The
+   official SDK's `DeviceCommissioner::OnLookupOperationalTrustAnchor`
+   delegate is the reference integration point; authenticated DCL transport,
+   signer entries, and statement-chain validation remain follow-up work.
 2. Run the JCM sequence against the official SDK `jf-control-app` and
    `jf-admin-app`. The current Docker test proves Crystal-to-Crystal JCM;
    the official `chip-tool` separately commissions the example device.

@@ -194,6 +194,10 @@ begin
     # Replace with a trusted revocation source; unavailable is rejected.
     Matter::Controller::RevocationStatus::Unavailable
   }
+  # For a local CRL bundle, use:
+  # revocation_check = Matter::Controller::OfflineAttestationRevocation.new([
+  #   File.read("paa.crl.der").to_slice, File.read("pai.crl.der").to_slice,
+  # ]).callback
   trust = Matter::Controller::AttestationTrustStore.new(
     paa_certificates, cd_signers, revocation_check: revocation_check)
   verifier = Matter::Controller::DeviceAttestationVerifier.new(trust)
@@ -233,6 +237,14 @@ ensure
   client.close
 end
 ```
+
+`OfflineAttestationRevocation` accepts DER CRLs provisioned by the host. It
+verifies the issuer, authority key identifier, CRL signature, signing usage,
+and update interval for both the PAA and PAI before deciding that a DAC chain
+is clear. Missing, stale, or invalid coverage returns `Unavailable` and blocks
+commissioning. The host must obtain the CRLs through a trusted channel;
+automated DCL retrieval, partitioned CRLs, and indirect CRL signers are not
+implemented by this local provider.
 
 `ImClient` also has `write_attribute`, `write_attributes` and `invoke`;
 `Commissioning::CommissioningWindowOpener` opens an enhanced commissioning window on an already
