@@ -126,11 +126,18 @@ parsing commands, replay checks, or ACL evaluation. A group command path
 without an Endpoint tag expands over member endpoints; an explicit Endpoint
 tag is invalid on a group command path. Each expansion passes
 its own Group ACL check. No group response or acknowledgement is sent.
-`Protocol::GroupMessageSender` emits one-way group InvokeRequests using durable
+Authenticated group WriteRequests fan out over the same member endpoints and
+Group ACL, reject timed/chunked writes, endpoint and node paths, and
+DataVersion, and emit no response. The sender sets SuppressResponse as required
+by Core §8.7.2.2; the receiver also accepts the official SDK v1.6 chip-tool's
+false value while still emitting no response. Writable, untimed attribute
+metadata determines whether each matching endpoint applies the value.
+`Protocol::GroupMessageSender` emits one-way group InvokeRequests and
+WriteRequests using durable
 `Session::GroupOutgoingCounters`; callers currently supply the fabric identity,
 installed operational key, and command paths. A high-level Controller method
-for selecting group keys is still needed. Group control messages, group writes,
-and the provisional CacheAndSync/MCSP path remain unsupported.
+for selecting group keys is still needed. Group control messages and the
+provisional CacheAndSync/MCSP path remain unsupported.
 
 ### Who owns what in the protocol layer
 
