@@ -73,6 +73,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ResourceExhausted for an indivisible attribute or event payload that cannot
   fit, instead of sending an oversized datagram.
 
+### Interaction Model invoke responses
+
+- Split large InvokeResponse arrays into IPv6-sized messages. The device waits
+  for Status.Success after each intermediate chunk, and the controller collects
+  the chunks on one exchange with a deadline and size limit.
+- Return ResourceExhausted for a single command result larger than the message
+  budget. Correlate pending read, subscription, and invoke chunks by session and
+  exchange ID so another controller cannot advance the exchange.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

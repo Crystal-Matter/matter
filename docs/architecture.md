@@ -172,7 +172,7 @@ GroupKeyManagement policy is TrustFirst. The separate Groupcast cluster in
 |---|---|---|
 | `MrpCache` | `protocol/mrp_cache.cr` | responses cached by `{session id, counter}` so a retransmit is answered without re-running the handler |
 | `SessionRegistry` | `protocol/session_registry.cr` | sessions, active subscriptions, pending cleanups, the sweep fiber, and **the one protocol lock** |
-| `SubscriptionManager` | `protocol/subscription_manager.cr` | one chunk ladder for reads, subscriptions and reports; drains the event journal per subscription |
+| `SubscriptionManager` | `protocol/subscription_manager.cr` | session-scoped chunk ladders for reads, subscriptions, and invoke responses; drains the event journal per subscription |
 | `SecureChannel` | `protocol/secure_channel.cr` | the PASE and CASE state machines, keyed by peer endpoint and exchange id so concurrent commissioners cannot collide |
 | `InteractionRouter` | `protocol/interaction_router.cr` | interaction model message types, timed-request bookkeeping, access control context |
 | `ResponseSender` | `protocol/response_sender.cr` | encrypt, cache, send — the single outbound seam |

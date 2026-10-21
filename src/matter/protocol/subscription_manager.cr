@@ -8,6 +8,7 @@ require "../event_journal"
 require "../node"
 require "../session/context"
 require "./im_handler"
+require "./message_type"
 require "./response_sender"
 require "./session_registry"
 require "./subscription"
@@ -49,6 +50,10 @@ module Matter
       class PendingRead < PendingChunks
       end
 
+      # An InvokeRequest whose command responses span multiple messages.
+      class PendingInvoke < PendingChunks
+      end
+
       # A SubscribeRequest whose priming report is still being delivered. The
       # subscription becomes active once the last chunk is acknowledged.
       class PendingSubscription < PendingChunks
@@ -77,9 +82,11 @@ module Matter
         end
       end
 
-      # Keyed by exchange id: one controller exchange carries one ladder.
-      @pending_subscriptions : Hash(UInt16, PendingSubscription) = {} of UInt16 => PendingSubscription
-      @pending_reads : Hash(UInt16, PendingRead) = {} of UInt16 => PendingRead
+      # Exchange IDs are scoped to sessions; two controllers may reuse one.
+      alias ExchangeKey = Tuple(UInt16, UInt16)
+      @pending_subscriptions : Hash(ExchangeKey, PendingSubscription) = {} of ExchangeKey => PendingSubscription
+      @pending_reads : Hash(ExchangeKey, PendingRead) = {} of ExchangeKey => PendingRead
+      @pending_invokes : Hash(ExchangeKey, PendingInvoke) = {} of ExchangeKey => PendingInvoke
 
       def initialize(
         @registry : SessionRegistry,
@@ -91,7 +98,7 @@ module Matter
       # Tracks a subscription whose priming report has begun, so the
       # controller's acknowledgement can carry it to completion.
       def await_subscription(exchange_id : UInt16, pending : PendingSubscription) : Nil
-        @registry.synchronize { @pending_subscriptions[exchange_id] = pending }
+        @registry.synchronize { @pending_subscriptions[{pending.session.session_id, exchange_id}] = pending }
       end
 
       # A new SubscribeRequest with KeepSubscriptions=false terminates both
@@ -113,7 +120,11 @@ module Matter
 
       # Tracks a read response with chunks still to send.
       def await_read(exchange_id : UInt16, pending : PendingRead) : Nil
-        @registry.synchronize { @pending_reads[exchange_id] = pending }
+        @registry.synchronize { @pending_reads[{pending.session.session_id, exchange_id}] = pending }
+      end
+
+      def await_invoke(exchange_id : UInt16, pending : PendingInvoke) : Nil
+        @registry.synchronize { @pending_invokes[{pending.session.session_id, exchange_id}] = pending }
       end
 
       # Advances the chunked exchange *exchange_id*, returning whether it was
@@ -125,9 +136,10 @@ module Matter
       # message that acknowledged, and is what the next message answers.
       def advance(exchange_id : UInt16, trigger : Codec::MessageCodec::Message, success : Bool = true) : Bool
         @registry.synchronize do
-          if pending = @pending_subscriptions[exchange_id]?
+          key = {trigger.packet_header.session_id, exchange_id}
+          if pending = @pending_subscriptions[key]?
             unless success
-              @pending_subscriptions.delete(exchange_id)
+              @pending_subscriptions.delete(key)
               Log.warn { "Subscription #{pending.subscription_id} aborted: peer rejected a ReportData chunk" }
               return true
             end
@@ -136,16 +148,16 @@ module Matter
               Log.debug { "Subscription #{pending.subscription_id}: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
               send_chunk(pending, trigger, chunk)
             else
-              @pending_subscriptions.delete(exchange_id)
+              @pending_subscriptions.delete(key)
               complete_subscription(pending, trigger, exchange_id)
             end
 
             return true
           end
 
-          if pending = @pending_reads[exchange_id]?
+          if pending = @pending_reads[key]?
             unless success
-              @pending_reads.delete(exchange_id)
+              @pending_reads.delete(key)
               Log.warn { "Read response aborted: peer rejected a ReportData chunk (exchange=#{exchange_id})" }
               return true
             end
@@ -154,7 +166,27 @@ module Matter
               Log.debug { "Read response: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
               send_chunk(pending, trigger, chunk)
             end
-            @pending_reads.delete(exchange_id) unless pending.more_chunks?
+            @pending_reads.delete(key) unless pending.more_chunks?
+
+            return true
+          end
+
+          if pending = @pending_invokes[key]?
+            # InvokeResponse chunking requires an IM Status.Success. A transport
+            # MRP acknowledgement only confirms datagram delivery.
+            return false unless trigger.payload_header.protocol_id == ProtocolId::InteractionModel.value &&
+                                trigger.payload_header.message_type == InteractionModel::MessageType::StatusResponse.value
+            unless success
+              @pending_invokes.delete(key)
+              Log.warn { "Invoke response aborted: peer rejected a chunk (exchange=#{exchange_id})" }
+              return true
+            end
+
+            if chunk = pending.next_chunk
+              Log.debug { "Invoke response: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
+              send_chunk(pending, trigger, chunk)
+            end
+            @pending_invokes.delete(key) unless pending.more_chunks?
 
             return true
           end
@@ -305,8 +337,9 @@ module Matter
           original_msg: trigger,
           peer: pending.peer,
           session: pending.session,
-          message_type: InteractionModel::MessageType::ReportData.value,
-          payload: chunk
+          message_type: pending.is_a?(PendingInvoke) ? InteractionModel::MessageType::InvokeResponse.value : InteractionModel::MessageType::ReportData.value,
+          payload: chunk,
+          cache_for_mrp: true
         )
       end
 

@@ -103,11 +103,22 @@ private def timed_interaction_fixture : TimedInteractionFixture
   endpoint.add_cluster(labels)
   handler.node.add_endpoint(endpoint)
   basic = handler.node.get_cluster(Matter::Cluster::BasicInformation).as(Matter::Cluster::BasicInformation)
-  session = Matter::Spec::ProtocolMessages.case_session(1_u16)
-  session.peer_session_id = session.session_id
-  handler.sessions[session.session_id] = session
+  device_session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  handler.sessions[device_session.session_id] = device_session
+  session = Matter::Session::SecureContext.new(
+    session_id: device_session.peer_session_id,
+    peer_session_id: device_session.session_id,
+    session_type: Matter::Session::SessionType::Unicast,
+    encryption_key: device_session.decryption_key,
+    decryption_key: device_session.encryption_key,
+    initiator: true,
+    peer_node_id: device_session.local_node_id,
+    local_node_id: device_session.peer_node_id,
+    case_session: true,
+    fabric_index: device_session.fabric_index
+  )
   peer = Socket::IPAddress.new("127.0.0.1", 5540)
-  client = TimedInteractionClient.new(handler, capture, session, peer)
+  client = TimedInteractionClient.new(handler, capture, device_session, peer)
   TimedInteractionFixture.new(client, handler, session, peer, basic, on_off, labels)
 end
 

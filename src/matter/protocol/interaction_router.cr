@@ -153,7 +153,7 @@ module Matter
       ) : Nil
         Log.debug { "Handling StatusResponse (exchange=#{original_msg.payload_header.exchange_id})" }
 
-        status_code = InteractionModel::StatusCode::Success.value
+        status_code = InteractionModel::StatusCode::InvalidAction.value
         begin
           status_code = InteractionModel::StatusResponseMessage.from_slice(decrypted).status
           if status_code == InteractionModel::StatusCode::Success.value
@@ -398,15 +398,21 @@ module Matter
           return
         end
 
+        chunks = IMHandler.encode_chunked_invoke_response(invoke_responses,
+          suppress_response: request.suppress_response || false)
         @sender.send_im_response(
           original_msg: original_msg,
           peer: peer,
           session: session,
           message_type: InteractionModel::MessageType::InvokeResponse.value,
-          payload: IMHandler.encode_invoke_response(invoke_responses, suppress_response: request.suppress_response || false),
+          payload: chunks.first,
           cache_for_mrp: true
         )
-        Log.info { "Sent InvokeResponse" }
+        if chunks.size > 1
+          @subscriptions.await_invoke(original_msg.payload_header.exchange_id,
+            SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..]))
+        end
+        Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
         Log.error(exception: ex) do
           "Error handling InvokeRequest: peer=#{peer.address}:#{peer.port} session_id=#{session.session_id} " \

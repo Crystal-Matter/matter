@@ -149,3 +149,75 @@ describe "Subscription chunk ladder" do
     fixture.handler.close
   end
 end
+
+describe "Invoke response chunk ladder" do
+  it "sends each remaining InvokeResponse after Status.Success and stops at the last chunk" do
+    fixture = pending_subscription_fixture
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18], Bytes[0x18]]))
+
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(fixture.session, FIRST_COUNTER, EXCHANGE_ID &+ 1_u16), PEER)
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(fixture.session, FIRST_COUNTER + 1, EXCHANGE_ID &+ 1_u16), PEER)
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(fixture.session, FIRST_COUNTER + 2, EXCHANGE_ID &+ 1_u16), PEER)
+
+    sent_message_types(fixture).should eq([
+      Matter::InteractionModel::MessageType::InvokeResponse.value,
+      Matter::InteractionModel::MessageType::InvokeResponse.value,
+      nil,
+    ])
+    fixture.handler.close
+  end
+
+  it "does not advance another session's exchange with the same ID" do
+    fixture = pending_subscription_fixture
+    other_session = Matter::Spec::ProtocolMessages.case_session(2_u16)
+    fixture.handler.sessions[other_session.session_id] = other_session
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]]))
+
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(other_session, FIRST_COUNTER, EXCHANGE_ID &+ 1_u16), PEER)
+    sent_message_types(fixture).should eq([nil])
+
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(fixture.session, FIRST_COUNTER, EXCHANGE_ID &+ 1_u16), PEER)
+    sent_message_types(fixture).last.should eq Matter::InteractionModel::MessageType::InvokeResponse.value
+    fixture.handler.close
+  end
+
+  it "stops sending invoke chunks after a rejection" do
+    fixture = pending_subscription_fixture
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]]))
+
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(
+        fixture.session, FIRST_COUNTER, EXCHANGE_ID &+ 1_u16,
+        status: Matter::InteractionModel::StatusCode::Failure.value), PEER)
+
+    fixture.transport.sent_packets.should be_empty
+    fixture.handler.close
+  end
+
+  it "waits for IM Status.Success after an MRP acknowledgement" do
+    fixture = pending_subscription_fixture
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]]))
+
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.standalone_ack(fixture.session, FIRST_COUNTER, EXCHANGE_ID &+ 1_u16), PEER)
+    fixture.transport.sent_packets.should be_empty
+
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(fixture.session, FIRST_COUNTER + 1, EXCHANGE_ID &+ 1_u16), PEER)
+    sent_message_types(fixture).should eq([Matter::InteractionModel::MessageType::InvokeResponse.value])
+    fixture.handler.close
+  end
+end
