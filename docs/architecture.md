@@ -31,6 +31,11 @@ no glob requires, so a layer can only reach downwards.
 `Matter::Storage` is the strictest of these: it requires nothing from the rest of the library, which
 is why it can be driven by the `matter-storage` CLI on its own.
 
+`Matter::Network.local_ip_addresses` supplies the device runtime's mDNS A/AAAA records. On Unix it
+enumerates addresses on active, non-loopback interfaces, including local IPv6 addresses that have
+no public route. It uses IPv4 loopback only when no usable interface address exists. Windows uses
+outbound route probes until native interface enumeration is available there.
+
 Two rules keep the tree honest:
 
 * `require "matter"` is the **device** library. The controller — scanner, client, PASE/CASE pairing,

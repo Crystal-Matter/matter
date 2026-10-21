@@ -28,6 +28,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 ### Shared fabric and certificate validation
 
+- Discover active local IPv6 and IPv4 interfaces for Matter mDNS advertisements,
+  including IPv6 unique-local addresses on networks without a public IPv6 route.
+  Use loopback only if no usable interface is present.
 - Recover interrupted device migration commands after authenticated proof of
   completion or no effect. Verify both fabrics' Datastore ownership before
   declaring migration complete, and resume partially completed rollback.
