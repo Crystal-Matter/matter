@@ -14,7 +14,7 @@ module Matter
         MAX_ACTIVE_TRANSFERS       =        4
         MAX_BLOCK_SIZE             = 1024_u16
         DEFAULT_MAX_TRANSFER_BYTES = 64_u64 * 1024 * 1024
-        IDLE_TIMEOUT               = 60.seconds
+        IDLE_TIMEOUT               = 5.minutes
 
         record Source, io : IO, length : UInt64?
         alias ResponseMessage = Wire::Accept | Transfer::Message

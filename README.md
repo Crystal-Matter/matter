@@ -183,7 +183,7 @@ A device exposes a designator only through a callback on its message handler.
 The callback receives the authenticated peer session and negotiation request,
 so an application can check the fabric, peer Node ID, and requested file before
 opening a stream. Return `nil` to reject access. The handler closes a returned
-stream at transfer completion, on error, after 60 idle seconds, or when the
+stream at transfer completion, on error, after five idle minutes, or when the
 secure session is removed. The device also limits each stream to 64 MiB by
 default; set `device.message_handler.bdx.max_transfer_bytes` for a larger
 application-specific limit.
