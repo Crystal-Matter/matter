@@ -102,17 +102,19 @@ module Matter
         unless status.good?
           raise Matter::AuthenticationError.new("Attestation revocation status is #{status}")
         end
-        unless subject_id(dac, VENDOR_ID_OID) == vendor_id &&
-               subject_id(dac, PRODUCT_ID_OID) == product_id &&
-               subject_id(pai, VENDOR_ID_OID) == vendor_id
-          raise Matter::AuthenticationError.new("Attestation certificate VID/PID mismatch")
+        dac_vendor = subject_id(dac, VENDOR_ID_OID)
+        pai_vendor = subject_id(pai, VENDOR_ID_OID)
+        paa_vendor = subject_id(root, VENDOR_ID_OID)
+        if dac_vendor.nil? || dac_vendor != pai_vendor ||
+           (paa_vendor && paa_vendor != pai_vendor)
+          raise Matter::AuthenticationError.new("Attestation certificate VID mismatch")
         end
 
         elements = ::Matter::Commissioning::CredentialService::AttestationElements.from_slice(elements_bytes)
         unless elements.attestation_nonce == nonce
           raise Matter::AuthenticationError.new("Attestation nonce mismatch")
         end
-        verify_declaration(elements.certification_declaration, vendor_id, product_id)
+        verify_declaration(elements.certification_declaration, vendor_id, product_id, dac, pai, root)
         key_bytes = dac.public_key.as(OpenSSL::PKey::EC).public_key_bytes
         unless key_bytes.size == P256_PUBLIC_KEY_SIZE
           raise Matter::AuthenticationError.new("DAC key is not P-256")
@@ -182,7 +184,9 @@ module Matter
       # The signature covers the payload directly when signedAttrs is absent;
       # otherwise RFC 5652 requires a DER SET OF signedAttrs and a digest of
       # the encapsulated payload inside those attributes.
-      private def verify_declaration(cms : Bytes, vendor_id : UInt16, product_id : UInt16) : Nil
+      private def verify_declaration(cms : Bytes, vendor_id : UInt16, product_id : UInt16,
+                                     dac : OpenSSL::X509::Certificate, pai : OpenSSL::X509::Certificate,
+                                     paa : OpenSSL::X509::Certificate) : Nil
         raise Matter::AuthenticationError.new("Certification Declaration is too large") if cms.size > MAX_DECLARATION_SIZE
         outer = DerReader.new(cms)
         content_info = outer.read(0x30_u8)
@@ -242,6 +246,27 @@ module Matter
         unless declaration.format_version == 1_u8 && declaration.vendor_id == vendor_id &&
                declaration.product_ids.includes?(product_id) && declaration.certification_type <= 2_u8
           raise Matter::AuthenticationError.new("Certification Declaration VID/PID or type mismatch")
+        end
+        origin_vendor = declaration.dac_origin_vendor_id
+        origin_product = declaration.dac_origin_product_id
+        if origin_vendor.nil? != origin_product.nil?
+          raise Matter::AuthenticationError.new("Certification Declaration origin VID and PID must appear together")
+        end
+        expected_vendor = origin_vendor || declaration.vendor_id
+        expected_products = origin_product ? [origin_product] : declaration.product_ids
+        dac_product = subject_id(dac, PRODUCT_ID_OID)
+        pai_product = subject_id(pai, PRODUCT_ID_OID)
+        unless subject_id(dac, VENDOR_ID_OID) == expected_vendor &&
+               subject_id(pai, VENDOR_ID_OID) == expected_vendor &&
+               dac_product && expected_products.includes?(dac_product) &&
+               (pai_product.nil? || expected_products.includes?(pai_product))
+          raise Matter::AuthenticationError.new("Certification Declaration DAC origin mismatch")
+        end
+        if authorized_paas = declaration.authorized_paa_list
+          unless authorized_paas.size.in?(1..10) && authorized_paas.all?(&.size.==(20)) &&
+                 authorized_paas.includes?(key_id(paa))
+            raise Matter::AuthenticationError.new("Certification Declaration has no authorized PAA")
+          end
         end
       end
 
