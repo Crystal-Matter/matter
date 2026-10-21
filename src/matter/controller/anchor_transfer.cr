@@ -34,11 +34,13 @@ module Matter
         Completed
       end
 
-      struct Journal
+      class Journal
         include Storage::Record
 
         getter candidate_node_id : UInt64
         property stage : Stage
+        property active_rotation_node_id : UInt64? = nil
+        property rotated_administrator_node_ids = [] of UInt64
 
         def initialize(@candidate_node_id : UInt64, @stage : Stage = Stage::Ready)
         end
@@ -217,6 +219,13 @@ module Matter
       # network transfer from migration of every other Administrator.
       abstract class Migration
         def preflight! : Nil
+        end
+
+        def bind_journal!(_journal : Journal, _save : Proc(Journal, Nil)) : Nil
+        end
+
+        def rotation_complete? : Bool
+          true
         end
 
         abstract def copy_datastore! : Nil
@@ -653,6 +662,9 @@ module Matter
       class RotationMigration < Migration
         alias Operation = Proc(Nil)
 
+        @rotation_journal : Journal? = nil
+        @save_rotation_journal : Proc(Journal, Nil)? = nil
+
         def initialize(@old_anchor_im : ImClient,
                        @old_anchor_session : Session::SecureContext,
                        @old_anchor_peer : Socket::IPAddress,
@@ -692,6 +704,19 @@ module Matter
           end
         end
 
+        def bind_journal!(journal : Journal, save : Proc(Journal, Nil)) : Nil
+          @rotation_journal = journal
+          @save_rotation_journal = save
+        end
+
+        def rotation_complete? : Bool
+          journal = @rotation_journal || return false
+          validate_participants!
+          expected = @other_administrators.compact_map(&.target_node_id).sort!
+          actual = journal.rotated_administrator_node_ids.sort
+          actual == expected
+        end
+
         def rotate_credentials! : Nil
           validate_participants!
           old_root = @candidate_store.anchor_root_ca
@@ -704,8 +729,23 @@ module Matter
             raise Matter::CommissioningError.new("Candidate Datastore copy is not committed")
           end
           @other_administrators.each do |administrator|
+            node_id = administrator.target_node_id ||
+                      raise Matter::ConfigurationError.new("Anchor transfer requires identified Administrator rotations")
+            if journal = @rotation_journal
+              next if journal.rotated_administrator_node_ids.includes?(node_id)
+              if journal.active_rotation_node_id
+                raise Matter::CommissioningError.new("Administrator rotation needs reconciliation before retry")
+              end
+              journal.active_rotation_node_id = node_id
+              save_rotation_journal.call(journal)
+            end
             administrator.transition!
             @persist.call
+            if journal = @rotation_journal
+              journal.rotated_administrator_node_ids << node_id
+              journal.active_rotation_node_id = nil
+              save_rotation_journal.call(journal)
+            end
           end
         end
 
@@ -747,6 +787,10 @@ module Matter
             raise Matter::ConfigurationError.new("Anchor transfer rotations must cover every other Datastore Administrator")
           end
         end
+
+        private def save_rotation_journal : Proc(Journal, Nil)
+          @save_rotation_journal || raise Matter::ConfigurationError.new("Anchor transfer rotation journal is unbound")
+        end
       end
 
       class Workflow
@@ -759,6 +803,7 @@ module Matter
                        @consent : Consent, @save : SaveJournal,
                        @journal : Journal)
           raise Matter::ConfigurationError.new("Anchor transfer requires a candidate Node ID") if @journal.candidate_node_id == 0_u64
+          @migration.bind_journal!(@journal, @save)
         end
 
         # The source snapshot must come from a fresh authenticated read. A
@@ -819,6 +864,12 @@ module Matter
         # the interrupted stage either finished or did not run. Only a stable
         # state is accepted for the next run.
         def reconcile!(stable_stage : Stage) : Nil
+          if @journal.active_rotation_node_id
+            raise Matter::CommissioningError.new("Administrator rotation needs reconciliation before transfer stage reconciliation")
+          end
+          if @journal.stage.rotating? && stable_stage.rotated? && !@migration.rotation_complete?
+            raise Matter::CommissioningError.new("Cannot complete Anchor transfer rotation while Administrators remain unrotated")
+          end
           valid = case @journal.stage
                   when Stage::Requesting  then stable_stage.in?(Stage::Ready, Stage::Requested)
                   when Stage::Copying     then stable_stage.in?(Stage::Requested, Stage::Copied)
@@ -832,6 +883,19 @@ module Matter
             raise Matter::ConfigurationError.new("Invalid Anchor transfer reconciliation")
           end
           advance(stable_stage)
+        end
+
+        # Resolve a credential rotation only after inspecting the peer's NOC
+        # and CAT. A completed rotation is never repeated on resume.
+        def reconcile_rotation!(node_id : UInt64, completed : Bool) : Nil
+          unless @journal.stage.rotating? && @journal.active_rotation_node_id == node_id
+            raise Matter::ConfigurationError.new("Invalid Administrator rotation reconciliation")
+          end
+          if completed && !@journal.rotated_administrator_node_ids.includes?(node_id)
+            @journal.rotated_administrator_node_ids << node_id
+          end
+          @journal.active_rotation_node_id = nil
+          @save.call(@journal)
         end
 
         private def advance(stage : Stage) : Nil
