@@ -20,6 +20,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Configuration, Flow Measurement, and Air Quality cluster implementations.
   Locale and temperature unit writes validate supported values; applications
   can publish bounded sensor readings and power source endpoint lists.
+### Enhanced Setup Flow Terms and Conditions
+
+- Support the optional Matter 1.6 General Commissioning TC feature: advertise
+  its admin-readable attributes and handle SetTCAcknowledgements with the
+  specified command/response IDs and error codes. Acceptance made while the
+  fail-safe is armed commits only after CommissioningComplete; expiry or a
+  restart restores the previous committed acceptance.
 
 ### ICD advertisement
 

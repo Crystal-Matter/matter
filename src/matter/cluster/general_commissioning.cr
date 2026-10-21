@@ -22,6 +22,8 @@ module Matter
 
       cluster 0x0030, revision: 2
 
+      feature :terms_and_conditions, bit: 0
+
       # ========================================================================
       # Enumerations
       # ========================================================================
@@ -116,6 +118,29 @@ module Matter
         end
       end
 
+      struct SetTCAcknowledgementsRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter tc_version : UInt16
+
+        @[TLV::Field(tag: 1)]
+        getter tc_user_response : UInt16
+
+        def initialize(@tc_version, @tc_user_response)
+        end
+      end
+
+      struct SetTCAcknowledgementsResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter error_code : CommissioningError
+
+        def initialize(@error_code)
+        end
+      end
+
       # BasicCommissioningInfo - returned by BasicCommissioningInfo attribute
       struct BasicCommissioningInfo
         include TLV::Serializable
@@ -147,6 +172,11 @@ module Matter
       attribute 0x0002, :regulatory_config, RegulatoryLocationType, default: RegulatoryLocationType::IndoorOutdoor
       attribute 0x0003, :location_capability, RegulatoryLocationType, default: RegulatoryLocationType::IndoorOutdoor, fixed: true
       attribute 0x0004, :supports_concurrent_connection, Bool, default: true, fixed: true
+      attribute 0x0005, :tc_accepted_version, UInt16, computed: true, read_access: :administer, requires: :terms_and_conditions
+      attribute 0x0006, :tc_min_required_version, UInt16, computed: true, read_access: :administer, requires: :terms_and_conditions
+      attribute 0x0007, :tc_acknowledgements, UInt16, computed: true, read_access: :administer, requires: :terms_and_conditions
+      attribute 0x0008, :tc_acknowledgements_required, Bool, computed: true, read_access: :administer, requires: :terms_and_conditions
+      attribute 0x0009, :tc_update_deadline, UInt32, computed: true, nullable: true, read_access: :administer, requires: :terms_and_conditions
       # Commissioning on backup power is not supported
       attribute 0x000C, :is_commissioning_without_power, Bool, default: false
 
@@ -195,6 +225,7 @@ module Matter
       command 0x00, :arm_fail_safe, request: Tlv::ArmFailSafeRequest, response: ArmFailSafeResponse, response_id: 0x01, access: :administer
       command 0x02, :set_regulatory_config, request: Tlv::SetRegularConfigurationRequest, response: SetRegulatoryConfigResponse, response_id: 0x03, access: :administer, handler: :handle_set_regulatory_config
       command 0x04, :commissioning_complete, response: CommissioningCompleteResponse, response_id: 0x05, access: :administer
+      command 0x06, :set_tc_acknowledgements, request: SetTCAcknowledgementsRequest, response: SetTCAcknowledgementsResponse, response_id: 0x07, access: :administer, requires: :terms_and_conditions
 
       # ========================================================================
       # State Management
@@ -205,12 +236,32 @@ module Matter
       # target, and an object cannot hand itself out of its own constructor.
       @failsafe : Commissioning::FailsafeService? = nil
 
+      # Only committed acceptance is serialized; acceptance under an armed
+      # fail-safe is intentionally lost on restart or rollback.
+      private struct PersistedTCState
+        include Storage::Record
+
+        getter accepted_version : UInt16?
+        getter acknowledgements : UInt16?
+
+        def initialize(@accepted_version, @acknowledgements)
+        end
+      end
+
+      @tc_committed_version : UInt16? = nil
+      @tc_committed_acknowledgements : UInt16? = nil
+      @tc_temporal_version : UInt16? = nil
+      @tc_temporal_acknowledgements : UInt16? = nil
+
       def failsafe : Commissioning::FailsafeService
         @failsafe ||= begin
           service = Commissioning::FailsafeService.new(self)
           # The breadcrumb tracks commissioner progress and is polled, never
           # subscribed to, so it is written without bumping the data version.
           service.on_breadcrumb_changed = ->(value : UInt64) { @breadcrumb = value }
+          service.on_terms_conditions_validate = -> { validate_tc_acceptance }
+          service.on_terms_conditions_commit = -> { commit_tc_acceptance }
+          service.on_terms_conditions_revert = -> { revert_tc_acceptance }
           service
         end
       end
@@ -236,6 +287,9 @@ module Matter
 
       def initialize(
         endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        @feature_map : Feature = Feature::None,
+        @tc_min_required_version : UInt16? = nil,
+        @tc_required_acknowledgements : UInt16 = 0_u16,
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
@@ -274,6 +328,24 @@ module Matter
           session_fabric_index: request_fabric_index,
           is_case_session: request_is_case_session?
         )
+      end
+
+      # Matter command name, rather than a Crystal property setter.
+      # ameba:disable Naming/AccessorMethodName
+      def set_tc_acknowledgements(request : SetTCAcknowledgementsRequest) : SetTCAcknowledgementsResponse
+        if error = validate_tc_values(request.tc_version, request.tc_user_response)
+          return SetTCAcknowledgementsResponse.new(error)
+        end
+
+        if failsafe.armed?
+          @tc_temporal_version = request.tc_version
+          @tc_temporal_acknowledgements = request.tc_user_response
+        else
+          @tc_committed_version = request.tc_version
+          @tc_committed_acknowledgements = request.tc_user_response
+        end
+        notify_tc_acceptance_changed
+        SetTCAcknowledgementsResponse.new(CommissioningError::OK)
       end
 
       # ========================================================================
@@ -451,6 +523,89 @@ module Matter
       def accept_terms_conditions : Nil
         failsafe.terms_conditions_accepted = true
         Log.info { "Terms & Conditions accepted" }
+      end
+
+      # TC feature attributes expose the temporal acceptance while a fail-safe
+      # is armed. With no acceptance, the wire values are zero, as in the SDK.
+      def tc_accepted_version : UInt16
+        @tc_temporal_version || @tc_committed_version || 0_u16
+      end
+
+      def tc_min_required_version : UInt16
+        @tc_min_required_version || 0_u16
+      end
+
+      def tc_acknowledgements : UInt16
+        @tc_temporal_acknowledgements || @tc_committed_acknowledgements || 0_u16
+      end
+
+      def tc_acknowledgements_required? : Bool
+        !validate_tc_acceptance.nil?
+      end
+
+      def tc_acknowledgements_required : Bool
+        tc_acknowledgements_required?
+      end
+
+      def tc_update_deadline : UInt32?
+        nil
+      end
+
+      def save_state : Storage::Document?
+        return unless @feature_map.terms_and_conditions?
+        PersistedTCState.new(@tc_committed_version, @tc_committed_acknowledgements).to_document
+      end
+
+      def restore_state(document : Storage::Document) : Nil
+        state = PersistedTCState.from_document(document)
+        @tc_committed_version = state.accepted_version
+        @tc_committed_acknowledgements = state.acknowledgements
+        @tc_temporal_version = nil
+        @tc_temporal_acknowledgements = nil
+      rescue ex
+        Log.warn(exception: ex) { "Failed to restore Terms and Conditions acceptance" }
+      end
+
+      private def validate_tc_values(version : UInt16, acknowledgements : UInt16) : CommissioningError?
+        required_version = @tc_min_required_version
+        return unless required_version
+        return CommissioningError::TCMinVersionNotMet if version < required_version
+        return CommissioningError::RequiredTCNotAccepted if (acknowledgements & @tc_required_acknowledgements) != @tc_required_acknowledgements
+        nil
+      end
+
+      private def validate_tc_acceptance : CommissioningError?
+        return unless @feature_map.terms_and_conditions?
+        return unless @tc_min_required_version
+
+        version = @tc_temporal_version || @tc_committed_version
+        acknowledgements = @tc_temporal_acknowledgements || @tc_committed_acknowledgements
+        return CommissioningError::TCAcknowledgementsNotReceived unless version && acknowledgements
+
+        validate_tc_values(version, acknowledgements)
+      end
+
+      private def commit_tc_acceptance : Nil
+        return unless version = @tc_temporal_version
+        @tc_committed_version = version
+        @tc_committed_acknowledgements = @tc_temporal_acknowledgements
+        @tc_temporal_version = nil
+        @tc_temporal_acknowledgements = nil
+        increment_version # Mark committed state dirty without changing wire values.
+      end
+
+      private def revert_tc_acceptance : Nil
+        return unless @tc_temporal_version
+        @tc_temporal_version = nil
+        @tc_temporal_acknowledgements = nil
+        notify_tc_acceptance_changed
+      end
+
+      private def notify_tc_acceptance_changed : Nil
+        increment_version
+        notify_changed(ATTR_TC_ACCEPTED_VERSION)
+        notify_changed(ATTR_TC_ACKNOWLEDGEMENTS)
+        notify_changed(ATTR_TC_ACKNOWLEDGEMENTS_REQUIRED)
       end
 
       # ========================================================================

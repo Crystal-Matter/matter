@@ -36,6 +36,12 @@ module Matter
       property? terms_conditions_required : Bool = false
       property? terms_conditions_accepted : Bool = false
 
+      # The optional TC feature supplies version/map validation and maintains
+      # temporal acceptance until the fail-safe succeeds or expires.
+      property on_terms_conditions_validate : Proc(ErrorCode?)?
+      property on_terms_conditions_commit : Proc(Nil)?
+      property on_terms_conditions_revert : Proc(Nil)?
+
       # Invoked when a new failsafe context is armed, so that per-failsafe state
       # elsewhere (the pending credentials of `CredentialService`) is reset
       property on_failsafe_armed : Proc(Nil)?
@@ -194,12 +200,17 @@ module Matter
           )
         end
 
+        if error = @on_terms_conditions_validate.try(&.call)
+          return Outcome.new(error, "Terms and Conditions acknowledgements not satisfied")
+        end
+
         Log.info { "Commissioning completed successfully" }
         context.disarm
         @context = nil
         @admin_fabric_index = nil
         self.breadcrumb = 0_u64
         @targets.close_commissioning_window
+        @on_terms_conditions_commit.try(&.call)
         @on_failsafe_success.try(&.call)
 
         Outcome.new
@@ -228,6 +239,7 @@ module Matter
           context.disarm
           @context = nil
           @admin_fabric_index = nil
+          @on_terms_conditions_revert.try(&.call)
         end
       end
 
@@ -269,6 +281,7 @@ module Matter
           @admin_fabric_index = nil
         end
 
+        @on_terms_conditions_revert.try(&.call)
         @on_failsafe_expired.try(&.call)
 
         @commissioning_window_open = false

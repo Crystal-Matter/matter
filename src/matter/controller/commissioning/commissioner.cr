@@ -155,6 +155,7 @@ module Matter
           new_fabric : Bool = false,
           defer_completion : Bool = false,
           friendly_name : String? = nil,
+          tc_acknowledgements : Tuple(UInt16, UInt16)? = nil,
         ) : PendingCommissioningHandoff?
           if @datastore_registrar && friendly_name.nil?
             raise Matter::ConfigurationError.new("Datastore registration requires a friendly name")
@@ -258,6 +259,18 @@ module Matter
           dac_public_key = verifier.verify_attestation(dac, pai, attestation.attestation_elements,
             attestation.attestation_signature, attestation_nonce, challenge, vendor_id, product_id)
           fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
+
+          # The caller must obtain user consent; commissioning never silently
+          # acknowledges a device's Enhanced Setup Flow terms.
+          if acknowledgement = tc_acknowledgements
+            request = Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(
+              acknowledgement[0], acknowledgement[1])
+            tc_response = im.invoke(session: pase_session, peer: peer_addr,
+              endpoint_id: 0_u16, cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
+              command_id: Cluster::GeneralCommissioning::CMD_SET_TC_ACKNOWLEDGEMENTS,
+              fields: request.to_slice)
+            assert_tc_acknowledged!(tc_response)
+          end
 
           csr_nonce = @crypto.random_bytes(32)
           csr_req = Cluster::OperationalCredentials::Tlv::CsrRequest.new(
@@ -748,6 +761,16 @@ module Matter
           result = Cluster::GeneralCommissioning::CommissioningCompleteResponse.from_slice(fields)
           unless result.error_code.ok?
             raise Matter::CommissioningError.new("CommissioningComplete failed (error=#{result.error_code} debug=#{result.debug_text})")
+          end
+        end
+
+        protected def assert_tc_acknowledged!(response : InteractionModel::InvokeResponseMessage) : Nil
+          assert_invoke_ok!(response, "SetTCAcknowledgements")
+          fields = first_command_fields(response,
+            Cluster::GeneralCommissioning::CMD_SET_TC_ACKNOWLEDGEMENTS_RESPONSE)
+          outcome = Cluster::GeneralCommissioning::SetTCAcknowledgementsResponse.from_slice(fields)
+          unless outcome.error_code.ok?
+            raise Matter::CommissioningError.new("SetTCAcknowledgements failed (error=#{outcome.error_code})")
           end
         end
 
