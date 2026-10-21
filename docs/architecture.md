@@ -249,6 +249,16 @@ commissioned device, which is how multi-admin works.
 
 The scanner is the other half of discovery and belongs to the controller:
 `Controller::Scanner` (`controller/scanner.cr`), behind `require "matter/controller"`.
+It matches each service instance's SRV target hostname to that host's A/AAAA
+records, including address replies that arrive in a separate mDNS packet.
+Host addresses are cached for their DNS TTL and removed on goodbye records;
+unrelated host records never become addresses of a discovered instance.
+The scanner currently listens on IPv4 mDNS only. It can use routable IPv6
+addresses advertised in those replies, but cannot discover an IPv6-only mDNS
+peer; link-local IPv6 addresses lack the receiving interface's scope and may
+not be connectable. Native IPv6 discovery requires a separate IPv6 multicast
+socket and interface-aware receive path that attaches the interface index to
+link-local addresses.
 
 ## The device runtime
 

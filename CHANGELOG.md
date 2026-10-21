@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Controller discovery
+
+- Resolve operational and commissioning service addresses from the SRV target's
+  A/AAAA records, including split mDNS replies and host address goodbyes. Persist
+  updates to already discovered devices instead of changing a struct copy.
+
 ### Joint Fabric three-Administrator transfer
 
 - Exercise two live Joint Commissioning joins, Anchor transfer, and removal

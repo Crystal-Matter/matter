@@ -90,12 +90,16 @@ module Matter
     # - Processing unsolicited announcements
     # - Sending queries for specific services
     class Scanner
-      Log       = ::Log.for("matter.controller.scanner")
-      MDNS_PORT = 5353
-      MDNS_IPV4 = Socket::IPAddress.new("224.0.0.251", MDNS_PORT)
-      MDNS_IPV6 = Socket::IPAddress.new("ff02::fb", MDNS_PORT)
+      Log         = ::Log.for("matter.controller.scanner")
+      MDNS_PORT   = 5353
+      MDNS_IPV4   = Socket::IPAddress.new("224.0.0.251", MDNS_PORT)
+      MDNS_IPV6   = Socket::IPAddress.new("ff02::fb", MDNS_PORT)
+      CACHE_FLUSH = 0x8000_u16
 
-      @devices : Hash(String, DiscoveredDevice) # Key: instance name
+      private alias HostAddress = NamedTuple(address: Socket::IPAddress, expires_at: Time)
+
+      @devices : Hash(String, DiscoveredDevice)          # Key: instance name
+      @host_addresses : Hash(String, Array(HostAddress)) # Key: SRV target hostname
       @socket : UDPSocket
       @running : Bool
       @receive_fiber : Fiber?
@@ -127,6 +131,7 @@ module Matter
         end
 
         @devices = Hash(String, DiscoveredDevice).new
+        @host_addresses = Hash(String, Array(HostAddress)).new
         @running = false
         @receive_fiber = nil
       end
@@ -239,12 +244,20 @@ module Matter
         # Collect all records (answers + authorities + additionals)
         all_records = packet.answers + packet.authorities + packet.additionals
 
-        # Group records by instance name
+        # Address records belong to the SRV target host, not the service instance.
+        # Cache them independently so a host reply arriving before or after its
+        # SRV record can still resolve that instance.
+        address_records = Hash(String, Array(DNS::Packet::ResourceRecord)).new
         records_by_instance = Hash(String, Array(DNS::Packet::ResourceRecord)).new
 
         all_records.each do |record|
           # Skip non-.local records
-          next unless record.name.ends_with?(".local")
+          next unless record.name.downcase.ends_with?(".local")
+
+          if record.type == MDNS::RecordBuilder::TYPE_A || record.type == MDNS::RecordBuilder::TYPE_AAAA
+            (address_records[record.name.downcase] ||= [] of DNS::Packet::ResourceRecord) << record
+            next
+          end
 
           # Extract instance name from record
           instance = extract_instance_name(record.name)
@@ -254,10 +267,73 @@ module Matter
           records_by_instance[instance] << record
         end
 
+        address_records.each do |hostname, records|
+          update_host_addresses(hostname, records)
+        end
+
         # Process each instance's records
         records_by_instance.each do |instance, records|
           process_instance_records(instance, records)
         end
+
+        refresh_device_addresses(address_records.keys)
+      end
+
+      private def refresh_device_addresses(hostnames : Array(String)) : Nil
+        # Address-only answers also refresh services already pointing at that host.
+        @devices.keys.each do |instance|
+          device = @devices[instance]
+          next unless hostnames.includes?(device.hostname.downcase)
+          addresses = addresses_for_host(device.hostname)
+          next if device.addresses == addresses
+
+          device.addresses = addresses
+          @devices[instance] = device
+          @on_device_updated.try(&.call(device))
+        end
+      end
+
+      private def update_host_addresses(hostname : String, records : Array(DNS::Packet::ResourceRecord)) : Nil
+        now = Time.utc
+        addresses = (@host_addresses[hostname]? || [] of HostAddress).reject { |entry| entry[:expires_at] <= now }
+        # Cache flush applies to a DNS record set (owner, type, class), so an
+        # A refresh must leave this host's AAAA records intact, and vice versa.
+        flush_ipv4 = records.any? do |record|
+          record.type == MDNS::RecordBuilder::TYPE_A && record.resource_data.size == 4 &&
+            record.ttl.total_seconds > 0 && (record.class_code & CACHE_FLUSH) != 0
+        end
+        flush_ipv6 = records.any? do |record|
+          record.type == MDNS::RecordBuilder::TYPE_AAAA && record.resource_data.size == 16 &&
+            record.ttl.total_seconds > 0 && (record.class_code & CACHE_FLUSH) != 0
+        end
+        addresses.reject! do |entry|
+          (flush_ipv4 && entry[:address].family.inet?) || (flush_ipv6 && entry[:address].family.inet6?)
+        end
+
+        records.each do |record|
+          address = case record.type
+                    when MDNS::RecordBuilder::TYPE_A    then parse_a_record(record)
+                    when MDNS::RecordBuilder::TYPE_AAAA then parse_aaaa_record(record)
+                    end
+          next unless address
+
+          addresses.reject! { |entry| entry[:address] == address }
+          addresses << {address: address, expires_at: now + record.ttl} if record.ttl.total_seconds > 0
+        end
+
+        if addresses.empty?
+          @host_addresses.delete(hostname)
+        else
+          @host_addresses[hostname] = addresses
+        end
+      end
+
+      private def addresses_for_host(hostname : String) : Array(Socket::IPAddress)
+        now = Time.utc
+        addresses = @host_addresses[hostname.downcase]?
+        return [] of Socket::IPAddress unless addresses
+
+        addresses.select { |entry| entry[:expires_at] > now }.map(&.[:address])
       end
 
       private def extract_instance_name(name : String) : String?
@@ -275,8 +351,6 @@ module Matter
         # Extract information from records
         srv_record = records.find { |record| record.type == MDNS::RecordBuilder::TYPE_SRV }
         txt_record = records.find { |record| record.type == MDNS::RecordBuilder::TYPE_TXT }
-        a_records = records.select { |record| record.type == MDNS::RecordBuilder::TYPE_A }
-        aaaa_records = records.select { |record| record.type == MDNS::RecordBuilder::TYPE_AAAA }
 
         # Need at least SRV record to identify the service
         return unless srv_record
@@ -288,18 +362,7 @@ module Matter
         # Parse TXT record
         txt_records = txt_record ? parse_txt_record(txt_record) : Hash(String, String).new
 
-        # Collect IP addresses
-        addresses = [] of Socket::IPAddress
-        a_records.each do |record|
-          if addr = parse_a_record(record)
-            addresses << addr
-          end
-        end
-        aaaa_records.each do |record|
-          if addr = parse_aaaa_record(record)
-            addresses << addr
-          end
-        end
+        addresses = addresses_for_host(hostname)
 
         # Determine service type
         service_type = if instance.includes?(MDNS::ServiceNames::COMMISSIONING)
@@ -331,6 +394,7 @@ module Matter
           existing.port = port
           existing.txt_records = txt_records
           existing.expires_at = expires_at
+          @devices[instance] = existing
           @on_device_updated.try(&.call(existing))
         else
           # Create new device
@@ -423,6 +487,18 @@ module Matter
         while @running
           sleep 10.seconds
 
+          expired_hosts = [] of String
+          @host_addresses.reject! do |hostname, addresses|
+            previous_size = addresses.size
+            addresses.reject! { |entry| entry[:expires_at] <= Time.utc }
+            expired_hosts << hostname if addresses.size != previous_size
+            if addresses.empty?
+              true
+            else
+              false
+            end
+          end
+
           # Remove expired devices
           @devices.reject! do |instance, device|
             if device.expired?
@@ -432,6 +508,8 @@ module Matter
               false
             end
           end
+
+          refresh_device_addresses(expired_hosts)
         end
       end
     end
