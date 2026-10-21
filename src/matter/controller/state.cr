@@ -56,7 +56,7 @@ module Matter
       getter controller_node_id : UInt64
       getter node_id : UInt64
       getter friendly_name : String
-      getter expires_at_unix : Int64
+      property expires_at_unix : Int64
       getter peer_address : String?
       getter peer_port : Int32
       property stage : Stage

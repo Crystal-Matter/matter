@@ -47,7 +47,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and two-letter country code.
 - Refresh the fail-safe between long commissioning steps when its primary
   timeout falls below half the requested duration. Preserve the device's
-  current Breadcrumb and reject command-level ArmFailSafe errors.
+  current Breadcrumb, reject command-level ArmFailSafe errors, and carry the
+  refreshed deadline into durable Datastore registration and deferred JFA
+  handoff records without exceeding the device's cumulative limit.
 
 ### Commissioning interoperability
 

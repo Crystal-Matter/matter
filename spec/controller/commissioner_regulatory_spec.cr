@@ -71,9 +71,33 @@ private class RegulatoryCommissioner < Matter::Controller::Commissioning::Commis
   end
 
   def refresh(im : Matter::Controller::ImClient, session : Matter::Session::SecureContext,
-              peer : Socket::IPAddress, expires_at : Time::Instant) : Time::Instant
-    rearm_fail_safe_if_needed(im, session, peer, expires_at)
+              peer : Socket::IPAddress, window : FailSafeWindow) : FailSafeWindow
+    rearm_fail_safe_if_needed(im, session, peer, window)
   end
+
+  def checkpoint(fabric : Matter::Controller::FabricInfo, node_id : UInt64, peer : Socket::IPAddress,
+                 im : Matter::Controller::ImClient, session : Matter::Session::SecureContext,
+                 window : FailSafeWindow, defer_completion : Bool) : Tuple(FailSafeWindow, Matter::Controller::PendingCommissioningHandoff?)
+    record_pending_commissioning(fabric, node_id, "Test node", peer, im, session, window, defer_completion)
+  end
+end
+
+private class RegulatoryNodeDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+end
+
+private def regulatory_fabric : Matter::Controller::FabricInfo
+  Matter::Controller::FabricInfo.new(
+    fabric_id: 0x123_u64, controller_node_id: 0x100_u64,
+    ipk_value: Bytes.new(16), root_cert: Bytes[1], root_public_key: Bytes[2],
+    controller_noc: Bytes[3], controller_private_key: Bytes[4])
 end
 
 private def regulatory_session : Matter::Session::SecureContext
@@ -130,14 +154,43 @@ describe Matter::Controller::Commissioning::Commissioner do
       fail_safe_expiry_seconds: 60_u16)
     session = regulatory_session
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
-    healthy = Time.instant + 45.seconds
+    now = Time.utc.to_unix
+    healthy = RegulatoryCommissioner::FailSafeWindow.new(Time.instant + 45.seconds, now + 45, now + 600)
     commissioner.refresh(im, session, peer, healthy).should eq(healthy)
     im.calls.should be_empty
-    refreshed = commissioner.refresh(im, session, peer, Time.instant + 10.seconds)
-    refreshed.should be > Time.instant + 50.seconds
-    im.calls.map(&.[1]).should eq([GC::CMD_ARM_FAIL_SAFE])
+    expiring = RegulatoryCommissioner::FailSafeWindow.new(Time.instant + 10.seconds, now + 10, now + 600)
+    refreshed = commissioner.refresh(im, session, peer, expiring)
+    refreshed.primary_expires_at.should be > Time.instant + 50.seconds
+    refreshed.expires_at_unix.should be > expiring.expires_at_unix
+    capped = RegulatoryCommissioner::FailSafeWindow.new(Time.instant + 5.seconds, now + 5, now + 20)
+    commissioner.refresh(im, session, peer, capped).expires_at_unix.should eq(now + 20)
+    im.calls.map(&.[1]).should eq([GC::CMD_ARM_FAIL_SAFE, GC::CMD_ARM_FAIL_SAFE])
     GC::ArmFailSafeRequest.from_slice(im.calls.first[2]).expiry_length_seconds.should eq(60_u16)
     GC::ArmFailSafeRequest.from_slice(im.calls.first[2]).breadcrumb.should eq(11_u64)
+  ensure
+    im.try(&.close)
+    commissioner.try(&.close)
+  end
+
+  it "persists the refreshed deadline for Datastore registration and deferred handoff" do
+    im = RegulatoryImClient.new
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = regulatory_fabric
+    state = store.load
+    state.install_fabric(fabric)
+    store.save(state)
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, RegulatoryNodeDelivery.new)
+    commissioner = RegulatoryCommissioner.new(store, datastore_registrar: registrar)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    now = Time.utc.to_unix
+    stale = RegulatoryCommissioner::FailSafeWindow.new(Time.instant + 5.seconds, now + 5, now + 600)
+    refreshed, saved_handoff = commissioner.checkpoint(fabric, 0x200_u64, peer,
+      im, regulatory_session, stale, true)
+    handoff = saved_handoff.as(Matter::Controller::PendingCommissioningHandoff)
+    refreshed.expires_at_unix.should be > stale.expires_at_unix
+    handoff.expires_at_unix.should eq(refreshed.expires_at_unix)
+    store.load.pending_datastore_nodes.first.expires_at_unix.should eq(refreshed.expires_at_unix)
+    store.load.pending_handoffs.first.expires_at_unix.should eq(refreshed.expires_at_unix)
   ensure
     im.try(&.close)
     commissioner.try(&.close)
