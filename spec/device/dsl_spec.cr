@@ -150,6 +150,41 @@ describe Matter::Device::DSL do
   end
 
   describe "network" do
+    it "enables Terms and Conditions on root General Commissioning from device options" do
+      device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      commissioning = device.general_commissioning
+      commissioning.feature_map.terms_and_conditions?.should be_true
+      commissioning.tc_min_required_version.should eq(2_u16)
+      commissioning.tc_acknowledgements_required.should be_true
+    end
+
+    it "restores only committed Terms and Conditions acceptance from device storage" do
+      storage = Matter::Storage::Memory.new
+      device = DslSpecDevice.new(storage, port: DslSpec::EPHEMERAL_PORT,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      commissioning = device.general_commissioning
+      commissioning.arm_failsafe(
+        Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64),
+        1_u8, false
+      ).error_code.ok?.should be_true
+      commissioning.set_tc_acknowledgements(
+        Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16)
+      ).error_code.ok?.should be_true
+      device.persistence.save_cluster(commissioning).should be_true
+
+      interrupted = DslSpecDevice.new(storage, port: DslSpec::EPHEMERAL_PORT,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      interrupted.general_commissioning.tc_acknowledgements_required?.should be_true
+
+      commissioning.commissioning_complete(1_u8, true).error_code.ok?.should be_true
+      device.persistence.save_cluster(commissioning).should be_true
+      completed = DslSpecDevice.new(storage, port: DslSpec::EPHEMERAL_PORT,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      completed.general_commissioning.tc_acknowledgements_required?.should be_false
+      completed.general_commissioning.tc_accepted_version.should eq(2_u16)
+    end
+
     it "configures Network Commissioning for the declared network" do
       device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT)
       network = device.node.get_cluster!(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::NetworkCommissioning)

@@ -527,6 +527,33 @@ Wait for the Datastore entries to become Committed before the delegated
 controller opens CASE to the device. The ICAC signing key stays with
 `joint_authority`.
 
+## Enhanced Setup Flow Terms and Conditions
+
+Devices can enable the optional Matter 1.6 General Commissioning TC feature
+when constructed:
+
+```crystal
+device = MyDevice.new(
+  tc_min_required_version: 2_u16,
+  tc_required_acknowledgements: 0b0110_u16
+)
+```
+
+The device then advertises FeatureMap bit 0, exposes the TC attributes to
+administrators, and accepts SetTCAcknowledgements (command `0x06`). The
+acknowledged version must meet the configured minimum, and the response map
+must include every required bit. Acceptance during an armed fail-safe remains
+temporary until CommissioningComplete succeeds. Fail-safe expiry or a restart
+discards that temporary acceptance. A successful completion persists it for
+future commissioning sessions. Devices without these constructor options do
+not advertise the TC feature.
+
+When commissioning one of these devices, obtain the user's acceptance of the
+terms first, then pass the accepted version and bitmask explicitly to
+`Commissioner#pairing_code` as `tc_acknowledgements: {version, bitmask}`. The
+controller sends this after device attestation and checks the command response;
+it never accepts terms automatically.
+
 ## Error handling
 
 Everything the library raises on its own behalf descends from `Matter::Error`:

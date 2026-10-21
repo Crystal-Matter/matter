@@ -216,6 +216,8 @@ module Matter
           hostname : String? = nil,
           max_fabrics : UInt8 = ::Matter::FabricTable::DEFAULT_MAX_FABRICS,
           network_backend : ::Matter::Network::Backend? = nil,
+          tc_min_required_version : UInt16? = nil,
+          tc_required_acknowledgements : UInt16 = 0_u16,
         )
           super
         end

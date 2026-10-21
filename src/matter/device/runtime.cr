@@ -125,6 +125,8 @@ module Matter
       hostname : String? = nil,
       max_fabrics : UInt8 = FabricTable::DEFAULT_MAX_FABRICS,
       @network_backend : Network::Backend? = nil,
+      @tc_min_required_version : UInt16? = nil,
+      @tc_required_acknowledgements : UInt16 = 0_u16,
     )
       @ip_addresses = ip_addresses || default_ip_addresses
 
@@ -389,7 +391,14 @@ module Matter
       )
       @basic_info = basic_info
 
-      general_commissioning = Cluster::GeneralCommissioning.new(endpoint_0)
+      general_commissioning = if tc_version = @tc_min_required_version
+                                Cluster::GeneralCommissioning.new(endpoint_0,
+                                  feature_map: Cluster::GeneralCommissioning::Feature::TermsAndConditions,
+                                  tc_min_required_version: tc_version,
+                                  tc_required_acknowledgements: @tc_required_acknowledgements)
+                              else
+                                Cluster::GeneralCommissioning.new(endpoint_0)
+                              end
       access_control = Cluster::AccessControl.new(endpoint_0)
       @general_commissioning = general_commissioning
       @access_control = access_control
