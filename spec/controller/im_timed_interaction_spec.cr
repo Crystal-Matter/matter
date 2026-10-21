@@ -100,6 +100,9 @@ private def timed_interaction_fixture : TimedInteractionFixture
   handler.node.add_endpoint(endpoint)
   basic = handler.node.get_cluster(Matter::Cluster::BasicInformation).as(Matter::Cluster::BasicInformation)
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  # The fixture uses one SecureContext for both sides of the local exchange.
+  # Match the response recipient ID to the controller's receive session ID.
+  session.peer_session_id = session.session_id
   handler.sessions[session.session_id] = session
   peer = Socket::IPAddress.new("127.0.0.1", 5540)
   client = TimedInteractionClient.new(handler, capture, session, peer)

@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   explicitly approved HTTP hosts for signed CRLs, bounds downloads, rejects
   redirects, and fails closed on partitioned or delegated CRLs.
 
+### Controller Interaction Model
+
+- Collect chunked InvokeResponse messages on one exchange, acknowledging each
+  intermediate chunk with `Status.Success`. Reject wrong-session and malformed
+  chunks, global status errors, missing final chunks, and excessive response
+  size or chunk count.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

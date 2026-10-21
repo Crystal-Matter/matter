@@ -320,6 +320,11 @@ adds an optional minimum event number; the same bounded ReportData chunk
 ladder collects event and attribute reports. `subscribe_events` and `subscribe`
 allow event-only or mixed subscriptions, including EventFilterIB values.
 Subscription reports check both attribute and event status entries.
+Controller invokes collect bounded InvokeResponse chunks on the original CASE
+session and exchange. Every intermediate response receives an Interaction Model
+`Status.Success` continuation, while the final response returns the combined
+command results. A timeout, global status error, malformed chunk, or changed
+session aborts the collection.
 
 `GroupInvoker` derives an operational key from a provisioned epoch key and the
 selected fabric's compressed ID, then stores the derived key in controller
