@@ -243,7 +243,8 @@ module Matter
             raise Matter::AuthenticationError.new("CASE: Sigma2Resume MIC is invalid")
           end
           keys = Session::Case.derive_session_keys(@crypto, record.shared_secret,
-            initiator_random + record.resumption_id, Session::Case::Role::Initiator)
+            initiator_random + record.resumption_id, Session::Case::Role::Initiator,
+            resumption: true)
           session = Session::SecureContext.new(
             session_id: initiator_session_id,
             peer_session_id: sigma2.responder_session_id,

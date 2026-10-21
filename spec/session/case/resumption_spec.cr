@@ -37,9 +37,10 @@ describe "CASE session resumption wire and keys" do
 
     salt = initiator_random + old_id
     keys = Matter::Session::Case.derive_session_keys(crypto, shared_secret, salt,
-      Matter::Session::Case::Role::Initiator)
-    keys[:encryption].hexstring.should eq("f93a32a672e8413a8bdbaa10343d5aef")
-    keys[:decryption].hexstring.should eq("cef275b5dcdf161df58a964e11ef625b")
-    keys[:attestation_challenge].hexstring.should eq("bdd6a8cd912168ae68b7d5f45f6de220")
+      Matter::Session::Case::Role::Initiator, resumption: true)
+    # Matter.js NodeSession derives resumed keys with SessionResumptionKeys.
+    keys[:encryption].hexstring.should eq("a0c022b57a0023744f46330878f6c13b")
+    keys[:decryption].hexstring.should eq("1ba459f3def9a3d69bc69c87fa65b759")
+    keys[:attestation_challenge].hexstring.should eq("c23166685499b1dde028cadacd48b818")
   end
 end

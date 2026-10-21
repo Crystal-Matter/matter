@@ -18,15 +18,16 @@ module Matter
       # specification section 4.14.2, "CASE Session Establishment"). Both sides
       # of the handshake derive from the same constants; matter.js keeps the
       # same names in `packages/protocol/src/session/case/CaseMessages.ts`.
-      KDFSR2_INFO        = "Sigma2".to_slice
-      KDFSR3_INFO        = "Sigma3".to_slice
-      KDFSR1_RESUME_INFO = "Sigma1_Resume".to_slice
-      KDFSR2_RESUME_INFO = "Sigma2_Resume".to_slice
-      RESUME1_MIC_NONCE  = "NCASE_SigmaS1".to_slice
-      RESUME2_MIC_NONCE  = "NCASE_SigmaS2".to_slice
-      TBE_DATA2_NONCE    = "NCASE_Sigma2N".to_slice
-      TBE_DATA3_NONCE    = "NCASE_Sigma3N".to_slice
-      SESSION_KEYS_INFO  = "SessionKeys".to_slice
+      KDFSR2_INFO                  = "Sigma2".to_slice
+      KDFSR3_INFO                  = "Sigma3".to_slice
+      KDFSR1_RESUME_INFO           = "Sigma1_Resume".to_slice
+      KDFSR2_RESUME_INFO           = "Sigma2_Resume".to_slice
+      RESUME1_MIC_NONCE            = "NCASE_SigmaS1".to_slice
+      RESUME2_MIC_NONCE            = "NCASE_SigmaS2".to_slice
+      TBE_DATA2_NONCE              = "NCASE_Sigma2N".to_slice
+      TBE_DATA3_NONCE              = "NCASE_Sigma3N".to_slice
+      SESSION_KEYS_INFO            = "SessionKeys".to_slice
+      SESSION_RESUMPTION_KEYS_INFO = "SessionResumptionKeys".to_slice
 
       # AES-128-CCM key length: Sigma2/Sigma3 keys and each session key
       SYMMETRIC_KEY_LENGTH = 16
@@ -131,8 +132,10 @@ module Matter
         shared_secret : Bytes,
         salt : Bytes,
         role : Role,
+        resumption : Bool = false,
       ) : SessionKeys
-        keys = crypto.create_hkdf_key(shared_secret, salt, SESSION_KEYS_INFO, SESSION_KEYS_LENGTH)
+        info = resumption ? SESSION_RESUMPTION_KEYS_INFO : SESSION_KEYS_INFO
+        keys = crypto.create_hkdf_key(shared_secret, salt, info, SESSION_KEYS_LENGTH)
 
         i2r_key = keys[I2R_KEY_OFFSET, SYMMETRIC_KEY_LENGTH]
         r2i_key = keys[R2I_KEY_OFFSET, SYMMETRIC_KEY_LENGTH]

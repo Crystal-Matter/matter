@@ -688,7 +688,7 @@ module Matter
 
         keys = Session::Case.derive_session_keys(Crypto::StandardCrypto.new,
           record.shared_secret, handshake.initiator_random + record.resumption_id,
-          Session::Case::Role::Responder)
+          Session::Case::Role::Responder, resumption: true)
         session = Session::SecureContext.new(
           session_id: handshake.responder_session_id,
           peer_session_id: handshake.initiator_session_id,
