@@ -34,9 +34,7 @@ module ChipTool
           state = store.load
           fabric = state.fabric || raise Matter::CommissioningError.new("No controller fabric found; run `pairing code ...` first")
 
-          peer = resolve_peer(state, fabric, node_id, ctx.timeout)
-          state.nodes[node_id] = Matter::Controller::NodeInfo.new(node_id, peer.address, peer.port)
-          store.save(state)
+          peer = Matter::Controller::OperationalPeerResolver.new.resolve(state, fabric, node_id, ctx.timeout)
 
           controller = Matter::Controller::Client.new(
             unsecured_source_node_id: state.commissioner_node_id,
@@ -44,6 +42,8 @@ module ChipTool
           )
           begin
             session = ctx.case_pairing.pair(controller, peer, fabric, peer_node_id: node_id, timeout: ctx.timeout)
+            state.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(node_id, Matter::Controller::OperationalPeerResolver.address_hint(peer), peer.port),
+              fabric.root_public_key, fabric.controller_node_id)
             im = Matter::Controller::ImClient.new(controller, ctx.timeout)
             report = im.read_attribute(
               session: session,
@@ -75,35 +75,6 @@ module ChipTool
         else
           v.to_u64?
         end
-      end
-
-      private def resolve_peer(state : Matter::Controller::State, fabric : Matter::Controller::FabricInfo, node_id : UInt64, timeout : Time::Span) : Socket::IPAddress
-        if info = state.nodes[node_id]?
-          if addr = info.address
-            return Socket::IPAddress.new(addr, info.port)
-          end
-        end
-
-        scanner = nil.as(Matter::Controller::Scanner?)
-        scanner = Matter::Controller::Scanner.new
-        scanner.start
-        scanner.query_operational
-
-        deadline = Time.instant + timeout
-        loop do
-          if dev = scanner.operational_devices.find { |device| device.fabric_id == fabric.compressed_fabric_id && device.node_id == node_id }
-            address = dev.addresses.find(&.family.inet?) || dev.addresses.first?
-            if addr = address
-              return Socket::IPAddress.new(addr.address, dev.port)
-            end
-          end
-          break if Time.instant >= deadline
-          sleep 100.milliseconds
-        end
-
-        raise Matter::TransportError.new("Failed to resolve operational address via mDNS (fabric_id=0x#{fabric.fabric_id.to_s(16)} node_id=0x#{node_id.to_s(16)})")
-      ensure
-        scanner.try(&.close)
       end
 
       private def extract_report_u16_list(report : Matter::InteractionModel::ReportDataMessage, cluster_id : UInt32, attribute_id : UInt32) : Array(UInt16)?

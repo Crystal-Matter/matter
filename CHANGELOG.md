@@ -66,6 +66,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   handoff records without exceeding the device's cumulative limit. Bound local
   deadlines from the ArmFailSafe send time, including delayed responses.
 
+### Controller operational discovery
+
+- Resolve CASE peers by compressed fabric ID and Node ID before using saved IP
+  hints. Share this resolver with Joint Fabric datastore delivery and expose
+  `CasePairing#pair_discovered`, which updates a node's stored address only
+  after CASE authenticates it. The example chip-tool commands now use the same
+  discovery order and defer address persistence until authentication succeeds.
+
 ### Commissioning interoperability
 
 - Accept zero-valued RCAC and ICAC identifiers, which Matter 1.6 permits and

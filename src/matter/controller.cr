@@ -5,6 +5,7 @@
 require "../matter"
 
 require "./controller/scanner"
+require "./controller/operational_peer_resolver"
 require "./controller/state"
 require "./controller/state_store"
 require "./controller/shared_fabric"
