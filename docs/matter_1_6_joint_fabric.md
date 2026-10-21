@@ -84,6 +84,21 @@ item below as covered only to the extent of its cited tests.
   Anchor fabric through the opt-in registrar; it observes the pending NodeList
   record before final CASE and the committed node, endpoint, and ACL afterward.
 
+## Official certification scenario mirrors
+
+`spec/cluster/joint_fabric_certification_parity_spec.cr` runs local command
+sequences drawn from connectedhomeip v1.6.0.0's `TC_JFADMIN_1_1`, `1_2`,
+`1_4` and `TC_JFDS_2_1` through `2_4`. It checks the Anchor's advertised
+Datastore values, reserved key set and CAT groups, key set/group/admin command
+outcomes, JFA fail-safe statuses, and Joint Commissioning window parameter
+boundaries. The `TC_JFDS_2_2` invalid security policy is injected as raw TLV:
+the handler returns `ConstraintError` as the certification test requires.
+
+These are local parity checks. They do not run the official Python scripts or
+verify discovery, CASE ACLs, mDNS window expiry, controller certificate stores,
+and full commissioning against an independent implementation. Those remain
+part of the interoperability work below.
+
 ## Work required for interoperable Joint Commissioning
 
 1. Integrate a production operational trust anchor source and exercise
