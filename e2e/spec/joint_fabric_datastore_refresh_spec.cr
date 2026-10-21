@@ -172,6 +172,43 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
       attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
     after.attribute_reports.as(Array(IM::AttributeReportIB)).first.attribute_data.should_not be_nil
+
+    # Exercise the device as a jointly controlled node, including a restart.
+    # Both controller identities must keep operational access to the same
+    # fabric and observe each other's changes to an ordinary application cluster.
+    turned_on = delegate_im.invoke(session: delegate_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_ON, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(turned_on)
+    on_report = im.read_attribute(session: target_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    on_data = on_report.attribute_reports.as(Array(IM::AttributeReportIB))
+      .first.attribute_data.as(IM::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(on_data.to_slice).should be_true
+
+    target.restart!
+    delegate_session = Matter::Controller::Pairing::CasePairing.new.pair(delegate_client,
+      target_peer, delegated, peer_node_id: target_node_id, timeout: E2E::COMMAND_TIMEOUT)
+    target_session = Matter::Controller::Pairing::CasePairing.new.pair(client, target_peer,
+      bootstrap.fabric, peer_node_id: target_node_id, timeout: E2E::COMMAND_TIMEOUT)
+    persisted = delegate_im.read_attribute(session: delegate_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    persisted_data = persisted.attribute_reports.as(Array(IM::AttributeReportIB))
+      .first.attribute_data.as(IM::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(persisted_data.to_slice).should be_true
+
+    turned_off = im.invoke(session: target_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(turned_off)
+    off_report = delegate_im.read_attribute(session: delegate_session, peer: target_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    off_data = off_report.attribute_reports.as(Array(IM::AttributeReportIB))
+      .first.attribute_data.as(IM::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(off_data.to_slice).should be_false
   ensure
     delegate_client.try(&.close)
     client.try(&.close)
