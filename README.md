@@ -183,6 +183,16 @@ Applications can add these clusters to endpoints through the device DSL.
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
 
+Energy devices can add `ElectricalPowerMeasurement`,
+`ElectricalEnergyMeasurement`, and `PowerTopology`. The power and energy
+clusters require their fixed measurement accuracy at construction. Select the
+DC/AC and imported/exported plus cumulative/periodic feature bits that the
+device actually supports; the constructors reject incomplete combinations.
+Use `update_ranges`, `record_cumulative`, or `record_periodic` to update
+readings and emit the Matter 1.6 measurement events. Power Topology exposes a
+fixed set of available endpoints; `update_active_endpoints` changes its
+nonvolatile active subset when DynamicPowerFlow is enabled.
+
 Wi-Fi device declarations expose Wi-Fi Network Diagnostics at endpoint 0.
 Applications can update observed link values and counters on that cluster.
 Software Diagnostics is available as an optional cluster for applications

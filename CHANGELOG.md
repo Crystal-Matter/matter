@@ -13,6 +13,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   servers with feature-gated attributes and events, typed command payloads,
   bounded mode/position/level inputs, and a valve open-duration timer.
 
+### Electrical measurement and topology
+
+- Add Matter 1.6 Electrical Power Measurement (revision 3), Electrical Energy
+  Measurement (revision 2), and Power Topology (revision 1) servers. Their
+  fixed accuracy data and feature combinations are validated when configured.
+- Encode measurement accuracy and range structs as Matter TLV. Publish the
+  required range and cumulative/periodic energy events with feature-gated
+  fields, and persist dynamic active endpoint sets.
+
 ### Level and OnOff coordination
 
 - Wire sibling OnOff and LevelControl servers on an endpoint. Ordinary level
