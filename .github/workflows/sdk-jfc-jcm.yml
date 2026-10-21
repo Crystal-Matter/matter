@@ -27,6 +27,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             avahi-daemon avahi-utils dbus libavahi-client-dev libdbus-1-dev \
             libglib2.0-dev libssl-dev pkg-config clang ninja-build cmake python3-yaml iproute2
+          interface="$(ip -o -4 route show default | awk 'NR == 1 {print $5}')"
+          test -n "${interface}"
+          sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
+          sudo ip -6 addr add 'fd42:4d41:5454::2/64' dev "${interface}"
+          ip -6 addr show dev "${interface}"
           sudo service dbus start
           sudo service avahi-daemon start
           avahi-daemon --check
@@ -40,13 +45,7 @@ jobs:
         env:
           MATTER_INTEROP_SCENARIO: jcm
           MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
-        run: |
-          interface="$(ip -o -4 route show default | awk 'NR == 1 {print $5}')"
-          test -n "${interface}"
-          sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
-          sudo ip -6 addr add "${MATTER_JFA_IP_ADDRESS}/64" dev "${interface}"
-          ip -6 addr show dev "${interface}"
-          timeout --signal=TERM --kill-after=30s 105m bash e2e/interop/sdk_jfc_switch_smoke.sh
+        run: timeout --signal=TERM --kill-after=30s 105m bash e2e/interop/sdk_jfc_switch_smoke.sh
       - name: Upload process and protocol logs
         if: always()
         uses: actions/upload-artifact@v4
