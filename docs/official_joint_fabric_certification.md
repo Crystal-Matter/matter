@@ -46,7 +46,8 @@ single case. It preserves the official test, SDK JFC, bridge and Crystal logs.
 
 The multi-ecosystem fixture runs the following official cases without changing
 their scripts or assertions. Both passed in the
-[Matter 1.6 SDK CI run](https://github.com/Crystal-Matter/matter/actions/runs/39619792506):
+[integrated Matter 1.6 SDK CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)
+against merged `develop`:
 
 | Case | Verified protocol path |
 | --- | --- |

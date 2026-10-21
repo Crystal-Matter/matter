@@ -251,7 +251,8 @@ Anchor node and fabric across those sessions; a different node or fabric
 cannot reuse either decision.
 The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
 `TC_JFADMIN_2_1` each passed all steps against Crystal in
-[the multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39619792506).
+[the integrated multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)
+against merged `develop`.
 
 ## Work required for interoperable Joint Commissioning
 
