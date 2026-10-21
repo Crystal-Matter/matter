@@ -31,6 +31,10 @@ private class MigrationPort < Migration::Port
     call("add-anchor")
   end
 
+  def refresh_anchor_registration! : Nil
+    call("refresh-anchor")
+  end
+
   def remove_old_fabric! : Nil
     call("remove-fabric")
   end
@@ -394,6 +398,32 @@ describe Migration do
     restarted.resume_rollback!
     restarted.journal.stage.should eq(Migration::Stage::RolledBack)
     port.calls.should eq(["rollback-true", "resume-rollback", "resume-rollback"])
+  end
+
+  it "refreshes an uncertain pending Anchor registration without repeating AddPendingNode" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    port = MigrationPort.new
+    port.fail_at = "add-anchor"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AnchorVerified)
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { runner.run }
+    restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+      -> { true }, ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::CommissioningError) { restarted.run }
+    port.fail_at = "refresh-anchor"
+    expect_raises(Matter::TransportError) { restarted.resume_anchor_registration! }
+    restarted.journal.stage.should eq(Migration::Stage::AddingAnchorNode)
+    port.fail_at = nil
+    restarted.resume_anchor_registration!
+    restarted.journal.stage.should eq(Migration::Stage::AnchorNodeAdded)
+    restarted.run
+    restarted.journal.stage.should eq(Migration::Stage::Complete)
+    port.calls.count("add-anchor").should eq(1)
+    port.calls.count("refresh-anchor").should eq(2)
   end
 
   it "refuses rollback after B removal begins" do

@@ -115,6 +115,9 @@ item below as covered only to the extent of its cited tests.
   `resume-rollback-device-migration` for a partially completed rollback. All
   retain the same consent and selected fabric/device identity checks as
   `migrate-device`.
+  If AddPendingNode has created an A NodeList entry but propagation remains
+  Pending or CommitFailed, `resume-anchor-registration` explicitly sends
+  RefreshNode and waits for a Committed entry without repeating AddPendingNode.
   With `MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE=1`, endpoint 2 keeps both B's JFA
   service and Datastore bound to B after endpoint 1 joins A. The two services
   retain separate AdministratorFabricIndex, ICAC and Anchor role records, and

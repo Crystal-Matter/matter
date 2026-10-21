@@ -88,6 +88,7 @@ module Matter
         abstract def commission_anchor! : Nil
         abstract def verify_anchor! : Nil
         abstract def add_anchor_node! : Nil
+        abstract def refresh_anchor_registration! : Nil
         abstract def remove_old_fabric! : Nil
         abstract def remove_old_node! : Nil
         abstract def verify_postcondition!(stage : Stage) : Nil
@@ -235,6 +236,27 @@ module Matter
             Cluster::JointFabricDatastore::CLUSTER_ID,
             Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE, request.to_slice)
           assert_status_success!(response, "AddPendingNode")
+          wait_anchor_node_committed!(im, session)
+        end
+
+        def refresh_anchor_registration! : Nil
+          verify_anchor!
+          require_old_fabric_present!
+          entry = anchor_node_entry ||
+                  raise Matter::CommissioningError.new("Anchor Datastore has no pending migrated node to refresh")
+          return if entry.commissioning_status_entry.state.committed?
+          session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
+          im = ImClient.new(@client, @timeout)
+          response = im.invoke(session, @anchor_datastore_peer, @anchor_datastore_endpoint,
+            Cluster::JointFabricDatastore::CLUSTER_ID,
+            Cluster::JointFabricDatastore::CMD_REFRESH_NODE,
+            Cluster::JointFabricDatastore::RefreshNodeRequest.new(@anchor_node_id).to_slice)
+          assert_status_success!(response, "RefreshNode")
+          wait_anchor_node_committed!(im, session)
+        end
+
+        private def wait_anchor_node_committed!(im : ImClient,
+                                                session : Session::SecureContext) : Nil
           deadline = Time.instant + @timeout
           loop do
             nodes = datastore_nodes(im, session, @anchor_datastore_peer, @anchor_datastore_endpoint)
@@ -718,6 +740,15 @@ module Matter
           advance(Stage::RollingBack)
           @port.rollback_anchor!(registered)
           advance(Stage::RolledBack)
+        end
+
+        def resume_anchor_registration! : Nil
+          unless @journal.stage.adding_anchor_node?
+            raise Matter::ConfigurationError.new("Anchor registration is not awaiting recovery")
+          end
+          @port.refresh_anchor_registration!
+          @port.verify_postcondition!(Stage::AnchorNodeAdded)
+          advance(Stage::AnchorNodeAdded)
         end
 
         def resume_rollback! : Nil

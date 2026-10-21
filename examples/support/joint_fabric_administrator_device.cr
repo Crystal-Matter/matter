@@ -1514,7 +1514,7 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok", nonce: request.nonce, certificate: certificate)
           when "migrate-device", "reconcile-device-migration",
                "reconcile-device-migration-no-effect", "rollback-device-migration",
-               "resume-rollback-device-migration"
+               "resume-rollback-device-migration", "resume-anchor-registration"
             migrate_device(request)
             CommandResult.new("ok", nonce: request.nonce)
           else
@@ -1625,6 +1625,8 @@ module MatterJointFabricAdministrator
           workflow.rollback!
         when "resume-rollback-device-migration"
           workflow.resume_rollback!
+        when "resume-anchor-registration"
+          workflow.resume_anchor_registration!
         when "reconcile-device-migration-no-effect"
           workflow.reconcile_no_effect!
         when "reconcile-device-migration"
