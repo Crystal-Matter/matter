@@ -164,12 +164,12 @@ module Matter
           end
           sink.seek(0)
           StagedUpdate.new(header, token.dup, uri, bytes_downloaded)
-        rescue ex : Matter::Error | IO::Error
+        rescue ex
           @requestor.emit_download_error(version, bytes_downloaded)
           @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Failure)
           raise ex
         end
-      rescue ex : Matter::Error | IO::Error
+      rescue ex
         @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Failure)
         raise ex
       end

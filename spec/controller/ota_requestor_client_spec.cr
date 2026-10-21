@@ -198,6 +198,27 @@ describe "OTA Requestor controller download" do
     bdx.designators.size.should eq(1)
   end
 
+  it "returns to idle when the application consent callback fails" do
+    offer = OtaProviderSpec::QueryImageResponse.available(
+      "bdx://0000000000001234/image", 11_u32, "11.0", Bytes[1, 2, 3, 4, 5, 6, 7, 8])
+    offer.user_consent_needed = true
+    im = OtaImFake.new(offer)
+    bdx = OtaBdxFake.new(ota_controller_image)
+    cluster = OtaRequestorSpec.new
+    client = OtaRequestorClientSpec.new(im, bdx, cluster)
+    client.on_user_consent = ->(_offer : OtaProviderSpec::QueryImageResponse) : Bool do
+      raise "User interface unavailable"
+    end
+
+    expect_raises(Exception, "User interface unavailable") do
+      client.query_and_download(ota_controller_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 0_u16,
+        0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new)
+    end
+    bdx.designators.should be_empty
+    cluster.update_state.should eq(OtaRequestorSpec::UpdateState::Idle)
+  end
+
   it "keeps the image idle when the provider has no update" do
     im = OtaImFake.new(OtaProviderSpec::QueryImageResponse.new(OtaProviderSpec::QueryStatus::NotAvailable))
     bdx = OtaBdxFake.new(ota_controller_image)
