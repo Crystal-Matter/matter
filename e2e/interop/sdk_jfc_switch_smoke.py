@@ -13,12 +13,13 @@ import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 
 class ManagedProcess:
-    def __init__(self, name, argv, cwd, log_dir):
+    def __init__(self, name, argv, cwd, log_dir, env=None):
         self.name = name
         self.master, slave = pty.openpty()
         self.log = (log_dir / f"{name}.log").open("wb")
@@ -28,11 +29,14 @@ class ManagedProcess:
             stdin=slave,
             stdout=slave,
             stderr=slave,
+            env=env,
             start_new_session=True,
             close_fds=True,
         )
         os.close(slave)
         self.output = ""
+        self.reader = None
+        self.reader_stop = threading.Event()
 
     def drain(self, seconds=0.2):
         readable, _, _ = select.select([self.master], [], [], seconds)
@@ -67,6 +71,18 @@ class ManagedProcess:
         os.write(self.master, (value + "\n").encode())
         return start
 
+    def start_background_drain(self):
+        """Keep a chatty device from blocking when another process is awaited."""
+        if self.reader is not None:
+            return
+
+        def read_until_stopped():
+            while not self.reader_stop.is_set():
+                self.drain(0.2)
+
+        self.reader = threading.Thread(target=read_until_stopped, daemon=True)
+        self.reader.start()
+
     def close(self):
         if self.process.poll() is None:
             os.killpg(self.process.pid, signal.SIGTERM)
@@ -75,6 +91,9 @@ class ManagedProcess:
             except subprocess.TimeoutExpired:
                 os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait(timeout=5)
+        self.reader_stop.set()
+        if self.reader is not None:
+            self.reader.join(timeout=2)
         self.drain(0)
         os.close(self.master)
         self.log.close()
@@ -108,9 +127,9 @@ def run(args):
             jfa_state, logs,
         )
         processes.append(jfa)
+        jfa.start_background_drain()
         # The SDK JFA starts its Pigweed server before the JFC connects.
         time.sleep(3)
-        jfa.drain(0)
         if jfa.process.poll() is not None:
             raise RuntimeError("official JFA exited during startup")
 
@@ -118,6 +137,7 @@ def run(args):
         processes.append(switch)
         pin = switch.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
         switch.expect(r"Starting in Commissioning Mode", 60)
+        switch.start_background_drain()
 
         jfc_state = logs / "jfc-state"
         jfc_state.mkdir(exist_ok=True)

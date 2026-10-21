@@ -1,5 +1,6 @@
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -7,6 +8,32 @@ from sdk_jfc_switch_smoke import ManagedProcess
 
 
 class ManagedProcessTest(unittest.TestCase):
+    def test_background_drain_keeps_noninteractive_device_running(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = (
+                "import sys, time\n"
+                "print('ready', flush=True)\n"
+                "print('x' * 200000, flush=True)\n"
+                "print('finished', flush=True)\n"
+                "time.sleep(5)\n"
+            )
+            process = ManagedProcess(
+                "fake-device", [sys.executable, "-u", "-c", script],
+                Path(directory), Path(directory)
+            )
+            try:
+                process.expect("ready", 2)
+                process.start_background_drain()
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if "finished" in (Path(directory) / "fake-device.log").read_text():
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("background reader did not drain the device output")
+            finally:
+                process.close()
+
     def test_interactive_prompt_and_log_capture(self):
         with tempfile.TemporaryDirectory() as directory:
             script = (
