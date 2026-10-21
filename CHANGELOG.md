@@ -14,6 +14,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   TimeSource reporting, and a rate-limited TimeFailure event. Time state is
   discarded after restart until a trusted source updates it again.
 
+### On/Off timed lighting
+
+- Implement the Lighting OnWithTimedOff command's decisecond OnTime countdown
+  and guarded OffWaitTime period. Timer ticks update attributes and turn the
+  device off without an application scheduler; timer counters reset on restart.
+
 ### Thread diagnostics
 
 - Add the Matter 1.6 Thread Network Diagnostics revision 3 server with typed
