@@ -19,6 +19,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commands obey ExecuteIfOff and command option overrides; WithOnOff commands
   turn on before raising a level and turn off after a transition reaches its
   minimum. Stopping a downward transition leaves OnOff unchanged.
+
+### Color Control continuous movement
+
+- Run MoveHue, MoveSaturation, MoveColor and MoveColorTemperature over time at
+  the requested rates instead of accepting them as no-ops. StopMoveStep and
+  MoveMode Stop freeze the current value; zero rates for up/down moves return
+  InvalidCommand. A monotonic clock drives movement and bounds are enforced.
+
+
 ### Level control transitions
 
 - Apply MoveToLevel and Step transition times in deciseconds and Move rates in

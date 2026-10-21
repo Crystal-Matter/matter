@@ -19,6 +19,8 @@ module Matter
     class ColorControl < Base
       cluster 0x0300, revision: 7
 
+      MOVEMENT_TICK = 100.milliseconds
+
       feature :hue_saturation, bit: 0    # HS - Hue/saturation color specification
       feature :enhanced_hue, bit: 1      # EHUE - Enhanced 16-bit hue precision
       feature :color_loop, bit: 2        # CL - Color loop functionality
@@ -110,21 +112,63 @@ module Matter
         @enhanced_current_hue = @current_hue.to_u16 << ENHANCED_HUE_SHIFT
         # ColorCapabilities mirrors the feature map bit for bit
         @color_capabilities = @feature_map.value.to_u16
+        @movement = nil
+        @movement_fiber_running = false
       end
 
+      private enum MovementKind
+        Hue
+        Saturation
+        Xy
+        ColorTemperature
+      end
+
+      private class Movement
+        getter kind : MovementKind
+        getter started_at : Time::Instant
+        property last_advanced_at : Time::Instant
+        getter origin_x : Int32
+        getter origin_y : Int32
+        getter rate_x : Int32
+        getter rate_y : Int32
+        getter min_x : Int32
+        getter max_x : Int32
+
+        def initialize(@kind : MovementKind, @started_at : Time::Instant,
+                       @origin_x : Int32, @origin_y : Int32,
+                       @rate_x : Int32, @rate_y : Int32,
+                       @min_x : Int32, @max_x : Int32)
+          @last_advanced_at = @started_at
+        end
+      end
+
+      @movement : Movement?
+      @movement_fiber_running : Bool
+
       # ------------------------------------------------------------------------
-      # Commands (transitions are instant; move commands are accepted as no-ops)
+      # Commands
       # ------------------------------------------------------------------------
 
       def move_to_hue(request : MoveToHueRequest) : InteractionModel::Status
+        stop_movement
         move_to_hue(request.hue)
       end
 
       def move_hue(request : MoveHueRequest) : InteractionModel::Status
-        InteractionModel::Status.success
+        case request.move_mode
+        when .stop?
+          stop_movement
+        when .up?, .down?
+          return InteractionModel::Status.invalid_command if request.rate == 0
+          rate = request.move_mode.up? ? request.rate.to_i : -request.rate.to_i
+          start_movement(MovementKind::Hue, rate, 0, 0, HUE_MAXIMUM.to_i)
+        else
+          InteractionModel::Status.invalid_command
+        end
       end
 
       def step_hue(request : StepHueRequest) : InteractionModel::Status
+        stop_movement
         case request.step_mode
         in .up?
           move_to_hue(((@current_hue.to_u16 + request.step_size) % HUE_MODULUS).to_u8)
@@ -134,14 +178,25 @@ module Matter
       end
 
       def move_to_saturation(request : MoveToSaturationRequest) : InteractionModel::Status
+        stop_movement
         move_to_saturation(request.saturation)
       end
 
       def move_saturation(request : MoveSaturationRequest) : InteractionModel::Status
-        InteractionModel::Status.success
+        case request.move_mode
+        when .stop?
+          stop_movement
+        when .up?, .down?
+          return InteractionModel::Status.invalid_command if request.rate == 0
+          rate = request.move_mode.up? ? request.rate.to_i : -request.rate.to_i
+          start_movement(MovementKind::Saturation, rate, 0, 0, HUE_MAXIMUM.to_i)
+        else
+          InteractionModel::Status.invalid_command
+        end
       end
 
       def step_saturation(request : StepSaturationRequest) : InteractionModel::Status
+        stop_movement
         case request.step_mode
         in .up?
           move_to_saturation(Math.min(@current_saturation.to_u16 + request.step_size, SATURATION_MAXIMUM).to_u8)
@@ -151,6 +206,7 @@ module Matter
       end
 
       def move_to_hue_and_saturation(request : MoveToHueAndSaturationRequest) : InteractionModel::Status
+        stop_movement
         self.current_hue = request.hue
         self.current_saturation = request.saturation
         self.enhanced_current_hue = request.hue.to_u16 << ENHANCED_HUE_SHIFT
@@ -158,26 +214,44 @@ module Matter
       end
 
       def move_to_color(request : MoveToColorRequest) : InteractionModel::Status
+        stop_movement
         move_to_color(request.x, request.y)
       end
 
       def move_color(request : MoveColorRequest) : InteractionModel::Status
-        InteractionModel::Status.success
+        return stop_movement if request.x == 0 && request.y == 0
+        start_movement(MovementKind::Xy, request.x.to_i, request.y.to_i, 0, CHROMATICITY_MAX.to_i)
       end
 
       def step_color(request : StepColorRequest) : InteractionModel::Status
+        stop_movement
         move_to_color(step_chromaticity(@current_x, request.x), step_chromaticity(@current_y, request.y))
       end
 
       def move_to_color_temperature(request : MoveToColorTemperatureRequest) : InteractionModel::Status
+        stop_movement
         move_to_color_temperature(request.color_temperature_mireds)
       end
 
       def move_color_temperature(request : MoveColorTemperatureRequest) : InteractionModel::Status
-        InteractionModel::Status.success
+        return stop_movement if request.move_mode.stop?
+        return InteractionModel::Status.invalid_command if request.rate == 0
+
+        minimum = request.color_temperature_minimum_mireds == 0 ? @color_temp_physical_min_mireds : request.color_temperature_minimum_mireds.clamp(@color_temp_physical_min_mireds, @color_temp_physical_max_mireds)
+        maximum = request.color_temperature_maximum_mireds == 0 ? @color_temp_physical_max_mireds : request.color_temperature_maximum_mireds.clamp(@color_temp_physical_min_mireds, @color_temp_physical_max_mireds)
+        return InteractionModel::Status.constraint_error if minimum > maximum
+
+        case request.move_mode
+        when .up?, .down?
+          rate = request.move_mode.up? ? request.rate.to_i : -request.rate.to_i
+          start_movement(MovementKind::ColorTemperature, rate, 0, minimum.to_i, maximum.to_i)
+        else
+          InteractionModel::Status.invalid_command
+        end
       end
 
       def step_color_temperature(request : StepColorTemperatureRequest) : InteractionModel::Status
+        stop_movement
         case request.step_mode
         in .up?
           move_to_color_temperature(Math.min(@color_temperature_mireds.to_u32 + request.step_size, @color_temp_physical_max_mireds.to_u32).to_u16)
@@ -187,6 +261,7 @@ module Matter
       end
 
       def enhanced_move_to_hue(request : EnhancedMoveToHueRequest) : InteractionModel::Status
+        stop_movement
         move_to_enhanced_hue(request.enhanced_hue)
       end
 
@@ -195,6 +270,7 @@ module Matter
       end
 
       def enhanced_step_hue(request : EnhancedStepHueRequest) : InteractionModel::Status
+        stop_movement
         case request.step_mode
         in .up?
           move_to_enhanced_hue(((@enhanced_current_hue.to_u32 + request.step_size) % ENHANCED_HUE_MODULUS).to_u16)
@@ -204,6 +280,7 @@ module Matter
       end
 
       def enhanced_move_to_hue_and_saturation(request : EnhancedMoveToHueAndSaturationRequest) : InteractionModel::Status
+        stop_movement
         self.enhanced_current_hue = request.enhanced_hue
         self.current_hue = (request.enhanced_hue >> ENHANCED_HUE_SHIFT).to_u8
         self.current_saturation = request.saturation
@@ -217,8 +294,83 @@ module Matter
       end
 
       def stop_move_step(request : StopMoveStepRequest) : InteractionModel::Status
+        stop_movement
+      end
+
+      # Advances a continuous move using a monotonic clock. Public for
+      # deterministic platform clocks and tests; a fiber advances it normally.
+      def advance_movement(now : Time::Instant = Time.instant) : Nil
+        movement = @movement
+        return unless movement
+        return if now <= movement.last_advanced_at
+
+        movement.last_advanced_at = now
+        elapsed = (now - movement.started_at).total_seconds
+        x = movement.origin_x + (movement.rate_x * elapsed).trunc.to_i
+        y = movement.origin_y + (movement.rate_y * elapsed).trunc.to_i
+
+        case movement.kind
+        when .hue?
+          hue = ((x % HUE_MODULUS) + HUE_MODULUS) % HUE_MODULUS
+          move_to_hue(hue.to_u8)
+        when .saturation?
+          level = x.clamp(movement.min_x, movement.max_x)
+          move_to_saturation(level.to_u8)
+          @movement = nil if movement_limit_reached?(level, movement.rate_x, movement.min_x, movement.max_x)
+        when .xy?
+          new_x = x.clamp(movement.min_x, movement.max_x)
+          new_y = y.clamp(movement.min_x, movement.max_x)
+          move_to_color(new_x.to_u16, new_y.to_u16)
+          if movement_limit_reached?(new_x, movement.rate_x, movement.min_x, movement.max_x) &&
+             movement_limit_reached?(new_y, movement.rate_y, movement.min_x, movement.max_x)
+            @movement = nil
+          end
+        when .color_temperature?
+          mireds = x.clamp(movement.min_x, movement.max_x)
+          move_to_color_temperature(mireds.to_u16)
+          @movement = nil if movement_limit_reached?(mireds, movement.rate_x, movement.min_x, movement.max_x)
+        end
+        self.remaining_time = NO_TRANSITION unless @movement
+      end
+
+      private def movement_limit_reached?(value : Int32, rate : Int32, minimum : Int32, maximum : Int32) : Bool
+        rate == 0 || (rate > 0 && value >= maximum) || (rate < 0 && value <= minimum)
+      end
+
+      private def start_movement(kind : MovementKind, rate_x : Int32, rate_y : Int32,
+                                 minimum : Int32, maximum : Int32) : InteractionModel::Status
+        advance_movement
+        origin_x = case kind
+                   in .hue?               then @current_hue.to_i
+                   in .saturation?        then @current_saturation.to_i
+                   in .xy?                then @current_x.to_i
+                   in .color_temperature? then @color_temperature_mireds.to_i
+                   end
+        origin_y = kind.xy? ? @current_y.to_i : 0
+        @movement = Movement.new(kind, Time.instant, origin_x, origin_y,
+          rate_x, rate_y, minimum, maximum)
+        start_movement_fiber
+        InteractionModel::Status.success
+      end
+
+      private def stop_movement : InteractionModel::Status
+        advance_movement
+        @movement = nil
         self.remaining_time = NO_TRANSITION
         InteractionModel::Status.success
+      end
+
+      private def start_movement_fiber : Nil
+        return if @movement_fiber_running
+        @movement_fiber_running = true
+        spawn do
+          while @movement
+            sleep MOVEMENT_TICK
+            advance_movement
+          end
+        ensure
+          @movement_fiber_running = false
+        end
       end
 
       # ------------------------------------------------------------------------
