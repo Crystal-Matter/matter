@@ -33,6 +33,8 @@ module Matter
       getter port : Int32
       getter message_counter : MessageCounter
       getter exchange_manager : ExchangeManager
+      getter fragment_size : Int32
+      getter window_size : Int32
 
       @observers : Hash(Int32, Proc(Codec::MessageCodec::Message, Socket::IPAddress, Bool))
       @observers_mutex : Mutex
@@ -43,8 +45,8 @@ module Matter
       @receive_fiber : Fiber?
 
       def initialize(@channel : GattFragmentChannel, role : BtpSession::Role,
-                     fragment_size : Int32, window_size : Int32)
-        @session = BtpSession.new(role, fragment_size, window_size)
+                     @fragment_size : Int32, @window_size : Int32)
+        @session = BtpSession.new(role, @fragment_size, @window_size)
         @port = 5540
         @session_mutex = Mutex.new
         @message_counter = MessageCounter.new

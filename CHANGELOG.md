@@ -16,6 +16,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BLE transport framing
 
+- Negotiate a central BTP v4 session over a GATT handshake channel. The
+  controller writes C1, subscribes to C2, validates the response before its
+  timeout, and bounds fragment/window sizes before opening the packet transport.
 - Add a packet transport boundary shared by UDP and a GATT fragment channel.
   The BTP adapter now carries controller PASE and encrypted Interaction Model
   exchanges over an established BLE connection. Platform GATT discovery,

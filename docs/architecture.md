@@ -47,10 +47,11 @@ fragmentation, reassembly, receive windows, acknowledgements, and timeouts after
 handshake negotiation. `Transport::BtpMessageTransport` binds that session to a
 `GattFragmentChannel`, so a controller `Client` and device `MessageHandler` can
 exchange PASE and encrypted Interaction Model packets over an established BTP
-link. The adapter must write and read complete GATT fragments in order. A
-platform implementation still needs BLE discovery, connection management,
-notification subscriptions, and BTP handshake negotiation before constructing
-the packet transport. The default controller and device runtime use UDP.
+link. `Transport::BtpCentralHandshake.open` writes a v4 handshake request to
+C1, subscribes to C2, validates the response, and starts the packet transport.
+The adapter must write and read complete GATT fragments in order. A platform
+implementation still needs BLE discovery, connection management, and GATT
+characteristic access. The default controller and device runtime use UDP.
 
 Two rules keep the tree honest:
 
