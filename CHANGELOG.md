@@ -15,6 +15,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 - Verify Certification Declarations with CMS signed attributes, including their
   signed content type, encapsulated-content digest, and signature.
+- Validate Joint Fabric Node IDs against the Matter 1.6 range before
+  commissioning and Datastore registration; regenerate random candidates
+  that collide with the Datastore NodeList.
 - Add delegated controller identities on an existing fabric, a separate
   certificate issuer for commissioning, and an ACL grant helper for shared
   controller access.

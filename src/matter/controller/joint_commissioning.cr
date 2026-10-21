@@ -26,6 +26,17 @@ module Matter
       BOOTSTRAP_ICAC_ID        =                     3_u64
       BOOTSTRAP_SERIAL_BYTES   =                         8
 
+      # Allocate against the Datastore NodeList supplied by the caller. A
+      # collision requires a fresh random candidate rather than a sequential
+      # fallback, which could disclose allocation order.
+      def allocate_node_id(node_list_ids : Array(UInt64),
+                           candidate : Proc(UInt64) = -> { DataType::NodeId.random_joint_fabric.id }) : UInt64
+        loop do
+          node_id = candidate.call
+          return node_id if DataType::NodeId.valid_joint_fabric?(node_id) && !node_list_ids.includes?(node_id)
+        end
+      end
+
       # Persist this together with `fabric` to retain the Anchor ICAC issuer
       # across controller restarts. The root key inside FabricInfo is also used
       # for subsequent ICAC cross signing.
@@ -69,7 +80,7 @@ module Matter
                                   administrator_cat_version : UInt16 = 1_u16,
                                   anchor_cat_version : UInt16 = 1_u16,
                                   crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : AnchorBootstrap
-        if fabric_id == 0_u64 || controller_node_id == 0_u64 ||
+        if fabric_id == 0_u64 || !DataType::NodeId.valid_joint_fabric?(controller_node_id) ||
            administrator_cat_version == 0_u16 || anchor_cat_version == 0_u16
           raise Matter::ConfigurationError.new("Invalid Anchor fabric identity or CAT version")
         end
@@ -416,6 +427,15 @@ module Matter
         def commission(node_id : UInt64, manual_code : String,
                        peer : Socket::IPAddress? = nil,
                        defer_completion : Bool = false) : Nil
+          unless DataType::NodeId.valid_joint_fabric?(node_id)
+            raise Matter::CommissioningError.new("Invalid Joint Fabric Node ID")
+          end
+          state = @store.load
+          if node_id == @controller_node_id ||
+             (state.nodes_for(@fabric_id, @root_public_key, @controller_node_id).has_key?(node_id) &&
+             @hooks.pending.try(&.node_id) != node_id)
+            raise Matter::CommissioningError.new("Joint Fabric Node ID is already in use")
+          end
           recovering_node_id = @hooks.pending.try(&.node_id)
           recovered = resume_pending
           return if recovered && recovering_node_id == node_id

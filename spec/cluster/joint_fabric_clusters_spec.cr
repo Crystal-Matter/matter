@@ -110,6 +110,24 @@ describe Matter::Cluster::JointFabricDatastore do
     restored.node_list.map(&.node_id).should eq([43_u64])
   end
 
+  it "rejects reserved Joint Fabric Node IDs and Administrator collisions" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    upper_bound = Matter::DataType::NodeId::JOINT_FABRIC_EXCLUSIVE_MAXIMUM
+    admin_id = 7_u64
+    anchor_id = 8_u64
+    cluster.anchor_node_id = anchor_id
+    cluster.add_admin(Datastore::AddAdminRequest.new(admin_id, "Administrator", 0xFFF1_u16, Bytes.empty)).success?.should be_true
+    cluster.add_admin(Datastore::AddAdminRequest.new(upper_bound, "Invalid", 0xFFF1_u16, Bytes.empty))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    [0_u64, upper_bound, UInt64::MAX, admin_id, anchor_id].each do |node_id|
+      cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Device"))
+        .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    end
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(upper_bound - 1_u64, "Device"))
+      .success?.should be_true
+    cluster.node_list.map(&.node_id).should eq([upper_bound - 1_u64])
+  end
+
   it "round trips a typed group and rejects duplicate group ids" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     request = Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
