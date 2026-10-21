@@ -50,6 +50,11 @@ item below as covered only to the extent of its cited tests.
   an idempotent removal retry. The former Anchor subscribes to the new
   Anchor's authenticated Datastore and suspends Joint Commissioning when that
   view is stale. The subscription is invalidated if its fabric changes.
+- The Datastore accepts CASE reads and commands only while this device is the
+  Anchor. During transfer it remains readable for the candidate's frozen
+  snapshot; after TransferAnchorComplete, the former Anchor rejects Datastore
+  reads and commands, including after restart. Its propagation worker stops
+  when the Datastore freezes.
 - A dedicated Docker RefreshNode test observes an offline node fail propagation,
   then commissions it and confirms live endpoint and ACL reconciliation to
   Committed over CASE.

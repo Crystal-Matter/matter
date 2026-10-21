@@ -55,8 +55,11 @@ module MatterJointFabricAdministrator
       include Matter::Storage::Record
 
       getter? anchor : Bool
+      # A pre-upgrade role record without this field must fail closed rather
+      # than re-expose a former Anchor's frozen Datastore after restart.
+      getter? transfer_complete : Bool = true
 
-      def initialize(@anchor : Bool)
+      def initialize(@anchor : Bool, @transfer_complete : Bool = false)
       end
     end
 
@@ -262,7 +265,7 @@ module MatterJointFabricAdministrator
     protected def on_started : Nil
       super
       @propagation_started = true
-      @datastore_propagator.try(&.start)
+      @datastore_propagator.try(&.start) if joint_fabric_datastore.access_mode.active?
       if ENV["MATTER_JFA_JCM_REQUEST_PATH"]?
         every(1.second) { process_anchor_exchange_request }
       end
@@ -359,6 +362,13 @@ module MatterJointFabricAdministrator
 
       datastore = joint_fabric_datastore
       datastore.joint_fabric_index = fabric.fabric_index
+      datastore.access_mode = if @anchor_role
+                                Datastore::AccessMode::Active
+                              elsif datastore.status.state.delete_pending? && !persisted_transfer_complete?
+                                Datastore::AccessMode::Frozen
+                              else
+                                Datastore::AccessMode::Inactive
+                              end
       datastore.allow_jcm_pase_group_list = -> {
         owner = @jcm_failsafe_session_id
         !owner.nil? && owner == datastore.request_session_id &&
@@ -384,7 +394,7 @@ module MatterJointFabricAdministrator
         transfer_authorized: ->(_node_id : UInt64) { ENV["MATTER_JFA_ALLOW_TRANSFER"]? == "1" },
         datastore_busy: -> { joint_fabric_datastore.transfer_busy? },
         begin_transfer: -> { begin_anchor_transfer },
-        complete_transfer: -> { persist_anchor_role(false); lifecycle.sync_advertisements; nil },
+        complete_transfer: -> { persist_anchor_role(false, transfer_complete: true); lifecycle.sync_advertisements; nil },
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: persisted_icac,
@@ -479,7 +489,7 @@ module MatterJointFabricAdministrator
       @datastore_propagator = Matter::Controller::DatastorePropagator.new(joint_fabric_datastore, delivery)
       @controller_store = store
       @propagation_fabric = fabric
-      @datastore_propagator.try(&.start) if @propagation_started
+      @datastore_propagator.try(&.start) if @propagation_started && joint_fabric_datastore.access_mode.active?
     end
 
     private def seed_joint_fabric_groups(datastore : Datastore) : Nil
@@ -542,15 +552,29 @@ module MatterJointFabricAdministrator
       document ? JointFabricRoleState.from_document(document).anchor? : true
     end
 
-    private def persist_anchor_role(anchor : Bool) : Nil
-      persistence.write_app_document(APP_ROLE_DOCUMENT, JointFabricRoleState.new(anchor).to_document)
+    private def persisted_transfer_complete? : Bool
+      document = persistence.app_document(APP_ROLE_DOCUMENT)
+      document ? JointFabricRoleState.from_document(document).transfer_complete? : false
+    end
+
+    private def persist_anchor_role(anchor : Bool, transfer_complete : Bool = false) : Nil
+      persistence.write_app_document(APP_ROLE_DOCUMENT, JointFabricRoleState.new(anchor, transfer_complete).to_document)
       @anchor_role = anchor
+      joint_fabric_datastore.access_mode = if anchor
+                                             Datastore::AccessMode::Active
+                                           elsif transfer_complete
+                                             Datastore::AccessMode::Inactive
+                                           else
+                                             Datastore::AccessMode::Frozen
+                                           end
+      @datastore_propagator.try(&.start) if anchor && @propagation_started
     end
 
     private def begin_anchor_transfer : Nil
       unless joint_fabric_datastore.begin_anchor_transfer
         raise Matter::ConfigurationError.new("Datastore changed while Anchor transfer was starting")
       end
+      @datastore_propagator.try(&.stop!)
       persist_anchor_role(false)
       lifecycle.sync_advertisements
     end

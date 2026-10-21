@@ -803,23 +803,31 @@ module Matter
       ANCHOR_CAT                =      0xFFFE_u16
       MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
 
+      enum AccessMode
+        Inactive
+        Active
+        Frozen
+      end
+
       # A Datastore instance belongs to one fabric. Once bound, cluster reads
       # and invokes require that fabric's CASE session.
       property joint_fabric_index : UInt8? = nil
+      property access_mode : AccessMode = AccessMode::Inactive
       property allow_jcm_pase_group_list : Proc(Bool)? = nil
 
       def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
-        if !@joint_fabric_index.nil? && fabric_index.nil? && !request_is_case_session? && attribute_id == ATTR_GROUP_LIST &&
+        if @access_mode.active? && !@joint_fabric_index.nil? && fabric_index.nil? && !request_is_case_session? && attribute_id == ATTR_GROUP_LIST &&
            @allow_jcm_pase_group_list.try(&.call)
           return super
         end
-        return InteractionModel::Status.unsupported_access unless request_is_case_session? && accessing_fabric?(fabric_index)
+        readable = @access_mode.active? || @access_mode.frozen?
+        return InteractionModel::Status.unsupported_access unless readable && request_is_case_session? && accessing_fabric?(fabric_index)
         super
       end
 
       def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
                          is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
-        return InteractionModel::Status.unsupported_access unless is_case_session && accessing_fabric?(fabric_index)
+        return InteractionModel::Status.unsupported_access unless @access_mode.active? && is_case_session && accessing_fabric?(fabric_index)
         super
       end
 
@@ -833,6 +841,7 @@ module Matter
       def begin_anchor_transfer : Bool
         return false if transfer_busy?
         self.status = status_entry(DatastoreStateEnum::DeletePending)
+        @access_mode = AccessMode::Frozen
         true
       end
 
@@ -854,6 +863,7 @@ module Matter
         self.node_acl_list = [] of DatastoreACLEntryStruct
         self.node_endpoint_list = [] of DatastoreEndpointEntryStruct
         @joint_fabric_index = nil
+        @access_mode = AccessMode::Inactive
       end
 
       def transfer_busy? : Bool
