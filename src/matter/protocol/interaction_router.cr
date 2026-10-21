@@ -258,6 +258,8 @@ module Matter
           Log.debug { "  Subscribe event #{index}: #{path}" }
         end
 
+        @subscriptions.replace_subscriber_subscriptions(session) unless request.keep_subscriptions?
+
         subscription_id = @registry.allocate_subscription_id
         Log.info { "Created subscription #{subscription_id}" }
 

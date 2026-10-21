@@ -229,6 +229,10 @@ Reads take the same journal: `InteractionRouter#read_events` passes `Node#event_
 `IMHandler.read_events`, which shares the report chunk budget with attribute reads. A subscription
 carries its event paths and a persisted cursor; an urgent event bypasses the minimum-interval
 damping.
+When a SubscribeRequest sets `KeepSubscriptions` false, `SubscriptionManager`
+discards in-flight subscriptions and `SessionRegistry` removes active ones
+owned by that CASE node on the same fabric. Ownership is checked across secure
+session renewals, and removal deletes the persisted subscription document.
 
 ## Persistence
 

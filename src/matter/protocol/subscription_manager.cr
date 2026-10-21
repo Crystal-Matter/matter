@@ -94,6 +94,23 @@ module Matter
         @registry.synchronize { @pending_subscriptions[exchange_id] = pending }
       end
 
+      # A new SubscribeRequest with KeepSubscriptions=false terminates both
+      # active and in-flight subscriptions from the same CASE subscriber.
+      # Matching by fabric and node rather than session survives CASE renewal.
+      def replace_subscriber_subscriptions(session : Session::SecureContext) : Nil
+        fabric_index = session.fabric_index
+        peer_node_id = session.peer_node_id
+        return unless session.case_session? && fabric_index && peer_node_id
+
+        @registry.synchronize do
+          @pending_subscriptions.reject! do |_exchange_id, pending|
+            owner = pending.session
+            owner.case_session? && owner.fabric_index == fabric_index && owner.peer_node_id.try(&.id) == peer_node_id.id
+          end
+          @registry.remove_subscriptions_for_subscriber(fabric_index, peer_node_id.id)
+        end
+      end
+
       # Tracks a read response with chunks still to send.
       def await_read(exchange_id : UInt16, pending : PendingRead) : Nil
         @registry.synchronize { @pending_reads[exchange_id] = pending }

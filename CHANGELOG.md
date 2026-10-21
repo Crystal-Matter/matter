@@ -48,6 +48,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   statuses. Reject oversized individual items and multi-chunk timed writes
   before sending.
 
+### Interaction Model subscriptions
+
+- Honor `SubscribeRequest.KeepSubscriptions`: when false, terminate active and
+  pending subscriptions from the same CASE node on the same fabric, including
+  subscriptions carried by older secure sessions and persisted records. A true
+  value retains those subscriptions.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast
