@@ -318,14 +318,6 @@ module Matter
           begin
             arm_fail_safe(FAIL_SAFE_SECONDS)
             armed = true
-            unless @existing_fabric
-              root = @bootstrap.fabric.root_cert
-              invoke_status!("AddTrustedRootCertificate",
-                Cluster::OperationalCredentials::CLUSTER_ID,
-                Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
-                Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(root).to_slice)
-            end
-
             nonce = @crypto.random_bytes(CSR_NONCE_BYTES)
             csr_response = @im.invoke(@old_session, @peer, 0_u16,
               Cluster::OperationalCredentials::CLUSTER_ID,
@@ -335,6 +327,14 @@ module Matter
             csr_elements = Cluster::OperationalCredentials::CSRElements.from_slice(
               Cluster::OperationalCredentials::Tlv::CsrResponse.from_slice(csr_fields).nocsr_elements)
             public_key = CertificateUtil.extract_uncompressed_public_key_from_csr(csr_elements.csr)
+
+            unless @existing_fabric
+              root = @bootstrap.fabric.root_cert
+              invoke_status!("AddTrustedRootCertificate",
+                Cluster::OperationalCredentials::CLUSTER_ID,
+                Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
+                Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(root).to_slice)
+            end
 
             tags = [ADMINISTRATOR_CAT_ID << 16 | @administrator_cat_version.to_u32]
             tags << (ANCHOR_CAT_ID << 16 | @anchor_cat_version.to_u32) if @anchor_target

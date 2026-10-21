@@ -40,6 +40,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 - Encode generated operational certificate serial numbers as positive, minimal
   DER INTEGER content in their TLV field. This fixes intermittent rejection of
   Crystal-issued roots by the official Matter SDK during commissioning.
+- Request and validate a device CSR before installing its new trusted root in
+  ordinary commissioning and Anchor Administrator rotation. The official SDK
+  rejects CSR allocation after a root has created pending fabric data.
 - Recover interrupted device migration commands after authenticated proof of
   completion or no effect. Verify both fabrics' Datastore ownership before
   declaring migration complete, and resume partially completed rollback.
