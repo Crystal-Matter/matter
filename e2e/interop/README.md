@@ -153,11 +153,13 @@ Use the checked out `v1.6.0.0` SDK source. Bootstrap its own environment and
 submodules, then build only the two Joint Fabric apps, using the target names
 from the SDK's CI workflow:
 
-The executable smoke runner performs this build with the `release-size` profile,
+The executable smoke runner performs this build with the `debug` profile,
 builds the Crystal switch, starts all three processes in one network namespace,
 and checks the JFC commissioning and fabric/ACL readback logs. It requires
 `dbus` and `avahi-daemon` to be running. The manual GitHub Actions workflow
-`.github/workflows/sdk-jfc-smoke.yml` installs and starts them. Run locally with:
+`.github/workflows/sdk-jfc-smoke.yml` installs and starts them. The CI smoke
+run uses `debug` because the SDK `release-size` build stalled on the JFC main
+translation unit until the 105-minute job timeout. Run locally with:
 
 ```sh
 bash e2e/interop/sdk_jfc_switch_smoke.sh
@@ -177,7 +179,7 @@ source scripts/bootstrap.sh -p linux
 ./scripts/build/build_examples.py \
   --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
   --target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang \
-  --build-profile release-size \
+  --build-profile debug \
   build --copy-artifacts-to objdir-jf
 ```
 

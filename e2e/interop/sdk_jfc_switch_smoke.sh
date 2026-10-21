@@ -50,7 +50,7 @@ PY
     ./scripts/build/build_examples.py \
       --target linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang \
       --target linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang \
-      --build-profile release-size \
+      --build-profile debug \
       build --copy-artifacts-to objdir-jf
   ) 2>&1 | tee "${log_dir}/sdk-build.log"
 fi
