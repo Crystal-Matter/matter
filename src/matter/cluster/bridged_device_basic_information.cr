@@ -15,6 +15,7 @@ module Matter
       cluster 0x0039, revision: 5
 
       NODE_LABEL_MAX_LENGTH = 32
+      UNIQUE_ID_MAX_LENGTH  = 32
 
       # Reuse enums and structs from BasicInformation
       alias ProductFinish = BasicInformation::ProductFinish
@@ -59,8 +60,9 @@ module Matter
         end
       end
 
-      # The optional attributes are present exactly when the bridge supplied
-      # a value.
+      # Optional attributes are present exactly when the bridge supplied a
+      # value. UniqueID is required from revision 4 onward and identifies the
+      # same bridged device across bridge restarts.
       attribute 0x0001, :vendor_name, String, nullable: true, fixed: true, optional: true, present_if: :vendor_name
       attribute 0x0002, :vendor_id, UInt16, nullable: true, fixed: true, optional: true, present_if: :vendor_id
       attribute 0x0003, :product_name, String, nullable: true, fixed: true, optional: true, present_if: :product_name
@@ -76,7 +78,7 @@ module Matter
       attribute 0x000E, :product_label, String, nullable: true, fixed: true, optional: true, present_if: :product_label
       attribute 0x000F, :serial_number, String, nullable: true, fixed: true, optional: true, present_if: :serial_number
       attribute 0x0011, :reachable, Bool, default: true, persist: true, callback: :new_only
-      attribute 0x0012, :unique_id, String, nullable: true, fixed: true, optional: true, present_if: :unique_id
+      attribute 0x0012, :unique_id, String, default: "", fixed: true, max_length: UNIQUE_ID_MAX_LENGTH
       attribute 0x0014, :product_appearance, ProductAppearanceStruct, nullable: true, fixed: true, optional: true, present_if: :product_appearance
 
       event 0x00, :start_up, priority: :critical
@@ -101,9 +103,12 @@ module Matter
         @product_url : String? = nil,
         @product_label : String? = nil,
         @serial_number : String? = nil,
-        @unique_id : String? = nil,
+        @unique_id : String = "",
         @product_appearance : ProductAppearanceStruct? = nil,
       )
+        unless (1..UNIQUE_ID_MAX_LENGTH).includes?(@unique_id.bytesize)
+          raise ArgumentError.new("unique_id must be 1..#{UNIQUE_ID_MAX_LENGTH} bytes")
+        end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @node_label = node_label || ""
       end

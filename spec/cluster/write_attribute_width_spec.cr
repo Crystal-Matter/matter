@@ -119,7 +119,7 @@ describe "write_attribute with typed TLV values (chip-tool)" do
   end
 
   it "writes BridgedDeviceBasicInformation NodeLabel (string)" do
-    bridged = Matter::Cluster::BridgedDeviceBasicInformation.new(endpoint, node_label: "Original")
+    bridged = Matter::Cluster::BridgedDeviceBasicInformation.new(endpoint, node_label: "Original", unique_id: "test-bridged")
 
     # chip-tool bridgeddevicebasicinformation write node-label "Porch Light" 1 1
     result = write_via_im(bridged, Matter::Cluster::BridgedDeviceBasicInformation::ATTR_NODE_LABEL, TLV::Any.new("Porch Light"))
