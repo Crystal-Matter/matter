@@ -39,11 +39,17 @@ module Matter
         getter old_root_public_key : Bytes
         getter anchor_root_public_key : Bytes
         property stage : Stage
+        property? commissioning_acknowledged : Bool = false
+        property fail_safe_deadline_unix : Int64? = nil
+        property fail_safe_max_seconds : UInt16? = nil
 
         def initialize(@old_fabric_id : UInt64, @anchor_fabric_id : UInt64,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
                        @old_root_public_key : Bytes, @anchor_root_public_key : Bytes,
-                       @stage : Stage = Stage::Ready)
+                       @stage : Stage = Stage::Ready,
+                       @commissioning_acknowledged : Bool = false,
+                       @fail_safe_deadline_unix : Int64? = nil,
+                       @fail_safe_max_seconds : UInt16? = nil)
         end
       end
 
@@ -86,10 +92,13 @@ module Matter
         abstract def commission_anchor! : Nil
         abstract def verify_anchor! : Nil
         abstract def add_anchor_node! : Nil
+        abstract def refresh_anchor_registration! : Nil
         abstract def remove_old_fabric! : Nil
         abstract def remove_old_node! : Nil
         abstract def verify_postcondition!(stage : Stage) : Nil
+        abstract def verify_no_effect!(stage : Stage) : Nil
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
+        abstract def resume_rollback! : Nil
         abstract def validate_journal!(journal : Journal) : Nil
       end
 
@@ -101,6 +110,8 @@ module Matter
         DEFAULT_WINDOW_SECONDS   =   180_u16
         DEFAULT_PBKDF_ITERATIONS = 1_000_u32
         REGISTRATION_POLL        = 250.milliseconds
+
+        @journal : Journal? = nil
 
         def initialize(@store : StateStore, @old_fabric : FabricInfo,
                        @anchor_fabric : FabricInfo, @issuer : CrossSignedIssuer,
@@ -115,9 +126,13 @@ module Matter
                        @friendly_name : String,
                        @administrator_cat : UInt32,
                        @attestation_verifier : DeviceAttestationVerifier,
+                       @commissioning_ack : Proc(Nil)? = nil,
+                       @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
-                       @client : Client = Client.new)
+                       @client : Client = Client.new,
+                       @monotonic_now : Proc(Time::Instant) = -> { Time.instant },
+                       @recovery_sleep : Proc(Time::Span, Nil) = ->(duration : Time::Span) { sleep duration })
           if @old_node_id == 0_u64 || @anchor_node_id == 0_u64 ||
              (@old_fabric.fabric_id == @anchor_fabric.fabric_id &&
              @old_fabric.root_public_key == @anchor_fabric.root_public_key)
@@ -146,6 +161,7 @@ module Matter
                  journal.anchor_node_id == @anchor_node_id
             raise Matter::AuthenticationError.new("Migration journal does not match selected network identities")
           end
+          @journal = journal
         end
 
         def commission_anchor! : Nil
@@ -173,7 +189,9 @@ module Matter
             ImClient.new(@client, @timeout), old_session, @device_peer,
             DEFAULT_WINDOW_SECONDS, DEFAULT_PBKDF_ITERATIONS,
             Random::Secure.rand(0_u16..4095_u16))
-          hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id, @crypto)
+          deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
+          hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
+            @crypto, -> { persist_commissioning_ack! }, deadline_callback)
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
             @crypto, hooks: hooks, attestation_verifier: @attestation_verifier)
           commissioner.pairing_code(@anchor_node_id, window.manual_pairing_code,
@@ -196,6 +214,27 @@ module Matter
           JointFabricDeviceMigration.validate_anchor_ipk!(sets, @anchor_fabric.ipk_value)
         end
 
+        private def persist_commissioning_ack! : Nil
+          if callback = @commissioning_ack
+            callback.call
+            if journal = @journal
+              journal.commissioning_acknowledged = true
+              @journal = journal
+            end
+          end
+        end
+
+        private def persist_fail_safe_deadline!(deadline_unix : Int64, max_seconds : UInt16) : Nil
+          if callback = @fail_safe_deadline
+            callback.call(deadline_unix, max_seconds)
+            if journal = @journal
+              journal.fail_safe_deadline_unix = deadline_unix
+              journal.fail_safe_max_seconds = max_seconds
+              @journal = journal
+            end
+          end
+        end
+
         def verify_anchor! : Nil
           session = case_session(@anchor_fabric, @anchor_node_id, @device_peer)
           descriptors = fabrics(session, @device_peer)
@@ -216,6 +255,27 @@ module Matter
             Cluster::JointFabricDatastore::CLUSTER_ID,
             Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE, request.to_slice)
           assert_status_success!(response, "AddPendingNode")
+          wait_anchor_node_committed!(im, session)
+        end
+
+        def refresh_anchor_registration! : Nil
+          verify_anchor!
+          require_old_fabric_present!
+          entry = anchor_node_entry ||
+                  raise Matter::CommissioningError.new("Anchor Datastore has no pending migrated node to refresh")
+          return if entry.commissioning_status_entry.state.committed?
+          session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
+          im = ImClient.new(@client, @timeout)
+          response = im.invoke(session, @anchor_datastore_peer, @anchor_datastore_endpoint,
+            Cluster::JointFabricDatastore::CLUSTER_ID,
+            Cluster::JointFabricDatastore::CMD_REFRESH_NODE,
+            Cluster::JointFabricDatastore::RefreshNodeRequest.new(@anchor_node_id).to_slice)
+          assert_status_success!(response, "RefreshNode")
+          wait_anchor_node_committed!(im, session)
+        end
+
+        private def wait_anchor_node_committed!(im : ImClient,
+                                                session : Session::SecureContext) : Nil
           deadline = Time.instant + @timeout
           loop do
             nodes = datastore_nodes(im, session, @anchor_datastore_peer, @anchor_datastore_endpoint)
@@ -258,10 +318,19 @@ module Matter
             Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
             Cluster::JointFabricDatastore::RemoveNodeRequest.new(@old_node_id).to_slice)
           assert_status_success!(response, "RemoveNode")
+          verify_postcondition!(Stage::Complete)
         end
 
         def rollback_anchor!(anchor_registered : Bool) : Nil
-          if anchor_registered
+          resume_rollback!
+        end
+
+        # An interrupted rollback may have removed only the Anchor NodeList
+        # entry. Every retry first reads both peers over CASE and issues only
+        # the removal whose target is still present.
+        def resume_rollback! : Nil
+          require_old_fabric_present!
+          if anchor_node_entry
             session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
             response = ImClient.new(@client, @timeout).invoke(session, @anchor_datastore_peer,
               @anchor_datastore_endpoint, Cluster::JointFabricDatastore::CLUSTER_ID,
@@ -275,18 +344,14 @@ module Matter
               entry.root_public_key == @anchor_fabric.root_public_key &&
               entry.node_id == @anchor_node_id
           end
-          raise Matter::AuthenticationError.new("Selected Anchor fabric is absent or differs during rollback") unless descriptor
-          response = ImClient.new(@client, @timeout).invoke(session, @device_peer, 0_u16,
-            Cluster::OperationalCredentials::CLUSTER_ID,
-            Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
-            Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
-          assert_noc_success!(response, "Anchor RemoveFabric")
-          if fabrics(session, @device_peer).any? do |entry|
-               entry.fabric_id == @anchor_fabric.fabric_id &&
-               entry.root_public_key == @anchor_fabric.root_public_key
-             end
-            raise Matter::CommissioningError.new("Anchor fabric remained installed after rollback")
+          if descriptor
+            response = ImClient.new(@client, @timeout).invoke(session, @device_peer, 0_u16,
+              Cluster::OperationalCredentials::CLUSTER_ID,
+              Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
+              Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
+            assert_noc_success!(response, "Anchor RemoveFabric")
           end
+          verify_postcondition!(Stage::RolledBack)
         end
 
         # These are read-only postconditions for explicit journal
@@ -311,11 +376,19 @@ module Matter
         def verify_postcondition!(stage : Stage) : Nil
           case stage
           when Stage::AnchorCommissioned
+            wait_for_fail_safe_expiry! unless @journal.try(&.commissioning_acknowledged?)
             state = @store.load
             unless state.nodes_for(@anchor_fabric.fabric_id,
                      @anchor_fabric.root_public_key,
                      @anchor_fabric.controller_node_id).has_key?(@anchor_node_id)
-              raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement for Fabric A")
+              verify_handoff_baseline!
+              verify_anchor!
+              state.record_node(@anchor_fabric.fabric_id,
+                NodeInfo.new(node_id: @anchor_node_id, address: @device_peer.address,
+                  port: @device_peer.port), @anchor_fabric.root_public_key,
+                @anchor_fabric.controller_node_id)
+              @store.save(state)
+              return
             end
             verify_anchor!
           when Stage::AnchorVerified
@@ -329,13 +402,16 @@ module Matter
             end
           when Stage::OldFabricRemoved
             raise Matter::CommissioningError.new("Fabric B remains installed") unless old_fabric_absent?
+            verify_postcondition!(Stage::AnchorNodeAdded)
           when Stage::Complete
+            verify_postcondition!(Stage::OldFabricRemoved)
             session = case_session(@old_fabric, @old_datastore_node_id, @old_datastore_peer)
             if datastore_nodes(ImClient.new(@client, @timeout), session,
                  @old_datastore_peer, @old_datastore_endpoint).any?(&.node_id.==(@old_node_id))
               raise Matter::CommissioningError.new("Fabric B Datastore still contains the migrated node")
             end
           when Stage::RolledBack
+            require_old_fabric_present!
             session = case_session(@old_fabric, @old_node_id, @device_peer)
             if fabrics(session, @device_peer).any? do |entry|
                  entry.fabric_id == @anchor_fabric.fabric_id &&
@@ -351,6 +427,108 @@ module Matter
           else
             raise Matter::ConfigurationError.new("Stage has no observable migration postcondition")
           end
+        end
+
+        # A failed command response does not establish whether the peer
+        # committed it. A retry is permitted only when authenticated reads
+        # establish the exact pre-command state on both sides of the handoff.
+        def verify_no_effect!(stage : Stage) : Nil
+          case stage
+          when Stage::CommissioningAnchor
+            if @journal.try(&.commissioning_acknowledged?)
+              raise Matter::CommissioningError.new("Durable CommissioningComplete acknowledgement exists")
+            end
+            wait_for_fail_safe_expiry!
+            state = @store.load
+            if state.nodes_for(@anchor_fabric.fabric_id,
+                 @anchor_fabric.root_public_key,
+                 @anchor_fabric.controller_node_id).has_key?(@anchor_node_id)
+              raise Matter::CommissioningError.new("Controller already stores the Anchor device identity")
+            end
+            require_old_fabric_present!
+            if anchor_fabric_present_over_old_case?
+              raise Matter::CommissioningError.new("Anchor fabric is present on the device")
+            end
+            if anchor_node_entry
+              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            end
+          when Stage::VerifyingAnchor
+            verify_postcondition!(Stage::AnchorCommissioned)
+          when Stage::AddingAnchorNode
+            verify_anchor!
+            require_old_fabric_present!
+            if anchor_node_entry
+              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            end
+          when Stage::RemovingOldFabric
+            verify_postcondition!(Stage::AnchorNodeAdded)
+            require_old_fabric_present!
+          when Stage::RemovingOldNode
+            verify_postcondition!(Stage::OldFabricRemoved)
+            unless old_node_entry
+              raise Matter::CommissioningError.new("Fabric B Datastore no longer contains the migrated node")
+            end
+          else
+            raise Matter::ConfigurationError.new("Stage has no observable no-effect migration condition")
+          end
+        end
+
+        # A stored UTC deadline is diagnostic only: the local clock may have
+        # jumped while this process was stopped. A fresh monotonic interval
+        # covers the device's whole reported cumulative fail-safe bound before
+        # an unacknowledged commissioning result can be classified.
+        private def wait_for_fail_safe_expiry! : Nil
+          max_seconds = @journal.try(&.fail_safe_max_seconds)
+          unless max_seconds && max_seconds > 0
+            raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement or fail-safe recovery bound for Fabric A")
+          end
+          interval = (max_seconds.to_i64 + Commissioning::Commissioner::FAIL_SAFE_RECOVERY_GRACE_SECONDS).seconds
+          start = @monotonic_now.call
+          while (remaining = interval - (@monotonic_now.call - start)) > Time::Span.zero
+            @recovery_sleep.call(remaining)
+          end
+        end
+
+        private def anchor_fabric_present_over_old_case? : Bool
+          session = case_session(@old_fabric, @old_node_id, @device_peer)
+          fabrics(session, @device_peer).any? do |entry|
+            entry.fabric_id == @anchor_fabric.fabric_id &&
+              entry.root_public_key == @anchor_fabric.root_public_key
+          end
+        end
+
+        private def require_old_fabric_present! : Nil
+          session = case_session(@old_fabric, @old_node_id, @device_peer)
+          unless fabrics(session, @device_peer).any? do |entry|
+                   entry.fabric_id == @old_fabric.fabric_id &&
+                   entry.root_public_key == @old_fabric.root_public_key &&
+                   entry.node_id == @old_node_id
+                 end
+            raise Matter::CommissioningError.new("Fabric B device identity is no longer present")
+          end
+        end
+
+        private def verify_handoff_baseline! : Nil
+          require_old_fabric_present!
+          entry = old_node_entry
+          unless entry && entry.commissioning_status_entry.state.committed?
+            raise Matter::CommissioningError.new("Fabric B Datastore no longer owns the committed device node")
+          end
+          if anchor_node_entry
+            raise Matter::CommissioningError.new("Anchor Datastore already contains the device before registration")
+          end
+        end
+
+        private def anchor_node_entry : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct?
+          session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
+          datastore_nodes(ImClient.new(@client, @timeout), session,
+            @anchor_datastore_peer, @anchor_datastore_endpoint).find(&.node_id.==(@anchor_node_id))
+        end
+
+        private def old_node_entry : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct?
+          session = case_session(@old_fabric, @old_datastore_node_id, @old_datastore_peer)
+          datastore_nodes(ImClient.new(@client, @timeout), session,
+            @old_datastore_peer, @old_datastore_endpoint).find(&.node_id.==(@old_node_id))
         end
 
         private def case_session(fabric : FabricInfo, node_id : UInt64,
@@ -508,7 +686,9 @@ module Matter
       class Credentials < Commissioning::Commissioner::Hooks
         def initialize(@issuer : CrossSignedIssuer,
                        @administrator_cat : UInt32, @admin_vendor_id : UInt16,
-                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
+                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                       @commissioning_ack : Proc(Nil)? = nil,
+                       @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil)
           unless @administrator_cat >> 16 == ADMINISTRATOR_CAT_ID &&
                  (@administrator_cat & 0xFFFF_u32) != 0_u32
             raise Matter::ConfigurationError.new("A current Administrator CAT is required")
@@ -534,6 +714,19 @@ module Matter
                             case_session : Session::SecureContext,
                             peer : Socket::IPAddress) : Nil
         end
+
+        def complete_acknowledged(fabric : FabricInfo, node_id : UInt64,
+                                  peer : Socket::IPAddress) : Nil
+          @commissioning_ack.try(&.call)
+        end
+
+        def record_fail_safe_deadline? : Bool
+          !@fail_safe_deadline.nil?
+        end
+
+        def fail_safe_deadline_observed(deadline_unix : Int64, max_seconds : UInt16) : Nil
+          @fail_safe_deadline.try(&.call(deadline_unix, max_seconds))
+        end
       end
 
       class Workflow
@@ -556,7 +749,14 @@ module Matter
 
         def run : Nil
           return if @journal.stage.complete? || @journal.stage.rolled_back?
-          if @journal.stage.in?(Stage::CommissioningAnchor, Stage::VerifyingAnchor,
+          if @journal.stage.commissioning_anchor?
+            # Recovery after a lost CommissioningComplete response only reads
+            # authenticated state. The port enforces the durable acknowledgement
+            # or elapsed fail-safe deadline before this can advance.
+            @port.verify_postcondition!(Stage::AnchorCommissioned)
+            advance(Stage::AnchorCommissioned)
+          end
+          if @journal.stage.in?(Stage::VerifyingAnchor,
                Stage::AddingAnchorNode, Stage::RemovingOldFabric, Stage::RemovingOldNode,
                Stage::RollingBack)
             raise Matter::CommissioningError.new("Migration stage #{@journal.stage} needs authenticated reconciliation")
@@ -603,6 +803,23 @@ module Matter
           advance(Stage::RolledBack)
         end
 
+        def resume_anchor_registration! : Nil
+          unless @journal.stage.adding_anchor_node?
+            raise Matter::ConfigurationError.new("Anchor registration is not awaiting recovery")
+          end
+          @port.refresh_anchor_registration!
+          @port.verify_postcondition!(Stage::AnchorNodeAdded)
+          advance(Stage::AnchorNodeAdded)
+        end
+
+        def resume_rollback! : Nil
+          unless @journal.stage.rolling_back?
+            raise Matter::ConfigurationError.new("Migration rollback is not awaiting recovery")
+          end
+          @port.resume_rollback!
+          advance(Stage::RolledBack)
+        end
+
         # An uncertain operation is never replayed by run. The caller must
         # inspect the device or Datastore over authenticated CASE and then
         # explicitly record the observed postcondition before resuming.
@@ -622,6 +839,22 @@ module Matter
           end
           @port.verify_postcondition!(completed)
           advance(completed)
+        end
+
+        # Record an authenticated observation that an interrupted operation
+        # did not take effect. The next run may then issue that command once.
+        def reconcile_no_effect! : Nil
+          previous = case @journal.stage
+                     when Stage::CommissioningAnchor then Stage::Ready
+                     when Stage::VerifyingAnchor     then Stage::AnchorCommissioned
+                     when Stage::AddingAnchorNode    then Stage::AnchorVerified
+                     when Stage::RemovingOldFabric   then Stage::AnchorNodeAdded
+                     when Stage::RemovingOldNode     then Stage::OldFabricRemoved
+                     else
+                       raise Matter::ConfigurationError.new("Migration is not awaiting a command outcome")
+                     end
+          @port.verify_no_effect!(@journal.stage)
+          advance(previous)
         end
 
         private def advance(stage : Stage) : Nil

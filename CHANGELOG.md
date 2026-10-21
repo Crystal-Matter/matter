@@ -13,6 +13,15 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 ### Shared fabric and certificate validation
 
+- Recover interrupted device migration commands after authenticated proof of
+  completion or no effect. Verify both fabrics' Datastore ownership before
+  declaring migration complete, and resume partially completed rollback.
+  Persist CommissioningComplete acknowledgement before the local node record
+  and the device's reported maximum cumulative fail-safe duration, so a restart
+  can restore it only after verified A/B ownership and a fresh monotonic wait
+  when the acknowledgement was lost. A restart
+  then continues after read-only proof without replaying commissioning. Resume a pending
+  Anchor NodeList registration with RefreshNode without replaying AddPendingNode.
 - Add local command-sequence parity specs drawn from seven Matter 1.6 JFA/JFD
   certification scenarios. Return `ConstraintError` for an unknown Joint Fabric key
   security policy on the command wire, as `TC_JFDS_2_2` requires.

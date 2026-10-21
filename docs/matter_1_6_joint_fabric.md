@@ -92,8 +92,42 @@ item below as covered only to the extent of its cited tests.
   window over B CASE, attests and commissions A, verifies A CASE, waits for A
   NodeList to commit, removes B from the device, and removes the B NodeList
   entry. A per-device journal blocks automatic replay of uncertain commands;
-  read-only CASE checks allow explicit recovery. Rollback is available before
-  B removal. The JFA example now publishes its IPK as GroupKeySetID zero.
+  authenticated CASE and Datastore reads allow explicit reconciliation when a
+  command took effect or provably had no effect. The latter restores the prior
+  journal stage so an operator can retry. A partially applied command remains
+  uncertain until its postcondition is met or an operator repairs the device
+  and Datastore state. Completion reconciliation checks both A's committed
+  NodeList entry and B's absent device fabric and NodeList entry, guarding
+  against split ownership. Rollback is available before B removal. An
+  interrupted rollback can be resumed explicitly: authenticated reads check
+  whether each A NodeList and device fabric removal took effect before issuing
+  only the remaining command. The JFA example now publishes its IPK as
+  GroupKeySetID zero.
+  The migration journal also records the device's CommissioningComplete
+  acknowledgement before the controller node record is saved. If a process
+  crashes in that window, recovery validates both fabric CASE sessions, B's
+  committed NodeList entry, A's absent NodeList entry, and the A fabric
+  descriptor before restoring the local node record. The journal also records
+  the device's reported maximum cumulative fail-safe duration immediately
+  after ArmFailSafe. If CommissioningComplete's reply is lost, recovery waits
+  that full duration plus a safety margin using a fresh monotonic interval,
+  then repeats the authenticated checks to establish durable A ownership.
+  The saved UTC deadline is diagnostic and never shortens this wait, even if
+  the controller clock changes during a restart. A fabric visible before the
+  wait may still be provisional. A restarted `migrate-device` automatically
+  performs this proof and continues if it succeeds;
+  other uncertain mutation stages still require explicit reconciliation.
+  Older journals lacking the reported duration remain uncertain and require
+  manual repair rather than adopting A from a UTC timestamp alone.
+  The local command channel accepts `reconcile-device-migration` after an
+  authenticated completed postcondition, `reconcile-device-migration-no-effect`
+  after authenticated proof that the command had no effect, and
+  `resume-rollback-device-migration` for a partially completed rollback. All
+  retain the same consent and selected fabric/device identity checks as
+  `migrate-device`.
+  If AddPendingNode has created an A NodeList entry but propagation remains
+  Pending or CommitFailed, `resume-anchor-registration` explicitly sends
+  RefreshNode and waits for a Committed entry without repeating AddPendingNode.
   With `MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE=1`, endpoint 2 keeps both B's JFA
   service and Datastore bound to B after endpoint 1 joins A. The two services
   retain separate AdministratorFabricIndex, ICAC and Anchor role records, and

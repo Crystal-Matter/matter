@@ -17,6 +17,8 @@ end
 private class MigrationPort < Migration::Port
   getter calls = [] of String
   property fail_at : String? = nil
+  property? no_effect : Bool = true
+  property? postcondition : Bool = true
 
   def commission_anchor! : Nil
     call("commission")
@@ -30,6 +32,10 @@ private class MigrationPort < Migration::Port
     call("add-anchor")
   end
 
+  def refresh_anchor_registration! : Nil
+    call("refresh-anchor")
+  end
+
   def remove_old_fabric! : Nil
     call("remove-fabric")
   end
@@ -40,10 +46,20 @@ private class MigrationPort < Migration::Port
 
   def verify_postcondition!(stage : Migration::Stage) : Nil
     call("reconcile-#{stage}")
+    raise Matter::CommissioningError.new("postcondition not proven") unless postcondition?
+  end
+
+  def verify_no_effect!(stage : Migration::Stage) : Nil
+    call("no-effect-#{stage}")
+    raise Matter::CommissioningError.new("operation took effect") unless @no_effect
   end
 
   def rollback_anchor!(anchor_registered : Bool) : Nil
     call("rollback-#{anchor_registered}")
+  end
+
+  def resume_rollback! : Nil
+    call("resume-rollback")
   end
 
   def validate_journal!(journal : Migration::Journal) : Nil
@@ -52,6 +68,23 @@ private class MigrationPort < Migration::Port
   private def call(name : String) : Nil
     @calls << name
     raise Matter::TransportError.new("interrupted") if @fail_at == name
+  end
+end
+
+private class MigrationRecoveryNetworkPort < Migration::NetworkPort
+  property? anchor_verified : Bool = false
+  property? old_verified : Bool = false
+
+  def verify_anchor! : Nil
+    raise Matter::AuthenticationError.new("A CASE verification failed") unless anchor_verified?
+  end
+
+  private def require_old_fabric_present! : Nil
+    raise Matter::AuthenticationError.new("B CASE verification failed") unless old_verified?
+  end
+
+  private def verify_handoff_baseline! : Nil
+    raise Matter::AuthenticationError.new("B ownership verification failed") unless old_verified?
   end
 end
 
@@ -90,6 +123,184 @@ describe Migration do
     runner.journal.stage.should eq(Migration::Stage::RemovingOldFabric)
     expect_raises(Matter::CommissioningError) { runner.run }
     port.calls.count("remove-fabric").should eq(1)
+  end
+
+  it "recovers a restarted journal only after proof that each command had no effect" do
+    boundaries = {
+      {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::Ready},
+      {"verify", Migration::Stage::VerifyingAnchor, Migration::Stage::AnchorCommissioned},
+      {"add-anchor", Migration::Stage::AddingAnchorNode, Migration::Stage::AnchorVerified},
+      {"remove-fabric", Migration::Stage::RemovingOldFabric, Migration::Stage::AnchorNodeAdded},
+      {"remove-old", Migration::Stage::RemovingOldNode, Migration::Stage::OldFabricRemoved},
+    }
+    boundaries.each do |command, uncertain, previous|
+      backend = Matter::Storage::Memory.new
+      store = Migration::JournalStore.new(backend)
+      port = MigrationPort.new
+      port.fail_at = command
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], previous)
+      runner = Migration::Workflow.new(journal, port, -> { true },
+        ->(item : Migration::Journal) { store.save(item) })
+      expect_raises(Matter::TransportError) { runner.run }
+      store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(uncertain)
+
+      restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+        -> { true }, ->(item : Migration::Journal) { store.save(item) })
+      port.postcondition = false if command == "commission"
+      expect_raises(Matter::CommissioningError) { restarted.run }
+      port.no_effect = false
+      expect_raises(Matter::CommissioningError) { restarted.reconcile_no_effect! }
+      restarted.journal.stage.should eq(uncertain)
+      port.no_effect = true
+      restarted.reconcile_no_effect!
+      restarted.journal.stage.should eq(previous)
+      port.fail_at = nil
+      restarted.run
+      restarted.journal.stage.should eq(Migration::Stage::Complete)
+      port.calls.count(command).should eq(2)
+    end
+  end
+
+  it "recovers completed commands with lost replies without issuing them twice" do
+    boundaries = {
+      {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::AnchorCommissioned},
+      {"verify", Migration::Stage::VerifyingAnchor, Migration::Stage::AnchorVerified},
+      {"add-anchor", Migration::Stage::AddingAnchorNode, Migration::Stage::AnchorNodeAdded},
+      {"remove-fabric", Migration::Stage::RemovingOldFabric, Migration::Stage::OldFabricRemoved},
+      {"remove-old", Migration::Stage::RemovingOldNode, Migration::Stage::Complete},
+    }
+    boundaries.each do |command, uncertain, observed|
+      backend = Matter::Storage::Memory.new
+      store = Migration::JournalStore.new(backend)
+      port = MigrationPort.new
+      port.fail_at = command
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+      runner = Migration::Workflow.new(journal, port, -> { true },
+        ->(item : Migration::Journal) { store.save(item) })
+      expect_raises(Matter::TransportError) { runner.run }
+      restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+        -> { true }, ->(item : Migration::Journal) { store.save(item) })
+      restarted.journal.stage.should eq(uncertain)
+      if command == "commission"
+        port.fail_at = nil
+        restarted.run
+        restarted.journal.stage.should eq(Migration::Stage::Complete)
+        port.calls.count(command).should eq(1)
+        next
+      end
+      expect_raises(Matter::CommissioningError) { restarted.run }
+      port.no_effect = false
+      expect_raises(Matter::CommissioningError) { restarted.reconcile_no_effect! }
+      restarted.reconcile!(observed)
+      port.fail_at = nil
+      restarted.run
+      restarted.journal.stage.should eq(Migration::Stage::Complete)
+      port.calls.count(command).should eq(1)
+    end
+  end
+
+  it "automatically resumes commissioning after restart only after a verified postcondition" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    store.save(journal)
+    port = MigrationPort.new
+    port.fail_at = "reconcile-AnchorCommissioned"
+    restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+      -> { true }, ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { restarted.run }
+    restarted.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+    port.calls.should eq(["reconcile-AnchorCommissioned"])
+    port.fail_at = nil
+    restarted.run
+    restarted.journal.stage.should eq(Migration::Stage::Complete)
+    port.calls.count("commission").should eq(0)
+    port.calls.should eq(["reconcile-AnchorCommissioned", "reconcile-AnchorCommissioned",
+                          "verify", "add-anchor", "remove-fabric", "remove-old"])
+  end
+
+  it "persists an interrupted migration across a fresh file backend" do
+    path = File.join(Dir.tempdir, "matter-migration-#{Random::Secure.hex(8)}.json")
+    begin
+      first_backend = Matter::Storage::JsonFile.new(path)
+      first_store = Migration::JournalStore.new(first_backend)
+      port = MigrationPort.new
+      port.fail_at = "remove-old"
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+      runner = Migration::Workflow.new(journal, port, -> { true },
+        ->(item : Migration::Journal) { first_store.save(item) })
+      expect_raises(Matter::TransportError) { runner.run }
+      first_backend.close
+
+      reopened_backend = Matter::Storage::JsonFile.new(path)
+      reopened_store = Migration::JournalStore.new(reopened_backend)
+      persisted = reopened_store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      persisted.stage.should eq(Migration::Stage::RemovingOldNode)
+      restarted = Migration::Workflow.new(persisted, port, -> { true },
+        ->(item : Migration::Journal) { reopened_store.save(item) })
+      restarted.reconcile_no_effect!
+      restarted.journal.stage.should eq(Migration::Stage::OldFabricRemoved)
+      port.fail_at = nil
+      restarted.run
+      reopened_store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(Migration::Stage::Complete)
+      reopened_backend.close
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "persists the CommissioningComplete acknowledgement before local node recovery" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    store.save(journal)
+    callback = -> {
+      current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      current.commissioning_acknowledged = true
+      store.save(current)
+    }
+    deadline_callback = ->(deadline : Int64, max_seconds : UInt16) {
+      current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      current.fail_safe_deadline_unix = deadline
+      current.fail_safe_max_seconds = max_seconds
+      store.save(current)
+    }
+    issuer = Migration::CrossSignedIssuer.new(Bytes.empty, Bytes.empty,
+      0xA001_u64, Bytes[2], Bytes[1])
+    hooks = Migration::Credentials.new(issuer, 0xFFFF_0001_u32, 0xFFF2_u16,
+      Matter::Crypto::StandardCrypto.new, callback, deadline_callback)
+    fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xA001_u64, 0xA101_u64, 0xFFF1_u16).fabric
+    hooks.record_fail_safe_deadline?.should be_true
+    hooks.fail_safe_deadline_observed(1_000_i64, 60_u16)
+    hooks.complete_acknowledged(fabric, 0xA002_u64,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    loaded = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    loaded.stage.should eq(Migration::Stage::CommissioningAnchor)
+    loaded.commissioning_acknowledged?.should be_true
+    loaded.fail_safe_deadline_unix.should eq(1_000_i64)
+    loaded.fail_safe_max_seconds.should eq(60_u16)
+    legacy_document = journal.to_document
+    legacy_document.delete("commissioning_acknowledged")
+    Migration::Journal.from_document(legacy_document).commissioning_acknowledged?.should be_false
+    legacy_document.delete("fail_safe_deadline_unix")
+    Migration::Journal.from_document(legacy_document).fail_safe_deadline_unix.should be_nil
+    legacy_document.delete("fail_safe_max_seconds")
+    Migration::Journal.from_document(legacy_document).fail_safe_max_seconds.should be_nil
   end
 
   it "issues a device NOC under B's cross-signed ICAC for Fabric A" do
@@ -215,6 +426,57 @@ describe Migration do
     saved.map(&.stage).should eq([Migration::Stage::RollingBack, Migration::Stage::RolledBack])
   end
 
+  it "resumes a partially completed rollback after restart only on explicit request" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    port = MigrationPort.new
+    port.fail_at = "rollback-true"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AnchorNodeAdded)
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { runner.rollback! }
+    persisted = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    persisted.stage.should eq(Migration::Stage::RollingBack)
+    restarted = Migration::Workflow.new(persisted, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::CommissioningError) { restarted.run }
+    port.fail_at = "resume-rollback"
+    expect_raises(Matter::TransportError) { restarted.resume_rollback! }
+    restarted.journal.stage.should eq(Migration::Stage::RollingBack)
+    port.fail_at = nil
+    restarted.resume_rollback!
+    restarted.journal.stage.should eq(Migration::Stage::RolledBack)
+    port.calls.should eq(["rollback-true", "resume-rollback", "resume-rollback"])
+  end
+
+  it "refreshes an uncertain pending Anchor registration without repeating AddPendingNode" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    port = MigrationPort.new
+    port.fail_at = "add-anchor"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AnchorVerified)
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { runner.run }
+    restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+      -> { true }, ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::CommissioningError) { restarted.run }
+    port.fail_at = "refresh-anchor"
+    expect_raises(Matter::TransportError) { restarted.resume_anchor_registration! }
+    restarted.journal.stage.should eq(Migration::Stage::AddingAnchorNode)
+    port.fail_at = nil
+    restarted.resume_anchor_registration!
+    restarted.journal.stage.should eq(Migration::Stage::AnchorNodeAdded)
+    restarted.run
+    restarted.journal.stage.should eq(Migration::Stage::Complete)
+    port.calls.count("add-anchor").should eq(1)
+    port.calls.count("refresh-anchor").should eq(2)
+  end
+
   it "refuses rollback after B removal begins" do
     port = MigrationPort.new
     journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
@@ -291,5 +553,120 @@ describe Migration do
       port.verify_postcondition!(Migration::Stage::Complete)
     end
     port.close
+  end
+
+  it "restores a missing controller node only after durable acknowledgement and A CASE proof" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xB001_u64, 0xB101_u64, 0xFFF2_u16, crypto: crypto).fabric
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xA001_u64, 0xA101_u64, 0xFFF1_u16, crypto: crypto)
+    joined = joined_identity(bootstrap, 0xA103_u64, Matter::Crypto::Key.generate_key_pair)
+    b_icac = old_fabric.intermediate_cert.as(Bytes)
+    signed = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      Matter::Crypto::MatterCertificate.public_key_from_tlv(b_icac),
+      joined.fabric_id, 0xB101_u64, bootstrap.fabric.certificate_authority_key,
+      1_u64, Bytes[2], crypto)
+    issuer = Migration.cross_signed_issuer(old_fabric, joined, signed,
+      old_fabric.intermediate_private_key.as(Bytes))
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    state = store.load
+    state.install_fabric(joined)
+    store.save(state)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    verifier = Matter::Controller::DeviceAttestationVerifier.new(
+      Matter::Controller::AttestationTrustStore.matter_test_fixture)
+    monotonic = Time.instant
+    recovery_waits = [] of Time::Span
+    port = MigrationRecoveryNetworkPort.new(store, old_fabric, joined, issuer,
+      0xB201_u64, 0xA201_u64, peer, 0xB101_u64, peer, 1_u16,
+      0xA101_u64, peer, 1_u16, "Existing device", 0xFFFF_0001_u32,
+      verifier, timeout: 1.millisecond,
+      monotonic_now: -> { monotonic },
+      recovery_sleep: ->(duration : Time::Span) { recovery_waits << duration; monotonic += duration })
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB201_u64, 0xA201_u64, old_fabric.root_public_key,
+      joined.root_public_key, Migration::Stage::CommissioningAnchor)
+    port.validate_journal!(journal)
+    expect_raises(Matter::CommissioningError, /durable CommissioningComplete/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    journal.commissioning_acknowledged = true
+    port.validate_journal!(journal)
+    expect_raises(Matter::CommissioningError, /Durable CommissioningComplete/) do
+      port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
+    end
+    expect_raises(Matter::AuthenticationError, /B ownership/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    port.old_verified = true
+    expect_raises(Matter::AuthenticationError, /A CASE/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id).has_key?(0xA201_u64).should be_false
+    port.anchor_verified = true
+    port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    stored = store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id)[0xA201_u64]
+    stored.address.should eq("127.0.0.1")
+    stored.port.should eq(5540)
+    journal.commissioning_acknowledged = false
+    journal.fail_safe_max_seconds = 1_u16
+    journal.fail_safe_deadline_unix = Time.utc.to_unix - 86_400
+    port.validate_journal!(journal)
+    port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    recovery_waits.should eq([3.seconds])
+    recovery_waits.clear
+    state = store.load
+    state.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id).delete(0xA201_u64)
+    store.save(state)
+    port.close
+    journal.commissioning_acknowledged = false
+    journal.fail_safe_max_seconds = nil
+    # Simulate a process restart with a stale UTC deadline. A jump in the
+    # wall clock must not let the restarted controller adopt provisional A.
+    journal.fail_safe_deadline_unix = Time.utc.to_unix - 86_400
+    migration_store = Migration::JournalStore.new(Matter::Storage::Memory.new)
+    migration_store.save(journal)
+    restarted_journal = migration_store.load(0xB001_u64, old_fabric.root_public_key,
+      0xB201_u64, 0xA001_u64, joined.root_public_key, 0xA201_u64).as(Migration::Journal)
+    restarted_port = MigrationRecoveryNetworkPort.new(store, old_fabric, joined, issuer,
+      0xB201_u64, 0xA201_u64, peer, 0xB101_u64, peer, 1_u16,
+      0xA101_u64, peer, 1_u16, "Existing device", 0xFFFF_0001_u32,
+      verifier, timeout: 1.millisecond,
+      monotonic_now: -> { monotonic },
+      recovery_sleep: ->(duration : Time::Span) { recovery_waits << duration; monotonic += duration })
+    restarted_port.validate_journal!(restarted_journal)
+    expect_raises(Matter::CommissioningError, /fail-safe recovery bound/) do
+      restarted_port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    expect_raises(Matter::CommissioningError, /fail-safe recovery bound/) do
+      restarted_port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
+    end
+    recovery_waits.should be_empty
+    restarted_journal.fail_safe_max_seconds = 1_u16
+    migration_store.save(restarted_journal)
+    restarted_port.validate_journal!(migration_store.load(0xB001_u64,
+      old_fabric.root_public_key, 0xB201_u64, 0xA001_u64,
+      joined.root_public_key, 0xA201_u64).as(Migration::Journal))
+    restarted_port.old_verified = false
+    restarted = Migration::Workflow.new(restarted_journal, restarted_port,
+      -> { true }, ->(item : Migration::Journal) { migration_store.save(item) })
+    expect_raises(Matter::AuthenticationError, /B ownership/) do
+      restarted.run
+    end
+    restarted.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+    recovery_waits.should eq([3.seconds])
+    restarted_journal.fail_safe_deadline_unix = Time.utc.to_unix + 86_400
+    restarted_port.validate_journal!(restarted_journal)
+    restarted_port.old_verified = true
+    restarted_port.anchor_verified = true
+    restarted_port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    recovery_waits.should eq([3.seconds, 3.seconds])
+    store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id).has_key?(0xA201_u64).should be_true
+    restarted_port.close
   end
 end

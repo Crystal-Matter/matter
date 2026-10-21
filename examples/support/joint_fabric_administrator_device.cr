@@ -1512,7 +1512,9 @@ module MatterJointFabricAdministrator
           when "finalize-commissioning"
             certificate = finalize_commissioning(request)
             CommandResult.new("ok", nonce: request.nonce, certificate: certificate)
-          when "migrate-device", "reconcile-device-migration", "rollback-device-migration"
+          when "migrate-device", "reconcile-device-migration",
+               "reconcile-device-migration-no-effect", "rollback-device-migration",
+               "resume-rollback-device-migration", "resume-anchor-registration"
             migrate_device(request)
             CommandResult.new("ok", nonce: request.nonce)
           else
@@ -1600,6 +1602,25 @@ module MatterJointFabricAdministrator
         target_peer, old_device_fabric.node_id, local_peer, 2_u16,
         anchor_datastore_node_id, anchor_peer, 1_u16, "Migrated device", admin_cat,
         verifier,
+        commissioning_ack: -> {
+          acknowledged = journal_store.load(old_fabric.fabric_id,
+            old_fabric.root_public_key, request.node_id,
+            anchor_fabric.fabric_id, anchor_fabric.root_public_key,
+            anchor_node_id) ||
+                         raise Matter::StorageError.new("Migration journal is missing at CommissioningComplete")
+          acknowledged.commissioning_acknowledged = true
+          journal_store.save(acknowledged)
+        },
+        fail_safe_deadline: ->(deadline : Int64, max_seconds : UInt16) {
+          armed = journal_store.load(old_fabric.fabric_id,
+            old_fabric.root_public_key, request.node_id,
+            anchor_fabric.fabric_id, anchor_fabric.root_public_key,
+            anchor_node_id) ||
+                  raise Matter::StorageError.new("Migration journal is missing after ArmFailSafe")
+          armed.fail_safe_deadline_unix = deadline
+          armed.fail_safe_max_seconds = max_seconds
+          journal_store.save(armed)
+        },
         timeout: 30.seconds)
       begin
         workflow = Matter::Controller::JointFabricDeviceMigration::Workflow.new(
@@ -1612,6 +1633,12 @@ module MatterJointFabricAdministrator
           workflow.run
         when "rollback-device-migration"
           workflow.rollback!
+        when "resume-rollback-device-migration"
+          workflow.resume_rollback!
+        when "resume-anchor-registration"
+          workflow.resume_anchor_registration!
+        when "reconcile-device-migration-no-effect"
+          workflow.reconcile_no_effect!
         when "reconcile-device-migration"
           stage = case workflow.journal.stage
                   when Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor

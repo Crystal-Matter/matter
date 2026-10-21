@@ -21,7 +21,8 @@ module Matter
   module Controller
     module Commissioning
       class Commissioner
-        Log = ::Log.for("matter.controller.commissioning.commissioner")
+        Log                              = ::Log.for("matter.controller.commissioning.commissioner")
+        FAIL_SAFE_RECOVERY_GRACE_SECONDS = 2_i64
 
         # fabric ID, device Node ID, CSR public key -> issued Matter NOC.
         alias CertificateIssuer = Proc(UInt64, UInt64, Bytes, Bytes)
@@ -74,6 +75,13 @@ module Matter
             node_id : UInt64,
             peer : Socket::IPAddress,
           ) : Nil
+          end
+
+          def record_fail_safe_deadline? : Bool
+            false
+          end
+
+          def fail_safe_deadline_observed(deadline_unix : Int64, max_seconds : UInt16) : Nil
           end
 
           def supports_deferred_handoff? : Bool
@@ -189,6 +197,23 @@ module Matter
             fields: arm.to_slice
           )
           assert_invoke_ok!(arm_resp, "ArmFailSafe")
+
+          if hooks = @hooks
+            if hooks.record_fail_safe_deadline?
+              report = im.read_attribute(pase_session, peer_addr, 0_u16,
+                Cluster::GeneralCommissioning::CLUSTER_ID,
+                Cluster::GeneralCommissioning::ATTR_BASIC_COMMISSIONING_INFO)
+              data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+                     raise Matter::ProtocolError.new("BasicCommissioningInfo read omitted data")
+              info = Cluster::GeneralCommissioning::BasicCommissioningInfo.from_slice(data.to_slice)
+              if info.max_cumulative_failsafe_seconds == 0_u16
+                raise Matter::CommissioningError.new("Device reported no maximum cumulative fail-safe duration")
+              end
+              hooks.fail_safe_deadline_observed(Time.utc.to_unix +
+                                                info.max_cumulative_failsafe_seconds.to_i64 + FAIL_SAFE_RECOVERY_GRACE_SECONDS,
+                info.max_cumulative_failsafe_seconds)
+            end
+          end
 
           vendor_id = read_basic_information(im, pase_session, peer_addr, Cluster::BasicInformation::ATTR_VENDOR_ID).as_u16
           product_id = read_basic_information(im, pase_session, peer_addr, Cluster::BasicInformation::ATTR_PRODUCT_ID).as_u16
