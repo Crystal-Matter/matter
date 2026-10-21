@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sdk_jfc_switch_smoke import ManagedProcess
+from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN
 
 
 def run(args):
@@ -45,7 +45,7 @@ def run(args):
 
     process = ManagedProcess("crystal-jfa", [str(device), "--no-interactive"], state, logs)
     try:
-        pin = process.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
+        pin = process.expect(SETUP_PIN_PATTERN, 60).group(1)
         discriminator = process.expect(r"Discriminator:\s*(\d+)", 20).group(1)
         process.expect(r"Starting in Commissioning Mode", 60)
         process.start_background_drain()
