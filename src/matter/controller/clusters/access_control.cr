@@ -10,6 +10,7 @@ module Matter
         alias Target = Matter::Cluster::AccessControl::Target
         alias Privilege = Matter::Cluster::AccessControl::AccessControlEntryPrivilege
         alias AuthMode = Matter::Cluster::AccessControl::AccessControlEntryAuthMode
+        alias AuxiliaryType = Matter::Cluster::AccessControl::AccessControlAuxiliaryType
 
         struct TargetJson
           include JSON::Serializable
@@ -35,6 +36,9 @@ module Matter
           getter subjects : Array(UInt64)
 
           getter targets : Array(TargetJson)?
+
+          @[JSON::Field(key: "auxiliaryType")]
+          getter auxiliary_type : UInt8?
         end
 
         # Parses the JSON format used by CHIP's `chip-tool accesscontrol write acl ...`
@@ -50,6 +54,9 @@ module Matter
           entries = Array(EntryJson).from_json(json)
 
           mapped = entries.each_with_index.map do |obj, idx|
+            if obj.auxiliary_type
+              raise ArgumentError.new("AuxiliaryType is not permitted in a primary ACL write")
+            end
             privilege = Privilege.from_value(obj.privilege.to_i)
             auth_mode = AuthMode.from_value(obj.auth_mode.to_i)
 

@@ -568,6 +568,10 @@ Grant each controller access to the new device with `SharedFabric.grant_admin`
 over the commissioning controller's CASE session. The ACL has a minimum of
 four entries per fabric; large controller groups need an ACL strategy that
 fits the target device's limits.
+Matter 1.6 AuxiliaryType entries belong to the separate provisional
+AuxiliaryACL feature. Primary ACL writes containing AuxiliaryType are rejected;
+the controller ACL JSON helper rejects the field too, instead of dropping it.
+Crystal devices do not advertise the provisional AUX feature.
 
 This provides shared trust and explicit ACL administration for a locally owned
 fabric. Matter 1.6 Joint Fabric support is in progress: the Administrator and

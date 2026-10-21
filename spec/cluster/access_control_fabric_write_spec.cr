@@ -2,6 +2,29 @@ require "../spec_helper"
 
 private alias FabricWriteAcl = Matter::Cluster::AccessControl
 
+# Matter 1.6 AccessControlEntryStruct adds optional context tag 5. Keep the
+# wire fixture independent of the implementation's typed ACL entry.
+private struct AuxiliaryAclEntryWire
+  include TLV::Serializable
+
+  @[TLV::Field(tag: 1)]
+  property privilege : FabricWriteAcl::AccessControlEntryPrivilege
+
+  @[TLV::Field(tag: 2)]
+  property auth_mode : FabricWriteAcl::AccessControlEntryAuthMode
+
+  @[TLV::Field(tag: 3)]
+  property subjects : Array(UInt64)
+
+  @[TLV::Field(tag: 5)]
+  property auxiliary_type : UInt8
+
+  def initialize(@privilege : FabricWriteAcl::AccessControlEntryPrivilege,
+                 @auth_mode : FabricWriteAcl::AccessControlEntryAuthMode,
+                 @subjects : Array(UInt64), @auxiliary_type : UInt8)
+  end
+end
+
 private def fabric_write_cluster : FabricWriteAcl
   cluster = build(FabricWriteAcl, 0)
   cluster.acl = [
@@ -51,5 +74,17 @@ describe "fabric-scoped access control writes" do
     write_on_second_fabric(cluster, FabricWriteAcl::ATTR_EXTENSION, [replacement]).should eq(Matter::InteractionModel::StatusCode::Success.value)
     cluster.extension.select { |entry| entry.fabric_index == 1_u8 }.map(&.data).should eq([Bytes[0xA1]])
     cluster.extension.select { |entry| entry.fabric_index == 2_u8 }.map(&.data).should eq([Bytes[0xB2]])
+  end
+
+  it "rejects a Matter 1.6 AuxiliaryType in the primary ACL without changing either fabric" do
+    cluster = fabric_write_cluster
+    original = cluster.acl.map(&.to_slice)
+    entry = AuxiliaryAclEntryWire.new(FabricWriteAcl::AccessControlEntryPrivilege::Administer,
+      FabricWriteAcl::AccessControlEntryAuthMode::CASE, [202_u64], 1_u8)
+    decoded = FabricWriteAcl::AccessControlEntry.from_slice(entry.to_slice)
+    decoded.auxiliary_type.should eq(FabricWriteAcl::AccessControlAuxiliaryType::Groupcast)
+
+    write_on_second_fabric(cluster, FabricWriteAcl::ATTR_ACL, [entry]).should eq(Matter::InteractionModel::StatusCode::Failure.value)
+    cluster.acl.map(&.to_slice).should eq(original)
   end
 end
