@@ -2029,16 +2029,7 @@ module MatterJointFabricAdministrator
         scanner.start
         scanner.query_operational
         compressed = IO::ByteFormat::BigEndian.decode(UInt64, fabric.compressed_fabric_id)
-        peer = begin
-          resolve_transfer_peer(scanner, compressed, node_id, 2.seconds)
-        rescue Matter::TransportError
-          listener_port = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?.try(&.to_i?)
-          raise Matter::TransportError.new("Anchor operational port is unavailable") unless listener_port
-          ::Log.for("matter.example.joint_fabric_administrator").info do
-            "Operational mDNS did not locate authenticated Anchor; trying configured listener port"
-          end
-          Socket::IPAddress.new(source.address, listener_port)
-        end
+        peer = resolve_anchor_verification_peer(scanner, compressed, node_id, source)
       ensure
         scanner.close
       end
@@ -2048,6 +2039,24 @@ module MatterJointFabricAdministrator
     rescue ex : Matter::Error | IO::Error
       ::Log.for("matter.example.joint_fabric_administrator").warn(exception: ex) { "Anchor VID verification failed" }
       false
+    end
+
+    # Announce arrived over an authenticated CASE session. Its UDP source is
+    # therefore a route hint when operational DNS-SD misses a peer, including
+    # SDK Administrators that listen on a dynamic port. The fresh outbound
+    # CASE and VID verification above still authenticate the expected node.
+    private def resolve_anchor_verification_peer(scanner : Matter::Controller::Scanner,
+                                                 compressed_fabric_id : UInt64, node_id : UInt64,
+                                                 source : Socket::IPAddress,
+                                                 timeout : Time::Span = 2.seconds) : Socket::IPAddress
+      resolve_transfer_peer(scanner, compressed_fabric_id, node_id, timeout)
+    rescue Matter::TransportError
+      listener_port = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?.try(&.to_i?) || source.port
+      raise Matter::TransportError.new("Anchor operational port is unavailable") unless listener_port > 0
+      ::Log.for("matter.example.joint_fabric_administrator").info do
+        "Operational mDNS did not locate authenticated Anchor; trying CASE source route"
+      end
+      Socket::IPAddress.new(source.address, listener_port)
     end
 
     private def accessing_fabric_identity(index : UInt8) : Matter::Commissioning::JointFabricAdministratorService::FabricIdentity?

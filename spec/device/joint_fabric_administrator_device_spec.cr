@@ -29,9 +29,34 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def anchor_profile_for_spec(fabric : Matter::Fabric) : Bool
     compliant_anchor_fabric?(fabric)
   end
+
+  def anchor_verification_peer_for_spec(source : Socket::IPAddress) : Socket::IPAddress
+    scanner = Matter::Controller::Scanner.new
+    resolve_anchor_verification_peer(scanner, 0_u64, 1_u64, source, 0.seconds)
+  ensure
+    scanner.try(&.close)
+  end
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "uses the authenticated Anchor CASE source when operational discovery misses" do
+    previous = ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"]?
+    ENV.delete("MATTER_JFA_ANCHOR_OPERATIONAL_PORT")
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    source = Socket::IPAddress.new("127.0.0.2", 44551)
+    device.anchor_verification_peer_for_spec(source).should eq(source)
+    expect_raises(Matter::TransportError, /operational port is unavailable/) do
+      device.anchor_verification_peer_for_spec(Socket::IPAddress.new("127.0.0.2", 0))
+    end
+  ensure
+    if previous
+      ENV["MATTER_JFA_ANCHOR_OPERATIONAL_PORT"] = previous
+    else
+      ENV.delete("MATTER_JFA_ANCHOR_OPERATIONAL_PORT")
+    end
+  end
+
   it "keeps a fixture DUT out of SDK discovery until its gate opens" do
     gate = File.join(Dir.tempdir, "matter-jfa-discovery-#{Random::Secure.hex(6)}")
     previous = ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
