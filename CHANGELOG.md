@@ -19,6 +19,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Require a stable 1–32-byte UniqueID for Bridged Device Basic Information,
   advertise it as a mandatory fixed attribute at revision 5, and retain each
   dynamic endpoint's provisioned ID across bridge restarts.
+
+### Color Control timed transitions
+
+- Apply MoveTo and Step TransitionTime in deciseconds for hue, saturation, XY,
+  color temperature, combined hue/saturation, and enhanced hue commands.
+  RemainingTime counts down while a transition runs, and StopMoveStep freezes
+  its interpolated value while leaving an active ColorLoop running. Hue honors
+  the requested cyclic direction, and XY and color temperature stop at their
+  Matter 1.6 bounds. Out-of-range MoveTo target fields return ConstraintError
+  without interrupting an active transition. The advertised cluster revision
+  remains 7.
+
+
 ### Group key validation
 
 - Reject KeySetWrite requests without the first epoch or with a gap before a
