@@ -27,6 +27,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Include the required PasscodeID and HasPBKDFParameters fields in commissioner
   PBKDFParamRequest messages. Strict connectedhomeip responders previously
   rejected the incomplete request before PASE could begin.
+- Reject malformed or incomplete PBKDFParamRequest messages at the responder
+  with an InvalidParam secure-channel status report. When an initiator already
+  has PBKDF parameters, omit them from PBKDFParamResponse as required.
 
 The 0.2 refactor. Every layer of the library was reworked: storage, the device API, all 35
 clusters, the interaction model and the protocol objects. It is a breaking release, and
