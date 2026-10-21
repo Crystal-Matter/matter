@@ -157,7 +157,8 @@ module Matter
         end
         uri = URI.parse(point.url)
         host = uri.host
-        unless uri.scheme == "https" && host && @allowed_crl_hosts.includes?(host.downcase) &&
+        unless uri.scheme == "https" && (uri.port.nil? || uri.port == 443) &&
+               host && @allowed_crl_hosts.includes?(host.downcase) &&
                uri.user.nil? && uri.password.nil? && uri.fragment.nil?
           raise Matter::AuthenticationError.new("CRL URL is not approved")
         end

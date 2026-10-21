@@ -6,7 +6,8 @@ private module AttestationCrlFixture
   extend self
 
   def generate(issuer_der : Bytes, issuer_key : Matter::Crypto::Key,
-               revoked_der : Bytes? = nil, stale : Bool = false) : Bytes
+               revoked_der : Bytes? = nil, stale : Bool = false,
+               numbered : Bool = true) : Bytes
     directory = File.join(Dir.tempdir, "matter-crl-#{Random::Secure.hex(8)}")
     Dir.mkdir(directory)
     Dir.mkdir(File.join(directory, "newcerts"))
@@ -27,7 +28,7 @@ private module AttestationCrlFixture
         database = #{config_directory}/index.txt
         new_certs_dir = #{config_directory}/newcerts
         serial = #{config_directory}/serial
-        crlnumber = #{config_directory}/crlnumber
+        #{numbered ? "crlnumber = #{config_directory}/crlnumber" : ""}
         default_md = sha256
         default_crl_days = 30
         policy = policy_any
@@ -168,6 +169,8 @@ describe Matter::Controller::DclAttestationRevocation do
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
     source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(url: "http://127.0.0.1/private")]
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
+    source.points[pai_point.issuer_skid.hexstring] = [pai_point.copy_with(url: "https://crl.example:8443/private")]
+    provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
     source.points[pai_point.issuer_skid.hexstring] = [pai_point]
     crls[pai_point.url] = Bytes[0x30]
     provider.check(dac, pai, paa).should eq(Matter::Controller::RevocationStatus::Unavailable)
@@ -220,6 +223,9 @@ describe Matter::Controller::OfflineAttestationRevocation do
 
     stale = AttestationCrlFixture.generate(pai, manager.pai_key_pair, stale: true)
     Matter::Controller::OfflineAttestationRevocation.new([good_paa, stale]).check(dac, pai, paa)
+      .should eq(Matter::Controller::RevocationStatus::Unavailable)
+    unnumbered = AttestationCrlFixture.generate(pai, manager.pai_key_pair, numbered: false)
+    Matter::Controller::OfflineAttestationRevocation.new([good_paa, unnumbered]).check(dac, pai, paa)
       .should eq(Matter::Controller::RevocationStatus::Unavailable)
     forged = good_pai.dup
     forged[forged.size - 1] ^= 1_u8

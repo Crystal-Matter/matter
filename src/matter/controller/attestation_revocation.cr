@@ -58,11 +58,13 @@ module Matter
       @authority_key_nid : Int32
       @issuing_distribution_point_nid : Int32
       @delta_crl_nid : Int32
+      @crl_number_nid : Int32
 
       def initialize(crl_der : Array(Bytes))
         @authority_key_nid = LibCrypto.obj_txt2nid("authorityKeyIdentifier")
         @issuing_distribution_point_nid = LibCrypto.obj_txt2nid("issuingDistributionPoint")
         @delta_crl_nid = LibCrypto.obj_txt2nid("deltaCRLIndicator")
+        @crl_number_nid = LibCrypto.obj_txt2nid("crlNumber")
         @crls = crl_der.map { |der| ParsedCrl.new(der) }
       end
 
@@ -126,6 +128,7 @@ module Matter
         # metadata and signer chain. Reject them until those are provided.
         return false if LibCrypto.matter_x509_crl_get_ext_by_nid(crl, @issuing_distribution_point_nid, -1) >= 0
         return false if LibCrypto.matter_x509_crl_get_ext_by_nid(crl, @delta_crl_nid, -1) >= 0
+        return false if LibCrypto.matter_x509_crl_get_ext_by_nid(crl, @crl_number_nid, -1) < 0
         last_update = LibCrypto.matter_x509_crl_get0_last_update(crl)
         next_update = LibCrypto.matter_x509_crl_get0_next_update(crl)
         return false if last_update.null? || next_update.null?

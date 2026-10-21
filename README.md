@@ -267,7 +267,7 @@ end
 
 `OfflineAttestationRevocation` accepts DER CRLs provisioned by the host. It
 verifies the issuer, authority key identifier, CRL signature, signing usage,
-and update interval for both the PAA and PAI before deciding that a DAC chain
+CRL number, and update interval for both the PAA and PAI before deciding that a DAC chain
 is clear. Missing, stale, or invalid coverage returns `Unavailable` and blocks
 commissioning. The host must obtain the CRLs through a trusted channel;
 automated DCL retrieval, partitioned CRLs, and indirect CRL signers are not
