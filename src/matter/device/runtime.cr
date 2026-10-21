@@ -227,6 +227,8 @@ module Matter
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode
       @responder.start
       @transport.start
+      @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::GeneralDiagnostics)
+        .try(&.emit_boot_reason_event)
       on_started
     rescue error
       Log.error(exception: error) { "error during startup" }

@@ -8,7 +8,7 @@ module Matter
     # Provides general diagnostic information about the device.
     # Required on endpoint 0 for Root Node device type.
     #
-    # Matter Specification: Core 1.4 § 11.11 - General Diagnostics Cluster
+    # Matter 1.6 § 11.11 - General Diagnostics Cluster
     class GeneralDiagnostics < Base
       Log = ::Log.for("matter.cluster.general_diagnostics")
 
@@ -218,6 +218,9 @@ module Matter
 
           @[TLV::Field(tag: 0)]
           property boot_reason : BootReason
+
+          def initialize(@boot_reason : BootReason)
+          end
         end
       end
 
@@ -282,29 +285,62 @@ module Matter
         end
       end
 
+      # Matter 1.6 TimeSnapshotResponse (0x02). POSIX time is null until an
+      # application supplies a synchronized time source.
+      struct TimeSnapshotResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property system_time_ms : UInt64
+
+        @[TLV::Field(tag: 1, optional: false)]
+        property posix_time_ms : UInt64?
+
+        def initialize(@system_time_ms : UInt64, @posix_time_ms : UInt64?)
+        end
+      end
+
       # UpTime and TotalOperationalHours are computed on read from the time
       # the cluster was created.
       attribute 0x0000, :network_interfaces, Array(NetworkInterfaceInfo), default: [] of NetworkInterfaceInfo
       attribute 0x0001, :reboot_count, UInt16, default: 0_u16
       attribute 0x0002, :up_time, UInt64, computed: true, omit_changes: true
       attribute 0x0003, :total_operational_hours, UInt32, computed: true, omit_changes: true, optional: true
-      attribute 0x0004, :boot_reason, BootReason, default: BootReason::PowerOnReboot, optional: true
+      attribute 0x0004, :boot_reason, BootReason, default: BootReason::Unspecified, optional: true
       attribute 0x0005, :active_hardware_faults, Array(HardwareFault), default: [] of HardwareFault, optional: true
       attribute 0x0006, :active_radio_faults, Array(RadioFault), default: [] of RadioFault, optional: true
       attribute 0x0007, :active_network_faults, Array(NetworkFault), default: [] of NetworkFault, optional: true
       attribute 0x0008, :test_event_triggers_enabled, Bool, default: false
 
       command 0x00, :test_event_trigger, request: TestEventTriggerRequest, access: :manage
+      command 0x01, :time_snapshot, response: TimeSnapshotResponse, response_id: 0x02, access: :operate
+
+      event 0x03, :boot_reason, priority: :critical, payload: Events::BootReasonEvent
 
       @start_time : Time
+      @start_instant : Time::Instant
+
+      # Return synchronized POSIX milliseconds, or nil when unavailable.
+      property on_posix_time_ms : Proc(UInt64?)?
 
       def initialize(
         endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
         @reboot_count : UInt16 = 0_u16,
-        @boot_reason : BootReason = BootReason::PowerOnReboot,
+        @boot_reason : BootReason = BootReason::Unspecified,
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @start_time = Time.utc
+        @start_instant = Time.instant
+        @on_posix_time_ms = nil
+      end
+
+      def time_snapshot : TimeSnapshotResponse
+        elapsed_ms = (Time.instant - @start_instant).total_milliseconds.to_u64
+        TimeSnapshotResponse.new(elapsed_ms, @on_posix_time_ms.try(&.call))
+      end
+
+      def emit_boot_reason_event : Nil
+        emit_event(EVENT_BOOT_REASON, Events::BootReasonEvent.new(@boot_reason))
       end
 
       # UpTime attribute (0x02): seconds since the cluster was created

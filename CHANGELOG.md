@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### General Diagnostics snapshot and boot event
+
+- Implement revision 2 TimeSnapshot command and nullable POSIX response field.
+  Record the mandatory critical BootReason event on device startup, defaulting
+  to Unspecified when the platform cannot identify the cause.
+
 ### Protocol command and event coverage
 
 - Add a reproducible Matter 1.6 canonical XML report for server command and
