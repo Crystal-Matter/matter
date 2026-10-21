@@ -36,6 +36,34 @@ module Matter
       # message counter.
       MIN_PACKET_SIZE = 8
 
+      # Matter 1.6 MRP defaults for an active peer. Keep at most four copies
+      # after the original send, as the official SDK does.
+      MRP_ACTIVE_RETRY_INTERVAL = 300.milliseconds
+      MRP_MAX_RETRANSMISSIONS   = 4
+      MRP_SWEEP_INTERVAL        = 25.milliseconds
+      MRP_BACKOFF_MARGIN        =  1.1
+      MRP_BACKOFF_BASE          =  1.6
+      MRP_BACKOFF_JITTER        = 0.25
+      MRP_PENDING_LIMIT         =  256
+
+      private class PendingReliableMessage
+        getter packet : Bytes
+        getter peer : Socket::IPAddress
+        getter session_id : UInt16
+        getter exchange_id : UInt16
+        getter message_counter : UInt32
+        property retransmissions : Int32
+        property next_at : Time::Instant
+
+        def initialize(@packet, @peer, @session_id, @exchange_id, @message_counter,
+                       @next_at, @retransmissions = 0)
+        end
+      end
+
+      @pending_reliable : Hash(Tuple(UInt16, UInt16, UInt32), PendingReliableMessage)
+      @reliable_mutex : Mutex
+      @reliable_fiber : Fiber?
+
       UNSECURED_COUNTER_LIMIT          = 1024
       UNSECURED_COUNTER_TTL            = 5.minutes
       UNSECURED_COUNTER_SWEEP_INTERVAL = 1.minute
@@ -91,6 +119,9 @@ module Matter
         @unsecured_counters = Hash(Tuple(UInt64?, Socket::IPAddress), Tuple(MessageCounter, Time::Instant)).new
         @last_unsecured_counter_sweep = Time.instant
         @exchange_manager = ExchangeManager.new
+        @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
+        @reliable_mutex = Mutex.new
+        @reliable_fiber = nil
         @running = false
         @receive_fiber = nil
         Log.info { "UDP transport bound: [::]:#{@port} (dual-stack)" }
@@ -102,6 +133,7 @@ module Matter
 
         @running = true
         @receive_fiber = spawn { receive_loop }
+        @reliable_fiber = spawn { reliable_loop }
       end
 
       # Stop receiving messages
@@ -110,6 +142,8 @@ module Matter
         # Give fiber time to exit on next loop iteration
         sleep 200.milliseconds if @receive_fiber
         @receive_fiber = nil
+        @reliable_fiber = nil
+        clear_reliable
       end
 
       # Close transport and release resources
@@ -153,12 +187,111 @@ module Matter
           "type=0x#{message.payload_header.message_type.to_s(16)} msg_id=#{message.packet_header.message_id}"
         end
 
-        transmit(data, peer_address)
+        if message.payload_header.requires_acknowledge?
+          send_reliable_raw(data, peer_address, message.packet_header.session_id,
+            message.payload_header.exchange_id, message.packet_header.message_id)
+        else
+          transmit(data, peer_address)
+        end
       end
 
       # Send an already encoded packet.
       def send_raw(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
         transmit(data, peer_address)
+      end
+
+      # Retain the already encoded datagram. Reusing its exact ciphertext and
+      # counter is essential: a retransmission is the same Matter message.
+      def send_reliable_raw(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress,
+                            session_id : UInt16, exchange_id : UInt16,
+                            message_counter : UInt32) : Nil
+        key = {session_id, exchange_id, message_counter}
+        packet = data.to_slice.dup
+        @reliable_mutex.synchronize do
+          if @pending_reliable.size >= MRP_PENDING_LIMIT && !@pending_reliable.has_key?(key)
+            raise Matter::TransportError.new("MRP retransmission table is full")
+          end
+          @pending_reliable[key] = PendingReliableMessage.new(packet, peer_address,
+            session_id, exchange_id, message_counter, Time.instant + mrp_backoff(0))
+        end
+        begin
+          transmit(packet, peer_address)
+        rescue ex
+          @reliable_mutex.synchronize { @pending_reliable.delete(key) }
+          raise ex
+        end
+      end
+
+      # Call only after a secure message's AEAD is authenticated. The unsecured
+      # path calls this after its payload is decoded.
+      def acknowledge_reliable(session_id : UInt16, exchange_id : UInt16,
+                               message_counter : UInt32,
+                               peer : Socket::IPAddress? = nil) : Bool
+        @reliable_mutex.synchronize do
+          key = {session_id, exchange_id, message_counter}
+          pending = @pending_reliable[key]?
+          return false unless pending
+          return false if peer && pending.peer != peer
+          !!@pending_reliable.delete(key)
+        end
+      end
+
+      def pending_reliable_count : Int32
+        @reliable_mutex.synchronize { @pending_reliable.size }
+      end
+
+      def clear_reliable_session(session_id : UInt16) : Nil
+        @reliable_mutex.synchronize do
+          @pending_reliable.reject! { |(pending_session_id, _, _), _| pending_session_id == session_id }
+        end
+      end
+
+      # Public to permit deterministic clock-based tests without sleeping.
+      def retransmit_due(now : Time::Instant = Time.instant) : Nil
+        @reliable_mutex.synchronize do
+          @pending_reliable.reject! do |_key, pending|
+            next false if pending.next_at > now
+            if pending.retransmissions >= MRP_MAX_RETRANSMISSIONS
+              true
+            else
+              pending.retransmissions += 1
+              pending.next_at = now + mrp_backoff(pending.retransmissions)
+              begin
+                transmit(pending.packet, pending.peer)
+              rescue ex
+                Log.debug(exception: ex) { "MRP retransmission failed for session #{pending.session_id}, counter #{pending.message_counter}" }
+              end
+              false
+            end
+          end
+        end
+      end
+
+      protected def initialize_reliable_messages : Nil
+        @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
+        @reliable_mutex = Mutex.new
+        @reliable_fiber = nil
+      end
+
+      protected def clear_reliable : Nil
+        @reliable_mutex.synchronize { @pending_reliable.clear }
+      end
+
+      private def reliable_loop : Nil
+        while @running
+          sleep MRP_SWEEP_INTERVAL
+          retransmit_due if @running
+        end
+      rescue ex
+        Log.error(exception: ex) { "MRP retransmission loop stopped" }
+      end
+
+      private def mrp_backoff(retransmissions : Int32) : Time::Span
+        exponent = {retransmissions - 1, 0}.max
+        millis = MRP_ACTIVE_RETRY_INTERVAL.total_milliseconds *
+                 MRP_BACKOFF_MARGIN * (MRP_BACKOFF_BASE ** exponent) *
+                 (1.0 + Random.rand * MRP_BACKOFF_JITTER)
+        millis.milliseconds
       end
 
       # The one place bytes leave the process. Specs override this to capture
@@ -367,6 +500,9 @@ module Matter
           if message.payload_header.requires_acknowledge?
             Log.trace { "Sending acknowledgment for message #{packet.header.message_id}" }
             send_acknowledgment(message, peer_address, exchange)
+          end
+          if ack = message.payload_header.acknowledged_message_id
+            acknowledge_reliable(0_u16, message.payload_header.exchange_id, ack, peer_address)
           end
         end
 

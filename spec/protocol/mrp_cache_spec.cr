@@ -53,6 +53,19 @@ describe Matter::Protocol::MrpCache do
     cache.resend?(9_u16, 1_u32, peer).should be_true
   end
 
+  it "drops outbound retransmissions when a session is removed" do
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    cache = Matter::Protocol::MrpCache.new(transport)
+    transport.send_reliable_raw(Bytes[1], peer, 7_u16, 1_u16, 1_u32)
+    transport.send_reliable_raw(Bytes[2], peer, 8_u16, 1_u16, 1_u32)
+
+    cache.clear_session(7_u16)
+
+    transport.pending_reliable_count.should eq(1)
+    transport.acknowledge_reliable(7_u16, 1_u16, 1_u32).should be_false
+    transport.acknowledge_reliable(8_u16, 1_u16, 1_u32).should be_true
+  end
+
   it "keeps at most MAX_ENTRIES responses, dropping the oldest" do
     transport = Matter::Spec::CaptureTransport.new_for_spec
     cache = Matter::Protocol::MrpCache.new(transport)

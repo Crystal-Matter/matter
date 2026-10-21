@@ -8,6 +8,46 @@ class ReplaySpecClient < Matter::Controller::Client
 end
 
 describe Matter::Controller::Client do
+  it "retains the encrypted request bytes until an authenticated ACK arrives" do
+    require_udp_sockets!
+    client = ReplaySpecClient.new
+    peer = UDPSocket.new(Socket::Family::INET6)
+    peer.bind("::1", 0)
+    peer.read_timeout = 1.second
+    session = Matter::Session::SecureContext.new(
+      session_id: 3_u16, peer_session_id: 3_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16, 3_u8), decryption_key: Bytes.new(16, 3_u8)
+    )
+    client.register_session(session)
+    exchange_id = client.send_encrypted_request(session, peer.local_address,
+      Matter::Controller::Client::PROTOCOL_INTERACTION_MODEL, 2_u8, Bytes[1])
+    first, _ = peer.receive
+    counter = Matter::Codec::MessageCodec::Base.decode_packet(first.to_slice).header.message_id
+    client.transport.pending_reliable_count.should eq(1)
+
+    client.transport.retransmit_due(Time.instant + 2.seconds)
+    second, _ = peer.receive
+    second.should eq(first)
+    session.local_message_counter.should eq(counter)
+
+    ack_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: exchange_id,
+      protocol_id: Matter::Controller::Client::PROTOCOL_SECURE_CHANNEL,
+      message_type: Matter::Controller::Client::MSG_STANDALONE_ACK,
+      initiator_message: false, requires_acknowledge: false,
+      acknowledged_message_id: counter)
+    ack, _ = Matter::Session::SecureMessage.encode(session, ack_header, Bytes.empty,
+      message_counter: counter &+ 1)
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(ack)
+    client.receive_for_spec(Matter::Codec::MessageCodec::Message.new(packet.header,
+      ack_header, packet.payload, packet.header_bytes), peer.local_address)
+    client.transport.pending_reliable_count.should eq(0)
+  ensure
+    client.try(&.close)
+    peer.try(&.close)
+  end
+
   it "resends the same encrypted ACK for duplicate messages without advancing its outgoing counter" do
     require_udp_sockets!
     client = ReplaySpecClient.new

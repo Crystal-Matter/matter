@@ -16,6 +16,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   case-insensitive DNS names while validating the complete operational
   instance identifier.
 
+### Reliable messaging
+
+- Retransmit outbound unicast messages that request an MRP acknowledgement,
+  retaining the exact encoded datagram and message counter. Device responses,
+  subscription reports, controller requests, and unsecured commissioning
+  requests share a bounded retry table. Authenticated secure ACKs and decoded
+  unsecured ACKs clear the matching entry; session removal and shutdown clear
+  pending packets.
+
 ### Joint Fabric three-Administrator transfer
 
 - Exercise two live Joint Commissioning joins, Anchor transfer, and removal

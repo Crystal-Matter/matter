@@ -306,6 +306,10 @@ module Matter
             end
 
             msg = decrypt_message(msg, session)
+            if ack = msg.payload_header.acknowledged_message_id
+              @transport.acknowledge_reliable(session_id,
+                msg.payload_header.exchange_id, ack)
+            end
             @registry.cancel_cleanup_on_traffic(session_id)
           end
 
