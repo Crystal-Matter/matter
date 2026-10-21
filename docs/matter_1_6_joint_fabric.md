@@ -105,10 +105,14 @@ item below as covered only to the extent of its cited tests.
   GroupKeySetID zero.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
-  crashes in that window, recovery validates B CASE, A CASE, and the A fabric
-  descriptor before restoring the local node record. A missing acknowledgement
-  remains fail closed; a visible A fabric alone does not prove the fail-safe
-  was disarmed.
+  crashes in that window, recovery validates both fabric CASE sessions, B's
+  committed NodeList entry, A's absent NodeList entry, and the A fabric
+  descriptor before restoring the local node record. The journal also records
+  a conservative deadline from the device's reported maximum cumulative
+  fail-safe duration immediately after ArmFailSafe. If CommissioningComplete's
+  reply is lost, the same authenticated checks can establish durable A
+  ownership only after that deadline. Before it, A fabric visibility alone
+  does not prove the fail-safe was disarmed.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and

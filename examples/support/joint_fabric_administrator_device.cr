@@ -1611,6 +1611,15 @@ module MatterJointFabricAdministrator
           acknowledged.commissioning_acknowledged = true
           journal_store.save(acknowledged)
         },
+        fail_safe_deadline: ->(deadline : Int64) {
+          armed = journal_store.load(old_fabric.fabric_id,
+            old_fabric.root_public_key, request.node_id,
+            anchor_fabric.fabric_id, anchor_fabric.root_public_key,
+            anchor_node_id) ||
+                  raise Matter::StorageError.new("Migration journal is missing after ArmFailSafe")
+          armed.fail_safe_deadline_unix = deadline
+          journal_store.save(armed)
+        },
         timeout: 30.seconds)
       begin
         workflow = Matter::Controller::JointFabricDeviceMigration::Workflow.new(

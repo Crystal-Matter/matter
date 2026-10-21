@@ -17,7 +17,8 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
   completion or no effect. Verify both fabrics' Datastore ownership before
   declaring migration complete, and resume partially completed rollback.
   Persist CommissioningComplete acknowledgement before the local node record
-  so a restart can restore it only after verified A CASE. Resume a pending
+  and the device's maximum fail-safe deadline, so a restart can restore it
+  only after verified A/B ownership or the deadline plus A/B checks. Resume a pending
   Anchor NodeList registration with RefreshNode without replaying AddPendingNode.
 - Add local command-sequence parity specs drawn from seven Matter 1.6 JFA/JFD
   certification scenarios. Return `ConstraintError` for an unknown Joint Fabric key

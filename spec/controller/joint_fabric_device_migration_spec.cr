@@ -80,6 +80,10 @@ private class MigrationRecoveryNetworkPort < Migration::NetworkPort
   private def require_old_fabric_present! : Nil
     raise Matter::AuthenticationError.new("B CASE verification failed") unless old_verified?
   end
+
+  private def verify_handoff_baseline! : Nil
+    raise Matter::AuthenticationError.new("B ownership verification failed") unless old_verified?
+  end
 end
 
 describe Migration do
@@ -235,21 +239,32 @@ describe Migration do
       current.commissioning_acknowledged = true
       store.save(current)
     }
+    deadline_callback = ->(deadline : Int64) {
+      current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      current.fail_safe_deadline_unix = deadline
+      store.save(current)
+    }
     issuer = Migration::CrossSignedIssuer.new(Bytes.empty, Bytes.empty,
       0xA001_u64, Bytes[2], Bytes[1])
     hooks = Migration::Credentials.new(issuer, 0xFFFF_0001_u32, 0xFFF2_u16,
-      Matter::Crypto::StandardCrypto.new, callback)
+      Matter::Crypto::StandardCrypto.new, callback, deadline_callback)
     fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0xA001_u64, 0xA101_u64, 0xFFF1_u16).fabric
+    hooks.record_fail_safe_deadline?.should be_true
+    hooks.fail_safe_deadline_observed(1_000_i64)
     hooks.complete_acknowledged(fabric, 0xA002_u64,
       Socket::IPAddress.new("127.0.0.1", 5540))
     loaded = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
       0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
     loaded.stage.should eq(Migration::Stage::CommissioningAnchor)
     loaded.commissioning_acknowledged?.should be_true
+    loaded.fail_safe_deadline_unix.should eq(1_000_i64)
     legacy_document = journal.to_document
     legacy_document.delete("commissioning_acknowledged")
     Migration::Journal.from_document(legacy_document).commissioning_acknowledged?.should be_false
+    legacy_document.delete("fail_safe_deadline_unix")
+    Migration::Journal.from_document(legacy_document).fail_safe_deadline_unix.should be_nil
   end
 
   it "issues a device NOC under B's cross-signed ICAC for Fabric A" do
@@ -541,7 +556,7 @@ describe Migration do
     expect_raises(Matter::CommissioningError, /Durable CommissioningComplete/) do
       port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
     end
-    expect_raises(Matter::AuthenticationError, /B CASE/) do
+    expect_raises(Matter::AuthenticationError, /B ownership/) do
       port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
     end
     port.old_verified = true
@@ -556,6 +571,29 @@ describe Migration do
       joined.controller_node_id)[0xA201_u64]
     stored.address.should eq("127.0.0.1")
     stored.port.should eq(5540)
+    state = store.load
+    state.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id).delete(0xA201_u64)
+    store.save(state)
+    journal.commissioning_acknowledged = false
+    journal.fail_safe_deadline_unix = Time.utc.to_unix + 60
+    port.validate_journal!(journal)
+    expect_raises(Matter::CommissioningError, /fail-safe deadline/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    expect_raises(Matter::CommissioningError, /fail-safe deadline/) do
+      port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
+    end
+    journal.fail_safe_deadline_unix = Time.utc.to_unix - 1
+    port.validate_journal!(journal)
+    port.old_verified = false
+    expect_raises(Matter::AuthenticationError, /B ownership/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    port.old_verified = true
+    port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id).has_key?(0xA201_u64).should be_true
     port.close
   end
 end
