@@ -62,10 +62,12 @@ module Matter
         def self.valid_control!(control : UInt8, proposal : Bool) : Nil
           raise Matter::CodecError.new("Unsupported BDX version or transfer bits") unless (control & VERSION_MASK) == 0 && (control & ~CONTROL_MASK) == 0
           modes = control & (TransferControl::SenderDrive.value | TransferControl::ReceiverDrive.value)
-          raise Matter::CodecError.new("BDX needs a synchronous drive mode") if modes == 0
-          if !proposal && (modes == (TransferControl::SenderDrive.value | TransferControl::ReceiverDrive.value) ||
-             (control & TransferControl::Async.value) != 0)
-            raise Matter::CodecError.new("BDX responder must select one synchronous mode")
+          asynchronous = (control & TransferControl::Async.value) != 0
+          if proposal
+            raise Matter::CodecError.new("BDX proposal needs a synchronous drive mode") if modes == 0
+          elsif modes == (TransferControl::SenderDrive.value | TransferControl::ReceiverDrive.value) ||
+                (asynchronous && modes != 0) || (modes == 0 && !asynchronous)
+            raise Matter::CodecError.new("BDX responder must select one transfer mode")
           end
         end
 

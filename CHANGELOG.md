@@ -38,9 +38,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   available for separately authenticated mirrors.
 ### Bulk Data Exchange
 
-- Add bounded Matter 1.6 BDX v0 binary message codecs for transfer negotiation,
-  block data, acknowledgements, and skip queries. This is the wire layer for
-  upcoming encrypted file transfer support; it does not yet route BDX sessions.
+- Add Matter 1.6 BDX v0 binary message codecs for transfer negotiation, block
+  data, acknowledgements, and skip queries, plus a synchronous stream transfer
+  engine with block ordering and definite-length checks. This does not yet
+  route encrypted BDX sessions or provide a file service.
 
 ### CASE session resumption
 
