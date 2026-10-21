@@ -59,6 +59,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Short BDX-requested logs use Exhausted with complete inline content.
 - Preserve command data InvokeResponses when SuppressResponse is set, as
   required by Matter 1.6, while suppressing status-only InvokeResponses.
+- Piggyback BDX BlockQuery acknowledgements on ReceiverDrive data blocks so
+  Matter.js accepts the flow and duplicate queries replay the cached block.
 - Add Matter 1.6 BDX v0 binary message codecs for transfer negotiation, block
   data, acknowledgements, and skip queries, plus a synchronous stream transfer
   engine with block ordering and definite-length checks.

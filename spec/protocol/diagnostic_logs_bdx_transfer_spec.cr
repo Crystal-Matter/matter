@@ -179,6 +179,35 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
+  it "piggybacks the ReceiverDrive BlockQuery acknowledgement on its Block" do
+    handler, transport, session = diagnostic_bdx_fixture
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "support-log".to_slice, Bytes.new(1200, 0x41_u8)).should be_true
+    handler.bdx_initiator.start_pending
+    init = diagnostic_bdx_outgoing(transport.sent_packets.last[0], session)
+    exchange = init.payload_header.exchange_id
+
+    accept = DiagnosticBdx::Wire::Accept.new(DiagnosticBdx::Wire::Opcode::SendAccept,
+      DiagnosticBdx::Wire::TransferControl::ReceiverDrive, 1024_u16)
+    handler.handle_message(diagnostic_bdx_incoming(session, 1_u32, exchange,
+      accept.opcode, accept.to_slice), DIAGNOSTIC_PEER)
+    query = DiagnosticBdx::Wire::BlockCounterMessage.new(DiagnosticBdx::Wire::Opcode::BlockQuery, 0_u32)
+    handler.handle_message(diagnostic_bdx_incoming(session, 2_u32, exchange,
+      query.opcode, query.to_slice), DIAGNOSTIC_PEER)
+
+    blocks = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+      .select { |message| message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value }
+    blocks.size.should eq(1)
+    blocks.first.payload_header.acknowledged_message_id.should eq(2_u32)
+    original_block = transport.sent_packets.find! do |wire, _peer|
+      diagnostic_bdx_outgoing(wire, session).payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value
+    end[0]
+    handler.handle_message(diagnostic_bdx_incoming(session, 2_u32, exchange,
+      query.opcode, query.to_slice), DIAGNOSTIC_PEER)
+    transport.sent_packets.last[0].should eq(original_block)
+    handler.close
+  end
+
   it "rejects a queue request for another fabric or peer and cleans up on session removal" do
     handler, _transport, session = diagnostic_bdx_fixture
     handler.queue_bdx_transfer(session.session_id, 2_u8, 0x2222_u64,

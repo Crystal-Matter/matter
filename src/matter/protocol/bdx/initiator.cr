@@ -76,12 +76,12 @@ module Matter
 
         def receive(session : Session::SecureContext, exchange_id : UInt16,
                     opcode : Wire::Opcode, payload : Bytes,
-                    initiator_message : Bool) : Transfer::StatusCode?
+                    initiator_message : Bool) : Tuple(Transfer::StatusCode?, Transfer::Message?)
           key = Key.new(session.session_id, exchange_id)
-          active = @active[key]? || return
+          active = @active[key]? || return {nil, nil}
           if !active.session.same?(session) || initiator_message
             finish(key)
-            return Transfer::StatusCode::UnexpectedMessage
+            return {Transfer::StatusCode::UnexpectedMessage, nil}
           end
           active.touched_at = Time.instant
           if transfer = active.transfer
@@ -91,10 +91,7 @@ module Matter
             counter = Wire::BlockCounterMessage.decode(opcode, payload)
             next_message = transfer.receive(counter)
             finish(key) if transfer.complete?
-            if next_message
-              @sender.send_bdx_request(session, active.peer, exchange_id,
-                next_message.opcode.value, next_message.to_slice)
-            end
+            {nil, next_message}
           else
             raise Transfer::Error.new(Transfer::StatusCode::UnexpectedMessage, "Expected SendAccept") unless opcode.send_accept?
             accepted = Wire::Accept.decode(opcode, payload)
@@ -107,15 +104,13 @@ module Matter
             transfer = Transfer.sender(active.io, accepted.max_block_size, drive,
               active.content.size.to_u64)
             active.transfer = transfer
-            if first = transfer.start
-              @sender.send_bdx_request(session, active.peer, exchange_id,
-                first.opcode.value, first.to_slice)
-            end
+            {nil, transfer.start}
           end
         rescue ex : Transfer::Error | Matter::CodecError
           Log.warn(exception: ex) { "Outbound BDX transfer failed" }
           finish(Key.new(session.session_id, exchange_id))
-          ex.is_a?(Transfer::Error) ? ex.status : Transfer::StatusCode::BadMessageContents
+          status = ex.is_a?(Transfer::Error) ? ex.status : Transfer::StatusCode::BadMessageContents
+          {status, nil}
         end
 
         def abort(session_id : UInt16, exchange_id : UInt16) : Nil

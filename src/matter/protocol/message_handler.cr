@@ -486,10 +486,13 @@ module Matter
             return
           end
           if @bdx_initiator.handles?(session.session_id, msg.payload_header.exchange_id)
-            status = @bdx_initiator.receive(session, msg.payload_header.exchange_id, opcode,
+            status, response = @bdx_initiator.receive(session, msg.payload_header.exchange_id, opcode,
               msg.payload, msg.payload_header.initiator_message?)
             if status
               @sender.send_bdx_status(msg, peer, session, status)
+            elsif response
+              @sender.send_bdx_response(msg, peer, session, response.opcode.value,
+                response.to_slice)
             else
               @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true)
             end
