@@ -271,10 +271,11 @@ describe Migration do
       current.commissioning_acknowledged = true
       store.save(current)
     }
-    deadline_callback = ->(deadline : Int64) {
+    deadline_callback = ->(deadline : Int64, max_seconds : UInt16) {
       current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
         0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
       current.fail_safe_deadline_unix = deadline
+      current.fail_safe_max_seconds = max_seconds
       store.save(current)
     }
     issuer = Migration::CrossSignedIssuer.new(Bytes.empty, Bytes.empty,
@@ -284,7 +285,7 @@ describe Migration do
     fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0xA001_u64, 0xA101_u64, 0xFFF1_u16).fabric
     hooks.record_fail_safe_deadline?.should be_true
-    hooks.fail_safe_deadline_observed(1_000_i64)
+    hooks.fail_safe_deadline_observed(1_000_i64, 60_u16)
     hooks.complete_acknowledged(fabric, 0xA002_u64,
       Socket::IPAddress.new("127.0.0.1", 5540))
     loaded = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
@@ -292,11 +293,14 @@ describe Migration do
     loaded.stage.should eq(Migration::Stage::CommissioningAnchor)
     loaded.commissioning_acknowledged?.should be_true
     loaded.fail_safe_deadline_unix.should eq(1_000_i64)
+    loaded.fail_safe_max_seconds.should eq(60_u16)
     legacy_document = journal.to_document
     legacy_document.delete("commissioning_acknowledged")
     Migration::Journal.from_document(legacy_document).commissioning_acknowledged?.should be_false
     legacy_document.delete("fail_safe_deadline_unix")
     Migration::Journal.from_document(legacy_document).fail_safe_deadline_unix.should be_nil
+    legacy_document.delete("fail_safe_max_seconds")
+    Migration::Journal.from_document(legacy_document).fail_safe_max_seconds.should be_nil
   end
 
   it "issues a device NOC under B's cross-signed ICAC for Fabric A" do
@@ -572,10 +576,14 @@ describe Migration do
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     verifier = Matter::Controller::DeviceAttestationVerifier.new(
       Matter::Controller::AttestationTrustStore.matter_test_fixture)
+    monotonic = Time.instant
+    recovery_waits = [] of Time::Span
     port = MigrationRecoveryNetworkPort.new(store, old_fabric, joined, issuer,
       0xB201_u64, 0xA201_u64, peer, 0xB101_u64, peer, 1_u16,
       0xA101_u64, peer, 1_u16, "Existing device", 0xFFFF_0001_u32,
-      verifier, timeout: 1.millisecond)
+      verifier, timeout: 1.millisecond,
+      monotonic_now: -> { monotonic },
+      recovery_sleep: ->(duration : Time::Span) { recovery_waits << duration; monotonic += duration })
     journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
       0xB201_u64, 0xA201_u64, old_fabric.root_public_key,
       joined.root_public_key, Migration::Stage::CommissioningAnchor)
@@ -603,29 +611,62 @@ describe Migration do
       joined.controller_node_id)[0xA201_u64]
     stored.address.should eq("127.0.0.1")
     stored.port.should eq(5540)
+    journal.commissioning_acknowledged = false
+    journal.fail_safe_max_seconds = 1_u16
+    journal.fail_safe_deadline_unix = Time.utc.to_unix - 86_400
+    port.validate_journal!(journal)
+    port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    recovery_waits.should eq([3.seconds])
+    recovery_waits.clear
     state = store.load
     state.nodes_for(joined.fabric_id, joined.root_public_key,
       joined.controller_node_id).delete(0xA201_u64)
     store.save(state)
+    port.close
     journal.commissioning_acknowledged = false
-    journal.fail_safe_deadline_unix = Time.utc.to_unix + 60
-    port.validate_journal!(journal)
-    expect_raises(Matter::CommissioningError, /fail-safe deadline/) do
-      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    journal.fail_safe_max_seconds = nil
+    # Simulate a process restart with a stale UTC deadline. A jump in the
+    # wall clock must not let the restarted controller adopt provisional A.
+    journal.fail_safe_deadline_unix = Time.utc.to_unix - 86_400
+    migration_store = Migration::JournalStore.new(Matter::Storage::Memory.new)
+    migration_store.save(journal)
+    restarted_journal = migration_store.load(0xB001_u64, old_fabric.root_public_key,
+      0xB201_u64, 0xA001_u64, joined.root_public_key, 0xA201_u64).as(Migration::Journal)
+    restarted_port = MigrationRecoveryNetworkPort.new(store, old_fabric, joined, issuer,
+      0xB201_u64, 0xA201_u64, peer, 0xB101_u64, peer, 1_u16,
+      0xA101_u64, peer, 1_u16, "Existing device", 0xFFFF_0001_u32,
+      verifier, timeout: 1.millisecond,
+      monotonic_now: -> { monotonic },
+      recovery_sleep: ->(duration : Time::Span) { recovery_waits << duration; monotonic += duration })
+    restarted_port.validate_journal!(restarted_journal)
+    expect_raises(Matter::CommissioningError, /fail-safe recovery bound/) do
+      restarted_port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
     end
-    expect_raises(Matter::CommissioningError, /fail-safe deadline/) do
-      port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
+    expect_raises(Matter::CommissioningError, /fail-safe recovery bound/) do
+      restarted_port.verify_no_effect!(Migration::Stage::CommissioningAnchor)
     end
-    journal.fail_safe_deadline_unix = Time.utc.to_unix - 1
-    port.validate_journal!(journal)
-    port.old_verified = false
+    recovery_waits.should be_empty
+    restarted_journal.fail_safe_max_seconds = 1_u16
+    migration_store.save(restarted_journal)
+    restarted_port.validate_journal!(migration_store.load(0xB001_u64,
+      old_fabric.root_public_key, 0xB201_u64, 0xA001_u64,
+      joined.root_public_key, 0xA201_u64).as(Migration::Journal))
+    restarted_port.old_verified = false
+    restarted = Migration::Workflow.new(restarted_journal, restarted_port,
+      -> { true }, ->(item : Migration::Journal) { migration_store.save(item) })
     expect_raises(Matter::AuthenticationError, /B ownership/) do
-      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+      restarted.run
     end
-    port.old_verified = true
-    port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    restarted.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+    recovery_waits.should eq([3.seconds])
+    restarted_journal.fail_safe_deadline_unix = Time.utc.to_unix + 86_400
+    restarted_port.validate_journal!(restarted_journal)
+    restarted_port.old_verified = true
+    restarted_port.anchor_verified = true
+    restarted_port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    recovery_waits.should eq([3.seconds, 3.seconds])
     store.load.nodes_for(joined.fabric_id, joined.root_public_key,
       joined.controller_node_id).has_key?(0xA201_u64).should be_true
-    port.close
+    restarted_port.close
   end
 end

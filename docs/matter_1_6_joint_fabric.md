@@ -108,13 +108,17 @@ item below as covered only to the extent of its cited tests.
   crashes in that window, recovery validates both fabric CASE sessions, B's
   committed NodeList entry, A's absent NodeList entry, and the A fabric
   descriptor before restoring the local node record. The journal also records
-  a conservative deadline from the device's reported maximum cumulative
-  fail-safe duration immediately after ArmFailSafe. If CommissioningComplete's
-  reply is lost, the same authenticated checks can establish durable A
-  ownership only after that deadline. Before it, A fabric visibility alone
-  does not prove the fail-safe was disarmed. A restarted `migrate-device`
-  automatically performs this read-only proof and continues if it succeeds;
+  the device's reported maximum cumulative fail-safe duration immediately
+  after ArmFailSafe. If CommissioningComplete's reply is lost, recovery waits
+  that full duration plus a safety margin using a fresh monotonic interval,
+  then repeats the authenticated checks to establish durable A ownership.
+  The saved UTC deadline is diagnostic and never shortens this wait, even if
+  the controller clock changes during a restart. A fabric visible before the
+  wait may still be provisional. A restarted `migrate-device` automatically
+  performs this proof and continues if it succeeds;
   other uncertain mutation stages still require explicit reconciliation.
+  Older journals lacking the reported duration remain uncertain and require
+  manual repair rather than adopting A from a UTC timestamp alone.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and

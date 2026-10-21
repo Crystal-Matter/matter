@@ -1611,13 +1611,14 @@ module MatterJointFabricAdministrator
           acknowledged.commissioning_acknowledged = true
           journal_store.save(acknowledged)
         },
-        fail_safe_deadline: ->(deadline : Int64) {
+        fail_safe_deadline: ->(deadline : Int64, max_seconds : UInt16) {
           armed = journal_store.load(old_fabric.fabric_id,
             old_fabric.root_public_key, request.node_id,
             anchor_fabric.fabric_id, anchor_fabric.root_public_key,
             anchor_node_id) ||
                   raise Matter::StorageError.new("Migration journal is missing after ArmFailSafe")
           armed.fail_safe_deadline_unix = deadline
+          armed.fail_safe_max_seconds = max_seconds
           journal_store.save(armed)
         },
         timeout: 30.seconds)

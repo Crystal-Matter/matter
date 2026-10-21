@@ -81,7 +81,7 @@ module Matter
             false
           end
 
-          def fail_safe_deadline_observed(deadline_unix : Int64) : Nil
+          def fail_safe_deadline_observed(deadline_unix : Int64, max_seconds : UInt16) : Nil
           end
 
           def supports_deferred_handoff? : Bool
@@ -210,7 +210,8 @@ module Matter
                 raise Matter::CommissioningError.new("Device reported no maximum cumulative fail-safe duration")
               end
               hooks.fail_safe_deadline_observed(Time.utc.to_unix +
-                                                info.max_cumulative_failsafe_seconds.to_i64 + FAIL_SAFE_RECOVERY_GRACE_SECONDS)
+                                                info.max_cumulative_failsafe_seconds.to_i64 + FAIL_SAFE_RECOVERY_GRACE_SECONDS,
+                info.max_cumulative_failsafe_seconds)
             end
           end
 

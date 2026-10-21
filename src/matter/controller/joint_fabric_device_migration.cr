@@ -41,13 +41,15 @@ module Matter
         property stage : Stage
         property? commissioning_acknowledged : Bool = false
         property fail_safe_deadline_unix : Int64? = nil
+        property fail_safe_max_seconds : UInt16? = nil
 
         def initialize(@old_fabric_id : UInt64, @anchor_fabric_id : UInt64,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
                        @old_root_public_key : Bytes, @anchor_root_public_key : Bytes,
                        @stage : Stage = Stage::Ready,
                        @commissioning_acknowledged : Bool = false,
-                       @fail_safe_deadline_unix : Int64? = nil)
+                       @fail_safe_deadline_unix : Int64? = nil,
+                       @fail_safe_max_seconds : UInt16? = nil)
         end
       end
 
@@ -125,10 +127,12 @@ module Matter
                        @administrator_cat : UInt32,
                        @attestation_verifier : DeviceAttestationVerifier,
                        @commissioning_ack : Proc(Nil)? = nil,
-                       @fail_safe_deadline : Proc(Int64, Nil)? = nil,
+                       @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
-                       @client : Client = Client.new)
+                       @client : Client = Client.new,
+                       @monotonic_now : Proc(Time::Instant) = -> { Time.instant },
+                       @recovery_sleep : Proc(Time::Span, Nil) = ->(duration : Time::Span) { sleep duration })
           if @old_node_id == 0_u64 || @anchor_node_id == 0_u64 ||
              (@old_fabric.fabric_id == @anchor_fabric.fabric_id &&
              @old_fabric.root_public_key == @anchor_fabric.root_public_key)
@@ -185,7 +189,7 @@ module Matter
             ImClient.new(@client, @timeout), old_session, @device_peer,
             DEFAULT_WINDOW_SECONDS, DEFAULT_PBKDF_ITERATIONS,
             Random::Secure.rand(0_u16..4095_u16))
-          deadline_callback = @fail_safe_deadline ? ->(deadline : Int64) { persist_fail_safe_deadline!(deadline) } : nil
+          deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
           hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
             @crypto, -> { persist_commissioning_ack! }, deadline_callback)
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
@@ -220,11 +224,12 @@ module Matter
           end
         end
 
-        private def persist_fail_safe_deadline!(deadline_unix : Int64) : Nil
+        private def persist_fail_safe_deadline!(deadline_unix : Int64, max_seconds : UInt16) : Nil
           if callback = @fail_safe_deadline
-            callback.call(deadline_unix)
+            callback.call(deadline_unix, max_seconds)
             if journal = @journal
               journal.fail_safe_deadline_unix = deadline_unix
+              journal.fail_safe_max_seconds = max_seconds
               @journal = journal
             end
           end
@@ -371,16 +376,11 @@ module Matter
         def verify_postcondition!(stage : Stage) : Nil
           case stage
           when Stage::AnchorCommissioned
+            wait_for_fail_safe_expiry! unless @journal.try(&.commissioning_acknowledged?)
             state = @store.load
             unless state.nodes_for(@anchor_fabric.fabric_id,
                      @anchor_fabric.root_public_key,
                      @anchor_fabric.controller_node_id).has_key?(@anchor_node_id)
-              unless @journal.try(&.commissioning_acknowledged?)
-                deadline = @journal.try(&.fail_safe_deadline_unix)
-                unless deadline && Time.utc.to_unix > deadline
-                  raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement or elapsed fail-safe deadline for Fabric A")
-                end
-              end
               verify_handoff_baseline!
               verify_anchor!
               state.record_node(@anchor_fabric.fabric_id,
@@ -438,11 +438,7 @@ module Matter
             if @journal.try(&.commissioning_acknowledged?)
               raise Matter::CommissioningError.new("Durable CommissioningComplete acknowledgement exists")
             end
-            if deadline = @journal.try(&.fail_safe_deadline_unix)
-              if Time.utc.to_unix <= deadline
-                raise Matter::CommissioningError.new("Commissioning fail-safe deadline has not elapsed")
-              end
-            end
+            wait_for_fail_safe_expiry!
             state = @store.load
             if state.nodes_for(@anchor_fabric.fabric_id,
                  @anchor_fabric.root_public_key,
@@ -474,6 +470,22 @@ module Matter
             end
           else
             raise Matter::ConfigurationError.new("Stage has no observable no-effect migration condition")
+          end
+        end
+
+        # A stored UTC deadline is diagnostic only: the local clock may have
+        # jumped while this process was stopped. A fresh monotonic interval
+        # covers the device's whole reported cumulative fail-safe bound before
+        # an unacknowledged commissioning result can be classified.
+        private def wait_for_fail_safe_expiry! : Nil
+          max_seconds = @journal.try(&.fail_safe_max_seconds)
+          unless max_seconds && max_seconds > 0
+            raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement or fail-safe recovery bound for Fabric A")
+          end
+          interval = (max_seconds.to_i64 + Commissioning::Commissioner::FAIL_SAFE_RECOVERY_GRACE_SECONDS).seconds
+          start = @monotonic_now.call
+          while (remaining = interval - (@monotonic_now.call - start)) > Time::Span.zero
+            @recovery_sleep.call(remaining)
           end
         end
 
@@ -676,7 +688,7 @@ module Matter
                        @administrator_cat : UInt32, @admin_vendor_id : UInt16,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @commissioning_ack : Proc(Nil)? = nil,
-                       @fail_safe_deadline : Proc(Int64, Nil)? = nil)
+                       @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil)
           unless @administrator_cat >> 16 == ADMINISTRATOR_CAT_ID &&
                  (@administrator_cat & 0xFFFF_u32) != 0_u32
             raise Matter::ConfigurationError.new("A current Administrator CAT is required")
@@ -712,8 +724,8 @@ module Matter
           !@fail_safe_deadline.nil?
         end
 
-        def fail_safe_deadline_observed(deadline_unix : Int64) : Nil
-          @fail_safe_deadline.try(&.call(deadline_unix))
+        def fail_safe_deadline_observed(deadline_unix : Int64, max_seconds : UInt16) : Nil
+          @fail_safe_deadline.try(&.call(deadline_unix, max_seconds))
         end
       end
 
