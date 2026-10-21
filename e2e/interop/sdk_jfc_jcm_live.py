@@ -109,6 +109,7 @@ def run(args):
         b_pin = b.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
         b_discriminator = b.expect(r"Discriminator:\s*(\d+)", 10).group(1)
         b.expect(r"Starting in Commissioning Mode", 60)
+        b.start_background_drain()
 
         bridge_log = (logs / "csr-bridge.log").open("wb")
         bridge = subprocess.Popen([sys.executable,
@@ -151,6 +152,7 @@ def run(args):
         a.expect(r"Discriminator:\s*(\d+)", 10)
         a.expect(r"Starting in Commissioning Mode", 60)
         a_code = a.expect(r"chip-tool pairing code 1 ([\d-]+)", 20).group(1)
+        a.start_background_drain()
 
         opened = jfc.command("pairing open-joint-commissioning-window 11 1 400 1000 1261")
         b_code = jfc.expect(r"Manual pairing code:\s*\[([^\]]+)\]", 90, opened).group(1)
