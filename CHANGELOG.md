@@ -64,6 +64,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### OTA Software Update Requestor
 
+- Add typed AnnounceOTAProvider command and Requestor lifecycle events, plus a
+  CASE QueryImage and BDX download client that stages a bounded image in
+  caller-owned storage and validates its Matter header and payload digest.
+  Expose ApplyUpdateRequest and NotifyUpdateApplied so applications can finish
+  the provider handshake around their installer and reboot; an optional
+  `apply_staged` callback runs only on immediate Proceed. Honor provider
+  QueryImage delays before another query or BDX download.
 - Persist DefaultOTAProviders per fabric, enforce the Matter 1.6 limit of one
   provider per fabric, and remove a provider when its fabric is removed.
   Accept writes that omit FabricIndex and bind them to the authenticated fabric.

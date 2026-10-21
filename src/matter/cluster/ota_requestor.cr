@@ -27,6 +27,97 @@ module Matter
         DelayedOnUserConsent = 8
       end
 
+      enum ChangeReason : UInt8
+        Unknown         = 0
+        Success         = 1
+        Failure         = 2
+        TimeOut         = 3
+        DelayByProvider = 4
+      end
+
+      enum AnnouncementReason : UInt8
+        SimpleAnnouncement    = 0
+        UpdateAvailable       = 1
+        UrgentUpdateAvailable = 2
+      end
+
+      struct StateTransitionEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property previous_state : UpdateState
+
+        @[TLV::Field(tag: 1)]
+        property new_state : UpdateState
+
+        @[TLV::Field(tag: 2)]
+        property reason : ChangeReason
+
+        @[TLV::Field(tag: 3, optional: false)]
+        property target_software_version : UInt32?
+
+        def initialize(@previous_state : UpdateState, @new_state : UpdateState,
+                       @reason : ChangeReason, @target_software_version : UInt32? = nil)
+        end
+      end
+
+      struct VersionAppliedEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property software_version : UInt32
+
+        @[TLV::Field(tag: 1)]
+        property product_id : UInt16
+
+        def initialize(@software_version : UInt32, @product_id : UInt16)
+        end
+      end
+
+      struct DownloadErrorEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property software_version : UInt32
+
+        @[TLV::Field(tag: 1)]
+        property bytes_downloaded : UInt64
+
+        @[TLV::Field(tag: 2, optional: false)]
+        property progress_percent : UInt8?
+
+        @[TLV::Field(tag: 3, optional: false)]
+        property platform_code : Int64?
+
+        def initialize(@software_version : UInt32, @bytes_downloaded : UInt64,
+                       @progress_percent : UInt8? = nil, @platform_code : Int64? = nil)
+        end
+      end
+
+      struct AnnounceProviderRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property provider_node_id : UInt64
+
+        @[TLV::Field(tag: 1)]
+        property vendor_id : UInt16
+
+        @[TLV::Field(tag: 2)]
+        property announcement_reason : AnnouncementReason
+
+        @[TLV::Field(tag: 3, optional: true)]
+        property metadata_for_node : Bytes?
+
+        @[TLV::Field(tag: 4)]
+        property endpoint : UInt16
+
+        def initialize(@provider_node_id : UInt64, @vendor_id : UInt16,
+                       @announcement_reason : AnnouncementReason, @endpoint : UInt16,
+                       @metadata_for_node : Bytes? = nil)
+        end
+      end
+
       # An OTA provider on a fabric (DefaultOTAProviders entries)
       struct ProviderLocation
         include TLV::Serializable
@@ -60,6 +151,15 @@ module Matter
       attribute 0x0001, :update_possible, Bool, default: false
       attribute 0x0002, :update_state, UpdateState, default: UpdateState::Idle
       attribute 0x0003, :update_state_progress, UInt8, nullable: true
+
+      event 0x00, :state_transition, priority: :info, payload: StateTransitionEvent
+      event 0x01, :version_applied, priority: :critical, payload: VersionAppliedEvent
+      event 0x02, :download_error, priority: :info, payload: DownloadErrorEvent
+
+      command 0x00, :announce_ota_provider, request: AnnounceProviderRequest,
+        access: :administer
+
+      property on_announce_provider : Proc(UInt8, UInt64, AnnounceProviderRequest, Nil)?
 
       before_write :default_ota_providers do |entries|
         if request_fabric_index.nil?
@@ -101,6 +201,41 @@ module Matter
         before = @default_ota_providers.size
         @default_ota_providers.reject! { |entry| entry.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_DEFAULT_OTA_PROVIDERS) if @default_ota_providers.size != before
+      end
+
+      def announce_ota_provider(request : AnnounceProviderRequest) : InteractionModel::Status
+        fabric = request_fabric_index
+        peer = request_peer_node_id
+        return InteractionModel::Status.unsupported_access unless request_is_case_session? && fabric && peer
+        if (metadata = request.metadata_for_node) && metadata.size > 512
+          return InteractionModel::Status.constraint_error
+        end
+        @on_announce_provider.try(&.call(fabric, peer, request))
+        InteractionModel::Status.success
+      end
+
+      def transition_to(new_state : UpdateState, reason : ChangeReason,
+                        target_version : UInt32? = nil) : Nil
+        previous = @update_state
+        return if previous == new_state
+        self.update_state = new_state
+        emit_event(EVENT_STATE_TRANSITION,
+          StateTransitionEvent.new(previous, new_state, reason, target_version))
+      end
+
+      def emit_version_applied(software_version : UInt32, product_id : UInt16) : Nil
+        emit_event(EVENT_VERSION_APPLIED, VersionAppliedEvent.new(software_version, product_id))
+      end
+
+      def emit_download_error(software_version : UInt32, bytes_downloaded : UInt64,
+                              progress_percent : UInt8? = nil,
+                              platform_code : Int64? = nil) : Nil
+        if progress_percent && progress_percent > 100_u8
+          raise Matter::ConfigurationError.new("OTA download progress must be 0..100")
+        end
+        emit_event(EVENT_DOWNLOAD_ERROR,
+          DownloadErrorEvent.new(software_version, bytes_downloaded,
+            progress_percent, platform_code))
       end
 
       def save_state : Storage::Document?
