@@ -9,6 +9,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Groupcast runtime
 
+- Accept authenticated, untimed group WriteRequests for writable attributes on
+  member endpoints authorized by Group ACL, without a response. Add a private
+  one-way group WriteRequest sender with durable counters and multicast routing.
 - Receive private AES-CCM group messages on fabric-derived IPv6 multicast
   addresses, authenticate mapped epoch keys, retain replay windows, and invoke
   commands only on member endpoints authorized by a Group ACL. Group commands

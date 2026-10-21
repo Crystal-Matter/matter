@@ -29,6 +29,12 @@ describe "private groupcast interoperability" do
     sleep 1.second
     read_bool(device, "onoff", "on-off", "OnOff").should be_true
 
+    # SDK group WriteRequest must fan out only to member endpoints and never
+    # wait for a WriteResponse. The CASE read verifies the resulting value.
+    expect_success(device.chip("levelcontrol", "write", "options", "1", group_node, "1"))
+    sleep 1.second
+    read_int(device, "levelcontrol", "options", "Options").should eq(1)
+
     expect_success(device.write("accesscontrol", "acl", deny_acl, 0))
     expect_success(device.invoke("onoff", "off"))
     expect_success(device.chip("onoff", "on", group_node, "1"))

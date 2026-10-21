@@ -1,6 +1,73 @@
 require "../spec_helper"
 
 describe Matter::Protocol::GroupInteractionRouter do
+  it "applies a group WriteRequest only to member endpoints with Group write ACL" do
+    group_id = 0x1234_u16
+    fabric = 1_u8
+    root = Matter::DataType::EndpointNumber.new(0_u16)
+    acl = Matter::Cluster::AccessControl.new(root)
+    gkm = Matter::Cluster::GroupKeyManagement.new(root)
+    first = Matter::Cluster::LevelControl.new(Matter::DataType::EndpointNumber.new(1_u16))
+    second = Matter::Cluster::LevelControl.new(Matter::DataType::EndpointNumber.new(2_u16))
+    clusters = {} of Tuple(UInt16, UInt32) => Matter::Cluster::Base
+    clusters[{0_u16, Matter::Cluster::AccessControl::CLUSTER_ID}] = acl
+    clusters[{1_u16, Matter::Cluster::LevelControl::CLUSTER_ID}] = first
+    clusters[{2_u16, Matter::Cluster::LevelControl::CLUSTER_ID}] = second
+    epoch = Bytes.new(16, 0x11_u8)
+    gkm.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(1_u16,
+        epoch_key0: epoch, epoch_start_time0: 1_u64)), fabric)
+    gkm.add_group_key_map(group_id, 1_u16, fabric)
+    gkm.add_group(group_id, 1_u16, nil, fabric)
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Operate,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::Group,
+      [group_id.to_u64], nil, fabric)
+    key = Matter::Session::GroupSecurePacket::Key.new(fabric, group_id, epoch)
+    codec = Matter::Session::GroupSecurePacket.new([key])
+    path = Matter::InteractionModel::AttributePath.new(nil,
+      Matter::Cluster::LevelControl::CLUSTER_ID, Matter::Cluster::LevelControl::ATTR_OPTIONS)
+    data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Any.new(1_u8, nil))
+    request = Matter::InteractionModel::WriteRequestMessage.new(true, false, [data])
+    header = Matter::Codec::MessageCodec::PayloadHeader.new(9_u16, 1_u16,
+      Matter::Protocol::IMHandler::MSG_WRITE_REQUEST, true, false)
+    wire = codec.encode(key, 0x1111_u64, 100_u32, header, request.to_slice)
+    router = Matter::Protocol::GroupInteractionRouter.new(clusters, gkm)
+
+    router.handle(Matter::Session::GroupSecurePacket.new([key]).decode(wire))
+    first.options.should eq(1_u8)
+    second.options.should eq(0_u8)
+
+    first.options = 0_u8
+    acl.acl.clear
+    router.handle(Matter::Session::GroupSecurePacket.new([key]).decode(wire))
+    first.options.should eq(0_u8)
+
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Operate,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::Group,
+      [group_id.to_u64], nil, fabric)
+    # Official SDK v1.6 chip-tool sends false here despite Core §8.7.2.2.
+    sdk_write = Matter::InteractionModel::WriteRequestMessage.new(false, false, [data])
+    sdk_wire = codec.encode(key, 0x1111_u64, 101_u32, header, sdk_write.to_slice)
+    router.handle(Matter::Session::GroupSecurePacket.new([key]).decode(sdk_wire))
+    first.options.should eq(1_u8)
+    first.options = 0_u8
+    [
+      Matter::InteractionModel::WriteRequestMessage.new(true, true, [data]),
+      Matter::InteractionModel::WriteRequestMessage.new(true, false, [
+        Matter::InteractionModel::AttributeDataIB.new(
+          Matter::InteractionModel::AttributePath.new(1_u16,
+            Matter::Cluster::LevelControl::CLUSTER_ID, Matter::Cluster::LevelControl::ATTR_OPTIONS),
+          TLV::Any.new(1_u8, nil)),
+      ]),
+    ].each_with_index do |invalid, index|
+      bad_wire = codec.encode(key, 0x1111_u64, (102 + index).to_u32, header, invalid.to_slice)
+      router.handle(Matter::Session::GroupSecurePacket.new([key]).decode(bad_wire))
+      first.options.should eq(0_u8)
+    end
+  end
+
   it "keeps wildcard command paths out of unicast Invoke processing" do
     request = Matter::InteractionModel::InvokeRequestMessage.new([
       Matter::InteractionModel::CommandDataIBTlv.new(
