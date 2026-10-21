@@ -11,6 +11,16 @@ module Matter
       # Operational Node ID range (Matter 1.4 § 2.5.5.1)
       OPERATIONAL_MINIMUM = 0x0000_0000_0000_0001_u64
       OPERATIONAL_MAXIMUM = 0xFFFF_FFEF_FFFF_FFFF_u64
+      # Matter 1.6 Joint Fabric Node IDs use an exclusive upper bound.
+      JOINT_FABRIC_EXCLUSIVE_MAXIMUM = OPERATIONAL_MAXIMUM
+
+      def self.valid_joint_fabric?(value : UInt64) : Bool
+        value >= OPERATIONAL_MINIMUM && value < JOINT_FABRIC_EXCLUSIVE_MAXIMUM
+      end
+
+      def self.random_joint_fabric : NodeId
+        new(Random::Secure.rand(OPERATIONAL_MINIMUM...JOINT_FABRIC_EXCLUSIVE_MAXIMUM))
+      end
 
       # Group Node ID prefix: 0xFFFFFFFFFFFF followed by the 16-bit group id
       GROUP_NODE_ID_PREFIX = 0xFFFF_FFFF_FFFF_0000_u64

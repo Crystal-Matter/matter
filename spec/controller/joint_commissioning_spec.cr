@@ -293,6 +293,41 @@ describe Matter::Controller::JointCommissioning do
     workflow.close
   end
 
+  it "regenerates colliding Joint Fabric IDs and rejects invalid or locally used IDs before PASE" do
+    joint = Matter::Controller::JointCommissioning
+    candidates = [9_u64, 0_u64, Matter::DataType::NodeId::JOINT_FABRIC_EXCLUSIVE_MAXIMUM, 11_u64]
+    joint.allocate_node_id([9_u64], -> { candidates.shift }).should eq(11_u64)
+    expect_raises(Matter::ConfigurationError, /Anchor fabric identity/) do
+      joint.bootstrap_anchor_fabric(0x4570_u64,
+        Matter::DataType::NodeId::JOINT_FABRIC_EXCLUSIVE_MAXIMUM, 0xFFF1_u16, crypto: crypto)
+    end
+
+    fabric = joint.bootstrap_anchor_fabric(0x4570_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    state = store.load
+    state.install_fabric(fabric)
+    state.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(9_u64),
+      fabric.root_public_key, fabric.controller_node_id)
+    store.save(state)
+    datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    workflow = Matter::Controller::JointCommissioning::Workflow.new(store, fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id, 1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16,
+      2_u64, JointTestTrust.new,
+      ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) {
+        joint.add_admin_once(datastore, request); nil
+      },
+      ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+    [0_u64, Matter::DataType::NodeId::JOINT_FABRIC_EXCLUSIVE_MAXIMUM,
+     UInt64::MAX, fabric.controller_node_id, 9_u64].each do |node_id|
+      expect_raises(Matter::CommissioningError, /Joint Fabric Node ID/) do
+        workflow.commission(node_id, "invalid manual code")
+      end
+    end
+    workflow.close
+  end
+
   it "recovers an acknowledged completion when controller node storage failed" do
     joint = Matter::Controller::JointCommissioning
     fabric = joint.bootstrap_anchor_fabric(0x4568_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric

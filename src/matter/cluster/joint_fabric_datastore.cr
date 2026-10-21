@@ -1062,7 +1062,8 @@ module Matter
 
       def add_admin(request : AddAdminRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error if request.node_id == 0_u64 || !valid_name?(request.friendly_name) || request.icac.size > 400
+        return InteractionModel::Status.constraint_error unless DataType::NodeId.valid_joint_fabric?(request.node_id)
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name) && request.icac.size <= 400
         return InteractionModel::Status.constraint_error if @admin_list.any?(&.node_id.==(request.node_id))
         return InteractionModel::Status.resource_exhausted if @admin_list.size >= MAX_ADMINS
         entry = DatastoreAdministratorInformationEntryStruct.new(request.node_id, request.friendly_name,
@@ -1096,8 +1097,11 @@ module Matter
 
       def add_pending_node(request : AddPendingNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error if request.node_id == 0_u64 || !valid_name?(request.friendly_name)
+        return InteractionModel::Status.constraint_error unless DataType::NodeId.valid_joint_fabric?(request.node_id)
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
         return InteractionModel::Status.constraint_error if @node_list.any?(&.node_id.==(request.node_id))
+        return InteractionModel::Status.constraint_error if request.node_id == @anchor_node_id ||
+                                                            @admin_list.any?(&.node_id.==(request.node_id))
         return InteractionModel::Status.resource_exhausted if @node_list.size >= MAX_NODES
         entry = DatastoreNodeInformationEntryStruct.new(request.node_id, request.friendly_name, status_entry(DatastoreStateEnum::Pending))
         self.node_list = @node_list + [entry]
