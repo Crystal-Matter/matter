@@ -177,6 +177,10 @@ GroupKeyManagement policy is TrustFirst. The separate Groupcast cluster in
 `IMHandler` serializes request-context assignment and handler execution per
 cluster. This keeps a concurrent request from replacing the authenticated
 session, fabric, or CASE subject while a cluster operation is in progress.
+Read and Subscribe requests pass typed DataVersionFilterIB values to
+`IMHandler`; a matching endpoint, cluster and data version omits that cluster's
+attribute reports from the initial response. The controller can supply these
+filters through `ImClient#read` and `#subscribe`.
 
 ## Node, endpoints and clusters
 

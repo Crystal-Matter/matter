@@ -250,6 +250,21 @@ module Matter
       end
     end
 
+    # DataVersionFilterIB suppresses reports for a cluster whose version the
+    # client already holds.
+    struct DataVersionFilterIB
+      include TLV::Serializable
+
+      @[TLV::Field(tag: 0)]
+      property path : ClusterPath
+
+      @[TLV::Field(tag: 1, fixed_size: true)]
+      property data_version : UInt32
+
+      def initialize(@path : ClusterPath, @data_version : UInt32)
+      end
+    end
+
     # ReadRequest message
     struct ReadRequestMessage
       include TLV::Serializable
@@ -272,7 +287,7 @@ module Matter
 
       # Tag 4: DataVersionFilters (optional)
       @[TLV::Field(tag: 4, optional: true)]
-      property data_version_filters : Array(TLV::Any)?
+      property data_version_filters : Array(DataVersionFilterIB)?
 
       # Tag 0xFF (INTERACTION_MODEL_REVISION_TAG): InteractionModelRevision
       @[TLV::Field(tag: 0xFF, optional: true)]
@@ -376,7 +391,7 @@ module Matter
 
       # Tag 8: DataVersionFilters (optional)
       @[TLV::Field(tag: 8, optional: true)]
-      property data_version_filters : Array(TLV::Any)?
+      property data_version_filters : Array(DataVersionFilterIB)?
 
       # Tag 7: IsFabricFiltered
       @[TLV::Field(tag: 7)]

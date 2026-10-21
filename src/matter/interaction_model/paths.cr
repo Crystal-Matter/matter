@@ -52,6 +52,24 @@ module Matter
       end
     end
 
+    # The endpoint/cluster pair carried by a DataVersionFilterIB.
+    @[TLV::ListFormat]
+    struct ClusterPath
+      include TLV::Serializable
+
+      @[TLV::Field(tag: 0, optional: true, fixed_size: true)]
+      property node : UInt64?
+
+      @[TLV::Field(tag: 1, fixed_size: true)]
+      property endpoint : UInt16
+
+      @[TLV::Field(tag: 2, fixed_size: true)]
+      property cluster : UInt32
+
+      def initialize(@endpoint : UInt16, @cluster : UInt32, @node : UInt64? = nil)
+      end
+    end
+
     # Attribute path identifying a specific attribute
     # Encoded as a TLV list per Matter spec (and matter.js/CHIP encodings),
     # and TLV::Serializable decoding is tolerant of list/structure variations.

@@ -188,7 +188,8 @@ module Matter
           "and #{event_requests.size} event path(s) requested"
         end
 
-        reports = read_attributes(request.attribute_requests, session, request.fabric_filtered != false)
+        reports = read_attributes(request.attribute_requests, session,
+          request.fabric_filtered != false, request.data_version_filters)
         events = read_events(request.event_requests, request.event_filters, session)
         chunks = IMHandler.encode_chunked_report_data(reports, nil, events)
         first_chunk, _ = chunks.first
@@ -254,7 +255,8 @@ module Matter
         subscription_id = @registry.allocate_subscription_id
         Log.info { "Created subscription #{subscription_id}" }
 
-        reports = read_attributes(request.attribute_requests, session, request.is_fabric_filtered?)
+        reports = read_attributes(request.attribute_requests, session,
+          request.is_fabric_filtered?, request.data_version_filters)
         # Captured before the read so nothing journaled between the two is
         # reported twice: the priming report never carries a higher number.
         last_event_number = @node.event_journal.latest_event_number
@@ -408,6 +410,7 @@ module Matter
         paths : Array(InteractionModel::AttributePath)?,
         session : Session::SecureContext,
         fabric_filtered : Bool = true,
+        data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil,
       ) : Array(InteractionModel::AttributeReportIB)
         IMHandler.read_attributes(
           paths,
@@ -416,7 +419,8 @@ module Matter
           session.case_session?,
           peer_subject_ids(session),
           fabric_filtered,
-          session.session_id.to_u64
+          session.session_id.to_u64,
+          data_version_filters
         )
       end
 
