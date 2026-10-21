@@ -49,9 +49,12 @@ handshake negotiation. `Transport::BtpMessageTransport` binds that session to a
 exchange PASE and encrypted Interaction Model packets over an established BTP
 link. `Transport::BtpCentralHandshake.open` writes a v4 handshake request to
 C1, subscribes to C2, validates the response, and starts the packet transport.
-The adapter must write and read complete GATT fragments in order. A platform
-implementation still needs BLE discovery, connection management, and GATT
-characteristic access. The default controller and device runtime use UDP.
+The Linux `Transport::Bluez::Central` supplies Matter BLE service-data discovery,
+GATT connection and characteristic lookup. Its `GioBus` talks to BlueZ over
+the system D-Bus and acquires a C2 notification file descriptor, preserving
+complete GATT fragments. It polls BlueZ's managed objects during scanning and
+connection setup. Hardware commissioning remains unverified; the default
+controller and device runtime use UDP.
 
 Two rules keep the tree honest:
 

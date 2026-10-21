@@ -23,6 +23,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BLE transport framing
 
+- Add a Linux BlueZ central adapter with Matter service-data discovery,
+  GATT connection and characteristic lookup, C1 writes, C2 `AcquireNotify`
+  indications, and BTP v4 handshake. The D-Bus boundary supports mock-bus
+  testing; physical BLE commissioning remains to be verified on hardware.
 - Negotiate a central BTP v4 session over a GATT handshake channel. The
   controller writes C1, subscribes to C2, validates the response before its
   timeout, and bounds fragment/window sizes before opening the packet transport.

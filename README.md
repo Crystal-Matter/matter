@@ -47,14 +47,27 @@ Two more modules stay out of the default tree and are required explicitly:
 `matter/storage/legacy` (the 0.1 storage importer) and `matter/storage/cli` (the `matter-storage`
 binary). [docs/architecture.md](docs/architecture.md) follows a datagram through the whole stack.
 
-`Matter::Transport::BtpMessageTransport` accepts a `GattFragmentChannel` and
-carries PASE and encrypted Interaction Model packets over an established,
-negotiated BTP connection. A platform adapter must supply BLE discovery, GATT
-connection and notifications. A platform `GattHandshakeChannel` writes C1
-frames, subscribes to C2, and exposes the ATT MTU. Pass that channel to
-`BtpCentralHandshake.open` to negotiate BTP v4 and start the packet transport.
-`Controller::Client.new(transport: btp_transport)` can then use the existing
-PASE and Interaction Model clients over that channel.
+`Matter::Transport::BtpMessageTransport` carries PASE and encrypted Interaction
+Model packets over BTP. On Linux with BlueZ and the GIO development library
+installed (for example, `bluez` and `libglib2.0-dev` on Ubuntu), the experimental
+central adapter discovers a Matter advertisement, connects to its GATT service,
+writes C1, acquires C2 indications, and negotiates BTP v4:
+
+```crystal
+require "matter/controller"
+require "matter/transport/bluez_gio_bus"
+
+bus = Matter::Transport::Bluez::GioBus.new("/org/bluez/hci0")
+central = Matter::Transport::Bluez::Central.new(bus)
+device = central.discover(0x234_u16)
+transport = central.open(device)
+client = Matter::Controller::Client.new(transport: transport)
+```
+
+BlueZ must expose `AcquireNotify` for C2; the adapter uses its file descriptor
+to retain GATT frame boundaries. The current host has no Linux Bluetooth
+controller, so hardware commissioning has not yet been verified. The default
+controller and device runtimes continue to use UDP.
 
 The optional `Cluster::TimeSynchronization` server accepts administrator UTC
 time and advances it with a monotonic clock. It starts unsynchronized after
