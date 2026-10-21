@@ -166,6 +166,32 @@ describe Matter::Device::DSL do
 
       network.backend.should be(backend)
     end
+
+    it "updates General Commissioning Breadcrumb only after a successful network command" do
+      device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT, network_backend: Matter::Network::TestBackend.new)
+      network = device.node.get_cluster!(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::NetworkCommissioning)
+      general = device.node.get_cluster!(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::GeneralCommissioning)
+
+      successful = Matter::Cluster::NetworkCommissioning::AddOrUpdateWiFiNetworkRequest.new(
+        ssid: "network".to_slice,
+        credentials: "password".to_slice,
+        breadcrumb: 42_u64
+      )
+      network.handle_add_or_update_wifi_network(successful, failsafe_armed: true).networking_status.should eq(
+        Matter::Cluster::NetworkCommissioning::NetworkCommissioningStatus::Success
+      )
+      general.breadcrumb.should eq(42_u64)
+
+      rejected = Matter::Cluster::NetworkCommissioning::AddOrUpdateWiFiNetworkRequest.new(
+        ssid: Bytes.new(0),
+        credentials: "password".to_slice,
+        breadcrumb: 99_u64
+      )
+      network.handle_add_or_update_wifi_network(rejected, failsafe_armed: true).networking_status.should eq(
+        Matter::Cluster::NetworkCommissioning::NetworkCommissioningStatus::OutOfRange
+      )
+      general.breadcrumb.should eq(42_u64)
+    end
   end
 
   describe "endpoint" do

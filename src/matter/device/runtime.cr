@@ -423,6 +423,10 @@ module Matter
         feature_map: commissioning_network_feature_map,
         backend: @network_backend
       )
+      network_commissioning.on_breadcrumb_success = ->(value : UInt64) do
+        general_commissioning.breadcrumb = value
+        nil
+      end
       group_key_management = Cluster::GroupKeyManagement.new(endpoint_0)
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)
       diagnostic_logs = Cluster::DiagnosticLogs.new(endpoint_0)
