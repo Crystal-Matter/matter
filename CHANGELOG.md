@@ -62,6 +62,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BLE transport framing
 
+- Fall back from optional BlueZ `AcquireNotify` to `StartNotify` plus
+  `PropertiesChanged(Value)` on C2, retaining duplicate indications and bounded
+  delivery order while closing signal subscriptions on shutdown or failure.
 - Add a Linux BlueZ central adapter with Matter service-data discovery,
   GATT connection and characteristic lookup, C1 writes, C2 `AcquireNotify`
   indications, and BTP v4 handshake. The D-Bus boundary supports mock-bus

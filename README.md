@@ -51,7 +51,7 @@ binary). [docs/architecture.md](docs/architecture.md) follows a datagram through
 Model packets over BTP. On Linux with BlueZ and the GIO development library
 installed (for example, `bluez` and `libglib2.0-dev` on Ubuntu), the experimental
 central adapter discovers a Matter advertisement, connects to its GATT service,
-writes C1, acquires C2 indications, and negotiates BTP v4:
+writes C1, subscribes to C2 indications, and negotiates BTP v4:
 
 ```crystal
 require "matter/controller"
@@ -64,10 +64,12 @@ transport = central.open(device)
 client = Matter::Controller::Client.new(transport: transport)
 ```
 
-BlueZ must expose `AcquireNotify` for C2; the adapter uses its file descriptor
-to retain GATT frame boundaries. The current host has no Linux Bluetooth
-controller, so hardware commissioning has not yet been verified. The default
-controller and device runtimes continue to use UDP.
+The adapter prefers BlueZ `AcquireNotify` for packet-preserving C2 file
+descriptor reads. If C2 does not support acquisition, it subscribes to
+`PropertiesChanged(Value)` before calling `StartNotify`, preserving each signal
+as a separate BTP frame. The current host has no Linux Bluetooth controller,
+so hardware commissioning has not yet been verified. The default controller
+and device runtimes continue to use UDP.
 
 The optional `Cluster::TimeSynchronization` server accepts administrator UTC
 time with nonzero granularity and advances it with a monotonic clock. It starts
