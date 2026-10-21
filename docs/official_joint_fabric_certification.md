@@ -17,6 +17,8 @@ the SDK's private key. The SDK controller and Crystal device stores contain
 private keys and are kept outside the uploaded log directory.
 
 The CI workflow runs these cases and reports every failure in one run:
+All six passed in the [integrated SDK matrix run](https://github.com/Crystal-Matter/matter/actions/runs/39688721274)
+against the expanded Joint Fabric E2E branch later merged as PR #112.
 
 | Official case | Coverage |
 | --- | --- |
@@ -53,3 +55,10 @@ their scripts or assertions. Both passed in the
 
 The run's uploaded test summaries report PASS 1/1, with no failures or skips,
 for each case.
+
+The separate `TC_JFADMIN_1_2` SDK case passed in the
+[integrated certification run](https://github.com/Crystal-Matter/matter/actions/runs/39691585152)
+against merged `develop`. It covers the pre-Joint-Commissioning JFA command
+and fail-safe sequence. Its fixture adds one missing test variable
+initialization for teardown; the certification steps and assertions are
+unchanged.
