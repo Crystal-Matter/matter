@@ -60,6 +60,19 @@ describe Matter::DeviceType do
       device_type.requires_cluster?(0x0008_u32).should be_true # Level Control
     end
 
+    it "defines the Matter 1.6 Air Quality Sensor concentration endpoints" do
+      device_type = Matter::DeviceType.air_quality_sensor
+
+      device_type.device_type_id.id.should eq(0x002C_u32)
+      device_type.revision.should eq(1_u16)
+      device_type.requires_cluster?(0x0003_u32).should be_true
+      device_type.requires_cluster?(0x005B_u32).should be_true
+      [0x040C_u32, 0x040D_u32, 0x0413_u32, 0x0415_u32, 0x042A_u32,
+       0x042B_u32, 0x042C_u32, 0x042D_u32, 0x042E_u32, 0x042F_u32].each do |id|
+        device_type.supports_optional_cluster?(id).should be_true
+      end
+    end
+
     it "checks cluster requirements" do
       device_type = Matter::DeviceType.on_off_light
 

@@ -23,6 +23,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Persist sensitivity and enabled-alarm settings and include the cluster in
   the generated declaration coverage reports.
 
+### Concentration measurement sensors
+
+- Implement all ten Matter 1.6 Concentration Measurement derived clusters at
+  revision 5 through one shared server definition. CO₂ retains its existing
+  constructor and update API, now reports MED/CRI features with level support,
+  accepts nullable numeric readings, and validates fixed bounds and windows.
+- Add an Air Quality Sensor example endpoint with CO₂ and CO clusters and
+  chip-tool reads for the device type, revision, medium, level, and reading.
+
 ### Protocol command and event coverage
 
 - Add a reproducible Matter 1.6 canonical XML report for server command and
