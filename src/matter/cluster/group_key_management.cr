@@ -51,6 +51,9 @@ module Matter
       # Group Key Set structure
       # Contains epoch keys and their lifecycle timestamps
       # Matter Core Spec §11.2.6.3
+      class EpochKeyLengthError < ArgumentError
+      end
+
       struct GroupKeySetStruct
         include TLV::Serializable
 
@@ -116,6 +119,15 @@ module Matter
           validate_key_time_pairing!("key1", epoch_key1, epoch_start_time1)
           validate_key_time_pairing!("key2", epoch_key2, epoch_start_time2)
 
+          # KeySetWrite requires the first epoch. Later epochs cannot leave a
+          # gap, even when their own key/time fields are paired correctly.
+          unless epoch_key0 && epoch_start_time0
+            raise ArgumentError.new("EpochKey0 and EpochStartTime0 must be set")
+          end
+          if epoch_key2 && epoch_key1.nil?
+            raise ArgumentError.new("EpochKey1 must be set when EpochKey2 is set")
+          end
+
           # Validation 3: Epoch start times cannot be 0 if set
           validate_nonzero_time!(epoch_start_time0, "epoch_start_time0")
           validate_nonzero_time!(epoch_start_time1, "epoch_start_time1")
@@ -142,7 +154,7 @@ module Matter
         private def validate_key_length!(key : Bytes?, name : String) : Nil
           return unless key
           unless key.size == EPOCH_KEY_LENGTH
-            raise ArgumentError.new("#{name} must be exactly #{EPOCH_KEY_LENGTH} bytes, got #{key.size}")
+            raise EpochKeyLengthError.new("#{name} must be exactly #{EPOCH_KEY_LENGTH} bytes, got #{key.size}")
           end
         end
 
@@ -370,6 +382,8 @@ module Matter
       def key_set_write(request : KeySetWriteRequest) : InteractionModel::Status
         handle_key_set_write(request, accessing_fabric_index)
         InteractionModel::Status.success
+      rescue ex : EpochKeyLengthError
+        raise Matter::ClusterError.new(ex.message || "Invalid epoch key length", InteractionModel::StatusCode::ConstraintError)
       end
 
       def key_set_read(request : KeySetReadRequest) : KeySetReadResponse
