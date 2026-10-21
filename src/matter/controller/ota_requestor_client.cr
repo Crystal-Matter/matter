@@ -3,15 +3,18 @@ require "../cluster/ota_requestor"
 require "../protocol/ota_image"
 require "./im_client"
 require "./bdx_client"
+require "./ota_https_downloader"
 
 module Matter
   module Controller
-    # Query an OTA Provider over CASE and stage a validated image via BDX.
+    # Query an OTA Provider over CASE and stage a validated image via BDX or HTTPS.
     # The application owns the seekable, initially empty sink and decides when
     # to install the staged image. The client never buffers the image itself.
     class OtaRequestorClient(I, B)
       alias Provider = Cluster::OtaProvider
       alias Requestor = Cluster::OtaRequestor
+
+      property on_user_consent : Proc(Provider::QueryImageResponse, Bool)?
 
       record StagedUpdate,
         header : Protocol::OtaImage::Header,
@@ -19,8 +22,10 @@ module Matter
         image_uri : String,
         bytes_downloaded : UInt64
 
-      def initialize(@im : I, @bdx : B, @requestor : Requestor)
+      def initialize(@im : I, @bdx : B, @requestor : Requestor,
+                     @https : OtaHttpsDownloader? = nil)
         @next_query_deadlines = {} of Tuple(UInt8, UInt64) => Time::Instant
+        @on_user_consent = nil
       end
 
       # A provider's DelayedActionTime is local to its node and fabric. The
@@ -77,8 +82,10 @@ module Matter
         end
 
         @requestor.transition_to(Requestor::UpdateState::Querying, Requestor::ChangeReason::Unknown)
+        protocols = [Provider::DownloadProtocol::BdxSynchronous]
+        protocols << Provider::DownloadProtocol::Https if @https
         request = Provider::QueryImageRequest.new(vendor_id, product_id,
-          current_version, [Provider::DownloadProtocol::BdxSynchronous])
+          current_version, protocols, requestor_can_consent: !@on_user_consent.nil?)
         response = @im.invoke(session, peer, provider_endpoint, Provider::CLUSTER_ID,
           Provider::CMD_QUERY_IMAGE, request.to_slice)
         offer = response_fields(response, provider_endpoint, Provider::CMD_QUERY_IMAGE_RESPONSE)
@@ -114,25 +121,41 @@ module Matter
                token.size.in?(Provider::UPDATE_TOKEN_MIN_LENGTH..Provider::UPDATE_TOKEN_MAX_LENGTH) &&
                version_string.bytesize.in?(1..Provider::VERSION_STRING_MAX_SIZE) &&
                uri.bytesize <= Provider::IMAGE_URI_MAX_LENGTH &&
-               uri.matches?(Provider::BDX_IMAGE_URI_PATTERN)
+               (uri.matches?(Provider::BDX_IMAGE_URI_PATTERN) ||
+               (@https && uri.matches?(Provider::HTTPS_IMAGE_URI_PATTERN)))
           raise Matter::ProtocolError.new("OTA provider returned an invalid image offer")
         end
 
-        # Core §11.20.6.5.2 reserves another BDX authority for future use.
-        # The path is sent as received, including any percent escapes.
-        uri_node = uri.byte_slice(6, 16).to_u64(16)
-        unless uri_node == provider_node_id
-          @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Failure)
-          raise Matter::ProtocolError.new("OTA BDX authority differs from the CASE provider")
+        if offer.user_consent_needed && (consent = @on_user_consent)
+          unless consent.call(offer)
+            @requestor.transition_to(Requestor::UpdateState::DelayedOnUserConsent,
+              Requestor::ChangeReason::Unknown, version)
+            return
+          end
         end
-        designator = uri.byte_slice(23, uri.bytesize - 23).to_slice
+
+        designator = nil
+        if uri.matches?(Provider::BDX_IMAGE_URI_PATTERN)
+          # Core §11.20.6.5.2 reserves another BDX authority for future use.
+          # The path is sent as received, including any percent escapes.
+          uri_node = uri.byte_slice(6, 16).to_u64(16)
+          unless uri_node == provider_node_id
+            raise Matter::ProtocolError.new("OTA BDX authority differs from the CASE provider")
+          end
+          designator = uri.byte_slice(23, uri.bytesize - 23).to_slice
+        end
 
         @requestor.transition_to(Requestor::UpdateState::Downloading,
           Requestor::ChangeReason::Success, version)
         bytes_downloaded = 0_u64
         begin
-          bytes_downloaded = @bdx.download(session, peer, designator, sink,
-            max_bytes: max_image_bytes)
+          bytes_downloaded = if designator
+                               @bdx.download(session, peer, designator, sink,
+                                 max_bytes: max_image_bytes)
+                             else
+                               https = @https || raise Matter::ProtocolError.new("OTA HTTPS downloader is unavailable")
+                               https.download(uri, sink, max_bytes: max_image_bytes)
+                             end
           sink.seek(0)
           header = Protocol::OtaImage.validate(sink, vendor_id, product_id,
             current_version, version, max_image_bytes)
@@ -141,12 +164,12 @@ module Matter
           end
           sink.seek(0)
           StagedUpdate.new(header, token.dup, uri, bytes_downloaded)
-        rescue ex : Matter::Error | IO::Error
+        rescue ex
           @requestor.emit_download_error(version, bytes_downloaded)
           @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Failure)
           raise ex
         end
-      rescue ex : Matter::Error | IO::Error
+      rescue ex
         @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Failure)
         raise ex
       end
@@ -162,9 +185,10 @@ module Matter
           raise Matter::SessionError.new("OTA ApplyUpdateRequest requires an authenticated CASE provider")
         end
         uri = staged.image_uri
-        unless uri.matches?(Provider::BDX_IMAGE_URI_PATTERN) &&
-               uri.byte_slice(6, 16).to_u64(16) == provider_node_id &&
-               staged.update_token.size.in?(Provider::UPDATE_TOKEN_MIN_LENGTH..Provider::UPDATE_TOKEN_MAX_LENGTH)
+        valid_source = (uri.matches?(Provider::BDX_IMAGE_URI_PATTERN) &&
+                        uri.byte_slice(6, 16).to_u64(16) == provider_node_id) ||
+                       uri.matches?(Provider::HTTPS_IMAGE_URI_PATTERN)
+        unless valid_source && staged.update_token.size.in?(Provider::UPDATE_TOKEN_MIN_LENGTH..Provider::UPDATE_TOKEN_MAX_LENGTH)
           raise Matter::ProtocolError.new("OTA staged update does not match the CASE provider")
         end
 

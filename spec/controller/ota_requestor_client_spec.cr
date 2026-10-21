@@ -46,6 +46,22 @@ private class OtaBdxFake
   end
 end
 
+private class OtaHttpsFake < Matter::Controller::OtaHttpsDownloader
+  getter urls = [] of String
+  getter max_bytes = [] of UInt64
+
+  def initialize(@image : Bytes)
+    super()
+  end
+
+  def download(url : String, sink : IO, max_bytes : UInt64) : UInt64
+    @urls << url
+    @max_bytes << max_bytes
+    sink.write(@image)
+    @image.size.to_u64
+  end
+end
+
 private class OtaApplyImFake
   getter applies = [] of OtaProviderSpec::ApplyUpdateRequest
   getter notifications = [] of OtaProviderSpec::NotifyUpdateAppliedRequest
@@ -128,11 +144,79 @@ describe "OTA Requestor controller download" do
       update.update_token.should eq(token)
     end
     im.requests.first.protocols_supported.should eq([OtaProviderSpec::DownloadProtocol::BdxSynchronous])
+    im.requests.first.requestor_can_consent.should be_false
     # Matter sends the URI path octets verbatim as the BDX file designator.
     bdx.designators.should eq(["fw%20v11".to_slice])
     bdx.max_bytes.should eq([4096_u64])
     cluster.update_state.should eq(OtaRequestorSpec::UpdateState::Downloading)
     sink.pos.should eq(0)
+  end
+
+  it "advertises HTTPS only when a downloader is wired and validates that image" do
+    token = Bytes[1, 2, 3, 4, 5, 6, 7, 8]
+    im = OtaImFake.new(OtaProviderSpec::QueryImageResponse.available(
+      "https://updates.example.test/v11.ota", 11_u32, "11.0", token))
+    bdx = OtaBdxFake.new(Bytes.empty)
+    https = OtaHttpsFake.new(ota_controller_image)
+    client = OtaRequestorClientSpec.new(im, bdx, OtaRequestorSpec.new, https: https)
+
+    staged = client.query_and_download(ota_controller_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 0_u16,
+      0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new,
+      max_image_bytes: 4096_u64)
+
+    staged.should_not be_nil
+    im.requests.first.protocols_supported.should eq([
+      OtaProviderSpec::DownloadProtocol::BdxSynchronous,
+      OtaProviderSpec::DownloadProtocol::Https,
+    ])
+    https.urls.should eq(["https://updates.example.test/v11.ota"])
+    bdx.designators.should be_empty
+  end
+
+  it "asks for user consent before downloading when the provider requires it" do
+    offer = OtaProviderSpec::QueryImageResponse.available(
+      "bdx://0000000000001234/image", 11_u32, "11.0", Bytes[1, 2, 3, 4, 5, 6, 7, 8])
+    offer.user_consent_needed = true
+    im = OtaImFake.new(offer)
+    bdx = OtaBdxFake.new(ota_controller_image)
+    cluster = OtaRequestorSpec.new
+    client = OtaRequestorClientSpec.new(im, bdx, cluster)
+    client.on_user_consent = ->(_offer : OtaProviderSpec::QueryImageResponse) { false }
+
+    client.query_and_download(ota_controller_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 0_u16,
+      0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new).should be_nil
+    im.requests.first.requestor_can_consent.should be_true
+    bdx.designators.should be_empty
+    cluster.update_state.should eq(OtaRequestorSpec::UpdateState::DelayedOnUserConsent)
+
+    client.on_user_consent = ->(_offer : OtaProviderSpec::QueryImageResponse) { true }
+    client.query_and_download(ota_controller_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 0_u16,
+      0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new).should_not be_nil
+    bdx.designators.size.should eq(1)
+  end
+
+  it "returns to idle when the application consent callback fails" do
+    offer = OtaProviderSpec::QueryImageResponse.available(
+      "bdx://0000000000001234/image", 11_u32, "11.0", Bytes[1, 2, 3, 4, 5, 6, 7, 8])
+    offer.user_consent_needed = true
+    im = OtaImFake.new(offer)
+    bdx = OtaBdxFake.new(ota_controller_image)
+    cluster = OtaRequestorSpec.new
+    client = OtaRequestorClientSpec.new(im, bdx, cluster)
+    client.on_user_consent = ->(_offer : OtaProviderSpec::QueryImageResponse) : Bool do
+      raise "User interface unavailable"
+    end
+
+    expect_raises(Exception, "User interface unavailable") do
+      client.query_and_download(ota_controller_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 0_u16,
+        0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new)
+    end
+    bdx.designators.should be_empty
+    cluster.update_state.should eq(OtaRequestorSpec::UpdateState::Idle)
   end
 
   it "keeps the image idle when the provider has no update" do
@@ -275,6 +359,20 @@ describe "OTA Requestor controller download" do
     im.action = OtaProviderSpec::ApplyAction::Discontinue
     client.request_apply(session, peer, 0_u16, staged)
     cluster.update_state.should eq(OtaRequestorSpec::UpdateState::Idle)
+  end
+
+  it "allows provider approval for a validated HTTPS image without installing it automatically" do
+    im = OtaApplyImFake.new
+    client = OtaRequestorClientSpec.new(im, OtaBdxFake.new(Bytes.empty), OtaRequestorSpec.new)
+    header = Matter::Protocol::OtaImage::Header.new
+    header.software_version = 11_u32
+    staged = OtaRequestorClientSpec::StagedUpdate.new(header,
+      Bytes[1, 2, 3, 4, 5, 6, 7, 8], "https://updates.example.test/image.ota", 1024_u64)
+
+    client.request_apply(ota_controller_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 0_u16, staged).action
+      .should eq(OtaProviderSpec::ApplyAction::Proceed)
+    im.applies.size.should eq(1)
   end
 
   it "invokes the application installer only after an immediate Proceed" do

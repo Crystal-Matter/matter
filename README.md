@@ -124,10 +124,14 @@ An administrator can write one DefaultOTAProviders entry on each fabric. The
 device keeps those entries separate, saves them with its cluster state, and
 removes an entry when its fabric is removed. `Controller::OtaRequestorClient`
 can query a provider on an established CASE session and stage a BDX image in
-caller-owned seekable storage. It checks the provider's BDX URI node ID,
-streams with a size limit, and verifies the Matter OTA image header and payload
-digest. Provider QueryImage delays are enforced per fabric and provider; the
-application can inspect `next_query_at(session)` before scheduling a retry.
+caller-owned seekable storage. An optional `Controller::OtaHttpsDownloader`
+enables HTTPS image offers with certificate-checked TLS and bounded streaming.
+The client checks the provider's BDX URI node ID and verifies the Matter OTA
+image header and payload digest for either transport. A wired user-consent
+callback is advertised to the provider and must approve a consent-gated offer
+before any image bytes are downloaded. Provider QueryImage delays are enforced
+per fabric and provider; the application can inspect `next_query_at(session)`
+before scheduling a retry.
 `request_apply` then asks the provider when the staged version may be
 installed. `apply_staged` invokes an application installer only after an
 immediate Proceed; `notify_applied` reports a version after the application boots
