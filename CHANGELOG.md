@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Bridged device identity
+
+- Require a stable 1–32-byte UniqueID for Bridged Device Basic Information,
+  advertise it as a mandatory fixed attribute at revision 5, and retain each
+  dynamic endpoint's provisioned ID across bridge restarts.
+
 ### Group key validation
 
 - Reject KeySetWrite requests without the first epoch or with a gap before a

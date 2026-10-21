@@ -12,7 +12,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Standard XML clusters: 135
 - Crystal declarations for those IDs: 54
 - Matching known revisions: 37
-- Clusters with mandatory attributes absent or optional in Crystal: 2
+- Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
 
@@ -21,7 +21,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0003 | Identify Cluster | 6 | 6 | — |
 | 0x0004 | Groups Cluster | 4 | 4 | — |
 | 0x0006 | On/Off Cluster | 6 | 6 | — |
-| 0x0008 | Level Control Cluster | 7 | 6 | 0x0002 (optional), 0x0003 (optional) |
+| 0x0008 | Level Control Cluster | 7 | 6 | — |
 | 0x001D | Descriptor Cluster | 3 | 3 | — |
 | 0x001E | Binding Cluster | 1 | 1 | — |
 | 0x001F | Access Control Cluster | 3 | 2 | — |
@@ -43,7 +43,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0036 | Wi-Fi Network Diagnostics Cluster | 1 | 1 | — |
 | 0x0037 | Ethernet Network Diagnostics Cluster | 1 | 1 | — |
 | 0x0038 | Time Synchronization Cluster | 2 | 2 | — |
-| 0x0039 | Bridged Device Basic Information Cluster | 6 | 5 | 0x0012 (optional) |
+| 0x0039 | Bridged Device Basic Information Cluster | 6 | 5 | — |
 | 0x003B | Switch Cluster | 2 | 2 | — |
 | 0x003C | Administrator Commissioning Cluster | 1 | 1 | — |
 | 0x003E | Operational Credentials Cluster | 2 | 2 | — |

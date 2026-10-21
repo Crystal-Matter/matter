@@ -93,6 +93,7 @@ describe "Dynamic Endpoint Management" do
 
       bridged_info = Matter::Cluster::BridgedDeviceBasicInformation.new(
         endpoint,
+        unique_id: "test-light-1",
         reachable: true,
         product_name: "Test Light"
       )
@@ -196,7 +197,7 @@ describe "Dynamic Endpoint Management" do
 
       endpoint_id = 1_u16
       endpoint = endpoint(endpoint_id)
-      bridged_info = Matter::Cluster::BridgedDeviceBasicInformation.new(endpoint)
+      bridged_info = Matter::Cluster::BridgedDeviceBasicInformation.new(endpoint, unique_id: "test-light-1")
 
       device.add_endpoint(
         endpoint_id: endpoint_id,

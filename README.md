@@ -136,6 +136,9 @@ The declarations are:
 * `endpoint_template :name, device_type:, parameters: {...} do ... end` — the shape of an endpoint
   added at runtime with `add_endpoint(:name, key: value)`. Template parameters are persisted, so
   dynamic endpoints survive a restart. `examples/matter_bridge_device.cr` uses this.
+  A Bridged Device Basic Information cluster requires a provisioned, nonempty `unique_id:` of at
+  most 32 UTF-8 bytes. Reuse the same ID when restoring that bridged device after a restart;
+  the bridge example persists it as a template parameter.
 * `on(:accessor, :event) { |...| }` — binds a block to a cluster callback. Callbacks are wired once
   every endpoint exists, so one may reference an accessor on another endpoint.
 

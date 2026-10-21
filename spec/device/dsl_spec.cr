@@ -334,6 +334,8 @@ describe Matter::Device::DSL do
 
         restarted = DslSpec.bridge(path)
         DslSpec.endpoint_labels(restarted).should eq({1_u16 => "Porch", 2_u16 => "Hall"})
+        restarted.node.get_cluster!(1_u16, Matter::Cluster::BridgedDeviceBasicInformation).unique_id.should eq("porch-1")
+        restarted.node.get_cluster!(2_u16, Matter::Cluster::BridgedDeviceBasicInformation).unique_id.should eq("hall-1")
         restarted.node.endpoint!(Matter::Node::ROOT_ENDPOINT_ID).descriptor.parts_list.should eq([1_u16, 2_u16])
         restarted.node.get_cluster!(1_u16, Matter::Cluster::OnOff).on?.should be_false
         restarted.node.get_cluster!(2_u16, Matter::Cluster::OnOff).on?.should be_true

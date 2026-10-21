@@ -5,7 +5,7 @@ private ENDPOINT_NUMBER = 1_u16
 private def bridged_endpoint : Matter::Endpoint
   endpoint = Matter::Endpoint.new(endpoint(ENDPOINT_NUMBER))
   endpoint.add_cluster(build(Matter::Cluster::BridgedDeviceBasicInformation, ENDPOINT_NUMBER,
-    node_label: "Bridged"
+    node_label: "Bridged", unique_id: "event-bridged"
   ))
   endpoint
 end
