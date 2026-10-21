@@ -13,6 +13,8 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 ### Shared fabric and certificate validation
 
+- Enforce signed Certification Declaration DAC origin VID/PID and authorized
+  PAA identifiers during device attestation, including legitimate OEM chains.
 - Issue locally signed Joint Fabric controller CAT NOCs and grant device access
   through Anchor Datastore groups, with idempotent retries and RefreshNode
   recovery. A live device test verifies CASE access before and after propagation.
