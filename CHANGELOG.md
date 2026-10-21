@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Attestation revocation
+
+- Add an opt-in DCL adapter for complete, directly signed PAA and PAI CRLs.
+  It uses an explicit HTTPS DCL gateway and CRL host allowlist, permits
+  explicitly approved HTTP hosts for signed CRLs, bounds downloads, rejects
+  redirects, and fails closed on partitioned or delegated CRLs.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast
