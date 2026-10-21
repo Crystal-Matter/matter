@@ -57,6 +57,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
   for interoperability failures.
 - Serve defined JFA fail-safe and ICAC validation statuses on a freshly
   commissioned Administrator before it has joined a Joint Fabric.
+- Accept SDK-issued ICACs that identify their intermediate authority without
+  repeating the Fabric ID in the subject, while checking the issuer root and
+  any Fabric ID that is present.
 - Enforce signed Certification Declaration DAC origin VID/PID and authorized
   PAA identifiers during device attestation, including legitimate OEM chains.
 - Accept length-delimited Matter Message Extensions and Secured Extensions as

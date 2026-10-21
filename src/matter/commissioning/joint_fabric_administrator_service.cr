@@ -197,7 +197,7 @@ module Matter
         unless certificate.ec_public_key == csr_key
           return Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::InvalidPublicKey)
         end
-        unless certificate.subject.fabric_id == identity.fabric_id && certificate.subject.icac_id &&
+        unless certificate.subject.icac_id &&
                Crypto::MatterCertificate::Validation.certificate_authority?(request.icac_value)
           return Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::InvalidICAC)
         end
@@ -319,7 +319,7 @@ module Matter
                    end
         return Admin::ICACResponseStatusEnum::InvalidICAC unless identity
         certificate = Crypto::MatterCertificate.from_slice(icac)
-        return Admin::ICACResponseStatusEnum::InvalidICAC unless certificate.subject.fabric_id == identity.fabric_id && certificate.subject.icac_id &&
+        return Admin::ICACResponseStatusEnum::InvalidICAC unless certificate.subject.icac_id &&
                                                                  Crypto::MatterCertificate::Validation.certificate_authority?(icac)
         Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, identity.fabric_id)
         root_key = Crypto::MatterCertificate.public_key_from_tlv(identity.root_certificate)
