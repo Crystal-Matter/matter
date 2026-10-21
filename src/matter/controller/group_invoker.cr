@@ -60,7 +60,8 @@ module Matter
           candidate.fabric_id == fabric.fabric_id &&
             candidate.root_public_key == fabric.root_public_key && candidate.group_id == group_id
         end || raise Matter::ConfigurationError.new("No group key installed for selected fabric and Group ID")
-        key = Session::GroupSecurePacket::Key.new(LOCAL_FABRIC_INDEX, group_id, entry.operational_key)
+        key = Session::GroupSecurePacket::Key.new(LOCAL_FABRIC_INDEX, group_id,
+          entry.operational_key, fabric.fabric_id)
         path = InteractionModel::CommandPath.new(nil, cluster_id, command_id)
         command_fields = fields.empty? ? nil : TLV::Any.from_slice(fields)
         command = InteractionModel::CommandDataIBTlv.new(path, command_fields)

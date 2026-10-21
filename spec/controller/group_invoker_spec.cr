@@ -37,7 +37,7 @@ describe Matter::Controller::GroupInvoker do
       compressed = Bytes.new(8)
       IO::ByteFormat::BigEndian.encode(fabric.compressed_fabric_id, compressed)
       key_bytes = Matter::Session::GroupSecurePacket.derive_operational_key(epoch_key, compressed)
-      key = Matter::Session::GroupSecurePacket::Key.new(1_u8, group_id, key_bytes)
+      key = Matter::Session::GroupSecurePacket::Key.new(1_u8, group_id, key_bytes, fabric.fabric_id)
       decoded = Matter::Session::GroupSecurePacket.new([key]).decode(packet)
       decoded.message.packet_header.source_node_id.as(Matter::DataType::NodeId).id.should eq(fabric.controller_node_id)
       request = Matter::InteractionModel::InvokeRequestMessage.from_slice(decoded.message.payload)
