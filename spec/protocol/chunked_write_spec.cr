@@ -53,7 +53,9 @@ describe "chunked WriteRequest" do
     append = Matter::InteractionModel::AttributeDataIB.new(append_path,
       Matter::Cluster::LabelStruct.new("room", "office").to_tlv)
     first = Matter::InteractionModel::WriteRequestMessage.new(write_requests: [clear], more_chunked_messages: true)
-    second = Matter::InteractionModel::WriteRequestMessage.new(write_requests: [append], more_chunked_messages: false)
+    # A unicast write sends WriteResponse even when the final chunk requests suppression.
+    second = Matter::InteractionModel::WriteRequestMessage.new(
+      suppress_response: true, write_requests: [append], more_chunked_messages: false)
 
     [
       {first, WRITE_EXCHANGE},

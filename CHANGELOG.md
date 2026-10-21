@@ -39,6 +39,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Apply whole-list replacements and ordered list-item appends across chunked
   WriteRequests on one exchange, with a WriteResponse per chunk. Reject numeric
   list indices, orphan appends, and chunked timed writes with protocol statuses.
+  Unicast writes now return WriteResponse even when SuppressResponse is set, as
+  in the official SDK.
 
 ### Controller discovery
 

@@ -343,12 +343,6 @@ module Matter
         @write_list_states[exchange_key] = {list_state, now + WRITE_CHUNK_TIMEOUT} if request.more_chunked_messages
         Log.debug { "WriteResponse: #{write_responses.size} status(es)" }
 
-        all_succeeded = write_responses.all? { |write_status| write_status.status.status == InteractionModel::StatusCode::Success.value }
-        if request.suppress_response && all_succeeded && !request.more_chunked_messages
-          Log.info { "Response suppressed per suppressResponse flag (all writes succeeded)" }
-          return
-        end
-
         @sender.send_im_response(
           original_msg: original_msg,
           peer: peer,
