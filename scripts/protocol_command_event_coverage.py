@@ -231,6 +231,15 @@ def render_markdown(report: dict[int, CoverageEntry], source_count: int, source_
         for member in getattr(entry.xml, kind).values()
         if member.requirement == "conditional"
     ]
+    unresolved = [row for row in conditional if row[2].revision_threshold is None]
+    unresolved_absent = sum(
+        member.member_id not in getattr(entry.crystal, kind)
+        for entry, kind, member in unresolved
+    )
+    unresolved_without_literal_gate = sum(
+        getattr(entry.crystal, kind).get(member.member_id) == "—"
+        for entry, kind, member in unresolved
+    )
     lines = [
         "# Matter 1.6 server command and event declaration audit", "",
         "This compares canonical Matter XML IDs with literal Crystal cluster DSL declarations",
@@ -241,7 +250,10 @@ def render_markdown(report: dict[int, CoverageEntry], source_count: int, source_
         f"- Implemented standard cluster IDs compared: {len(entries)}",
         f"- Direct or revision-active mandatory server command IDs absent: {missing_commands}",
         f"- Direct or revision-active mandatory event IDs absent: {missing_events}",
-        f"- Conditional command/event declarations for review: {len(conditional)}", "",
+        f"- Conditional command/event declarations for review: {len(conditional)}",
+        f"- Feature or complex conditional IDs absent from Crystal: {unresolved_absent}",
+        f"- Feature or complex conditional IDs declared without literal `requires:`: {unresolved_without_literal_gate}",
+        "  (Neither count alone establishes a conformance failure.)", "",
         "| Cluster ID | XML name | XML rev | Crystal rev | Mandatory server commands absent | Mandatory events absent |",
         "| --- | --- | ---: | ---: | --- | --- |",
     ]

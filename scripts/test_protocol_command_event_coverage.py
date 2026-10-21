@@ -41,6 +41,8 @@ class CommandEventCoverageTests(unittest.TestCase):
         self.assertIn("fixture-digest", text)
         self.assertIn("0x0001", text)
         self.assertIn("feature(TEST)", text)
+        self.assertIn("Feature or complex conditional IDs absent from Crystal: 0", text)
+        self.assertIn("Feature or complex conditional IDs declared without literal `requires:`: 1", text)
         self.assertIn("not a completeness claim", text)
 
 
