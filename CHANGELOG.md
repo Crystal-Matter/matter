@@ -58,6 +58,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the requested rates instead of accepting them as no-ops. StopMoveStep and
   MoveMode Stop freeze the current value; zero rates for up/down moves return
   InvalidCommand. A monotonic clock drives movement and bounds are enforced.
+- Run EnhancedMoveHue at its 16-bit rate with cyclic wrap, synchronized current
+  hue and enhanced color mode. ColorLoopSet applies its update flags, moves
+  through the enhanced hue circle in the configured direction and period, and
+  restores the stored hue on deactivation. StopMoveStep leaves an active color
+  loop running.
 
 ### Color Control and OnOff coordination
 
