@@ -31,10 +31,10 @@ module MatterJointFabricAdministrator
     JCM_RPC_REQUEST                       = "request"
     JCM_RPC_RESULT                        = "result"
     COMMAND_RPC_COLLECTION                = "jfa_command"
-    ANCHOR_CAT                            = Matter::DataType::CaseAuthenticatedTag.create(0xFFFE_u16, 1_u16)
-    DEFAULT_OPERATIONAL_PORT              =  5540
-    ADMIN_GROUP_ID                        = 1_u16
-    ANCHOR_GROUP_ID                       = 2_u16
+    ANCHOR_CAT_ID                         = 0xFFFE_u16
+    DEFAULT_OPERATIONAL_PORT              =       5540
+    ADMIN_GROUP_ID                        =      1_u16
+    ANCHOR_GROUP_ID                       =      2_u16
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -612,6 +612,10 @@ module MatterJointFabricAdministrator
           end
         }
       )
+      if role.transfer_complete?
+        administrator.administrator_fabric_index = nil
+        administrator.service = nil
+      end
       unless persistence.save_cluster(datastore)
         raise Matter::StorageError.new("Could not persist bootstrap Joint Fabric Datastore")
       end
@@ -632,12 +636,31 @@ module MatterJointFabricAdministrator
     # while endpoint 1 follows the committed cross-signed ICAC onto the joined
     # fabric. Match both fabric identity and certificate before rebinding.
     private def attach_joined_fabric(fabric : Matter::Fabric) : Nil
+      # A promoted Anchor may still retain the former Anchor fabric for its
+      # controller journal. Its persisted Anchor role owns endpoint 1 now;
+      # loading that residual joined fabric must not replace the copied store.
+      if document = persistence.app_document(APP_ROLE_DOCUMENT)
+        if JointFabricRoleState.from_document(document).anchor? &&
+           joint_fabric_datastore.joint_fabric_index != fabric.fabric_index
+          return
+        end
+      end
       certificate = persisted_icac
-      return unless certificate && fabric.intermediate_cert == certificate
+      unless certificate && joined_icac_matches_fabric?(certificate, fabric)
+        ::Log.for("matter.example.joint_fabric_administrator").info do
+          "Joined JFA activation skipped: committed ICAC #{certificate ? "mismatches" : "absent for"} fabric 0x#{fabric.fabric_id.to_s(16)}"
+        end
+        return
+      end
       return if compliant_anchor_fabric?(fabric)
       root = fabric.root_cert || raise Matter::ConfigurationError.new("Joined Joint Fabric root is unavailable")
-      key = provisioned_icac_key(fabric, certificate) ||
-            raise Matter::ConfigurationError.new("Joined JFA ICAC private key is unavailable")
+      remote_csr_provider = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?.try do |path|
+        Matter::Commissioning::RemoteIcacCsrProvider.new(path, fabric.fabric_id, fabric.root_public_key)
+      end
+      key = remote_csr_provider ? nil : provisioned_icac_key(fabric, certificate)
+      unless key || remote_csr_provider
+        raise Matter::ConfigurationError.new("Joined JFA ICAC private key is unavailable")
+      end
       return if joint_fabric_datastore.joint_fabric_index == fabric.fabric_index &&
                 joint_fabric_administrator.administrator_fabric_index == fabric.fabric_index &&
                 joint_fabric_service.try(&.cross_signed_icac) == certificate
@@ -676,6 +699,7 @@ module MatterJointFabricAdministrator
         },
         resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
         existing_icac_certificate: certificate,
+        icac_csr_provider: remote_csr_provider,
         failsafe_fabric_matches: ->(index : UInt8?) {
           if context = general_commissioning.failsafe_context
             context.armed? && !index.nil? &&
@@ -691,6 +715,32 @@ module MatterJointFabricAdministrator
         raise Matter::StorageError.new("Could not persist joined Joint Fabric Administrator endpoints")
       end
       persistence.flush
+    end
+
+    # The operational NOC chains through the Anchor ICAC, while the JFA's
+    # committed cross-signed ICAC certifies the JFA signing key. A local JFA
+    # proves possession with its private key; an SDK-owned JFA delegates CSR
+    # signing to its authenticated remote provider and retains the operational
+    # ICAC public key while allowing the cross-signer a distinct ICAC ID.
+    private def joined_icac_matches_fabric?(certificate : Bytes, fabric : Matter::Fabric) : Bool
+      installed = fabric.intermediate_cert || return false
+      root = fabric.root_cert || return false
+      committed_icac = Matter::Crypto::MatterCertificate.from_slice(certificate)
+      installed_icac = Matter::Crypto::MatterCertificate.from_slice(installed)
+      remote_signer = !!ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+      expected_identity = remote_signer ? committed_icac.ec_public_key == installed_icac.ec_public_key : committed_icac.subject.icac_id == installed_icac.subject.icac_id
+      unless committed_icac.subject.fabric_id == fabric.fabric_id &&
+             committed_icac.subject.icac_id && expected_identity
+        ::Log.for("matter.example.joint_fabric_administrator").info { "Joined JFA committed and installed ICAC identities differ" }
+        return false
+      end
+      Matter::Crypto::MatterCertificate::Validation.verify_intermediate_profile(certificate, fabric.fabric_id)
+      Matter::Crypto::MatterCertificate::Validation.verify_issued_by(certificate, root)
+      Matter::Crypto::MatterCertificate::Validation.verify_signature(certificate, fabric.root_public_key)
+      true
+    rescue error : Matter::Error
+      ::Log.for("matter.example.joint_fabric_administrator").info(exception: error) { "Joined JFA committed ICAC validation failed" }
+      false
     end
 
     private def grant_administrator_cat_access(fabric : Matter::Fabric) : Nil
@@ -1005,7 +1055,7 @@ module MatterJointFabricAdministrator
           scanner.start
           @new_anchor_scanner = scanner
           subscription = Matter::Controller::AnchorDatastoreSubscription.new(
-            scanner, identity, new_anchor_node_id, 1_u16,
+            scanner, identity, new_anchor_node_id, nil,
             ->(_im : Matter::Controller::ImClient, session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { verify_new_anchor_session!(session) },
             address_hint: configured_transfer_peer(new_anchor_node_id))
           @new_anchor_subscription = subscription
@@ -1197,8 +1247,16 @@ module MatterJointFabricAdministrator
     private def select_anchor_administrator_fabric(index : UInt8) : Nil
       cluster = joint_fabric_administrator
       cluster.administrator_fabric_index = index
-      unless persistence.save_cluster(cluster)
-        raise Matter::StorageError.new("Could not persist Anchor AdministratorFabricIndex")
+      joint_fabric_datastore.joint_fabric_index = index
+      @bootstrap_datastore_propagator.try(&.stop!)
+      persist_bootstrap_anchor_role(false, transfer_complete: true)
+      bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
+      bootstrap_joint_fabric_administrator.service = nil
+      unless persistence.save_cluster(cluster) &&
+             persistence.save_cluster(joint_fabric_datastore) &&
+             persistence.save_cluster(bootstrap_joint_fabric_administrator) &&
+             persistence.save_cluster(bootstrap_joint_fabric_datastore)
+        raise Matter::StorageError.new("Could not persist promoted Anchor Datastore and Administrator endpoints")
       end
       persistence.flush
     end
@@ -1744,7 +1802,7 @@ module MatterJointFabricAdministrator
       raise Matter::ConfigurationError.new("Finalization nonce is required") if nonce.nil? || nonce.empty?
       jcm_parameters = joint_handoff_parameters(request) if request.jcm?
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
-      unless @anchor_role && own_fabric.cats.includes?(ANCHOR_CAT)
+      unless @anchor_role && has_anchor_cat?(own_fabric)
         raise Matter::AuthenticationError.new("Device is not the active Anchor")
       end
       unless request.fabric_id == own_fabric.fabric_id && request.root_public_key == own_fabric.root_public_key
@@ -1831,7 +1889,7 @@ module MatterJointFabricAdministrator
              request.root_public_key == own_fabric.root_public_key
         raise Matter::AuthenticationError.new("Anchor exchange requested for a different fabric")
       end
-      unless @anchor_role && own_fabric.cats.includes?(ANCHOR_CAT)
+      unless @anchor_role && has_anchor_cat?(own_fabric)
         raise Matter::AuthenticationError.new("Device is not the active Anchor")
       end
       identity = @controller_store.as(Matter::Controller::StateStore).load.fabric_for(
@@ -1920,7 +1978,7 @@ module MatterJointFabricAdministrator
 
     private def compliant_anchor_fabric?(fabric : Matter::Fabric) : Bool
       return false unless ENV["MATTER_JFA_PROVISIONED_ANCHOR"]? == "1"
-      return false unless fabric.cats.includes?(ANCHOR_CAT)
+      return false unless has_anchor_cat?(fabric)
       icac = fabric.intermediate_cert
       return false unless icac
       Matter::Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, fabric.fabric_id)
@@ -1929,15 +1987,21 @@ module MatterJointFabricAdministrator
       false
     end
 
+    private def has_anchor_cat?(fabric : Matter::Fabric) : Bool
+      fabric.cats.any? { |cat| cat.identity_value == ANCHOR_CAT_ID && cat.version > 0_u16 }
+    end
+
     private def verify_anchor_initiator(node_id : UInt64, fabric_index : UInt8,
                                         source : Socket::IPAddress) : Bool
       fabric = fabric_table.get_fabric(fabric_index)
       return false unless fabric
       trust_path = ENV["MATTER_JFA_VID_TRUST_ROOT_PATH"]?
       return false unless trust_path
-      trusted_root = File.read(trust_path).to_slice.dup
+      trusted_roots = trust_path.split(',').map do |path|
+        File.read(path.strip).to_slice.dup
+      end
       trust = Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
-        {fabric.vendor_id => [trusted_root]}
+        {fabric.vendor_id => trusted_roots}
       )
       scanner = Matter::Controller::Scanner.new
       begin

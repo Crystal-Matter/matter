@@ -7,6 +7,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric three-Administrator transfer
+
+- Exercise two live Joint Commissioning joins, Anchor transfer, and removal
+  across three Crystal Administrators, including restart during an uncertain
+  removal journal transition. The targeted Docker scenario passes in 2:31.
+- Bind a promoted Anchor's copied Datastore to its new fabric, retire the
+  bootstrap Datastore, and discover the active Datastore endpoint over a
+  verified CASE session. Restore the promoted role after restart with a
+  rotated nonzero Anchor CAT version.
+- Bind a joined Administrator's committed cross-signed ICAC to its fabric and
+  issuer root. Locally signed ICACs require the expected ICAC ID and private-key
+  proof; SDK-owned signers may use a distinct ICAC ID when the cross-signed key
+  matches the commissioned ICAC and CSR signing remains remote.
+
 ### Controller groupcast
 
 - Add `Controller::GroupInvoker` to install fabric-scoped operational group
