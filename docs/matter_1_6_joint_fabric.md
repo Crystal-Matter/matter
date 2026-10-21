@@ -155,6 +155,18 @@ item below as covered only to the extent of its cited tests.
   confirms the DAC/PAI/PAA chain; `Unavailable` fails commissioning. The
   example's Matter test-root option is enabled only in the Docker fixture.
 
+Local restart and transport-interruption specs cover both possible outcomes
+at each persisted Anchor transfer command boundary (request, Datastore copy,
+credential rotation, candidate promotion, and completion), including restart
+during participant follow-up, and each
+Administrator removal boundary (RemoveFabric, Datastore RemoveAdmin, Anchor
+rotation, and participant rotation). They verify that an observed completed
+command is not replayed and an observed no-effect command can be retried after
+reconciliation. Stable journal stages resume without repeating earlier
+commands. B-to-A device migration already has the same five-command recovery
+matrix, plus rollback and a fresh file-backend restart test. These local tests
+exercise journal logic; wider live network interruption coverage remains open.
+
 ## Official certification scenario mirrors
 
 `spec/cluster/joint_fabric_certification_parity_spec.cr` runs local command

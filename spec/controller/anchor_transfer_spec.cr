@@ -2,18 +2,22 @@ require "../spec_helper"
 require "../../src/matter/controller/anchor_transfer"
 
 private alias TransferDatastore = Matter::Cluster::JointFabricDatastore
+private alias TransferStage = Matter::Controller::AnchorTransfer::Stage
 
 private class FakeAnchorPort < Matter::Controller::AnchorTransfer::Port
   getter calls = [] of String
   property result = Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK
+  property fail_at : String?
 
   def request : Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum
     @calls << "request"
+    raise Matter::TransportError.new("request interrupted") if @fail_at == "request"
     @result
   end
 
   def complete : Nil
     @calls << "complete"
+    raise Matter::TransportError.new("complete interrupted") if @fail_at == "complete"
   end
 end
 
@@ -21,23 +25,26 @@ private class FakeAnchorMigration < Matter::Controller::AnchorTransfer::Migratio
   getter calls = [] of String
   property? fail_copy = false
   property? fail_follow_up = false
+  property fail_at : String?
 
   def copy_datastore! : Nil
     @calls << "copy"
-    raise Matter::TransportError.new("copy interrupted") if fail_copy?
+    raise Matter::TransportError.new("copy interrupted") if fail_copy? || @fail_at == "copy"
   end
 
   def rotate_credentials! : Nil
     @calls << "rotate"
+    raise Matter::TransportError.new("rotate interrupted") if @fail_at == "rotate"
   end
 
   def promote_candidate! : Nil
     @calls << "promote"
+    raise Matter::TransportError.new("promote interrupted") if @fail_at == "promote"
   end
 
   def follow_up_administrators! : Nil
     @calls << "follow-up"
-    raise Matter::TransportError.new("follow-up interrupted") if fail_follow_up?
+    raise Matter::TransportError.new("follow-up interrupted") if fail_follow_up? || @fail_at == "follow-up"
   end
 end
 
@@ -419,6 +426,74 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
   end
 
+  it "recovers every interrupted transfer command from a persisted journal" do
+    boundaries = {
+      {"request", TransferStage::Ready, TransferStage::Requesting, TransferStage::Requested},
+      {"copy", TransferStage::Requested, TransferStage::Copying, TransferStage::Copied},
+      {"rotate", TransferStage::Copied, TransferStage::Rotating, TransferStage::Rotated},
+      {"promote", TransferStage::Rotated, TransferStage::Promoting, TransferStage::Promoted},
+      {"complete", TransferStage::Promoted, TransferStage::Completing, TransferStage::Transferred},
+    }
+    boundaries.each do |command, before, uncertain, after|
+      {false, true}.each do |completed|
+        port = FakeAnchorPort.new
+        migration = FakeAnchorMigration.new
+        port.fail_at = command
+        migration.fail_at = command
+        stored = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, before)
+        save = ->(item : Matter::Controller::AnchorTransfer::Journal) {
+          stored = Matter::Controller::AnchorTransfer::Journal.from_document(item.to_document)
+          nil
+        }
+        workflow = Matter::Controller::AnchorTransfer::Workflow.new(
+          committed_anchor_store, port, migration, -> { true }, save, stored)
+
+        expect_raises(Matter::TransportError, /interrupted/) { workflow.run }
+        stored.stage.should eq(uncertain)
+        restarted = Matter::Controller::AnchorTransfer::Workflow.new(
+          committed_anchor_store, port, migration, -> { true }, save,
+          Matter::Controller::AnchorTransfer::Journal.from_document(stored.to_document))
+        expect_raises(Matter::CommissioningError, /reconciliation/) { restarted.run }
+        restarted.reconcile!(completed ? after : before)
+        port.fail_at = nil
+        migration.fail_at = nil
+        restarted.run
+
+        restarted.journal.stage.should eq(TransferStage::Completed)
+        calls = port.calls + migration.calls
+        calls.count(command).should eq(completed ? 1 : 2)
+      end
+    end
+  end
+
+  it "resumes from every persisted stable transfer boundary without replaying prior commands" do
+    boundaries = {
+      {TransferStage::Requested, ["copy", "rotate", "promote", "complete", "follow-up"]},
+      {TransferStage::Copied, ["rotate", "promote", "complete", "follow-up"]},
+      {TransferStage::Rotated, ["promote", "complete", "follow-up"]},
+      {TransferStage::Promoted, ["complete", "follow-up"]},
+      {TransferStage::Transferred, ["follow-up"]},
+      {TransferStage::Completed, [] of String},
+    }
+    boundaries.each do |stable, expected|
+      port = FakeAnchorPort.new
+      migration = FakeAnchorMigration.new
+      stored = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, stable)
+      restarted = Matter::Controller::AnchorTransfer::Workflow.new(
+        committed_anchor_store, port, migration, -> { true },
+        ->(item : Matter::Controller::AnchorTransfer::Journal) {
+          stored = Matter::Controller::AnchorTransfer::Journal.from_document(item.to_document)
+          nil
+        }, Matter::Controller::AnchorTransfer::Journal.from_document(stored.to_document))
+
+      restarted.run
+      (port.calls + migration.calls).sort.should eq(expected.sort)
+      stored.stage.should eq(TransferStage::Completed) unless stable.completed?
+      restarted.run
+      (port.calls + migration.calls).size.should eq(expected.size)
+    end
+  end
+
   it "records an observed completed Administrator rotation before stage recovery" do
     journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64,
       Matter::Controller::AnchorTransfer::Stage::Rotating)
@@ -452,19 +527,28 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     migration = FakeAnchorMigration.new
     migration.fail_follow_up = true
     journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64)
+    stored = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    save = ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      stored = Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }
     workflow = Matter::Controller::AnchorTransfer::Workflow.new(
-      store, port, migration, -> { true },
-      ->(_state : Matter::Controller::AnchorTransfer::Journal) { nil }, journal)
+      store, port, migration, -> { true }, save, journal)
 
     expect_raises(Matter::TransportError, /follow-up interrupted/) { workflow.run }
     port.calls.should eq(["request", "complete"])
     workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::FollowingUp)
-    expect_raises(Matter::TransportError, /follow-up interrupted/) { workflow.run }
-    workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::FollowingUp)
+    stored.stage.should eq(Matter::Controller::AnchorTransfer::Stage::FollowingUp)
+    restarted = Matter::Controller::AnchorTransfer::Workflow.new(
+      store, port, migration, -> { true }, save,
+      Matter::Controller::AnchorTransfer::Journal.from_document(stored.to_document))
+    expect_raises(Matter::TransportError, /follow-up interrupted/) { restarted.run }
+    restarted.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::FollowingUp)
     migration.fail_follow_up = false
-    workflow.run
+    restarted.run
     port.calls.should eq(["request", "complete"])
-    workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
+    restarted.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
+    migration.calls.count("follow-up").should eq(3)
   end
 end
 

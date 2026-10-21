@@ -55,6 +55,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscriptions carried by older secure sessions and persisted records. A true
   value retains those subscriptions.
 
+### Joint Fabric recovery verification
+
+- Exercise persisted restart and interrupted network-command recovery at every
+  Anchor transfer and Administrator removal journal boundary. Verify both
+  observed completion without replay and explicit no-effect retry, and
+  resume from each stable stage. The existing B-to-A device migration matrix
+  covers its five command boundaries and rollback stages.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast
