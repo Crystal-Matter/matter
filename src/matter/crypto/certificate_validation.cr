@@ -84,9 +84,10 @@ module Matter
             raise Matter::AuthenticationError.new("Intermediate certificate cannot sign certificates")
           end
           intermediate = MatterCertificate.from_slice(certificate)
-          unless intermediate.subject.icac_id && intermediate.subject.icac_id != 0_u64 &&
-                 intermediate.subject.node_id.nil? && intermediate.subject.rcac_id.nil? &&
-                 intermediate.subject.noc_cat.nil?
+          valid_subject = !intermediate.subject.icac_id.nil? &&
+                          intermediate.subject.node_id.nil? && intermediate.subject.rcac_id.nil? &&
+                          intermediate.subject.noc_cat.nil?
+          unless valid_subject
             raise Matter::AuthenticationError.new("Intermediate certificate has an invalid ICAC subject")
           end
           if fabric_id && intermediate.subject.fabric_id && fabric_id != intermediate.subject.fabric_id
@@ -101,9 +102,10 @@ module Matter
         # NOC and ICAC dates are checked during chain use.
         def verify_root(certificate : Bytes) : Nil
           root = MatterCertificate.from_slice(certificate)
-          unless root.subject.rcac_id && root.subject.rcac_id != 0_u64 &&
-                 issuer_matches_subject?(certificate, certificate) && certificate_authority?(certificate) &&
-                 key_cert_sign?(certificate) && valid_root_path_length?(certificate)
+          valid_root = !root.subject.rcac_id.nil? &&
+                       issuer_matches_subject?(certificate, certificate) && certificate_authority?(certificate) &&
+                       key_cert_sign?(certificate) && valid_root_path_length?(certificate)
+          unless valid_root
             raise Matter::AuthenticationError.new("Root certificate has an invalid RCAC profile")
           end
           verify_issued_by(certificate, certificate)

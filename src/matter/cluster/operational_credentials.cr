@@ -407,11 +407,21 @@ module Matter
         noc_response credentials.remove_fabric(request.fabric_index)
       end
 
-      # AddTrustedRootCertificate has no response; a rejected certificate is logged.
+      # AddTrustedRootCertificate has no command response. The IM status reports
+      # its fail-safe, sequencing, and certificate validation outcome.
       def add_trusted_root_certificate(request : Tlv::AddTrustedRootCertificateRequest) : InteractionModel::Status
         outcome = credentials.add_trusted_root_certificate(request.root_certificate)
-        Log.warn { "AddTrustedRootCertificate failed: #{outcome.debug_text}" } unless outcome.ok?
-        InteractionModel::Status.success
+        return InteractionModel::Status.success if outcome.ok?
+
+        Log.warn { "AddTrustedRootCertificate failed: #{outcome.debug_text}" }
+        case outcome.root_install_failure
+        when Commissioning::RootInstallFailure::FailsafeRequired
+          InteractionModel::Status.failsafe_required
+        when Commissioning::RootInstallFailure::Constraint
+          InteractionModel::Status.constraint_error
+        else
+          InteractionModel::Status.invalid_command
+        end
       end
 
       # Wire command name is fixed by the Matter specification.

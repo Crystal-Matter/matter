@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Commissioning interoperability
+
+- Accept zero-valued RCAC and ICAC identifiers, which Matter 1.6 permits and
+  Matter.js uses for its commissioning root. Return the specified Interaction
+  Model errors from AddTrustedRootCertificate instead of reporting success for
+  rejected certificates. Reusing an installed root now succeeds without a
+  duplicate entry and selects that root for the next AddNOC.
+
 ### Operational certificates
 
 - Derive Matter operational certificate SKID and AKID as SHA-1 of the complete

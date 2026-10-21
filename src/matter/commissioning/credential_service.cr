@@ -30,13 +30,24 @@ module Matter
       InvalidFabricIndex    = 11 # Specified fabric index doesn't exist
     end
 
+    # AddTrustedRootCertificate reports Interaction Model status, unlike
+    # AddNOC's NOCResponse. Keep its rejection reason typed until the cluster
+    # maps it to the status mandated by Core §11.18.6.13.
+    enum RootInstallFailure
+      FailsafeRequired
+      Constraint
+      InvalidCertificate
+    end
+
     # What a credential command decided; the cluster encodes it as an NOCResponse.
     struct NocOutcome
       getter status : NocStatus
       getter fabric_index : UInt8?
       getter debug_text : String?
+      getter root_install_failure : RootInstallFailure?
 
-      def initialize(@status : NocStatus, @fabric_index : UInt8? = nil, @debug_text : String? = nil)
+      def initialize(@status : NocStatus, @fabric_index : UInt8? = nil, @debug_text : String? = nil,
+                     @root_install_failure : RootInstallFailure? = nil)
       end
 
       def ok? : Bool
@@ -50,12 +61,14 @@ module Matter
       property csr_session_id : UInt64?
       property? is_for_update_noc : Bool
       property? root_cert_set : Bool
+      property root_certificate : Bytes?
       property? noc_added_or_updated : Bool
 
       def initialize
         @csr_session_id = nil
         @is_for_update_noc = false
         @root_cert_set = false
+        @root_certificate = nil
         @noc_added_or_updated = false
       end
 
@@ -63,6 +76,7 @@ module Matter
         @csr_session_id = nil
         @is_for_update_noc = false
         @root_cert_set = false
+        @root_certificate = nil
         @noc_added_or_updated = false
       end
 
@@ -264,29 +278,44 @@ module Matter
         Log.trace { "Root cert hex (first #{CERTIFICATE_LOG_PREFIX}): #{certificate_prefix(root_certificate, CERTIFICATE_LOG_PREFIX)}" }
 
         unless failsafe_armed?
-          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failsafe not armed")
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failsafe not armed",
+            root_install_failure: RootInstallFailure::FailsafeRequired)
+        end
+
+        # Reusing an installed root is idempotent and still chooses that root
+        # for the next AddNOC, even when another installed root is last in the
+        # attribute list (Core §11.18.6.13).
+        if @target.trusted_root_certificates.includes?(root_certificate)
+          @pending.root_cert_set = true
+          @pending.root_certificate = root_certificate
+          return NocOutcome.new(NocStatus::Ok)
         end
 
         if @pending.root_cert_set?
-          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Root certificate already set in this failsafe context")
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Root certificate already set in this failsafe context",
+            root_install_failure: RootInstallFailure::Constraint)
         end
 
         if @pending.noc_added_or_updated?
-          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Cannot set root certificate after AddNOC/UpdateNOC")
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Cannot set root certificate after AddNOC/UpdateNOC",
+            root_install_failure: RootInstallFailure::Constraint)
         end
 
         unless valid_certificate_format?(root_certificate)
-          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Invalid root certificate format")
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Invalid root certificate format",
+            root_install_failure: RootInstallFailure::InvalidCertificate)
         end
 
         begin
           Crypto::MatterCertificate::Validation.verify_root(root_certificate)
         rescue ex : Matter::AuthenticationError
-          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Invalid root certificate: #{ex.message}")
+          return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Invalid root certificate: #{ex.message}",
+            root_install_failure: RootInstallFailure::InvalidCertificate)
         end
 
         @target.trusted_root_certificates << root_certificate
         @pending.root_cert_set = true
+        @pending.root_certificate = root_certificate
         Log.info { "AddTrustedRootCertificate succeeded, root_cert_set=true" }
         @target.credentials_changed
 
@@ -346,7 +375,7 @@ module Matter
 
         # The compressed fabric ID is computed from the root public key, not
         # from the certificate it is carried in.
-        root_cert = @target.trusted_root_certificates.last
+        root_cert = @pending.root_certificate || @target.trusted_root_certificates.last
         root_public_key = public_key_from_certificate(root_cert)
         Log.debug { "Extracted root public key: #{root_public_key.size} bytes, first byte: 0x#{root_public_key[0].to_s(16)}" }
 
