@@ -31,6 +31,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and connection now fail when no backend is configured, rather than reporting
   success for changes that were never applied.
 
+### OTA Software Update Provider
+
+- Add the Matter 1.6 Provider cluster's QueryImage, ApplyUpdateRequest, and
+  NotifyUpdateApplied commands with typed TLV payloads and authenticated
+  fabric/peer callbacks. Reject malformed update offers and tokens. QueryImage
+  returns NotAvailable until an application supplies an image selector.
+
 ### OTA Software Update Requestor
 
 - Persist DefaultOTAProviders per fabric, enforce the Matter 1.6 limit of one

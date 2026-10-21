@@ -71,6 +71,45 @@ describe OtaProvider do
       .as(Matter::InteractionModel::Status).status.should eq(OtaProviderCode::ConstraintError)
   end
 
+  it "requires a newer version and a valid BDX URI in an available response" do
+    cluster = OtaProvider.new
+    token = Bytes[1, 2, 3, 4, 5, 6, 7, 8]
+    cluster.on_query_image = ->(_context : OtaProvider::RequestContext, _request : OtaProvider::QueryImageRequest) do
+      OtaProvider::QueryImageResponse.available("bdx://0000000000005678/image", 10_u32, "10.0", token)
+    end
+    invoke_ota_provider(cluster, OtaProvider::CMD_QUERY_IMAGE, ota_query)
+      .as(Matter::InteractionModel::Status).status.should eq(OtaProviderCode::ConstraintError)
+
+    cluster.on_query_image = ->(_context : OtaProvider::RequestContext, _request : OtaProvider::QueryImageRequest) do
+      OtaProvider::QueryImageResponse.available("bdx://000000000000567a/image", 11_u32, "11.0", token)
+    end
+    invoke_ota_provider(cluster, OtaProvider::CMD_QUERY_IMAGE, ota_query)
+      .as(Matter::InteractionModel::Status).status.should eq(OtaProviderCode::ConstraintError)
+
+    cluster.on_query_image = ->(_context : OtaProvider::RequestContext, _request : OtaProvider::QueryImageRequest) do
+      OtaProvider::QueryImageResponse.available("bdx://0000000000005678/image?x=1", 11_u32, "11.0", token)
+    end
+    invoke_ota_provider(cluster, OtaProvider::CMD_QUERY_IMAGE, ota_query)
+      .as(Matter::InteractionModel::Status).status.should eq(OtaProviderCode::ConstraintError)
+  end
+
+  it "accepts an HTTPS image only when the requestor supports HTTPS" do
+    cluster = OtaProvider.new
+    cluster.on_query_image = ->(_context : OtaProvider::RequestContext, _request : OtaProvider::QueryImageRequest) do
+      OtaProvider::QueryImageResponse.available("https://updates.example.test/image.bin",
+        11_u32, "11.0", Bytes[1, 2, 3, 4, 5, 6, 7, 8])
+    end
+    request = OtaProvider::QueryImageRequest.new(0xFFF1_u16, 0x8001_u16, 10_u32,
+      [OtaProvider::DownloadProtocol::Https])
+    response = invoke_ota_provider(cluster, OtaProvider::CMD_QUERY_IMAGE, request)
+      .as(Matter::Cluster::CommandResponse)
+    OtaProvider::QueryImageResponse.from_tlv(response.response.as(TLV::Any)).image_uri
+      .should eq("https://updates.example.test/image.bin")
+
+    invoke_ota_provider(cluster, OtaProvider::CMD_QUERY_IMAGE, ota_query)
+      .as(Matter::InteractionModel::Status).status.should eq(OtaProviderCode::ConstraintError)
+  end
+
   it "validates an update token and routes ApplyUpdate and NotifyUpdateApplied" do
     cluster = OtaProvider.new
     applied = [] of UInt32
@@ -98,5 +137,15 @@ describe OtaProvider do
       OtaProvider::ApplyUpdateRequest.new(Bytes[1], 11_u32))
       .as(Matter::InteractionModel::Status).status.should eq(OtaProviderCode::ConstraintError)
     applied.should eq([11_u32])
+  end
+
+  it "discontinues an unhandled apply request" do
+    cluster = OtaProvider.new
+    response = invoke_ota_provider(cluster, OtaProvider::CMD_APPLY_UPDATE_REQUEST,
+      OtaProvider::ApplyUpdateRequest.new(Bytes[1, 2, 3, 4, 5, 6, 7, 8], 11_u32))
+      .as(Matter::Cluster::CommandResponse)
+    body = OtaProvider::ApplyUpdateResponse.from_tlv(response.response.as(TLV::Any))
+    body.action.should eq(OtaProvider::ApplyAction::Discontinue)
+    body.delayed_action_time.should eq(0_u32)
   end
 end

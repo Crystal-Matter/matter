@@ -119,6 +119,14 @@ removes an entry when its fabric is removed. This provider registry does not
 yet query, download, or apply an update; applications must supply an update
 engine before advertising actual update capability.
 
+Applications can add the optional `Cluster::OtaProvider` to an endpoint and
+register `on_query_image`, `on_apply_update`, and
+`on_notify_update_applied` callbacks. Each receives the authenticated fabric
+index and peer Node ID. The provider answers `NotAvailable` until an image
+selector is registered. An application that offers a `bdx:` image URI also
+registers its file designator on the BDX responder and checks the same fabric
+and peer there; command callbacks do not expose files by themselves.
+
 ### Cluster values
 
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;

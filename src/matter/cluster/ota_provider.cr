@@ -34,6 +34,8 @@ module Matter
       IMAGE_URI_MAX_LENGTH    = 256
       VERSION_STRING_MAX_SIZE =  64
       MAX_PROTOCOLS_SUPPORTED =   8
+      BDX_IMAGE_URI_PATTERN   = /\Abdx:\/\/[0-9A-F]{16}\/(?:[A-Za-z0-9._~!$&'()*+,;=:@\/-]|%[0-9A-Fa-f]{2})+\z/
+      HTTPS_IMAGE_URI_PATTERN = /\Ahttps:\/\/[^\s\/?#@]+(?:\/[^\s#]*)?(?:\?[^\s#]*)?(?:\#[^\s]*)?\z/
 
       record RequestContext, fabric_index : UInt8, peer_node_id : UInt64
 
@@ -176,13 +178,14 @@ module Matter
       def query_image(request : QueryImageRequest) : QueryImageResponse | InteractionModel::Status
         context = authenticated_context || return InteractionModel::Status.unsupported_access
         return InteractionModel::Status.constraint_error unless valid_query?(request)
-        unless request.protocols_supported.includes?(DownloadProtocol::BdxSynchronous)
+        unless request.protocols_supported.includes?(DownloadProtocol::BdxSynchronous) ||
+               request.protocols_supported.includes?(DownloadProtocol::Https)
           return QueryImageResponse.new(QueryStatus::DownloadProtocolNotSupported)
         end
 
         response = @on_query_image.try(&.call(context, request)) ||
                    QueryImageResponse.new(QueryStatus::NotAvailable)
-        return InteractionModel::Status.constraint_error unless valid_response?(response)
+        return InteractionModel::Status.constraint_error unless valid_response?(response, request)
         response
       end
 
@@ -201,7 +204,7 @@ module Matter
       end
 
       private def authenticated_context : RequestContext?
-        return nil unless request_is_case_session?
+        return unless request_is_case_session?
         fabric = request_fabric_index
         node = request_peer_node_id
         RequestContext.new(fabric, node) if fabric && node
@@ -215,16 +218,19 @@ module Matter
         true
       end
 
-      private def valid_response?(response : QueryImageResponse) : Bool
+      private def valid_response?(response : QueryImageResponse,
+                                  request : QueryImageRequest) : Bool
         return false if (metadata = response.metadata_for_requestor) && metadata.size > METADATA_MAX_LENGTH
         if response.status.update_available?
           uri = response.image_uri
           version_string = response.software_version_string
           token = response.update_token
-          return false unless uri && version_string && token && response.software_version
+          version = response.software_version
+          return false unless uri && version_string && token && version
           return false if uri.empty? || uri.bytesize > IMAGE_URI_MAX_LENGTH
           return false if version_string.empty? || version_string.bytesize > VERSION_STRING_MAX_SIZE
-          return valid_token?(token)
+          return false unless version > request.software_version && valid_token?(token)
+          return valid_image_uri?(uri, request.protocols_supported)
         end
         return false if response.status.busy? && response.delayed_action_time.nil?
         response.image_uri.nil? && response.software_version.nil? &&
@@ -233,6 +239,18 @@ module Matter
 
       private def valid_token?(token : Bytes) : Bool
         token.size >= UPDATE_TOKEN_MIN_LENGTH && token.size <= UPDATE_TOKEN_MAX_LENGTH
+      end
+
+      private def valid_image_uri?(uri : String, protocols : Array(DownloadProtocol)) : Bool
+        if uri.starts_with?("bdx:")
+          protocols.includes?(DownloadProtocol::BdxSynchronous) &&
+            uri.matches?(BDX_IMAGE_URI_PATTERN)
+        elsif uri.starts_with?("https:")
+          protocols.includes?(DownloadProtocol::Https) &&
+            uri.matches?(HTTPS_IMAGE_URI_PATTERN)
+        else
+          false
+        end
       end
     end
   end
