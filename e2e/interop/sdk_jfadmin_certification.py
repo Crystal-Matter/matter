@@ -48,6 +48,7 @@ def run(args):
         pin = process.expect(r"Setup PIN:\s*(\d{8})", 60).group(1)
         discriminator = process.expect(r"Discriminator:\s*(\d+)", 20).group(1)
         process.expect(r"Starting in Commissioning Mode", 60)
+        process.start_background_drain()
         command = [
             str(python), str(test),
             "--dut-node-id", "1",
