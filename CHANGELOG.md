@@ -31,6 +31,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and connection now fail when no backend is configured, rather than reporting
   success for changes that were never applied.
 
+### OTA Software Update Requestor
+
+- Persist DefaultOTAProviders per fabric, enforce the Matter 1.6 limit of one
+  provider per fabric, and remove a provider when its fabric is removed.
+  Accept writes that omit FabricIndex and bind them to the authenticated fabric.
+- Report UpdatePossible as false until an application supplies an update engine.
+
 ### Commissioning interoperability
 
 - Accept zero-valued RCAC and ICAC identifiers, which Matter 1.6 permits and
