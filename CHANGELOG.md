@@ -13,6 +13,9 @@ clusters, the interaction model and the protocol objects. It is a breaking relea
 
 ### Shared fabric and certificate validation
 
+- Issue locally signed Joint Fabric controller CAT NOCs and grant device access
+  through Anchor Datastore groups, with idempotent retries and RefreshNode
+  recovery. A live device test verifies CASE access before and after propagation.
 - Verify Certification Declarations with CMS signed attributes, including their
   signed content type, encapsulated-content digest, and signature.
 - Validate Joint Fabric Node IDs against the Matter 1.6 range before

@@ -16,6 +16,17 @@ item below as covered only to the extent of its cited tests.
 - A controller can install an externally issued identity with an ICAC, delegate
   a separate identity under an existing root, and grant that Node ID an ACL
   entry. See `SharedFabric` in the controller library.
+- For a Joint Fabric whose ICAC signing key is available locally,
+  `SharedFabric.delegate_joint` issues a controller NOC with a non-reserved
+  group CAT. `SharedFabric.grant_joint_admin` verifies that identity and the
+  Anchor Datastore root, then uses AddGroup,
+  AddGroupIDToEndpointForNode, and AddACLToNode as needed. Repeating the
+  grant checks existing Datastore entries before sending commands and calls
+  RefreshNode when a matching membership or ACL has CommitFailed. The
+  Datastore propagates the pending membership and ACL to the target node;
+  callers should observe its status before assuming the controller can access
+  that node. Existing `grant_admin` remains available for fabrics that do
+  not use the Joint Fabric Datastore.
 - Joint Fabric Administrator (0x0753) and Datastore (0x0752) have typed Matter
   1.6 schemas and cluster handlers. Datastore entries track Pending,
   Committed, DeletePending, and CommitFailed. The controller synchronizer
