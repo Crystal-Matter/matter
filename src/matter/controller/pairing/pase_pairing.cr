@@ -34,8 +34,8 @@ module Matter
           pbkdf_req = Session::Pase::Definitions::PbkdfParamRequest.new(
             initiator_random: initiator_random,
             initiator_session_id: initiator_session_id,
-            passcode_id: nil,
-            has_pbkdf_parameters: nil,
+            passcode_id: 0_u16,
+            has_pbkdf_parameters: false,
             mrp_parameters: nil
           )
           pbkdf_req_bytes = pbkdf_req.to_slice

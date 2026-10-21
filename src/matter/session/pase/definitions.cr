@@ -44,19 +44,19 @@ module Matter
         struct PbkdfParamRequest
           include TLV::Serializable
 
-          # Initiator random (optional, tag 1)
+          # Initiator random (mandatory on the wire, tag 1)
           @[TLV::Field(tag: 1, optional: true)]
           property initiator_random : Bytes?
 
-          # Initiator session ID (optional, tag 2)
+          # Initiator session ID (mandatory on the wire, tag 2)
           @[TLV::Field(tag: 2, optional: true)]
           property initiator_session_id : UInt16?
 
-          # Passcode ID (optional, tag 3)
+          # Passcode ID (mandatory on the wire, tag 3)
           @[TLV::Field(tag: 3, optional: true)]
           property passcode_id : UInt16?
 
-          # Has PBKDF parameters (optional, tag 4)
+          # Has PBKDF parameters (mandatory on the wire, tag 4)
           @[TLV::Field(tag: 4, optional: true)]
           property has_pbkdf_parameters : Bool?
 

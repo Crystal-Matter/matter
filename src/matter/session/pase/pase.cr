@@ -48,9 +48,11 @@ module Matter
 
         # Step 1: Request PBKDF parameters from responder
         def create_pbkdf_param_request : Bytes
-          # Create a TLV-encoded PBKDF parameter request
-          # This can include optional initiator information
-          request = Definitions::PbkdfParamRequest.new
+          request = Definitions::PbkdfParamRequest.new(
+            initiator_random: @crypto.random_bytes(32),
+            initiator_session_id: @crypto.random_uint16,
+            passcode_id: 0_u16,
+            has_pbkdf_parameters: false)
           request.to_slice
         end
 
