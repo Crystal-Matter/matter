@@ -26,6 +26,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Let controller reads and subscriptions supply data version filters, with a
   convenient version argument for a single attribute read.
 
+### Conditional Interaction Model writes
+
+- Enforce AttributeDataIB DataVersion on device writes. A stale version returns
+  DataVersionMismatch without calling the cluster writer.
+- Let controller single and batch writes carry cluster data versions for
+  compare-and-write requests.
+
 ### Controller discovery
 
 - Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast

@@ -210,6 +210,7 @@ module Matter
         timed_request : Bool = false,
         suppress_response : Bool = false,
         timed_request_timeout : Time::Span = DEFAULT_TIMED_REQUEST_TIMEOUT,
+        data_version : UInt32? = nil,
       ) : InteractionModel::WriteResponseMessage
         write_attributes(
           session: session,
@@ -217,7 +218,8 @@ module Matter
           writes: [{endpoint_id, cluster_id, attribute_id, value}],
           timed_request: timed_request,
           suppress_response: suppress_response,
-          timed_request_timeout: timed_request_timeout
+          timed_request_timeout: timed_request_timeout,
+          data_versions: data_version.try { |version| { {endpoint_id, cluster_id} => version } }
         )
       end
 
@@ -228,6 +230,7 @@ module Matter
         timed_request : Bool = false,
         suppress_response : Bool = false,
         timed_request_timeout : Time::Span = DEFAULT_TIMED_REQUEST_TIMEOUT,
+        data_versions : Hash(Tuple(UInt16, UInt32), UInt32)? = nil,
       ) : InteractionModel::WriteResponseMessage
         write_ibs = writes.map do |endpoint_id, cluster_id, attribute_id, value|
           path = InteractionModel::AttributePath.new(
@@ -239,7 +242,7 @@ module Matter
           InteractionModel::AttributeDataIB.new(
             path: path,
             data: TLV::Any.from_slice(value),
-            data_version: nil
+            data_version: data_versions.try(&.[{endpoint_id, cluster_id}]?)
           )
         end
 
