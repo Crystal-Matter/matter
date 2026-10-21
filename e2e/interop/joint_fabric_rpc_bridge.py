@@ -4,8 +4,8 @@
 This implements the HDLC/pw_rpc transport needed to keep the SDK controller's
 GetStream open after commissioning a Crystal Anchor. It can durably queue a
 standard (non-JCM) ownership handoff through Crystal JFA's YAML command
-channel. The optional fabric probe uses the same channel. JCM handoff and
-ICAC CSR streaming remain unsupported.
+channel. The optional fabric probe uses the same channel. The ICAC CSR
+stream is supported for an SDK-held key; a live JCM handoff remains unverified.
 """
 
 from __future__ import annotations
