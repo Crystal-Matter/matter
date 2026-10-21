@@ -114,6 +114,22 @@ def preseed_sdk_issuer(jfc, storage_dir, case_logs):
     return serialized[:P256_PUBLIC_KEY_LENGTH]
 
 
+def report_sdk_icac_size(storage_dir, name):
+    """Record certificate size only; the issuer store stays private."""
+    config = ConfigParser()
+    if not config.read(storage_dir / "chip_tool_config.alpha.ini"):
+        return
+    if not config.has_option("Default", "ExampleCAIntermediateCert0"):
+        return
+    encoded = config.get("Default", "ExampleCAIntermediateCert0")
+    try:
+        certificate = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        return
+    encoding = "DER" if certificate[:1] == b"\x30" else "other"
+    print(f"{name}: SDK issuer ICAC is {len(certificate)} bytes ({encoding})", flush=True)
+
+
 def run_case(sdk, jfa, logs, name):
     python = sdk / "out/python_env/bin/python3"
     script = sdk / "src/python_testing" / f"{name}.py"
@@ -124,11 +140,11 @@ def run_case(sdk, jfa, logs, name):
 
     case_logs = logs / name
     case_logs.mkdir(parents=True, exist_ok=True)
-    # The SDK INI store contains private issuer keys. Keep it outside the CI
-    # artifact directory, which uploads all files under case_logs.
+    # Controller and device stores contain private operational keys. Keep all
+    # stores outside the CI artifact directory, which uploads case_logs.
     issuer_dir = logs.parent / "interop-jf-cert-private" / name
     issuer_dir.mkdir(parents=True, exist_ok=True)
-    state = case_logs / "crystal-state"
+    state = issuer_dir / "crystal-state"
     state.mkdir(exist_ok=True)
     csr_mailbox = case_logs / "icac-csr.json"
     csr_mailbox.unlink(missing_ok=True)
@@ -179,7 +195,7 @@ def run_case(sdk, jfa, logs, name):
             "--dut-node-id", "1",
             "--passcode", pin,
             "--discriminator", discriminator,
-            "--storage-path", str(case_logs / "sdk-controller-storage.json"),
+            "--storage-path", str(issuer_dir / "sdk-controller-storage.json"),
             "--logs-path", str(case_logs / "official-test-logs"),
             "--PICS", str(pics),
             "--string-arg", f"jfc_server_app:{jfc}",
@@ -193,6 +209,7 @@ def run_case(sdk, jfa, logs, name):
             result = subprocess.run(command, cwd=sdk, stdout=output,
                                     stderr=subprocess.STDOUT, timeout=timeout, check=False,
                                     env=os.environ.copy())
+        report_sdk_icac_size(issuer_dir, name)
         if result.returncode:
             tail = (case_logs / "official-test.log").read_text(errors="replace")[-14000:]
             raise RuntimeError(f"official {name} failed with exit {result.returncode}:\n{tail}")
