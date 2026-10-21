@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/controller/im_client"
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/user_label"
 require "../../src/matter/protocol/message_handler"
 
 private class TimedInteractionClient < Matter::Controller::Client
@@ -88,7 +89,8 @@ private record TimedInteractionFixture,
   session : Matter::Session::SecureContext,
   peer : Socket::IPAddress,
   basic : Matter::Cluster::BasicInformation,
-  on_off : Matter::Cluster::OnOff
+  on_off : Matter::Cluster::OnOff,
+  labels : Matter::Cluster::UserLabel
 
 private def timed_interaction_fixture : TimedInteractionFixture
   capture = Matter::Spec::CaptureTransport.new_for_spec
@@ -97,16 +99,91 @@ private def timed_interaction_fixture : TimedInteractionFixture
   endpoint = Matter::Endpoint.new(endpoint(1))
   on_off = build(Matter::Cluster::OnOff)
   endpoint.add_cluster(on_off)
+  labels = Matter::Cluster::UserLabel.new(Matter::DataType::EndpointNumber.new(1_u16))
+  endpoint.add_cluster(labels)
   handler.node.add_endpoint(endpoint)
   basic = handler.node.get_cluster(Matter::Cluster::BasicInformation).as(Matter::Cluster::BasicInformation)
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  session.peer_session_id = session.session_id
   handler.sessions[session.session_id] = session
   peer = Socket::IPAddress.new("127.0.0.1", 5540)
   client = TimedInteractionClient.new(handler, capture, session, peer)
-  TimedInteractionFixture.new(client, handler, session, peer, basic, on_off)
+  TimedInteractionFixture.new(client, handler, session, peer, basic, on_off, labels)
 end
 
 describe Matter::Controller::ImClient do
+  it "writes a large list in bounded chunks on one exchange and collects all statuses" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    entries = (0...100).map do |index|
+      Matter::Cluster::LabelStruct.new("room#{index}", "value#{index}")
+    end
+
+    version = fixture.labels.data_version
+    response = im.write_attribute(fixture.session, fixture.peer, 1_u16,
+      Matter::Cluster::UserLabel::CLUSTER_ID,
+      Matter::Cluster::UserLabel::ATTR_LABEL_LIST,
+      entries.to_tlv.to_slice, data_version: version)
+
+    fixture.labels.label_list.should eq(entries)
+    writes = fixture.client.sent.select do |sent|
+      sent.message_type == Matter::InteractionModel::MessageType::WriteRequest.value
+    end
+    writes.size.should be > 1
+    writes.all? { |sent| sent.exchange_id == writes.first.exchange_id }.should be_true
+    writes.each(&.payload.size.should(be <= 1100))
+    first_chunk = Matter::InteractionModel::WriteRequestMessage.from_slice(writes.first.payload)
+    first_items = first_chunk.write_requests || [] of Matter::InteractionModel::AttributeDataIB
+    first_items.first.path.list_index_null?.should be_false
+    first_items.first.data_version.should eq(version)
+    first_items.first.data.as_list.should be_empty
+    first_items[1].path.list_index_null?.should be_true
+    first_items[1].data_version.should eq(version)
+    writes[0...-1].each do |sent|
+      Matter::InteractionModel::WriteRequestMessage.from_slice(sent.payload).more_chunked_messages.should be_true
+    end
+    Matter::InteractionModel::WriteRequestMessage.from_slice(writes.last.payload).more_chunked_messages.should be_false
+    response.write_responses.size.should be > 1
+    response.write_responses.all? { |status| status.status.status == Matter::InteractionModel::StatusCode::Success.value }.should be_true
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "rejects a list item larger than a Matter packet before sending" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    item = Matter::Cluster::LabelStruct.new("room", "x" * 1200)
+
+    expect_raises(Matter::ConfigurationError, /message size/) do
+      im.write_attribute(fixture.session, fixture.peer, 1_u16,
+        Matter::Cluster::UserLabel::CLUSTER_ID,
+        Matter::Cluster::UserLabel::ATTR_LABEL_LIST,
+        [item].to_tlv.to_slice)
+    end
+    fixture.client.sent.should be_empty
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "rejects a timed list write that would need multiple requests" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    entries = (0...100).map { |index| Matter::Cluster::LabelStruct.new("room#{index}", "value#{index}") }
+
+    expect_raises(Matter::ConfigurationError, /Timed WriteRequest cannot be chunked/) do
+      im.write_attribute(fixture.session, fixture.peer, 1_u16,
+        Matter::Cluster::UserLabel::CLUSTER_ID,
+        Matter::Cluster::UserLabel::ATTR_LABEL_LIST,
+        entries.to_tlv.to_slice, timed_request: true)
+    end
+    fixture.client.sent.should be_empty
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
   it "writes over the same timed exchange only after the device acknowledges TimedRequest" do
     fixture = timed_interaction_fixture
     im = Matter::Controller::ImClient.new(fixture.client)

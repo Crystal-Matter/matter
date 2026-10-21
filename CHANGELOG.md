@@ -43,6 +43,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   list indices, orphan appends, and chunked timed writes with protocol statuses.
   Unicast writes now return WriteResponse even when SuppressResponse is set, as
   in the official SDK.
+- Split large controller list writes into bounded replacement and append
+  chunks, wait for each WriteResponse on the same exchange, and collect their
+  statuses. Reject oversized individual items and multi-chunk timed writes
+  before sending.
 
 ### Controller discovery
 
