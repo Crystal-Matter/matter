@@ -218,6 +218,14 @@ describe Matter::MDNS::RecordBuilder do
   end
 
   describe "AAAA record" do
+    it "encodes loopback and scoped link-local IPv6 addresses" do
+      loopback = Matter::MDNS::RecordBuilder.build_aaaa("node.local", Socket::IPAddress.new("::1", 0), 120.seconds)
+      loopback.resource_data.should eq(Bytes[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+
+      scoped = Matter::MDNS::RecordBuilder.build_aaaa("node.local", Socket::IPAddress.new("fe80::1%1", 0), 120.seconds)
+      scoped.resource_data.should eq(Bytes[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+    end
+
     it "builds AAAA record for IPv6 address" do
       ip = Socket::IPAddress.new("fe80::1", 0)
 

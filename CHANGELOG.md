@@ -9,6 +9,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Controller discovery
 
+- Receive and query mDNS over IPv6 as well as IPv4, joining IPv6 multicast
+  per interface on Unix. Scope link-local AAAA results to the announcing
+  interface and omit them when that interface is unknown. Encode `::1` and
+  scoped IPv6 literals correctly in device AAAA advertisements.
 - Resolve operational and commissioning service addresses from the SRV target's
   A/AAAA records, including split mDNS replies and host address goodbyes. Persist
   updates to already discovered devices instead of changing a struct copy.
