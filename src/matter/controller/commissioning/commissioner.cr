@@ -1,6 +1,7 @@
 require "log"
 
 require "../../cluster/general_commissioning"
+require "../../cluster/network_commissioning"
 require "../../cluster/operational_credentials"
 require "../../crypto/certificate"
 require "../../crypto/key"
@@ -23,6 +24,13 @@ module Matter
       class Commissioner
         Log                              = ::Log.for("matter.controller.commissioning.commissioner")
         FAIL_SAFE_RECOVERY_GRACE_SECONDS = 2_i64
+        FAIL_SAFE_REFRESH_FRACTION       =     2
+        REGULATORY_BREADCRUMB            = 1_u64
+
+        record FailSafeWindow,
+          primary_expires_at : Time::Instant,
+          expires_at_unix : Int64,
+          cumulative_expires_at_unix : Int64
 
         # fabric ID, device Node ID, CSR public key -> issued Matter NOC.
         alias CertificateIssuer = Proc(UInt64, UInt64, Bytes, Bytes)
@@ -119,10 +127,17 @@ module Matter
           @fail_safe_expiry_seconds : UInt16 = 60_u16,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
           @datastore_registrar : DatastoreNodeRegistrar? = nil,
+          @regulatory_location : Cluster::GeneralCommissioning::RegulatoryLocationType? = nil,
+          @regulatory_country_code : String? = nil,
         )
           if @fail_safe_expiry_seconds == 0_u16 ||
              @fail_safe_expiry_seconds > ::Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS
             raise Matter::ConfigurationError.new("Commissioning fail-safe expiry must be between 1 and #{::Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS} seconds")
+          end
+          if country = @regulatory_country_code
+            unless country.size == 2 && country.chars.all?(&.ascii_uppercase?)
+              raise Matter::ConfigurationError.new("Regulatory country code must be two uppercase letters")
+            end
           end
         end
 
@@ -182,12 +197,13 @@ module Matter
 
           im = ImClient.new(@client, @timeout)
 
-          fail_safe_expires_at_unix = Time.utc.to_unix + @fail_safe_expiry_seconds.to_i64
           arm = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
             expiry_length_seconds: @fail_safe_expiry_seconds,
             breadcrumb: 0_u64,
             timeout_ms: 0_u32
           )
+          armed_at_unix = Time.utc.to_unix
+          armed_at_instant = Time.instant
           arm_resp = im.invoke(
             session: pase_session,
             peer: peer_addr,
@@ -196,21 +212,29 @@ module Matter
             command_id: Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
             fields: arm.to_slice
           )
-          assert_invoke_ok!(arm_resp, "ArmFailSafe")
+          assert_commissioning_response!(arm_resp,
+            Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE, "ArmFailSafe")
+          info_report = im.read_attribute(pase_session, peer_addr, 0_u16,
+            Cluster::GeneralCommissioning::CLUSTER_ID,
+            Cluster::GeneralCommissioning::ATTR_BASIC_COMMISSIONING_INFO)
+          info_data = info_report.attribute_reports.try(&.find(&.attribute_data))
+            .try(&.attribute_data).try(&.data) ||
+                      raise Matter::ProtocolError.new("BasicCommissioningInfo read omitted data")
+          info = Cluster::GeneralCommissioning::BasicCommissioningInfo.from_slice(info_data.to_slice)
+          if info.max_cumulative_failsafe_seconds == 0_u16
+            raise Matter::CommissioningError.new("Device reported no maximum cumulative fail-safe duration")
+          end
+          cumulative_expires_at_unix = armed_at_unix + info.max_cumulative_failsafe_seconds.to_i64
+          fail_safe_window = FailSafeWindow.new(armed_at_instant + @fail_safe_expiry_seconds.seconds,
+            {armed_at_unix + @fail_safe_expiry_seconds.to_i64, cumulative_expires_at_unix}.min,
+            cumulative_expires_at_unix)
+
+          configure_regulatory_information(im, pase_session, peer_addr)
+          fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           if hooks = @hooks
             if hooks.record_fail_safe_deadline?
-              report = im.read_attribute(pase_session, peer_addr, 0_u16,
-                Cluster::GeneralCommissioning::CLUSTER_ID,
-                Cluster::GeneralCommissioning::ATTR_BASIC_COMMISSIONING_INFO)
-              data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
-                     raise Matter::ProtocolError.new("BasicCommissioningInfo read omitted data")
-              info = Cluster::GeneralCommissioning::BasicCommissioningInfo.from_slice(data.to_slice)
-              if info.max_cumulative_failsafe_seconds == 0_u16
-                raise Matter::CommissioningError.new("Device reported no maximum cumulative fail-safe duration")
-              end
-              hooks.fail_safe_deadline_observed(Time.utc.to_unix +
-                                                info.max_cumulative_failsafe_seconds.to_i64 + FAIL_SAFE_RECOVERY_GRACE_SECONDS,
+              hooks.fail_safe_deadline_observed(cumulative_expires_at_unix + FAIL_SAFE_RECOVERY_GRACE_SECONDS,
                 info.max_cumulative_failsafe_seconds)
             end
           end
@@ -233,6 +257,7 @@ module Matter
                       raise Matter::AuthenticationError.new("PASE session has no attestation challenge")
           dac_public_key = verifier.verify_attestation(dac, pai, attestation.attestation_elements,
             attestation.attestation_signature, attestation_nonce, challenge, vendor_id, product_id)
+          fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           csr_nonce = @crypto.random_bytes(32)
           csr_req = Cluster::OperationalCredentials::Tlv::CsrRequest.new(
@@ -250,6 +275,7 @@ module Matter
           csr_fields = first_command_fields(csr_resp_msg, Cluster::OperationalCredentials::CMD_CSR_REQUEST_RESPONSE)
           csr_resp = Cluster::OperationalCredentials::Tlv::CsrResponse.from_slice(csr_fields)
           device_pub_key = verifier.verify_csr(csr_resp, csr_nonce, challenge, dac_public_key)
+          fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           add_root_req = Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(
             root_certificate: fabric.root_cert.to_slice
@@ -263,6 +289,7 @@ module Matter
             fields: add_root_req.to_slice
           )
           assert_invoke_ok!(add_root_resp, "AddTrustedRootCertificate")
+          fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           credentials = if hooks = @hooks
                           hooks.prepare_credentials(fabric, node_id, device_pub_key, im, pase_session, peer_addr)
@@ -276,6 +303,7 @@ module Matter
                           )
                         end
           validate_credentials(credentials, fabric, node_id, device_pub_key)
+          fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           add_noc_req = Cluster::OperationalCredentials::Tlv::AddNocRequest.new(
             noc_value: credentials.noc.to_slice,
@@ -297,25 +325,17 @@ module Matter
           unless noc_resp.status_code.ok?
             raise Matter::CommissioningError.new("AddNOC failed (status=#{noc_resp.status_code} debug=#{noc_resp.debug_text})")
           end
+          fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           registrar = @datastore_registrar
           registration_attempted = false
           begin
-            if registrar
-              registration_attempted = true
-              name = friendly_name || raise Matter::ConfigurationError.new("Datastore registration requires a friendly name")
-              registrar.add_pending(fabric, node_id, name, fail_safe_expires_at_unix, peer_addr)
-            end
+            registration_attempted = !!registrar
+            fail_safe_window, handoff = record_pending_commissioning(fabric, node_id,
+              friendly_name, peer_addr, im, pase_session, fail_safe_window, defer_completion)
 
             if defer_completion
-              handoff = PendingCommissioningHandoff.new(
-                fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
-                node_id, peer_addr.address, peer_addr.port,
-                fail_safe_expires_at_unix, @crypto.random_bytes(16).hexstring)
-              state = @store.load
-              state.add_pending_handoff(handoff)
-              state.unsecured_message_counter = @client.transport.message_counter.counter
-              @store.save(state)
+              handoff = handoff || raise Matter::ProtocolError.new("Deferred commissioning handoff was not recorded")
               if hooks = @hooks
                 registrar.try(&.completing(fabric, node_id))
                 hooks.finalize_deferred_handoff(fabric, node_id, im, pase_session, peer_addr, handoff)
@@ -338,6 +358,8 @@ module Matter
             if hooks = @hooks
               hooks.before_complete(fabric, node_id, im, case_session, peer_addr)
             end
+            fail_safe_window = rearm_fail_safe_if_needed(im, case_session, peer_addr, fail_safe_window)
+            registrar.try(&.extend_deadline(fabric, node_id, fail_safe_window.expires_at_unix))
 
             registrar.try(&.completing(fabric, node_id))
 
@@ -404,6 +426,108 @@ module Matter
             registrar.refresh(fabric, node_id)
           end
           node
+        end
+
+        # Core §5.5 step 8 applies to every WI/TH Network Commissioning
+        # instance, including one on a non-root endpoint. Ethernet-only nodes
+        # do not need a regulatory command.
+        protected def configure_regulatory_information(im : ImClient, session : Session::SecureContext,
+                                                       peer : Socket::IPAddress) : Nil
+          path = InteractionModel::AttributePath.new(endpoint: nil,
+            cluster: Cluster::NetworkCommissioning::CLUSTER_ID,
+            attribute: Cluster::Base::GLOBAL_FEATURE_MAP)
+          report = im.read(session, peer, attribute_paths: [path])
+          wireless = (Cluster::NetworkCommissioning::Feature::WiFiNetworkInterface |
+                      Cluster::NetworkCommissioning::Feature::ThreadNetworkInterface).value
+          requires_config = (report.attribute_reports || [] of InteractionModel::AttributeReportIB).any? do |entry|
+            data = entry.attribute_data
+            next false unless data
+            concrete = data.path
+            next false unless concrete.cluster == Cluster::NetworkCommissioning::CLUSTER_ID &&
+                              concrete.attribute == Cluster::Base::GLOBAL_FEATURE_MAP
+            (data.data.as_u32 & wireless) != 0
+          end
+          return unless requires_config
+
+          location = @regulatory_location ||
+                     raise Matter::ConfigurationError.new("Wireless commissioning requires regulatory location")
+          country = @regulatory_country_code ||
+                    raise Matter::ConfigurationError.new("Wireless commissioning requires regulatory country code")
+          request = Cluster::GeneralCommissioning::SetRegulatoryConfigRequest.new(
+            location, country, REGULATORY_BREADCRUMB)
+          response = im.invoke(session, peer, 0_u16, Cluster::GeneralCommissioning::CLUSTER_ID,
+            Cluster::GeneralCommissioning::CMD_SET_REGULATORY_CONFIG, request.to_slice)
+          assert_commissioning_response!(response,
+            Cluster::GeneralCommissioning::CMD_SET_REGULATORY_CONFIG_RESPONSE, "SetRegulatoryConfig")
+        end
+
+        # The checkpoint immediately before a deferred handoff uses the
+        # refreshed deadline for both durable records. Registering with the
+        # Datastore may itself take long enough to require another re-arm.
+        protected def record_pending_commissioning(fabric : FabricInfo, node_id : UInt64,
+                                                   friendly_name : String?, peer : Socket::IPAddress,
+                                                   im : ImClient, session : Session::SecureContext,
+                                                   window : FailSafeWindow,
+                                                   defer_completion : Bool) : Tuple(FailSafeWindow, PendingCommissioningHandoff?)
+          if registrar = @datastore_registrar
+            name = friendly_name || raise Matter::ConfigurationError.new("Datastore registration requires a friendly name")
+            registrar.add_pending(fabric, node_id, name, window.expires_at_unix, peer)
+          end
+          window = rearm_fail_safe_if_needed(im, session, peer, window)
+          @datastore_registrar.try(&.extend_deadline(fabric, node_id, window.expires_at_unix))
+          return {window, nil} unless defer_completion
+
+          handoff = PendingCommissioningHandoff.new(
+            fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+            node_id, peer.address, peer.port,
+            window.expires_at_unix, @crypto.random_bytes(16).hexstring)
+          state = @store.load
+          state.add_pending_handoff(handoff)
+          state.unsecured_message_counter = @client.transport.message_counter.counter
+          @store.save(state)
+          {window, handoff}
+        end
+
+        # Refresh between steps before the primary fail-safe reaches half of
+        # its requested lifetime. The device continues enforcing its own
+        # cumulative deadline; a refused re-arm is a commissioning failure.
+        protected def rearm_fail_safe_if_needed(im : ImClient, session : Session::SecureContext,
+                                                peer : Socket::IPAddress,
+                                                window : FailSafeWindow) : FailSafeWindow
+          return window if window.primary_expires_at - Time.instant >=
+                             (@fail_safe_expiry_seconds.to_i / FAIL_SAFE_REFRESH_FRACTION).seconds
+          breadcrumb_report = im.read_attribute(session, peer, 0_u16,
+            Cluster::GeneralCommissioning::CLUSTER_ID,
+            Cluster::GeneralCommissioning::ATTR_BREADCRUMB)
+          breadcrumb = breadcrumb_report.attribute_reports.try(&.find(&.attribute_data))
+            .try(&.attribute_data).try(&.data).try(&.as_u64) ||
+                       raise Matter::ProtocolError.new("ArmFailSafe refresh could not read Breadcrumb")
+          request = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
+            expiry_length_seconds: @fail_safe_expiry_seconds,
+            breadcrumb: breadcrumb)
+          armed_at_unix = Time.utc.to_unix
+          armed_at_instant = Time.instant
+          response = im.invoke(session, peer, 0_u16, Cluster::GeneralCommissioning::CLUSTER_ID,
+            Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE, request.to_slice)
+          assert_commissioning_response!(response,
+            Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE, "ArmFailSafe")
+          FailSafeWindow.new(armed_at_instant + @fail_safe_expiry_seconds.seconds,
+            {armed_at_unix + @fail_safe_expiry_seconds.to_i64, window.cumulative_expires_at_unix}.min,
+            window.cumulative_expires_at_unix)
+        end
+
+        private def assert_commissioning_response!(response : InteractionModel::InvokeResponseMessage,
+                                                   response_id : UInt32, name : String) : Nil
+          assert_invoke_ok!(response, name)
+          fields = first_command_fields(response, response_id)
+          result = if response_id == Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE
+                     Cluster::GeneralCommissioning::ArmFailSafeResponse.from_slice(fields)
+                   else
+                     Cluster::GeneralCommissioning::SetRegulatoryConfigResponse.from_slice(fields)
+                   end
+          unless result.error_code.ok?
+            raise Matter::CommissioningError.new("#{name} failed (error=#{result.error_code} debug=#{result.debug_text})")
+          end
         end
 
         private def discover_commissionable(discriminator : UInt16) : Socket::IPAddress

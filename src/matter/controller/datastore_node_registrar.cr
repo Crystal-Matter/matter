@@ -131,6 +131,21 @@ module Matter
         set_stage(fabric, node_id, PendingDatastoreNode::Stage::Completing)
       end
 
+      # A successful ArmFailSafe re-arm extends the pending registration's
+      # recovery window without repeating AddPendingNode on the Anchor.
+      def extend_deadline(fabric : FabricInfo, node_id : UInt64, expires_at_unix : Int64) : Nil
+        state = @store.load
+        index = state.pending_datastore_nodes.index do |entry|
+          same_fabric?(entry, fabric) && entry.node_id == node_id
+        end
+        return unless index
+        entry = state.pending_datastore_nodes[index]
+        return if expires_at_unix <= entry.expires_at_unix
+        entry.expires_at_unix = expires_at_unix
+        state.pending_datastore_nodes[index] = entry
+        @store.save(state)
+      end
+
       def complete(fabric : FabricInfo, node_id : UInt64) : Nil
         set_stage(fabric, node_id, PendingDatastoreNode::Stage::Completed)
       end

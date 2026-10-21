@@ -157,6 +157,24 @@ These projects show off how custom matter interfaces can be built for almost any
 model client. `examples/chip-tool.cr` is a full CLI built on it — see
 [examples/chip-tool/README.md](examples/chip-tool/README.md).
 
+When commissioning a device whose Network Commissioning cluster advertises
+Wi-Fi or Thread, provide the regulatory location and country code. The
+commissioner detects this on any endpoint and sends `SetRegulatoryConfig`
+before attestation:
+
+```crystal
+commissioner = Matter::Controller::Commissioning::Commissioner.new(
+  state_store,
+  attestation_verifier: verifier,
+  regulatory_location: Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::Indoor,
+  regulatory_country_code: "AU"
+)
+```
+
+Ethernet-only devices need no regulatory options. The IP commissioner does not
+provision Wi-Fi or Thread credentials; those require a commissioning channel
+and platform network backend for network handoff.
+
 CASE pairing can reuse a persisted secret after the first certificate exchange.
 The Crystal chip-tool enables this with its controller store. Library callers
 can share a `ResumptionStore` with their controller state backend:

@@ -38,6 +38,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Accept writes that omit FabricIndex and bind them to the authenticated fabric.
 - Report UpdatePossible as false until an application supplies an update engine.
 
+### Controller commissioning
+
+- Discover Network Commissioning feature maps on every endpoint during IP
+  commissioning. Send SetRegulatoryConfig before device attestation when any
+  instance advertises Wi-Fi or Thread; Ethernet-only nodes keep the previous
+  flow. Wireless commissioning now requires an explicit regulatory location
+  and two-letter country code.
+- Refresh the fail-safe between long commissioning steps when its primary
+  timeout falls below half the requested duration. Preserve the device's
+  current Breadcrumb, reject command-level ArmFailSafe errors, and carry the
+  refreshed deadline into durable Datastore registration and deferred JFA
+  handoff records without exceeding the device's cumulative limit. Bound local
+  deadlines from the ArmFailSafe send time, including delayed responses.
+
 ### Commissioning interoperability
 
 - Accept zero-valued RCAC and ICAC identifiers, which Matter 1.6 permits and
