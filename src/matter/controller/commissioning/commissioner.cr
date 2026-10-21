@@ -8,6 +8,7 @@ require "../scanner"
 require "../../setup_payload"
 
 require "../certificate_util"
+require "../device_attestation_verifier"
 require "../client"
 require "../im_client"
 require "../pairing/case_pairing"
@@ -107,6 +108,7 @@ module Matter
           @hooks : Hooks? = nil,
           @controller_cats : Array(UInt32) = [] of UInt32,
           @fail_safe_expiry_seconds : UInt16 = 60_u16,
+          @attestation_verifier : DeviceAttestationVerifier? = nil,
         )
           if @fail_safe_expiry_seconds == 0_u16 ||
              @fail_safe_expiry_seconds > ::Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS
@@ -148,6 +150,8 @@ module Matter
           if fabric.root_private_key.nil? && fabric.intermediate_private_key.nil? && @certificate_issuer.nil? && @hooks.nil?
             raise Matter::ConfigurationError.new("Commissioning on this fabric requires a certificate issuer")
           end
+          verifier = @attestation_verifier ||
+                     raise Matter::ConfigurationError.new("Device attestation requires an explicitly configured verifier and trust store")
           @store.save(state)
 
           peer_addr = peer || discover_commissionable(discriminator)
@@ -175,6 +179,25 @@ module Matter
             fields: arm.to_slice
           )
           assert_invoke_ok!(arm_resp, "ArmFailSafe")
+
+          vendor_id = read_basic_information(im, pase_session, peer_addr, Cluster::BasicInformation::ATTR_VENDOR_ID).as_u16
+          product_id = read_basic_information(im, pase_session, peer_addr, Cluster::BasicInformation::ATTR_PRODUCT_ID).as_u16
+          dac = request_certificate(im, pase_session, peer_addr,
+            Cluster::OperationalCredentials::Tlv::CertificateChainType::DacCertificate)
+          pai = request_certificate(im, pase_session, peer_addr,
+            Cluster::OperationalCredentials::Tlv::CertificateChainType::PaiCertificate)
+          attestation_nonce = @crypto.random_bytes(DeviceAttestationVerifier::NONCE_SIZE)
+          attestation_request = Cluster::OperationalCredentials::Tlv::AttestationRequest.new(attestation_nonce)
+          attestation_invocation = im.invoke(session: pase_session, peer: peer_addr,
+            endpoint_id: 0_u16, cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
+            command_id: Cluster::OperationalCredentials::CMD_ATTESTATION_REQUEST,
+            fields: attestation_request.to_slice)
+          attestation = Cluster::OperationalCredentials::Tlv::AttestationResponse.from_slice(
+            first_command_fields(attestation_invocation, Cluster::OperationalCredentials::CMD_ATTESTATION_REQUEST_RESPONSE))
+          challenge = pase_session.attestation_challenge ||
+                      raise Matter::AuthenticationError.new("PASE session has no attestation challenge")
+          dac_public_key = verifier.verify_attestation(dac, pai, attestation.attestation_elements,
+            attestation.attestation_signature, attestation_nonce, challenge, vendor_id, product_id)
 
           add_root_req = Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(
             root_certificate: fabric.root_cert.to_slice
@@ -204,9 +227,7 @@ module Matter
           )
           csr_fields = first_command_fields(csr_resp_msg, Cluster::OperationalCredentials::CMD_CSR_REQUEST_RESPONSE)
           csr_resp = Cluster::OperationalCredentials::Tlv::CsrResponse.from_slice(csr_fields)
-          csr_elements = Cluster::OperationalCredentials::CSRElements.from_slice(csr_resp.nocsr_elements)
-
-          device_pub_key = CertificateUtil.extract_uncompressed_public_key_from_csr(csr_elements.csr)
+          device_pub_key = verifier.verify_csr(csr_resp, csr_nonce, challenge, dac_public_key)
           credentials = if hooks = @hooks
                           hooks.prepare_credentials(fabric, node_id, device_pub_key, im, pase_session, peer_addr)
                         else
@@ -333,6 +354,25 @@ module Matter
           raise Matter::TransportError.new("Failed to discover commissionable node via mDNS (discriminator=#{discriminator})")
         ensure
           scanner.try(&.close)
+        end
+
+        private def read_basic_information(im : ImClient, session : Session::SecureContext,
+                                           peer : Socket::IPAddress, attribute_id : UInt32) : TLV::Any
+          report = im.read_attribute(session, peer, 0_u16, Cluster::BasicInformation::CLUSTER_ID, attribute_id)
+          data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
+          data || raise Matter::AuthenticationError.new("BasicInformation attribute #{attribute_id} is missing")
+        end
+
+        private def request_certificate(im : ImClient, session : Session::SecureContext,
+                                        peer : Socket::IPAddress,
+                                        kind : Cluster::OperationalCredentials::Tlv::CertificateChainType) : Bytes
+          request = Cluster::OperationalCredentials::Tlv::CertificateChainRequest.new(kind)
+          response = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+            cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
+            command_id: Cluster::OperationalCredentials::CMD_CERTIFICATE_CHAIN_REQUEST,
+            fields: request.to_slice)
+          Cluster::OperationalCredentials::Tlv::CertificateChainResponse.from_slice(
+            first_command_fields(response, Cluster::OperationalCredentials::CMD_CERTIFICATE_CHAIN_REQUEST_RESPONSE)).certificate
         end
 
         # Create an identity before commissioning when a controller requires a

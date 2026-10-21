@@ -67,7 +67,9 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
     end
 
     Matter::Controller::Commissioning::Commissioner.new(store, client,
-      timeout: E2E::COMMAND_TIMEOUT, certificate_issuer: issuer).pairing_code(
+      timeout: E2E::COMMAND_TIMEOUT, certificate_issuer: issuer,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
       anchor_node_id, anchor.pairing_code, anchor_peer)
     anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(client, anchor_peer,
       bootstrap.fabric, peer_node_id: anchor_node_id, timeout: E2E::COMMAND_TIMEOUT)
@@ -82,7 +84,9 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
     failed.failure_code.should eq(IM::StatusCode::Failure.value)
 
     Matter::Controller::Commissioning::Commissioner.new(store, client,
-      timeout: E2E::COMMAND_TIMEOUT).pairing_code(target_node_id, target.pairing_code,
+      timeout: E2E::COMMAND_TIMEOUT,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(target_node_id, target.pairing_code,
       target_peer, fabric_id: bootstrap.fabric.fabric_id,
       root_public_key: bootstrap.fabric.root_public_key,
       controller_node_id: bootstrap.fabric.controller_node_id)

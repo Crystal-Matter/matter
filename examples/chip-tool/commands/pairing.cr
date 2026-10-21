@@ -23,11 +23,12 @@ module ChipTool
           manual_code = args.shift?
 
           unless node_id_str && manual_code
-            STDERR.puts "Usage: pairing code <node-id> <manual-code> [--address <ip[:port]>] [--new-fabric]"
+            STDERR.puts "Usage: pairing code <node-id> <manual-code> [--address <ip[:port]>] [--new-fabric] [--allow-test-attestation]"
             next 2
           end
 
           new_fabric = !!args.delete("--new-fabric")
+          allow_test_attestation = !!args.delete("--allow-test-attestation")
           peer = nil.as(Socket::IPAddress?)
           if idx = args.index("--address")
             addr = args[idx + 1]?
@@ -54,7 +55,12 @@ module ChipTool
             unsecured_source_node_id: state.commissioner_node_id,
             initial_unsecured_message_counter: state.unsecured_message_counter
           )
-          commissioner = Matter::Controller::Commissioning::Commissioner.new(store, controller, timeout: ctx.timeout)
+          verifier = if allow_test_attestation
+                       Matter::Controller::DeviceAttestationVerifier.new(
+                         Matter::Controller::AttestationTrustStore.matter_test_fixture)
+                     end
+          commissioner = Matter::Controller::Commissioning::Commissioner.new(store, controller,
+            timeout: ctx.timeout, attestation_verifier: verifier)
           begin
             commissioner.pairing_code(node_id, manual_code, peer: peer, new_fabric: new_fabric)
           ensure

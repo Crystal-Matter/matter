@@ -19,7 +19,9 @@ describe "shared fabric between Crystal controllers" do
     delegate_id = 0x302_u64
 
     commissioner = Matter::Controller::Commissioning::Commissioner.new(
-      authority_store, authority_client, timeout: E2E::COMMAND_TIMEOUT
+      authority_store, authority_client, timeout: E2E::COMMAND_TIMEOUT,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture)
     )
     commissioner.pairing_code(node_id, device.pairing_code, peer)
 

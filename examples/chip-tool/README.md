@@ -26,14 +26,24 @@ the keys and certificates redacted.
 Commission a device over IP using a manual pairing code:
 
 ```bash
-./bin/chip-tool-crystal pairing code 0x1 1495-753-5193
+./bin/chip-tool-crystal pairing code 0x1 1495-753-5193 --allow-test-attestation
 ```
 
 To skip mDNS discovery and target a specific address:
 
 ```bash
-./bin/chip-tool-crystal pairing code 0x1 1495-753-5193 --address 192.168.1.50:5540
+./bin/chip-tool-crystal pairing code 0x1 1495-753-5193 --address 192.168.1.50:5540 --allow-test-attestation
 ```
+
+The example devices use the public Matter test PAA and CD signer. The
+`--allow-test-attestation` flag explicitly opts in to those credentials.
+The controller rejects commissioning without a configured attestation verifier;
+applications commissioning production devices must provide their own trusted
+PAA certificates and CD signer keys through `AttestationTrustStore`.
+The current verifier supports the compact CD CMS profile without signed
+attributes; it rejects other CMS profiles. Production trust stores also need
+an explicit revocation provider. An unavailable revocation result rejects the
+device. The opt-in test fixture reports `Good` only for local examples.
 
 ## OnOff
 

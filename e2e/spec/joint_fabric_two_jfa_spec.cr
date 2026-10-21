@@ -75,10 +75,14 @@ describe "two provisioned Joint Fabric Administrators" do
       joiner_bootstrap.issue_anchor_administrator_noc(node_id, key)
     end
     Matter::Controller::Commissioning::Commissioner.new(anchor_store, anchor_client,
-      timeout: E2E::COMMAND_TIMEOUT, certificate_issuer: anchor_issuer).pairing_code(
+      timeout: E2E::COMMAND_TIMEOUT, certificate_issuer: anchor_issuer,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
       0xA102_u64, anchor.pairing_code, anchor_peer)
     Matter::Controller::Commissioning::Commissioner.new(joiner_store, joiner_client,
-      timeout: E2E::COMMAND_TIMEOUT, certificate_issuer: joiner_issuer).pairing_code(
+      timeout: E2E::COMMAND_TIMEOUT, certificate_issuer: joiner_issuer,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
       0xB102_u64, joiner.pairing_code, joiner_peer)
 
     [{anchor_client, anchor_peer, anchor_bootstrap.fabric, 0xA102_u64},
@@ -217,7 +221,9 @@ describe "two provisioned Joint Fabric Administrators" do
       registrar.callback,
       anchor_exchange,
       client: anchor_client, anchor_finalize: anchor_finalize,
-      handoff_result: handoff_result)
+      handoff_result: handoff_result,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture))
     workflow.commission(0xA103_u64,
       Matter::SetupPayload.generate_manual_code(discriminator, passcode), joiner_peer,
       defer_completion: true)
