@@ -28,6 +28,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric operational VID trust
 
+- Reject NOC entries that supply both ICAC and VVSC, as required by Matter 1.6
+  for the fabric-scoped NOC structure.
 - Validate an optional Matter-TLV VVSC as a signed, current Vendor Verification
   Signer certificate through an approved DCL Root/ICA path, without requiring
   a duplicate DCL signer leaf. Check its VVS identity, key usage, CA flag,

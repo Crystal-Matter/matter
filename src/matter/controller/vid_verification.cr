@@ -85,6 +85,9 @@ module Matter
                      raise Matter::AuthenticationError.new("Requested fabric is absent")
         noc = nocs.find { |entry| entry.fabric_index == fabric_index } ||
               raise Matter::AuthenticationError.new("Requested fabric has no NOC")
+        if noc.icac && noc.vvsc
+          raise Matter::AuthenticationError.new("NOC entry cannot contain both ICAC and VVSC")
+        end
         root = roots.find { |entry| Crypto::MatterCertificate.public_key_from_tlv(entry) == descriptor.root_public_key } ||
                raise Matter::AuthenticationError.new("Requested fabric has no matching root")
 
