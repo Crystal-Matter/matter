@@ -65,6 +65,14 @@ private class MigrationPort < Migration::Port
   end
 end
 
+private class MigrationRecoveryNetworkPort < Migration::NetworkPort
+  property? anchor_verified : Bool = false
+
+  def verify_anchor! : Nil
+    raise Matter::AuthenticationError.new("A CASE verification failed") unless anchor_verified?
+  end
+end
+
 describe Migration do
   it "requires both fabric identities and explicit consent" do
     port = MigrationPort.new
@@ -203,6 +211,35 @@ describe Migration do
     ensure
       File.delete?(path)
     end
+  end
+
+  it "persists the CommissioningComplete acknowledgement before local node recovery" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    store.save(journal)
+    callback = -> {
+      current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      current.commissioning_acknowledged = true
+      store.save(current)
+    }
+    issuer = Migration::CrossSignedIssuer.new(Bytes.empty, Bytes.empty,
+      0xA001_u64, Bytes[2], Bytes[1])
+    hooks = Migration::Credentials.new(issuer, 0xFFFF_0001_u32, 0xFFF2_u16,
+      Matter::Crypto::StandardCrypto.new, callback)
+    fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xA001_u64, 0xA101_u64, 0xFFF1_u16).fabric
+    hooks.complete_acknowledged(fabric, 0xA002_u64,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    loaded = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    loaded.stage.should eq(Migration::Stage::CommissioningAnchor)
+    loaded.commissioning_acknowledged?.should be_true
+    legacy_document = journal.to_document
+    legacy_document.delete("commissioning_acknowledged")
+    Migration::Journal.from_document(legacy_document).commissioning_acknowledged?.should be_false
   end
 
   it "issues a device NOC under B's cross-signed ICAC for Fabric A" do
@@ -428,6 +465,54 @@ describe Migration do
       port.old_fabric_absent?
       port.verify_postcondition!(Migration::Stage::Complete)
     end
+    port.close
+  end
+
+  it "restores a missing controller node only after durable acknowledgement and A CASE proof" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xB001_u64, 0xB101_u64, 0xFFF2_u16, crypto: crypto).fabric
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xA001_u64, 0xA101_u64, 0xFFF1_u16, crypto: crypto)
+    joined = joined_identity(bootstrap, 0xA103_u64, Matter::Crypto::Key.generate_key_pair)
+    b_icac = old_fabric.intermediate_cert.as(Bytes)
+    signed = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      Matter::Crypto::MatterCertificate.public_key_from_tlv(b_icac),
+      joined.fabric_id, 0xB101_u64, bootstrap.fabric.certificate_authority_key,
+      1_u64, Bytes[2], crypto)
+    issuer = Migration.cross_signed_issuer(old_fabric, joined, signed,
+      old_fabric.intermediate_private_key.as(Bytes))
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    state = store.load
+    state.install_fabric(joined)
+    store.save(state)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    verifier = Matter::Controller::DeviceAttestationVerifier.new(
+      Matter::Controller::AttestationTrustStore.matter_test_fixture)
+    port = MigrationRecoveryNetworkPort.new(store, old_fabric, joined, issuer,
+      0xB201_u64, 0xA201_u64, peer, 0xB101_u64, peer, 1_u16,
+      0xA101_u64, peer, 1_u16, "Existing device", 0xFFFF_0001_u32,
+      verifier, timeout: 1.millisecond)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB201_u64, 0xA201_u64, old_fabric.root_public_key,
+      joined.root_public_key, Migration::Stage::CommissioningAnchor)
+    port.validate_journal!(journal)
+    expect_raises(Matter::CommissioningError, /durable CommissioningComplete/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    journal.commissioning_acknowledged = true
+    port.validate_journal!(journal)
+    expect_raises(Matter::AuthenticationError, /A CASE/) do
+      port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    end
+    store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id).has_key?(0xA201_u64).should be_false
+    port.anchor_verified = true
+    port.verify_postcondition!(Migration::Stage::AnchorCommissioned)
+    stored = store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+      joined.controller_node_id)[0xA201_u64]
+    stored.address.should eq("127.0.0.1")
+    stored.port.should eq(5540)
     port.close
   end
 end

@@ -103,6 +103,18 @@ item below as covered only to the extent of its cited tests.
   whether each A NodeList and device fabric removal took effect before issuing
   only the remaining command. The JFA example now publishes its IPK as
   GroupKeySetID zero.
+  The migration journal also records the device's CommissioningComplete
+  acknowledgement before the controller node record is saved. If a process
+  crashes in that window, recovery validates A CASE and the A fabric
+  descriptor before restoring the local node record. A missing acknowledgement
+  remains fail closed; a visible A fabric alone does not prove the fail-safe
+  was disarmed.
+  The local command channel accepts `reconcile-device-migration` after an
+  authenticated completed postcondition, `reconcile-device-migration-no-effect`
+  after authenticated proof that the command had no effect, and
+  `resume-rollback-device-migration` for a partially completed rollback. All
+  retain the same consent and selected fabric/device identity checks as
+  `migrate-device`.
   With `MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE=1`, endpoint 2 keeps both B's JFA
   service and Datastore bound to B after endpoint 1 joins A. The two services
   retain separate AdministratorFabricIndex, ICAC and Anchor role records, and

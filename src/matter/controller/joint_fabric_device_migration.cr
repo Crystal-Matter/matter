@@ -39,11 +39,13 @@ module Matter
         getter old_root_public_key : Bytes
         getter anchor_root_public_key : Bytes
         property stage : Stage
+        property? commissioning_acknowledged : Bool = false
 
         def initialize(@old_fabric_id : UInt64, @anchor_fabric_id : UInt64,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
                        @old_root_public_key : Bytes, @anchor_root_public_key : Bytes,
-                       @stage : Stage = Stage::Ready)
+                       @stage : Stage = Stage::Ready,
+                       @commissioning_acknowledged : Bool = false)
         end
       end
 
@@ -104,6 +106,8 @@ module Matter
         DEFAULT_PBKDF_ITERATIONS = 1_000_u32
         REGISTRATION_POLL        = 250.milliseconds
 
+        @journal : Journal? = nil
+
         def initialize(@store : StateStore, @old_fabric : FabricInfo,
                        @anchor_fabric : FabricInfo, @issuer : CrossSignedIssuer,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
@@ -117,6 +121,7 @@ module Matter
                        @friendly_name : String,
                        @administrator_cat : UInt32,
                        @attestation_verifier : DeviceAttestationVerifier,
+                       @commissioning_ack : Proc(Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @client : Client = Client.new)
@@ -148,6 +153,7 @@ module Matter
                  journal.anchor_node_id == @anchor_node_id
             raise Matter::AuthenticationError.new("Migration journal does not match selected network identities")
           end
+          @journal = journal
         end
 
         def commission_anchor! : Nil
@@ -175,7 +181,8 @@ module Matter
             ImClient.new(@client, @timeout), old_session, @device_peer,
             DEFAULT_WINDOW_SECONDS, DEFAULT_PBKDF_ITERATIONS,
             Random::Secure.rand(0_u16..4095_u16))
-          hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id, @crypto)
+          hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
+            @crypto, -> { persist_commissioning_ack! })
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
             @crypto, hooks: hooks, attestation_verifier: @attestation_verifier)
           commissioner.pairing_code(@anchor_node_id, window.manual_pairing_code,
@@ -196,6 +203,16 @@ module Matter
             @anchor_datastore_endpoint, Cluster::JointFabricDatastore::ATTR_GROUP_KEY_SET_LIST)
           sets = Array(Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct).from_tlv(key_data.to_slice)
           JointFabricDeviceMigration.validate_anchor_ipk!(sets, @anchor_fabric.ipk_value)
+        end
+
+        private def persist_commissioning_ack! : Nil
+          if callback = @commissioning_ack
+            callback.call
+            if journal = @journal
+              journal.commissioning_acknowledged = true
+              @journal = journal
+            end
+          end
         end
 
         def verify_anchor! : Nil
@@ -322,7 +339,16 @@ module Matter
             unless state.nodes_for(@anchor_fabric.fabric_id,
                      @anchor_fabric.root_public_key,
                      @anchor_fabric.controller_node_id).has_key?(@anchor_node_id)
-              raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement for Fabric A")
+              unless @journal.try(&.commissioning_acknowledged?)
+                raise Matter::CommissioningError.new("Controller has no durable CommissioningComplete acknowledgement for Fabric A")
+              end
+              verify_anchor!
+              state.record_node(@anchor_fabric.fabric_id,
+                NodeInfo.new(node_id: @anchor_node_id, address: @device_peer.address,
+                  port: @device_peer.port), @anchor_fabric.root_public_key,
+                @anchor_fabric.controller_node_id)
+              @store.save(state)
+              return
             end
             verify_anchor!
           when Stage::AnchorVerified
@@ -369,6 +395,9 @@ module Matter
         def verify_no_effect!(stage : Stage) : Nil
           case stage
           when Stage::CommissioningAnchor
+            if @journal.try(&.commissioning_acknowledged?)
+              raise Matter::CommissioningError.new("Durable CommissioningComplete acknowledgement exists")
+            end
             state = @store.load
             if state.nodes_for(@anchor_fabric.fabric_id,
                  @anchor_fabric.root_public_key,
@@ -589,7 +618,8 @@ module Matter
       class Credentials < Commissioning::Commissioner::Hooks
         def initialize(@issuer : CrossSignedIssuer,
                        @administrator_cat : UInt32, @admin_vendor_id : UInt16,
-                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
+                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                       @commissioning_ack : Proc(Nil)? = nil)
           unless @administrator_cat >> 16 == ADMINISTRATOR_CAT_ID &&
                  (@administrator_cat & 0xFFFF_u32) != 0_u32
             raise Matter::ConfigurationError.new("A current Administrator CAT is required")
@@ -614,6 +644,11 @@ module Matter
         def before_complete(fabric : FabricInfo, node_id : UInt64, im : ImClient,
                             case_session : Session::SecureContext,
                             peer : Socket::IPAddress) : Nil
+        end
+
+        def complete_acknowledged(fabric : FabricInfo, node_id : UInt64,
+                                  peer : Socket::IPAddress) : Nil
+          @commissioning_ack.try(&.call)
         end
       end
 
