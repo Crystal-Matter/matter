@@ -93,17 +93,17 @@ module Matter
       end
 
       def apply_utc_time(request : SetUtcTimeRequest) : InteractionModel::Status
-        # A synchronized node may reject a less precise update. A node with
-        # NoTime must accept even a NoTime update from an administrator.
-        if @granularity != Granularity::NoTime && request.granularity.value < @granularity.value
+        # The Matter 1.6 SetUTCTime command requires an offered UTC source;
+        # NoTime never establishes one. A synchronized node also rejects an
+        # update with lower precision than its current source.
+        if request.granularity == Granularity::NoTime ||
+           (@granularity != Granularity::NoTime && request.granularity.value < @granularity.value)
           return InteractionModel::Status.cluster_failure(TIME_NOT_ACCEPTED)
         end
 
         @base_utc_time = request.utc_time
         @base_instant = Time.instant
-        # Network transfer and local drift reduce the guaranteed precision.
-        level = {request.granularity.value.to_i - 1, Granularity::Minutes.value.to_i}.max
-        self.granularity = Granularity.from_value(level.to_u8)
+        self.granularity = request.granularity
         self.time_source = TimeSource::Admin
         increment_version_and_notify(ATTR_UTC_TIME)
         InteractionModel::Status.success

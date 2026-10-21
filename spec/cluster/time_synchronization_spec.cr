@@ -30,7 +30,7 @@ describe TimeSync do
     second = read(cluster, TimeSync::ATTR_UTC_TIME).as(UInt64)
     second.should be > first
     read(cluster, TimeSync::ATTR_TIME_SOURCE).should eq(TimeSync::TimeSource::Admin.value)
-    read(cluster, TimeSync::ATTR_GRANULARITY).should_not eq(TimeSync::Granularity::NoTime.value)
+    read(cluster, TimeSync::ATTR_GRANULARITY).should eq(TimeSync::Granularity::Seconds.value)
   end
 
   it "declines a lower-quality update without replacing synchronized time" do
@@ -46,13 +46,28 @@ describe TimeSync do
     read(cluster, TimeSync::ATTR_UTC_TIME).should_not be_nil
   end
 
-  it "accepts a NoTime administrator update when it has no synchronized clock" do
+  it "rejects a NoTime administrator update even when it has no synchronized clock" do
     cluster = TimeSync.new(endpoint(0))
-    result = cluster.apply_utc_time(TimeSync::SetUtcTimeRequest.new(0_u64,
-      TimeSync::Granularity::NoTime))
-    result.status.should eq(Matter::InteractionModel::StatusCode::Success)
-    read(cluster, TimeSync::ATTR_UTC_TIME).should_not be_nil
-    read(cluster, TimeSync::ATTR_GRANULARITY).should eq(TimeSync::Granularity::Minutes.value)
+    request = TimeSync::SetUtcTimeRequest.new(0_u64, TimeSync::Granularity::NoTime)
+    result = cluster.invoke_command(TimeSync::CMD_SET_UTC_TIME,
+      request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+    result.as(Matter::InteractionModel::Status).cluster_status.should eq(TimeSync::TIME_NOT_ACCEPTED)
+    read(cluster, TimeSync::ATTR_UTC_TIME).should be_nil
+    read(cluster, TimeSync::ATTR_GRANULARITY).should eq(TimeSync::Granularity::NoTime.value)
+  end
+
+  it "keeps the accepted granularity and rejects a less precise update" do
+    cluster = TimeSync.new(endpoint(0))
+    first = cluster.apply_utc_time(TimeSync::SetUtcTimeRequest.new(123_456_000_000_u64,
+      TimeSync::Granularity::Milliseconds))
+    first.status.should eq(Matter::InteractionModel::StatusCode::Success)
+    read(cluster, TimeSync::ATTR_GRANULARITY).should eq(TimeSync::Granularity::Milliseconds.value)
+
+    rejected = cluster.apply_utc_time(TimeSync::SetUtcTimeRequest.new(223_456_000_000_u64,
+      TimeSync::Granularity::Seconds))
+    rejected.cluster_status.should eq(TimeSync::TIME_NOT_ACCEPTED)
+    read(cluster, TimeSync::ATTR_GRANULARITY).should eq(TimeSync::Granularity::Milliseconds.value)
+    read(cluster, TimeSync::ATTR_UTC_TIME).as(UInt64).should be < 223_456_000_000_u64
   end
 
   it "forgets untrusted monotonic time after restart" do
