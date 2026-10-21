@@ -444,7 +444,7 @@ module MatterJointFabricAdministrator
       end
       unless compliant_anchor_fabric?(fabric)
         ::Log.for("matter.example.joint_fabric_administrator").info do
-          "JFA activation skipped: Anchor CAT or ICAC profile gate failed (fabric_id=0x#{fabric.fabric_id.to_s(16)}, cats=#{fabric.cats.map(&.value).map(&.to_s(16))})"
+          "JFA activation skipped: Anchor CAT or ICAC validation failed (fabric_id=0x#{fabric.fabric_id.to_s(16)}, cats=#{fabric.cats.map(&.value).map(&.to_s(16))})"
         end
         return
       end
@@ -1923,13 +1923,8 @@ module MatterJointFabricAdministrator
       return false unless fabric.cats.includes?(ANCHOR_CAT)
       icac = fabric.intermediate_cert
       return false unless icac
-      certificate = Matter::Crypto::MatterCertificate.from_slice(icac)
-      return false if certificate.subject.icac_id.nil?
-      subject = TLV::Any.from_slice(icac).as_structure[Matter::Crypto::MatterCertificate::Asn1::Field::Subject.value].as_list
-      subject.any? do |entry|
-        entry.header.ids == Matter::Crypto::MatterCertificate::Asn1::Dn::OrgUnitName.value &&
-          entry.as_s? == Matter::Crypto::MatterCertificate::Builder::ANCHOR_ICAC_ORGANIZATIONAL_UNIT
-      end
+      Matter::Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, fabric.fabric_id)
+      true
     rescue Matter::Error
       false
     end
