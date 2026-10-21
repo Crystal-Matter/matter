@@ -10,7 +10,9 @@ require "../../session/case/definitions"
 require "../../session/case/resumption_store"
 require "../../session/pase/definitions"
 require "../client"
+require "../operational_peer_resolver"
 require "../state"
+require "../state_store"
 
 module Matter
   module Controller
@@ -59,6 +61,41 @@ module Matter
             raise Matter::ConfigurationError.new("No controller fabric is installed")
           end
           pair(client, peer, fabric, peer_node_id: peer_node_id, timeout: timeout)
+        end
+
+        # Resolve a commissioned node by its operational DNS-SD identity and
+        # remember the address only after CASE verifies the expected fabric
+        # and Node ID. A saved address is used when discovery is unavailable.
+        def pair_discovered(
+          client : Client,
+          store : StateStore,
+          peer_node_id : UInt64,
+          fabric_id : UInt64? = nil,
+          root_public_key : Bytes? = nil,
+          controller_node_id : UInt64? = nil,
+          timeout : Time::Span = 10.seconds,
+          resolver : OperationalPeerResolver = OperationalPeerResolver.new,
+        ) : Tuple(Session::SecureContext, Socket::IPAddress)
+          if (root_public_key || controller_node_id) && fabric_id.nil?
+            raise Matter::ConfigurationError.new("Selecting a fabric by root public key or controller Node ID also requires a fabric ID")
+          end
+          state = store.load
+          fabric = if id = fabric_id
+                     state.fabric_for(id, root_public_key, controller_node_id)
+                   else
+                     state.fabric || raise Matter::ConfigurationError.new("No controller fabric is installed")
+                   end
+          peer = resolver.resolve(state, fabric, peer_node_id, timeout)
+          begin
+            session = pair(client, peer, fabric, peer_node_id: peer_node_id, timeout: timeout)
+            state.record_node(fabric.fabric_id, NodeInfo.new(peer_node_id, OperationalPeerResolver.address_hint(peer), peer.port),
+              fabric.root_public_key, fabric.controller_node_id)
+            {session, peer}
+          ensure
+            # Sigma1 consumes an unsecured message counter even if CASE fails.
+            state.unsecured_message_counter = client.transport.message_counter.counter
+            store.save(state)
+          end
         end
 
         def pair(

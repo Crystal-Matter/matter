@@ -2,7 +2,7 @@ require "log"
 
 require "./datastore_synchronizer"
 require "./pairing/case_pairing"
-require "./scanner"
+require "./operational_peer_resolver"
 require "./state_store"
 
 module Matter
@@ -41,7 +41,8 @@ module Matter
                    else
                      state.fabric || raise Matter::ConfigurationError.new("No controller fabric is installed")
                    end
-          peer = resolve_peer(state, fabric, node_id)
+          peer = OperationalPeerResolver.new.resolve(state, fabric, node_id,
+            @timeout, @peer_hints[node_id]?)
           client = Client.new(
             unsecured_source_node_id: fabric.controller_node_id,
             initial_unsecured_message_counter: state.unsecured_message_counter
@@ -49,46 +50,12 @@ module Matter
           begin
             session = Pairing::CasePairing.new.pair(client, peer, fabric, peer_node_id: node_id, timeout: @timeout)
             DatastoreSynchronizer.new(ImClient.new(client, @timeout)).sync_node(store, node_id, session, peer)
-            state.record_node(fabric.fabric_id, NodeInfo.new(node_id, peer.address, peer.port), fabric.root_public_key, fabric.controller_node_id)
+            state.record_node(fabric.fabric_id, NodeInfo.new(node_id, OperationalPeerResolver.address_hint(peer), peer.port), fabric.root_public_key, fabric.controller_node_id)
           ensure
             state.unsecured_message_counter = client.transport.message_counter.counter
             @state_store.save(state)
             client.close
           end
-        end
-
-        private def resolve_peer(state : State, fabric : FabricInfo, node_id : UInt64) : Socket::IPAddress
-          compressed_fabric_id = fabric.compressed_fabric_id
-          scanner = Scanner.new
-          begin
-            scanner.start
-            scanner.query_operational
-            deadline = Time.instant + @timeout
-            loop do
-              device = scanner.operational_devices.find do |candidate|
-                candidate.fabric_id == compressed_fabric_id && candidate.node_id == node_id
-              end
-              if device
-                address = device.addresses.find(&.family.inet?) || device.addresses.first?
-                return Socket::IPAddress.new(address.address, device.port) if address
-              end
-              break if Time.instant >= deadline
-              sleep 100.milliseconds
-            end
-          ensure
-            scanner.close
-          end
-          if info = state.nodes_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)[node_id]?
-            if address = info.address
-              return Socket::IPAddress.new(address, info.port)
-            end
-          end
-          # A configured address is only a reachability hint. CASE still
-          # authenticates the expected Node ID against the selected fabric.
-          if peer = @peer_hints[node_id]?
-            return peer
-          end
-          raise Matter::TransportError.new("Could not discover Joint Fabric node 0x#{node_id.to_s(16)}")
         end
       end
 

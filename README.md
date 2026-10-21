@@ -196,13 +196,16 @@ can share a `ResumptionStore` with their controller state backend:
 ```crystal
 resume_store = Matter::Session::Case::ResumptionStore.new(state_store.backend)
 pairing = Matter::Controller::Pairing::CasePairing.new(resumption_store: resume_store)
-session = pairing.pair(client, peer, fabric, peer_node_id: node_id)
+session, peer = pairing.pair_discovered(client, state_store, node_id)
 ```
 
 The first call performs full CASE and saves a record. Later calls, including
 after restart, use Sigma2Resume when the peer recognizes that record; otherwise
 the peer can answer with full Sigma2. Records are scoped to fabric root, fabric
-ID, controller node ID, and peer node ID.
+ID, controller node ID, and peer node ID. `pair_discovered` matches the
+compressed fabric ID and Node ID in operational mDNS, then falls back to a
+saved address if discovery is unavailable. It saves a newly discovered address
+only after CASE authenticates that peer.
 
 ### Bulk Data Exchange
 
@@ -340,13 +343,8 @@ begin
   commissioner.pairing_code(NODE_ID, PAIRING_CODE)
   commissioner.close
 
-  state = store.load
-  fabric = state.fabric || raise Matter::CommissioningError.new("no controller fabric")
-  node = state.nodes[NODE_ID]
-  peer = Socket::IPAddress.new(node.address || "::1", node.port)
-
-  session = Matter::Controller::Pairing::CasePairing.new
-    .pair(client, peer, fabric, peer_node_id: NODE_ID)
+  session, peer = Matter::Controller::Pairing::CasePairing.new
+    .pair_discovered(client, store, NODE_ID)
   im = Matter::Controller::ImClient.new(client)
 
   report = im.read_attribute(
@@ -366,8 +364,9 @@ begin
     command_id: Matter::Cluster::OnOff::CMD_TOGGLE
   )
 ensure
-  state.unsecured_message_counter = client.transport.message_counter.counter
-  store.save(state)
+  persisted = store.load
+  persisted.unsecured_message_counter = client.transport.message_counter.counter
+  store.save(persisted)
   client.close
 end
 ```
