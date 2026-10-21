@@ -56,7 +56,9 @@ jobs:
           source scripts/bootstrap.sh -p linux
           set -u
           ./scripts/build_python.sh --enable_ble false --enable_webrtc false \
-            --install_virtual_env out/python_env
+            --include_pytest_deps no --install_virtual_env out/python_env
+          out/python_env/bin/pip install -r src/python_testing/requirements.txt
+          out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
       - name: Run TC_JFADMIN_1_2 certification steps
         timeout-minutes: 10
         run: |
