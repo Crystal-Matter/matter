@@ -1,0 +1,27 @@
+<configurator>
+  <cluster>
+    <name>Example Switch</name>
+    <code>0x1234</code>
+    <globalAttribute side="either" code="0xFFFD" value="3"/>
+    <attribute side="server" code="0x0000" name="Required" type="int8u"/>
+    <attribute side="server" code="0x0001" name="Optional" optional="true" type="int8u"/>
+    <attribute side="server" code="0x0002" name="FeatureRequired" type="int8u">
+      <mandatoryConform><feature name="X"/></mandatoryConform>
+    </attribute>
+    <attribute side="server" code="0x0003" name="AlwaysRequired" type="int8u">
+      <mandatoryConform/>
+    </attribute>
+    <attribute side="server" code="0x0004" name="OptionalByConformance" type="int8u">
+      <optionalConform/>
+    </attribute>
+    <attribute side="client" code="0x0005" name="ClientOnly" type="int8u"/>
+    <attribute side="server" code="0x0006" name="MissingRequired" type="int8u"/>
+    <attribute side="server" code="0x0007" name="DeclaredOptional" type="int8u"/>
+  </cluster>
+  <cluster>
+    <name>Absent Cluster</name>
+    <code>0x1235</code>
+    <globalAttribute side="either" code="0xFFFD" value="1"/>
+    <attribute side="server" code="0x0000" name="Required" type="bool"/>
+  </cluster>
+</configurator>

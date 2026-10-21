@@ -1,0 +1,9 @@
+<cluster name="Family Cluster" revision="2">
+  <clusterIds>
+    <clusterId id="0x1237" name="First Member"/>
+    <clusterId id="0x1238" name="Second Member"/>
+  </clusterIds>
+  <attributes>
+    <attribute id="0x0000" name="Shared"><mandatoryConform/></attribute>
+  </attributes>
+</cluster>
