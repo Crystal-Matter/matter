@@ -22,12 +22,13 @@ module Matter
                      @timeout : Time::Span = 10.seconds,
                      event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
                      event_filters : Array(InteractionModel::EventFilterIB)? = nil,
-                     data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil)
+                     data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil,
+                     keep_subscriptions : Bool = false)
         if (paths.empty? && event_paths.empty?) || max_interval == 0_u16 || max_interval < min_interval
           raise Matter::ConfigurationError.new("Invalid subscription intervals")
         end
         request = InteractionModel::SubscribeRequestMessage.new(
-          keep_subscriptions: false,
+          keep_subscriptions: keep_subscriptions,
           min_interval_floor: min_interval,
           max_interval_ceiling: max_interval,
           attribute_requests: paths.empty? ? nil : paths,
@@ -50,8 +51,9 @@ module Matter
       def initialize(client : Client, session : Session::SecureContext,
                      peer : Socket::IPAddress, path : InteractionModel::AttributePath,
                      min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
-                     timeout : Time::Span = 10.seconds)
-        initialize(client, session, peer, [path], min_interval, max_interval, timeout)
+                     timeout : Time::Span = 10.seconds, keep_subscriptions : Bool = false)
+        initialize(client, session, peer, [path], min_interval, max_interval, timeout,
+          keep_subscriptions: keep_subscriptions)
       end
 
       # Returns one logical update (which may have multiple ReportData chunks).
@@ -197,10 +199,12 @@ module Matter
       def subscribe_events(session : Session::SecureContext, peer : Socket::IPAddress,
                            paths : Array(InteractionModel::EventPath),
                            event_min : UInt64? = nil,
-                           min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
+                           min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
+                           keep_subscriptions : Bool = false) : AttributeSubscription
         filters = event_min.try { |number| [InteractionModel::EventFilterIB.new(number)] }
         AttributeSubscription.new(@client, session, peer, [] of InteractionModel::AttributePath,
-          min_interval, max_interval, @timeout, paths, filters)
+          min_interval, max_interval, @timeout, paths, filters,
+          keep_subscriptions: keep_subscriptions)
       end
 
       def subscribe(session : Session::SecureContext, peer : Socket::IPAddress,
@@ -208,24 +212,28 @@ module Matter
                     event_paths : Array(InteractionModel::EventPath) = [] of InteractionModel::EventPath,
                     event_filters : Array(InteractionModel::EventFilterIB)? = nil,
                     min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
-                    data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil) : AttributeSubscription
+                    data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil,
+                    keep_subscriptions : Bool = false) : AttributeSubscription
         AttributeSubscription.new(@client, session, peer, attribute_paths,
-          min_interval, max_interval, @timeout, event_paths, event_filters, data_version_filters)
+          min_interval, max_interval, @timeout, event_paths, event_filters,
+          data_version_filters, keep_subscriptions)
       end
 
       def subscribe_attributes(session : Session::SecureContext, peer : Socket::IPAddress,
                                paths : Array(InteractionModel::AttributePath),
-                               min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
+                               min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
+                               keep_subscriptions : Bool = false) : AttributeSubscription
         AttributeSubscription.new(@client, session, peer, paths,
-          min_interval, max_interval, @timeout)
+          min_interval, max_interval, @timeout, keep_subscriptions: keep_subscriptions)
       end
 
       def subscribe_attribute(session : Session::SecureContext, peer : Socket::IPAddress,
                               endpoint_id : UInt16, cluster_id : UInt32, attribute_id : UInt32,
-                              min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16) : AttributeSubscription
+                              min_interval : UInt16 = 0_u16, max_interval : UInt16 = 60_u16,
+                              keep_subscriptions : Bool = false) : AttributeSubscription
         AttributeSubscription.new(@client, session, peer,
           InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id,
-            attribute: attribute_id), min_interval, max_interval, @timeout)
+            attribute: attribute_id), min_interval, max_interval, @timeout, keep_subscriptions)
       end
     end
   end
