@@ -114,10 +114,16 @@ module Matter
       def initialize(endpoint_id : DataType::EndpointNumber,
                      table_size : UInt8 = DEFAULT_TABLE_SIZE,
                      supported_fabrics : UInt8 = FabricTable::DEFAULT_MAX_FABRICS)
-        raise ConfigurationError.new("SupportedFabrics must meet Matter's minimum") if supported_fabrics < FabricTable::MIN_MAX_FABRICS
-        raise ConfigurationError.new("Thread Network Directory capacity must be at least twice SupportedFabrics") if table_size.to_i < supported_fabrics.to_i * 2
         @thread_network_table_size = table_size
+        validate_supported_fabrics!(supported_fabrics)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+      end
+
+      # Device calls this with the root Operational Credentials capacity before
+      # exposing the endpoint, independently of the constructor argument.
+      def validate_supported_fabrics!(supported_fabrics : UInt8) : Nil
+        raise ConfigurationError.new("SupportedFabrics must meet Matter's minimum") if supported_fabrics < FabricTable::MIN_MAX_FABRICS
+        raise ConfigurationError.new("Thread Network Directory capacity must be at least twice SupportedFabrics") if @thread_network_table_size.to_i < supported_fabrics.to_i * 2
       end
 
       def preferred_extended_pan_id : Bytes?

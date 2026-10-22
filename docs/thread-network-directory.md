@@ -10,7 +10,8 @@ ACL privilege protects writes and retrieval of full credentials. The
 The host supplies `table_size` and `supported_fabrics` when it constructs the
 cluster. `table_size` must be at least twice the root Operational Credentials
 `SupportedFabrics` value. Defaults are 32 and 16. If the device's configured
-maximum differs, pass its actual value. `AddNetwork` and `RemoveNetwork` require
+maximum differs, pass its actual value. The Device also checks the actual
+fabric capacity before exposing the endpoint. `AddNetwork` and `RemoveNetwork` require
 a timed interaction; the Interaction Model enforces that using command metadata.
 
 Attach a persistent `Storage::Backend` to the device. It holds raw Thread

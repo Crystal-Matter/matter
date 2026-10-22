@@ -167,7 +167,10 @@ module Matter
       @node.on_version_changed = ->(cluster : Cluster::Base) { @persistence.mark_dirty(cluster) }
 
       build_and_wire_clusters
-      @message_handler.clusters.values.each { |cluster| wire_ecosystem_information(cluster) }
+      @message_handler.clusters.values.each do |cluster|
+        wire_ecosystem_information(cluster)
+        validate_thread_network_directory(cluster)
+      end
       @message_handler.setup_cluster_notifications
 
       # Restore cluster state (scenes, groups, etc.) and track changes
@@ -754,6 +757,7 @@ module Matter
       endpoint = Endpoint.new(DataType::EndpointNumber.new(endpoint_id), device_types)
       clusters.each do |cluster|
         wire_ecosystem_information(cluster)
+        validate_thread_network_directory(cluster)
         endpoint.add_cluster(cluster)
       end
       @node.add_endpoint(endpoint)
@@ -772,6 +776,12 @@ module Matter
     private def wire_ecosystem_information(cluster : Cluster::Base) : Nil
       if ecosystem_information = cluster.as?(Cluster::EcosystemInformation)
         ecosystem_information.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+      end
+    end
+
+    private def validate_thread_network_directory(cluster : Cluster::Base) : Nil
+      if directory = cluster.as?(Cluster::ThreadNetworkDirectory)
+        directory.validate_supported_fabrics!(@fabric_table.max_fabrics)
       end
     end
 

@@ -48,6 +48,7 @@ describe Directory do
       metadata.timed?.should be_true
     end
     cluster.get_command_metadata(Directory::CMD_GET_OPERATIONAL_DATASET).as(Matter::Cluster::CommandMetadata).timed?.should be_false
+    expect_raises(Matter::ConfigurationError) { cluster.validate_supported_fabrics!(17_u8) }
   end
 
   it "rejects missing, malformed and duplicate Thread dataset TLVs" do
@@ -64,6 +65,11 @@ describe Directory do
       add_dataset(cluster, input).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     end
     cluster.thread_networks.should be_empty
+    future_dataset = dataset + thread_tlv(200_u8, Bytes[1, 2, 3])
+    add_dataset(cluster, future_dataset).status.should eq(Matter::InteractionModel::StatusCode::Success)
+    cluster.request_is_case_session = true
+    cluster.get_operational_dataset(Directory::ExtendedPanIdRequest.new(Bytes[1, 2, 3, 4, 5, 6, 7, 8]))
+      .as(Directory::OperationalDatasetResponse).operational_dataset.should eq(future_dataset)
   end
 
   it "shares entries across fabrics and replaces only with a newer timestamp" do
