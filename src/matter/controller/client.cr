@@ -22,6 +22,8 @@ module Matter
       MAX_CACHED_ACKS         = Transport::MessageCounter::WINDOW_SIZE
       MAX_DEFERRED_MESSAGES   = 256
       DEFERRED_CHECK_INTERVAL = 10.milliseconds
+      # A bounded rejection limit for random candidates, not a wire protocol value.
+      SESSION_ID_ALLOCATION_ATTEMPTS = 32
 
       record ReceivedMessage, message : Codec::MessageCodec::Message, peer : Socket::IPAddress
 
@@ -103,6 +105,16 @@ module Matter
 
       def session_id_available?(session_id : UInt16) : Bool
         session_id != 0 && !@sessions.has_key?(session_id) && !(@session_id_in_use.try(&.call(session_id)) || false)
+      end
+
+      # Session IDs must be available both locally and to another controller
+      # using the same transport. Check before advertising one on the wire.
+      def allocate_session_id(protocol : String, &candidate : -> UInt16) : UInt16
+        SESSION_ID_ALLOCATION_ATTEMPTS.times do
+          id = candidate.call
+          return id if session_id_available?(id)
+        end
+        raise Matter::ProtocolError.new("Could not allocate an unused #{protocol} session ID")
       end
 
       def session?(session_id : UInt16) : Session::SecureContext?
