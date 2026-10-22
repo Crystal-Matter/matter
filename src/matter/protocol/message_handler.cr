@@ -1,4 +1,5 @@
 require "../cluster/basic_information"
+require "../cluster/general_diagnostics"
 require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
 require "../cluster/group_key_management"
@@ -99,6 +100,10 @@ module Matter
       getter operational_credentials_cluster : Cluster::OperationalCredentials?
       getter persistence : Persistence::Base?
 
+      @im_stats_mutex : Mutex = Mutex.new
+      @im_messages_sent : UInt32 = 0_u32
+      @im_messages_received : UInt32 = 0_u32
+
       property vendor_id : UInt16
       property product_id : UInt16
 
@@ -158,6 +163,7 @@ module Matter
         initialize_clusters
 
         @sender = ResponseSender.new(@transport, @mrp_cache)
+        @sender.on_im_message_sent = -> { record_im_message_sent }
         @bdx = Bdx::Responder.new
         @bdx_initiator = Bdx::Initiator.new(@sender)
         @bdx_lanes = {} of UInt16 => BdxLane
@@ -286,6 +292,34 @@ module Matter
       # through `node` instead.
       def clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base)
         @node.clusters
+      end
+
+      # A snapshot for the revision-3 GeneralDiagnostics DeviceLoadStatus
+      # attribute. Subscription state is read under the registry's lock, and
+      # packet counters are protected against concurrent sender fibers.
+      def device_load_status(fabric_index : UInt8?) : Cluster::GeneralDiagnostics::DeviceLoadStruct
+        subscriptions = @registry.subscription_load(fabric_index)
+        @im_stats_mutex.synchronize do
+          Cluster::GeneralDiagnostics::DeviceLoadStruct.new(
+            subscriptions.current,
+            subscriptions.current_for_fabric,
+            subscriptions.total,
+            @im_messages_sent,
+            @im_messages_received
+          )
+        end
+      end
+
+      private def record_im_message_sent : Nil
+        @im_stats_mutex.synchronize do
+          @im_messages_sent = @im_messages_sent &+ 1_u32 unless @im_messages_sent == UInt32::MAX
+        end
+      end
+
+      private def record_im_message_received : Nil
+        @im_stats_mutex.synchronize do
+          @im_messages_received = @im_messages_received &+ 1_u32 unless @im_messages_received == UInt32::MAX
+        end
       end
 
       # Initialize device clusters (called during construction)
@@ -641,6 +675,9 @@ module Matter
           return if keys.empty?
           @group_packets.keys = keys
           decoded = @group_packets.decode(wire)
+          if decoded.message.payload_header.protocol_id == ProtocolId::InteractionModel.value
+            record_im_message_received
+          end
           if group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
             GroupInteractionRouter.new(@node.clusters, group_keys).handle(decoded)
           end
@@ -723,6 +760,7 @@ module Matter
             return
           end
 
+          record_im_message_received
           @router.handle(msg, peer, session)
         when ProtocolId::Bdx.value
           unless session && session.case_session?

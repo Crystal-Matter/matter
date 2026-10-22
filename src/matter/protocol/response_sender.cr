@@ -25,6 +25,10 @@ module Matter
       # collide with the exchanges a controller opens.
       property next_exchange_id : UInt16 = Random.rand(UInt16).to_u16
 
+      # Fired once a new encrypted IM packet has been handed to the transport.
+      # MRP retransmissions reuse cached bytes and do not invoke this callback.
+      property on_im_message_sent : Proc(Nil)?
+
       def initialize(@transport : Transport::PacketTransport, @mrp_cache : MrpCache)
       end
 
@@ -60,6 +64,7 @@ module Matter
 
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           payload_header.exchange_id, counter)
+        @on_im_message_sent.try(&.call)
       end
 
       # Sends one BDX message on the same encrypted exchange as the request.
@@ -184,6 +189,7 @@ module Matter
           source_node_id: session.local_node_id)
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           exchange_id, counter)
+        @on_im_message_sent.try(&.call)
       end
 
       # Sends an unencrypted Secure Channel message: the PASE and CASE

@@ -12,7 +12,7 @@ module Matter
     class GeneralDiagnostics < Base
       Log = ::Log.for("matter.cluster.general_diagnostics")
 
-      cluster 0x0033, revision: 2
+      cluster 0x0033, revision: 3
 
       enum InterfaceType : UInt8
         # Indicates an interface of an unspecified type.
@@ -300,6 +300,34 @@ module Matter
         end
       end
 
+      # Matter 1.6 DeviceLoadStatus (0x000A). These are live protocol counters,
+      # not values persisted with the cluster's data model state.
+      struct DeviceLoadStruct
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter current_subscriptions : UInt16
+
+        @[TLV::Field(tag: 1)]
+        getter current_subscriptions_for_fabric : UInt16
+
+        @[TLV::Field(tag: 2)]
+        getter total_subscriptions_established : UInt32
+
+        @[TLV::Field(tag: 3)]
+        getter total_interaction_model_messages_sent : UInt32
+
+        @[TLV::Field(tag: 4)]
+        getter total_interaction_model_messages_received : UInt32
+
+        def initialize(@current_subscriptions : UInt16,
+                       @current_subscriptions_for_fabric : UInt16,
+                       @total_subscriptions_established : UInt32,
+                       @total_interaction_model_messages_sent : UInt32,
+                       @total_interaction_model_messages_received : UInt32)
+        end
+      end
+
       # UpTime and TotalOperationalHours are computed on read from the time
       # the cluster was created.
       attribute 0x0000, :network_interfaces, Array(NetworkInterfaceInfo), default: [] of NetworkInterfaceInfo
@@ -311,6 +339,7 @@ module Matter
       attribute 0x0006, :active_radio_faults, Array(RadioFault), default: [] of RadioFault, optional: true
       attribute 0x0007, :active_network_faults, Array(NetworkFault), default: [] of NetworkFault, optional: true
       attribute 0x0008, :test_event_triggers_enabled, Bool, default: false
+      attribute 0x000A, :device_load_status, DeviceLoadStruct, computed: true, omit_changes: true
 
       command 0x00, :test_event_trigger, request: TestEventTriggerRequest, access: :manage
       command 0x01, :time_snapshot, response: TimeSnapshotResponse, response_id: 0x02, access: :operate
@@ -323,6 +352,9 @@ module Matter
       # Return synchronized POSIX milliseconds, or nil when unavailable.
       property on_posix_time_ms : Proc(UInt64?)?
 
+      # Supplied by the device runtime, which owns the protocol counters.
+      property on_device_load_status : Proc(UInt8?, DeviceLoadStruct)?
+
       def initialize(
         endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
         @reboot_count : UInt16 = 0_u16,
@@ -332,6 +364,11 @@ module Matter
         @start_time = Time.utc
         @start_instant = Time.instant
         @on_posix_time_ms = nil
+        @on_device_load_status = nil
+      end
+
+      def device_load_status(fabric_index : UInt8?) : DeviceLoadStruct | InteractionModel::Status
+        @on_device_load_status.try(&.call(fabric_index)) || InteractionModel::Status.failure
       end
 
       def time_snapshot : TimeSnapshotResponse

@@ -192,6 +192,11 @@ application supplies a synchronized clock through `on_posix_time_ms`. Device
 startup journals the configured BootReason as a critical event.
 When the application has no platform boot-cause signal, the reported reason is
 Unspecified.
+General Diagnostics revision 3 also reports DeviceLoadStatus from live protocol
+state: active subscriptions, the accessing fabric's share, cumulative
+subscription establishments, and sent and received Interaction Model messages.
+These counters start with each device process; restored active subscriptions
+count as established when restored.
 Each `PowerSource` also exposes the Matter 1.6 mandatory `EndpointList`;
 pass the powered endpoint numbers at construction or call
 `update_endpoint_list` when the mapping changes.

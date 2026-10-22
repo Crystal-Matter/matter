@@ -7,7 +7,7 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 55
+- Implemented standard cluster IDs compared: 64
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 107
@@ -35,13 +35,13 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0030 | General Commissioning Cluster | 2 | 2 | — | — |
 | 0x0031 | Network Commissioning Cluster | 2 | 2 | — | — |
 | 0x0032 | Diagnostic Logs Cluster | 1 | 1 | — | — |
-| 0x0033 | General Diagnostics Cluster | 3 | 2 | — | — |
+| 0x0033 | General Diagnostics Cluster | 3 | 3 | — | — |
 | 0x0034 | Software Diagnostics Cluster | 1 | 1 | — | — |
 | 0x0035 | Thread Network Diagnostics Cluster | 3 | 3 | — | — |
 | 0x0036 | Wi-Fi Network Diagnostics Cluster | 1 | 1 | — | — |
 | 0x0037 | Ethernet Network Diagnostics Cluster | 1 | 1 | — | — |
 | 0x0038 | Time Synchronization Cluster | 2 | 2 | — | — |
-| 0x0039 | Bridged Device Basic Information Cluster | 6 | 5 | — | — |
+| 0x0039 | Bridged Device Basic Information Cluster | 6 | 6 | — | — |
 | 0x003B | Switch Cluster | 2 | 2 | — | — |
 | 0x003C | Administrator Commissioning Cluster | 1 | 1 | — | — |
 | 0x003E | Operational Credentials Cluster | 2 | 2 | — | — |
@@ -69,7 +69,16 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 3 | — | — |
 | 0x0406 | Occupancy Sensing Cluster | 7 | 5 | — | — |
-| 0x040D | Carbon Dioxide Concentration Measurement | 5 | 3 | — | — |
+| 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — | — |
+| 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — | — |
+| 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — | — |
+| 0x0415 | Ozone Concentration Measurement | 5 | 5 | — | — |
+| 0x042A | PM2.5 Concentration Measurement | 5 | 5 | — | — |
+| 0x042B | Formaldehyde Concentration Measurement | 5 | 5 | — | — |
+| 0x042C | PM1 Concentration Measurement | 5 | 5 | — | — |
+| 0x042D | PM10 Concentration Measurement | 5 | 5 | — | — |
+| 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
+| 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — | — |
 

@@ -16,9 +16,9 @@ private struct TimeSnapshotWire
 end
 
 describe GeneralDiagnostics do
-  it "declares mandatory TimeSnapshot and BootReason at revision 2" do
+  it "retains mandatory TimeSnapshot and BootReason at revision 3" do
     cluster = build(GeneralDiagnostics, 0)
-    cluster.cluster_revision.should eq(2_u16)
+    cluster.cluster_revision.should eq(3_u16)
     cluster.boot_reason.should eq(GeneralDiagnostics::BootReason::Unspecified)
     cluster.get_command_metadata(GeneralDiagnostics::CMD_TIME_SNAPSHOT).as(Matter::Cluster::CommandMetadata).access
       .should eq(Matter::InteractionModel::EntryPrivilege::Operate)

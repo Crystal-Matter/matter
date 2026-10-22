@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### General Diagnostics device load
+
+- Advertise General Diagnostics revision 3 and its mandatory DeviceLoadStatus
+  structure. Report active subscriptions for all fabrics and the accessing
+  fabric, successful subscription establishments, and actual Interaction Model
+  messages sent and received. Secure Channel traffic and MRP retransmissions
+  do not inflate the IM counters.
+
 ### General Diagnostics snapshot and boot event
 
 - Implement revision 2 TimeSnapshot command and nullable POSIX response field.
