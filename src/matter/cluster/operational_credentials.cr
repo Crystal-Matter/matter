@@ -662,8 +662,8 @@ module Matter
 
       # Failsafe disarmed successfully - the credentials are committed
       def on_failsafe_success
+        credentials.commit_pending
         @vid_failsafe_snapshot.clear
-        credentials.reset_pending
       end
 
       # A new failsafe was armed: state from a previous commissioning session
@@ -701,6 +701,7 @@ module Matter
             fabric_index: fabric.fabric_index
           )
           acl_cluster.increment_version
+          persist_acl(acl_cluster, fabric.fabric_index)
         end
 
         @general_commissioning_cluster.try(&.record_added_fabric(fabric.fabric_index))
@@ -709,7 +710,20 @@ module Matter
 
       # A fabric was removed: so is every piece of data scoped to it
       def fabric_forgotten(fabric_index : UInt8) : Nil
-        @access_control_cluster.try(&.remove_fabric_acl(fabric_index))
+        if access_control = @access_control_cluster
+          access_control.remove_fabric_acl(fabric_index)
+          # The credential journal may only be cleared after the removed
+          # fabric's ACL is durable. Otherwise a crash can resurrect an ACL
+          # under the same local fabric index on a later commission.
+          persist_acl(access_control, fabric_index)
+        end
+      end
+
+      private def persist_acl(access_control : AccessControl, fabric_index : UInt8) : Nil
+        state = access_control.save_state ||
+                raise StorageError.new("Could not encode ACL for fabric #{fabric_index}")
+        @fabric_table.backend.write(Storage::Collections::CLUSTERS,
+          access_control.persistence_key, state)
       end
     end
   end

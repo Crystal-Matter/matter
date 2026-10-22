@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Durable fail-safe credential recovery
+
+- Write a durable undo journal before provisional AddNOC and UpdateNOC fabric
+  changes. On restart, remove an uncommitted added fabric or restore the prior
+  CASE identity before operational startup; retain acknowledged credentials.
+  Persist ACL grants and removals synchronously, and prune orphan fabric ACLs
+  before a recycled fabric index can be used. File-backed restart and injected
+  storage failure specs cover these boundaries.
+
 ### Keypad Input
 
 - Translate accepted SendKey repeats into host Press, Hold, and Release
@@ -48,7 +57,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to separate host callbacks; without them, it reports InvalidInState. The
   transition runs only after a successful InvokeResponse send. A synthetic
   device and official chip-tool test verify command dispatch and restart.
-
 ### Color Control revision 9
 
 - Report fixed primary count and coordinates, require the CT coupling minimum,

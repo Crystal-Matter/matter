@@ -204,13 +204,16 @@ module Matter
         end
 
         Log.info { "Commissioning completed successfully" }
+        # Commit credential storage before dropping the fail-safe context.
+        # A storage failure must leave a live context that can still expire
+        # and roll back; only a durable commit may be acknowledged.
+        @on_failsafe_success.try(&.call)
+        @on_terms_conditions_commit.try(&.call)
+        @targets.close_commissioning_window
+        self.breadcrumb = 0_u64
         context.disarm
         @context = nil
         @admin_fabric_index = nil
-        self.breadcrumb = 0_u64
-        @targets.close_commissioning_window
-        @on_terms_conditions_commit.try(&.call)
-        @on_failsafe_success.try(&.call)
 
         Outcome.new
       end

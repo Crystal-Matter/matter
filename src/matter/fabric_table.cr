@@ -82,8 +82,8 @@ module Matter
         return false
       end
 
-      @fabrics[fabric.fabric_index] = fabric
       write_fabric(fabric)
+      @fabrics[fabric.fabric_index] = fabric
       true
     end
 
@@ -99,9 +99,10 @@ module Matter
       label : String = "",
       intermediate_cert : Bytes? = nil,
       root_cert : Bytes? = nil,
+      fabric_index : UInt8? = nil,
     ) : Fabric?
       # Find next available fabric index
-      fabric_index = next_available_index
+      fabric_index ||= next_available_index
       return unless fabric_index
 
       # Create fabric
@@ -132,8 +133,8 @@ module Matter
       # Fabric must already exist
       return false unless @fabrics.has_key?(fabric.fabric_index)
 
-      @fabrics[fabric.fabric_index] = fabric
       write_fabric(fabric)
+      @fabrics[fabric.fabric_index] = fabric
       true
     end
 

@@ -225,6 +225,21 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
+      # Remove ACLs whose fabric document is absent. This also repairs an
+      # interrupted ordinary RemoveFabric, where the fabric delete succeeded
+      # but the ACL write did not. Do this before CASE can use a recycled index.
+      orphan_acl_indices = access_control.acl.compact_map(&.fabric_index).uniq!.reject do |index|
+        @fabric_table.get_fabric(index)
+      end
+      orphan_acl_indices.each do |index|
+        access_control.remove_fabric_acl(index)
+      end
+      if !orphan_acl_indices.empty? || @persistence.recovered_added_fabric_index
+        unless @persistence.save_cluster(access_control)
+          raise StorageError.new("Could not persist recovered fabric ACL cleanup")
+        end
+        @persistence.complete_credential_recovery
+      end
       @message_handler.refresh_group_memberships
       if @groupcast_sender_enabled
         groupcast = @node.get_cluster(Cluster::Groupcast).as(Cluster::Groupcast)
