@@ -345,6 +345,8 @@ module Matter
       class CaseResponder
         Log = ::Log.for("matter.session.case.responder")
 
+        SESSION_ID_ALLOCATION_ATTEMPTS = 32
+
         property cert_chain : OperationalCertChain
         property operational_key : Crypto::Key
         property ephemeral_key : Crypto::Key?
@@ -415,6 +417,7 @@ module Matter
           peer_random : Bytes,
           peer_session_id : UInt16,
           sigma1_bytes : Bytes,
+          responder_session_id : UInt16? = nil,
         ) : {ephemeral_public_key: Bytes, random: Bytes, encrypted_cert: Bytes, session_id: UInt16, sigma2_bytes: Bytes}
           # Store sigma1 bytes for session key derivation
           @sigma1_bytes = sigma1_bytes
@@ -513,8 +516,10 @@ module Matter
           encrypted_cert = @crypto.encrypt(sigma2_key, encrypted_data_bytes, TBE_DATA2_NONCE)
           Log.debug { "CASE Sigma2 encrypted2: #{encrypted_cert.size} bytes" }
 
-          # Generate session ID
-          session_id = @crypto.random_uint16
+          # SecureChannel supplies an ID checked against all established and
+          # pending sessions. Standalone callers still need a nonzero ID.
+          session_id = responder_session_id || draw_nonzero_session_id
+          raise Matter::ProtocolError.new("CASE responder session ID must be nonzero") if session_id == 0_u16
 
           # Build the Sigma2 TLV message for later use in session key derivation
           sigma2_msg = Definitions::Sigma2.new(
@@ -538,6 +543,14 @@ module Matter
             session_id:           session_id,
             sigma2_bytes:         sigma2_bytes,
           }
+        end
+
+        private def draw_nonzero_session_id : UInt16
+          SESSION_ID_ALLOCATION_ATTEMPTS.times do
+            candidate = @crypto.random_uint16
+            return candidate unless candidate == 0_u16
+          end
+          raise Matter::ProtocolError.new("Could not allocate a nonzero CASE responder session ID")
         end
 
         # Step 2: Process Sigma3 and verify

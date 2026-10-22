@@ -30,6 +30,9 @@ module Matter
       # across all peers while allowing a new commissioner to make progress.
       MAX_HANDSHAKES_IN_FLIGHT = 64
 
+      # Bound rejection sampling even if a random source repeats an unusable ID.
+      SESSION_ID_ALLOCATION_ATTEMPTS = 32
+
       # SPAKE2+ context prefix (Matter spec 3.10).
       SPAKE_CONTEXT = "CHIP PAKE V1 Commissioning"
 
@@ -133,6 +136,9 @@ module Matter
       @default_iterations : UInt32
       @default_salt : Bytes
 
+      # Injected only by protocol specs to force rejected ID candidates.
+      @session_id_candidate : Proc(UInt16)
+
       def initialize(
         @fabric_table : FabricTable,
         @registry : SessionRegistry,
@@ -140,6 +146,7 @@ module Matter
         @setup_pin : UInt32,
         @iterations : UInt32,
         @salt : Bytes,
+        @session_id_candidate : Proc(UInt16) = -> { Random::Secure.rand(UInt16) },
       )
         @default_setup_pin = @setup_pin
         @default_iterations = @iterations
@@ -149,6 +156,20 @@ module Matter
         @fabric_table.on_fabric_removed = ->(fabric : Fabric) do
           @resumption_store.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
         end
+      end
+
+      # An encrypted session ID must be nonzero and must not alias either an
+      # established session or any handshake that may still establish one.
+      private def allocate_responder_session_id : UInt16
+        SESSION_ID_ALLOCATION_ATTEMPTS.times do
+          id = @session_id_candidate.call
+          next if id == 0_u16 || @registry.session(id)
+          next if @pase_handshakes.values.any?(&.responder_session_id.==(id))
+          next if @case_handshakes.values.any?(&.responder_session_id.==(id))
+          next if @case_resume_handshakes.values.any?(&.responder_session_id.==(id))
+          return id
+        end
+        raise Matter::ProtocolError.new("Could not allocate an unused responder session ID")
       end
 
       # Handles a Secure Channel message. Returns whether it was one this
@@ -251,7 +272,7 @@ module Matter
         initiator_random = request.initiator_random || return
         Log.debug { "  Initiator session ID: #{initiator_session_id}, random: #{initiator_random.size} bytes" }
 
-        responder_session_id = Random::Secure.rand(UInt16)
+        responder_session_id = allocate_responder_session_id
         response_payload = Session::Pase::Definitions::PbkdfParamResponse.new(
           initiator_random: initiator_random,
           responder_random: Random::Secure.random_bytes(RANDOM_LENGTH),
@@ -453,7 +474,8 @@ module Matter
           peer_ephemeral_public_key: sigma1.initiator_eph_pub_key,
           peer_random: sigma1.initiator_random,
           peer_session_id: sigma1.initiator_session_id,
-          sigma1_bytes: msg.payload
+          sigma1_bytes: msg.payload,
+          responder_session_id: allocate_responder_session_id
         )
 
         key = handshake_key(msg, peer)
@@ -506,10 +528,7 @@ module Matter
         key = handshake_key(msg, peer)
         evict_oldest_handshake if !@case_resume_handshakes.has_key?(key) &&
                                   handshakes_in_flight >= MAX_HANDSHAKES_IN_FLIGHT
-        responder_session_id = Random::Secure.rand(UInt16)
-        while responder_session_id == 0 || @registry.session(responder_session_id)
-          responder_session_id = Random::Secure.rand(UInt16)
-        end
+        responder_session_id = allocate_responder_session_id
         new_id = crypto.random_bytes(Session::Case::RESUMPTION_ID_LENGTH)
         @case_resume_handshakes[key] = CaseResumeHandshake.new(record, fabric,
           sigma1.initiator_random.dup, new_id, sigma1.initiator_session_id,

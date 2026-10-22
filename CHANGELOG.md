@@ -16,6 +16,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   B-issued controller against a migrated A device before and after that grant
   and after the device restarts.
 
+### Secure session ID allocation
+
+- Allocate nonzero, unused responder session IDs across PASE, full CASE, and
+  CASE resumption, including pending handshakes. This prevents rare CASE
+  failures when a random responder ID is zero and avoids a handshake claiming
+  an established or pending session ID. Deterministic protocol specs force
+  each rejected candidate.
+
 ### Temperature Control
 
 - Add an opt-in Matter 1.6 Temperature Control server (`0x0056`, revision 1)
