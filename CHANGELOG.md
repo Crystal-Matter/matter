@@ -14,14 +14,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   at most 10.00% maximum error; nullable percentage readings are range checked
   before publication. A Soil Sensor example is read through official chip-tool.
 
+### Level Control revision 7 color temperature coupling
+
+- Link Level Control and Color Control on the same endpoint. The Lighting
+  feature now applies `Options.CoupleColorTempToLevel` to ordinary and WithOnOff
+  commands, including per-command masks and transition ticks. Coupling follows
+  the Color Control temperature mode and its physical and coupling limits.
+  The official chip-tool example covers the Options write and command overrides.
+  Level Control now advertises Matter 1.6 revision 7.
+
 ### Level Control revision 7 conformance slice
 
 - Apply Operate and Manage write privileges from the Matter 1.6 XML, retain
   only CurrentLevel and StartUpCurrentLevel across restarts, expose all eight
   mandatory commands even without the OnOff feature, and mark CurrentFrequency
   as a scene attribute. Reject host CurrentLevel updates outside configured
-  bounds before changing state. The server continues to advertise revision 6
-  while color-temperature coupling remains incomplete.
+  bounds before changing state. Color-temperature coupling is described above.
 
 ### Relative Humidity Measurement revision 5
 

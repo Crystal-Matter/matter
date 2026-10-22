@@ -309,6 +309,10 @@ Confirmed working with iOS.
 endpoint 1, an extended color light on endpoint 2, and a window covering on endpoint 3.
 The Docker e2e suite commissions it with the official chip-tool and exercises group
 membership, hue, color temperature, and lift position commands.
+The extended color light also demonstrates Level Control's
+`CoupleColorTempToLevel` option: level changes adjust the active color
+temperature across the configured mired range. Per-command option masks can
+enable or disable coupling for one command.
 Level Control defaults to a Lighting range of 1–254. When using Level Control
 for a non-lighting application, set `feature_map: Matter::Cluster::LevelControl::Feature::None`
 to allow a custom range that starts at zero.

@@ -52,6 +52,7 @@ module Matter
       @clusters[cluster.cluster_id.id] = cluster
       if level = get_cluster(Cluster::LevelControl)
         level.bind_on_off(get_cluster(Cluster::OnOff))
+        level.bind_color_control(get_cluster(Cluster::ColorControl))
       end
       if color = get_cluster(Cluster::ColorControl)
         color.bind_on_off(get_cluster(Cluster::OnOff))

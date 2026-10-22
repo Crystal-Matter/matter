@@ -2,31 +2,38 @@ require "./e2e_helper"
 
 # Dimmable light, color light and window covering endpoints.
 module LevelControlE2E
-  COLOR_ENDPOINT          =  2
-  COVERING_ENDPOINT       =  3
-  GROUP_ID                = 42
-  GROUP_NAME              = "Reading room"
-  TARGET_HUE              =   90
-  OFF_TARGET_HUE          =  120
-  COLOR_TEMPERATURE       =  300
-  START_COLOR_TEMPERATURE =  250
-  HUE_MODE                =    0
-  TEMPERATURE_MODE        =    2
-  LIFT_POSITION           = 5000
-  NO_TRANSITION           = "0"
-  TIMED_TRANSITION        = "50"
-  NO_OPTIONS              = "0"
-  SHORTEST_HUE_DIRECTION  = "0"
-  COLOR_OPTIONS           =    1
-  COLOR_OPTIONS_CLEAR     =    0
-  EXECUTE_IF_OFF          =    1
-  COVERING_MODE           =    1
-  COVERING_OPENING_STATUS = 0x05
-  COVERING_CLOSING_STATUS = 0x0A
-  COVERING_REVISION       =    8
-  COVERING_MAINTENANCE    =    4
-  COVERING_CALIBRATION    =    2
-  COVERING_REVERSED       =    1
+  COLOR_ENDPOINT               =  2
+  COVERING_ENDPOINT            =  3
+  GROUP_ID                     = 42
+  GROUP_NAME                   = "Reading room"
+  TARGET_HUE                   =   90
+  OFF_TARGET_HUE               =  120
+  COLOR_TEMPERATURE            =  300
+  COUPLED_TEMPERATURE_MIN      =  200
+  PHYSICAL_TEMPERATURE_MAX     =  500
+  COUPLED_MIDPOINT_TEMPERATURE =  350
+  LEVEL_MINIMUM                =    1
+  LEVEL_MIDPOINT               =  127
+  LEVEL_MAXIMUM                =  254
+  COUPLE_COLOR_OPTION          =    2
+  START_COLOR_TEMPERATURE      =  250
+  HUE_MODE                     =    0
+  TEMPERATURE_MODE             =    2
+  LIFT_POSITION                = 5000
+  NO_TRANSITION                = "0"
+  TIMED_TRANSITION             = "50"
+  NO_OPTIONS                   = "0"
+  SHORTEST_HUE_DIRECTION       = "0"
+  COLOR_OPTIONS                =    1
+  COLOR_OPTIONS_CLEAR          =    0
+  EXECUTE_IF_OFF               =    1
+  COVERING_MODE                =    1
+  COVERING_OPENING_STATUS      = 0x05
+  COVERING_CLOSING_STATUS      = 0x0A
+  COVERING_REVISION            =    8
+  COVERING_MAINTENANCE         =    4
+  COVERING_CALIBRATION         =    2
+  COVERING_REVERSED            =    1
 end
 
 describe "matter_level_control example" do
@@ -120,6 +127,39 @@ describe "matter_level_control example" do
     read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint).should eq LevelControlE2E::COLOR_TEMPERATURE
     expect_success(device.write("colorcontrol", "options", LevelControlE2E::COLOR_OPTIONS, endpoint))
     read_int(device, "colorcontrol", "options", "Options", endpoint).should eq LevelControlE2E::COLOR_OPTIONS
+  end
+
+  it "couples level changes to color temperature with effective command options" do
+    endpoint = LevelControlE2E::COLOR_ENDPOINT
+    expect_success(device.invoke("onoff", "on", endpoint: endpoint))
+    expect_success(device.write("levelcontrol", "options", LevelControlE2E::COUPLE_COLOR_OPTION, endpoint))
+    expect_success(device.invoke("colorcontrol", "move-to-color-temperature", [
+      LevelControlE2E::COLOR_TEMPERATURE.to_s, LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::NO_OPTIONS, LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "couple-color-temp-to-level-min-mireds", "CoupleColorTempToLevelMinMireds", endpoint)
+      .should eq LevelControlE2E::COUPLED_TEMPERATURE_MIN
+
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", [
+      LevelControlE2E::LEVEL_MINIMUM.to_s, LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::NO_OPTIONS, LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint)
+      .should eq LevelControlE2E::PHYSICAL_TEMPERATURE_MAX
+
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", [
+      LevelControlE2E::LEVEL_MAXIMUM.to_s, LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::COUPLE_COLOR_OPTION.to_s, LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint)
+      .should eq LevelControlE2E::PHYSICAL_TEMPERATURE_MAX
+
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", [
+      LevelControlE2E::LEVEL_MIDPOINT.to_s, LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::COUPLE_COLOR_OPTION.to_s, LevelControlE2E::COUPLE_COLOR_OPTION.to_s,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint)
+      .should eq LevelControlE2E::COUPLED_MIDPOINT_TEMPERATURE
   end
 
   it "switches ColorMode on a same-value command and at the start of a timed transition" do
