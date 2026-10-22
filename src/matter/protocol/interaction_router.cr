@@ -408,6 +408,7 @@ module Matter
         # requires an InvokeResponse (Core 8.8.3.2.1).
         if request.suppress_response && invoke_responses.none? { |response| response.command_data != nil }
           Log.info { "Response suppressed per suppressResponse flag" }
+          @on_invoke_response_failed.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
           return
         end
 

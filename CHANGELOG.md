@@ -18,9 +18,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Low Power cluster
 
 - Add the opt-in Matter 1.6 Low Power revision 1 server. Its mandatory Sleep
-  command has Operate access and delegates acceptance to a host callback;
-  without one, it reports InvalidInState. A synthetic device and official
-  chip-tool test verify command dispatch and restart.
+  command has Operate access and delegates acceptance and physical transition
+  to separate host callbacks; without them, it reports InvalidInState. The
+  transition runs only after a successful InvokeResponse send. A synthetic
+  device and official chip-tool test verify command dispatch and restart.
 
 ### Color Control revision 9
 

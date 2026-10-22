@@ -319,8 +319,12 @@ lockout and schedule visibility require Manage. The
 Thermostat device and is exercised by official chip-tool.
 
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
-Register `on_sleep` to accept or refuse requests; the callback should schedule
-the physical transition after the command response. The synthetic
+Register `configure_host(accept, sleep)` to accept or refuse requests and to
+enter low power. The admission callback returns a status synchronously and must
+not begin sleep or perform irreversible work. The physical sleep callback runs
+only after the matching InvokeResponse has been
+sent and the protocol lock is released. Failed or suppressed responses discard
+the transition. The synthetic
 `examples/matter_low_power_device.cr` fixture records requests for its
 chip-tool interoperability test.
 
