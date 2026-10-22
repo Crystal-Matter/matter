@@ -26,6 +26,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and one-use reverse responses with official chip-tool. No ordinary device
   advertises this cluster.
 
+### Wi-Fi Network Management
+
+- Add an opt-in Matter 1.6 Wi-Fi Network Management server. A network
+  infrastructure host supplies its current SSID and WPA-Personal passphrase;
+  authorized CASE managers can request the passphrase. The cluster reports a
+  changed surrogate when the passphrase changes and clears both nullable
+  attributes when credentials are removed. The host retains durable credential
+  storage and surrogate, then reprovisions the cluster after restart. A
+  synthetic Aggregator fixture checks the wire behavior with official
+  chip-tool without advertising the incomplete Network Infrastructure Manager
+  device type.
+
 ### Level Control startup state
 
 - Apply Lighting StartUpCurrentLevel after restoring persisted cluster state on
