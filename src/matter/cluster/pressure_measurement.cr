@@ -44,24 +44,28 @@ module Matter
       attribute 0x0000, :measured_value, Int16, nullable: true,
         validate: :validate_measured_value!
       attribute 0x0001, :min_measured_value, Int16, nullable: true,
-        fixed: true, max: MAX_MIN_MEASURED_VALUE
+        fixed: true, max: MAX_MIN_MEASURED_VALUE,
+        validate: :reject_fixed_attribute_change!
       attribute 0x0002, :max_measured_value, Int16, nullable: true,
-        fixed: true
+        fixed: true, validate: :reject_fixed_attribute_change!
       attribute 0x0003, :tolerance, UInt16, default: 0_u16,
         optional: true, fixed: true, max: MAX_TOLERANCE,
-        present_if: :tolerance_supported?
+        present_if: :tolerance_supported?, validate: :reject_fixed_attribute_change!
 
       attribute 0x0010, :scaled_value, Int16, nullable: true,
         requires: :extended, validate: :validate_scaled_value!
       attribute 0x0011, :min_scaled_value, Int16, nullable: true,
-        fixed: true, max: MAX_MIN_MEASURED_VALUE, requires: :extended
+        fixed: true, max: MAX_MIN_MEASURED_VALUE, requires: :extended,
+        validate: :reject_fixed_attribute_change!
       attribute 0x0012, :max_scaled_value, Int16, nullable: true,
-        fixed: true, requires: :extended
+        fixed: true, requires: :extended, validate: :reject_fixed_attribute_change!
       attribute 0x0013, :scaled_tolerance, UInt16, default: 0_u16,
         optional: true, fixed: true, max: MAX_TOLERANCE,
-        requires: :extended, present_if: :scaled_tolerance_supported?
+        requires: :extended, present_if: :scaled_tolerance_supported?,
+        validate: :reject_fixed_attribute_change!
       attribute 0x0014, :scale, Int8, default: 0_i8,
-        fixed: true, min: MIN_SCALE, requires: :extended
+        fixed: true, min: MIN_SCALE, requires: :extended,
+        validate: :reject_fixed_attribute_change!
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @measured_value : Int16? = nil,
@@ -142,6 +146,10 @@ module Matter
       # Called with the previous and the new value whenever MeasuredValue changes
       def on_pressure_changed(&block : Int16?, Int16? -> Nil) : Nil
         on_measured_value_changed(&block)
+      end
+
+      private def reject_fixed_attribute_change!(_value) : Nil
+        raise ArgumentError.new("fixed pressure attributes cannot change after construction")
       end
 
       private def below_minimum?(value : Int16) : Bool

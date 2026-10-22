@@ -30,6 +30,32 @@ describe "Pressure Measurement revision 5" do
     cluster.data_version.should eq(version)
   end
 
+  it "rejects host changes to fixed configuration without changing DataVersion" do
+    cluster = build(Matter::Cluster::PressureMeasurement,
+      feature_map: Matter::Cluster::PressureMeasurement::Feature::Extended,
+      min_measured_value: 1_i16, max_measured_value: 100_i16, tolerance: 1_u16,
+      min_scaled_value: 10_i16, max_scaled_value: 1000_i16,
+      scaled_tolerance: 2_u16, scale: 1_i8)
+    version = cluster.data_version
+
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.min_measured_value = 2_i16 }
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.max_measured_value = 99_i16 }
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.tolerance = 2_u16 }
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.min_scaled_value = 11_i16 }
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.max_scaled_value = 999_i16 }
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.scaled_tolerance = 3_u16 }
+    expect_raises(ArgumentError, /fixed pressure/) { cluster.scale = 2_i8 }
+
+    cluster.min_measured_value.should eq(1_i16)
+    cluster.max_measured_value.should eq(100_i16)
+    cluster.tolerance.should eq(1_u16)
+    cluster.min_scaled_value.should eq(10_i16)
+    cluster.max_scaled_value.should eq(1000_i16)
+    cluster.scaled_tolerance.should eq(2_u16)
+    cluster.scale.should eq(1_i8)
+    cluster.data_version.should eq(version)
+  end
+
   it "exposes the complete Extended group only when enabled" do
     base = build(Matter::Cluster::PressureMeasurement)
     (0x0010_u32..0x0014_u32).each do |id|
