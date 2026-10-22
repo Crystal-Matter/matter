@@ -14,7 +14,7 @@ private record CaseResumeFixture,
   fabric : Matter::Fabric,
   table : Matter::FabricTable
 
-private def case_resume_fixture : CaseResumeFixture
+private def case_resume_fixture(candidate : Proc(UInt16) = -> { Random::Secure.rand(UInt16) }) : CaseResumeFixture
   crypto = Matter::Crypto::StandardCrypto.new
   authority = crypto.create_key_pair
   operational = crypto.create_key_pair
@@ -33,7 +33,7 @@ private def case_resume_fixture : CaseResumeFixture
   registry = Matter::Protocol::SessionRegistry.new(mrp_cache: cache)
   channel = Matter::Protocol::SecureChannel.new(table, registry,
     Matter::Protocol::ResponseSender.new(transport, cache), 20202021_u32,
-    1000_u32, Bytes.new(32, 0x01_u8))
+    1000_u32, Bytes.new(32, 0x01_u8), candidate)
   CaseResumeFixture.new(channel, registry, transport, fabric, table)
 end
 
@@ -68,6 +68,25 @@ private def case_resume_response(fixture : CaseResumeFixture) : Matter::Codec::M
 end
 
 describe "device CASE resumption" do
+  it "rejects zero and occupied responder IDs during resumption" do
+    candidates = [0_u16, 0x2222_u16, 0x3333_u16]
+    fixture = case_resume_fixture(-> { candidates.shift? || raise Matter::ProtocolError.new("Unexpected session ID draw") })
+    active = Matter::Session::SecureContext.new(0x2222_u16, 0x1111_u16,
+      Matter::Session::SessionType::Unicast, Bytes.new(16), Bytes.new(16))
+    fixture.registry.establish_session(active)
+    id = Bytes.new(16, 0x11_u8)
+    secret = Bytes.new(32, 0x22_u8)
+    fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fixture.fabric.fabric_id, fixture.fabric.root_public_key, fixture.fabric.node_id,
+      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE]))
+
+    fixture.channel.handle(resumed_sigma1(fixture.fabric, id, secret), CASE_RESUME_PEER).should be_true
+    response = case_resume_response(fixture)
+    sigma2 = Matter::Session::Case::Definitions::Sigma2Resume.from_slice(response.payload)
+    sigma2.responder_session_id.should eq(0x3333_u16)
+    candidates.should be_empty
+  end
+
   it "rotates a valid resumed session only after the matching Success status" do
     fixture = case_resume_fixture
     id = Bytes.new(16, 0x11_u8)

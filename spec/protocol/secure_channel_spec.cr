@@ -12,9 +12,10 @@ private MAX_EXPECTED_HANDSHAKES =           64
 private record SecureChannelFixture,
   channel : Matter::Protocol::SecureChannel,
   transport : Matter::Spec::CaptureTransport,
-  fabric_table : Matter::FabricTable
+  fabric_table : Matter::FabricTable,
+  registry : Matter::Protocol::SessionRegistry
 
-private def build_secure_channel : SecureChannelFixture
+private def build_secure_channel(candidate : Proc(UInt16) = -> { Random::Secure.rand(UInt16) }) : SecureChannelFixture
   transport = Matter::Spec::CaptureTransport.new_for_spec
   storage = Matter::Storage::Memory.new
   mrp_cache = Matter::Protocol::MrpCache.new(transport)
@@ -27,10 +28,11 @@ private def build_secure_channel : SecureChannelFixture
     sender: Matter::Protocol::ResponseSender.new(transport, mrp_cache),
     setup_pin: SETUP_PIN,
     iterations: ITERATIONS,
-    salt: Bytes.new(32, 0x01_u8)
+    salt: Bytes.new(32, 0x01_u8),
+    session_id_candidate: candidate
   )
 
-  SecureChannelFixture.new(channel, transport, fabric_table)
+  SecureChannelFixture.new(channel, transport, fabric_table, registry)
 end
 
 private def case_sigma1_request(fabric : Matter::Fabric, exchange_id : UInt16,
@@ -129,6 +131,26 @@ private def pake1_request(exchange_id : UInt16) : Matter::Codec::MessageCodec::M
 end
 
 describe Matter::Protocol::SecureChannel do
+  it "rejects zero, active, and pending responder IDs across PASE and CASE" do
+    candidates = [0_u16, 0x2222_u16, 0x3333_u16,
+                  0_u16, 0x2222_u16, 0x3333_u16, 0x4444_u16]
+    fixture = build_secure_channel(-> { candidates.shift? || raise Matter::ProtocolError.new("Unexpected session ID draw") })
+    active = Matter::Session::SecureContext.new(0x2222_u16, 0x1111_u16,
+      Matter::Session::SessionType::Unicast, Bytes.new(16), Bytes.new(16))
+    fixture.registry.establish_session(active)
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x1111_u16), PEER).should be_true
+    decode_pbkdf_response(fixture.transport.sent_packets.last[0]).responder_session_id.should eq(0x3333_u16)
+
+    fabric = case_test_fabric
+    fixture.fabric_table.add_fabric(fabric).should be_true
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x1111_u16), OTHER_PEER).should be_true
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(fixture.transport.sent_packets.last[0])
+    message = Matter::Codec::MessageCodec::Base.decode_payload(packet)
+    sigma2 = Matter::Session::Case::Definitions::Sigma2.from_slice(message.payload)
+    sigma2.responder_session_id.should eq(0x4444_u16)
+    candidates.should be_empty
+  end
+
   it "keeps a separate handshake per exchange, so two commissioners do not collide" do
     fixture = build_secure_channel
 
