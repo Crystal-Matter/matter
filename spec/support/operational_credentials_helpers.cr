@@ -5,6 +5,36 @@ require "../../src/matter/cluster/operational_credentials"
 require "../../src/matter/crypto/certificate"
 require "../../src/matter/controller/certificate_util"
 
+# Independent Matter 1.6 UpdateNOC request: the accessing fabric is supplied by
+# the CASE session and ICACValue is optional. No FabricIndex appears on wire.
+struct CanonicalUpdateNocWire
+  include TLV::Serializable
+
+  @[TLV::Field(tag: 0)]
+  property noc_value : Bytes
+
+  @[TLV::Field(tag: 1, optional: true)]
+  property icac_value : Bytes?
+
+  def initialize(@noc_value : Bytes, @icac_value : Bytes? = nil)
+  end
+end
+
+# Legacy tag 254 is deliberately included in this independent fixture to
+# prove that a supplied index cannot redirect a CASE UpdateNOC.
+struct LegacyUpdateNocWire
+  include TLV::Serializable
+
+  @[TLV::Field(tag: 0)]
+  property noc_value : Bytes
+
+  @[TLV::Field(tag: 254)]
+  property fabric_index : UInt8
+
+  def initialize(@noc_value : Bytes, @fabric_index : UInt8)
+  end
+end
+
 def csr_public_key(result : Matter::Cluster::CommandResponse) : Bytes
   response = Matter::Cluster::OperationalCredentials::Tlv::CsrResponse.from_slice(result.response.as(TLV::Any).to_slice)
   elements = Matter::Commissioning::CredentialService::CSRElements.from_slice(response.nocsr_elements)
@@ -51,10 +81,9 @@ def create_add_noc_request_tlv(noc : Bytes, icac : Bytes?, ipk : Bytes, admin_su
   ).to_tlv(nil)
 end
 
-def create_update_noc_request_tlv(noc : Bytes, icac : Bytes?, fabric_index : UInt8) : TLV::Any
+def create_update_noc_request_tlv(noc : Bytes, icac : Bytes?) : TLV::Any
   Matter::Cluster::OperationalCredentials::Tlv::UpdateNocRequest.new(
     noc_value: noc,
-    fabric_index: fabric_index,
     icac_value: icac
   ).to_tlv(nil)
 end
@@ -83,10 +112,9 @@ def create_mock_noc_with_key(node_id : UInt64, fabric_id : UInt64, public_key : 
 end
 
 # Helper to create UpdateFabricLabel request TLV
-def create_update_fabric_label_request(label : String, fabric_index : UInt8) : TLV::Any
+def create_update_fabric_label_request(label : String) : TLV::Any
   Matter::Cluster::OperationalCredentials::Tlv::UpdateFabricLabelRequest.new(
-    label: label,
-    fabric_index: fabric_index
+    label: label
   ).to_tlv(nil)
 end
 

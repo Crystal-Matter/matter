@@ -385,21 +385,25 @@ module Matter
         )
       end
 
-      def update_noc(request : Tlv::UpdateNocRequest) : Tlv::TlvNocResponse
+      def update_noc(request : Tlv::UpdateNocRequest) : InteractionModel::Status | Tlv::TlvNocResponse
+        fabric_index = request_fabric_index
+        return InteractionModel::Status.unsupported_access unless request_is_case_session? && fabric_index
+
         noc_response credentials.update_noc(
           noc: request.noc_value,
           icac: request.icac_value,
-          session_fabric_index: request_fabric_index || request.fabric_index || 0_u8,
+          session_fabric_index: fabric_index,
           session_id: request_session_id || 0_u64
         )
       end
 
-      def update_fabric_label(request : Tlv::UpdateFabricLabelRequest) : Tlv::TlvNocResponse
-        # Per Matter spec the fabric index is optional: the accessing fabric is
-        # the one being labelled.
+      def update_fabric_label(request : Tlv::UpdateFabricLabelRequest) : InteractionModel::Status | Tlv::TlvNocResponse
+        fabric_index = request_fabric_index
+        return InteractionModel::Status.unsupported_access unless request_is_case_session? && fabric_index
+
         noc_response credentials.update_fabric_label(
           request.label,
-          request_fabric_index || request.fabric_index
+          fabric_index
         )
       end
 

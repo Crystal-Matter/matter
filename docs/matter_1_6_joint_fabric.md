@@ -13,6 +13,10 @@ item below as covered only to the extent of its cited tests.
 - Device AddNOC and UpdateNOC bind the issued NOC to the CSR public key. CASE
   verifies the peer's certificate chain, Node ID, and CATs. The verified
   subjects survive session persistence and reach cluster handlers.
+- Device UpdateNOC and UpdateFabricLabel use the accessing CASE fabric. Their
+  command payloads do not carry FabricIndex; a legacy extra field cannot
+  redirect an update, and a fabricless PASE invoke is rejected. UpdateNOC
+  accepts omitted ICACValue as specified by the Matter 1.6 wire schema.
 - A controller can install an externally issued identity with an ICAC, delegate
   a separate identity under an existing root, and grant that Node ID an ACL
   entry. See `SharedFabric` in the controller library.
