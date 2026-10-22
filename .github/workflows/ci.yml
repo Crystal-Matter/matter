@@ -11,6 +11,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
       - name: Install Dependencies
         run: shards install
       # ameba declares no executable in its shard.yml, so `shards install` never
@@ -27,6 +29,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
       - name: Install Dependencies
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
       # Type-check everything the spec suite does not: the ten example devices,
@@ -52,6 +56,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
       - name: Install Dependencies
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Create bin folder
@@ -84,7 +90,7 @@ jobs:
           - macos-latest
           - windows-latest
         crystal:
-          - latest
+          - 1.22.0
         include:
           - experimental: true
             os: ubuntu-latest
