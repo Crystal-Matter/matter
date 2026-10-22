@@ -7,6 +7,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Administrator removal recovery
+
+- Extend the three-administrator Docker test through a second restart after
+  RemoveAdmin commits but its acknowledgement is lost. The Anchor checks its
+  restored Datastore AdminList before advancing the removal journal, blocks
+  an uncertain automatic retry, and resumes Administrator CAT/NOC rotation
+  without replaying RemoveAdmin. The final AdminList and CAT version are read
+  over CASE. The same scenario checks that a removal without the outgoing
+  Administrator's local consent leaves the fabric, AdminList, and CAT version
+  unchanged. Remaining live interruption points are tracked in the Joint
+  Fabric guide.
+
 ### Thread Border Router Management
 
 - Add an opt-in Matter 1.6 Thread Border Router Management server (`0x0452`,

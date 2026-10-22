@@ -146,6 +146,33 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     end
   end
 
+  it "requires persisted AdminList proof before resuming a lost RemoveAdmin acknowledgement" do
+    datastore = removal_datastore
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RemovingDatastore, administrator_cat_version: 2_u16)
+    stored = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
+    save = ->(item : Matter::Controller::AdministratorRemoval::Journal) {
+      stored = Matter::Controller::AdministratorRemoval::Journal.from_document(item.to_document)
+      nil
+    }
+
+    expect_raises(Matter::CommissioningError, /still lists outgoing Administrator/) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(stored, datastore, save)
+    end
+    stored.stage.should eq(RemovalStage::RemovingDatastore)
+
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(stored, datastore, save)
+    stored.stage.should eq(RemovalStage::DatastoreRemoved)
+    port = FakeAdministratorRemovalPort.new
+    resumed = Matter::Controller::AdministratorRemoval::Workflow.new(datastore, 0x100_u64,
+      [0x200_u64], port, -> { true }, -> { true }, save,
+      Matter::Controller::AdministratorRemoval::Journal.from_document(stored.to_document))
+    resumed.run
+    resumed.journal.stage.should eq(RemovalStage::Completed)
+    port.events.should eq(["Anchor UpdateNOC", "Participant 200 UpdateNOC"])
+  end
+
   it "recovers each interrupted removal command from a persisted journal" do
     boundaries = {
       {"RemoveFabric", RemovalStage::Ready, RemovalStage::RemovingFabric, RemovalStage::FabricRemoved},

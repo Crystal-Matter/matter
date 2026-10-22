@@ -133,6 +133,7 @@ module MatterJointFabricAdministrator
       getter root_public_key : Bytes?
       getter nonce : String?
       getter? interrupt_after_remove_fabric : Bool
+      getter? interrupt_after_remove_admin : Bool
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
@@ -146,7 +147,8 @@ module MatterJointFabricAdministrator
                      @jcm : Bool = false, @trusted_icac_public_key_b : Bytes? = nil,
                      @peer_admin_jfa_endpoint_id : UInt16? = nil,
                      @anchor_node_id : UInt64? = nil, @peer_address : String? = nil,
-                     @peer_port : Int32? = nil)
+                     @peer_port : Int32? = nil,
+                     @interrupt_after_remove_admin : Bool = false)
       end
     end
 
@@ -182,16 +184,23 @@ module MatterJointFabricAdministrator
     # Exercises the journal boundary where the remote RemoveFabric completed
     # but its acknowledgement was lost before the local stage could advance.
     class InterruptedRemovalPort < Matter::Controller::AdministratorRemoval::Port
-      def initialize(@delegate : Matter::Controller::AdministratorRemoval::Port)
+      def initialize(@delegate : Matter::Controller::AdministratorRemoval::Port,
+                     @interrupt_after_remove_fabric : Bool = false,
+                     @interrupt_after_remove_admin : Bool = false)
       end
 
       def remove_outgoing_fabric! : Nil
         @delegate.remove_outgoing_fabric!
-        raise Matter::TransportError.new("Injected lost RemoveFabric acknowledgement")
+        if @interrupt_after_remove_fabric
+          raise Matter::TransportError.new("Injected lost RemoveFabric acknowledgement")
+        end
       end
 
       def remove_datastore_admin! : Nil
         @delegate.remove_datastore_admin!
+        if @interrupt_after_remove_admin
+          raise Matter::TransportError.new("Injected lost RemoveAdmin acknowledgement")
+        end
       end
 
       def rotate_anchor! : Nil
@@ -1362,7 +1371,8 @@ module MatterJointFabricAdministrator
     # also be listed in MATTER_JFA_CONSENTED_REMOVALS after its own user has
     # approved removal. The list contains comma-separated hexadecimal Node IDs.
     private def remove_administrator(outgoing_node_id : UInt64,
-                                     interrupt_after_remove_fabric : Bool = false) : Nil
+                                     interrupt_after_remove_fabric : Bool = false,
+                                     interrupt_after_remove_admin : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Another Joint Fabric operation is running") if @removal_in_progress || @transfer_in_progress
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -1459,7 +1469,12 @@ module MatterJointFabricAdministrator
             tighten_administrator_acl(im, refreshed_session, peer, admin_version)
             nil
           })
-        effective_port = interrupt_after_remove_fabric ? InterruptedRemovalPort.new(port) : port
+        effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin
+                           InterruptedRemovalPort.new(port, interrupt_after_remove_fabric,
+                             interrupt_after_remove_admin)
+                         else
+                           port
+                         end
         workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
           own_fabric.node_id, remaining, effective_port, -> { true }, -> { consented },
           ->(state : Matter::Controller::AdministratorRemoval::Journal) {
@@ -1504,6 +1519,25 @@ module MatterJointFabricAdministrator
       end
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_journal!(journal,
         Matter::Controller::AdministratorRemoval::Stage::FabricRemoved,
+        ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+          persistence.write_app_document(document_name, state.to_document)
+          persistence.flush
+          nil
+        })
+    end
+
+    private def reconcile_datastore_removed(outgoing_node_id : UInt64) : Nil
+      raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+      datastore = joint_fabric_datastore
+      unless datastore.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Datastore belongs to another Anchor")
+      end
+      document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+      document = persistence.app_document(document_name) ||
+                 raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+      journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(journal, datastore,
         ->(state : Matter::Controller::AdministratorRemoval::Journal) {
           persistence.write_app_document(document_name, state.to_document)
           persistence.flush
@@ -1638,7 +1672,8 @@ module MatterJointFabricAdministrator
             transfer_anchor_from(request.node_id)
             CommandResult.new("ok")
           when "remove-administrator"
-            remove_administrator(request.node_id, request.interrupt_after_remove_fabric?)
+            remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
+              request.interrupt_after_remove_admin?)
             CommandResult.new("ok")
           when "inspect-fabric"
             fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Fabric ID is required")
@@ -1663,6 +1698,9 @@ module MatterJointFabricAdministrator
               subscription_committed: @participant_view_current)
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
+            CommandResult.new("ok")
+          when "reconcile-datastore-removed"
+            reconcile_datastore_removed(request.node_id)
             CommandResult.new("ok")
           when "finalize-commissioning"
             certificate = finalize_commissioning(request)
