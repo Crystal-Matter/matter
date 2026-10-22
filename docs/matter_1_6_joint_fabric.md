@@ -236,6 +236,14 @@ certification steps and assertions are unchanged.
 The [integrated SDK run](https://github.com/Crystal-Matter/matter/actions/runs/39691585152)
 passed `TC_JFADMIN_1_2` against the merged Crystal JFA.
 
+The same workflow's opt-in `opcreds` case runs the unmodified Matter 1.6
+`TC_OPCREDS_3_8.py` against a freshly commissioned Crystal JFA. The
+[SDK run](https://github.com/Crystal-Matter/matter/actions/runs/39859190491)
+passed all steps 0–28 with two requested tests passed and zero skips. It covers
+live AddNOC and UpdateNOC rollback, VID/VVS updates, subscriptions, and
+CommissioningComplete. Crash-safe recovery of provisional credentials remains
+the separate limitation described above.
+
 `e2e/interop/sdk_jf_cert_matrix.py` runs the official SDK v1.6.0.0
 `TC_JFADMIN_1_1`, `1_4`, and `TC_JFDS_2_1` through `2_3` scripts unchanged
 against Crystal. `TC_JFDS_2_4` inherits every official step and assertion but
