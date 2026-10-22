@@ -9,9 +9,9 @@ describe Matter::Cluster::RelativeHumidityMeasurement do
       cluster.cluster_id.id.should eq(0x0405_u32)
       cluster.name.should eq("RelativeHumidityMeasurement")
       cluster.measured_value.should be_nil
-      cluster.min_measured_value.should eq(0_u16)
-      cluster.max_measured_value.should eq(10000_u16)
-      cluster.tolerance.should be_nil
+      cluster.min_measured_value.should be_nil
+      cluster.max_measured_value.should be_nil
+      cluster.tolerance.should eq(0_u16)
     end
 
     it "creates with custom values" do
@@ -44,10 +44,33 @@ describe Matter::Cluster::RelativeHumidityMeasurement do
       cluster.max_measured_value.should eq(10000_u16)
     end
 
-    it "rejects min > max" do
-      expect_raises(ArgumentError, /min_measured_value must be <= max_measured_value/) do
+    it "accepts an undefined bound independently of the other bound" do
+      lower_only = build(Matter::Cluster::RelativeHumidityMeasurement,
+        measured_value: 10000_u16, min_measured_value: 9999_u16)
+      upper_only = build(Matter::Cluster::RelativeHumidityMeasurement,
+        measured_value: 0_u16, max_measured_value: 0_u16)
+
+      lower_only.max_measured_value.should be_nil
+      upper_only.min_measured_value.should be_nil
+    end
+
+    it "rejects a reading above the absolute limit with undefined bounds" do
+      expect_raises(ArgumentError, /measured_value must be between min and max/) do
+        build(Matter::Cluster::RelativeHumidityMeasurement,
+          measured_value: 10001_u16)
+      end
+    end
+
+    it "rejects min >= max" do
+      expect_raises(ArgumentError, /min_measured_value must be < max_measured_value/) do
         build(Matter::Cluster::RelativeHumidityMeasurement,
           min_measured_value: 8000_u16,
+          max_measured_value: 5000_u16
+        )
+      end
+      expect_raises(ArgumentError, /min_measured_value must be < max_measured_value/) do
+        build(Matter::Cluster::RelativeHumidityMeasurement,
+          min_measured_value: 5000_u16,
           max_measured_value: 5000_u16
         )
       end
@@ -73,6 +96,41 @@ describe Matter::Cluster::RelativeHumidityMeasurement do
   end
 
   describe "attributes" do
+    it "advertises revision 5 nullable fixed limits and fixed nonnullable tolerance" do
+      cluster = build(Matter::Cluster::RelativeHumidityMeasurement, tolerance: 0_u16)
+
+      cluster.cluster_revision.should eq(5_u16)
+      min = cluster.attributes.find! { |attr| attr.id.id == 0x0001_u32 }
+      max = cluster.attributes.find! { |attr| attr.id.id == 0x0002_u32 }
+      tolerance = cluster.attributes.find! { |attr| attr.id.id == 0x0003_u32 }
+      min.fixed?.should be_true
+      max.fixed?.should be_true
+      tolerance.fixed?.should be_true
+      tolerance.optional?.should be_true
+      read(cluster, 0x0003_u32).should eq(0_u16)
+    end
+
+    it "reads undefined sensor limits as null" do
+      cluster = build(Matter::Cluster::RelativeHumidityMeasurement)
+
+      read(cluster, 0x0001_u32).should be_nil
+      read(cluster, 0x0002_u32).should be_nil
+    end
+
+    it "keeps fixed sensor limits and tolerance unchanged after construction" do
+      cluster = build(Matter::Cluster::RelativeHumidityMeasurement,
+        min_measured_value: 1000_u16, max_measured_value: 9000_u16, tolerance: 100_u16)
+      initial_version = cluster.data_version
+
+      expect_raises(ArgumentError, /fixed/) { cluster.min_measured_value = 2000_u16 }
+      expect_raises(ArgumentError, /fixed/) { cluster.max_measured_value = nil }
+      expect_raises(ArgumentError, /fixed/) { cluster.tolerance = 200_u16 }
+      cluster.min_measured_value.should eq(1000_u16)
+      cluster.max_measured_value.should eq(9000_u16)
+      cluster.tolerance.should eq(100_u16)
+      cluster.data_version.should eq(initial_version)
+    end
+
     it "has required attributes" do
       cluster = build(Matter::Cluster::RelativeHumidityMeasurement, tolerance: 0_u16)
 
@@ -146,6 +204,25 @@ describe Matter::Cluster::RelativeHumidityMeasurement do
   end
 
   describe "update_humidity" do
+    it "validates direct host assignments before changing state or data version" do
+      cluster = build(Matter::Cluster::RelativeHumidityMeasurement,
+        measured_value: 5000_u16, min_measured_value: 1000_u16, max_measured_value: 9000_u16)
+      initial_version = cluster.data_version
+
+      expect_raises(ArgumentError, /outside measurable range/) { cluster.measured_value = 9500_u16 }
+      cluster.measured_value.should eq(5000_u16)
+      cluster.data_version.should eq(initial_version)
+    end
+
+    it "applies absolute limits when a nullable sensor bound is undefined" do
+      cluster = build(Matter::Cluster::RelativeHumidityMeasurement,
+        min_measured_value: nil, max_measured_value: nil)
+
+      cluster.update_humidity(0_u16)
+      cluster.update_humidity(10000_u16)
+      expect_raises(ArgumentError, /outside measurable range/) { cluster.measured_value = 10001_u16 }
+    end
+
     it "updates humidity value" do
       cluster = build(Matter::Cluster::RelativeHumidityMeasurement)
 

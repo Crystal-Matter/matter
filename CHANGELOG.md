@@ -16,6 +16,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bounds before changing state. The server continues to advertise revision 6
   while color-temperature coupling remains incomplete.
 
+### Relative Humidity Measurement revision 5
+
+- Advertise Matter 1.6 revision 5 with nullable fixed sensor limits and a
+  fixed, nonnullable optional tolerance. Keep fixed attributes immutable after
+  construction and validate host-assigned readings before changing the
+  attribute or DataVersion. The humidity sensor example now checks the revision
+  through official chip-tool.
+
 ### Cross-ecosystem Joint Fabric control
 
 - Let a joining Administrator issue a group-CAT controller identity under

@@ -14,6 +14,7 @@ describe "matter_humidity_sensor example" do
   end
 
   it "reads the measured humidity within the configured range" do
+    read_int(device, "relativehumiditymeasurement", "cluster-revision", "ClusterRevision").should eq 5
     read_int(device, "relativehumiditymeasurement", "min-measured-value", "MinMeasuredValue").should eq 3500
     read_int(device, "relativehumiditymeasurement", "max-measured-value", "MaxMeasuredValue").should eq 8000
     read_int(device, "relativehumiditymeasurement", "tolerance", "Tolerance").should eq 150
