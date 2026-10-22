@@ -352,6 +352,10 @@ VendorID and ProductID against the earlier request. The cluster validates the
 reverse-window wire parameters, but does not perform target commissioning or
 attestation. Ordinary device and bridge examples do not advertise it, and the
 current slice is not a complete reverse-commissioning flow.
+`examples/matter_commissioner_control_device.cr` is an opt-in synthetic
+Aggregator used only for chip-tool interoperability testing. It auto-approves
+one test VID/PID pair and returns dummy reverse-window bytes; it does not open
+a target window or commission a node.
 
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor
 CAT check. The controller's `OperationalTrustAnchors` implementation must

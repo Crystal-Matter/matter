@@ -178,6 +178,11 @@ services:
     environment:
       E2E_DEVICE: matter_ecosystem_bridge
 
+  commissioner-control:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_commissioner_control
+
   # Official connectedhomeip server used to verify Crystal-originated groupcast.
   official-group-recipient:
     image: matter-e2e-tests
@@ -214,6 +219,7 @@ services:
       air-conditioner: { condition: service_healthy }
       bridge: { condition: service_healthy }
       ecosystem-bridge: { condition: service_healthy }
+      commissioner-control: { condition: service_healthy }
       official-group-recipient: { condition: service_started }
     environment:
       E2E_RUN_UNIT: ${E2E_RUN_UNIT:-1}

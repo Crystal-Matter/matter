@@ -12,7 +12,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add the Matter 1.6 Commissioner Control wire model and a fail-closed
   per-fabric, per-node approval state machine. An explicit host callback handles
   approval and target commissioning-window creation; a missing host cannot
-  approve requests. No device advertises this cluster by default.
+  approve requests. A separate synthetic Aggregator verifies approval events
+  and one-use reverse responses with official chip-tool. No ordinary device
+  advertises this cluster.
 
 ### Level Control startup state
 
