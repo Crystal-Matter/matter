@@ -17,6 +17,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes; accepted settings persist across restart. A synthetic two-endpoint
   fixture exercises both feature choices with official chip-tool.
 
+### Time Synchronization time zone feature
+
+- Add an opt-in Matter 1.6 TimeZone server on root endpoint 0, with validated
+  SetTimeZone and SetDSTOffset commands, a computed LocalTime attribute,
+  status/empty-table events, and nonvolatile offset lists. The default mode has
+  no time-zone database, so a commissioner supplies DST offsets. UTC time is
+  intentionally unsynchronized after restart. A synthetic root device checks
+  the wire behavior with official chip-tool.
+
 ### Scenes Management fabric isolation
 
 - Scope all Scenes Management commands and FabricSceneInfo reads to the
@@ -27,7 +36,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Close the enhanced AdministratorCommissioning window when a commissioner
   completes or rolls back commissioning, releasing its PAKE state and allowing
   another administrator to open a fresh window immediately.
-
 ### Controller session ID allocation
 
 - Choose nonzero, unused local session IDs before PASE and CASE advertise them.
