@@ -15,6 +15,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   messages sent and received. Secure Channel traffic and MRP retransmissions
   do not inflate the IM counters.
 
+### Level Control lighting bounds
+
+- Default Lighting MinLevel and CurrentLevel to 1 and enforce its fixed
+  MinLevel=1/MaxLevel=254 range. Non-Lighting configurations may use a custom
+  range starting at zero, with MaxLevel no greater than 254. The advertised
+  cluster revision remains 6 pending the remaining revision 7 behavior audit.
+
 ### General Diagnostics snapshot and boot event
 
 - Implement revision 2 TimeSnapshot command and nullable POSIX response field.

@@ -29,8 +29,9 @@ module Matter
       feature :frequency, bit: 2 # FQ - Frequency control (provisional)
 
       # Bounds of the CurrentLevel attribute
-      LOWEST_LEVEL  =   0_u8
-      HIGHEST_LEVEL = 254_u8
+      LOWEST_LEVEL      =   0_u8
+      DEFAULT_MIN_LEVEL =   1_u8
+      HIGHEST_LEVEL     = 254_u8
 
       enum MoveMode : UInt8
         Up   = 0
@@ -214,9 +215,9 @@ module Matter
         end
       end
 
-      attribute 0x0000, :current_level, UInt8, default: LOWEST_LEVEL, persist: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL
+      attribute 0x0000, :current_level, UInt8, default: DEFAULT_MIN_LEVEL, persist: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL
       attribute 0x0001, :remaining_time, UInt16, default: 0_u16, requires: :lighting
-      attribute 0x0002, :min_level, UInt8, default: LOWEST_LEVEL, persist: true, fixed: true
+      attribute 0x0002, :min_level, UInt8, default: DEFAULT_MIN_LEVEL, persist: true, fixed: true
       attribute 0x0003, :max_level, UInt8, default: HIGHEST_LEVEL, persist: true, fixed: true
       attribute 0x0004, :current_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
       attribute 0x0005, :min_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
@@ -246,13 +247,24 @@ module Matter
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
-        @current_level : UInt8 = LOWEST_LEVEL,
-        @min_level : UInt8 = LOWEST_LEVEL,
+        current_level : UInt8? = nil,
+        min_level : UInt8? = nil,
         @max_level : UInt8 = HIGHEST_LEVEL,
         @on_level : UInt8? = nil,
         @options : UInt8 = 0_u8,
         @feature_map : Feature = Feature::OnOff | Feature::Lighting,
       )
+        @min_level = min_level || DEFAULT_MIN_LEVEL
+        @current_level = current_level || @min_level
+        if @max_level > HIGHEST_LEVEL
+          raise ArgumentError.new("MaxLevel exceeds the Matter level ceiling")
+        end
+        if @feature_map.lighting? && (@min_level != DEFAULT_MIN_LEVEL || @max_level != HIGHEST_LEVEL)
+          raise ArgumentError.new("Lighting requires MinLevel=1 and MaxLevel=254")
+        end
+        unless (@min_level..@max_level).includes?(@current_level)
+          raise ArgumentError.new("CurrentLevel must be between MinLevel and MaxLevel")
+        end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @transition_started_at = nil
         @transition_last_advanced_at = nil

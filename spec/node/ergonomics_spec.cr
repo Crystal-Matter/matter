@@ -54,7 +54,7 @@ describe "Node ergonomics" do
       node = Matter::Node.new
       endpoint = light_endpoint(1_u16, Matter::DeviceType.dimmable_light)
       endpoint.add_cluster(Matter::Cluster::OnOff.new(endpoint.endpoint_id, on_off: false))
-      endpoint.add_cluster(Matter::Cluster::LevelControl.new(endpoint.endpoint_id, current_level: 0_u8))
+      endpoint.add_cluster(Matter::Cluster::LevelControl.new(endpoint.endpoint_id, current_level: 1_u8))
       node.add_endpoint(endpoint)
 
       # Direct cluster access for reading state (most ergonomic)
@@ -62,7 +62,7 @@ describe "Node ergonomics" do
       light.on_off?.should be_false
 
       dimmer = node.get_cluster!(1_u16, Matter::Cluster::LevelControl)
-      dimmer.current_level.should eq(0_u8)
+      dimmer.current_level.should eq(1_u8)
 
       # Commands go to the cluster the lookup returned
       invoke(light, Matter::Cluster::OnOff::CMD_ON)
@@ -72,7 +72,7 @@ describe "Node ergonomics" do
       light.on_off?.should be_false
 
       # Attribute reads go through the same reference
-      read_tlv(dimmer, Matter::Cluster::LevelControl::ATTR_CURRENT_LEVEL).value.should eq(0_u8)
+      read_tlv(dimmer, Matter::Cluster::LevelControl::ATTR_CURRENT_LEVEL).value.should eq(1_u8)
     end
 
     it "demonstrates multi-endpoint device control" do

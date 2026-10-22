@@ -14,8 +14,8 @@ describe Matter::Cluster::LevelControl do
 
       cluster.cluster_id.id.should eq(0x0008_u32)
       cluster.name.should eq("LevelControl")
-      cluster.current_level.should eq(0_u8)
-      cluster.min_level.should eq(0_u8)
+      cluster.current_level.should eq(1_u8)
+      cluster.min_level.should eq(1_u8)
       cluster.max_level.should eq(254_u8)
     end
 
@@ -23,7 +23,8 @@ describe Matter::Cluster::LevelControl do
       cluster = build(Matter::Cluster::LevelControl,
         current_level: 127_u8,
         min_level: 10_u8,
-        max_level: 200_u8
+        max_level: 200_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None
       )
 
       cluster.current_level.should eq(127_u8)
@@ -60,13 +61,15 @@ describe Matter::Cluster::LevelControl do
     end
 
     it "reads MinLevel attribute" do
-      cluster = build(Matter::Cluster::LevelControl, min_level: 5_u8)
+      cluster = build(Matter::Cluster::LevelControl, min_level: 5_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None)
 
       read(cluster, Matter::Cluster::LevelControl::ATTR_MIN_LEVEL).should eq(5_u8)
     end
 
     it "reads MaxLevel attribute" do
-      cluster = build(Matter::Cluster::LevelControl, max_level: 200_u8)
+      cluster = build(Matter::Cluster::LevelControl, max_level: 200_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None)
 
       read(cluster, Matter::Cluster::LevelControl::ATTR_MAX_LEVEL).should eq(200_u8)
     end
@@ -100,7 +103,8 @@ describe Matter::Cluster::LevelControl do
     end
 
     it "executes MoveToLevel command" do
-      cluster = build(Matter::Cluster::LevelControl, current_level: 0_u8)
+      cluster = build(Matter::Cluster::LevelControl, current_level: 0_u8,
+        min_level: 0_u8, feature_map: Matter::Cluster::LevelControl::Feature::None)
 
       cluster.current_level.should eq(0_u8)
 
@@ -193,7 +197,8 @@ describe Matter::Cluster::LevelControl do
     it "clamps level to min boundary" do
       cluster = build(Matter::Cluster::LevelControl,
         current_level: 100_u8,
-        min_level: 50_u8
+        min_level: 50_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None
       )
 
       # Try to move below min
@@ -214,7 +219,8 @@ describe Matter::Cluster::LevelControl do
     it "clamps level to max boundary" do
       cluster = build(Matter::Cluster::LevelControl,
         current_level: 100_u8,
-        max_level: 200_u8
+        max_level: 200_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None
       )
 
       # Try to move above max
@@ -291,7 +297,8 @@ describe Matter::Cluster::LevelControl do
     it "clamps step down to min" do
       cluster = build(Matter::Cluster::LevelControl,
         current_level: 10_u8,
-        min_level: 0_u8
+        min_level: 0_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None
       )
 
       invoke(cluster,
@@ -361,7 +368,7 @@ describe Matter::Cluster::LevelControl do
       cluster = build(Matter::Cluster::LevelControl,
         current_level: 50_u8,
         min_level: 1_u8,
-        max_level: 200_u8,
+        max_level: 254_u8,
         feature_map: Matter::Cluster::LevelControl::Feature::OnOff |
                      Matter::Cluster::LevelControl::Feature::Lighting |
                      Matter::Cluster::LevelControl::Feature::Frequency
@@ -397,7 +404,7 @@ describe Matter::Cluster::LevelControl do
 
       restored.current_level.should eq(50_u8)
       restored.min_level.should eq(1_u8)
-      restored.max_level.should eq(200_u8)
+      restored.max_level.should eq(254_u8)
       restored.on_level.should eq(42_u8)
       restored.options.should eq(3_u8)
       restored.remaining_time.should eq(0_u16)
@@ -415,7 +422,8 @@ describe Matter::Cluster::LevelControl do
 
   describe "OnLevel writes" do
     it "rejects a level outside MinLevel..MaxLevel with ConstraintError" do
-      cluster = build(Matter::Cluster::LevelControl, min_level: 10_u8, max_level: 200_u8)
+      cluster = build(Matter::Cluster::LevelControl, min_level: 10_u8, max_level: 200_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None)
 
       expect_status(write(cluster, Matter::Cluster::LevelControl::ATTR_ON_LEVEL, 201_u8), Matter::InteractionModel::StatusCode::ConstraintError)
       expect_status(write(cluster, Matter::Cluster::LevelControl::ATTR_ON_LEVEL, 9_u8), Matter::InteractionModel::StatusCode::ConstraintError)
@@ -510,7 +518,8 @@ describe Matter::Cluster::LevelControl do
     it "fades out to minimum" do
       light = build(Matter::Cluster::LevelControl,
         current_level: 200_u8,
-        min_level: 10_u8
+        min_level: 10_u8,
+        feature_map: Matter::Cluster::LevelControl::Feature::None
       )
 
       invoke(light,
