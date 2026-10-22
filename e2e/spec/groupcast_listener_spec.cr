@@ -14,7 +14,7 @@ describe "Matter 1.6 Groupcast Listener advertisement" do
     group_id = 0x7511
     key_set_id = 0x7512
     epoch_key = "75757575757575757575757575757575"
-    key_set = %({"groupKeySetID":#{key_set_id},"groupKeySecurityPolicy":0,"epochKey0":"#{epoch_key}","epochStartTime0":1,"epochKey1":null,"epochStartTime1":null,"epochKey2":null,"epochStartTime2":null})
+    key_set = %({"groupKeySetID":#{key_set_id},"groupKeySecurityPolicy":0,"epochKey0":"#{epoch_key}","epochStartTime0":1110000,"epochKey1":null,"epochStartTime1":null,"epochKey2":null,"epochStartTime2":null})
     expect_success(device.chip("groupkeymanagement", "key-set-write", key_set, device.node, "0"))
     expect_success(device.invoke("groupcast", "join-group", [group_id.to_s, "[1]", key_set_id.to_s], 0))
     membership = expect_success(device.read("groupcast", "membership", 0))
@@ -27,6 +27,16 @@ describe "Matter 1.6 Groupcast Listener advertisement" do
     expect_success(device.read("groupkeymanagement", "group-key-map", 0)).output.should contain("0 entries")
     expect_success(device.invoke("groupcast", "groupcast-testing", ["1"], 0))
     read_int(device, "groupcast", "fabric-under-test", "FabricUnderTest", 0).should eq(1)
+    group_node = "0xffffffffffff#{group_id.to_s(16)}"
+    expect_success(device.chip("groupsettings", "add-group", "Groupcast test", group_id.to_s, "--addressPolicy", "0"))
+    expect_success(device.chip("groupsettings", "add-keysets", key_set_id.to_s, "0", "1110000", "hex:#{epoch_key}"))
+    expect_success(device.chip("groupsettings", "bind-keyset", group_id.to_s, key_set_id.to_s))
+    expect_success(device.chip("onoff", "on", group_node, "1"))
+    sleep 1.second
+    read_bool(device, "onoff", "on-off", "OnOff").should be_true
+    event = expect_success(device.chip("groupcast", "read-event", "groupcast-testing", device.node, "0"))
+    event.output.should contain("GroupcastTestResult")
+    event.output.should contain(group_id.to_s)
     expect_success(device.invoke("groupcast", "groupcast-testing", ["0"], 0))
     device.restart!
     read_int(device, "groupkeymanagement", "feature-map", "FeatureMap", 0).should eq(2)
