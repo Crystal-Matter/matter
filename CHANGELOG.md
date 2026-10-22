@@ -24,6 +24,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an established or pending session ID. Deterministic protocol specs force
   each rejected candidate.
 
+### Window Covering revision 8
+
+- Advertise Window Covering revision 8, reject undefined Mode bits, synchronize
+  ConfigStatus with Mode, and block movement in maintenance and calibration
+  modes. Persist exposed current-position percentages and restore combined
+  ConfigStatus flag values correctly after restart.
+
 ### Temperature Control
 
 - Add an opt-in Matter 1.6 Temperature Control server (`0x0056`, revision 1)

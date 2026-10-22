@@ -173,7 +173,18 @@ module Matter
         {% elsif T <= Enum %}
           case value
           in String
-            T.parse?(value) || raise StorageError.new("Field #{field}: #{value.inspect} is not a member of #{T}")
+            parsed = T.parse?(value)
+            {% if T.annotation(::Flags) %}
+              unless parsed
+                mask = 0_u64
+                value.split(" | ").each do |member|
+                  flag = T.parse?(member) || raise StorageError.new("Field #{field}: #{value.inspect} is not a member of #{T}")
+                  mask |= flag.value.to_u64
+                end
+                parsed = T.from_value?(mask)
+              end
+            {% end %}
+            parsed || raise StorageError.new("Field #{field}: #{value.inspect} is not a member of #{T}")
           in Int64, UInt64
             # Stores imported from the legacy format hold enums by value.
             T.from_value?(value) || raise StorageError.new("Field #{field}: #{value} is not a value of #{T}")

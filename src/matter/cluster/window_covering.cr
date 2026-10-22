@@ -15,7 +15,7 @@ module Matter
     # - PositionAwareLift (PA_LF): Supports precise lift positioning
     # - PositionAwareTilt (PA_TL): Supports precise tilt positioning
     class WindowCovering < Base
-      cluster 0x0102, revision: 6
+      cluster 0x0102, revision: 8
 
       feature :lift, bit: 0                # LF - Lift/lower control
       feature :tilt, bit: 1                # TL - Tilt control
@@ -138,15 +138,18 @@ module Matter
       attribute 0x0005, :number_of_actuations_lift, UInt16, default: 0_u16, persist: true, optional: true, requires: :lift
       attribute 0x0006, :number_of_actuations_tilt, UInt16, default: 0_u16, persist: true, optional: true, requires: :tilt
       attribute 0x0007, :config_status, ConfigStatus, default: ConfigStatus::Operational, persist: true
-      attribute 0x0008, :current_position_lift_percentage, UInt8, nullable: true, optional: true, requires: {lift: true, position_aware_lift: true}
-      attribute 0x0009, :current_position_tilt_percentage, UInt8, nullable: true, optional: true, requires: {tilt: true, position_aware_tilt: true}
+      attribute 0x0008, :current_position_lift_percentage, UInt8, nullable: true, optional: true, persist: true, requires: {lift: true, position_aware_lift: true}
+      attribute 0x0009, :current_position_tilt_percentage, UInt8, nullable: true, optional: true, persist: true, requires: {tilt: true, position_aware_tilt: true}
       attribute 0x000A, :operational_status, OperationalStatus, default: OperationalStatus::None
       attribute 0x000B, :target_position_lift_percent100ths, UInt16, nullable: true, max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}
       attribute 0x000C, :target_position_tilt_percent100ths, UInt16, nullable: true, max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}
       attribute 0x000D, :end_product_type, EndProductType, default: EndProductType::RollerShade, fixed: true
-      attribute 0x000E, :current_position_lift_percent100ths, UInt16, nullable: true, persist: true, max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}
-      attribute 0x000F, :current_position_tilt_percent100ths, UInt16, nullable: true, persist: true, max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}
-      attribute 0x0017, :mode, Mode, default: Mode::None, writable: true, write_access: :manage
+      attribute 0x000E, :current_position_lift_percent100ths, UInt16, nullable: true, persist: true,
+        max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}, on_change: :sync_lift_percentage
+      attribute 0x000F, :current_position_tilt_percent100ths, UInt16, nullable: true, persist: true,
+        max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}, on_change: :sync_tilt_percentage
+      attribute 0x0017, :mode, Mode, default: Mode::None, writable: true, write_access: :manage,
+        on_change: :sync_mode_config_status
       attribute 0x001A, :safety_status, UInt16, default: 0_u16, optional: true
 
       command 0x00, :up_or_open
@@ -182,14 +185,20 @@ module Matter
       # ------------------------------------------------------------------------
 
       def up_or_open : InteractionModel::Status
+        lock_status = motion_lock_status
+        return lock_status if lock_status
         move_to(OPEN_POSITION_PERCENT100THS, MovementStatus::Opening)
       end
 
       def down_or_close : InteractionModel::Status
+        lock_status = motion_lock_status
+        return lock_status if lock_status
         move_to(MAX_POSITION_PERCENT100THS, MovementStatus::Closing)
       end
 
       def stop_motion : InteractionModel::Status
+        lock_status = motion_lock_status
+        return lock_status if lock_status
         self.target_position_lift_percent100ths = current_position_lift_percent100ths if @feature_map.position_aware_lift?
         self.target_position_tilt_percent100ths = current_position_tilt_percent100ths if @feature_map.position_aware_tilt?
         self.operational_status = OperationalStatus::None
@@ -197,6 +206,8 @@ module Matter
       end
 
       def go_to_lift_percentage(request : GoToLiftPercentageRequest) : InteractionModel::Status
+        lock_status = motion_lock_status
+        return lock_status if lock_status
         percentage = request.lift_percent100ths_value
         return InteractionModel::Status.constraint_error if percentage > MAX_POSITION_PERCENT100THS
 
@@ -204,6 +215,8 @@ module Matter
       end
 
       def go_to_tilt_percentage(request : GoToTiltPercentageRequest) : InteractionModel::Status
+        lock_status = motion_lock_status
+        return lock_status if lock_status
         percentage = request.tilt_percent100ths_value
         return InteractionModel::Status.constraint_error if percentage > MAX_POSITION_PERCENT100THS
 
@@ -220,6 +233,39 @@ module Matter
           @feature_map.lift? ? direction : MovementStatus::Stopped,
           @feature_map.tilt? ? direction : MovementStatus::Stopped)
         InteractionModel::Status.success
+      end
+
+      private def motion_lock_status : InteractionModel::Status?
+        return InteractionModel::Status.busy if @mode.maintenance_mode?
+        return InteractionModel::Status.failure if @mode.calibration_mode?
+        nil
+      end
+
+      private def sync_lift_percentage(position : UInt16?) : Nil
+        self.current_position_lift_percentage = position.try { |value| (value // 100).to_u8 }
+      end
+
+      private def sync_tilt_percentage(position : UInt16?) : Nil
+        self.current_position_tilt_percentage = position.try { |value| (value // 100).to_u8 }
+      end
+
+      private def sync_mode_config_status(mode : Mode) : Nil
+        status = @config_status
+        if mode.maintenance_mode? || mode.calibration_mode?
+          status &= ~ConfigStatus::Operational
+        else
+          status |= ConfigStatus::Operational
+        end
+        if mode.motor_direction_reversed?
+          status |= ConfigStatus::LiftMovementReversed
+        else
+          status &= ~ConfigStatus::LiftMovementReversed
+        end
+        self.config_status = status
+      end
+
+      private def after_restore_state : Nil
+        sync_mode_config_status(@mode)
       end
 
       private def move_lift_to(percentage : UInt16) : InteractionModel::Status

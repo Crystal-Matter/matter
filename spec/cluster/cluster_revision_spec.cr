@@ -39,7 +39,7 @@ describe "Cluster::Base ClusterRevision" do
                    {Matter::Cluster::Identify, 6_u16},
                    {Matter::Cluster::LevelControl, 6_u16},
                    {Matter::Cluster::OnOff, 6_u16},
-                   {Matter::Cluster::WindowCovering, 6_u16},
+                   {Matter::Cluster::WindowCovering, 8_u16},
                  ] %}
     it "reports {{ pair[0] }}::CLUSTER_REVISION ({{ pair[1] }})" do
       cluster = build({{ pair[0] }})

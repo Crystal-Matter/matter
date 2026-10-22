@@ -9,6 +9,12 @@ module RecordSpec
     Blue
   end
 
+  @[Flags]
+  enum Options : UInt8
+    Alpha = 0x01
+    Beta  = 0x02
+  end
+
   struct Point
     include Matter::Storage::Record
 
@@ -289,6 +295,14 @@ describe Matter::Storage::Record do
       document["color"] = RecordSpec::Color.values.size.to_i64
       expect_raises(Matter::StorageError, /Field color: #{RecordSpec::Color.values.size} is not a value of RecordSpec::Color/) do
         RecordSpec::Everything.from_document(document)
+      end
+    end
+
+    it "restores combined flag names from persisted records" do
+      decoded = Matter::Storage::Record.decode("Alpha | Beta", RecordSpec::Options, "options")
+      decoded.should eq(RecordSpec::Options::Alpha | RecordSpec::Options::Beta)
+      expect_raises(Matter::StorageError, /Field options/) do
+        Matter::Storage::Record.decode("Alpha | Unknown", RecordSpec::Options, "options")
       end
     end
 
