@@ -92,6 +92,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Close the enhanced AdministratorCommissioning window when a commissioner
   completes or rolls back commissioning, releasing its PAKE state and allowing
   another administrator to open a fresh window immediately.
+
+### Matter TCP framing foundation
+
+- Add a bounded, incremental Matter TCP frame codec. It writes and reads the
+  four-byte little-endian packet length, accepts fragmented or coalesced stream
+  reads, and rejects zero-length or over-limit packets before body allocation.
+  This is a framing primitive; TCP connections and large-payload CASE sessions
+  are not enabled yet.
+
 ### Controller session ID allocation
 
 - Choose nonzero, unused local session IDs before PASE and CASE advertise them.
@@ -126,7 +135,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   monitor-only. Appliance hosts opt into commands and decide whether each
   transition is safe through an explicit callback; denied commands leave the
   state unchanged.
-
 ### Door Lock operating-mode conformance
 
 - Correct `SoundVolume` wire values (`High = 2`, `Medium = 3`) and use a valid
@@ -134,6 +142,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   feature maps that omit the required User feature for credentials. Door Lock
   continues to advertise revision 9 pending persistent credential storage and
   Aliro feature support; see [Door Lock conformance](docs/door-lock-conformance.md).
+
 
 ### Thread Network Directory
 
