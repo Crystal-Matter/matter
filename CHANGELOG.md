@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Audio Output
+
+- Add the Matter 1.6 revision 1 Audio Output server with a typed output
+  catalogue, selectable current output, and opt-in NameUpdates renaming.
+  Selection and names persist across restart. The host callback confirms a
+  physical output change and reapplies the saved route at startup; a synthetic
+  Aggregator fixture exercises both commands with official chip-tool.
+
 ### Meter Identification
 
 - Add the Matter 1.6 revision 1 Meter Identification server and Electrical
