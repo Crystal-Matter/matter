@@ -9,6 +9,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Keypad Input
 
+- Translate accepted SendKey repeats into host Press, Hold, and Release
+  callbacks using the Matter 1.6 200 ms window. Track keys independently by
+  endpoint and fabric; release state is transient across restarts. An injectable
+  monotonic clock and timer make the timing behavior deterministic to test.
 - Add the Matter 1.6 revision 1 Keypad Input server with all canonical CEC
   key values, NavigationKeyCodes, LocationKeys, and NumberKeys feature bits,
   and a typed SendKeyResponse. Advertised features accept their promised key
