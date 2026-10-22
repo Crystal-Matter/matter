@@ -238,7 +238,12 @@ module Matter
 
     # Starts mDNS and UDP transport and syncs advertisements for the current fabric set.
     # Returns immediately after starting - use `await_shutdown` to block until shutdown.
-    def start : Nil
+    # Pass `ota_restart: true` when resuming after an OTA update so Level
+    # Control retains its pre-update CurrentLevel (Matter 1.6 §1.6.6.15).
+    def start(ota_restart : Bool = false) : Nil
+      @message_handler.clusters.each_value do |cluster|
+        cluster.as?(Cluster::LevelControl).try(&.apply_startup_level(ota_restart: ota_restart))
+      end
       before_start
       @lifecycle.sync_advertisements
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode

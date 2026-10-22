@@ -170,4 +170,16 @@ describe "matter_level_control example" do
     expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_MODE, endpoint))
     read_int(device, "windowcovering", "mode", "Mode", endpoint).should eq LevelControlE2E::COVERING_MODE
   end
+
+  it "applies StartUpCurrentLevel after an ordinary device restart" do
+    expect_success(device.write("levelcontrol", "start-up-current-level", 42))
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", ["80", "0", "0", "0"]))
+    read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 80
+
+    device.restart!
+
+    device.operational?.should be_true
+    read_int(device, "levelcontrol", "start-up-current-level", "StartUpCurrentLevel").should eq 42
+    read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 42
+  end
 end

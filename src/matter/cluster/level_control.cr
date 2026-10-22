@@ -292,6 +292,19 @@ module Matter
         @current_level = @current_level.try(&.clamp(@min_level, @max_level))
       end
 
+      # Apply the manufacturer-selected power-up level after persisted state is
+      # restored. An OTA restart retains the level from before the update.
+      # Matter 1.6 Application Cluster §1.6.6.15.
+      def apply_startup_level(ota_restart : Bool = false) : Nil
+        return unless feature_map.lighting?
+        return if ota_restart
+        return unless startup = @start_up_current_level
+
+        level = startup == 0_u8 ? @min_level : startup.clamp(@min_level, @max_level)
+        clear_transition
+        self.current_level = level
+      end
+
       private def current_level_updated(level : UInt8?) : Nil
         return if level
         clear_transition
