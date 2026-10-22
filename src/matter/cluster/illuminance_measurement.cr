@@ -45,11 +45,11 @@ module Matter
 
       # Value of 0 indicates too low to measure
       attribute 0x0000, :measured_value, UInt16, nullable: true, min: MIN_ILLUMINANCE, max: MAX_ILLUMINANCE
-      attribute 0x0001, :min_measured_value, UInt16, nullable: true, fixed: true, min: MIN_MEASURED_VALUE_RANGE.begin, max: MIN_MEASURED_VALUE_RANGE.end
-      attribute 0x0002, :max_measured_value, UInt16, nullable: true, fixed: true, max: MAX_ILLUMINANCE
+      attribute 0x0001, :min_measured_value, UInt16, nullable: true, fixed: true, min: MIN_MEASURED_VALUE_RANGE.begin, max: MIN_MEASURED_VALUE_RANGE.end, validate: :reject_fixed_attribute_change!
+      attribute 0x0002, :max_measured_value, UInt16, nullable: true, fixed: true, max: MAX_ILLUMINANCE, validate: :reject_fixed_attribute_change!
       # Nil disables the optional attribute; when present, Tolerance is always a number on the wire.
-      attribute 0x0003, :tolerance, UInt16, nullable: true, fixed: true, optional: true, max: MAX_TOLERANCE, present_if: :tolerance
-      attribute 0x0004, :light_sensor_type, LightSensorType, nullable: true, fixed: true, optional: true, present_if: :light_sensor_type
+      attribute 0x0003, :tolerance, UInt16, nullable: true, fixed: true, optional: true, max: MAX_TOLERANCE, present_if: :tolerance, validate: :reject_fixed_attribute_change!
+      attribute 0x0004, :light_sensor_type, LightSensorType, nullable: true, fixed: true, optional: true, present_if: :light_sensor_type, validate: :reject_fixed_attribute_change!
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @measured_value : UInt16? = nil,
@@ -98,6 +98,10 @@ module Matter
       # Called with the previous and the new value whenever MeasuredValue changes
       def on_illuminance_changed(&block : UInt16?, UInt16? -> Nil) : Nil
         on_measured_value_changed(&block)
+      end
+
+      private def reject_fixed_attribute_change!(_value) : Nil
+        raise ArgumentError.new("fixed illuminance attributes cannot change after construction")
       end
 
       # 0 (too low to measure) is always valid

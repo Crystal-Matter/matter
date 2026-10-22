@@ -24,6 +24,27 @@ describe Matter::Cluster::IlluminanceMeasurement do
       end
     end
 
+    it "rejects host changes to fixed configuration without changing DataVersion" do
+      cluster = build(Matter::Cluster::IlluminanceMeasurement,
+        min_measured_value: 1_u16,
+        max_measured_value: 1000_u16,
+        tolerance: 10_u16,
+        light_sensor_type: Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode
+      )
+      version = cluster.data_version
+
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.min_measured_value = 2_u16 }
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.max_measured_value = 999_u16 }
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.tolerance = 11_u16 }
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.light_sensor_type = Matter::Cluster::IlluminanceMeasurement::LightSensorType::CMOS }
+
+      cluster.min_measured_value.should eq(1_u16)
+      cluster.max_measured_value.should eq(1000_u16)
+      cluster.tolerance.should eq(10_u16)
+      cluster.light_sensor_type.should eq(Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode)
+      cluster.data_version.should eq(version)
+    end
+
     it "requires at least one step between non-null minimum and maximum" do
       expect_raises(ArgumentError, /max_measured_value must be at least min_measured_value \+ 1/) do
         build(Matter::Cluster::IlluminanceMeasurement,
