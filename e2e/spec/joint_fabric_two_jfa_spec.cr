@@ -584,6 +584,44 @@ describe "three provisioned Joint Fabric Administrators" do
         Random::Secure.hex(8)))
     third_new_fabric.fabric_present.should be_true
 
+    before_removal_groups = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+    before_removal_group_data = before_removal_groups.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    before_removal_group = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+      .from_tlv(before_removal_group_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
+    before_removal_cat_version = before_removal_group.group_cat_version ||
+                                 raise Matter::ProtocolError.new("Administrator group CAT version is absent")
+
+    # C's user has not consented. B rejects the request before creating a
+    # removal journal or sending any removal command; C stays on the fabric.
+    denied_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA104_u64))
+    denied_removal.status.should eq("error")
+    denied_removal.error.to_s.should contain("Outgoing Administrator user consent is not recorded")
+    after_denial_admins = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    after_denial_data = after_denial_admins.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    after_denial_ids = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(after_denial_data.to_slice).map(&.node_id)
+    after_denial_ids.sort!.should eq(promoted_ids.sort!)
+    still_joined = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    still_joined.fabric_present.should be_true
+    before_removal_groups_again = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+    before_removal_groups_again_data = before_removal_groups_again.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+      .from_tlv(before_removal_groups_again_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
+      .group_cat_version.should eq(before_removal_cat_version)
+
     # The former Anchor consents out of band; B removes its new-fabric NOC,
     # removes A from the Datastore, and increments the Administrator CAT.
     interrupted = jfa_command("matter_joint_fabric_joiner",
@@ -598,7 +636,6 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
       unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
-    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
     uncertain_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     uncertain_retry.status.should eq("error")
@@ -613,8 +650,39 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-fabric-removed", 0xA102_u64,
         nonce: proof_nonce))
     reconciled.status.should eq("ok"), reconciled.error.to_s
-    removed = jfa_command("matter_joint_fabric_joiner",
+    # RemoveAdmin commits to the new Anchor Datastore, but the simulated
+    # acknowledgement is lost before the journal advances. Restart B at this
+    # second uncertain boundary and prove the AdminList change survived.
+    interrupted_datastore = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+        interrupt_after_remove_admin: true))
+    interrupted_datastore.status.should eq("error")
+    interrupted_datastore.error.to_s.should contain("Injected lost RemoveAdmin acknowledgement")
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    uncertain_datastore_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    uncertain_datastore_retry.status.should eq("error")
+    uncertain_datastore_retry.error.to_s.should contain("needs reconciliation")
+    promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    persisted_admins = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    persisted_data = persisted_admins.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    persisted_ids = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(persisted_data.to_slice).map(&.node_id)
+    persisted_ids.should_not contain(0xA102_u64)
+    reconciled_datastore = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-datastore-removed", 0xA102_u64))
+    reconciled_datastore.status.should eq("ok"), reconciled_datastore.error.to_s
+    removed = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+        interrupt_after_remove_admin: true))
     removed.status.should eq("ok"), removed.error.to_s
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -626,6 +694,14 @@ describe "three provisioned Joint Fabric Administrators" do
     final_ids = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
       .from_tlv(final_data.to_slice).map(&.node_id)
     final_ids.sort!.should eq([0xA104_u64, 0xB102_u64])
+    final_groups = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+    final_group_data = final_groups.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    administrator_group = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+      .from_tlv(final_group_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
+    administrator_group.group_cat_version.should eq(before_removal_cat_version + 1_u16)
     # Retrying after a completed journal is idempotent and cannot rotate CATs again.
     repeated = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))

@@ -223,6 +223,23 @@ module Matter
           journal
         end
 
+        # The Anchor can resolve a lost local RemoveAdmin acknowledgement from
+        # its restored, durably saved Datastore. It must not infer success from
+        # the journal alone or rerun an operation with an uncertain outcome.
+        def self.reconcile_datastore_removed!(journal : Journal, datastore : Datastore,
+                                              save : SaveJournal) : Journal
+          unless journal.stage.removing_datastore? && journal.outgoing_node_id != 0_u64
+            raise Matter::ConfigurationError.new("Administrator removal is not awaiting Datastore reconciliation")
+          end
+          unless datastore.status.state.committed?
+            raise Matter::CommissioningError.new("Anchor Datastore is not committed")
+          end
+          if datastore.admin_list.any?(&.node_id.==(journal.outgoing_node_id))
+            raise Matter::CommissioningError.new("Anchor Datastore still lists outgoing Administrator")
+          end
+          reconcile_journal!(journal, Stage::DatastoreRemoved, save)
+        end
+
         private def advance(stage : Stage) : Nil
           @journal.stage = stage
           @save.call(@journal)

@@ -133,6 +133,8 @@ module MatterJointFabricAdministrator
       getter root_public_key : Bytes?
       getter nonce : String?
       getter? interrupt_after_remove_fabric : Bool
+      # Older command-channel YAML files predate this test-only fault hook.
+      getter? interrupt_after_remove_admin : Bool = false
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
@@ -146,7 +148,8 @@ module MatterJointFabricAdministrator
                      @jcm : Bool = false, @trusted_icac_public_key_b : Bytes? = nil,
                      @peer_admin_jfa_endpoint_id : UInt16? = nil,
                      @anchor_node_id : UInt64? = nil, @peer_address : String? = nil,
-                     @peer_port : Int32? = nil)
+                     @peer_port : Int32? = nil,
+                     @interrupt_after_remove_admin : Bool = false)
       end
     end
 
@@ -182,16 +185,23 @@ module MatterJointFabricAdministrator
     # Exercises the journal boundary where the remote RemoveFabric completed
     # but its acknowledgement was lost before the local stage could advance.
     class InterruptedRemovalPort < Matter::Controller::AdministratorRemoval::Port
-      def initialize(@delegate : Matter::Controller::AdministratorRemoval::Port)
+      def initialize(@delegate : Matter::Controller::AdministratorRemoval::Port,
+                     @interrupt_after_remove_fabric : Bool = false,
+                     @interrupt_after_remove_admin : Bool = false)
       end
 
       def remove_outgoing_fabric! : Nil
         @delegate.remove_outgoing_fabric!
-        raise Matter::TransportError.new("Injected lost RemoveFabric acknowledgement")
+        if @interrupt_after_remove_fabric
+          raise Matter::TransportError.new("Injected lost RemoveFabric acknowledgement")
+        end
       end
 
       def remove_datastore_admin! : Nil
         @delegate.remove_datastore_admin!
+        if @interrupt_after_remove_admin
+          raise Matter::TransportError.new("Injected lost RemoveAdmin acknowledgement")
+        end
       end
 
       def rotate_anchor! : Nil
@@ -1362,7 +1372,8 @@ module MatterJointFabricAdministrator
     # also be listed in MATTER_JFA_CONSENTED_REMOVALS after its own user has
     # approved removal. The list contains comma-separated hexadecimal Node IDs.
     private def remove_administrator(outgoing_node_id : UInt64,
-                                     interrupt_after_remove_fabric : Bool = false) : Nil
+                                     interrupt_after_remove_fabric : Bool = false,
+                                     interrupt_after_remove_admin : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Another Joint Fabric operation is running") if @removal_in_progress || @transfer_in_progress
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -1406,6 +1417,9 @@ module MatterJointFabricAdministrator
         outgoing_session = nil.as(Matter::Session::SecureContext?)
         if journal.stage.ready?
           outgoing_peer = resolve_transfer_peer(scanner, identity.compressed_fabric_id, outgoing_node_id)
+          ::Log.for("matter.example.joint_fabric_administrator").info do
+            "Administrator removal CASE pairing with outgoing node 0x#{outgoing_node_id.to_s(16)}"
+          end
           outgoing_session = Matter::Controller::Pairing::CasePairing.new.pair(client, outgoing_peer,
             identity, peer_node_id: outgoing_node_id)
         end
@@ -1428,6 +1442,9 @@ module MatterJointFabricAdministrator
             raise Matter::StorageError.new("Could not persist Administrator CAT version") unless persistence.save_cluster(datastore)
             persistence.flush
             self_peer = Socket::IPAddress.new("127.0.0.1", self.port)
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with local Anchor before NOC rotation"
+            end
             self_session = Matter::Controller::Pairing::CasePairing.new.pair(client, self_peer,
               identity, peer_node_id: own_fabric.node_id)
             Matter::Controller::AnchorTransfer::AdministratorRotation.new(client, im,
@@ -1437,6 +1454,9 @@ module MatterJointFabricAdministrator
             configure_propagator(own_fabric, own_fabric.root_cert.as(Bytes))
             active_identity = controller_store.load.fabric_for(own_fabric.fabric_id,
               own_fabric.root_public_key, own_fabric.node_id)
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with local Anchor after NOC rotation"
+            end
             active_session = Matter::Controller::Pairing::CasePairing.new.pair(client, self_peer,
               active_identity, peer_node_id: own_fabric.node_id)
             tighten_administrator_acl(im, active_session, self_peer, admin_version)
@@ -1448,18 +1468,29 @@ module MatterJointFabricAdministrator
             active_bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(
               active_identity, bootstrap.anchor_icac_private_key)
             peer = resolve_transfer_peer(scanner, active_identity.compressed_fabric_id, node_id)
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with participant 0x#{node_id.to_s(16)} before NOC rotation"
+            end
             session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
               active_identity, peer_node_id: node_id)
             index = remote_fabric_index(im, session, peer, own_fabric)
             Matter::Controller::AnchorTransfer::AdministratorRotation.new(client, im,
               session, peer, node_id, active_bootstrap, admin_version, anchor_version,
               existing_fabric: true, existing_fabric_index: index).transition!
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with participant 0x#{node_id.to_s(16)} after NOC rotation"
+            end
             refreshed_session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
               active_identity, peer_node_id: node_id)
             tighten_administrator_acl(im, refreshed_session, peer, admin_version)
             nil
           })
-        effective_port = interrupt_after_remove_fabric ? InterruptedRemovalPort.new(port) : port
+        effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin
+                           InterruptedRemovalPort.new(port, interrupt_after_remove_fabric,
+                             interrupt_after_remove_admin)
+                         else
+                           port
+                         end
         workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
           own_fabric.node_id, remaining, effective_port, -> { true }, -> { consented },
           ->(state : Matter::Controller::AdministratorRemoval::Journal) {
@@ -1504,6 +1535,25 @@ module MatterJointFabricAdministrator
       end
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_journal!(journal,
         Matter::Controller::AdministratorRemoval::Stage::FabricRemoved,
+        ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+          persistence.write_app_document(document_name, state.to_document)
+          persistence.flush
+          nil
+        })
+    end
+
+    private def reconcile_datastore_removed(outgoing_node_id : UInt64) : Nil
+      raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+      datastore = joint_fabric_datastore
+      unless datastore.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Datastore belongs to another Anchor")
+      end
+      document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+      document = persistence.app_document(document_name) ||
+                 raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+      journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(journal, datastore,
         ->(state : Matter::Controller::AdministratorRemoval::Journal) {
           persistence.write_app_document(document_name, state.to_document)
           persistence.flush
@@ -1638,7 +1688,8 @@ module MatterJointFabricAdministrator
             transfer_anchor_from(request.node_id)
             CommandResult.new("ok")
           when "remove-administrator"
-            remove_administrator(request.node_id, request.interrupt_after_remove_fabric?)
+            remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
+              request.interrupt_after_remove_admin?)
             CommandResult.new("ok")
           when "inspect-fabric"
             fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Fabric ID is required")
@@ -1663,6 +1714,9 @@ module MatterJointFabricAdministrator
               subscription_committed: @participant_view_current)
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
+            CommandResult.new("ok")
+          when "reconcile-datastore-removed"
+            reconcile_datastore_removed(request.node_id)
             CommandResult.new("ok")
           when "finalize-commissioning"
             certificate = finalize_commissioning(request)

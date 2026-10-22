@@ -43,6 +43,31 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "decodes a legacy command YAML without the new removal interruption flag" do
+    path = File.join(Dir.tempdir, "matter-jfa-legacy-command-#{Random::Secure.hex(6)}.yml")
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA102_u64,
+      fabric_id: 0xA100_u64, root_public_key: Bytes[1_u8], nonce: "legacy-command")
+    document = request.to_document
+    document.delete("interrupt_after_remove_admin")
+    backend = Matter::Storage::YamlFile.new(path)
+    backend.open
+    backend.write(MatterJointFabricAdministrator::Device::COMMAND_RPC_COLLECTION, "request", document)
+    backend.close
+
+    reopened = Matter::Storage::YamlFile.new(path)
+    reopened.open
+    stored = reopened.read(MatterJointFabricAdministrator::Device::COMMAND_RPC_COLLECTION, "request") ||
+             raise Matter::StorageError.new("Legacy JFA command was not saved")
+    restored = MatterJointFabricAdministrator::Device::CommandRequest.from_document(stored)
+    restored.operation.should eq("inspect-fabric")
+    restored.node_id.should eq(0xA102_u64)
+    restored.interrupt_after_remove_admin?.should be_false
+  ensure
+    backend.try(&.close) if backend.try(&.open?)
+    reopened.try(&.close) if reopened.try(&.open?)
+    File.delete?(path) if path
+  end
+
   it "retains the link-local interface scope in an Anchor ICAC exchange handoff" do
     peer = Socket::IPAddress.new("fe80::1234%1", 5540)
     request = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.new(

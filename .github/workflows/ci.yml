@@ -67,6 +67,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: Commission example devices with official chip-tool
         run: ./test --e2e-only
+      - name: Upload device logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-interoperability-logs
+          path: tmp/e2e/logs/
+          if-no-files-found: warn
   test:
     strategy:
       fail-fast: false

@@ -65,7 +65,12 @@ item below as covered only to the extent of its cited tests.
   rotation. The Docker three-administrator test jointly commissions B and C,
   transfers the Anchor from A to B, and removes A. It restarts B after a lost
   RemoveFabric acknowledgement, verifies the persisted journal blocks replay,
-  reconciles the result, and confirms B and C remain registered. The former
+  and reconciles the result. It also restarts B after a lost RemoveAdmin
+  acknowledgement, checks the removal in B's persisted AdminList over CASE,
+  and resumes CAT/NOC rotation only after checked reconciliation. B and C
+  remain registered. Before A's authorized removal, B rejects an unconsented
+  request to remove C and the test checks that C's fabric, B's AdminList, and
+  the Administrator CAT version are unchanged. The former
   Anchor subscribes to the new Anchor's authenticated Datastore and suspends
   Joint Commissioning when that view is stale. The subscription discovers the
   active Datastore endpoint through Descriptor reads and verifies its root and
@@ -278,8 +283,9 @@ against merged `develop`.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer, A removal, B restart after a lost RemoveFabric
-   acknowledgement, and B/C registration; local specs cover interrupted
-   second credential rotation. Other network interruption points remain.
+   acknowledgement, persisted RemoveAdmin with a lost acknowledgement, and
+   B/C registration; local specs cover interrupted second credential rotation.
+   Other network interruption points remain.
 3. Deploy production PAA/CD signers and a trusted CRL distribution source
    through the JFA example's explicit injection point. The bundled
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
