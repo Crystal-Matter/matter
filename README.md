@@ -222,6 +222,21 @@ and peer there; command callbacks do not expose files by themselves.
 
 ### Cluster values
 
+`Cluster::WakeOnLan` exposes a wake-capable interface's optional addresses
+on a server endpoint. Give it a 12-digit upper-case hex MAC address and/or a
+16-byte IPv6 link-local address:
+
+```crystal
+cluster Matter::Cluster::WakeOnLan,
+  mac_address: "12345678ABCD",
+  link_local_address: Bytes[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+```
+
+Addresses are fixed after construction; nil omits the corresponding attribute.
+The host must supply an interface that actually accepts wake packets while
+asleep. The library only exposes the addresses over Matter. See
+`examples/matter_wake_on_lan_device.cr` for a synthetic wire-test endpoint.
+
 An appliance can opt in to `Cluster::TemperatureControl` to expose either a
 numeric setpoint in hundredths of a degree Celsius or ordered, named levels.
 `TemperatureNumber` and `TemperatureLevel` are exclusive; `TemperatureStep`
