@@ -17,7 +17,9 @@ module Matter
       @failed : Bool
 
       def initialize(@max_message_size : Int32)
-        self.class.validate_limit!(@max_message_size)
+        if @max_message_size <= 0
+          raise Matter::ConfigurationError.new("Matter TCP receive limit must be positive")
+        end
         @prefix = Bytes.new(LENGTH_PREFIX_SIZE)
         @prefix_size = 0
         @message = nil
