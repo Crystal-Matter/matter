@@ -54,7 +54,7 @@ module Matter
         @transport = transport || Transport::UDPTransport.new(port: port)
         @transport_observer_id = nil
         @owned_unsecured_exchanges = Set(Tuple(UInt16, Socket::IPAddress)).new
-        @unsecured_source_node_id = unsecured_source_node_id ? DataType::NodeId.new(unsecured_source_node_id) : nil
+        @unsecured_source_node_id = unsecured_source_node_id ? DataType::NodeId.new(unsecured_source_node_id) : DataType::NodeId.random_operational
 
         # Avoid re-using old unsecured message IDs across process restarts: peers may
         # keep a dedupe window for unsecured traffic (session_id=0), which can cause

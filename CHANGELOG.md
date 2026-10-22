@@ -69,6 +69,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Resolve compressed DNS SRV targets from the decoded packet when discovering
   Matter devices. This allows a controller to find an SDK bridge whose
   operational and commissionable advertisements share a hostname.
+- Give each controller client a random operational source Node ID for unsecured
+  packets by default, so SDK peers accept its PASE and CASE handshakes. Preserve
+  the caller's explicit unsecured source Node ID when provided.
 
 ### Scenes Management fabric isolation
 
