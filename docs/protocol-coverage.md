@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 81
-- Matching known revisions: 79
+- Crystal declarations for those IDs: 82
+- Matching known revisions: 80
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -126,7 +126,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — |
 | 0x0430 | Soil Measurement Cluster | 1 | 1 | Fixed accuracy limits and nullable validated percentage reading; Soil Sensor chip-tool E2E |
-| 0x0431 | Ambient Context Sensing Cluster | 1 | — | cluster absent |
+| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | HA-only provisional slice; OC, OI, AUD and PRED remain unavailable |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — |
