@@ -252,4 +252,22 @@ describe "matter_level_control example" do
     read_int(device, "levelcontrol", "start-up-current-level", "StartUpCurrentLevel").should eq 42
     read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 42
   end
+
+  it "advertises all mandatory commands and resets volatile settings after restart" do
+    expect_success(device.read("levelcontrol", "accepted-command-list"))
+      .int_list("AcceptedCommandList").should eq((0_i64..7_i64).to_a)
+    expect_success(device.write("levelcontrol", "options", 1))
+    expect_success(device.write("levelcontrol", "on-level", 100))
+    expect_success(device.write("levelcontrol", "on-off-transition-time", 3))
+    expect_success(device.write("levelcontrol", "start-up-current-level", 50))
+    expect_success(device.invoke("levelcontrol", "move-to-level-with-on-off", ["80", "0", "0", "0"]))
+
+    device.restart!
+
+    read_int(device, "levelcontrol", "start-up-current-level", "StartUpCurrentLevel").should eq 50
+    read_int(device, "levelcontrol", "current-level", "CurrentLevel").should eq 50
+    read_int(device, "levelcontrol", "options", "Options").should eq 0
+    read_int(device, "levelcontrol", "on-off-transition-time", "OnOffTransitionTime").should eq 0
+    read_value(device, "levelcontrol", "on-level", "OnLevel").should eq "null"
+  end
 end

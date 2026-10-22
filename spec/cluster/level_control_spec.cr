@@ -364,7 +364,7 @@ describe Matter::Cluster::LevelControl do
   end
 
   describe "persistence" do
-    it "saves and restores state" do
+    it "restores only the nonvolatile level and startup setting" do
       cluster = build(Matter::Cluster::LevelControl,
         current_level: 50_u8,
         min_level: 1_u8,
@@ -389,7 +389,8 @@ describe Matter::Cluster::LevelControl do
 
       saved = cluster.save_state.as(Matter::Storage::Document)
       saved["current_level"].should eq(50_i64)
-      saved["on_level"].should eq(42_i64)
+      saved["start_up_current_level"].should eq(12_i64)
+      saved.has_key?("on_level").should be_false
       saved["data_version"].should eq(12_i64)
 
       restored = build(Matter::Cluster::LevelControl,
@@ -405,17 +406,17 @@ describe Matter::Cluster::LevelControl do
       restored.current_level.should eq(50_u8)
       restored.min_level.should eq(1_u8)
       restored.max_level.should eq(254_u8)
-      restored.on_level.should eq(42_u8)
-      restored.options.should eq(3_u8)
+      restored.on_level.should be_nil
+      restored.options.should eq(0_u8)
       restored.remaining_time.should eq(0_u16)
-      restored.on_off_transition_time.should eq(5_u16)
-      restored.on_transition_time.should eq(7_u16)
-      restored.off_transition_time.should eq(8_u16)
-      restored.default_move_rate.should eq(10_u8)
+      restored.on_off_transition_time.should eq(0_u16)
+      restored.on_transition_time.should be_nil
+      restored.off_transition_time.should be_nil
+      restored.default_move_rate.should be_nil
       restored.start_up_current_level.should eq(12_u8)
-      restored.current_frequency.should eq(111_u16)
-      restored.min_frequency.should eq(100_u16)
-      restored.max_frequency.should eq(120_u16)
+      restored.current_frequency.should eq(0_u16)
+      restored.min_frequency.should eq(0_u16)
+      restored.max_frequency.should eq(0_u16)
       restored.data_version.should eq(12_u32)
     end
   end

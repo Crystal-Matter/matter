@@ -10,8 +10,13 @@ runtime-state restores, ignores legacy stored bounds, and clamps a known
 restored CurrentLevel to the configured range. It also reports null
 CurrentLevel and handles an absolute MoveToLevel from that state. Focused
 specs cover these behaviors, plus the CurrentLevel scene quality and the
-minimum non-null DefaultMoveRate of 1. The advertised revision stays at 6
-because the following behavior is still incomplete:
+minimum non-null DefaultMoveRate of 1. A further conformance slice aligns
+write privileges with the XML, makes only CurrentLevel and
+StartUpCurrentLevel nonvolatile, exposes all eight mandatory commands without
+requiring the optional OnOff feature, and marks Frequency CurrentFrequency as
+a scene attribute. Direct host CurrentLevel assignments now validate the
+configured bounds before changing the value. The advertised revision stays
+at 6 because the following behavior is still incomplete:
 
 - The Lighting `Options.CoupleColorTempToLevel` bit should couple level changes
   to Color Control's color temperature when the sibling server is present.
