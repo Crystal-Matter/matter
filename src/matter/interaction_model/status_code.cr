@@ -61,10 +61,12 @@ module Matter
 
       # Request is for an event the cluster instance does not support
       # (Matter Core 8.10.1, another general code inside the 0xC0-0xFF range)
-      UnsupportedEvent     = 0xC7
-      TimedRequestMismatch = 0xC9
-      FailsafeRequired     = 0xCA
-      InvalidInState       = 0xCB
+      UnsupportedEvent       = 0xC7
+      TimedRequestMismatch   = 0xC9
+      FailsafeRequired       = 0xCA
+      InvalidInState         = 0xCB
+      DynamicConstraintError = 0xCF
+      AlreadyExists          = 0xD0
 
       # Other values in 0xC0-0xFF may be cluster-specific. The named general
       # statuses above keep their assigned meanings in that range.
@@ -78,32 +80,34 @@ module Matter
       # `Log` the latter), so both are overridden to share this label.
       def label : String
         case self
-        when Success               then "Success"
-        when Failure               then "Failure"
-        when InvalidSubscription   then "Invalid Subscription"
-        when UnsupportedAccess     then "Unsupported Access"
-        when UnsupportedEndpoint   then "Unsupported Endpoint"
-        when InvalidAction         then "Invalid Action"
-        when UnsupportedCommand    then "Unsupported Command"
-        when InvalidCommand        then "Invalid Command"
-        when UnsupportedAttribute  then "Unsupported Attribute"
-        when ConstraintError       then "Constraint Error"
-        when UnsupportedWrite      then "Unsupported Write"
-        when ResourceExhausted     then "Resource Exhausted"
-        when NotFound              then "Not Found"
-        when UnreportableAttribute then "Unreportable Attribute"
-        when InvalidDataType       then "Invalid Data Type"
-        when UnsupportedRead       then "Unsupported Read"
-        when DataVersionMismatch   then "Data Version Mismatch"
-        when Timeout               then "Timeout"
-        when Busy                  then "Busy"
-        when UnsupportedCluster    then "Unsupported Cluster"
-        when NeedsTimedInteraction then "Needs Timed Interaction"
-        when UnsupportedEvent      then "Unsupported Event"
-        when TimedRequestMismatch  then "Timed Request Mismatch"
-        when FailsafeRequired      then "Failsafe Required"
-        when InvalidInState        then "Invalid In State"
-        else                            "Unknown Status (#{Hex.u8(value)})"
+        when Success                then "Success"
+        when Failure                then "Failure"
+        when InvalidSubscription    then "Invalid Subscription"
+        when UnsupportedAccess      then "Unsupported Access"
+        when UnsupportedEndpoint    then "Unsupported Endpoint"
+        when InvalidAction          then "Invalid Action"
+        when UnsupportedCommand     then "Unsupported Command"
+        when InvalidCommand         then "Invalid Command"
+        when UnsupportedAttribute   then "Unsupported Attribute"
+        when ConstraintError        then "Constraint Error"
+        when UnsupportedWrite       then "Unsupported Write"
+        when ResourceExhausted      then "Resource Exhausted"
+        when NotFound               then "Not Found"
+        when UnreportableAttribute  then "Unreportable Attribute"
+        when InvalidDataType        then "Invalid Data Type"
+        when UnsupportedRead        then "Unsupported Read"
+        when DataVersionMismatch    then "Data Version Mismatch"
+        when Timeout                then "Timeout"
+        when Busy                   then "Busy"
+        when UnsupportedCluster     then "Unsupported Cluster"
+        when NeedsTimedInteraction  then "Needs Timed Interaction"
+        when UnsupportedEvent       then "Unsupported Event"
+        when TimedRequestMismatch   then "Timed Request Mismatch"
+        when FailsafeRequired       then "Failsafe Required"
+        when InvalidInState         then "Invalid In State"
+        when DynamicConstraintError then "Dynamic Constraint Error"
+        when AlreadyExists          then "Already Exists"
+        else                             "Unknown Status (#{Hex.u8(value)})"
         end
       end
 

@@ -104,6 +104,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   packets by default, so SDK peers accept its PASE and CASE handshakes. Preserve
   the caller's explicit unsecured source Node ID when provided.
 
+### TLS Certificate Management
+
+- Add the opt-in Matter 1.6 TLS Certificate Management cluster (0x0801,
+  revision 1) with per-fabric root and client certificates, device-generated
+  P-256 CSRs, nonce signatures, certificate lookup and removal, and immediate
+  persistence of private keys. Removing a fabric erases its certificate and key
+  records. An official chip-tool fixture exercises the command surface.
+
 ### Scenes Management fabric isolation
 
 - Scope all Scenes Management commands and FabricSceneInfo reads to the
