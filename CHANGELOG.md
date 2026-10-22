@@ -23,6 +23,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   construction and validate host-assigned readings before changing the
   attribute or DataVersion. The humidity sensor example now checks the revision
   through official chip-tool.
+### Occupancy Sensing revision 7
+
+- Advertise revision 7 with a required sensing modality and optional
+  OccupancyEvent feature. Emit a typed OccupancyChanged event only for actual
+  state changes when that feature is selected. Occupancy remains volatile.
+- Expose fixed HoldTimeLimits with optional, bounded HoldTime; gate PIR,
+  ultrasonic, and physical-contact timing settings by HoldTime and sensing
+  modality, and derive legacy sensor type fields from the selected modalities.
+  Synchronize HoldTime with the equivalent legacy
+  occupied-to-unoccupied delays, keep timing settings nonvolatile, reject
+  changes to fixed sensor metadata and limits, and reject invalid threshold and
+  HoldTime writes. The motion sensor example now applies
+  HoldTime to its simulated detector samples; physical sensing and entry
+  threshold filtering remain device-owned.
 
 ### Cross-ecosystem Joint Fabric control
 
