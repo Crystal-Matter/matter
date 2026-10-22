@@ -23,6 +23,22 @@ describe "matter_door_lock example" do
     read_bool(device, "doorlock", "require-pinfor-remote-operation", "RequirePINforRemoteOperation").should be_true
   end
 
+  it "exposes valid operating modes and Matter 1.6 sound-volume values" do
+    read_int(device, "doorlock", "supported-operating-modes", "SupportedOperatingModes").should eq(0xFFF6_i64)
+
+    expect_success(device.write("doorlock", "sound-volume", 2))
+    read_int(device, "doorlock", "sound-volume", "SoundVolume").should eq(2_i64)
+    expect_success(device.write("doorlock", "sound-volume", 3))
+    read_int(device, "doorlock", "sound-volume", "SoundVolume").should eq(3_i64)
+
+    expect_failure(device.write("doorlock", "operating-mode", 1), "CONSTRAINT_ERROR")
+    read_int(device, "doorlock", "operating-mode", "OperatingMode").should eq(0_i64)
+    expect_success(device.write("doorlock", "operating-mode", 3))
+    read_int(device, "doorlock", "operating-mode", "OperatingMode").should eq(3_i64)
+    expect_failure(device.invoke("doorlock", "unlock-door", options: timed + pin), "FAILURE")
+    expect_success(device.write("doorlock", "operating-mode", 0))
+  end
+
   it "rejects an untimed unlock before changing lock state" do
     before = read_int(device, "doorlock", "lock-state", "LockState")
     result = device.invoke("doorlock", "unlock-door", options: pin)

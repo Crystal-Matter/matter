@@ -35,9 +35,19 @@ module Matter
       enum SoundVolume : UInt8
         Silent = 0
         Low    = 1
-        Medium = 2
-        High   = 3
+        High   = 2
+        Medium = 3
       end
+
+      # OperatingModesBitmap uses set bits for unsupported modes; bits 5–15
+      # are reserved and must remain set.
+      SUPPORTED_OPERATING_MODES_RESERVED   = 0xFFE0_u16
+      UNSUPPORTED_OPTIONAL_OPERATING_MODES = (1_u16 << OperatingMode::Vacation.value) |
+                                             (1_u16 << OperatingMode::Privacy.value) |
+                                             (1_u16 << OperatingMode::Passage.value)
+      DEFAULT_SUPPORTED_OPERATING_MODES = SUPPORTED_OPERATING_MODES_RESERVED | UNSUPPORTED_OPTIONAL_OPERATING_MODES
+      NORMAL_OPERATING_MODE_BIT         = 1_u16 << OperatingMode::Normal.value
+      NO_REMOTE_OPERATING_MODE_BIT      = 1_u16 << OperatingMode::NoRemoteLockUnlock.value
 
       # Wildcard indexes clearing every user / schedule / credential
       ALL_USERS     = 0xFFFE_u16
@@ -95,7 +105,10 @@ module Matter
       attribute 0x0023, :auto_relock_time, UInt32, default: 0_u32, writable: true, write_access: :manage, optional: true
       attribute 0x0024, :sound_volume, SoundVolume, default: SoundVolume::Medium, writable: true, write_access: :manage, optional: true
       attribute 0x0025, :operating_mode, OperatingMode, default: OperatingMode::Normal, writable: true, write_access: :manage
-      attribute 0x0026, :supported_operating_modes, UInt16, default: 0_u16, fixed: true
+      before_write :operating_mode do |mode|
+        InteractionModel::Status.constraint_error unless operating_mode_supported?(mode)
+      end
+      attribute 0x0026, :supported_operating_modes, UInt16, default: DEFAULT_SUPPORTED_OPERATING_MODES, fixed: true
       attribute 0x0027, :default_configuration_register, UInt16, default: 0_u16, optional: true
       attribute 0x0028, :enable_local_programming, Bool, default: true, writable: true, write_access: :administer, optional: true
       attribute 0x0029, :enable_one_touch_locking, Bool, default: true, writable: true, write_access: :manage, optional: true
@@ -204,7 +217,7 @@ module Matter
         @auto_relock_time : UInt32 = 0_u32,
         @sound_volume : SoundVolume = SoundVolume::Medium,
         @operating_mode : OperatingMode = OperatingMode::Normal,
-        @supported_operating_modes : UInt16 = 0_u16,
+        @supported_operating_modes : UInt16 = DEFAULT_SUPPORTED_OPERATING_MODES,
         @default_configuration_register : UInt16 = 0_u16,
         @enable_local_programming : Bool = true,
         @enable_one_touch_locking : Bool = true,
@@ -233,7 +246,14 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         raise ArgumentError.new("credentialOverTheAirAccess requires pinCredential") if @feature_map.credential_over_the_air_access? && !@feature_map.pin_credential?
+        credential_feature = @feature_map.pin_credential? || @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials? || @feature_map.aliro_provisioning?
+        raise ArgumentError.new("credential features require user") if credential_feature && !@feature_map.user?
+        raise ArgumentError.new("aliroBLEUWB requires aliroProvisioning") if @feature_map.aliro_bleuwb? && !@feature_map.aliro_provisioning?
         raise ArgumentError.new("user schedules require user feature") if (@feature_map.week_day_access_schedules? || @feature_map.year_day_access_schedules? || @feature_map.holiday_schedules?) && !@feature_map.user?
+        raise ArgumentError.new("supportedOperatingModes reserved bits must be set") if (@supported_operating_modes & SUPPORTED_OPERATING_MODES_RESERVED) != SUPPORTED_OPERATING_MODES_RESERVED
+        raise ArgumentError.new("Normal operating mode is mandatory") unless (@supported_operating_modes & NORMAL_OPERATING_MODE_BIT).zero?
+        raise ArgumentError.new("NoRemoteLockUnlock operating mode is mandatory") unless (@supported_operating_modes & NO_REMOTE_OPERATING_MODE_BIT).zero?
+        raise ArgumentError.new("operatingMode is not supported") unless operating_mode_supported?(@operating_mode)
         raise ArgumentError.new("min_pin_code_length must be <= max_pin_code_length") if @min_pin_code_length > @max_pin_code_length
         raise ArgumentError.new("min_rfid_code_length must be <= max_rfid_code_length") if @min_rfid_code_length > @max_rfid_code_length
         raise ArgumentError.new("wrong_code_entry_limit must be >= 1") if @wrong_code_entry_limit < MIN_WRONG_CODE_ENTRY_LIMIT
@@ -338,6 +358,10 @@ module Matter
 
       def unlatched? : Bool
         @lock_state == LockState::Unlatched
+      end
+
+      private def operating_mode_supported?(mode : OperatingMode) : Bool
+        (@supported_operating_modes & (1_u16 << mode.value)).zero?
       end
 
       # Records a door position change and counts the open / close events; the

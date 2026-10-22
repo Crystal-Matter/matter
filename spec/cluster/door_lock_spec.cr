@@ -25,10 +25,59 @@ describe Matter::Cluster::DoorLock do
 
     it "includes unbolt command only when unbolting feature is enabled" do
       cluster = build(Matter::Cluster::DoorLock,
-        feature_map: Matter::Cluster::DoorLock::Feature::PinCredential
+        feature_map: Matter::Cluster::DoorLock::Feature::None
       )
 
       cluster.commands.map(&.id.id).includes?(Matter::Cluster::DoorLock::CMD_UNBOLT_DOOR).should be_false
+    end
+
+    it "uses Matter 1.6 SoundVolume wire values" do
+      Def::SoundVolume::High.value.should eq(2_u8)
+      Def::SoundVolume::Medium.value.should eq(3_u8)
+      read(build(Def), Def::ATTR_SOUND_VOLUME).should eq(3_u8)
+    end
+
+    it "sets reserved bits and supports both mandatory operating modes" do
+      cluster = build(Def)
+      modes = cluster.supported_operating_modes
+
+      (modes & 0xFFE0_u16).should eq(0xFFE0_u16)
+      (modes & 0x0001_u16).should eq(0_u16)
+      (modes & 0x0008_u16).should eq(0_u16)
+      modes.should eq(0xFFF6_u16)
+      read(cluster, Def::ATTR_SUPPORTED_OPERATING_MODES).should eq(modes)
+    end
+
+    it "rejects invalid operating-mode masks at construction" do
+      expect_raises(ArgumentError) { build(Def, supported_operating_modes: 0_u16) }
+      expect_raises(ArgumentError) { build(Def, supported_operating_modes: 0xFFE1_u16) }
+      expect_raises(ArgumentError) { build(Def, supported_operating_modes: 0xFFE8_u16) }
+      expect_raises(ArgumentError) do
+        build(Def, supported_operating_modes: 0xFFE2_u16, operating_mode: Def::OperatingMode::Vacation)
+      end
+    end
+
+    it "requires User when a credential feature is advertised" do
+      [Def::Feature::PinCredential, Def::Feature::RfidCredential,
+       Def::Feature::FingerCredentials, Def::Feature::FaceCredentials,
+       Def::Feature::AliroProvisioning].each do |feature|
+        expect_raises(ArgumentError) { build(Def, feature_map: feature) }
+      end
+    end
+  end
+
+  describe "operating mode" do
+    it "rejects a write to an unsupported operating mode without changing it" do
+      cluster = build(Def, supported_operating_modes: 0xFFE2_u16)
+      before_version = cluster.data_version
+
+      expect_status(write(cluster, Def::ATTR_OPERATING_MODE, Def::OperatingMode::Vacation.value),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.operating_mode.should eq(Def::OperatingMode::Normal)
+      cluster.data_version.should eq(before_version)
+
+      expect_success(write(cluster, Def::ATTR_OPERATING_MODE, Def::OperatingMode::Privacy.value))
+      cluster.operating_mode.should eq(Def::OperatingMode::Privacy)
     end
   end
 
@@ -77,7 +126,7 @@ describe Matter::Cluster::DoorLock do
 
     it "returns UnsupportedCommand for unbolt when feature disabled" do
       cluster = build(Matter::Cluster::DoorLock,
-        feature_map: Matter::Cluster::DoorLock::Feature::PinCredential
+        feature_map: Matter::Cluster::DoorLock::Feature::None
       )
 
       result = invoke(cluster, Matter::Cluster::DoorLock::CMD_UNBOLT_DOOR, lock_request)
