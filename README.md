@@ -307,6 +307,9 @@ Ethernet-only devices need no regulatory options. The IP commissioner does not
 provision Wi-Fi or Thread credentials; those require a commissioning channel
 and platform network backend for network handoff.
 
+For wireless devices, ScanNetworks responses include the enabled interface's
+result list as an empty array when no networks are discovered.
+
 CASE pairing can reuse a persisted secret after the first certificate exchange.
 The Crystal chip-tool enables this with its controller store. Library callers
 can share a `ResumptionStore` with their controller state backend:
