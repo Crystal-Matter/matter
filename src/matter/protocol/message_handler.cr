@@ -5,6 +5,7 @@ require "../cluster/operational_credentials"
 require "../cluster/commissioner_control"
 require "../cluster/group_key_management"
 require "../cluster/groupcast"
+require "../cluster/low_power"
 require "../cluster/scenes_management"
 require "../codec/message_codec"
 require "../fabric_table"
@@ -188,11 +189,13 @@ module Matter
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
         @router.on_invoke_response_sent = ->(session_identity : UInt64, exchange_id : UInt16) do
           start_pending_commissions(session_identity, exchange_id)
+          start_pending_sleeps(session_identity, exchange_id)
           @bdx_initiator.start_pending
         end
         @router.on_invoke_response_failed = ->(session_identity : UInt64, exchange_id : UInt16) do
           @bdx_initiator.discard_pending
           discard_pending_commissions(session_identity, exchange_id)
+          discard_pending_sleeps(session_identity, exchange_id)
         end
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
@@ -326,6 +329,27 @@ module Matter
 
       private def discard_pending_commissions(session_identity : UInt64, exchange_id : UInt16) : Nil
         commissioner_controls.each(&.discard_pending_commissions(session_identity, exchange_id))
+      end
+
+      private def start_pending_sleeps(session_identity : UInt64, exchange_id : UInt16) : Nil
+        @node.clusters.values.each do |cluster|
+          next unless low_power = cluster.as?(Cluster::LowPower)
+          next unless transition = low_power.take_pending_sleep(session_identity, exchange_id)
+          spawn do
+            # The response was transmitted, but the router still holds the
+            # protocol lock. Let it finish before the platform enters sleep.
+            @registry.synchronize { nil }
+            transition.call
+          rescue ex
+            Log.error(exception: ex) { "Deferred Low Power transition failed" }
+          end
+        end
+      end
+
+      private def discard_pending_sleeps(session_identity : UInt64, exchange_id : UInt16) : Nil
+        @node.clusters.values.each do |cluster|
+          cluster.as?(Cluster::LowPower).try(&.discard_pending_sleep(session_identity, exchange_id))
+        end
       end
 
       # The clusters of the node, keyed by `{endpoint, cluster}`.

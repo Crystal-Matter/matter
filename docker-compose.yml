@@ -203,6 +203,12 @@ services:
     environment:
       E2E_DEVICE: matter_thermostat_ui
 
+  low-power:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_low_power
+      MATTER_LOW_POWER_REQUEST_PATH: /e2e/logs/matter_low_power.sleep_requests
+
   humidity-sensor:
     <<: *device
     environment:
