@@ -18,7 +18,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 
 - Standard XML clusters: 135
 - Crystal declarations for those IDs: 79
-- Matching known revisions: 76
+- Matching known revisions: 77
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
