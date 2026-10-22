@@ -123,7 +123,7 @@ module Matter
         return InteractionModel::Status.constraint_error if request.endpoint_id > MAX_ENDPOINT_ID
         entry = endpoint(fabric, request.endpoint_id)
         return InteractionModel::Status.not_found unless entry
-        return InteractionModel::Status.invalid_in_state unless entry.reference_count.zero?
+        return InteractionModel::Status.cluster_failure(StatusCode::EndpointInUse) unless entry.reference_count.zero?
         @endpoints.delete(entry)
         changed
         InteractionModel::Status.success

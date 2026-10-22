@@ -74,8 +74,9 @@ describe TlsClient do
       .as(TlsCert::Tlv::ProvisionRootCertificateResponse)
     first = client.provision_endpoint(tls_client_request(first_root.caid)).as(TlsClient::Tlv::ProvisionEndpointResponse)
     client.change_reference_count(1_u8, first.endpoint_id, 1_i8).should be_true
-    client.remove_endpoint(TlsClient::Tlv::RemoveEndpointRequest.new(first.endpoint_id)).status
-      .should eq(Matter::InteractionModel::StatusCode::InvalidInState)
+    in_use = client.remove_endpoint(TlsClient::Tlv::RemoveEndpointRequest.new(first.endpoint_id))
+    in_use.status.should eq(Matter::InteractionModel::StatusCode::Failure)
+    in_use.cluster_status.should eq(TlsClient::StatusCode::EndpointInUse.value)
 
     client.request_fabric_index = 2_u8
     certificates.request_fabric_index = 2_u8
