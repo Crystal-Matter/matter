@@ -108,16 +108,23 @@ module SdkJfcJcmDriver
         raise Matter::ConfigurationError.new("Wrong A fabric") unless fabric_id == A_FABRIC_ID
         bootstrap.issue_anchor_administrator_noc(node_id, public_key)
       end
-      Matter::Controller::Commissioning::Commissioner.new(state_store, client,
-        timeout: OPERATION_TIMEOUT, certificate_issuer: issuer,
-        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-          Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
-        A_ANCHOR_ID, a_code, a_peer)
-      puts "A Anchor commissioned"
+      unless ENV["MATTER_JCM_TEST_SKIP_ANCHOR_COMMISSION"]? == "1"
+        Matter::Controller::Commissioning::Commissioner.new(state_store, client,
+          timeout: OPERATION_TIMEOUT, certificate_issuer: issuer,
+          attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+            Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
+          A_ANCHOR_ID, a_code, a_peer)
+        puts "A Anchor commissioned"
+      end
 
-      b_root = File.read(b_root_path).to_slice.dup
-      trust = Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
-        {A_VENDOR_ID => [b_root]})
+      trust = if url = ENV["MATTER_JCM_TEST_DCL_GATEWAY_URL"]?
+                Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
+                  Matter::Controller::VidVerification::HttpDclSource.new(url))
+              else
+                b_root = File.read(b_root_path).to_slice.dup
+                Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
+                  {A_VENDOR_ID => [b_root]})
+              end
       registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
         state_store, client, fabric.fabric_id, fabric.root_public_key,
         fabric.controller_node_id, A_ANCHOR_ID, JFA_ENDPOINT)
@@ -138,14 +145,30 @@ module SdkJfcJcmDriver
         end
         result.certificate || raise Matter::CommissioningError.new("Anchor handoff omitted cross-ICAC")
       end
+      consent = ENV["MATTER_JCM_TEST_CONSENT"]? != "deny"
       workflow = Matter::Controller::JointCommissioning::Workflow.new(
         state_store, fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
         1_u8, JFA_ENDPOINT, "SDK-owned joining Administrator", 1_u16, 1_u16, 3_u64, trust,
         ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
-        ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { consent },
         registrar.callback, anchor_exchange, client: client, anchor_finalize: anchor_finalize,
         attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
           Matter::Controller::AttestationTrustStore.matter_test_fixture))
+      if !consent
+        begin
+          workflow.commission(B_JOINED_ID, b_code, b_peer, defer_completion: true)
+        rescue ex : Matter::CommissioningError
+          unless ex.message.to_s.includes?("Joint Commissioning consent denied")
+            raise ex
+          end
+          if state_store.load.nodes.has_key?(B_JOINED_ID)
+            raise Matter::CommissioningError.new("Denied joiner was recorded in source controller state")
+          end
+          puts "PASS: trusted SDK-issued B root was rejected by explicit consent denial"
+          return
+        end
+        raise Matter::CommissioningError.new("Joint Commissioning succeeded without consent")
+      end
       workflow.commission(B_JOINED_ID, b_code, b_peer, defer_completion: true)
       cross_icac = workflow.stored_icac(B_JOINED_ID).as(Bytes)
       File.write(result_path, cross_icac)
@@ -171,6 +194,34 @@ module SdkJfcJcmDriver
       client.close
     end
   end
+
+  def probe_dcl(b_code : String, b_port : Int32, gateway_url : String,
+                expected : String) : Nil
+    _, pin = Matter::SetupPayload.parse_manual_code(b_code)
+    peer = Socket::IPAddress.new("127.0.0.1", b_port)
+    client = Matter::Controller::Client.new
+    begin
+      session = Matter::Controller::Pairing::PasePairing.new.pair(client, peer, pin,
+        timeout: OPERATION_TIMEOUT)
+      client.register_session(session)
+      im = Matter::Controller::ImClient.new(client, OPERATION_TIMEOUT)
+      index = Matter::Controller::JointCommissioning.read_administrator_fabric_index(
+        im, session, peer, JFA_ENDPOINT)
+      trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
+        Matter::Controller::VidVerification::HttpDclSource.new(gateway_url))
+      begin
+        Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, index, trust)
+      rescue ex : Matter::AuthenticationError
+        raise ex unless expected == "deny"
+        puts "PASS: SDK-issued root denied by test DCL before Joint Commissioning: #{ex.message}"
+        return
+      end
+      raise Matter::AuthenticationError.new("Untrusted SDK-issued root passed DCL validation") if expected == "deny"
+      puts "PASS: SDK-issued root and VID accepted by test DCL before Joint Commissioning"
+    ensure
+      client.close
+    end
+  end
 end
 
 case ARGV.shift?
@@ -181,7 +232,9 @@ when "verify-csr"
 when "commission"
   SdkJfcJcmDriver.commission(ARGV[0], ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5],
     ARGV[6], ARGV[7].to_i, ARGV[8].to_i)
+when "probe-dcl"
+  SdkJfcJcmDriver.probe_dcl(ARGV[0], ARGV[1].to_i, ARGV[2], ARGV[3])
 else
-  STDERR.puts "Usage: sdk_jfc_jcm_driver {setup|verify-csr|commission} ..."
+  STDERR.puts "Usage: sdk_jfc_jcm_driver {setup|verify-csr|commission|probe-dcl} ..."
   exit 2
 end

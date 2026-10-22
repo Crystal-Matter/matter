@@ -50,6 +50,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Support Matter 1.6 Pressure Measurement revision 5, including the optional Extended feature with scaled pressure, range, tolerance, and scale attributes. Nullable capabilities and readings, fixed metadata, strict known bounds, and optional nonnullable tolerances now match the data model. Host updates validate ranges before notification and cannot change fixed configuration after construction; readings are volatile across restart. A Pressure Sensor example exercises the complete Extended set with official chip-tool.
 
+### Joint Fabric SDK DCL and consent interoperability
+
+- Add an opt-in HTTPS test DCL mirror that publishes the official SDK JFC's
+  public operational root. The live JCM fixture tests wrong-VID and removed
+  root rejection, active-root acceptance, explicit consent denial, and a
+  successful consented commission. The JFA example can select this loopback
+  mirror without a static trust fallback.
+
 ### Cross-ecosystem Joint Fabric control
 
 - Let a joining Administrator issue a group-CAT controller identity under

@@ -239,6 +239,21 @@ The [integrated JCM run](https://github.com/Crystal-Matter/matter/actions/runs/3
 passed against merged `develop`, including a streamed Anchor ICAC CSR signature
 and Datastore registration.
 
+The opt-in SDK JFC JCM fixture also publishes the SDK issuer's **public**
+operational root through an ephemeral HTTPS DCL-shaped mirror on loopback.
+Crystal's `DclOperationalTrustAnchors` must reject the SDK-issued joining
+Administrator root when its DCL record has the wrong VID or has been removed,
+then accept it when the active VID `0xFFF1` record is restored. A separate
+attempt with the trusted root and explicit `consent=false` must stop before
+credential issuance and Datastore registration. The fixture then reopens the
+window and completes JCM with consent. The JFA example selects this mirror
+only when `MATTER_JFA_TEST_DCL_GATEWAY_URL=https://127.0.0.1` is set; its
+normal configured root source remains available for other test deployments.
+The HTTPS certificate is generated per run and trusted only by fixture
+processes. This verifies the SDK's independently issued operational root and
+Crystal's trust and consent gates; it does not verify production DCL ledger
+freshness, VVS interoperability, or a production consent policy.
+
 `e2e/interop/sdk_jfadmin_multi.py` supplies isolated SDK issuer stores and a
 Crystal JFA to the unmodified official `TC_JFADMIN_2_2.py` and
 `TC_JFADMIN_2_1.py` scripts. The latter imports the SDK issuer's private key
@@ -282,8 +297,10 @@ against merged `develop`.
 ## Work required for interoperable Joint Commissioning
 
 1. Exercise independent consent decisions with real ecosystem policies and
-   confirm DCL-backed operational VID validation against independently issued
-   certificates. The explicit `HttpDclSource` reads VID-scoped DCL
+   validate operational roots against a deployed, authenticated DCL gateway.
+   The local SDK fixture above covers an independently issued root with an
+   ephemeral HTTPS mirror and explicit test consent choices. The explicit
+   `HttpDclSource` reads VID-scoped DCL
    OperationalPKI roots, ICAs, and VIDSignerPKI leaves. The local adapter binds
    an RCAC to a DCL root by VID, RCAC ID, public key, and SKID, and validates
    a VVS signature through a signer-specific leaf and a Root/ICA CA chain. The

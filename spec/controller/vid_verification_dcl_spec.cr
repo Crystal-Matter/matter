@@ -113,6 +113,30 @@ private class TestDclSource < VidTrust::DclSource
 end
 
 describe VidTrust::DclOperationalTrustAnchors do
+  it "uses active VID-scoped HTTPS DCL records for an operational root" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    root_key = crypto.create_key_pair
+    matter_root = Matter::Crypto::MatterCertificate::Builder.root(root_key, 1_u64, Bytes[0x01], crypto)
+    name = dcl_test_matter_name("1.3.6.1.4.1.37244.1.4", "0000000000000001")
+    der = dcl_test_certificate(root_key, root_key, name, nil, 1, true)
+    pem = "-----BEGIN CERTIFICATE-----\n#{Base64.strict_encode(der)}\n-----END CERTIFICATE-----"
+    mode = "wrong-vid"
+    fetch = ->(_url : String) do
+      vid = mode == "wrong-vid" ? 0xFFF2 : 0xFFF1
+      records = mode == "removed" ? [] of JSON::Any : [JSON.parse({
+        "pemCert" => pem, "vid" => vid, "certificateType" => "OperationalPKI", "isRoot" => true,
+      }.to_json)]
+      {"nocRootCertificates" => {"certs" => records}}.to_json
+    end
+    trust = VidTrust::DclOperationalTrustAnchors.new(
+      VidTrust::HttpDclSource.new("https://127.0.0.1", fetch))
+    trust.trusted_root?(0xFFF1_u16, matter_root).should be_false
+    mode = "removed"
+    trust.trusted_root?(0xFFF1_u16, matter_root).should be_false
+    mode = "active"
+    trust.trusted_root?(0xFFF1_u16, matter_root).should be_true
+  end
+
   it "fails closed when the DCL has no operational root or signer" do
     trust = VidTrust::DclOperationalTrustAnchors.new(TestDclSource.new)
     trust.trusted_root?(0x1234_u16, Bytes.empty).should be_false
