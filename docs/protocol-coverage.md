@@ -13,8 +13,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 68
-- Matching known revisions: 57
+- Crystal declarations for those IDs: 69
+- Matching known revisions: 58
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -125,7 +125,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0431 | Ambient Context Sensing Cluster | 1 | — | cluster absent |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | — | cluster absent |
-| 0x0453 | Thread Network Directory Cluster | 1 | — | cluster absent |
+| 0x0453 | Thread Network Directory Cluster | 1 | 1 | — |
 | 0x0503 | Wake On LAN Cluster | 1 | — | cluster absent |
 | 0x0504 | Channel Cluster | 2 | — | cluster absent |
 | 0x0505 | Target Navigator Cluster | 2 | — | cluster absent |
