@@ -17,6 +17,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fixture exercises the command with official chip-tool without claiming a
   complete media device type.
 
+### Matter 1.6 Groupcast Sender
+
+- Add an opt-in root Groupcast SD feature for send-only and combined listener
+  nodes. Send-only JoinGroup membership carries no listener endpoints or
+  AuxiliaryACL and survives restart. Device applications can send one-way
+  authenticated group Invoke and Write requests using their commissioned
+  fabric, active epoch key, IANA multicast address, and durable counters.
+  SenderTesting now accepts its feature-gated operation and emits only outbound
+  test results, while ListenerTesting emits only inbound results. An official chip-tool
+  test commissions a Sender and Listener on one fabric and verifies multicast
+  On delivery before and after the Sender restarts.
+
 ### Thermostat User Interface Configuration
 
 - Add the Matter 1.6 revision 2 Thermostat User Interface Configuration

@@ -57,6 +57,21 @@ services:
       E2E_BINARY: matter_switch
       MATTER_GROUPCAST_LISTENER: "1"
 
+  groupcast-sender:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_groupcast_sender
+      E2E_BINARY: matter_switch
+      MATTER_GROUPCAST_SENDER: "1"
+      MATTER_GROUPCAST_FORWARD_ON: "1"
+
+  groupcast-sender-listener:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_groupcast_sender_listener
+      E2E_BINARY: matter_switch
+      MATTER_GROUPCAST_LISTENER: "1"
+
   time-zone:
     <<: *device
     environment:

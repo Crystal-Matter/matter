@@ -22,6 +22,7 @@ require "../cluster/general_diagnostics"
 require "../cluster/network_commissioning"
 require "../cluster/group_key_management"
 require "../cluster/groupcast"
+require "./groupcast_sender"
 require "../cluster/ota_requestor"
 require "../cluster/tls_certificate_management"
 require "../cluster/tls_client_management"
@@ -100,6 +101,8 @@ module Matter
     @access_control : Cluster::AccessControl? = nil
     @operational_credentials : Cluster::OperationalCredentials? = nil
     @administrator_commissioning : Cluster::AdministratorCommissioning? = nil
+    @groupcast_outbound : GroupcastSender? = nil
+    @groupcast_sender_enabled : Bool = false
 
     # Endpoints added from a template, by endpoint number: the template name
     # and the parameters it was built from.
@@ -130,6 +133,31 @@ module Matter
       @administrator_commissioning.as(Cluster::AdministratorCommissioning)
     end
 
+    # Send an untimed, one-way group command from this device's fabric. The
+    # Groupcast SD feature and a joined Sender membership are required.
+    def send_groupcast_invoke(fabric_index : UInt8, group_id : UInt16,
+                              cluster_id : UInt32, command_id : UInt32,
+                              fields : Bytes = Bytes.empty) : Nil
+      groupcast_outbound.invoke(fabric_index, group_id, cluster_id, command_id, fields)
+    end
+
+    # Forward from a synchronous CASE command callback to all joined Sender
+    # groups on that command's authenticated fabric.
+    def send_groupcast_invoke_for_request(source : Cluster::Base, cluster_id : UInt32,
+                                          command_id : UInt32, fields : Bytes = Bytes.empty) : Nil
+      groupcast_outbound.invoke_joined_for_request(source, cluster_id, command_id, fields)
+    end
+
+    def send_groupcast_write(fabric_index : UInt8, group_id : UInt16,
+                             cluster_id : UInt32, attribute_id : UInt32,
+                             value : TLV::Any) : Nil
+      groupcast_outbound.write(fabric_index, group_id, cluster_id, attribute_id, value)
+    end
+
+    private def groupcast_outbound : GroupcastSender
+      @groupcast_outbound || raise ConfigurationError.new("Groupcast Sender feature is disabled")
+    end
+
     def port : Int32
       @transport.port
     end
@@ -147,7 +175,12 @@ module Matter
       @regulatory_location_capability : Cluster::GeneralCommissioning::RegulatoryLocationType = Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
       @tcp_enabled : Bool = false,
       @groupcast_listener : Bool = false,
+      groupcast_sender : Bool = false,
     )
+      @groupcast_sender_enabled = groupcast_sender
+      if @groupcast_sender_enabled && storage.path.nil?
+        raise ConfigurationError.new("Groupcast Sender requires durable storage")
+      end
       # Matter Core 1.6 §11.10.6.4 requires IndoorOutdoor for nodes without
       # radio network interfaces. This device API currently models one network.
       if commissioning_network_type.ethernet? && !@regulatory_location_capability.indoor_outdoor?
@@ -193,6 +226,13 @@ module Matter
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
       @message_handler.refresh_group_memberships
+      if @groupcast_sender_enabled
+        groupcast = @node.get_cluster(Cluster::Groupcast).as(Cluster::Groupcast)
+        group_keys = @node.get_cluster(Cluster::GroupKeyManagement).as(Cluster::GroupKeyManagement)
+        sender = Protocol::GroupMessageSender.new(@transport,
+          Session::GroupOutgoingCounters.new(@persistence.backend))
+        @groupcast_outbound = GroupcastSender.new(@fabric_table, groupcast, group_keys, sender)
+      end
       if icd = icd_management
         icd.retain_fabrics(@fabric_table.all_fabrics.map(&.fabric_index))
         # restore_state advances the counter by 1000; commit that advancement
@@ -611,14 +651,20 @@ module Matter
         general_commissioning.breadcrumb = value
         nil
       end
-      group_key_management = if @groupcast_listener
+      group_key_management = if @groupcast_listener || @groupcast_sender_enabled
                                Cluster::GroupKeyManagement.new(endpoint_0,
                                  feature_map: Cluster::GroupKeyManagement::Feature::Groupcast,
                                  max_groups_per_fabric: 0_u16)
                              else
                                Cluster::GroupKeyManagement.new(endpoint_0)
                              end
-      groupcast = @groupcast_listener ? Cluster::Groupcast.new(endpoint_0, group_key_management, access_control) : nil
+      groupcast_features = Cluster::Groupcast::Feature::None
+      groupcast_features |= Cluster::Groupcast::Feature::Listener if @groupcast_listener
+      groupcast_features |= Cluster::Groupcast::Feature::Sender if @groupcast_sender_enabled
+      groupcast = if @groupcast_listener || @groupcast_sender_enabled
+                    Cluster::Groupcast.new(endpoint_0, group_key_management, access_control,
+                      feature_map: groupcast_features)
+                  end
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)
       icd_management = @icd_configuration.try { |config| Cluster::IcdManagement.new(endpoint_0, configuration: config) }
       diagnostic_logs = Cluster::DiagnosticLogs.new(endpoint_0)

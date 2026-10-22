@@ -4,7 +4,7 @@ require "./access_control"
 
 module Matter
   module Cluster
-    # Opt-in Matter 1.6 Groupcast Listener (0x0065). The Groupcast cluster is
+    # Opt-in Matter 1.6 Groupcast (0x0065). The Groupcast cluster is
     # provisional in 1.6, so ordinary devices keep using legacy Groups.
     # Membership is the persistent owner of endpoint and group policy. GKM
     # retains the operational key mapping even after adoption hides its legacy
@@ -54,14 +54,16 @@ module Matter
         @[TLV::Field(tag: 0)]
         property group_id : UInt16
 
-        @[TLV::Field(tag: 1)]
-        property endpoints : Array(UInt16)
+        @[TLV::Field(tag: 1, optional: true)]
+        @[Storage::Field(key: "endpoints")]
+        property endpoints_field : Array(UInt16)?
 
         @[TLV::Field(tag: 2)]
         property key_set_id : UInt16
 
-        @[TLV::Field(tag: 3)]
-        property? has_auxiliary_acl : Bool
+        @[TLV::Field(tag: 3, optional: true)]
+        @[Storage::Field(key: "has_auxiliary_acl")]
+        property has_auxiliary_acl_field : Bool?
 
         @[TLV::Field(tag: 4)]
         property mcast_addr_policy : MulticastAddrPolicyEnum
@@ -69,10 +71,18 @@ module Matter
         @[TLV::Field(tag: 254, optional: true)]
         property fabric_index : UInt8?
 
-        def initialize(@group_id : UInt16, @endpoints : Array(UInt16), @key_set_id : UInt16,
-                       @has_auxiliary_acl : Bool = false,
+        def initialize(@group_id : UInt16, @endpoints_field : Array(UInt16)?, @key_set_id : UInt16,
+                       @has_auxiliary_acl_field : Bool? = false,
                        @mcast_addr_policy : MulticastAddrPolicyEnum = MulticastAddrPolicyEnum::IanaAddr,
                        @fabric_index : UInt8? = nil)
+        end
+
+        def endpoints : Array(UInt16)
+          @endpoints_field || [] of UInt16
+        end
+
+        def has_auxiliary_acl? : Bool
+          @has_auxiliary_acl_field || false
         end
       end
 
@@ -223,7 +233,7 @@ module Matter
         response_id: 0x02, access: :manage
       command 0x03, :update_group_key, request: UpdateGroupKeyRequest, access: :manage
       command 0x04, :configure_auxiliary_acl, request: ConfigureAuxiliaryAclRequest,
-        access: :administer
+        access: :administer, requires: :listener
       command 0x05, :groupcast_testing, request: GroupcastTestingRequest, access: :administer
 
       event 0x00, :groupcast_testing, priority: :info, access: :administer,
@@ -231,6 +241,7 @@ module Matter
 
       @membership = [] of MembershipStruct
       @test_fabric = 0_u8
+      @test_operation = GroupcastTestingEnum::DisableTesting
       @test_deadline : Time::Instant? = nil
       @test_generation = 0_u32
       property endpoint_exists : Proc(UInt16, Bool)?
@@ -242,12 +253,14 @@ module Matter
                      @feature_map : Feature = Feature::Listener,
                      @max_membership_count : UInt16 = DEFAULT_MAX_MEMBERSHIP_COUNT,
                      @max_mcast_addr_count : UInt16 = DEFAULT_MAX_MCAST_ADDR_COUNT)
-        unless endpoint_id.number == 0_u16 && @feature_map == Feature::Listener &&
-               @group_keys.feature_map.groupcast? && @access_control.feature_map.auxiliary? &&
-               @max_membership_count >= DEFAULT_MAX_MEMBERSHIP_COUNT &&
-               @max_mcast_addr_count >= DEFAULT_MAX_MCAST_ADDR_COUNT
-          raise Matter::ConfigurationError.new("Groupcast Listener needs root GKM GCAST and Access Control AUX")
-        end
+        valid_configuration = endpoint_id.number == 0_u16 &&
+                              (@feature_map.listener? || @feature_map.sender?) &&
+                              !@feature_map.per_group? &&
+                              @group_keys.feature_map.groupcast? &&
+                              (!@feature_map.listener? || @access_control.feature_map.auxiliary?) &&
+                              @max_membership_count >= DEFAULT_MAX_MEMBERSHIP_COUNT &&
+                              @max_mcast_addr_count >= DEFAULT_MAX_MCAST_ADDR_COUNT
+        raise Matter::ConfigurationError.new("Groupcast needs LN or SD, root GKM GCAST, and AUX with LN; PGA is unavailable") unless valid_configuration
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
@@ -255,8 +268,8 @@ module Matter
         return [] of MembershipStruct unless fabric_index
         entries = @membership.select { |entry| entry.fabric_index == fabric_index }
         entries.map do |entry|
-          MembershipStruct.new(entry.group_id, entry.endpoints.dup, entry.key_set_id,
-            entry.has_auxiliary_acl?, entry.mcast_addr_policy, entry.fabric_index)
+          MembershipStruct.new(entry.group_id, entry.endpoints_field.try(&.dup), entry.key_set_id,
+            entry.has_auxiliary_acl_field, entry.mcast_addr_policy, entry.fabric_index)
         end
       end
 
@@ -272,10 +285,14 @@ module Matter
         fabric = accessing_fabric
         return InteractionModel::Status.constraint_error unless valid_group?(request.group_id) &&
                                                                 valid_key_set?(request.key_set_id)
-        return InteractionModel::Status.constraint_error if request.endpoints.empty? || request.endpoints.uniq.size != request.endpoints.size
+        return InteractionModel::Status.constraint_error if request.endpoints.empty? && !@feature_map.sender?
+        return InteractionModel::Status.constraint_error if !@feature_map.listener? && !request.endpoints.empty?
+        return InteractionModel::Status.constraint_error if request.endpoints.uniq.size != request.endpoints.size
         return InteractionModel::Status.unsupported_endpoint if request.endpoints.any? { |endpoint| !valid_endpoint?(endpoint) }
-        return InteractionModel::Status.constraint_error if request.mcast_addr_policy &&
-                                                            request.mcast_addr_policy != MulticastAddrPolicyEnum::IanaAddr
+        return InteractionModel::Status.constraint_error if request.mcast_addr_policy == MulticastAddrPolicyEnum::PerGroup &&
+                                                            !@feature_map.per_group?
+        return InteractionModel::Status.constraint_error if !@feature_map.listener? &&
+                                                            (!request.use_auxiliary_acl.nil? || !request.replace_endpoints.nil?)
         if request.key || !request.use_auxiliary_acl.nil?
           return InteractionModel::Status.unsupported_access unless administering?(fabric)
         end
@@ -294,11 +311,14 @@ module Matter
         key_status = ensure_key_set(fabric, request.key_set_id, request.key)
         return key_status unless key_status.success?
         auxiliary_flag = request.use_auxiliary_acl
-        updated = MembershipStruct.new(request.group_id, endpoints, request.key_set_id,
-          auxiliary_flag.nil? ? (existing.try(&.has_auxiliary_acl?) || false) : auxiliary_flag,
-          MulticastAddrPolicyEnum::IanaAddr, fabric)
-        @group_keys.replace_groupcast_membership(updated.group_id, updated.endpoints,
-          updated.key_set_id, fabric)
+        updated = MembershipStruct.new(request.group_id,
+          @feature_map.listener? ? endpoints : nil, request.key_set_id,
+          @feature_map.listener? ? (auxiliary_flag.nil? ? (existing.try(&.has_auxiliary_acl?) || false) : auxiliary_flag) : nil,
+          request.mcast_addr_policy || existing.try(&.mcast_addr_policy) || MulticastAddrPolicyEnum::IanaAddr, fabric)
+        if @feature_map.listener?
+          @group_keys.replace_groupcast_membership(updated.group_id, updated.endpoints,
+            updated.key_set_id, fabric)
+        end
         @membership.reject! { |entry| entry.fabric_index == fabric && entry.group_id == request.group_id }
         @membership << updated
         changed_membership
@@ -310,12 +330,15 @@ module Matter
       def leave_group(request : LeaveGroupRequest) : LeaveGroupResponse | InteractionModel::Status
         fabric = accessing_fabric
         requested = request.endpoints
+        return InteractionModel::Status.constraint_error if requested && !@feature_map.listener?
         return InteractionModel::Status.constraint_error if requested && (requested.empty? || requested.size > MAX_LEAVE_ENDPOINTS)
         if request.group_id == 0_u16
           return InteractionModel::Status.constraint_error if requested
           affected = membership(fabric)
           return InteractionModel::Status.not_found if affected.empty?
-          affected.each { |entry| @group_keys.replace_groupcast_membership(entry.group_id, [] of UInt16, entry.key_set_id, fabric) }
+          if @feature_map.listener?
+            affected.each { |entry| @group_keys.replace_groupcast_membership(entry.group_id, [] of UInt16, entry.key_set_id, fabric) }
+          end
           @membership.reject! { |entry| entry.fabric_index == fabric }
           changed_membership
           return LeaveGroupResponse.new(0_u16, [] of UInt16)
@@ -329,7 +352,9 @@ module Matter
         # callers can withdraw large groups in bounded endpoint batches.
         return InteractionModel::Status.constraint_error if removed.size > MAX_LEAVE_ENDPOINTS
         remaining = existing.endpoints.reject { |endpoint| removed.includes?(endpoint) }
-        @group_keys.replace_groupcast_membership(existing.group_id, remaining, existing.key_set_id, fabric)
+        if @feature_map.listener?
+          @group_keys.replace_groupcast_membership(existing.group_id, remaining, existing.key_set_id, fabric)
+        end
         @membership.reject! { |entry| entry.fabric_index == fabric && entry.group_id == request.group_id }
         unless remaining.empty?
           @membership << MembershipStruct.new(existing.group_id, remaining, existing.key_set_id,
@@ -352,8 +377,10 @@ module Matter
         end
         key_status = ensure_key_set(fabric, request.key_set_id, request.key)
         return key_status unless key_status.success?
-        @group_keys.replace_groupcast_membership(existing.group_id, existing.endpoints,
-          request.key_set_id, fabric)
+        if @feature_map.listener?
+          @group_keys.replace_groupcast_membership(existing.group_id, existing.endpoints,
+            request.key_set_id, fabric)
+        end
         existing.key_set_id = request.key_set_id
         @membership[index] = existing
         changed_membership
@@ -363,12 +390,13 @@ module Matter
       end
 
       def configure_auxiliary_acl(request : ConfigureAuxiliaryAclRequest) : InteractionModel::Status
+        return InteractionModel::Status.unsupported_command unless @feature_map.listener?
         fabric = accessing_fabric
         index = @membership.index { |entry| entry.fabric_index == fabric && entry.group_id == request.group_id }
         return InteractionModel::Status.not_found unless index
         existing = @membership[index]
         return InteractionModel::Status.success if existing.has_auxiliary_acl? == request.use_auxiliary_acl?
-        existing.has_auxiliary_acl = request.use_auxiliary_acl?
+        existing.has_auxiliary_acl_field = request.use_auxiliary_acl?
         @membership[index] = existing
         changed_membership
         InteractionModel::Status.success
@@ -376,13 +404,20 @@ module Matter
 
       def groupcast_testing(request : GroupcastTestingRequest) : InteractionModel::Status
         fabric = accessing_fabric
-        if request.test_operation.enable_listener_testing?
+        if request.test_operation.enable_listener_testing? && !@feature_map.listener?
+          return InteractionModel::Status.constraint_error
+        end
+        if request.test_operation.enable_sender_testing? && !@feature_map.sender?
+          return InteractionModel::Status.constraint_error
+        end
+        if request.test_operation.enable_listener_testing? || request.test_operation.enable_sender_testing?
           duration = request.duration_seconds || DEFAULT_TEST_DURATION
           return InteractionModel::Status.constraint_error unless (MIN_TEST_DURATION..MAX_TEST_DURATION).includes?(duration)
         elsif !request.test_operation.disable_testing?
           return InteractionModel::Status.constraint_error
         end
         @test_generation &+= 1_u32
+        @test_operation = request.test_operation
         if request.test_operation.disable_testing?
           @test_fabric = 0_u8
           @test_deadline = nil
@@ -403,7 +438,10 @@ module Matter
       def record_group_message(fabric : UInt8?, group_id : UInt16?,
                                result : GroupcastTestResultEnum,
                                endpoint_id : UInt16? = nil, cluster_id : UInt32? = nil,
-                               element_id : UInt32? = nil, access_allowed : Bool? = nil) : Nil
+                               element_id : UInt32? = nil, access_allowed : Bool? = nil,
+                               sender : Bool = false) : Nil
+        selected_direction = sender ? @test_operation.enable_sender_testing? : @test_operation.enable_listener_testing?
+        return unless selected_direction
         return unless test_active? && (fabric.nil? || @test_fabric == fabric)
         emit_event(EVENT_GROUPCAST_TESTING,
           GroupcastTestingEvent.new(result, group_id, endpoint_id, cluster_id, element_id, access_allowed), @test_fabric)
@@ -413,6 +451,7 @@ module Matter
         if @test_fabric == fabric
           @test_generation &+= 1_u32
           @test_fabric = 0_u8
+          @test_operation = GroupcastTestingEnum::DisableTesting
           @test_deadline = nil
           increment_version_and_notify(ATTR_FABRIC_UNDER_TEST)
         end
@@ -474,7 +513,9 @@ module Matter
               AccessControl::AccessControlAuxiliaryType::Groupcast)
           end
         end
-        @access_control.set_groupcast_auxiliary_acl(entries, request_peer_node_id, emit_event)
+        if @feature_map.listener?
+          @access_control.set_groupcast_auxiliary_acl(entries, request_peer_node_id, emit_event)
+        end
         increment_version_and_notify(ATTR_MEMBERSHIP)
         notify_changed(ATTR_USED_MCAST_ADDR_COUNT)
         @on_membership_changed.try(&.call)
@@ -487,6 +528,7 @@ module Matter
           true
         else
           @test_fabric = 0_u8
+          @test_operation = GroupcastTestingEnum::DisableTesting
           @test_deadline = nil
           increment_version_and_notify(ATTR_FABRIC_UNDER_TEST)
           false
@@ -513,7 +555,9 @@ module Matter
         @data_version = state.data_version
         @membership.each do |entry|
           next unless fabric = entry.fabric_index
-          @group_keys.replace_groupcast_membership(entry.group_id, entry.endpoints, entry.key_set_id, fabric)
+          if @feature_map.listener?
+            @group_keys.replace_groupcast_membership(entry.group_id, entry.endpoints, entry.key_set_id, fabric)
+          end
         end
         changed_membership(emit_event: false)
       end

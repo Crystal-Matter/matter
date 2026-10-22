@@ -531,8 +531,22 @@ to supply key bytes or enable an auxiliary Group ACL. Groupcast membership,
 key mappings, adopted fabric state, and auxiliary access survive a device
 restart. A fabric that
 writes GroupcastAdoption=true reads an empty legacy GroupKeyMap/GroupTable and
-must manage membership through Groupcast commands. Sender and per-group
-multicast address features are not advertised.
+must manage membership through Groupcast commands.
+
+Set `groupcast_sender: true` to advertise SD on the root node; it may be used
+alone or together with Listener. The switch example accepts
+`MATTER_GROUPCAST_SENDER=1`. A Sender-only node joins a group through
+`JoinGroup` with `Endpoints=[]`; it does not join the receive multicast address
+or add AuxiliaryACL entries. Device application code calls
+`send_groupcast_invoke(fabric_index, group_id, cluster_id, command_id, fields)`
+or `send_groupcast_write(fabric_index, group_id, cluster_id, attribute_id, value)`.
+For a synchronous CASE command callback,
+`send_groupcast_invoke_for_request(source_cluster, cluster_id, command_id, fields)`
+forwards only to Sender memberships on the command's authenticated fabric.
+These methods require a durable storage backend for node-global outbound
+message counters, an installed fabric, Groupcast membership, and a current
+epoch key. The PerGroup address feature is not advertised; Sender traffic uses
+the IANA multicast address.
 Pass `iana_address: true` to `GroupInvoker#invoke` or `#write` when sending to
 an LN-only Groupcast Listener. Legacy Groups memberships retain the default
 fabric-derived multicast address.

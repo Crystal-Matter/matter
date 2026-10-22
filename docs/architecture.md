@@ -219,9 +219,16 @@ operational key, and interaction paths. `Controller::GroupInvoker` selects a
 stored fabric-scoped key and sends a one-way group Invoke or Write. Group control
 messages and the provisional CacheAndSync/MCSP path remain unsupported.
 
+An opted-in device Groupcast Sender selects its own commissioned fabric and
+active Group Key Management epoch from persistent Groupcast membership. Its
+outbound facade then uses the same private group packet sender and durable
+node-global counter as a controller. Sender-only membership has no receive
+endpoints and does not create an AuxiliaryACL entry.
+
 Matter 1.6 Core §4.18.1.2 makes CacheAndSync and MCSP optional; the advertised
 GroupKeyManagement policy is TrustFirst. The separate Groupcast cluster in
-§11.27 is also provisional and is not implemented.
+§11.27 is provisional; Listener and Sender are implemented as explicit device
+opt-ins. PerGroup multicast remains unadvertised.
 
 ### Who owns what in the protocol layer
 
