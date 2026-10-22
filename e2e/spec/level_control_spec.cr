@@ -23,6 +23,10 @@ module LevelControlE2E
   COVERING_MODE           =    1
   COVERING_OPENING_STATUS = 0x05
   COVERING_CLOSING_STATUS = 0x0A
+  COVERING_REVISION       =    8
+  COVERING_MAINTENANCE    =    4
+  COVERING_CALIBRATION    =    2
+  COVERING_REVERSED       =    1
 end
 
 describe "matter_level_control example" do
@@ -208,6 +212,33 @@ describe "matter_level_control example" do
     read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
     expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_MODE, endpoint))
     read_int(device, "windowcovering", "mode", "Mode", endpoint).should eq LevelControlE2E::COVERING_MODE
+  end
+
+  it "advertises revision 8 and honors Window Covering Mode across restart" do
+    endpoint = LevelControlE2E::COVERING_ENDPOINT
+    read_int(device, "windowcovering", "cluster-revision", "ClusterRevision", endpoint).should eq LevelControlE2E::COVERING_REVISION
+    read_int(device, "windowcovering", "feature-map", "FeatureMap", endpoint).should eq 0x05
+    commands = expect_success(device.read("windowcovering", "accepted-command-list", endpoint)).int_list("AcceptedCommandList")
+    commands.should contain(0_i64)
+    commands.should contain(1_i64)
+    commands.should contain(2_i64)
+    commands.should contain(5_i64)
+    commands.should_not contain(4_i64)
+    commands.should_not contain(7_i64)
+
+    expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_MAINTENANCE, endpoint))
+    expect_failure(device.invoke("windowcovering", "up-or-open", endpoint: endpoint), "BUSY")
+    (read_int(device, "windowcovering", "config-status", "ConfigStatus", endpoint) & 0x01).should eq 0
+    expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_CALIBRATION, endpoint))
+    expect_failure(device.invoke("windowcovering", "go-to-lift-percentage", ["2500"], endpoint: endpoint), "FAILURE")
+    expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_REVERSED, endpoint))
+    (read_int(device, "windowcovering", "config-status", "ConfigStatus", endpoint) & 0x05).should eq 0x05
+    expect_success(device.invoke("windowcovering", "go-to-lift-percentage", ["2500"], endpoint: endpoint))
+    read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq 2_500
+
+    device.restart!
+    read_int(device, "windowcovering", "mode", "Mode", endpoint).should eq LevelControlE2E::COVERING_REVERSED
+    (read_int(device, "windowcovering", "config-status", "ConfigStatus", endpoint) & 0x05).should eq 0x05
   end
 
   it "applies StartUpCurrentLevel after an ordinary device restart" do

@@ -62,7 +62,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — | — |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |
 | 0x0101 | Door Lock Cluster | 10 | 9 | — | — |
-| 0x0102 | Window Covering Cluster | 8 | 6 | — | — |
+| 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
 | 0x0202 | Fan Control Cluster | 6 | 5 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 7 | — | — |
