@@ -10,9 +10,9 @@ module Matter
     # Humidity values are expressed in hundredths of percent (0.01%).
     # For example, 5500 represents 55.00% relative humidity.
     #
-    # Specification: Matter 1.4 § 2.6
+    # Specification: Matter 1.6 § 2.6
     class RelativeHumidityMeasurement < Base
-      cluster 0x0405, revision: 3
+      cluster 0x0405, revision: 5
 
       # Humidity limits (in 0.01%)
       MIN_HUMIDITY =     0_u16 # 0.00%
@@ -27,38 +27,54 @@ module Matter
       # Hundredths of a percent per percent
       CENTI_PER_UNIT = 100.0
 
-      attribute 0x0000, :measured_value, UInt16, nullable: true, min: MIN_HUMIDITY, max: MAX_HUMIDITY
-      attribute 0x0001, :min_measured_value, UInt16, default: MIN_HUMIDITY, min: MIN_HUMIDITY, max: MAX_MIN_MEASURED_VALUE
-      attribute 0x0002, :max_measured_value, UInt16, default: MAX_HUMIDITY, max: MAX_HUMIDITY
-      attribute 0x0003, :tolerance, UInt16, nullable: true, optional: true, max: MAX_TOLERANCE, present_if: :tolerance
+      attribute 0x0000, :measured_value, UInt16, nullable: true,
+        min: MIN_HUMIDITY, max: MAX_HUMIDITY, validate: :validate_measured_value!
+      attribute 0x0001, :min_measured_value, UInt16, nullable: true,
+        fixed: true, min: MIN_HUMIDITY, max: MAX_MIN_MEASURED_VALUE,
+        validate: :reject_fixed_attribute_change!
+      attribute 0x0002, :max_measured_value, UInt16, nullable: true,
+        fixed: true, max: MAX_HUMIDITY,
+        validate: :reject_fixed_attribute_change!
+      attribute 0x0003, :tolerance, UInt16, default: 0_u16,
+        optional: true, fixed: true, max: MAX_TOLERANCE,
+        present_if: :tolerance_supported?, validate: :reject_fixed_attribute_change!
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @measured_value : UInt16? = nil,
-                     @min_measured_value : UInt16 = MIN_HUMIDITY,
-                     @max_measured_value : UInt16 = MAX_HUMIDITY,
-                     @tolerance : UInt16? = nil)
+                     @min_measured_value : UInt16? = nil,
+                     @max_measured_value : UInt16? = nil,
+                     tolerance : UInt16? = nil)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
-        raise ArgumentError.new("min_measured_value must be <= #{MAX_MIN_MEASURED_VALUE}") if @min_measured_value > MAX_MIN_MEASURED_VALUE
-        raise ArgumentError.new("max_measured_value must be <= #{MAX_HUMIDITY}") if @max_measured_value > MAX_HUMIDITY
-        raise ArgumentError.new("min_measured_value must be <= max_measured_value") if @min_measured_value > @max_measured_value
+        if min = @min_measured_value
+          raise ArgumentError.new("min_measured_value must be <= #{MAX_MIN_MEASURED_VALUE}") if min > MAX_MIN_MEASURED_VALUE
+        end
+        if max = @max_measured_value
+          raise ArgumentError.new("max_measured_value must be <= #{MAX_HUMIDITY}") if max > MAX_HUMIDITY
+          if (min = @min_measured_value) && max <= min
+            raise ArgumentError.new("min_measured_value must be < max_measured_value")
+          end
+        end
 
         if measured_value = @measured_value
           raise ArgumentError.new("measured_value must be between min and max") unless measurable?(measured_value)
         end
 
-        if tolerance = @tolerance
+        @tolerance_supported = !tolerance.nil?
+        @tolerance = tolerance || 0_u16
+        if tolerance
           raise ArgumentError.new("tolerance must be <= #{MAX_TOLERANCE}") if tolerance > MAX_TOLERANCE
         end
       end
 
-      # Tolerance is optional: unsupported until the device reports one.
+      def tolerance_supported? : Bool
+        @tolerance_supported
+      end
+
+      # Tolerance is optional: unsupported unless configured by the device.
       # Reports a new reading (nil when unknown); `measured_value=` with a
       # device-facing name that enforces the measurable range.
       def update_humidity(value : UInt16?) : Nil
-        if value && !measurable?(value)
-          raise ArgumentError.new("Humidity #{value} is outside measurable range [#{@min_measured_value}, #{@max_measured_value}]")
-        end
         self.measured_value = value
       end
 
@@ -68,7 +84,20 @@ module Matter
       end
 
       private def measurable?(value : UInt16) : Bool
-        (@min_measured_value..@max_measured_value).includes?(value)
+        return false if value > MAX_HUMIDITY
+        return false if (min = @min_measured_value) && value < min
+        return false if (max = @max_measured_value) && value > max
+        true
+      end
+
+      private def validate_measured_value!(value : UInt16?) : Nil
+        if value && !measurable?(value)
+          raise ArgumentError.new("Humidity #{value} is outside measurable range [#{@min_measured_value}, #{@max_measured_value}]")
+        end
+      end
+
+      private def reject_fixed_attribute_change!(_value) : Nil
+        raise ArgumentError.new("fixed humidity attributes cannot change after construction")
       end
 
       # Helper methods for humidity conversion
