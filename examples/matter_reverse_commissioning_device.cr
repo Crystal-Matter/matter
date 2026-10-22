@@ -20,7 +20,7 @@ module MatterReverseCommissioning
     SALT_LENGTH            =       32
     COMMISSION_TIMEOUT     = 90.seconds
     SDK_ROOT_ENV           = "MATTER_REVERSE_SDK_ROOT"
-    SDK_PAA_CERT           = "credentials/development/attestation/Chip-Development-PAA-Cert.der"
+    SDK_PAA_CERT           = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
     SDK_CD_CERT_GLOB       = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
 
     identity vendor: "Spider-Gazelle", product: "Reverse Commissioning Aggregator",
@@ -41,8 +41,8 @@ module MatterReverseCommissioning
       ["Opt-in SDK reverse-commissioning fixture; no production approval policy"]
     end
 
-    # The SDK bridge uses the pinned upstream development DAC/PAI and CD
-    # signer. Only this opt-in interop fixture adds those public test roots.
+    # The SDK example PAI chains to its VID FFF1 test PAA, and the bridge uses
+    # an upstream development CD signer. Only this opt-in fixture trusts them.
     private def sdk_attestation_trust : Matter::Controller::AttestationTrustStore
       sdk_root = ENV[SDK_ROOT_ENV]? ||
                  raise Matter::ConfigurationError.new("Missing pinned SDK root for reverse commissioning attestation")
