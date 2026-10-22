@@ -373,6 +373,11 @@ services:
     environment:
       E2E_DEVICE: matter_channel
 
+  content-launcher:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_content_launcher
+
   target-navigator:
     <<: *device
     environment:

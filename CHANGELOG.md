@@ -54,6 +54,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject host ProgramGuideResponse paging tokens beyond the Matter 1.6
   8192-byte limit before encoding a command response.
 
+### Content Launcher
+
+- Add the Matter 1.6 revision 2 Content Launcher server with independent
+  ContentSearch and URLPlayback feature gates, typed search, branding, and
+  playback preference payloads, plus host callbacks for launch decisions.
+  A synthetic Aggregator fixture exercises metadata and typed URL responses
+  with official chip-tool; the host application owns the actual media player.
+
 ### Joint Fabric transfer recovery
 
 - Extend the three-Administrator live scenario with a restart after
