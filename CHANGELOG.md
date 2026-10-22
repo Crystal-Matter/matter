@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Cross-ecosystem Joint Fabric control
+
+- Let a joining Administrator issue a group-CAT controller identity under
+  its cross-signed ICAC on the Anchor fabric. Validate the controller chain,
+  keep the ICAC signing key with the issuer, and propagate an Administer ACL
+  through the Anchor Datastore. The two-JFA E2E scenario now exercises a
+  B-issued controller against a migrated A device before and after that grant
+  and after the device restarts.
+
 ### Temperature Control
 
 - Add an opt-in Matter 1.6 Temperature Control server (`0x0056`, revision 1)

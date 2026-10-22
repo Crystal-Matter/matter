@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/controller/joint_fabric_device_migration"
+require "../../src/matter/controller/shared_fabric"
 
 private alias Migration = Matter::Controller::JointFabricDeviceMigration
 private alias MigrationDatastore = Matter::Cluster::JointFabricDatastore
@@ -342,6 +343,48 @@ describe Migration do
     expect_raises(Matter::AuthenticationError) do
       Matter::Crypto::MatterCertificate::Validation.verify_chain(credentials.noc,
         joined.intermediate_cert, anchor.root_public_key, anchor.root_cert)
+    end
+  end
+
+  it "delegates a B-signed group-CAT controller on A's shared fabric" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xB001_u64, 0xB101_u64, 0xFFF2_u16, crypto: crypto).fabric
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xA001_u64, 0xA101_u64, 0xFFF1_u16, crypto: crypto)
+    joined = joined_identity(bootstrap, 0xA103_u64, Matter::Crypto::Key.generate_key_pair)
+    b_public = Matter::Crypto::MatterCertificate.public_key_from_tlv(old_fabric.intermediate_cert.as(Bytes))
+    icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      b_public, joined.fabric_id, 0xB101_u64,
+      bootstrap.fabric.certificate_authority_key, 1_u64, Bytes[1], crypto)
+    issuer = Migration.cross_signed_issuer(old_fabric, joined, icac,
+      old_fabric.intermediate_private_key.as(Bytes))
+
+    delegated = issuer.delegate_controller(joined, 0xA105_u64, 0x1234_u16, 2_u16, crypto)
+    delegated.fabric_id.should eq(joined.fabric_id)
+    delegated.root_cert.should eq(joined.root_cert)
+    delegated.ipk_value.should eq(joined.ipk_value)
+    delegated.admin_vendor_id.should eq(old_fabric.admin_vendor_id)
+    delegated.intermediate_cert.should eq(icac)
+    delegated.intermediate_private_key.should be_nil
+    Matter::Crypto::MatterCertificate::Validation.verify_chain(delegated.controller_noc,
+      icac, joined.root_public_key, joined.root_cert)
+    cert = Matter::Crypto::MatterCertificate.from_slice(delegated.controller_noc)
+    cert.node_id.should eq(0xA105_u64)
+    subjects = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(delegated.controller_noc)
+    subjects.should contain(0xA105_u64)
+    subjects.should contain(0xFFFF_FFFD_1234_0002_u64)
+    Matter::Controller::SharedFabric.install(
+      Matter::Controller::StateStore.new(Matter::Storage::Memory.new), delegated)
+
+    expect_raises(Matter::ConfigurationError) do
+      issuer.delegate_controller(joined, joined.controller_node_id, 0x1234_u16, 2_u16, crypto)
+    end
+    expect_raises(Matter::ConfigurationError) do
+      issuer.delegate_controller(joined, 0xA106_u64, 0xFFFF_u16, 2_u16, crypto)
+    end
+    expect_raises(Matter::ConfigurationError) do
+      issuer.delegate_controller(joined, 0xA106_u64, 0x1234_u16, 0_u16, crypto)
     end
   end
 
