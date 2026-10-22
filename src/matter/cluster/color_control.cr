@@ -336,8 +336,6 @@ module Matter
         when .up?, .down?
           return InteractionModel::Status.invalid_command if request.rate == 0
           rate = request.move_mode.up? ? request.rate.to_i : -request.rate.to_i
-          self.color_mode = ColorMode::CurrentHueAndCurrentSaturation
-          self.enhanced_color_mode = EnhancedColorMode::EnhancedCurrentHueAndCurrentSaturation
           start_movement(MovementKind::EnhancedHue, rate, 0, 0, ENHANCED_HUE_MODULUS - 1)
         else
           InteractionModel::Status.invalid_command
@@ -473,6 +471,7 @@ module Matter
         return InteractionModel::Status.constraint_error if duration == UInt16::MAX
         stop_movement
         origin_x, origin_y, target_x, target_y = transition_endpoints(kind, requested_x, requested_y)
+        select_color_mode(kind)
         delta_x = if kind.hue? || kind.hue_saturation?
                     hue_delta(origin_x, target_x, direction, HUE_MODULUS)
                   elsif kind.enhanced_hue? || kind.enhanced_hue_saturation?
@@ -607,8 +606,26 @@ module Matter
         self.color_loop_active = false if !kind.color_loop? && color_loop_active?
         @movement = Movement.new(kind, Time.instant, origin_x, origin_y,
           rate_x, rate_y, minimum, maximum)
+        select_color_mode(kind)
         start_movement_fiber
         InteractionModel::Status.success
+      end
+
+      private def select_color_mode(kind : MovementKind) : Nil
+        mode = case kind
+               when .xy?                then ColorMode::CurrentXAndCurrentY
+               when .color_temperature? then ColorMode::ColorTemperatureMireds
+               else                          ColorMode::CurrentHueAndCurrentSaturation
+               end
+        enhanced_mode = case kind
+                        when .xy?                then EnhancedColorMode::CurrentXAndCurrentY
+                        when .color_temperature? then EnhancedColorMode::ColorTemperatureMireds
+                        when .enhanced_hue?, .enhanced_hue_saturation?, .color_loop?
+                          EnhancedColorMode::EnhancedCurrentHueAndCurrentSaturation
+                        else EnhancedColorMode::CurrentHueAndCurrentSaturation
+                        end
+        color_changed(mode, enhanced_mode) unless @color_mode == mode && @enhanced_color_mode == enhanced_mode
+        nil
       end
 
       private def stop_movement : InteractionModel::Status
@@ -621,8 +638,6 @@ module Matter
       end
 
       private def start_color_loop : Nil
-        self.color_mode = ColorMode::CurrentHueAndCurrentSaturation
-        self.enhanced_color_mode = EnhancedColorMode::EnhancedCurrentHueAndCurrentSaturation
         direction = @color_loop_direction == COLOR_LOOP_DIRECTION_DECREASE ? -1 : 1
         start_movement(MovementKind::ColorLoop, direction, 0, 0, ENHANCED_HUE_MODULUS - 1)
         nil
