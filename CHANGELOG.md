@@ -7,6 +7,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thread Network Directory
+
+- Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.
+
 ### Window Covering position and feature composition
 
 - Remove the AbsolutePosition feature and commands retired by Matter 1.6, and
