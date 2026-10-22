@@ -311,6 +311,23 @@ the gateway's ledger synchronization or replace production PAA/CD provisioning.
 
 ## Security boundaries
 
+The Ecosystem Information cluster on a Bridged Node exposes names and
+locations only when the bridge host publishes them for a fabric. Use
+`Cluster::EcosystemInformation#publish` after the host's consent decision;
+its read-only directories require Manage privilege and are filtered by fabric.
+The device removes their entries when that fabric is removed. An empty
+directory means the host has no metadata to share. Matter 1.6 requires this
+cluster on a FabricSynchronizedNode Bridged Node and makes it optional on other
+Bridged Nodes. Commissioner Control is required on an Aggregator with the
+FabricSynchronization condition; its approval, UI and reverse commissioning
+flow still needs a host policy implementation.
+
+`examples/matter_ecosystem_bridge_device.cr` is an opt-in interoperability
+fixture. It publishes clearly synthetic names and a location for each newly
+commissioned fabric, so the official chip-tool E2E can read both directories,
+restart the bridge and verify two-fabric isolation.
+The ordinary bridge example does not enable this fixture.
+
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor
 CAT check. The controller's `OperationalTrustAnchors` implementation must
 validate the source of an operational root or VID Verification Statement. An

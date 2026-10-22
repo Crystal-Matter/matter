@@ -167,6 +167,7 @@ module Matter
       @node.on_version_changed = ->(cluster : Cluster::Base) { @persistence.mark_dirty(cluster) }
 
       build_and_wire_clusters
+      @message_handler.clusters.values.each { |cluster| wire_ecosystem_information(cluster) }
       @message_handler.setup_cluster_notifications
 
       # Restore cluster state (scenes, groups, etc.) and track changes
@@ -208,6 +209,15 @@ module Matter
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
+        @message_handler.clusters.values.each do |cluster|
+          if ecosystem_information = cluster.as?(Cluster::EcosystemInformation)
+            ecosystem_information.remove_fabric(fabric_index)
+            unless @persistence.save_cluster(ecosystem_information)
+              @persistence.mark_dirty(ecosystem_information)
+              raise StorageError.new("Could not persist erased Ecosystem Information for fabric #{fabric_index}")
+            end
+          end
+        end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
           @persistence.save_cluster(fabric_icd)
@@ -736,7 +746,10 @@ module Matter
       return false if @node.has_endpoint?(endpoint_id)
 
       endpoint = Endpoint.new(DataType::EndpointNumber.new(endpoint_id), device_types)
-      clusters.each { |cluster| endpoint.add_cluster(cluster) }
+      clusters.each do |cluster|
+        wire_ecosystem_information(cluster)
+        endpoint.add_cluster(cluster)
+      end
       @node.add_endpoint(endpoint)
       basic_info.increase_configuration_version if @started
 
@@ -748,6 +761,12 @@ module Matter
       descriptor.add_part(endpoint_id)
       notify_root_parts_list if notify_subscribers
       true
+    end
+
+    private def wire_ecosystem_information(cluster : Cluster::Base) : Nil
+      if ecosystem_information = cluster.as?(Cluster::EcosystemInformation)
+        ecosystem_information.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+      end
     end
 
     # Removes an endpoint, its clusters and their persisted state at runtime.

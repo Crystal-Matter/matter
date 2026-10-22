@@ -7,7 +7,7 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 64
+- Implemented standard cluster IDs compared: 65
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 107
@@ -79,6 +79,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042D | PM10 Concentration Measurement | 5 | 5 | — | — |
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
+| 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — | — |
 
