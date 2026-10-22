@@ -7,11 +7,11 @@ module MatterContentApp
   class Device < Matter::Device
     include Examples::Console
 
-    CATALOG_VENDOR_ID = Matter::SetupPayload.test_vendor_id
+    CATALOG_VENDOR_ID = 0xFFF1_u16
     APPLICATION_ID    = "crystal.radio"
 
     identity vendor: "Spider-Gazelle", product: "Crystal Radio Content App",
-      vendor_id: Matter::SetupPayload.test_vendor_id,
+      vendor_id: CATALOG_VENDOR_ID,
       product_id: rand(0x0001_u16..0xFFFF_u16),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
