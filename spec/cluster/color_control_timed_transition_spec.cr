@@ -6,6 +6,14 @@ require "../../src/matter/cluster/on_off"
 private alias TimedColor = Matter::Cluster::ColorControl
 
 describe "ColorControl timed transitions" do
+  # The cluster records Time.instant when each command starts. Freeze the
+  # monotonic clock so a later Time.instant sample is the same origin; otherwise
+  # exact midpoint assertions can be one tick ahead on a loaded CI runner.
+  around_each do |example|
+    Timecop.freeze(Time.utc) { example.run }
+    nil
+  end
+
   it "interpolates hue in the requested direction and reports remaining deciseconds" do
     color = build(TimedColor, current_hue: 250_u8)
     color.move_to_hue(TimedColor::MoveToHueRequest.new(10_u8, TimedColor::Direction::Up, 20_u16)).success?.should be_true

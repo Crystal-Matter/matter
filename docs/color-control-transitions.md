@@ -18,6 +18,16 @@ command advances the old transition to its current value before replacing it.
 StopMoveStep holds that value. Per Matter 1.6, an active ColorLoop survives
 StopMoveStep and is stopped by ColorLoopSet instead.
 
+An accepted MoveTo, Step, or movement-producing Move command selects its
+ColorMode and EnhancedColorMode as soon as it starts, before the first
+transition tick. This also applies when a zero-duration command names the value
+already stored: the new mode is still observable even though the numeric color
+value does not change. Rejected or ExecuteIfOff-suppressed commands leave the
+modes alone.
+
 Only commands advertised by enabled features are available. The cluster
-continues to advertise revision 7; this change does not claim the additional
-requirements of Matter 1.6 revision 9.
+continues to advertise revision 7. Matter 1.6 defines revision 9; its full
+behavioral audit remains open, including the advertised
+StartUpColorTemperatureMireds power-on behavior and feature-map dependency
+checks. Optional calibration attributes and device-specific color-space
+conversion are not implemented.

@@ -29,6 +29,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that is impossible. The cluster still advertises revision 9 while the
   remaining revision 11 behavior is audited.
 
+### Color Control mode selection
+
+- Set ColorMode and EnhancedColorMode when an accepted timed or continuous
+  color movement starts, including a zero-duration command whose target already
+  matches the stored color. Official chip-tool E2E covers mode reads at the
+  command boundary. Color Control remains at revision 7 pending a full Matter
+  1.6 revision 9 audit.
+
 ### Window Covering position and feature composition
 
 - Remove the AbsolutePosition feature and commands retired by Matter 1.6, and
