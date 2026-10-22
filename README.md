@@ -145,6 +145,12 @@ The declarations are:
 The DSL rules are documented at the top of `src/matter/device/dsl.cr`, and the cluster DSL that
 backs the cluster classes at the top of `src/matter/cluster/dsl.cr`.
 
+Basic Information's `ConfigurationVersion` persists across restarts. Runtime
+`add_endpoint` and `remove_endpoint` calls advance it when they change the node's
+topology. For other application-managed configuration changes, call
+`basic_info.increase_configuration_version` after the change succeeds. The
+version wraps from the largest uint32 value to one.
+
 Every device includes the OTA Software Update Requestor cluster on endpoint 0.
 An administrator can write one DefaultOTAProviders entry on each fabric. The
 device keeps those entries separate, saves them with its cluster state, and

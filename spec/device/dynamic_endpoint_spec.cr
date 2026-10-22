@@ -7,8 +7,10 @@ require "../../src/matter/cluster/bridged_device_basic_information"
 
 # Test device for dynamic endpoint tests
 class TestBridgeDevice < Matter::Device
-  def initialize(storage : Matter::Storage::Backend = Matter::Storage::Memory.new)
-    super(storage)
+  def initialize(storage : Matter::Storage::Backend = Matter::Storage::Memory.new,
+                 port : Int32 = 0,
+                 ip_addresses : Array(Socket::IPAddress)? = nil)
+    super(storage, port: port, ip_addresses: ip_addresses)
   end
 
   def device_name : String
@@ -84,6 +86,26 @@ private def parts_list(device : TestBridgeDevice) : Array(UInt16)
 end
 
 describe "Dynamic Endpoint Management" do
+  it "advances ConfigurationVersion only for successful runtime topology changes" do
+    require_udp_sockets!
+    device = TestBridgeDevice.new(ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)])
+    basic = device.basic_info
+    basic.configuration_version.should eq(1_u32)
+    device.start
+
+    add_light(device, 1_u16).should be_true
+    basic.configuration_version.should eq(2_u32)
+    add_light(device, 1_u16).should be_false
+    basic.configuration_version.should eq(2_u32)
+
+    device.remove_endpoint(1_u16).should be_true
+    basic.configuration_version.should eq(3_u32)
+    device.remove_endpoint(1_u16).should be_false
+    basic.configuration_version.should eq(3_u32)
+  ensure
+    device.try(&.shutdown!)
+  end
+
   describe "#add_endpoint" do
     it "adds a new endpoint with clusters" do
       device = TestBridgeDevice.new
