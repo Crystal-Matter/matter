@@ -1,5 +1,6 @@
 require "./support/console"
 require "./support/main"
+require "./support/motion_hold"
 
 # Matter Motion Sensor Device Example
 #
@@ -8,6 +9,8 @@ require "./support/main"
 module MatterMotionSensor
   class Device < Matter::Device
     include Examples::Console
+
+    @motion_hold = MotionHold.new
 
     SAMPLE_INTERVAL = 10.seconds
 
@@ -28,10 +31,12 @@ module MatterMotionSensor
 
     endpoint 1, device_type: Matter::DeviceType::OCCUPANCY_SENSOR do
       cluster Matter::Cluster::OccupancySensing,
-        feature_map: :passive_infrared,
+        feature_map: Matter::Cluster::OccupancySensing::Feature::PassiveInfrared |
+                     Matter::Cluster::OccupancySensing::Feature::OccupancyEvent,
         occupancy: Matter::Cluster::OccupancySensing::OCCUPANCY_UNOCCUPIED,
         occupancy_sensor_type: :pir,
         occupancy_sensor_type_bitmap: PIR_SENSOR_BITMAP,
+        hold_time: 60_u16,
         as: :occupancy
       cluster Matter::Cluster::Identify, identify_type: :visible_led
       cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Motion Sensor")]
@@ -70,7 +75,10 @@ module MatterMotionSensor
     end
 
     private def sample : Nil
-      occupancy.update_occupancy(rand(0..99) < OCCUPIED_CHANCE_PERCENT)
+      detected = rand(0..99) < OCCUPIED_CHANCE_PERCENT
+      if state = @motion_hold.sample(detected, occupancy.hold_time || occupancy.pir_occupied_to_unoccupied_delay)
+        occupancy.update_occupancy(state)
+      end
     end
 
     private def motion_state : String

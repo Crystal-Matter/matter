@@ -24,12 +24,12 @@ describe Matter::Cluster::OccupancySensing do
     it "creates with PIR configuration" do
       cluster = build(Matter::Cluster::OccupancySensing,
         hold_time: 60_u16,
-        pir_occupied_to_unoccupied_delay: 30_u16,
+        pir_occupied_to_unoccupied_delay: 60_u16,
         pir_unoccupied_to_occupied_delay: 5_u16,
         pir_unoccupied_to_occupied_threshold: 3_u8
       )
       cluster.hold_time.should eq(60_u16)
-      cluster.pir_occupied_to_unoccupied_delay.should eq(30_u16)
+      cluster.pir_occupied_to_unoccupied_delay.should eq(60_u16)
       cluster.pir_unoccupied_to_occupied_delay.should eq(5_u16)
       cluster.pir_unoccupied_to_occupied_threshold.should eq(3_u8)
     end
@@ -63,8 +63,8 @@ describe Matter::Cluster::OccupancySensing do
     it "has required attributes" do
       cluster = build(Matter::Cluster::OccupancySensing, hold_time: 60_u16)
       attrs = cluster.attributes
-      # Base attributes (3) + HoldTime (present with a value) + PIR feature attributes (3)
-      attrs.size.should eq(7)
+      # Base attributes (3) + HoldTime and limits + PIR timing attributes (3)
+      attrs.size.should eq(8)
       attrs.map(&.name).should contain("occupancy")
       attrs.map(&.name).should contain("occupancySensorType")
       attrs.map(&.name).should contain("occupancySensorTypeBitmap")
@@ -77,6 +77,7 @@ describe Matter::Cluster::OccupancySensing do
       cluster = build(Matter::Cluster::OccupancySensing, hold_time: 60_u16)
       attrs = cluster.attributes
       attrs.map(&.name).should contain("holdTime")
+      attrs.map(&.name).should contain("holdTimeLimits")
     end
 
     it "reads the global FeatureMap with the configured sensing features" do
@@ -123,38 +124,42 @@ describe Matter::Cluster::OccupancySensing do
 
     it "reads PIROccupiedToUnoccupiedDelay when set" do
       cluster = build(Matter::Cluster::OccupancySensing,
-        pir_occupied_to_unoccupied_delay: 30_u16
+        pir_occupied_to_unoccupied_delay: 30_u16,
+        hold_time: 30_u16
       )
       read(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_OCCUPIED_TO_UNOCCUPIED_DELAY).should eq(30)
     end
 
     it "returns default value for PIROccupiedToUnoccupiedDelay when not explicitly set" do
-      cluster = build(Matter::Cluster::OccupancySensing)
-      read(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_OCCUPIED_TO_UNOCCUPIED_DELAY).should eq(0)
+      cluster = build(Matter::Cluster::OccupancySensing, hold_time: 60_u16)
+      read(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_OCCUPIED_TO_UNOCCUPIED_DELAY).should eq(60)
     end
 
     it "returns unsupported for PIROccupiedToUnoccupiedDelay when PIR feature disabled" do
       cluster = build(Matter::Cluster::OccupancySensing,
-        feature_map: Matter::Cluster::OccupancySensing::Feature::None
+        feature_map: Matter::Cluster::OccupancySensing::Feature::Ultrasonic,
+        hold_time: 60_u16
       )
       read_status(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_OCCUPIED_TO_UNOCCUPIED_DELAY).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAttribute)
     end
 
     it "reads PIRUnoccupiedToOccupiedThreshold when set" do
       cluster = build(Matter::Cluster::OccupancySensing,
-        pir_unoccupied_to_occupied_threshold: 3_u8
+        pir_unoccupied_to_occupied_threshold: 3_u8,
+        hold_time: 60_u16
       )
       read(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_UNOCCUPIED_TO_OCCUPIED_THRESHOLD).should eq(3_u8)
     end
 
     it "returns default value for PIRUnoccupiedToOccupiedThreshold when not explicitly set" do
-      cluster = build(Matter::Cluster::OccupancySensing)
+      cluster = build(Matter::Cluster::OccupancySensing, hold_time: 60_u16)
       read(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_UNOCCUPIED_TO_OCCUPIED_THRESHOLD).should eq(1_u8) # Default value is 1
     end
 
     it "returns unsupported for PIRUnoccupiedToOccupiedThreshold when PIR feature disabled" do
       cluster = build(Matter::Cluster::OccupancySensing,
-        feature_map: Matter::Cluster::OccupancySensing::Feature::None
+        feature_map: Matter::Cluster::OccupancySensing::Feature::Ultrasonic,
+        hold_time: 60_u16
       )
       read_status(cluster, Matter::Cluster::OccupancySensing::ATTR_PIR_UNOCCUPIED_TO_OCCUPIED_THRESHOLD).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAttribute)
     end
@@ -271,7 +276,8 @@ describe Matter::Cluster::OccupancySensing do
       # Simple PIR sensor that detects motion
 
       sensor = build(Matter::Cluster::OccupancySensing,
-        occupancy: 0_u8,                           # Initially unoccupied
+        occupancy: 0_u8, # Initially unoccupied
+        hold_time: 60_u16,
         pir_occupied_to_unoccupied_delay: 60_u16,  # 60 seconds hold after last motion
         pir_unoccupied_to_occupied_delay: 0_u16,   # Instant detection
         pir_unoccupied_to_occupied_threshold: 1_u8 # Single detection needed
@@ -293,6 +299,7 @@ describe Matter::Cluster::OccupancySensing do
 
       sensor = build(Matter::Cluster::OccupancySensing, 2,
         occupancy: 0_u8,
+        hold_time: 60_u16,
         pir_unoccupied_to_occupied_threshold: 3_u8 # 3 detections required
       )
 
@@ -334,6 +341,7 @@ describe Matter::Cluster::OccupancySensing do
 
       sensor = build(Matter::Cluster::OccupancySensing, 4,
         occupancy: 0_u8,
+        hold_time: 300_u16,
         pir_occupied_to_unoccupied_delay: 300_u16, # 5 minutes to unoccupied
         pir_unoccupied_to_occupied_delay: 2_u16,   # 2 seconds to occupied
         pir_unoccupied_to_occupied_threshold: 2_u8 # 2 detections
