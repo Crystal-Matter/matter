@@ -1,19 +1,33 @@
-name: Matter 1.6 official JFA certification
+name: Matter 1.6 official JFA and VID certification
 
 on:
   workflow_dispatch:
+    inputs:
+      case:
+        description: Official SDK case to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - jfadmin
+          - opcreds
   pull_request:
     paths:
       - .github/workflows/sdk-jfadmin-certification.yml
       - e2e/interop/sdk_jfadmin_certification.py
+      - e2e/interop/sdk_opcreds_vid_certification.py
+      - e2e/interop/test_sdk_opcreds_vid_certification.py
       - examples/support/joint_fabric_administrator_device.cr
       - src/matter/commissioning/joint_fabric_administrator_service.cr
       - src/matter/cluster/joint_fabric_administrator.cr
+      - src/matter/cluster/operational_credentials.cr
+      - src/matter/datatype/vendor_id.cr
 
 jobs:
   tc-jfadmin-1-2:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 135
     steps:
       - uses: actions/checkout@v5
       - uses: crystal-lang/install-crystal@v1
@@ -33,6 +47,8 @@ jobs:
           avahi-daemon --check
       - name: Install Crystal dependencies
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Validate official VID harness result gate
+        run: python3 -m unittest discover -s e2e/interop -p 'test_sdk_opcreds_vid_certification.py'
       - name: Build Crystal JFA
         run: |
           mkdir -p tmp
@@ -64,15 +80,25 @@ jobs:
           out/python_env/bin/pip install -r src/python_testing/requirements.txt
           out/python_env/bin/python3 -c 'import matter.clusters, matter.testing.runner, mobly'
       - name: Run TC_JFADMIN_1_2 certification steps
+        if: github.event_name != 'workflow_dispatch' || inputs.case == 'all' || inputs.case == 'jfadmin'
         timeout-minutes: 10
         run: |
           python3 e2e/interop/sdk_jfadmin_certification.py \
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --log-dir tmp/interop-jfadmin-certification
+      - name: Run TC_OPCREDS_3_8 VID verification steps
+        if: github.event_name != 'workflow_dispatch' || inputs.case == 'all' || inputs.case == 'opcreds'
+        timeout-minutes: 20
+        run: |
+          python3 e2e/interop/sdk_opcreds_vid_certification.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --log-dir tmp/interop-opcreds-vid-certification
       - name: Upload official test and device logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: official-jfadmin-certification-logs
-          path: tmp/interop-jfadmin-certification/
+          path: |
+            tmp/interop-jfadmin-certification/
+            tmp/interop-opcreds-vid-certification/
           if-no-files-found: warn
