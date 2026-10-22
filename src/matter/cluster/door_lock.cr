@@ -41,10 +41,10 @@ module Matter
 
       # OperatingModesBitmap uses set bits for unsupported modes; bits 5–15
       # are reserved and must remain set.
-      SUPPORTED_OPERATING_MODES_RESERVED = 0xFFE0_u16
+      SUPPORTED_OPERATING_MODES_RESERVED   = 0xFFE0_u16
       UNSUPPORTED_OPTIONAL_OPERATING_MODES = (1_u16 << OperatingMode::Vacation.value) |
-                                              (1_u16 << OperatingMode::Privacy.value) |
-                                              (1_u16 << OperatingMode::Passage.value)
+                                             (1_u16 << OperatingMode::Privacy.value) |
+                                             (1_u16 << OperatingMode::Passage.value)
       DEFAULT_SUPPORTED_OPERATING_MODES = SUPPORTED_OPERATING_MODES_RESERVED | UNSUPPORTED_OPTIONAL_OPERATING_MODES
       NORMAL_OPERATING_MODE_BIT         = 1_u16 << OperatingMode::Normal.value
       NO_REMOTE_OPERATING_MODE_BIT      = 1_u16 << OperatingMode::NoRemoteLockUnlock.value
