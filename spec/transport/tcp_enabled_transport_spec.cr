@@ -30,6 +30,39 @@ end
 describe TcpTransport do
   before_each { require_udp_sockets! }
 
+  it "moves an ephemeral UDP port when TCP has acquired that port before startup" do
+    transport = TcpTransport.new(port: 0)
+    original_port = transport.port
+    blocker = TCPServer.new(Socket::Family::INET6)
+    blocker.ipv6_only = false
+    blocker.bind("::", original_port)
+    blocker.listen
+    begin
+      transport.start
+      transport.port.should_not eq(original_port)
+      client = TCPSocket.new("::1", transport.port)
+      client.close
+    ensure
+      transport.close
+      blocker.close
+    end
+  end
+
+  it "keeps a fixed port when its TCP listener is already occupied" do
+    blocker = TCPServer.new(Socket::Family::INET6)
+    blocker.ipv6_only = false
+    blocker.bind("::", 0)
+    blocker.listen
+    transport = TcpTransport.new(port: blocker.local_address.port)
+    begin
+      expect_raises(Socket::BindError) { transport.start }
+      transport.port.should eq(blocker.local_address.port)
+    ensure
+      transport.close
+      blocker.close
+    end
+  end
+
   it "grants the large IM budget only to a live connection-bound secure session" do
     server = TcpTransport.new(port: 0)
     client = TcpTransport.new(port: 0)

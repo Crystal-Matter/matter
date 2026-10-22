@@ -165,6 +165,33 @@ module Matter
         Log.info { "UDP transport bound: [::]:#{@port} (dual-stack)" }
       end
 
+      # TCP-enabled transports can discover that an ephemeral UDP port is
+      # already occupied by a TCP listener before their own listener starts.
+      # Rebind before the receive loop runs, keeping the old socket until the
+      # replacement and its multicast memberships are ready.
+      protected def rebind_ephemeral_port(port : Int32) : Nil
+        raise Matter::ConfigurationError.new("Cannot rebind a running UDP transport") if @running
+
+        replacement = UDPSocket.new(Socket::Family::INET6)
+        begin
+          replacement.ipv6_only = false
+          replacement.reuse_address = true
+          replacement.reuse_port = true
+          replacement.bind("::", port)
+          replacement.read_timeout = RECEIVE_TIMEOUT
+          @joined_groups.each { |address| replacement.join_group(address) }
+        rescue ex
+          replacement.close unless replacement.closed?
+          raise ex
+        end
+
+        previous = @socket
+        @socket = replacement
+        @port = replacement.local_address.port
+        previous.close unless previous.closed?
+        Log.info { "UDP transport rebound: [::]:#{@port} (dual-stack)" }
+      end
+
       # Start receiving messages in background
       def start : Nil
         return if @running

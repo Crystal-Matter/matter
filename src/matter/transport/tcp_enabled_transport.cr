@@ -21,6 +21,7 @@ module Matter
       MAX_TCP_PACKET_SIZE         = 63_000
       APPLICATION_MESSAGE_LIMIT   = MAX_TCP_PACKET_SIZE
       DEFAULT_MAX_TCP_CONNECTIONS = 16
+      EPHEMERAL_BIND_ATTEMPTS     = 16
       READ_TIMEOUT                = 10.seconds
       FRAME_TIMEOUT               = 10.seconds
       IDLE_TIMEOUT                = 5.minutes
@@ -49,6 +50,7 @@ module Matter
       @next_tcp_route_id : UInt64
       @connection_closed_observers : Hash(Int32, Proc(Socket::IPAddress, Nil))
       @next_connection_closed_observer_id : Int32
+      @ephemeral_port : Bool
 
       def initialize(port : Int32 = MATTER_PORT,
                      @max_tcp_connections : Int32 = DEFAULT_MAX_TCP_CONNECTIONS)
@@ -63,6 +65,7 @@ module Matter
         @next_tcp_route_id = 0_u64
         @connection_closed_observers = {} of Int32 => Proc(Socket::IPAddress, Nil)
         @next_connection_closed_observer_id = 0
+        @ephemeral_port = port == 0
         super(port: port)
       end
 
@@ -84,20 +87,52 @@ module Matter
       def start : Nil
         return if @tcp_running
 
-        server = TCPServer.new(Socket::Family::INET6)
+        server = begin
+          listen_tcp(port)
+        rescue ex : Socket::BindError
+          raise ex unless @ephemeral_port
+          reserve_ephemeral_port_pair
+        end
         begin
-          server.ipv6_only = false
-          server.reuse_address = true
-          server.bind("::", port)
-          server.listen(@max_tcp_connections)
           @tcp_server = server
           super
           @tcp_running = true
           spawn { accept_loop(server) }
         rescue ex
           server.close unless server.closed?
+          @tcp_server = nil
           raise ex
         end
+      end
+
+      private def listen_tcp(port : Int32) : TCPServer
+        server = TCPServer.new(Socket::Family::INET6)
+        begin
+          server.ipv6_only = false
+          server.reuse_address = true
+          server.bind("::", port)
+          server.listen(@max_tcp_connections)
+          server
+        rescue ex
+          server.close unless server.closed?
+          raise ex
+        end
+      end
+
+      private def reserve_ephemeral_port_pair : TCPServer
+        EPHEMERAL_BIND_ATTEMPTS.times do
+          server = listen_tcp(0)
+          begin
+            rebind_ephemeral_port(server.local_address.port)
+            return server
+          rescue Socket::BindError
+            server.close unless server.closed?
+          rescue ex
+            server.close unless server.closed?
+            raise ex
+          end
+        end
+        raise Matter::TransportError.new("Could not allocate a shared ephemeral UDP/TCP port")
       end
 
       def stop : Nil
