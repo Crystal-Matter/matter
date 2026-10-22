@@ -7,11 +7,14 @@ It does not verify types, feature-dependent requirements, commands, events,
 behavior, interoperability,
 or certification. A matching row is not a completeness claim.
 
+See [server command and event declaration audit](protocol-command-event-coverage.md)
+for a separate comparison of literal command and event IDs.
+
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
 - Crystal declarations for those IDs: 55
-- Matching known revisions: 39
+- Matching known revisions: 40
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -43,7 +46,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0036 | Wi-Fi Network Diagnostics Cluster | 1 | 1 | — |
 | 0x0037 | Ethernet Network Diagnostics Cluster | 1 | 1 | — |
 | 0x0038 | Time Synchronization Cluster | 2 | 2 | — |
-| 0x0039 | Bridged Device Basic Information Cluster | 6 | 5 | — |
+| 0x0039 | Bridged Device Basic Information Cluster | 6 | 6 | — |
 | 0x003B | Switch Cluster | 2 | 2 | — |
 | 0x003C | Administrator Commissioning Cluster | 1 | 1 | — |
 | 0x003E | Operational Credentials Cluster | 2 | 2 | — |

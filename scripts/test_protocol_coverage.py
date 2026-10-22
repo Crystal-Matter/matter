@@ -47,6 +47,7 @@ class ProtocolCoverageTests(unittest.TestCase):
         self.assertIn("0x0007 (optional)", text)
         self.assertIn("fixture-digest", text)
         self.assertIn("declaration coverage", text)
+        self.assertIn("[server command and event declaration audit](protocol-command-event-coverage.md)", text)
 
 
 if __name__ == "__main__":

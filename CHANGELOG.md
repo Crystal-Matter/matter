@@ -37,6 +37,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   setter changes, and omit the event when ChangeEvent is disabled. Application
   state-change callbacks continue to run independently.
 
+### Bridged device revision 6
+
+- Advertise Bridged Device Basic Information revision 6 and optionally expose
+  its read-only, nonvolatile ConfigurationVersion. A supplied value must be
+  positive and survives cluster state restoration.
+
 ### Bridged device identity
 
 - Require a stable 1–32-byte UniqueID for Bridged Device Basic Information,

@@ -63,6 +63,17 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
 
       read(cluster, Matter::Cluster::BridgedDeviceBasicInformation::ATTR_UNIQUE_ID).should eq("abc-123")
     end
+
+    it "advertises revision 6 and exposes ConfigurationVersion only when supplied" do
+      absent = build(Matter::Cluster::BridgedDeviceBasicInformation, unique_id: "bridge-absent")
+      absent.cluster_revision.should eq(6_u16)
+      read_status(absent, Matter::Cluster::BridgedDeviceBasicInformation::ATTR_CONFIGURATION_VERSION).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAttribute)
+
+      present = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-present", configuration_version: 1_u32)
+      read(present, Matter::Cluster::BridgedDeviceBasicInformation::ATTR_CONFIGURATION_VERSION).should eq(1_u32)
+      write(present, Matter::Cluster::BridgedDeviceBasicInformation::ATTR_CONFIGURATION_VERSION, 2_u32).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedWrite)
+    end
   end
 
   describe "#write_attribute" do
@@ -176,6 +187,26 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
 
       cluster2.node_label.should eq("Modified Label")
       cluster2.reachable?.should be_false
+    end
+
+    it "persists a supplied ConfigurationVersion across restart" do
+      source = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-config", configuration_version: 1_u32)
+      source.configuration_version = 2_u32
+      document = source.save_state.as(Matter::Storage::Document)
+      document["configuration_version"].should eq(2_u32)
+
+      restored = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-config", configuration_version: 1_u32)
+      restored.restore_state(document)
+      read(restored, Matter::Cluster::BridgedDeviceBasicInformation::ATTR_CONFIGURATION_VERSION).should eq(2_u32)
+    end
+  end
+
+  it "rejects a zero ConfigurationVersion when supplied" do
+    expect_raises(Matter::ConfigurationError) do
+      build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-invalid", configuration_version: 0_u32)
     end
   end
 

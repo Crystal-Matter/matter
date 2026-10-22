@@ -12,7 +12,7 @@ module Matter
     #
     # Matter Spec: Core 9.13
     class BridgedDeviceBasicInformation < Base
-      cluster 0x0039, revision: 5
+      cluster 0x0039, revision: 6
 
       NODE_LABEL_MAX_LENGTH = 32
       UNIQUE_ID_MAX_LENGTH  = 32
@@ -80,6 +80,8 @@ module Matter
       attribute 0x0011, :reachable, Bool, default: true, persist: true, callback: :new_only
       attribute 0x0012, :unique_id, String, default: "", fixed: true, max_length: UNIQUE_ID_MAX_LENGTH
       attribute 0x0014, :product_appearance, ProductAppearanceStruct, nullable: true, fixed: true, optional: true, present_if: :product_appearance
+      attribute 0x0018, :configuration_version, UInt32, nullable: true, optional: true,
+        present_if: :configuration_version, persist: true, min: 1_u32
 
       event 0x00, :start_up, priority: :critical
       event 0x01, :shut_down, priority: :critical
@@ -105,9 +107,13 @@ module Matter
         @serial_number : String? = nil,
         @unique_id : String = "",
         @product_appearance : ProductAppearanceStruct? = nil,
+        @configuration_version : UInt32? = nil,
       )
         unless (1..UNIQUE_ID_MAX_LENGTH).includes?(@unique_id.bytesize)
           raise ArgumentError.new("unique_id must be 1..#{UNIQUE_ID_MAX_LENGTH} bytes")
+        end
+        if @configuration_version == 0_u32
+          raise Matter::ConfigurationError.new("ConfigurationVersion must be positive")
         end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @node_label = node_label || ""
