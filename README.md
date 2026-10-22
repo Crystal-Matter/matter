@@ -168,6 +168,21 @@ topology. For other application-managed configuration changes, call
 `basic_info.increase_configuration_version` after the change succeeds. The
 version wraps from the largest uint32 value to one.
 
+TLS Certificate Management is opt-in: add
+`cluster Matter::Cluster::TlsCertificateManagement` to an endpoint that has
+appropriate administrator access. The cluster stores each fabric's root
+certificates, client certificates, and device-generated P-256 client private
+keys in the device's `Storage::Backend`; it erases them on `RemoveFabric`.
+Protect file-backed storage at the host level because it contains private
+keys. Provisioning a client certificate checks that its public key matches
+the saved CSR key. Certificate size can reach 3000 bytes, so enable the
+opt-in TCP transport (`tcp_enabled: true`) for large Matter messages. See
+`examples/matter_tls_certificate_management_device.cr` for an isolated
+chip-tool fixture. TLS Client Management (0x0802) and a host TLS connection
+policy are separate integrations; applications can install
+`root_in_use`/`client_in_use` callbacks to prevent removal of referenced
+certificates.
+
 Every device includes the OTA Software Update Requestor cluster on endpoint 0.
 An administrator can write one DefaultOTAProviders entry on each fabric. The
 device keeps those entries separate, saves them with its cluster state, and

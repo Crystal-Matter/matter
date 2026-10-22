@@ -22,6 +22,7 @@ require "../cluster/general_diagnostics"
 require "../cluster/network_commissioning"
 require "../cluster/group_key_management"
 require "../cluster/ota_requestor"
+require "../cluster/tls_certificate_management"
 require "../cluster/icd_management"
 require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
@@ -180,6 +181,7 @@ module Matter
       build_and_wire_clusters
       @message_handler.clusters.values.each do |cluster|
         wire_ecosystem_information(cluster)
+        wire_tls_certificate_management(cluster)
         validate_thread_network_directory(cluster)
       end
       @message_handler.setup_cluster_notifications
@@ -232,6 +234,7 @@ module Matter
             end
           end
           cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
+          cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
         end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
@@ -817,6 +820,7 @@ module Matter
       endpoint = Endpoint.new(DataType::EndpointNumber.new(endpoint_id), device_types)
       clusters.each do |cluster|
         wire_ecosystem_information(cluster)
+        wire_tls_certificate_management(cluster)
         validate_thread_network_directory(cluster)
         endpoint.add_cluster(cluster)
       end
@@ -836,6 +840,16 @@ module Matter
     private def wire_ecosystem_information(cluster : Cluster::Base) : Nil
       if ecosystem_information = cluster.as?(Cluster::EcosystemInformation)
         ecosystem_information.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+      end
+    end
+
+    private def wire_tls_certificate_management(cluster : Cluster::Base) : Nil
+      if tls = cluster.as?(Cluster::TlsCertificateManagement)
+        tls.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+        tls.on_persist = -> do
+          raise StorageError.new("Could not persist TLS certificates") unless @persistence.save_cluster(tls)
+          nil
+        end
       end
     end
 
