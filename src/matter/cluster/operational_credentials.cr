@@ -4,6 +4,7 @@ require "../commissioning"
 require "../fabric"
 require "../fabric_table"
 require "../crypto/key"
+require "../datatype/vendor_id"
 
 module Matter
   module Cluster
@@ -374,7 +375,8 @@ module Matter
         Tlv::CsrResponse.new(elements, signature)
       end
 
-      def add_noc(request : Tlv::AddNocRequest) : Tlv::TlvNocResponse
+      def add_noc(request : Tlv::AddNocRequest) : InteractionModel::Status | Tlv::TlvNocResponse
+        return InteractionModel::Status.invalid_command unless DataType::VendorId.valid_operational?(request.admin_vendor_id)
         noc_response credentials.add_noc(
           noc: request.noc_value,
           icac: request.icac_value,
@@ -437,6 +439,9 @@ module Matter
         return InteractionModel::Status.constraint_error unless fabric
         return InteractionModel::Status.invalid_command if request.vendor_id.nil? &&
                                                            request.vid_verification_statement.nil? && request.vvsc.nil?
+        if vendor_id = request.vendor_id
+          return InteractionModel::Status.constraint_error unless DataType::VendorId.valid_operational?(vendor_id)
+        end
         if statement = request.vid_verification_statement
           return InteractionModel::Status.constraint_error unless statement.empty? || statement.size == 85
         end

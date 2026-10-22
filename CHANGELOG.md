@@ -41,6 +41,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   align Options and startup attribute write privileges with Matter 1.6.
   Official chip-tool checks revision, required attributes, and restart behavior.
 
+### Operational Vendor ID validation
+
+- Reject reserved Vendor IDs in AddNOC and SetVIDVerificationStatement. AddNOC
+  returns InvalidCommand; SetVIDVerificationStatement returns ConstraintError,
+  matching the Matter 1.6 operational range of 1 through 0xFFF4 and the
+  official `TC_OPCREDS_3_8` boundary check.
+
 ### Wake On LAN
 
 - Add the Matter 1.6 Wake On LAN server (`0x0503`, revision 1). A host can
