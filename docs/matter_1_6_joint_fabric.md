@@ -280,6 +280,11 @@ against merged `develop`.
    unsupported, so independent VVS interoperability remains unproven.
    Deployment must authenticate and freshen its DCL gateway. The optional
    Matter-TLV VVSC is checked for its signed signer profile and issuer path.
+   The Appendix F.5 fixed-vector spec checks fabric-binding and VVS-bearing
+   signed-message byte layout against official SDK bytes. Its signed-message
+   case substitutes a locally generated root key because the published vector
+   does not supply that root's private key. This establishes encoding agreement,
+   not independent VVS certificate-chain or live DCL interoperability.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer, A removal, B restart after a lost RemoveFabric
