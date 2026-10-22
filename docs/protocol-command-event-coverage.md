@@ -7,7 +7,7 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 77
+- Implemented standard cluster IDs compared: 78
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 117
@@ -66,6 +66,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
 | 0x0202 | Fan Control Cluster | 6 | 6 | — | — |
+| 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — | — |
 | 0x0400 | Illuminance Measurement Cluster | 5 | 5 | — | — |
 | 0x0402 | Temperature Measurement Cluster | 6 | 4 | — | — |
