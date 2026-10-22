@@ -139,7 +139,8 @@ The declarations are:
   A Bridged Device Basic Information cluster requires a provisioned, nonempty `unique_id:` of at
   most 32 UTF-8 bytes. Reuse the same ID when restoring that bridged device after a restart;
   the bridge example persists it as a template parameter.
-  Bridged `ConfigurationVersion` is optional; provision an initial positive value to expose it.
+  Bridged `ConfigurationVersion` is optional; provision an initial positive value before
+  advertising the endpoint to expose it. Once provisioned, it cannot be removed.
   When the application detects a bridged device configuration change, call
   `device.increase_bridged_configuration_version(endpoint_id)` after applying it. Pass an array
   of endpoint IDs for one logical change spanning several bridged devices: each version advances

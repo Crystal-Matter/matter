@@ -121,6 +121,9 @@ module Matter
 
       def configuration_version=(value : UInt32?) : Nil
         current = @configuration_version
+        if current && !value
+          raise Matter::ConfigurationError.new("ConfigurationVersion cannot be removed after provisioning")
+        end
         if value && (value == 0_u32 || (current && value < current && !(current == UInt32::MAX && value == 1_u32)))
           raise Matter::ConfigurationError.new("ConfigurationVersion must advance or wrap to one")
         end

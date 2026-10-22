@@ -248,6 +248,9 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
       expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 6_u32 }
       cluster.configuration_version.should eq(7_u32)
 
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = nil }
+      cluster.configuration_version.should eq(7_u32)
+
       cluster.configuration_version = UInt32::MAX
       expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 2_u32 }
       cluster.configuration_version = 1_u32
