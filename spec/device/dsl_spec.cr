@@ -451,3 +451,13 @@ describe Matter::Device::DSL do
     end
   end
 end
+
+describe "device TCP opt-in" do
+  it "uses a dual UDP/TCP transport only when requested" do
+    require_udp_sockets!
+    device = DslSpecDevice.new(port: 0, tcp_enabled: true)
+    device.transport.should be_a(Matter::Transport::TcpEnabledTransport)
+  ensure
+    DslSpec.stop(device) if device
+  end
+end

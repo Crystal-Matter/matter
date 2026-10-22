@@ -7,6 +7,7 @@ require "../datatype/node_id"
 require "../session/context"
 require "../session/secure_message"
 require "../transport/udp_transport"
+require "../transport/tcp_enabled_transport"
 
 module Matter
   module Controller
@@ -48,10 +49,11 @@ module Matter
         unsecured_source_node_id : UInt64? = nil,
         initial_unsecured_message_counter : UInt32? = nil,
         transport : Transport::PacketTransport? = nil,
+        tcp_enabled : Bool = false,
         @session_id_in_use : Proc(UInt16, Bool)? = nil,
       )
         @owns_transport = transport.nil?
-        @transport = transport || Transport::UDPTransport.new(port: port)
+        @transport = transport || (tcp_enabled ? Transport::TcpEnabledTransport.new(port: port) : Transport::UDPTransport.new(port: port))
         @transport_observer_id = nil
         @owned_unsecured_exchanges = Set(Tuple(UInt16, Socket::IPAddress)).new
         @unsecured_source_node_id = unsecured_source_node_id ? DataType::NodeId.new(unsecured_source_node_id) : DataType::NodeId.random_operational
@@ -96,11 +98,24 @@ module Matter
         @transport.close if @owns_transport
       end
 
-      def register_session(session : Session::SecureContext) : Nil
+      def register_session(session : Session::SecureContext,
+                           peer : Socket::IPAddress? = nil) : Nil
         unless session_id_available?(session.session_id)
           raise Matter::ProtocolError.new("Controller session ID #{session.session_id} is already in use")
         end
+        if peer && peer.port == Transport::TcpEnabledTransport::TOKEN_PORT
+          unless @transport.tcp_peer?(peer)
+            raise Matter::TransportError.new("Matter TCP connection is closed")
+          end
+          session.bind_tcp_peer(peer)
+        end
         @sessions[session.session_id] = session
+      end
+
+      def connect_tcp(peer : Socket::IPAddress) : Socket::IPAddress
+        transport = @transport.as?(Transport::TcpEnabledTransport) ||
+                    raise Matter::ConfigurationError.new("Controller TCP transport is not enabled")
+        transport.connect_tcp(peer)
       end
 
       def session_id_available?(session_id : UInt16) : Bool
@@ -216,6 +231,9 @@ module Matter
         requires_ack : Bool = true,
         acknowledged_message_id : UInt32? = nil,
       ) : UInt16
+        unless session.accepts_peer?(peer)
+          raise Matter::TransportError.new("Secure session belongs to another transport or TCP connection")
+        end
         payload_header = Codec::MessageCodec::PayloadHeader.new(
           exchange_id: exchange_id,
           protocol_id: protocol_id,
@@ -342,6 +360,12 @@ module Matter
 
       private def handle_transport_message(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil
         if msg.packet_header.session_id == 0
+          # Before CASE/PASE authenticates a session, replies on TCP must
+          # match the exact connection that opened the unsecured exchange.
+          if peer.port == Transport::TcpEnabledTransport::TOKEN_PORT && !owns_incoming?(msg, peer)
+            Log.debug { "Dropping unsecured TCP message on another exchange or connection" }
+            return
+          end
           @inbox.send(ReceivedMessage.new(msg, peer))
           return
         end
@@ -349,6 +373,11 @@ module Matter
         session = @sessions[msg.packet_header.session_id]?
         unless session
           Log.debug { "Dropping encrypted message: no session found (session_id=#{msg.packet_header.session_id}, peer=#{peer})" }
+          return
+        end
+
+        unless session.accepts_peer?(peer)
+          Log.debug { "Dropping encrypted message on another transport or TCP connection (session_id=#{session.session_id})" }
           return
         end
 

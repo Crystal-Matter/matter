@@ -31,6 +31,10 @@ module Matter
         @failed
       end
 
+      def incomplete? : Bool
+        @prefix_size > 0 || !@message.nil?
+      end
+
       def self.encode(message : Bytes, max_message_size : Int32) : Bytes
         validate_limit!(max_message_size)
         unless message.size.in?(1..max_message_size)

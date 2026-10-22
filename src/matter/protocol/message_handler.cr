@@ -489,6 +489,11 @@ module Matter
               return
             end
 
+            unless session.accepts_peer?(peer)
+              Log.warn { "Dropping encrypted message on another transport or TCP connection (session_id=#{session_id})" }
+              return
+            end
+
             message_counter = msg.packet_header.message_id
             case session.check_peer_message_counter(message_counter)
             when Transport::MessageCounter::CheckResult::Duplicate

@@ -8,6 +8,7 @@ require "../session/case/definitions"
 require "../session/case/resumption_store"
 require "../session/context"
 require "../session/pase/pase"
+require "../transport/tcp_enabled_transport"
 require "./message_type"
 require "./response_sender"
 require "./session_registry"
@@ -391,7 +392,7 @@ module Matter
         Log.trace { "  Decryption key (I2R): #{keys[:decryption].hexstring}" }
         Log.trace { "  Attestation challenge: #{keys[:attestation_challenge].hexstring}" }
 
-        @registry.establish_session(Session::SecureContext.new(
+        session = Session::SecureContext.new(
           session_id: handshake.responder_session_id,
           peer_session_id: handshake.initiator_session_id,
           session_type: Session::SessionType::Unicast,
@@ -399,7 +400,9 @@ module Matter
           decryption_key: keys[:decryption],
           attestation_challenge: keys[:attestation_challenge],
           initiator: false
-        ))
+        )
+        session.bind_tcp_peer(peer) if peer.port == Transport::TcpEnabledTransport::TOKEN_PORT
+        @registry.establish_session(session)
         @pase_handshakes.delete(key)
 
         Log.info do
@@ -639,6 +642,7 @@ module Matter
           "CASE peer subjects: [#{subjects}] (session_id=#{session.session_id} fabric_index=#{session.fabric_index})"
         end
 
+        session.bind_tcp_peer(peer) if peer.port == Transport::TcpEnabledTransport::TOKEN_PORT
         @registry.establish_session(session)
         @case_handshakes.delete(key)
 
@@ -723,6 +727,7 @@ module Matter
         )
         session.peer_subject_ids = record.peer_subject_ids.dup
         session.peer_icac = record.peer_icac.try(&.dup)
+        session.bind_tcp_peer(key[0]) if key[0].port == Transport::TcpEnabledTransport::TOKEN_PORT
         @registry.establish_session(session)
         save_resumption_record(Session::Case::ResumptionStore::Record.new(
           record.fabric_id, record.root_public_key, record.local_node_id,

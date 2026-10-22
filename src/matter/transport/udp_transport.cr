@@ -22,6 +22,7 @@ module Matter
       # Matter default port
       MATTER_PORT        = 5540
       IPV4_MAPPED_PREFIX = "::ffff:"
+      TCP_ROUTE_PORT     = 0
 
       # How long the receive loop waits for a datagram before looping.
       RECEIVE_TIMEOUT = 100.milliseconds
@@ -463,6 +464,12 @@ module Matter
       end
 
       private def handle_received_data(data : Bytes, peer_address : Socket::IPAddress) : Nil
+        # Port zero is reserved for in-memory TCP route tokens. A network UDP
+        # packet must never enter a TCP-bound CASE session under that identity.
+        if peer_address.port == TCP_ROUTE_PORT
+          Log.debug { "Ignoring UDP packet with source port zero" }
+          return
+        end
         if data.size < MIN_PACKET_SIZE
           Log.warn { "Packet too small (#{data.size} bytes, minimum #{MIN_PACKET_SIZE}); ignoring malformed packet" }
           return
@@ -631,8 +638,17 @@ module Matter
           end
         end
 
-        # Give a controller sharing this listener first refusal. Copy the
-        # observer set before calling out so an observer may unregister itself.
+        dispatch_message(message, peer_address)
+      rescue ex : Exception
+        # Decode / processing errors for a single datagram
+        Log.debug(exception: ex) { "Error handling received data (peer=#{peer_address.address}:#{peer_address.port} bytes=#{data.size})" }
+      end
+
+      # Give a controller sharing this listener first refusal. Copy the
+      # observer set before calling out so an observer may unregister itself.
+      # TCP subclasses use the same dispatch path without UDP's MRP state.
+      protected def dispatch_message(message : Codec::MessageCodec::Message,
+                                     peer_address : Socket::IPAddress) : Nil
         observers = @observer_mutex.synchronize { @message_observers.values.to_a }
         return if observers.any?(&.call(message, peer_address))
 
@@ -643,9 +659,6 @@ module Matter
         else
           Log.warn { "No on_message callback registered" }
         end
-      rescue ex : Exception
-        # Decode / processing errors for a single datagram
-        Log.debug(exception: ex) { "Error handling received data (peer=#{peer_address.address}:#{peer_address.port} bytes=#{data.size})" }
       end
 
       private def sweep_unsecured_counters(now : Time::Instant,

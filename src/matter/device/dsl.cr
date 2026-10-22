@@ -220,6 +220,7 @@ module Matter
           tc_required_acknowledgements : UInt16 = 0_u16,
           icd_configuration : ::Matter::Cluster::IcdManagement::Configuration? = nil,
           regulatory_location_capability : ::Matter::Cluster::GeneralCommissioning::RegulatoryLocationType = ::Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
+          tcp_enabled : Bool = false,
         )
           super
         end

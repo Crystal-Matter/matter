@@ -93,13 +93,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   completes or rolls back commissioning, releasing its PAKE state and allowing
   another administrator to open a fresh window immediately.
 
-### Matter TCP framing foundation
+### Opt-in Matter TCP transport
 
 - Add a bounded, incremental Matter TCP frame codec. It writes and reads the
   four-byte little-endian packet length, accepts fragmented or coalesced stream
   reads, and rejects zero-length or over-limit packets before body allocation.
-  This is a framing primitive; TCP connections and large-payload CASE sessions
-  are not enabled yet.
+- Add an opt-in TCP listener and controller connection path sharing the existing
+  CASE/PASE and Interaction Model handler with UDP. Connections use one-time
+  local route tokens; secure sessions stay bound to their authenticated TCP
+  connection, and closed tokens cannot fall back to UDP.
+- Retain the 1280-byte application-packet limit on TCP. The pinned Matter 1.6
+  SDK does not exchange a maximum TCP payload in CASE session parameters, so
+  large-payload interactions remain unavailable pending negotiation support.
 
 ### Controller session ID allocation
 
