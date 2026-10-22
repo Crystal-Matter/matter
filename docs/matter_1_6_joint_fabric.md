@@ -388,6 +388,24 @@ Aggregator used only for chip-tool interoperability testing. It auto-approves
 one test VID/PID pair and returns dummy reverse-window bytes with a no-op
 deferred task; it does not open a target window or commission a node.
 
+For a real two-fabric SDK interoperability run, use
+`e2e/interop/sdk_reverse_commissioning.sh` on Linux x64. It pins the official
+SDK to `v1.6.0.0`, builds its RPC-enabled `fabric-admin` and
+`fabric-bridge-app`, and uses `examples/matter_reverse_commissioning_device.cr`
+as the Crystal Aggregator. The fixture first commissions that Aggregator onto
+a Crystal-owned source fabric. The SDK FabricAdmin commissions its local bridge
+onto an independent destination fabric, then joins the Aggregator to that
+fabric through an Enhanced Commissioning Window. The SDK's real
+`fabricsync add-bridge` command requests approval, receives the
+`ReverseOpenCommissioningWindow` response, and opens its local bridge window
+over Pigweed RPC. Crystal then attests and commissions the SDK bridge onto the
+source fabric, checking the approved test VID/PID before AddNOC. The harness
+verifies both nodes report two commissioned fabrics over fresh CASE sessions.
+Logs are retained under `tmp/interop-sdk-reverse/`. This test requires
+`MATTER_REVERSE_TEST_CONSENT=1` and uses the SDK/Crystal development PAA trust
+fixture; those are opt-in test policy and trust, not a production consent UI
+or a production attestation authority.
+
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor
 CAT check. The controller's `OperationalTrustAnchors` implementation must
 validate the source of an operational root or VID Verification Statement. An

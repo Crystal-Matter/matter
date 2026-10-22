@@ -52,6 +52,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Reverse commissioning handoff
 
+- Add an opt-in official SDK v1.6 FabricAdmin/FabricBridge reverse-commissioning
+  interoperability fixture with real Commissioner Control approval and
+  response, deferred Crystal commissioning of the SDK bridge, attested test
+  VID/PID, two-fabric counts, and CASE verification.
 - Prepare Commissioner Control's enhanced-window response before starting the
   reverse commissioner. Run host commissioning only after the matching CASE
   InvokeResponse is sent, outside the protocol lock; discard the task if its

@@ -1,0 +1,55 @@
+name: Matter 1.6 SDK reverse commissioning
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/sdk-reverse-commissioning.yml'
+      - 'e2e/interop/sdk_reverse_commissioning*'
+      - 'examples/matter_reverse_commissioning_device.cr'
+      - 'src/matter/cluster/commissioner_control.cr'
+      - 'src/matter/controller/commissioning/**'
+      - 'src/matter/protocol/**'
+
+jobs:
+  sdk-fabric-admin-crystal-aggregator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crystal-lang/install-crystal@v1
+      - name: Free space for official SDK build
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          df -h .
+      - name: Install SDK discovery and harness dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            avahi-daemon avahi-utils dbus libavahi-client-dev libdbus-1-dev \
+            libglib2.0-dev libssl-dev pkg-config clang ninja-build cmake iproute2
+          interface="$(ip -o -4 route show default | awk 'NR == 1 {print $5}')"
+          test -n "${interface}"
+          sudo sysctl -w "net.ipv6.conf.${interface}.disable_ipv6=0"
+          sudo ip -6 addr add 'fd42:4d41:5454::2/64' dev "${interface}"
+          ip -6 addr show dev "${interface}"
+          sudo service dbus start
+          sudo service avahi-daemon start
+          avahi-daemon --check
+      - name: Install Crystal dependencies
+        run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Validate fixture syntax
+        run: |
+          bash -n e2e/interop/sdk_reverse_commissioning.sh
+          python3 -m py_compile e2e/interop/sdk_reverse_commissioning_live.py
+          crystal tool format --check examples/matter_reverse_commissioning_device.cr e2e/interop/sdk_reverse_commissioning_driver.cr
+      - name: Build official SDK and run reverse commissioning
+        timeout-minutes: 110
+        run: timeout --signal=TERM --kill-after=30s 105m bash e2e/interop/sdk_reverse_commissioning.sh
+      - name: Upload process and protocol logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-reverse-commissioning-logs
+          path: tmp/interop-sdk-reverse/*.log
+          if-no-files-found: warn
