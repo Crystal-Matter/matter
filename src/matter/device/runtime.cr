@@ -496,6 +496,9 @@ module Matter
       @administrator_commissioning = administrator_commissioning
 
       general_diagnostics = Cluster::GeneralDiagnostics.new(endpoint_0)
+      general_diagnostics.on_device_load_status = ->(fabric_index : UInt8?) do
+        @message_handler.device_load_status(fabric_index)
+      end
       network_commissioning = Cluster::NetworkCommissioning.new(
         endpoint_0,
         network_type: commissioning_network_type,

@@ -76,6 +76,12 @@ module Matter
       # Subscriptions receiving reports, keyed by subscription id.
       getter active_subscriptions : Hash(UInt32, ActiveSubscription) = {} of UInt32 => ActiveSubscription
 
+      # Counts successful subscription establishments since this process
+      # started, including subscriptions restored into an active session.
+      @total_subscriptions_established : UInt32 = 0_u32
+
+      record SubscriptionLoad, current : UInt16, current_for_fabric : UInt16, total : UInt32
+
       # Sessions queued for deferred removal.
       getter pending_cleanups : Array(PendingCleanup) = [] of PendingCleanup
 
@@ -204,11 +210,35 @@ module Matter
       # Registers a subscription that has completed its handshake.
       def add_subscription(subscription : ActiveSubscription) : Nil
         @mutex.synchronize do
+          count_subscription_established unless @active_subscriptions.has_key?(subscription.subscription_id)
           @active_subscriptions[subscription.subscription_id] = subscription
           Log.info { "Subscription #{subscription.subscription_id} is now active (watching #{subscription.attribute_paths.size} path(s))" }
 
           persist(&.subscription_established(self, subscription))
           @on_subscription_established.try(&.call(subscription))
+        end
+      end
+
+      # Restored subscriptions resume reporting immediately but must not be
+      # written back to persistence or invoke an application callback again.
+      def restore_subscription(subscription : ActiveSubscription) : Nil
+        @mutex.synchronize do
+          count_subscription_established unless @active_subscriptions.has_key?(subscription.subscription_id)
+          @active_subscriptions[subscription.subscription_id] = subscription
+        end
+      end
+
+      def subscription_load(fabric_index : UInt8?) : SubscriptionLoad
+        @mutex.synchronize do
+          current = {@active_subscriptions.size, UInt16::MAX.to_i}.min.to_u16
+          for_fabric = 0_u16
+          if fabric_index
+            count_for_fabric = @active_subscriptions.values.count do |subscription|
+              subscription.session.fabric_index == fabric_index
+            end
+            for_fabric = count_for_fabric.clamp(0, UInt16::MAX.to_i).to_u16
+          end
+          SubscriptionLoad.new(current, for_fabric, @total_subscriptions_established)
         end
       end
 
@@ -245,8 +275,13 @@ module Matter
             forget_subscription(old_subscription_id)
           end
 
+          count_subscription_established
           @active_subscriptions[new_subscription.subscription_id] = new_subscription
         end
+      end
+
+      private def count_subscription_established : Nil
+        @total_subscriptions_established = @total_subscriptions_established &+ 1_u32 unless @total_subscriptions_established == UInt32::MAX
       end
 
       # An existing subscription of *session_id* that overlaps *paths* on

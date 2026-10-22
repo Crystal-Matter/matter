@@ -190,7 +190,7 @@ module Matter
             end
 
             subscription = ActiveSubscription.from_record(record, session)
-            registry.active_subscriptions[subscription.subscription_id] = subscription
+            registry.restore_subscription(subscription)
             max_id = {max_id, subscription.subscription_id}.max
             restored += 1
           rescue ex
