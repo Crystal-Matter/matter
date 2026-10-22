@@ -14,6 +14,29 @@ module Matter
       DATA_PEER_CAPACITY    = 10
       CONTROL_PEER_CAPACITY =  2
 
+      class NoAvailableKey < Matter::AuthenticationError
+        getter fabric_index : UInt8?
+        getter group_id : UInt16?
+
+        def initialize(message : String? = nil, @fabric_index : UInt8? = nil,
+                       @group_id : UInt16? = nil)
+          super(message || "No mapped operational group key could process the packet")
+        end
+      end
+
+      class FailedAuth < Matter::AuthenticationError
+      end
+
+      class Replay < Matter::SessionError
+        getter fabric_index : UInt8
+        getter group_id : UInt16
+
+        def initialize(message : String? = nil, @fabric_index : UInt8 = 0_u8,
+                       @group_id : UInt16 = 0_u16)
+          super(message || "Duplicate or stale group message")
+        end
+      end
+
       struct Key
         getter fabric_index : UInt8
         getter fabric_id : UInt64?
@@ -95,17 +118,30 @@ module Matter
       def decode(wire : Bytes) : Decoded
         raise Matter::CodecError.new("Group packet is too short") if wire.size < 8 + Codec::MessagePrivacy::MIC_LENGTH
         session_id = IO::ByteFormat::LittleEndian.decode(UInt16, wire[Codec::MessageCodec::SESSION_ID_OFFSET, 2])
+        candidate_found = false
+        authenticated_key : Key? = nil
+        authenticated_group_id : UInt16? = nil
         @keys.each do |key|
           next unless key.session_id == session_id
+          candidate_found = true
           packet = authenticate(wire, key)
           next unless packet
-          next unless packet.header.destination_group_id == key.group_id
+          unless packet.header.destination_group_id == key.group_id
+            authenticated_key = key
+            authenticated_group_id = packet.header.destination_group_id.try(&.id)
+            next
+          end
           source = packet.header.source_node_id.as(DataType::NodeId).id
-          accept_counter(key.fabric_index, source, packet.header.control_message?, packet.header.message_id)
+          accept_counter(key.fabric_index, key.group_id.id, source,
+            packet.header.control_message?, packet.header.message_id)
           message = Codec::MessageCodec::Base.decode_payload(packet)
           return Decoded.new(key.fabric_index, message)
         end
-        raise Matter::AuthenticationError.new("No mapped operational group key authenticated the packet")
+        if key = authenticated_key
+          raise NoAvailableKey.new(fabric_index: key.fabric_index, group_id: authenticated_group_id)
+        end
+        raise NoAvailableKey.new unless candidate_found
+        raise FailedAuth.new("No operational group key authenticated the packet")
       end
 
       private def authenticate(wire : Bytes, key : Key) : Codec::MessageCodec::Packet?
@@ -119,7 +155,8 @@ module Matter
         nil
       end
 
-      private def accept_counter(fabric_index : UInt8, source : UInt64, control : Bool, counter : UInt32) : Nil
+      private def accept_counter(fabric_index : UInt8, group_id : UInt16,
+                                 source : UInt64, control : Bool, counter : UInt32) : Nil
         identity = {fabric_index, source, control}
         state = @reception[identity]?
         unless state
@@ -132,7 +169,7 @@ module Matter
         case state.check(counter)
         when Transport::MessageCounter::CheckResult::Accept
         else
-          raise Matter::SessionError.new("Duplicate or stale group message")
+          raise Replay.new(fabric_index: fabric_index, group_id: group_id)
         end
       end
     end

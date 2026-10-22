@@ -18,6 +18,7 @@ module Matter
       cluster 0x001F, revision: 3, persist_state: false
 
       feature :extension, bit: 0 # EXTS - Extension attribute and its change event
+      feature :auxiliary, bit: 2 # AUX - generated, read-only ACL entries
 
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
@@ -157,6 +158,16 @@ module Matter
         end
       end
 
+      struct AuxiliaryAccessUpdatedEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: false)]
+        property admin_node_id : UInt64?
+
+        def initialize(@admin_node_id : UInt64?)
+        end
+      end
+
       # ACL and Extension are fabric-scoped lists: reads are filtered to the
       # accessing fabric and writes replace only that fabric's entries (see
       # `acl`, `acl=`, `extension` and `extension=`). They are persisted by
@@ -166,12 +177,17 @@ module Matter
       attribute 0x0002, :subjects_per_access_control_entry, UInt16, default: DEFAULT_SUBJECTS_PER_ENTRY, fixed: true
       attribute 0x0003, :targets_per_access_control_entry, UInt16, default: DEFAULT_TARGETS_PER_ENTRY, fixed: true
       attribute 0x0004, :access_control_entries_per_fabric, UInt16, default: DEFAULT_ENTRIES_PER_FABRIC, fixed: true
+      attribute 0x0007, :auxiliary_acl, Array(AccessControlEntry), computed: true,
+        read_access: :administer, fabric_scoped: true, requires: :auxiliary
 
       event 0x00, :access_control_entry_changed, priority: :info, access: :administer
       event 0x01, :access_control_extension_changed, priority: :info, access: :administer, requires: :extension
+      event 0x03, :auxiliary_access_updated, priority: :info, access: :administer,
+        requires: :auxiliary, payload: AuxiliaryAccessUpdatedEvent
 
       @acl = [] of AccessControlEntry
       @extension = [] of ExtensionEntry
+      @auxiliary_acl = [] of AccessControlEntry
       @acl_before_write = [] of AccessControlEntry
       @extension_before_write = [] of ExtensionEntry
 
@@ -209,6 +225,39 @@ module Matter
 
       def extension(fabric_index : UInt8? = nil) : Array(ExtensionEntry)
         fabric_index ? @extension.select { |entry| entry.fabric_index == fabric_index } : @extension
+      end
+
+      def auxiliary_acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)
+        fabric_index ? @auxiliary_acl.select { |entry| entry.fabric_index == fabric_index } : @auxiliary_acl
+      end
+
+      # A Groupcast listener's auxiliary ACL is derived from Membership. Keep
+      # it out of the writable primary ACL and publish the exact effective
+      # entries used by group message authorization.
+      def set_groupcast_auxiliary_acl(entries : Array(AccessControlEntry),
+                                      admin_node_id : UInt64? = nil,
+                                      emit_change : Bool = true) : Nil
+        unless @feature_map.auxiliary?
+          raise Matter::ConfigurationError.new("Groupcast auxiliary ACL requires Access Control AUX")
+        end
+        unless entries.all? do |entry|
+                 entry.auxiliary_type == AccessControlAuxiliaryType::Groupcast &&
+                 entry.auth_mode == AccessControlEntryAuthMode::Group &&
+                 entry.fabric_index && (entry.targets.try(&.size) || 0) <= targets_per_access_control_entry
+               end
+          raise Matter::ConfigurationError.new("Invalid Groupcast auxiliary ACL entry")
+        end
+        previous = @auxiliary_acl.select { |entry| entry.auxiliary_type == AccessControlAuxiliaryType::Groupcast }
+        return if previous == entries
+        @auxiliary_acl.reject! { |entry| entry.auxiliary_type == AccessControlAuxiliaryType::Groupcast }
+        @auxiliary_acl.concat(entries)
+        increment_version_and_notify(ATTR_AUXILIARY_ACL)
+        if emit_change
+          fabric_indexes = (previous.map(&.fabric_index) + entries.map(&.fabric_index)).compact
+          fabric_indexes.uniq!.each do |fabric_index|
+            emit_event(EVENT_AUXILIARY_ACCESS_UPDATED, AuxiliaryAccessUpdatedEvent.new(admin_node_id), fabric_index)
+          end
+        end
       end
 
       struct PersistedTarget
@@ -321,7 +370,7 @@ module Matter
                        cluster : UInt32? = nil, endpoint : UInt16? = nil, device_type : UInt32? = nil,
                        auth_mode : AccessControlEntryAuthMode = AccessControlEntryAuthMode::CASE) : Bool
         # Find matching ACL entries for this fabric
-        matching_entries = @acl.select do |entry|
+        matching_entries = (@acl + @auxiliary_acl).select do |entry|
           subjects = entry.subjects
           entry.fabric_index == fabric_index &&
             entry.auth_mode == auth_mode &&
@@ -399,7 +448,9 @@ module Matter
       # Helper: Remove all ACL entries for a fabric
       def remove_fabric_acl(fabric_index : UInt8) : Nil
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
+        @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_ACL)
+        notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?
       end
 
       # Replaces the accessing fabric's ACL entries (all entries outside a fabric).

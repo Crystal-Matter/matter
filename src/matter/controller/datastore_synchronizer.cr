@@ -2,6 +2,7 @@ require "log"
 
 require "../cluster/joint_fabric_datastore"
 require "../cluster/group_key_management"
+require "../cluster/groupcast"
 require "../cluster/groups"
 require "../cluster/access_control"
 require "../cluster/binding"
@@ -22,6 +23,9 @@ module Matter
       end
 
       def sync_node(store : Store, node_id : UInt64, session : Session::SecureContext, peer : Socket::IPAddress) : Nil
+        root_servers = read_list(UInt32, session, peer, 0_u16,
+          Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
+        groupcast_target = root_servers.includes?(Cluster::Groupcast::CLUSTER_ID)
         refreshing = store.node_list.any? { |entry| entry.node_id == node_id && entry.commissioning_status_entry.state == Store::DatastoreStateEnum::Pending }
         if refreshing
           endpoint_ids = read_list(UInt16, session, peer, 0_u16, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_PARTS_LIST)
@@ -36,9 +40,11 @@ module Matter
           store.complete_node_key_set(node_id, entry.group_key_set_id, status)
         end
 
-        store.endpoint_group_id_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }.each do |entry|
+        pending_groups = store.endpoint_group_id_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }
+        pending_groups.each do |entry|
           status = apply do
-            sync_group(store, entry, session, peer)
+            adopt_groupcast(session, peer) if groupcast_target
+            sync_group(store, entry, session, peer, groupcast_target)
           end
           store.complete_group_membership(node_id, entry.endpoint_id, entry.group_id, status)
         end
@@ -65,7 +71,7 @@ module Matter
         end
 
         if refreshing
-          reconcile_target_state(store, node_id, session, peer)
+          reconcile_target_state(store, node_id, session, peer, root_servers, groupcast_target)
           failed = store.node_key_set_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
                    store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
                    store.node_acl_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
@@ -75,11 +81,16 @@ module Matter
       end
 
       private def reconcile_target_state(store : Store, node_id : UInt64,
-                                         session : Session::SecureContext, peer : Socket::IPAddress) : Nil
-        root_servers = read_list(UInt32, session, peer, 0_u16, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
+                                         session : Session::SecureContext, peer : Socket::IPAddress,
+                                         root_servers : Array(UInt32), groupcast_target : Bool) : Nil
+        groupcast_memberships = groupcast_target ? read_list(Cluster::Groupcast::MembershipStruct,
+          session, peer, 0_u16, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP) : [] of Cluster::Groupcast::MembershipStruct
         store.node_endpoint_list.select(&.node_id.==(node_id)).each do |endpoint|
           servers = read_list(UInt32, session, peer, endpoint.endpoint_id, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
-          if servers.includes?(Cluster::Groups::CLUSTER_ID)
+          if groupcast_target
+            group_ids = groupcast_memberships.select { |member| member.endpoints.includes?(endpoint.endpoint_id) }.map(&.group_id)
+            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, group_ids))
+          elsif servers.includes?(Cluster::Groups::CLUSTER_ID)
             request = Cluster::Groups::GetGroupMembershipRequest.new([] of DataType::GroupId)
             fields = invoke_data(session, peer, endpoint.endpoint_id, Cluster::Groups::CLUSTER_ID,
               Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP, request.to_slice)
@@ -181,7 +192,12 @@ module Matter
       end
 
       private def sync_group(store : Store, entry : Store::DatastoreEndpointGroupIDEntryStruct,
-                             session : Session::SecureContext, peer : Socket::IPAddress) : Nil
+                             session : Session::SecureContext, peer : Socket::IPAddress,
+                             groupcast_target : Bool) : Nil
+        if groupcast_target
+          sync_groupcast(store, entry, session, peer)
+          return
+        end
         update_group_key_map(store, entry, session, peer)
         if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
           request = Cluster::Groups::RemoveGroupRequest.new(DataType::GroupId.new(entry.group_id))
@@ -207,6 +223,42 @@ module Matter
                  end
         unless status == InteractionModel::StatusCode::Success
           raise Matter::ClusterError.new("Groups command failed with status #{status}", status)
+        end
+      end
+
+      private def adopt_groupcast(session : Session::SecureContext, peer : Socket::IPAddress) : Nil
+        entries = read_list(Cluster::GroupKeyManagement::GroupcastAdoptionStruct, session, peer,
+          0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+          Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION)
+        return if entries.any?(&.groupcast_adopted?)
+        adoption = [Cluster::GroupKeyManagement::GroupcastAdoptionStruct.new(true)]
+        write_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+          Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION, adoption.to_tlv)
+      end
+
+      private def sync_groupcast(store : Store, entry : Store::DatastoreEndpointGroupIDEntryStruct,
+                                 session : Session::SecureContext, peer : Socket::IPAddress) : Nil
+        memberships = read_list(Cluster::Groupcast::MembershipStruct, session, peer,
+          0_u16, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP)
+        existing = memberships.find(&.group_id.==(entry.group_id))
+        if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
+          return unless existing && existing.endpoints.includes?(entry.endpoint_id)
+          request = Cluster::Groupcast::LeaveGroupRequest.new(entry.group_id, [entry.endpoint_id])
+          fields = invoke_data(session, peer, 0_u16, Cluster::Groupcast::CLUSTER_ID,
+            Cluster::Groupcast::CMD_LEAVE_GROUP, request.to_slice)
+          response = Cluster::Groupcast::LeaveGroupResponse.from_slice(fields)
+          unless response.group_id == entry.group_id && response.endpoints.includes?(entry.endpoint_id)
+            raise Matter::ProtocolError.new("Groupcast LeaveGroup did not confirm endpoint removal")
+          end
+        else
+          group = store.group_list.find(&.group_id.==(entry.group_id.to_u64)) ||
+                  raise Matter::ConfigurationError.new("Datastore group #{entry.group_id} is missing")
+          key_set_id = group.group_key_set_id ||
+                       raise Matter::ConfigurationError.new("Groupcast group #{entry.group_id} has no key set")
+          return if existing && existing.endpoints.includes?(entry.endpoint_id) && existing.key_set_id == key_set_id
+          request = Cluster::Groupcast::JoinGroupRequest.new(entry.group_id, [entry.endpoint_id], key_set_id)
+          invoke_ok!(session, peer, 0_u16, Cluster::Groupcast::CLUSTER_ID,
+            Cluster::Groupcast::CMD_JOIN_GROUP, request.to_slice)
         end
       end
 

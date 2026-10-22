@@ -4,6 +4,7 @@ require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
 require "../cluster/commissioner_control"
 require "../cluster/group_key_management"
+require "../cluster/groupcast"
 require "../cluster/scenes_management"
 require "../codec/message_codec"
 require "../fabric_table"
@@ -719,7 +720,7 @@ module Matter
       def handle_group_packet(wire : Bytes, peer : Socket::IPAddress) : Nil
         @registry.synchronize do
           keys = group_candidate_keys
-          return if keys.empty?
+          return if keys.empty? && @node.get_cluster(Cluster::Groupcast).nil?
           @group_packets.keys = keys
           decoded = @group_packets.decode(wire)
           if decoded.message.payload_header.protocol_id == ProtocolId::InteractionModel.value
@@ -728,8 +729,28 @@ module Matter
           if group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
             GroupInteractionRouter.new(@node.clusters, group_keys).handle(decoded)
           end
+          if groupcast = @node.get_cluster(Cluster::Groupcast)
+            if group_id = decoded.message.packet_header.destination_group_id
+              groupcast.record_group_message(decoded.fabric_index, group_id.id,
+                Cluster::Groupcast::GroupcastTestResultEnum::Success)
+            end
+          end
         end
+      rescue ex : Session::GroupSecurePacket::NoAvailableKey
+        @node.get_cluster(Cluster::Groupcast).try(&.record_group_message(ex.fabric_index,
+          ex.group_id, Cluster::Groupcast::GroupcastTestResultEnum::NoAvailableKey))
+        Log.debug(exception: ex) { "Dropping group packet from #{peer}" }
+      rescue ex : Session::GroupSecurePacket::FailedAuth
+        @node.get_cluster(Cluster::Groupcast).try(&.record_group_message(nil, nil,
+          Cluster::Groupcast::GroupcastTestResultEnum::FailedAuth))
+        Log.debug(exception: ex) { "Dropping group packet from #{peer}" }
+      rescue ex : Session::GroupSecurePacket::Replay
+        @node.get_cluster(Cluster::Groupcast).try(&.record_group_message(ex.fabric_index,
+          ex.group_id, Cluster::Groupcast::GroupcastTestResultEnum::MessageReplay))
+        Log.debug(exception: ex) { "Dropping group packet from #{peer}" }
       rescue ex
+        @node.get_cluster(Cluster::Groupcast).try(&.record_group_message(nil, nil,
+          Cluster::Groupcast::GroupcastTestResultEnum::GeneralError))
         Log.debug(exception: ex) { "Dropping group packet from #{peer}" }
       end
 
@@ -737,10 +758,18 @@ module Matter
         group_keys = @node.get_cluster(Cluster::GroupKeyManagement)
         return unless group_keys
         addresses = @fabric_table.all_fabrics.flat_map do |fabric|
-          mapped = group_keys.group_key_map(fabric.fabric_index).map(&.group_id)
-          group_keys.group_table(fabric.fabric_index).select { |group| mapped.includes?(group.group_id) }.map do |group|
-            Transport::GroupMulticast.address(fabric.fabric_id, group.group_id, @transport.port)
+          groupcast_memberships = @node.get_cluster(Cluster::Groupcast).try(&.membership(fabric.fabric_index)) ||
+                                  [] of Cluster::Groupcast::MembershipStruct
+          addresses_for_fabric = groupcast_memberships.empty? ? [] of Socket::IPAddress : [Transport::GroupMulticast.iana_address(@transport.port)]
+          groupcast_ids = groupcast_memberships.map(&.group_id)
+          mapped = group_keys.operational_group_key_map(fabric.fabric_index).map(&.group_id)
+          group_keys.operational_group_table(fabric.fabric_index).each do |group|
+            next unless mapped.includes?(group.group_id)
+            next if groupcast_ids.includes?(group.group_id)
+            addresses_for_fabric << Transport::GroupMulticast.address(fabric.fabric_id,
+              group.group_id, @transport.port)
           end
+          addresses_for_fabric
         end
         @transport.group_memberships = addresses.uniq
       rescue ex
@@ -750,6 +779,7 @@ module Matter
       # Remove every group credential and membership associated with a fabric
       # before its local index can be reused by a new commissioner.
       def forget_group_fabric(fabric_index : UInt8) : Nil
+        @node.get_cluster(Cluster::Groupcast).try(&.remove_fabric(fabric_index))
         @node.get_cluster(Cluster::GroupKeyManagement).try(&.remove_fabric(fabric_index))
         @node.clusters.each_value do |cluster|
           cluster.as?(Cluster::Groups).try(&.remove_fabric(fabric_index))
@@ -763,7 +793,7 @@ module Matter
         return [] of Session::GroupSecurePacket::Key unless group_keys
         result = [] of Session::GroupSecurePacket::Key
         @fabric_table.all_fabrics.each do |fabric|
-          group_keys.group_key_map(fabric.fabric_index).each do |mapping|
+          group_keys.operational_group_key_map(fabric.fabric_index).each do |mapping|
             next if mapping.group_key_set_id == Cluster::GroupKeyManagement::IPK_KEY_SET_ID
             key_set = group_keys.get_key_set(mapping.group_key_set_id, fabric.fabric_index)
             next unless key_set

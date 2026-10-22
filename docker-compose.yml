@@ -43,6 +43,20 @@ services:
     environment:
       E2E_DEVICE: matter_resource_monitoring
 
+  groupcast-listener:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_groupcast_listener
+      E2E_BINARY: matter_switch
+      MATTER_GROUPCAST_LISTENER: "1"
+
+  groupcast-shared:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_groupcast_shared
+      E2E_BINARY: matter_switch
+      MATTER_GROUPCAST_LISTENER: "1"
+
   time-zone:
     <<: *device
     environment:

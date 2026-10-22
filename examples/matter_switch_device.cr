@@ -73,5 +73,6 @@ Examples.main("Matter Switch Device") do
   ip_addresses = ENV["MATTER_SWITCH_IP_ADDRESS"]?.try do |address|
     [Socket::IPAddress.new(address, Matter::Network::UNSPECIFIED_PORT)]
   end
-  MatterSwitch::Device.new(ip_addresses: ip_addresses)
+  MatterSwitch::Device.new(ip_addresses: ip_addresses,
+    groupcast_listener: ENV["MATTER_GROUPCAST_LISTENER"]? == "1")
 end

@@ -2,6 +2,27 @@ require "../spec_helper"
 require "file_utils"
 
 describe Matter::Protocol::GroupMessageSender do
+  it "sends a listener group invocation to the IANA multicast address when selected" do
+    directory = File.join(Dir.tempdir, "matter-group-iana-#{Random::Secure.hex(8)}")
+    Dir.mkdir(directory)
+    store = Matter::Storage::YamlFile.new(File.join(directory, "state.yml")).tap(&.open)
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    sender = Matter::Protocol::GroupMessageSender.new(transport,
+      Matter::Session::GroupOutgoingCounters.new(store))
+    fabric_id = 0x1234_5678_9abc_def0_u64
+    key = Matter::Session::GroupSecurePacket::Key.new(1_u8, 0x0101_u16,
+      Bytes.new(16, 0x11_u8), fabric_id)
+    command = Matter::InteractionModel::CommandDataIBTlv.new(
+      Matter::InteractionModel::CommandPath.new(nil, Matter::Cluster::OnOff::CLUSTER_ID,
+        Matter::Cluster::OnOff::CMD_ON))
+
+    sender.invoke(fabric_id, 1_u8, 0x2222_u64, key, [command], iana_address: true)
+    transport.sent_packets.first[1].should eq(Matter::Transport::GroupMulticast.iana_address)
+    store.close
+  ensure
+    FileUtils.rm_rf(directory) if directory
+  end
+
   it "sends an untimed response-suppressed group WriteRequest with no endpoint or data version" do
     directory = File.join(Dir.tempdir, "matter-group-write-#{Random::Secure.hex(8)}")
     Dir.mkdir(directory)

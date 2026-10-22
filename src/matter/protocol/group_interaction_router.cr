@@ -27,7 +27,7 @@ module Matter
 
         group_id = header.destination_group_id.try(&.id)
         return unless group_id
-        group = @group_keys.group_table(decoded.fabric_index).find { |entry| entry.group_id == group_id }
+        group = @group_keys.operational_group_table(decoded.fabric_index).find { |entry| entry.group_id == group_id }
         return unless group
         acl = @clusters[{0_u16, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
         return unless acl
