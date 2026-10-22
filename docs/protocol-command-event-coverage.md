@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Implemented standard cluster IDs compared: 88
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 120
+- Conditional command/event declarations for review: 126
 - Feature or complex conditional IDs absent from Crystal: 22
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -97,6 +97,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
 | 0x0503 | Wake On LAN Cluster | 1 | 1 | — | — |
 | 0x0505 | Target Navigator Cluster | 2 | 2 | — | — |
+| 0x0506 | Media Playback Cluster | 2 | 2 | — | — |
 | 0x0508 | Low Power Cluster | 1 | 1 | — | — |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — | — |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | — |
@@ -235,6 +236,12 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0431 | event | 0x0000 | feature(HA) | declared; requires `:human_activity` |
 | 0x0431 | event | 0x0001 | feature(HA) | declared; requires `:human_activity` |
 | 0x0452 | command | 0x0004 | feature(PC) | declared; requires `:pan_change` |
+| 0x0506 | command | 0x0006 | feature(VS) | declared; requires `:variable_speed` |
+| 0x0506 | command | 0x0007 | feature(VS) | declared; requires `:variable_speed` |
+| 0x0506 | command | 0x000B | feature(AS) | declared; requires `:advanced_seek` |
+| 0x0506 | command | 0x000C | feature(AT) | declared; requires `:audio_tracks` |
+| 0x0506 | command | 0x000D | feature(TT) | declared; requires `:text_tracks` |
+| 0x0506 | command | 0x000E | feature(TT) | declared; requires `:text_tracks` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:
 
