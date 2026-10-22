@@ -16,8 +16,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   without replaying RemoveAdmin. The final AdminList and CAT version are read
   over CASE. The same scenario checks that a removal without the outgoing
   Administrator's local consent leaves the fabric, AdminList, and CAT version
-  unchanged. Remaining live interruption points are tracked in the Joint
-  Fabric guide.
+  unchanged. Legacy command-channel YAML files default the new test-only
+  interruption flag to false. Remaining live interruption points are tracked
+  in the Joint Fabric guide.
 
 ### Thread Border Router Management
 

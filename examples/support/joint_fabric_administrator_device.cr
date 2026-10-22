@@ -133,7 +133,8 @@ module MatterJointFabricAdministrator
       getter root_public_key : Bytes?
       getter nonce : String?
       getter? interrupt_after_remove_fabric : Bool
-      getter? interrupt_after_remove_admin : Bool
+      # Older command-channel YAML files predate this test-only fault hook.
+      getter? interrupt_after_remove_admin : Bool = false
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
