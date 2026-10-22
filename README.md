@@ -310,6 +310,14 @@ upward degradation, and sets ChangeIndication to OK. Optional
 LastChangedTime is controller-writable and retained across restarts; an
 application may set it when it knows when the resource changed.
 
+`Cluster::ThermostatUserInterfaceConfiguration` adds Matter 1.6 revision 2
+display units, keypad lockout, and optional local schedule programming
+visibility to a Thermostat endpoint. All three preferences persist; the
+temperature display mode requires Operate privilege to write, while keypad
+lockout and schedule visibility require Manage. The
+`examples/matter_thermostat_ui_device.cr` fixture includes the cluster on a
+Thermostat device and is exercised by official chip-tool.
+
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;
 command requests and `CommandResponse#response` use `TLV::Any?`. Pass `TLV::Any.new(50_u8)` to
 write a scalar or `request.to_tlv(nil)` for a `TLV::Serializable` command struct. Wire encoding
