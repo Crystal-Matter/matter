@@ -238,6 +238,15 @@ attribute; an orphan append receives `Busy`. `InteractionRouter` retains that
 list state across WriteRequest chunks on the same secure session and exchange,
 responds to each chunk, and drops the state after the final chunk or timeout.
 Timed writes cannot be chunked.
+For unicast InvokeRequest and WriteRequest, `InteractionRouter` first checks
+that a request with the timed flag consumes a live TimedRequest on the same
+secure session and exchange. A flag/prelude mismatch returns
+`TimedRequestMismatch`; an expired prelude returns `Timeout`. `IMHandler`
+then checks each addressed command or
+writable attribute's `timed` metadata after access control. An untimed request
+to a timed operation returns `NeedsTimedInteraction` for that path without
+running its handler or writer. Commands and attributes without that metadata
+continue to work without a TimedRequest.
 The controller budgets each WriteRequest to 1,100 TLV bytes. An oversized
 list becomes an empty replacement plus null-ListIndex appends; all chunks use
 one exchange and each WriteResponse is read before the next chunk is sent.

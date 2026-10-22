@@ -56,11 +56,15 @@ module Matter
       # status code that happens to sit inside the 0xC0-0xFF range)
       UnsupportedCluster = 0xC3
 
+      # A command or writable attribute requires a TimedRequest on this exchange.
+      NeedsTimedInteraction = 0xC6
+
       # Request is for an event the cluster instance does not support
       # (Matter Core 8.10.1, another general code inside the 0xC0-0xFF range)
-      UnsupportedEvent = 0xC7
-      FailsafeRequired = 0xCA
-      InvalidInState   = 0xCB
+      UnsupportedEvent     = 0xC7
+      TimedRequestMismatch = 0xC9
+      FailsafeRequired     = 0xCA
+      InvalidInState       = 0xCB
 
       # Other values in 0xC0-0xFF may be cluster-specific. The named general
       # statuses above keep their assigned meanings in that range.
@@ -94,7 +98,9 @@ module Matter
         when Timeout               then "Timeout"
         when Busy                  then "Busy"
         when UnsupportedCluster    then "Unsupported Cluster"
+        when NeedsTimedInteraction then "Needs Timed Interaction"
         when UnsupportedEvent      then "Unsupported Event"
+        when TimedRequestMismatch  then "Timed Request Mismatch"
         when FailsafeRequired      then "Failsafe Required"
         when InvalidInState        then "Invalid In State"
         else                            "Unknown Status (#{Hex.u8(value)})"

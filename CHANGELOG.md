@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Timed Interaction Model enforcement
+
+- Enforce timed command and writable attribute metadata on encrypted unicast
+  InvokeRequest and WriteRequest paths. Untimed requests for timed operations
+  return `NeedsTimedInteraction` (0xC6) without invoking the command or changing
+  the attribute. A timed flag must match a TimedRequest on the same exchange;
+  otherwise the request returns `TimedRequestMismatch` (0xC9). Expired timed
+  windows return `Timeout`, and ACL checks retain precedence.
+
 ### Group Key Management revision 3
 
 - Advertise the Matter 1.6 revision 3 ClusterRevision while retaining the

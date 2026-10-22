@@ -23,6 +23,13 @@ describe "matter_door_lock example" do
     read_bool(device, "doorlock", "require-pinfor-remote-operation", "RequirePINforRemoteOperation").should be_true
   end
 
+  it "rejects an untimed unlock before changing lock state" do
+    before = read_int(device, "doorlock", "lock-state", "LockState")
+    result = device.invoke("doorlock", "unlock-door", options: pin)
+    result.im_status.should eq("NEEDS_TIMED_INTERACTION"), result.output
+    read_int(device, "doorlock", "lock-state", "LockState").should eq(before)
+  end
+
   it "unlocks with the PIN" do
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + pin))
     read_int(device, "doorlock", "lock-state", "LockState").should eq unlocked

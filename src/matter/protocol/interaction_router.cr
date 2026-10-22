@@ -115,30 +115,32 @@ module Matter
         send_status(original_msg, peer, session, InteractionModel::StatusCode::Success)
       end
 
-      # Whether a TimedRequest armed this exchange and has not expired. Either
-      # way the deadline is spent.
-      private def consume_timed_request?(session_id : UInt16, exchange_id : UInt16) : Bool
-        deadline = @timed_request_deadlines.delete({session_id, exchange_id})
-        return false unless deadline
-
-        Time.instant <= deadline
-      end
-
-      # Whether *request* may proceed, answering TIMEOUT when it may not.
+      # The request's timed flag must match whether this secure exchange was
+      # armed. An expired TimedRequest is a timeout; a missing or extra flag is
+      # TimedRequestMismatch. The deadline is spent in every case.
       private def timed_interaction_satisfied?(
         timed_request : Bool?,
         original_msg : Codec::MessageCodec::Message,
         peer : Socket::IPAddress,
         session : Session::SecureContext,
       ) : Bool
-        return true unless timed_request
-        return true if consume_timed_request?(session.session_id, original_msg.payload_header.exchange_id)
+        deadline = @timed_request_deadlines.delete({session.session_id, original_msg.payload_header.exchange_id})
+        if deadline && Time.instant > deadline
+          Log.warn do
+            "Request rejected: expired TimedRequest " \
+            "(session_id=#{session.session_id} exchange=#{original_msg.payload_header.exchange_id} peer=#{peer.address}:#{peer.port})"
+          end
+          send_status(original_msg, peer, session, InteractionModel::StatusCode::Timeout)
+          return false
+        end
+
+        return true if (timed_request == true) == !deadline.nil?
 
         Log.warn do
-          "Request rejected: missing/expired TimedRequest " \
+          "Request rejected: TimedRequest flag mismatch " \
           "(session_id=#{session.session_id} exchange=#{original_msg.payload_header.exchange_id} peer=#{peer.address}:#{peer.port})"
         end
-        send_status(original_msg, peer, session, InteractionModel::StatusCode::Timeout)
+        send_status(original_msg, peer, session, InteractionModel::StatusCode::TimedRequestMismatch)
         false
       end
 
@@ -343,7 +345,8 @@ module Matter
           is_case_session: session.case_session?,
           fabric_index: session.fabric_index,
           peer_subject_ids: peer_subject_ids(session),
-          list_state: list_state
+          list_state: list_state,
+          timed_interaction: request.timed_request == true
         )
         @write_list_states[exchange_key] = {list_state, now + WRITE_CHUNK_TIMEOUT} if request.more_chunked_messages
         Log.debug { "WriteResponse: #{write_responses.size} status(es)" }
@@ -390,7 +393,8 @@ module Matter
           session.fabric_index,
           peer_subject_ids(session),
           peer,
-          session.peer_icac
+          session.peer_icac,
+          timed_interaction: request.timed_request == true
         )
 
         status_count = invoke_responses.count { |response| response.command_status != nil }

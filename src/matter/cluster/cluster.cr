@@ -22,7 +22,7 @@ module Matter
       property max : Int64?
       # Privilege required to read the attribute
       property access : InteractionModel::EntryPrivilege
-      # Quality flags (declarative only; no runtime behaviour yet)
+      # Quality flags; timed writes are enforced by the unicast IM handler.
       property? timed : Bool
       property? fabric_scoped : Bool
       property? scene : Bool
