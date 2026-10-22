@@ -29,7 +29,7 @@ module Matter
           timeout : Time::Span = 10.seconds,
         ) : Session::SecureContext
           initiator_random = @crypto.random_bytes(32)
-          initiator_session_id = @crypto.random_uint16
+          initiator_session_id = client.allocate_session_id("PASE") { @crypto.random_uint16 }
 
           pbkdf_req = Session::Pase::Definitions::PbkdfParamRequest.new(
             initiator_random: initiator_random,

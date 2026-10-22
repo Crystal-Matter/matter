@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Controller session ID allocation
+
+- Choose nonzero, unused local session IDs before PASE and CASE advertise them.
+  Retry random candidates against both the controller registry and shared
+  transport reservations, then fail before sending when no candidate is usable.
+
 ### Joint Fabric Administrator removal recovery
 
 - Extend the three-administrator Docker test through a second restart after
