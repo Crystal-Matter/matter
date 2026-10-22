@@ -205,6 +205,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   modes. Persist exposed current-position percentages and restore combined
   ConfigStatus flag values correctly after restart.
 
+### Temperature Alarm
+
+- Add the opt-in Matter 1.6 Temperature Alarm server (`0x0064`, revision 1),
+  including Alarm Base Mask, Latch, State, Supported, Reset,
+  ModifyEnabledAlarms and Notify. Over/under critical, major and minor
+  thresholds follow the selected feature set. Physical readings publish alarm
+  transitions; adjustable thresholds validate as one set and commit only after
+  host acceptance. A synthetic device is exercised with official chip-tool.
+
 ### Temperature Control
 
 - Add an opt-in Matter 1.6 Temperature Control server (`0x0056`, revision 1)

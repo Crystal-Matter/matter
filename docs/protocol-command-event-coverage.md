@@ -7,10 +7,10 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 80
+- Implemented standard cluster IDs compared: 81
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 117
+- Conditional command/event declarations for review: 118
 - Feature or complex conditional IDs absent from Crystal: 22
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -56,6 +56,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
 | 0x0060 | Operational State Cluster | 3 | 3 | — | — |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — | — |
+| 0x0064 | Temperature Alarm Cluster | 1 | 1 | — | — |
 | 0x0065 | Groupcast Cluster | 1 | 1 | — | — |
 | 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — | — |
@@ -154,6 +155,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0060 | command | 0x0000 | command() | declared; requires `—` |
 | 0x0060 | command | 0x0001 | command() | declared; requires `—` |
 | 0x0060 | command | 0x0003 | command() | declared; requires `—` |
+| 0x0064 | command | 0x0080 | (feature(OCRIADJ) or feature(OMAJADJ) or feature(OMINADJ) or feature(UMINADJ) or feature(UMAJADJ) or feature(UCRIADJ)) | declared; requires `[:over_critical_adjustable, :over_major_adjustable, :over_minor_adjustable, :under_minor_adjustable, :under_major_adjustable, :under_critical_adjustable]` |
 | 0x0065 | command | 0x0000 | otherwiseConform | declared; requires `—` |
 | 0x0065 | command | 0x0001 | otherwiseConform | declared; requires `—` |
 | 0x0065 | command | 0x0003 | otherwiseConform | declared; requires `—` |
