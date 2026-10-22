@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Wake On LAN
+
+- Add the Matter 1.6 Wake On LAN server (`0x0503`, revision 1). A host can
+  advertise a validated upper-case 48-bit MAC address and a 16-byte IPv6
+  link-local address; either optional attribute is omitted when unset. Both
+  values are fixed and read-only. A synthetic Aggregator example and official
+  chip-tool test exercise reads and restart without claiming a complete media
+  device type or supplying physical sleep/wake behavior.
+
 ### Soil Measurement revision 1
 
 - Add the Matter 1.6 Soil Measurement server and Soil Sensor device type. The
