@@ -73,7 +73,7 @@ private def commission_third_administrator(anchor_store : Matter::Controller::St
     begin
       request = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.new(
         fabric.fabric_id, fabric.root_public_key, joining_node_id,
-        peer.address, peer.port, endpoint, icac_public_key, icac_id)
+        peer, endpoint, icac_public_key, icac_id)
       rpc.write(MatterJointFabricAdministrator::Device::JCM_RPC_COLLECTION,
         MatterJointFabricAdministrator::Device::JCM_RPC_REQUEST, request.to_document)
     ensure
@@ -296,7 +296,7 @@ describe "three provisioned Joint Fabric Administrators" do
       begin
         request = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.new(
           fabric.fabric_id, fabric.root_public_key, joining_node_id,
-          peer.address, peer.port, endpoint, icac_public_key, icac_id)
+          peer, endpoint, icac_public_key, icac_id)
         rpc.write(MatterJointFabricAdministrator::Device::JCM_RPC_COLLECTION,
           MatterJointFabricAdministrator::Device::JCM_RPC_REQUEST, request.to_document)
       ensure

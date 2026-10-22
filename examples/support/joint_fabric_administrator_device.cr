@@ -99,6 +99,15 @@ module MatterJointFabricAdministrator
                      @peer_port : Int32, @administrator_endpoint : UInt16,
                      @icac_public_key : Bytes, @icac_id : UInt64)
       end
+
+      def initialize(fabric_id : UInt64, root_public_key : Bytes,
+                     joining_node_id : UInt64, peer : Socket::IPAddress,
+                     administrator_endpoint : UInt16, icac_public_key : Bytes,
+                     icac_id : UInt64)
+        initialize(fabric_id, root_public_key, joining_node_id,
+          Matter::Controller::OperationalPeerResolver.address_hint(peer), peer.port,
+          administrator_endpoint, icac_public_key, icac_id)
+      end
     end
 
     struct AnchorExchangeResult
@@ -1852,7 +1861,7 @@ module MatterJointFabricAdministrator
           icac_id = Matter::Crypto::MatterCertificate.from_slice(anchor_icac).subject.icac_id ||
                     raise Matter::ConfigurationError.new("Anchor ICAC ID is unavailable")
           exchange_request = AnchorExchangeRequest.new(identity.fabric_id, identity.root_public_key,
-            request.node_id, peer.address, peer.port, endpoint, public_key, icac_id)
+            request.node_id, peer, endpoint, public_key, icac_id)
           cross_signed_icac = execute_anchor_exchange(exchange_request)
           Matter::Controller::JointCommissioning.validate_cross_signed_icac(
             cross_signed_icac, identity, public_key, icac_id)

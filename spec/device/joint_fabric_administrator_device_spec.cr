@@ -43,6 +43,17 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "retains the link-local interface scope in an Anchor ICAC exchange handoff" do
+    peer = Socket::IPAddress.new("fe80::1234%1", 5540)
+    request = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.new(
+      0xA100_u64, Bytes[1], 0xB200_u64, peer, 1_u16, Bytes.new(65, 1_u8), 3_u64)
+
+    restored = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.from_document(request.to_document)
+    restored.peer_address.should eq("fe80::1234%1")
+    reconstructed = Socket::IPAddress.new(restored.peer_address, restored.peer_port)
+    reconstructed.zone_id.should eq(peer.zone_id)
+  end
+
   it "starts Anchor verification from the operational listener without taking ownership of it" do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
       ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
