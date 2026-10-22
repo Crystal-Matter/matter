@@ -8,7 +8,7 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 82
+- Implemented standard cluster IDs compared: 83
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 120
@@ -92,6 +92,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
 | 0x0503 | Wake On LAN Cluster | 1 | 1 | — | — |
+| 0x0505 | Target Navigator Cluster | 2 | 2 | — | — |
 | 0x0508 | Low Power Cluster | 1 | 1 | — | — |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |

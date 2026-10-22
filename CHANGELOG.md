@@ -49,6 +49,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   programming visibility attribute. Writes use the XML Operate and Manage
   privileges, reject values outside the declared enums, and persist across
   restarts. A thermostat example exercises reads and writes with chip-tool.
+### Target Navigator revision 2
+
+- Add the Matter 1.6 Target Navigator server (`0x0505`) with a validated
+  TargetList, optional CurrentTarget, NavigateTarget response statuses, and
+  TargetUpdated event. Applications handle navigation through an explicit
+  callback. A synthetic endpoint and official chip-tool test exercise
+  commissioning, reads, response paths, and restart.
 
 ### Low Power cluster
 

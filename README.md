@@ -222,6 +222,16 @@ and peer there; command callbacks do not expose files by themselves.
 
 ### Cluster values
 
+`Cluster::TargetNavigator` exposes an application's menu of targets on an
+endpoint. Each target has an identifier from 0 through 254 and a name. A
+successful `NavigateTarget` invokes the application's `on_navigate` callback;
+the response carries `Success`, `TargetNotFound`, or `NotAllowed` and optional
+text. `CurrentTarget` is advertised when an initial value is supplied, and
+the host can update the menu or selection locally through `update_targets`
+and `report_current_target`. The revision-two `TargetUpdated` event reports
+these changes. See `examples/matter_target_navigator_device.cr` for a synthetic
+fixture; the host must perform the actual media navigation.
+
 `Cluster::WakeOnLan` exposes a wake-capable interface's optional addresses
 on a server endpoint. Give it a 12-digit upper-case hex MAC address and/or a
 16-byte IPv6 link-local address:
