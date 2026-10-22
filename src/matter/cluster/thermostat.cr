@@ -246,17 +246,28 @@ module Matter
       # ------------------------------------------------------------------------
 
       def setpoint_raise_lower(request : SetpointRaiseLowerRequest) : InteractionModel::Status
-        delta = request.amount.to_i16 * DECI_TO_CENTI_DEGREES
-        mode = request.mode
+        delta = request.amount.to_i32 * DECI_TO_CENTI_DEGREES
 
-        if mode.heat? || mode.both?
-          self.heating_setpoint = (@occupied_heating_setpoint + delta).clamp(@min_heat_setpoint_limit, @max_heat_setpoint_limit)
+        case request.mode
+        when SetpointAdjustMode::Heat
+          return InteractionModel::Status.invalid_command unless @feature_map.heating?
+          raise_lower_heating(delta)
+        when SetpointAdjustMode::Cool
+          return InteractionModel::Status.invalid_command unless @feature_map.cooling?
+          raise_lower_cooling(delta)
+        when SetpointAdjustMode::Both
+          if @feature_map.heating? && @feature_map.cooling?
+            raise_lower_both(delta)
+          elsif @feature_map.heating?
+            raise_lower_heating(delta)
+          elsif @feature_map.cooling?
+            raise_lower_cooling(delta)
+          else
+            InteractionModel::Status.invalid_command
+          end
+        else
+          InteractionModel::Status.invalid_command
         end
-        if mode.cool? || mode.both?
-          self.cooling_setpoint = (@occupied_cooling_setpoint + delta).clamp(@min_cool_setpoint_limit, @max_cool_setpoint_limit)
-        end
-
-        InteractionModel::Status.success
       end
 
       # ------------------------------------------------------------------------
@@ -304,6 +315,55 @@ module Matter
       # ------------------------------------------------------------------------
       # Helpers
       # ------------------------------------------------------------------------
+
+      private def raise_lower_heating(delta : Int32) : InteractionModel::Status
+        heating = (@occupied_heating_setpoint.to_i32 + delta).clamp(@min_heat_setpoint_limit.to_i32, @max_heat_setpoint_limit.to_i32)
+        if @feature_map.automode? && @feature_map.cooling?
+          lowest_cooling = heating + deadband
+          if @occupied_cooling_setpoint < lowest_cooling
+            return InteractionModel::Status.invalid_command if lowest_cooling > @max_cool_setpoint_limit
+            self.occupied_cooling_setpoint = lowest_cooling.to_i16
+          end
+        end
+
+        self.occupied_heating_setpoint = heating.to_i16
+        update_running_mode
+        InteractionModel::Status.success
+      end
+
+      private def raise_lower_cooling(delta : Int32) : InteractionModel::Status
+        cooling = (@occupied_cooling_setpoint.to_i32 + delta).clamp(@min_cool_setpoint_limit.to_i32, @max_cool_setpoint_limit.to_i32)
+        if @feature_map.automode? && @feature_map.heating?
+          highest_heating = cooling - deadband
+          if @occupied_heating_setpoint > highest_heating
+            return InteractionModel::Status.invalid_command if highest_heating < @min_heat_setpoint_limit
+            self.occupied_heating_setpoint = highest_heating.to_i16
+          end
+        end
+
+        self.occupied_cooling_setpoint = cooling.to_i16
+        update_running_mode
+        InteractionModel::Status.success
+      end
+
+      # A Both command translates the pair by the same amount. Restrict the
+      # translation to the intersection of their limits so the separation is
+      # preserved even when one setpoint reaches a limit first.
+      private def raise_lower_both(delta : Int32) : InteractionModel::Status
+        minimum_shift = {@min_heat_setpoint_limit.to_i32 - @occupied_heating_setpoint,
+                         @min_cool_setpoint_limit.to_i32 - @occupied_cooling_setpoint}.max
+        maximum_shift = {@max_heat_setpoint_limit.to_i32 - @occupied_heating_setpoint,
+                         @max_cool_setpoint_limit.to_i32 - @occupied_cooling_setpoint}.min
+        return InteractionModel::Status.invalid_command if minimum_shift > maximum_shift
+        return InteractionModel::Status.invalid_command if @feature_map.automode? &&
+                                                           @occupied_cooling_setpoint - @occupied_heating_setpoint < deadband
+
+        shift = delta.clamp(minimum_shift, maximum_shift)
+        self.occupied_heating_setpoint = (@occupied_heating_setpoint + shift).to_i16
+        self.occupied_cooling_setpoint = (@occupied_cooling_setpoint + shift).to_i16
+        update_running_mode
+        InteractionModel::Status.success
+      end
 
       # The deadband the setpoints keep between them; only enforced with Automode
       private def deadband : Int16

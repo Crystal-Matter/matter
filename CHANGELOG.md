@@ -11,6 +11,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.
 
+### Thermostat setpoint adjustment
+
+- Make `SetpointRaiseLower` reject Heat or Cool when the feature is absent.
+  When Both reaches a limit, move both occupied setpoints by the same bounded
+  amount. In Auto mode, adjust the opposite setpoint to keep the configured
+  deadband or return `InvalidCommand` without changing either setpoint when
+  that is impossible. The cluster still advertises revision 9 while the
+  remaining revision 11 behavior is audited.
+
 ### Window Covering position and feature composition
 
 - Remove the AbsolutePosition feature and commands retired by Matter 1.6, and

@@ -35,6 +35,15 @@ describe "matter_air_conditioner example" do
     read_int(device, "thermostat", "occupied-cooling-setpoint", "OccupiedCoolingSetpoint", thermostat).should eq 2500
   end
 
+  it "keeps the heat/cool separation when SetpointRaiseLower Both reaches a limit" do
+    expect_success(device.write("thermostat", "occupied-cooling-setpoint", 2600, thermostat))
+    expect_success(device.write("thermostat", "occupied-heating-setpoint", 2000, thermostat))
+
+    expect_success(device.invoke("thermostat", "setpoint-raise-lower", ["2", "100"], endpoint: thermostat))
+    read_int(device, "thermostat", "occupied-heating-setpoint", "OccupiedHeatingSetpoint", thermostat).should eq 2600
+    read_int(device, "thermostat", "occupied-cooling-setpoint", "OccupiedCoolingSetpoint", thermostat).should eq 3200
+  end
+
   it "switches the system mode to cool and back off" do
     expect_success(device.write("thermostat", "system-mode", 3, thermostat))
     read_int(device, "thermostat", "system-mode", "SystemMode", thermostat).should eq 3
