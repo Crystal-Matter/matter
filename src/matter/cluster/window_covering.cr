@@ -266,6 +266,8 @@ module Matter
 
       private def after_restore_state : Nil
         sync_mode_config_status(@mode)
+        sync_lift_percentage(@current_position_lift_percent100ths)
+        sync_tilt_percentage(@current_position_tilt_percent100ths)
       end
 
       private def move_lift_to(percentage : UInt16) : InteractionModel::Status

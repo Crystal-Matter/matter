@@ -60,4 +60,22 @@ describe "Window Covering revision 8 mode behavior" do
     restored.current_position_tilt_percentage.should eq(75_u8)
     restored.config_status.lift_movement_reversed?.should be_true
   end
+
+  it "derives percentages when restoring revision 6 state without those fields" do
+    cluster = build(Covering,
+      feature_map: Covering::Feature::Lift | Covering::Feature::Tilt |
+                   Covering::Feature::PositionAwareLift | Covering::Feature::PositionAwareTilt)
+    cluster.current_position_lift_percent100ths = 2_550_u16
+    cluster.current_position_tilt_percent100ths = 7_550_u16
+    legacy_state = cluster.save_state.as(Matter::Storage::Document)
+    legacy_state.delete("current_position_lift_percentage")
+    legacy_state.delete("current_position_tilt_percentage")
+
+    restored = build(Covering,
+      feature_map: Covering::Feature::Lift | Covering::Feature::Tilt |
+                   Covering::Feature::PositionAwareLift | Covering::Feature::PositionAwareTilt)
+    restored.restore_state(legacy_state)
+    restored.current_position_lift_percentage.should eq(25_u8)
+    restored.current_position_tilt_percentage.should eq(75_u8)
+  end
 end
