@@ -275,6 +275,13 @@ corresponding feature bits.
 The foundation cluster set includes Localization Configuration, Unit
 Localization, Power Source Configuration, Flow Measurement, and Air Quality.
 Applications can add these clusters to endpoints through the device DSL.
+
+Content App endpoints can add `Cluster::ApplicationBasic` with an immutable
+application name, catalog vendor ID and application ID, version, and an
+administrator-readable allowed vendor list. The host reports changes in the
+app's visible/focused/running state through `update_status`; the status starts
+`Stopped` after each process restart. The
+`examples/matter_content_app_device.cr` example shows this configuration.
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
 Temperature Measurement reports Matter 1.6 revision 6. Its fixed minimum and
