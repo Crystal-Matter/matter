@@ -337,6 +337,9 @@ The extended color light also demonstrates Level Control's
 `CoupleColorTempToLevel` option: level changes adjust the active color
 temperature across the configured mired range. Per-command option masks can
 enable or disable coupling for one command.
+Color Control revision 9 reports fixed primary coordinates when configured,
+and its nonvolatile `StartUpColorTemperatureMireds` setting selects the
+power-up temperature and color mode after an ordinary restart.
 Level Control defaults to a Lighting range of 1–254. When using Level Control
 for a non-lighting application, set `feature_map: Matter::Cluster::LevelControl::Feature::None`
 to allow a custom range that starts at zero.

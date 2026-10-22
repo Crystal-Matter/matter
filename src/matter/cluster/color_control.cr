@@ -18,7 +18,7 @@ module Matter
     #
     # Matter Spec: Application 3.2
     class ColorControl < Base
-      cluster 0x0300, revision: 7
+      cluster 0x0300, revision: 9
 
       MOVEMENT_TICK  = 100.milliseconds
       EXECUTE_IF_OFF = 1_u8
@@ -47,6 +47,7 @@ module Matter
       PHYSICAL_MIN_MIREDS_LOWER_BOUND  =   1_u16
       LEVEL_MIN_FOR_COUPLING           =    1_u8
       LEVEL_MAX_FOR_COUPLING           =  254_u8
+      MAX_COLOR_PRIMARIES              =    6_u8
 
       # Color loop defaults from the specification
       DEFAULT_COLOR_LOOP_TIME       =     25_u16
@@ -64,11 +65,23 @@ module Matter
       attribute 0x0004, :current_y, UInt16, default: 0_u16, persist: true, scene: true, max: CHROMATICITY_MAX, requires: :xy
       attribute 0x0007, :color_temperature_mireds, UInt16, default: DEFAULT_COLOR_TEMPERATURE_MIREDS, persist: true, scene: true, requires: :color_temperature
       attribute 0x0008, :color_mode, ColorMode, default: ColorMode::CurrentHueAndCurrentSaturation, persist: true
-      attribute 0x000F, :options, UInt8, default: 0_u8, writable: true
-      attribute 0x0010, :number_of_primaries, UInt8, nullable: true, fixed: true
+      attribute 0x000F, :options, UInt8, default: 0_u8, writable: true, write_access: :operate
+      attribute 0x0010, :number_of_primaries, UInt8, nullable: true, fixed: true, max: MAX_COLOR_PRIMARIES, validate: :reject_fixed_primary_change!
+      attribute 0x0011, :primary_1_x, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_1_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0012, :primary_1_y, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_1_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0015, :primary_2_x, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_2_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0016, :primary_2_y, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_2_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0019, :primary_3_x, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_3_present?, validate: :reject_fixed_primary_change!
+      attribute 0x001A, :primary_3_y, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_3_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0020, :primary_4_x, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_4_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0021, :primary_4_y, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_4_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0024, :primary_5_x, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_5_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0025, :primary_5_y, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_5_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0028, :primary_6_x, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_6_present?, validate: :reject_fixed_primary_change!
+      attribute 0x0029, :primary_6_y, UInt16, default: 0_u16, fixed: true, max: CHROMATICITY_MAX, present_if: :primary_6_present?, validate: :reject_fixed_primary_change!
       attribute 0x4000, :enhanced_current_hue, UInt16, default: 0_u16, persist: true, scene: true, requires: :enhanced_hue
       attribute 0x4001, :enhanced_color_mode, EnhancedColorMode, default: EnhancedColorMode::CurrentHueAndCurrentSaturation, persist: true, scene: true
-      attribute 0x4002, :color_loop_active, Bool, default: false, persist: true, scene: true, requires: :color_loop
+      attribute 0x4002, :color_loop_active, UInt8, default: 0_u8, persist: true, scene: true, max: 1_u8, requires: :color_loop, validate: :validate_color_loop_active!
       attribute 0x4003, :color_loop_direction, UInt8, default: COLOR_LOOP_DIRECTION_DECREASE, persist: true, scene: true, requires: :color_loop
       attribute 0x4004, :color_loop_time, UInt16, default: DEFAULT_COLOR_LOOP_TIME, persist: true, scene: true, requires: :color_loop
       attribute 0x4005, :color_loop_start_enhanced_hue, UInt16, default: DEFAULT_COLOR_LOOP_START_HUE, requires: :color_loop
@@ -76,8 +89,8 @@ module Matter
       attribute 0x400A, :color_capabilities, UInt16, default: 0_u16
       attribute 0x400B, :color_temp_physical_min_mireds, UInt16, default: DEFAULT_PHYSICAL_MIN_MIREDS, min: PHYSICAL_MIN_MIREDS_LOWER_BOUND, max: CHROMATICITY_MAX, requires: :color_temperature
       attribute 0x400C, :color_temp_physical_max_mireds, UInt16, default: DEFAULT_PHYSICAL_MAX_MIREDS, max: CHROMATICITY_MAX, requires: :color_temperature
-      attribute 0x400D, :couple_color_temp_to_level_min_mireds, UInt16, nullable: true, optional: true, requires: :color_temperature
-      attribute 0x4010, :start_up_color_temperature_mireds, UInt16, nullable: true, writable: true, optional: true, min: PHYSICAL_MIN_MIREDS_LOWER_BOUND, max: CHROMATICITY_MAX, requires: :color_temperature
+      attribute 0x400D, :couple_color_temp_to_level_min_mireds, UInt16, default: DEFAULT_PHYSICAL_MIN_MIREDS, min: PHYSICAL_MIN_MIREDS_LOWER_BOUND, max: CHROMATICITY_MAX, requires: :color_temperature, validate: :validate_coupling_minimum!
+      attribute 0x4010, :start_up_color_temperature_mireds, UInt16, nullable: true, writable: true, write_access: :manage, persist: true, min: PHYSICAL_MIN_MIREDS_LOWER_BOUND, max: CHROMATICITY_MAX, requires: :color_temperature, validate: :validate_startup_temperature!
 
       command 0x00, :move_to_hue, request: MoveToHueRequest, requires: :hue_saturation
       command 0x01, :move_hue, request: MoveHueRequest, requires: :hue_saturation
@@ -114,8 +127,14 @@ module Matter
         @color_temp_physical_max_mireds : UInt16 = DEFAULT_PHYSICAL_MAX_MIREDS,
         @color_mode : ColorMode = ColorMode::CurrentHueAndCurrentSaturation,
         @options : UInt8 = 0_u8,
-        @couple_color_temp_to_level_min_mireds : UInt16? = nil,
+        couple_color_temp_to_level_min_mireds : UInt16? = nil,
+        primary_coordinates : Array({UInt16, UInt16})? = nil,
       )
+        validate_feature_dependencies!
+        validate_color_temperature_configuration!
+        @couple_color_temp_to_level_min_mireds = couple_color_temp_to_level_min_mireds || @color_temp_physical_min_mireds
+        validate_coupling_minimum!(@couple_color_temp_to_level_min_mireds)
+        configure_primaries(primary_coordinates)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         @enhanced_current_hue = @current_hue.to_u16 << ENHANCED_HUE_SHIFT
@@ -125,6 +144,90 @@ module Matter
         @transition = nil
         @movement_fiber_running = false
         @on_off_cluster = nil
+      end
+
+      private def validate_feature_dependencies! : Nil
+        if @feature_map.color_loop? && !@feature_map.enhanced_hue?
+          raise ArgumentError.new("ColorLoop requires EnhancedHue")
+        end
+        if @feature_map.enhanced_hue? && !@feature_map.hue_saturation?
+          raise ArgumentError.new("EnhancedHue requires HueSaturation")
+        end
+      end
+
+      private def validate_color_temperature_configuration! : Nil
+        return unless @feature_map.color_temperature?
+        unless @color_temp_physical_min_mireds >= PHYSICAL_MIN_MIREDS_LOWER_BOUND &&
+               @color_temp_physical_max_mireds <= CHROMATICITY_MAX &&
+               @color_temp_physical_min_mireds <= @color_temp_physical_max_mireds &&
+               (@color_temp_physical_min_mireds..@color_temp_physical_max_mireds).includes?(@color_temperature_mireds)
+          raise ArgumentError.new("Color temperature and physical bounds must form a valid mired range")
+        end
+      end
+
+      private def validate_coupling_minimum!(value : UInt16) : Nil
+        return if (@color_temp_physical_min_mireds..@color_temperature_mireds).includes?(value)
+        raise ArgumentError.new("CoupleColorTempToLevelMinMireds must lie between physical minimum and current temperature")
+      end
+
+      private def validate_startup_temperature!(value : UInt16?) : Nil
+        return unless value
+        return if (PHYSICAL_MIN_MIREDS_LOWER_BOUND..CHROMATICITY_MAX).includes?(value)
+        raise ArgumentError.new("StartUpColorTemperatureMireds must be between 1 and 65279")
+      end
+
+      private def validate_color_loop_active!(value : UInt8) : Nil
+        raise ArgumentError.new("ColorLoopActive must be 0 or 1") if value > 1_u8
+      end
+
+      private def reject_fixed_primary_change!(value : UInt8? | UInt16) : Nil
+        raise ArgumentError.new("Color primary metadata is fixed after construction")
+      end
+
+      private def configure_primaries(coordinates : Array({UInt16, UInt16})?) : Nil
+        return unless coordinates
+        raise ArgumentError.new("Color supports at most six primaries") if coordinates.size > MAX_COLOR_PRIMARIES
+        coordinates.each do |x, y|
+          if x > CHROMATICITY_MAX || y > CHROMATICITY_MAX
+            raise ArgumentError.new("Primary coordinates must be at most 65279")
+          end
+        end
+        @number_of_primaries = coordinates.size.to_u8
+        {% for number in 1..6 %}
+          if pair = coordinates[{{ number - 1 }}]?
+            @primary_{{ number }}_x = pair[0]
+            @primary_{{ number }}_y = pair[1]
+          end
+        {% end %}
+      end
+
+      private def primary_present?(number : UInt8) : Bool
+        count = @number_of_primaries
+        !!(count && count >= number)
+      end
+
+      def color_loop_active? : Bool
+        @color_loop_active == 1_u8
+      end
+
+      {% for number in 1..6 %}
+        private def primary_{{ number }}_present? : Bool
+          primary_present?({{ number }}_u8)
+        end
+      {% end %}
+
+      # Apply the configured power-up temperature after persisted state restores.
+      # Software update restarts preserve the operational color instead.
+      def apply_startup_color_temperature(ota_restart : Bool = false) : Nil
+        return if ota_restart || !feature_map.color_temperature?
+        return unless target = @start_up_color_temperature_mireds
+
+        @movement = nil
+        @transition = nil
+        self.remaining_time = NO_TRANSITION
+        self.color_temperature_mireds = target.clamp(@color_temp_physical_min_mireds, @color_temp_physical_max_mireds)
+        self.color_mode = ColorMode::ColorTemperatureMireds
+        self.enhanced_color_mode = EnhancedColorMode::ColorTemperatureMireds
       end
 
       private enum MovementKind
@@ -416,7 +519,7 @@ module Matter
                .activate_the_color_loop_from_the_value_of_the_enhanced_current_hue_attribute?
             stop_movement
             self.color_loop_stored_enhanced_hue = @enhanced_current_hue
-            self.color_loop_active = true
+            self.color_loop_active = 1_u8
             if request.action.activate_the_color_loop_from_the_value_in_the_color_loop_start_enhanced_hue_field?
               move_to_enhanced_hue(@color_loop_start_enhanced_hue)
             end
@@ -511,7 +614,7 @@ module Matter
           return InteractionModel::Status.success
         end
 
-        self.color_loop_active = false if color_loop_active?
+        self.color_loop_active = 0_u8 if color_loop_active?
         @transition = TimedTransition.new(kind, Time.instant, origin_x, origin_y,
           delta_x, delta_y, target_x, target_y, duration)
         self.remaining_time = duration
@@ -629,7 +732,7 @@ module Matter
                    in .color_temperature?          then @color_temperature_mireds.to_i
                    end
         origin_y = kind.xy? ? @current_y.to_i : 0
-        self.color_loop_active = false if !kind.color_loop? && color_loop_active?
+        self.color_loop_active = 0_u8 if !kind.color_loop? && color_loop_active?
         @movement = Movement.new(kind, Time.instant, origin_x, origin_y,
           rate_x, rate_y, minimum, maximum)
         select_color_mode(kind)
@@ -656,7 +759,7 @@ module Matter
 
       private def stop_movement : InteractionModel::Status
         advance_movement
-        self.color_loop_active = false if @movement.try(&.kind.color_loop?)
+        self.color_loop_active = 0_u8 if @movement.try(&.kind.color_loop?)
         @movement = nil
         @transition = nil
         self.remaining_time = NO_TRANSITION

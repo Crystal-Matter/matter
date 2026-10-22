@@ -17,6 +17,7 @@ module LevelControlE2E
   LEVEL_MAXIMUM                =  254
   COUPLE_COLOR_OPTION          =    2
   START_COLOR_TEMPERATURE      =  250
+  STARTUP_COLOR_TEMPERATURE    =  320
   HUE_MODE                     =    0
   TEMPERATURE_MODE             =    2
   LIFT_POSITION                = 5000
@@ -160,6 +161,32 @@ describe "matter_level_control example" do
     ], endpoint: endpoint))
     read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint)
       .should eq LevelControlE2E::COUPLED_MIDPOINT_TEMPERATURE
+  end
+
+  it "advertises Color Control revision 9 and restores startup temperature" do
+    endpoint = LevelControlE2E::COLOR_ENDPOINT
+    read_int(device, "colorcontrol", "cluster-revision", "ClusterRevision", endpoint).should eq 9
+    read_value(device, "colorcontrol", "number-of-primaries", "NumberOfPrimaries", endpoint).should eq "null"
+    read_int(device, "colorcontrol", "couple-color-temp-to-level-min-mireds", "CoupleColorTempToLevelMinMireds", endpoint)
+      .should eq LevelControlE2E::COUPLED_TEMPERATURE_MIN
+
+    expect_failure(device.write("colorcontrol", "start-up-color-temperature-mireds", 0, endpoint), "CONSTRAINT_ERROR")
+    expect_success(device.write("colorcontrol", "start-up-color-temperature-mireds", LevelControlE2E::STARTUP_COLOR_TEMPERATURE, endpoint))
+    expect_success(device.invoke("colorcontrol", "move-to-color-temperature", [
+      LevelControlE2E::START_COLOR_TEMPERATURE.to_s, LevelControlE2E::NO_TRANSITION,
+      LevelControlE2E::NO_OPTIONS, LevelControlE2E::NO_OPTIONS,
+    ], endpoint: endpoint))
+    read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint)
+      .should eq LevelControlE2E::START_COLOR_TEMPERATURE
+
+    device.restart!
+
+    read_int(device, "colorcontrol", "start-up-color-temperature-mireds", "StartUpColorTemperatureMireds", endpoint)
+      .should eq LevelControlE2E::STARTUP_COLOR_TEMPERATURE
+    read_int(device, "colorcontrol", "color-temperature-mireds", "ColorTemperatureMireds", endpoint)
+      .should eq LevelControlE2E::STARTUP_COLOR_TEMPERATURE
+    read_int(device, "colorcontrol", "color-mode", "ColorMode", endpoint).should eq LevelControlE2E::TEMPERATURE_MODE
+    read_int(device, "colorcontrol", "enhanced-color-mode", "EnhancedColorMode", endpoint).should eq LevelControlE2E::TEMPERATURE_MODE
   end
 
   it "switches ColorMode on a same-value command and at the start of a timed transition" do

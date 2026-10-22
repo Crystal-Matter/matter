@@ -18,7 +18,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 
 - Standard XML clusters: 135
 - Crystal declarations for those IDs: 76
-- Matching known revisions: 72
+- Matching known revisions: 73
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -81,9 +81,9 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | — | cluster absent |
 | 0x0065 | Groupcast Cluster | 1 | — | cluster absent |
-| 0x0071 | HEPA Filter Monitoring | 1 | 1 | — |
-| 0x0072 | Activated Carbon Filter Monitoring | 1 | 1 | — |
-| 0x0079 | Water Tank Level Monitoring | 1 | 1 | — |
+| 0x0071 | HEPA Filter Monitoring | 1 | — | cluster absent |
+| 0x0072 | Activated Carbon Filter Monitoring | 1 | — | cluster absent |
+| 0x0079 | Water Tank Level Monitoring | 1 | — | cluster absent |
 | 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
@@ -108,7 +108,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower feature, shared-limit, and Auto deadband behavior covered; other revision 11 gaps remain |
 | 0x0202 | Fan Control Cluster | 6 | 6 | feature-gated attributes and Step; only FanMode nonvolatile |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | — | cluster absent |
-| 0x0300 | Color Control Cluster | 9 | 7 | — |
+| 0x0300 | Color Control Cluster | 9 | 9 | — |
 | 0x0400 | Illuminance Measurement Cluster | 5 | 5 | Fixed sensor configuration, nullable bounds and reading, optional Tolerance/LightSensorType; host owns sampling |
 | 0x0402 | Temperature Measurement Cluster | 6 | 4 | — |
 | 0x0403 | Pressure Measurement Cluster | 5 | 5 | Extended feature, optional tolerances, fixed sensor bounds and scale |

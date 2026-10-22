@@ -265,6 +265,9 @@ module Matter
       @message_handler.clusters.each_value do |cluster|
         cluster.as?(Cluster::LevelControl).try(&.apply_startup_level(ota_restart: ota_restart))
       end
+      @message_handler.clusters.each_value do |cluster|
+        cluster.as?(Cluster::ColorControl).try(&.apply_startup_color_temperature(ota_restart: ota_restart))
+      end
       before_start
       @lifecycle.sync_advertisements
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode
