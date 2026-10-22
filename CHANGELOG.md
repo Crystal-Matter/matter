@@ -57,6 +57,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and notify Fabrics and NOCs subscribers. Preserve committed credentials after
   CommissioningComplete. The official `TC_OPCREDS_3_8` previously failed at
   step 18 because the pending fabric remained visible after ArmFailSafe(0).
+- Validate the official `TC_OPCREDS_3_8` result using its actual SDK 1.6 log
+  format: the script path, all 29 steps, the test method PASS, and both test
+  summaries with zero skips. A captured successful SDK run guards the parser.
 
 ### Wake On LAN
 

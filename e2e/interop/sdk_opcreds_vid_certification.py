@@ -12,19 +12,30 @@ from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN
 
 
 TEST_NAME = "TC_OPCREDS_3_8"
-REQUIRED_STEPS = ("19", "28")
+REQUIRED_STEPS = range(29)
+SUMMARY_FIELDS = r"Error (\d+), Executed (\d+), Failed (\d+), Passed (\d+), Requested (\d+), Skipped (\d+)"
 
 
 def assert_official_result(output, returncode):
     if returncode:
         raise RuntimeError(f"official {TEST_NAME} exited {returncode}:\n{output[-12000:]}")
-    if not re.search(r"Starting test from .*test_TC_OPCREDS_3_8", output):
-        raise RuntimeError("official TC_OPCREDS_3_8 did not execute")
+    if not re.search(r"Starting test from \S*/src/python_testing/TC_OPCREDS_3_8\.py:", output):
+        raise RuntimeError("official TC_OPCREDS_3_8 script path missing")
+    observed_steps = {int(step) for step in re.findall(r"\*{5} Test Step (\d+) :", output)}
     for step in REQUIRED_STEPS:
-        if not re.search(rf"Test Step {step}(?!\d)", output):
+        if step not in observed_steps:
             raise RuntimeError(f"official TC_OPCREDS_3_8 omitted step {step}")
-    if "Final result: PASS" not in output:
-        raise RuntimeError("official TC_OPCREDS_3_8 did not report PASS")
+    if not re.search(r"\[Test\] test_TC_OPCREDS_3_8 PASS(?:\s|$)", output):
+        raise RuntimeError("official TC_OPCREDS_3_8 test method PASS missing")
+
+    summaries = (
+        (rf"Summary for test class TC_OPCREDS_VidVerify: {SUMMARY_FIELDS}", (0, 1, 0, 1, 1, 0)),
+        (rf"^Test results: {SUMMARY_FIELDS}$", (0, 2, 0, 2, 2, 0)),
+    )
+    for pattern, expected in summaries:
+        match = re.search(pattern, output, re.MULTILINE)
+        if not match or tuple(map(int, match.groups())) != expected:
+            raise RuntimeError("official TC_OPCREDS_3_8 summary did not report two passes and zero skips")
 
 
 def run(args):

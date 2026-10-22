@@ -1,0 +1,33 @@
+[MatterTest] 10-22 21:37:21.365 INFO Starting test from /home/runner/work/matter/matter/tmp/connectedhomeip/src/python_testing/TC_OPCREDS_3_8.py: [DUTServer] TC-OPCREDS-3.8 test case. - 29 steps
+[MatterTest] 10-22 21:37:21.395 INFO ***** Test Step 0 : Commission DUT in TH1's fabric. Cert chain must include ICAC.
+[MatterTest] 10-22 21:37:21.400 INFO ***** Test Step 1 : Commission DUT in TH2's fabric. Cert chain must NOT include ICAC
+[MatterTest] 10-22 21:37:21.656 INFO ***** Test Step 2 : Read DUT's NOCs attribute and validate both fabrics have expected values extractable from their NOC. The NOCs attribute must show the NOC for every fabric.
+[MatterTest] 10-22 21:37:21.660 INFO ***** Test Step 3 : Read DUT's Fabrics attribute and validate both fabrics have expected values.
+[MatterTest] 10-22 21:37:21.663 INFO ***** Test Step 4 : TH1 sends SignVIDVerificationRequest for TH2's fabric. Verify the response and signature.
+[MatterTest] 10-22 21:37:21.672 INFO ***** Test Step 5 : Send bad SignVIDVerificationRequest commands and verify failures
+[MatterTest] 10-22 21:37:21.678 INFO ***** Test Step 6 : Invoke SetVIDVerificationStatement with VVSC, VIDVerificationStatement and VID fields all missing, outside fail-safe. Expect INVALID_COMMAND
+[MatterTest] 10-22 21:37:21.680 INFO ***** Test Step 7 : Invoke SetVIDVerificationStatement using TH2's fabric (no ICAC present) with VVSC field set to a size > 400 bytes, outside fail-safe. Expect CONSTRAINT_ERROR
+[MatterTest] 10-22 21:37:21.682 INFO ***** Test Step 8 : Invoke SetVIDVerificationStatement with VIDVerificationStatement field set to a size > 85 bytes, outside fail-safe. Expect CONSTRAINT_ERROR
+[MatterTest] 10-22 21:37:21.684 INFO ***** Test Step 9 : Establish a subscription to Operational Credentials cluster on endpoint 0 from TH1 fabric client, with MinIntervalFloor=0, MaxIntervalCeiling=30
+[MatterTest] 10-22 21:37:21.690 INFO ***** Test Step 10 : Invoke SetVIDVerificationStatement with maximum-sized VVSC and VIDVerificationStatement present and setting VID to 0x6a01 on TH2's fabric, outside fail-safe. Verify VIDVerificationStatement, VVSC and VID updates are correct. Verify subscription received the updated values.
+[MatterTest] 10-22 21:37:21.708 INFO ***** Test Step 11 : Invoke SetVIDVerificationStatement with maximum-sized VVSC on TH1's fabric, outside fail-safe. Verify INVALID_COMMAND due to presence of ICAC.
+[MatterTest] 10-22 21:37:21.710 INFO ***** Test Step 12 : Invoke SetVIDVerificationStatement with setting VID to 0xFFF1 on TH2's fabric, outside fail-safe. Verify VID is now 0xFFF1.
+[MatterTest] 10-22 21:37:21.721 INFO ***** Test Step 13 : Arm a fail safe for 300s from TH2 on dut_node_id2 with breadcrumb set to 10.
+[MatterTest] 10-22 21:37:21.723 INFO ***** Test Step 14 : Invoke SetVIDVerificationStatement with VVSC and VIDVerificationStatement to empty, and VID set to 0xFFF3 on TH2's fabric, inside fail-safe. Verify VVSC, VIDVerificationStatement are now empty and VID is 0xFFF3 for that fabric.
+[MatterTest] 10-22 21:37:21.735 INFO ***** Test Step 15 : Disarm fail safe with ArmFailSafe(0s). Verify VVS, VendorID are not reverted, since there had been no AddNOC/UpdateNOC
+[MatterTest] 10-22 21:37:21.743 INFO ***** Test Step 16 : Create a new fabric under TH2's root with fabric ID 0x3333, node ID 0x33333333, VendorID 0xFFF2, by invoking ArmFailSafe(600s), CSRRequest, AddTrustedRootCertificate and AddNOC. Do not disarm failsafe, do not execute commissioning complete.
+[MatterTest] 10-22 21:37:21.778 INFO ***** Test Step 17 : Invoke SetVIDVerificationStatement with VVSC and VIDVerificationStatement present and setting VID to 0xFFF1 on fabric ID 0x3333 under TH2's root, inside fail-safe. Verify VIDVerificationStatement, VVSC and VID values match values set.
+[MatterTest] 10-22 21:37:22.008 INFO ***** Test Step 18 : Disarm failsafe with ArmFailSafe(0s) from TH3 client. Verify that fabric table no longer has VVSC and VIDVerificationStatement for the pending fabric that was dropped.
+[MatterTest] 10-22 21:37:22.026 INFO ***** Test Step 19 : SetVIDVerificationStatement against TH1's fabric with VendorID set to 0xFFF5. Expect a CONSTRAINT_ERROR.
+[MatterTest] 10-22 21:37:22.028 INFO ***** Test Step 20 : Invoke SetVIDVerificationStatement with maximum-sized VVSC and VIDVerificationStatement present and setting VID to 0x6a01 on TH2's fabric, outside fail-safe. Expect success.
+[MatterTest] 10-22 21:37:22.035 INFO ***** Test Step 21 : TH1 sends SignVIDVerificationRequest for TH2's fabric (which has a VIDVerificationStatement). Verify the response and signature.
+[MatterTest] 10-22 21:37:22.040 INFO ***** Test Step 22 : Start updating fabric under TH2's root with fabric ID 0x2222, node ID 0x22222222, by invoking ArmFailSafe(600s), CSRRequest and UpdateNOC. Do not disarm failsafe, do not execute commissioning complete.
+[MatterTest] 10-22 21:37:22.057 INFO ***** Test Step 23 : Invoke SetVIDVerificationStatement with different VVSC and VIDVerificationStatement present and setting VID back to 0xFFF2 under TH2's fabric, inside fail-safe. Verify VIDVerificationStatement, VVSC and VID values match values set.
+[MatterTest] 10-22 21:37:22.289 INFO ***** Test Step 24 : Disarm failsafe with ArmFailSafe(0s) from TH2 client. Verify that fabric table has previous VIDVerificationStatement and VVSC due to the pending fabric update that was dropped.
+[MatterTest] 10-22 21:37:22.518 INFO ***** Test Step 25 : Start updating fabric under TH2's root with fabric ID 0x2222, node ID 0x77777777, by invoking ArmFailSafe(600s), CSRRequest and UpdateNOC. Do not disarm failsafe, do not execute commissioning complete.
+[MatterTest] 10-22 21:37:22.538 INFO ***** Test Step 26 : Invoke SetVIDVerificationStatement with VVSC and VIDVerificationStatement present and setting VID to 0xFFF4 under TH2's fabric, inside fail-safe. Verify VIDVerificationStatement, VVSC and VID values match values set.
+[MatterTest] 10-22 21:37:22.769 INFO ***** Test Step 27 : Invoke CommissioningComplete on the pending fabric under TH2 root. Verify VIDVerificationStatement, VVSC and VID values match the values that were set inside the fail-safe period.
+[MatterTest] 10-22 21:37:22.778 INFO ***** Test Step 28 : Remove TH2 and TH3's fabric
+[MatterTest] 10-22 21:37:22.790 INFO [Test] test_TC_OPCREDS_3_8 PASS
+[MatterTest] 10-22 21:37:22.972 INFO Summary for test class TC_OPCREDS_VidVerify: Error 0, Executed 1, Failed 0, Passed 1, Requested 1, Skipped 0
+Test results: Error 0, Executed 2, Failed 0, Passed 2, Requested 2, Skipped 0
