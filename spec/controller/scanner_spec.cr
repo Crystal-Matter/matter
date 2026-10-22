@@ -14,6 +14,30 @@ class Matter::Controller::Scanner
   end
 end
 
+# An AF_INET6 socket can exist even when ::1 cannot deliver UDP datagrams.
+# Check the network path before exercising the scanner's receive fiber.
+private def ipv6_loopback_available? : Bool
+  receiver : UDPSocket? = nil
+  sender : UDPSocket? = nil
+  begin
+    receiver = UDPSocket.new(:inet6)
+    sender = UDPSocket.new(:inet6)
+    receiver.ipv6_only = true
+    receiver.bind("::1", 0)
+    receiver.read_timeout = 2.seconds
+    destination = Socket::IPAddress.new("::1", receiver.local_address.as(Socket::IPAddress).port)
+    sender.send(Bytes[0xA5], destination)
+    buffer = Bytes.new(1)
+    count, _peer = receiver.receive(buffer)
+    count == 1 && buffer[0] == 0xA5
+  rescue Socket::Error | IO::TimeoutError
+    false
+  ensure
+    sender.try(&.close)
+    receiver.try(&.close)
+  end
+end
+
 describe Matter::Controller::Scanner do
   describe "DNS-SD packet processing" do
     it "scopes a link-local AAAA address to its IPv6 announcement interface" do
@@ -70,6 +94,7 @@ describe Matter::Controller::Scanner do
 
     it "receives an operational advertisement over IPv6 only" do
       require_udp_sockets!
+      pending! "IPv6 UDP loopback delivery is unavailable on this host" unless ipv6_loopback_available?
       scanner = Matter::Controller::Scanner.new(0)
       sender = UDPSocket.new(:inet6)
       instance = "0123456789ABCDEF-000000000000000B._matter._tcp.local"
@@ -82,19 +107,38 @@ describe Matter::Controller::Scanner do
         scanner.start
         port = scanner.ipv6_port_for_spec
         port.should_not be_nil
+        sent_packets = 0
         if port
           destination = Socket::IPAddress.new("::1", port)
           deadline = Time.instant + 5.seconds
           until scanner.get_device(instance) || Time.instant >= deadline
             sender.send(packet.to_slice, destination)
+            sent_packets += 1
             sleep 100.milliseconds
           end
         end
-        scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
+        device = scanner.get_device(instance)
+        device.should_not be_nil, "IPv6 scanner missed #{sent_packets} loopback advertisements on port #{port}"
+        device.as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
       ensure
         sender.close
         scanner.close
       end
+    end
+
+    it "parses an encoded IPv6 operational advertisement" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "0123456789ABCDEF-000000000000000D._matter._tcp.local"
+      builder = Matter::MDNS::RecordBuilder
+      packet = DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_srv(instance, 5540, "encoded-v6.local", 120.seconds),
+        builder.build_aaaa("encoded-v6.local", Socket::IPAddress.new("::1", 0), 120.seconds),
+      ])
+
+      scanner.process_packet_for_spec(DNS::Packet.from_slice(packet.to_slice), Socket::IPAddress.new("::1", 5353))
+      scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
+      scanner.close
     end
     it "resolves each operational SRV target from only its own host A/AAAA records" do
       require_udp_sockets!
