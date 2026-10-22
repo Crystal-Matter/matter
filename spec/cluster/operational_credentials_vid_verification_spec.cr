@@ -1,6 +1,77 @@
 require "../support/operational_credentials_helpers"
 
 describe "OperationalCredentials SignVIDVerificationRequest" do
+  it "reports ConstraintError for a well-typed challenge with the wrong length on the command wire" do
+    cluster = Matter::Cluster::OperationalCredentials.new(Matter::FabricTable.new(Matter::Storage::Memory.new))
+    [31, 33].each do |length|
+      request = Matter::Cluster::OperationalCredentials::Tlv::SignVIDVerificationRequest.new(
+        1_u8, Bytes.new(length, 0x5A_u8))
+      response = cluster.invoke_command(
+        Matter::Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
+        request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      response.should eq(Matter::InteractionModel::Status.constraint_error)
+    end
+  end
+
+  it "rejects reserved AddNOC administrator Vendor IDs before entering commissioning" do
+    cluster = Matter::Cluster::OperationalCredentials.new(Matter::FabricTable.new(Matter::Storage::Memory.new))
+    [0_u16, 0xFFF5_u16, 0xFFFF_u16].each do |vendor_id|
+      request = Matter::Cluster::OperationalCredentials::Tlv::AddNocRequest.new(
+        Bytes.empty, nil, Bytes.new(16), 1_u64, vendor_id)
+      cluster.add_noc(request).should eq(Matter::InteractionModel::Status.invalid_command)
+    end
+    request = Matter::Cluster::OperationalCredentials::Tlv::AddNocRequest.new(
+      Bytes.empty, nil, Bytes.new(16), 1_u64, 0xFFF4_u16)
+    cluster.add_noc(request).should be_a(Matter::Cluster::OperationalCredentials::Tlv::TlvNocResponse)
+  end
+
+  it "rejects reserved operational Vendor IDs and accepts the last test Vendor ID" do
+    table = Matter::FabricTable.new(Matter::Storage::Memory.new)
+    table.add_fabric(OpCredsTestHelpers.create_test_fabric(0x1111_u64, 1_u8)).should be_true
+    cluster = Matter::Cluster::OperationalCredentials.new(table)
+    cluster.request_fabric_index = 1_u8
+
+    [0_u16, 0xFFF5_u16, 0xFFFF_u16].each do |vendor_id|
+      cluster.set_vid_verification_statement(
+        Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
+          vendor_id: vendor_id)
+      ).should eq(Matter::InteractionModel::Status.constraint_error)
+      table.get_fabric(1_u8).as(Matter::Fabric).vendor_id.should eq(0xFFF1_u16)
+    end
+
+    cluster.set_vid_verification_statement(
+      Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
+        vendor_id: 0xFFF4_u16)
+    ).should eq(Matter::InteractionModel::Status.success)
+    table.get_fabric(1_u8).as(Matter::Fabric).vendor_id.should eq(0xFFF4_u16)
+  end
+
+  it "notifies Fabrics and NOCs subscribers when VID metadata changes and rolls back" do
+    table = Matter::FabricTable.new(Matter::Storage::Memory.new)
+    table.add_fabric(OpCredsTestHelpers.create_test_fabric(0x1111_u64, 1_u8)).should be_true
+    cluster = Matter::Cluster::OperationalCredentials.new(table)
+    cluster.request_fabric_index = 1_u8
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) {
+      changed << attribute
+      nil
+    }
+    cluster.credentials.pending.noc_added_or_updated = true
+    cluster.set_vid_verification_statement(
+      Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
+        vendor_id: 0x1234_u16, vid_verification_statement: Bytes.new(85, 0x11_u8),
+        vvsc: Bytes.new(400, 0x22_u8)
+      )
+    ).should eq(Matter::InteractionModel::Status.success)
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_FABRICS)
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+
+    changed.clear
+    cluster.on_failsafe_expired
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_FABRICS)
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+  end
+
   it "signs the exact fabric binding and session challenges with the selected NOC key" do
     crypto = Matter::Crypto::StandardCrypto.new
     root_key = crypto.create_key_pair

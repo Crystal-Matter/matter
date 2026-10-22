@@ -93,8 +93,7 @@ module Matter::Cluster
 
         response.error_code.ok?.should be_true
         cluster.failsafe_armed?.should be_false
-        # Breadcrumb should NOT be updated on disarm
-        cluster.breadcrumb.should eq(123_u64)
+        cluster.breadcrumb.should eq(0_u64)
       end
 
       it "re-arms existing failsafe with matching fabric" do

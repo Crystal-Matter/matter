@@ -65,6 +65,17 @@ item below as covered only to the extent of its cited tests.
   SetVIDVerificationStatement, including signed challenge binding, fabric
   filtering, persistence, and fail-safe rollback. The controller verifier
   requires a trusted operational root or verified VID statement.
+  AddNOC and SetVIDVerificationStatement enforce operational Vendor IDs from
+  1 through 0xFFF4; reserved IDs return their Matter 1.6 command statuses.
+  SignVIDVerificationRequest reports ConstraintError for a challenge with an
+  invalid length while preserving the command's typed TLV decoding. VID
+  metadata changes and fail-safe rollback report Fabrics and NOCs updates to
+  active subscribers. ArmFailSafe(0) removes a pending AddNOC fabric or restores
+  an UpdateNOC identity while the device remains running. The fail-safe's NOC
+  rollback snapshot is currently in memory: a process crash after AddNOC or
+  UpdateNOC and before expiry can leave the provisional fabric record in
+  persistent storage. A durable pending-credential journal and startup recovery
+  remain necessary before claiming crash-safe commissioning rollback.
 - DNS-SD understands Joint Fabric `JF` role bits and `CM=3`. A Joint Fabric
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with
@@ -227,6 +238,14 @@ initialization into the v1.6.0.0 test copy for its non-CI teardown path; the
 certification steps and assertions are unchanged.
 The [integrated SDK run](https://github.com/Crystal-Matter/matter/actions/runs/39691585152)
 passed `TC_JFADMIN_1_2` against the merged Crystal JFA.
+
+The same workflow's opt-in `opcreds` case runs the unmodified Matter 1.6
+`TC_OPCREDS_3_8.py` against a freshly commissioned Crystal JFA. The
+[SDK run](https://github.com/Crystal-Matter/matter/actions/runs/39859190491)
+passed all steps 0–28 with two requested tests passed and zero skips. It covers
+live AddNOC and UpdateNOC rollback, VID/VVS updates, subscriptions, and
+CommissioningComplete. Crash-safe recovery of provisional credentials remains
+the separate limitation described above.
 
 `e2e/interop/sdk_jf_cert_matrix.py` runs the official SDK v1.6.0.0
 `TC_JFADMIN_1_1`, `1_4`, and `TC_JFDS_2_1` through `2_3` scripts unchanged

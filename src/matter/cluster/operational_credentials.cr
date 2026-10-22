@@ -4,6 +4,7 @@ require "../commissioning"
 require "../fabric"
 require "../fabric_table"
 require "../crypto/key"
+require "../datatype/vendor_id"
 
 module Matter
   module Cluster
@@ -245,6 +246,7 @@ module Matter
         session_lookup, :session_lookup=,
         on_fabric_added, :on_fabric_added=,
         on_fabric_removed, :on_fabric_removed=,
+        on_fabric_updated, :on_fabric_updated=,
         set_attestation_credentials, set_attestation_from_manager,
         restore_root_cert,
         to: credentials
@@ -374,7 +376,8 @@ module Matter
         Tlv::CsrResponse.new(elements, signature)
       end
 
-      def add_noc(request : Tlv::AddNocRequest) : Tlv::TlvNocResponse
+      def add_noc(request : Tlv::AddNocRequest) : InteractionModel::Status | Tlv::TlvNocResponse
+        return InteractionModel::Status.invalid_command unless DataType::VendorId.valid_operational?(request.admin_vendor_id)
         noc_response credentials.add_noc(
           noc: request.noc_value,
           icac: request.icac_value,
@@ -437,6 +440,9 @@ module Matter
         return InteractionModel::Status.constraint_error unless fabric
         return InteractionModel::Status.invalid_command if request.vendor_id.nil? &&
                                                            request.vid_verification_statement.nil? && request.vvsc.nil?
+        if vendor_id = request.vendor_id
+          return InteractionModel::Status.constraint_error unless DataType::VendorId.valid_operational?(vendor_id)
+        end
         if statement = request.vid_verification_statement
           return InteractionModel::Status.constraint_error unless statement.empty? || statement.size == 85
         end
@@ -464,13 +470,15 @@ module Matter
         end
         @fabric_table.update_fabric(fabric)
         increment_version
+        notify_changed(ATTR_FABRICS) unless request.vendor_id.nil? && request.vid_verification_statement.nil?
+        notify_changed(ATTR_NOCS) unless request.vvsc.nil?
         InteractionModel::Status.success
       end
 
       # ameba:enable Naming/AccessorMethodName
 
       def sign_vid_verification_request(request : Tlv::SignVIDVerificationRequest) : Tlv::SignVIDVerificationResponse | InteractionModel::Status
-        return InteractionModel::Status.invalid_command unless request.client_challenge.size == 32
+        return InteractionModel::Status.constraint_error unless request.client_challenge.size == 32
         fabric = @fabric_table.get_fabric(request.fabric_index)
         return InteractionModel::Status.constraint_error unless fabric
         session_id = request_session_id
@@ -634,15 +642,22 @@ module Matter
 
       # Failsafe timer expired - drop everything that was pending
       def on_failsafe_expired
+        credentials.rollback_pending
+        restored_vid_metadata = false
         @vid_failsafe_snapshot.each do |index, previous|
           next unless fabric = @fabric_table.get_fabric(index)
           fabric.vendor_id = previous[0]
           fabric.vid_verification_statement = previous[1]
           fabric.vvsc = previous[2]
           @fabric_table.update_fabric(fabric)
+          restored_vid_metadata = true
         end
         @vid_failsafe_snapshot.clear
-        credentials.reset_pending
+        if restored_vid_metadata
+          increment_version
+          notify_changed(ATTR_FABRICS)
+          notify_changed(ATTR_NOCS)
+        end
       end
 
       # Failsafe disarmed successfully - the credentials are committed
@@ -666,6 +681,10 @@ module Matter
       # Bump the data version after a credential change
       def credentials_changed : Nil
         increment_version
+        notify_changed(ATTR_NOCS)
+        notify_changed(ATTR_FABRICS)
+        notify_changed(ATTR_COMMISSIONED_FABRICS)
+        notify_changed(ATTR_TRUSTED_ROOT_CERTIFICATES)
       end
 
       # A fabric was added: the Matter spec requires an ACL entry granting the
@@ -685,6 +704,7 @@ module Matter
         end
 
         @general_commissioning_cluster.try(&.record_added_fabric(fabric.fabric_index))
+        credentials_changed
       end
 
       # A fabric was removed: so is every piece of data scoped to it

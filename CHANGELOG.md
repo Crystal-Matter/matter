@@ -57,6 +57,26 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   align Options and startup attribute write privileges with Matter 1.6.
   Official chip-tool checks revision, required attributes, and restart behavior.
 
+### Operational Vendor ID validation
+
+- Reject reserved Vendor IDs in AddNOC and SetVIDVerificationStatement. AddNOC
+  returns InvalidCommand; SetVIDVerificationStatement returns ConstraintError,
+  matching the Matter 1.6 operational range of 1 through 0xFFF4 and the
+  official `TC_OPCREDS_3_8` boundary check.
+- Return ConstraintError for a well-typed SignVIDVerificationRequest challenge
+  whose length is not 32 bytes, as required by official `TC_OPCREDS_3_8` step 5.
+- Notify Fabrics and NOCs subscribers when SetVIDVerificationStatement changes
+  operational metadata or a pending NOC update rolls that metadata back.
+- Roll back uncommitted AddNOC and UpdateNOC changes when ArmFailSafe receives
+  zero expiry or the timer expires. Restore the persisted CASE identity and
+  fabric-scoped attributes, refresh operational discovery, retire old sessions,
+  and notify Fabrics and NOCs subscribers. Preserve committed credentials after
+  CommissioningComplete. The official `TC_OPCREDS_3_8` previously failed at
+  step 18 because the pending fabric remained visible after ArmFailSafe(0).
+- Validate the official `TC_OPCREDS_3_8` result using its actual SDK 1.6 log
+  format: the script path, all 29 steps, the test method PASS, and both test
+  summaries with zero skips. A captured successful SDK run guards the parser.
+
 ### Wake On LAN
 
 - Add the Matter 1.6 Wake On LAN server (`0x0503`, revision 1). A host can
