@@ -127,7 +127,7 @@ module MatterLevelControl
 
     private def level_summary : String
       level = level_control.current_level
-      "#{level} (#{level_percent(level)}%)"
+      level ? "#{level} (#{level_percent(level)}%)" : "unknown"
     end
 
     private def level_percent(level : UInt8) : Int32

@@ -18,6 +18,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Send timed invocations from the Crystal controller's enhanced window opener
   and from its basic-open and revoke CLI commands.
 
+### Level Control unknown current level
+
+- Report nullable CurrentLevel as TLV null, preserve unknown state across
+  restarts, and resolve an absolute MoveToLevel immediately from that state.
+  Relative Move and Step return Failure until a level is known. Becoming
+  unknown cancels a pending transition and clears RemainingTime. Cluster
+  revision remains 6 while the remaining revision 7 requirements are audited.
+- Keep fixed MinLevel and MaxLevel from the configured server rather than
+  restoring stale runtime values; clamp a restored known CurrentLevel to the
+  configured range. Mark CurrentLevel as a scene attribute and reject zero
+  writes to nullable DefaultMoveRate, whose defined range starts at 1.
+
 ### Group Key Management revision 3
 
 - Advertise the Matter 1.6 revision 3 ClusterRevision while retaining the
