@@ -7,7 +7,7 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 65
+- Implemented standard cluster IDs compared: 66
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 107
@@ -24,6 +24,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x001D | Descriptor Cluster | 3 | 3 | — | — |
 | 0x001E | Binding Cluster | 1 | 1 | — | — |
 | 0x001F | Access Control Cluster | 3 | 3 | — | — |
+| 0x0025 | Actions Cluster | 1 | 1 | — | — |
 | 0x0028 | Basic Information Cluster | 6 | 6 | — | — |
 | 0x0029 | OTA Software Update Provider Cluster | 1 | 1 | — | — |
 | 0x002A | OTA Software Update Requestor Cluster | 1 | 1 | — | — |

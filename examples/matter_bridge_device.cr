@@ -26,6 +26,9 @@ module MatterBridge
     # Random bytes behind a bridged device's unique id.
     UNIQUE_ID_BYTES = 4
 
+    ALL_LIGHTS_ACTION_ID        = 1_u16
+    ALL_LIGHTS_ENDPOINT_LIST_ID = 1_u16
+
     identity vendor: "Spider-Gazelle", product: "Crystal Bridge",
       vendor_id: Matter::SetupPayload.test_vendor_id,
       product_id: rand(0x0001_u16..0xFFFF_u16),
@@ -38,7 +41,9 @@ module MatterBridge
 
     # The bridge has no static endpoints of its own: the root endpoint is the
     # aggregator its bridged endpoints hang off.
-    endpoint 0, device_type: Matter::DeviceType::AGGREGATOR
+    endpoint 0, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Matter::Cluster::Actions
+    end
 
     endpoint_template :bridged_light,
       device_type: [Matter::DeviceType::ON_OFF_LIGHT, Matter::DeviceType::BRIDGED_NODE],
@@ -110,6 +115,15 @@ module MatterBridge
       end
 
       bridged_endpoints.each { |endpoint| watch(endpoint) }
+      configure_actions
+      actions.on_execute do |_action, command, _invoke_id, _parameter|
+        if command.instant_action?
+          bridged_endpoints.each { |endpoint| on_off(endpoint).toggle }
+          Matter::InteractionModel::Status.success
+        else
+          Matter::InteractionModel::Status.invalid_command
+        end
+      end
       puts ""
       super
     end
@@ -128,6 +142,7 @@ module MatterBridge
       )
 
       watch(endpoint)
+      configure_actions
       puts "  Added: Endpoint #{endpoint.number} - #{label(endpoint)}"
       endpoint
     end
@@ -135,6 +150,7 @@ module MatterBridge
     def remove_bridged_device(endpoint : Matter::Endpoint) : Nil
       name = label(endpoint)
       remove_endpoint(endpoint.number)
+      configure_actions
       puts "  Removed: Endpoint #{endpoint.number} - #{name}"
     end
 
@@ -184,6 +200,26 @@ module MatterBridge
 
     private def on_off(endpoint : Matter::Endpoint) : Matter::Cluster::OnOff
       endpoint.get_cluster!(Matter::Cluster::OnOff)
+    end
+
+    private def actions : Matter::Cluster::Actions
+      node.endpoint!(Matter::Node::ROOT_ENDPOINT_ID).get_cluster!(Matter::Cluster::Actions)
+    end
+
+    private def configure_actions : Nil
+      endpoints = bridged_endpoints.map(&.number)
+      if endpoints.empty?
+        actions.action_list = [] of Matter::Cluster::Actions::Action
+        actions.endpoint_lists = [] of Matter::Cluster::Actions::EndpointList
+        return
+      end
+      actions.endpoint_lists = [Matter::Cluster::Actions::EndpointList.new(
+        ALL_LIGHTS_ENDPOINT_LIST_ID, "All bridged lights",
+        Matter::Cluster::Actions::EndpointListType::Zone, endpoints)]
+      actions.action_list = [Matter::Cluster::Actions::Action.new(
+        ALL_LIGHTS_ACTION_ID, "Toggle all lights", Matter::Cluster::Actions::ActionType::Scene,
+        ALL_LIGHTS_ENDPOINT_LIST_ID, Matter::Cluster::Actions::CommandBits::InstantAction,
+        Matter::Cluster::Actions::ActionState::Inactive)]
     end
 
     private def bridged_info(endpoint : Matter::Endpoint) : Matter::Cluster::BridgedDeviceBasicInformation

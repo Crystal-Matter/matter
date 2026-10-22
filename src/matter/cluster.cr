@@ -13,6 +13,7 @@ require "./cluster/label_struct"
 require "./cluster/color_control_utils"
 
 require "./cluster/access_control"
+require "./cluster/actions"
 require "./cluster/administrator_commissioning"
 require "./cluster/air_quality"
 require "./cluster/basic_information"
