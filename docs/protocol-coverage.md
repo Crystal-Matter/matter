@@ -81,9 +81,9 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | — | cluster absent |
 | 0x0065 | Groupcast Cluster | 1 | — | cluster absent |
-| 0x0071 | HEPA Filter Monitoring | 1 | — | cluster absent |
-| 0x0072 | Activated Carbon Filter Monitoring | 1 | — | cluster absent |
-| 0x0079 | Water Tank Level Monitoring | 1 | — | cluster absent |
+| 0x0071 | HEPA Filter Monitoring | 1 | 1 | — |
+| 0x0072 | Activated Carbon Filter Monitoring | 1 | 1 | — |
+| 0x0079 | Water Tank Level Monitoring | 1 | 1 | — |
 | 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
