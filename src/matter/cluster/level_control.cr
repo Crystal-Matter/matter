@@ -215,20 +215,20 @@ module Matter
         end
       end
 
-      attribute 0x0000, :current_level, UInt8, default: DEFAULT_MIN_LEVEL, nullable: true, persist: true, scene: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL, on_change: :current_level_updated
+      attribute 0x0000, :current_level, UInt8, default: DEFAULT_MIN_LEVEL, nullable: true, persist: true, scene: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL, validate: :validate_current_level, on_change: :current_level_updated
       attribute 0x0001, :remaining_time, UInt16, default: 0_u16, requires: :lighting
       attribute 0x0002, :min_level, UInt8, default: DEFAULT_MIN_LEVEL, persist: false, fixed: true
       attribute 0x0003, :max_level, UInt8, default: HIGHEST_LEVEL, persist: false, fixed: true
-      attribute 0x0004, :current_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
-      attribute 0x0005, :min_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
-      attribute 0x0006, :max_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
-      attribute 0x000F, :options, UInt8, default: 0_u8, writable: true
-      attribute 0x0010, :on_off_transition_time, UInt16, default: 0_u16, writable: true, optional: true, requires: :lighting
-      attribute 0x0011, :on_level, UInt8, nullable: true, writable: true
-      attribute 0x0012, :on_transition_time, UInt16, nullable: true, writable: true, optional: true, requires: :lighting
-      attribute 0x0013, :off_transition_time, UInt16, nullable: true, writable: true, optional: true, requires: :lighting
-      attribute 0x0014, :default_move_rate, UInt8, nullable: true, writable: true, optional: true, min: 1, requires: :lighting
-      attribute 0x4000, :start_up_current_level, UInt8, nullable: true, writable: true, requires: :lighting
+      attribute 0x0004, :current_frequency, UInt16, default: 0_u16, persist: false, scene: true, requires: :frequency
+      attribute 0x0005, :min_frequency, UInt16, default: 0_u16, persist: false, requires: :frequency
+      attribute 0x0006, :max_frequency, UInt16, default: 0_u16, persist: false, requires: :frequency
+      attribute 0x000F, :options, UInt8, default: 0_u8, writable: true, write_access: :operate, persist: false
+      attribute 0x0010, :on_off_transition_time, UInt16, default: 0_u16, writable: true, write_access: :operate, persist: false, optional: true, requires: :lighting
+      attribute 0x0011, :on_level, UInt8, nullable: true, writable: true, write_access: :operate, persist: false
+      attribute 0x0012, :on_transition_time, UInt16, nullable: true, writable: true, write_access: :operate, persist: false, optional: true, requires: :lighting
+      attribute 0x0013, :off_transition_time, UInt16, nullable: true, writable: true, write_access: :operate, persist: false, optional: true, requires: :lighting
+      attribute 0x0014, :default_move_rate, UInt8, nullable: true, writable: true, write_access: :operate, persist: false, optional: true, min: 1, requires: :lighting
+      attribute 0x4000, :start_up_current_level, UInt8, nullable: true, writable: true, write_access: :manage, persist: true, requires: :lighting
 
       # OnLevel must lie within the level range the device reports.
       before_write :on_level do |level|
@@ -239,10 +239,10 @@ module Matter
       command 0x01, :move, request: MoveRequest
       command 0x02, :step, request: StepRequest
       command 0x03, :stop, request: StopRequest
-      command 0x04, :move_to_level_with_on_off, request: MoveToLevelWithOnOffRequest, requires: :on_off
-      command 0x05, :move_with_on_off, request: MoveWithOnOffRequest, requires: :on_off
-      command 0x06, :step_with_on_off, request: StepWithOnOffRequest, requires: :on_off
-      command 0x07, :stop_with_on_off, request: StopWithOnOffRequest, requires: :on_off
+      command 0x04, :move_to_level_with_on_off, request: MoveToLevelWithOnOffRequest
+      command 0x05, :move_with_on_off, request: MoveWithOnOffRequest
+      command 0x06, :step_with_on_off, request: StepWithOnOffRequest
+      command 0x07, :stop_with_on_off, request: StopWithOnOffRequest
       command 0x08, :move_to_closest_frequency, request: MoveToClosestFrequencyRequest, requires: :frequency
 
       def initialize(
@@ -309,6 +309,12 @@ module Matter
         return if level
         clear_transition
         @turn_off_on_completion = false
+      end
+
+      private def validate_current_level(level : UInt8?) : Nil
+        return unless level
+        return if (@min_level..@max_level).includes?(level)
+        raise ArgumentError.new("CurrentLevel must be between MinLevel and MaxLevel")
       end
 
       # Endpoint wires the sibling OnOff server when the OO feature is enabled.

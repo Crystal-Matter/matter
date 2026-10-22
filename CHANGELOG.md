@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Level Control revision 7 conformance slice
+
+- Apply Operate and Manage write privileges from the Matter 1.6 XML, retain
+  only CurrentLevel and StartUpCurrentLevel across restarts, expose all eight
+  mandatory commands even without the OnOff feature, and mark CurrentFrequency
+  as a scene attribute. Reject host CurrentLevel updates outside configured
+  bounds before changing state. The server continues to advertise revision 6
+  while color-temperature coupling remains incomplete.
+
 ### Cross-ecosystem Joint Fabric control
 
 - Let a joining Administrator issue a group-CAT controller identity under

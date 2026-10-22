@@ -285,6 +285,10 @@ transition, the server cancels that transition and clears `RemainingTime`.
 `MinLevel` and `MaxLevel` are fixed configuration values: restoring saved
 runtime state keeps the newly configured bounds and clamps a restored known
 `CurrentLevel` into them.
+Direct host updates to `CurrentLevel` must stay within those bounds. Only
+`CurrentLevel` and `StartUpCurrentLevel` are nonvolatile; Options, transition
+settings, OnLevel, and frequency values start from their configured defaults
+after a restart.
 For a Lighting endpoint, `StartUpCurrentLevel` takes effect after persisted state
 is restored on ordinary `Device#start`: zero selects `MinLevel`, null retains
 the previous `CurrentLevel`, and another value selects that level. After an
