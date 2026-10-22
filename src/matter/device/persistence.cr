@@ -6,6 +6,7 @@ require "../fabric_table"
 require "../protocol/persistence"
 require "../cluster/cluster"
 require "../storage/backend"
+require "../commissioning/credential_journal"
 
 module Matter
   abstract class Device
@@ -49,12 +50,14 @@ module Matter
       getter backend : Storage::Backend
       getter fabric_table : FabricTable
       getter protocol_persistence : Protocol::Persistence::StorageBackend
+      getter recovered_added_fabric_index : UInt8?
 
       @debouncer : Debouncer
       @dirty_clusters : Set(Cluster::Base) = Set(Cluster::Base).new
 
       def initialize(@backend : Storage::Backend, max_fabrics : UInt8 = FabricTable::DEFAULT_MAX_FABRICS)
         @backend.open unless @backend.open?
+        @recovered_added_fabric_index = Commissioning::CredentialJournal.recover(@backend)
         @debouncer = Debouncer.new(SAVE_DEBOUNCE) { write_dirty }
 
         @fabric_table = FabricTable.new(@backend, max_fabrics: max_fabrics)
@@ -233,6 +236,15 @@ module Matter
       def flush : Nil
         @debouncer.cancel
         write_dirty
+      end
+
+      # Called after AccessControl state is restored and the provisional
+      # fabric's ACL has been durably removed. Until then the add journal stays
+      # present, so another restart repeats the cleanup safely.
+      def complete_credential_recovery : Nil
+        return unless @recovered_added_fabric_index
+        Commissioning::CredentialJournal.clear(@backend)
+        @recovered_added_fabric_index = nil
       end
 
       # Flushes and closes the backend.

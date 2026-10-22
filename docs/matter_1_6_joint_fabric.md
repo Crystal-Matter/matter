@@ -72,10 +72,15 @@ item below as covered only to the extent of its cited tests.
   metadata changes and fail-safe rollback report Fabrics and NOCs updates to
   active subscribers. ArmFailSafe(0) removes a pending AddNOC fabric or restores
   an UpdateNOC identity while the device remains running. The fail-safe's NOC
-  rollback snapshot is currently in memory: a process crash after AddNOC or
-  UpdateNOC and before expiry can leave the provisional fabric record in
-  persistent storage. A durable pending-credential journal and startup recovery
-  remain necessary before claiming crash-safe commissioning rollback.
+  rollback snapshot is also journaled to the device store before a fabric
+  document changes. At startup, an unacknowledged AddNOC is removed before CASE
+  or operational discovery starts, and an unacknowledged UpdateNOC restores its
+  previous certificate, key, node ID, and CATs. Fabric-scoped orphan ACL entries
+  are removed and persisted before the journal is cleared. A successful
+  CommissioningComplete clears the journal before acknowledging the command.
+  If a later callback or the network response fails, the credentials remain
+  committed, as with a lost acknowledgement. Terms and Conditions cluster
+  state is still persisted by the device's ordinary debounced cluster writer.
 - DNS-SD understands Joint Fabric `JF` role bits and `CM=3`. A Joint Fabric
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with

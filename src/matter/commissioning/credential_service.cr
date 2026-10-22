@@ -11,6 +11,7 @@ require "../crypto/certificate_validation"
 require "../certificate/attestation_certificate_manager"
 require "../certificate/certification_declaration"
 require "../interaction_model/status_code"
+require "./credential_journal"
 
 module Matter
   module Commissioning
@@ -427,6 +428,13 @@ module Matter
           return NocOutcome.new(NocStatus::InvalidPublicKey, debug_text: "NOC public key does not match CSR")
         end
 
+        # Flush the undo record before FabricTable writes a provisional
+        # identity. A process loss in either window leaves recoverable state.
+        next_index = @fabric_table.next_available_index
+        return NocOutcome.new(NocStatus::TableFull) unless next_index
+        CredentialJournal.begin_add(@fabric_table.backend, next_index)
+        @pending_added_fabric_index = next_index
+
         fabric = @fabric_table.add_fabric_auto_index(
           fabric_id: fabric_id,
           node_id: node_id,
@@ -437,10 +445,13 @@ module Matter
           vendor_id: admin_vendor_id,
           label: "",
           intermediate_cert: icac,
-          root_cert: root_cert
+          root_cert: root_cert,
+          fabric_index: next_index
         )
 
         unless fabric
+          CredentialJournal.clear(@fabric_table.backend)
+          @pending_added_fabric_index = nil
           return NocOutcome.new(NocStatus::TableFull, debug_text: "Failed to add fabric")
         end
 
@@ -518,9 +529,12 @@ module Matter
           return NocOutcome.new(NocStatus::InvalidPublicKey, debug_text: "NOC public key does not match CSR")
         end
 
-        @pending_noc_update = NocUpdateSnapshot.new(
+        snapshot = NocUpdateSnapshot.new(
           fabric.fabric_index, fabric.operational_cert, fabric.intermediate_cert,
           fabric.operational_key, fabric.node_id, fabric.cats.dup)
+
+        CredentialJournal.begin_update(@fabric_table.backend, fabric)
+        @pending_noc_update = snapshot
 
         fabric.operational_cert = noc
         fabric.intermediate_cert = icac
@@ -531,7 +545,12 @@ module Matter
           cat_node.extract_as_case_authenticated_tag if cat_node.case_authenticated_tag?
         end
 
-        @fabric_table.update_fabric(fabric)
+        begin
+          @fabric_table.update_fabric(fabric)
+        rescue ex
+          restore_noc_update(fabric, snapshot)
+          raise ex
+        end
 
         @pending.noc_added_or_updated = true
         @target.credentials_changed
@@ -633,19 +652,39 @@ module Matter
       # persists the restored CASE identity before the next session arrives.
       def rollback_pending : Nil
         if index = @pending_added_fabric_index
-          remove_fabric(index) if @fabric_table.get_fabric(index)
+          if @fabric_table.get_fabric(index)
+            remove_fabric(index)
+          else
+            # A fabric write can fail after the journal has reached disk but
+            # before FabricTable accepted the new in-memory entry.
+            @fabric_table.backend.delete(FabricTable::COLLECTION, index.to_s)
+            @target.fabric_forgotten(index)
+          end
         elsif snapshot = @pending_noc_update
           if fabric = @fabric_table.get_fabric(snapshot.fabric_index)
-            fabric.operational_cert = snapshot.noc
-            fabric.intermediate_cert = snapshot.icac
-            fabric.operational_key = snapshot.key
-            fabric.node_id = snapshot.node_id
-            fabric.cats = snapshot.cats
+            restore_noc_update(fabric, snapshot)
             @fabric_table.update_fabric(fabric)
             @target.credentials_changed
             notify_fabric_updated(fabric)
           end
         end
+        CredentialJournal.clear(@fabric_table.backend)
+        reset_pending
+      end
+
+      private def restore_noc_update(fabric : Fabric, snapshot : NocUpdateSnapshot) : Nil
+        fabric.operational_cert = snapshot.noc
+        fabric.intermediate_cert = snapshot.icac
+        fabric.operational_key = snapshot.key
+        fabric.node_id = snapshot.node_id
+        fabric.cats = snapshot.cats
+      end
+
+      # CommissioningComplete is acknowledged only after the durable undo
+      # record is removed. A crash before this point rolls back on restart;
+      # a crash after it preserves the committed identity.
+      def commit_pending : Nil
+        CredentialJournal.clear(@fabric_table.backend)
         reset_pending
       end
 

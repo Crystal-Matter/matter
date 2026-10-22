@@ -47,7 +47,7 @@ private def commissioned_service : {Matter::Commissioning::CredentialService, UI
     admin_vendor_id: 0xFFF1_u16,
     session_id: TEST_SESSION
   )
-  service.reset_pending
+  service.commit_pending
   {service, outcome.fabric_index.as(UInt8)}
 end
 
@@ -250,7 +250,7 @@ module Matter::Commissioning
         ).ok?.should be_true
 
         # A second commissioning session, same fabric and root certificate
-        service.reset_pending
+        service.commit_pending
         commission(service)
         outcome = service.add_noc(
           noc: CommissioningCertificates.noc,
