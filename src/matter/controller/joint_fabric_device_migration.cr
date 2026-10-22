@@ -604,10 +604,12 @@ module Matter
         getter fabric_id : UInt64
         getter root_public_key : Bytes
         getter old_icac_public_key : Bytes
+        getter admin_vendor_id : UInt16
 
         def initialize(@icac : Bytes, @private_key : Bytes,
                        @fabric_id : UInt64, @root_public_key : Bytes,
-                       @old_icac_public_key : Bytes)
+                       @old_icac_public_key : Bytes,
+                       @admin_vendor_id : UInt16 = FabricInfo::DEFAULT_ADMIN_VENDOR_ID)
         end
 
         def validate_fabrics!(old_fabric : FabricInfo, anchor : FabricInfo) : Nil
@@ -620,7 +622,8 @@ module Matter
         end
 
         def issue_noc(anchor : FabricInfo, node_id : UInt64, public_key : Bytes,
-                      crypto : Crypto::CryptoBase) : Bytes
+                      crypto : Crypto::CryptoBase,
+                      case_authenticated_tags : Array(UInt32) = [] of UInt32) : Bytes
           unless @fabric_id == anchor.fabric_id && @root_public_key == anchor.root_public_key
             raise Matter::AuthenticationError.new("Cross-signed issuer selected another Anchor fabric")
           end
@@ -634,7 +637,34 @@ module Matter
             public_key: public_key, fabric_id: anchor.fabric_id, node_id: node_id,
             issuer_key: key, issuer_rcac_id: rcac_id, issuer_icac_id: icac_id,
             issuer_certificate: @icac, serial: crypto.random_bytes(CERTIFICATE_SERIAL_BYTES),
-            crypto: crypto)
+            crypto: crypto, case_authenticated_tags: case_authenticated_tags)
+        end
+
+        # B can issue a controller identity on A's fabric using the same
+        # cross-signed ICAC it uses for migrated devices. Only the operational
+        # private key is returned; B keeps its ICAC signing key with the issuer.
+        def delegate_controller(anchor : FabricInfo, node_id : UInt64,
+                                group_cat : UInt16, group_cat_version : UInt16,
+                                crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : FabricInfo
+          unless DataType::NodeId.valid_joint_fabric?(node_id) && node_id != anchor.controller_node_id
+            raise Matter::ConfigurationError.new("Delegated Joint Fabric controller needs a distinct operational Node ID")
+          end
+          if group_cat == 0_u16 || group_cat.in?(Cluster::JointFabricDatastore::ANCHOR_CAT,
+               Cluster::JointFabricDatastore::ADMINISTRATOR_CAT) ||
+             group_cat_version.in?(0_u16, UInt16::MAX)
+            raise Matter::ConfigurationError.new("Invalid Joint Fabric group CAT or version")
+          end
+          unless @fabric_id == anchor.fabric_id && @root_public_key == anchor.root_public_key
+            raise Matter::AuthenticationError.new("Cross-signed issuer selected another Anchor fabric")
+          end
+          tag = DataType::CaseAuthenticatedTag.create(group_cat, group_cat_version)
+          controller_key = crypto.create_key_pair
+          noc = issue_noc(anchor, node_id, controller_key.public_key, crypto, [tag.value])
+          Crypto::MatterCertificate::Validation.verify_chain(noc, @icac,
+            anchor.root_public_key, anchor.root_cert)
+          FabricInfo.new(anchor.fabric_id, node_id, anchor.ipk_value.dup,
+            anchor.root_cert.dup, anchor.root_public_key.dup, noc, controller_key.private_key,
+            admin_vendor_id: @admin_vendor_id, intermediate_cert: @icac.dup)
         end
       end
 
@@ -678,7 +708,8 @@ module Matter
           raise Matter::CertificateError.new("Migration requires the joining Administrator identity, not the Anchor identity")
         end
         CrossSignedIssuer.new(cross_signed_icac.dup, icac_private_key.dup,
-          anchor.fabric_id, anchor.root_public_key.dup, old_public.dup)
+          anchor.fabric_id, anchor.root_public_key.dup, old_public.dup,
+          old_fabric.admin_vendor_id)
       end
 
       # Commissioner's hook ensures the AddNOC ACL grants the Administrator

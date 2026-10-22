@@ -31,6 +31,17 @@ item below as covered only to the extent of its cited tests.
   callers should observe its status before assuming the controller can access
   that node. Existing `grant_admin` remains available for fabrics that do
   not use the Joint Fabric Datastore.
+- After JCM, a joining Administrator can use
+  `JointFabricDeviceMigration.cross_signed_issuer` with its original ICAC
+  private key and A's cross-signed ICAC. The resulting issuer's
+  `delegate_controller` method gives a B-ecosystem controller its own
+  operational key and a group CAT NOC on Fabric A. Install that identity in a
+  controller store, then call `SharedFabric.grant_joint_admin` through A's
+  Datastore for each target device and wait for the node ACL to commit.
+  The issuer keeps B's ICAC private key; the delegated controller receives
+  only its operational key. The two-JFA E2E scenario verifies that the
+  migrated A device denies access before the Datastore grant, accepts B's
+  cross-signed controller afterward, and retains access after restart.
 - Joint Fabric Administrator (0x0753) and Datastore (0x0752) have typed Matter
   1.6 schemas and cluster handlers. Datastore entries track Pending,
   Committed, DeletePending, and CommitFailed. The controller synchronizer

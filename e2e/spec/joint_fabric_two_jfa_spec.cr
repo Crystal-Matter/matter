@@ -32,6 +32,27 @@ private def jfa_command(device_name : String,
   end
 end
 
+private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
+                             session : Matter::Session::SecureContext,
+                             peer : Socket::IPAddress, node_id : UInt64,
+                             subject : UInt64, timeout : Time::Span) : Nil
+  deadline = Time.instant + timeout
+  loop do
+    report = im.read_attribute(session: session, peer: peer, endpoint_id: 1_u16,
+      cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_NODE_ACL_LIST)
+    data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    acl = Array(Matter::Cluster::JointFabricDatastore::DatastoreACLEntryStruct).from_tlv(data.to_slice)
+    entry = acl.find do |candidate|
+      candidate.node_id == node_id && candidate.acl_entry.subjects.try(&.includes?(subject))
+    end
+    return if entry && entry.status_entry.state.committed?
+    raise Matter::TimeoutError.new("B controller ACL did not commit for migrated A node") if Time.instant >= deadline
+    sleep 1.second
+  end
+end
+
 private def commission_third_administrator(anchor_store : Matter::Controller::StateStore,
                                            anchor_client : Matter::Controller::Client,
                                            anchor_bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
@@ -522,6 +543,74 @@ describe "three provisioned Joint Fabric Administrators" do
     b_nodes = Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct).from_tlv(b_nodes_data.to_slice)
     b_nodes.any?(&.node_id.==(0xB201_u64)).should be_false
 
+    # B retains its original ICAC key after JCM. A cross-signed that key, so
+    # a B-issued controller can join A's fabric with its own group CAT while
+    # the migrated device has only the single A fabric installed. The local
+    # Administrator identity below satisfies the issuer's joining-identity
+    # validation; the ICAC itself came from the live JCM exchange above.
+    crypto = Matter::Crypto::StandardCrypto.new
+    joined_key = crypto.create_key_pair
+    joined_noc = anchor_bootstrap.issue_noc(0xA103_u64, joined_key.public_key,
+      [0xFFFF_0001_u32], crypto)
+    joined_identity = Matter::Controller::FabricInfo.new(
+      anchor_bootstrap.fabric.fabric_id, 0xA103_u64,
+      anchor_bootstrap.fabric.ipk_value, anchor_bootstrap.fabric.root_cert,
+      anchor_bootstrap.fabric.root_public_key, joined_noc, joined_key.private_key,
+      admin_vendor_id: joiner_bootstrap.fabric.admin_vendor_id,
+      intermediate_cert: anchor_bootstrap.fabric.intermediate_cert)
+    b_issuer = Matter::Controller::JointFabricDeviceMigration.cross_signed_issuer(
+      joiner_bootstrap.fabric, joined_identity, cross_signed_icac,
+      joiner_bootstrap.fabric.intermediate_private_key.as(Bytes))
+    b_controller_node_id = 0xA105_u64
+    b_group_cat = 0x1235_u16
+    b_group_version = 2_u16
+    b_controller = b_issuer.delegate_controller(joined_identity,
+      b_controller_node_id, b_group_cat, b_group_version, crypto)
+    Matter::Crypto::MatterCertificate::Validation.verify_chain(b_controller.controller_noc,
+      cross_signed_icac, anchor_bootstrap.fabric.root_public_key,
+      anchor_bootstrap.fabric.root_cert)
+    b_controller.intermediate_cert.should eq(cross_signed_icac)
+    b_controller.intermediate_cert.should_not eq(joined_identity.intermediate_cert)
+    b_controller_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    Matter::Controller::SharedFabric.install(b_controller_store, b_controller)
+    b_controller_client = Matter::Controller::Client.new(unsecured_source_node_id: b_controller_node_id)
+    b_controller_im = Matter::Controller::ImClient.new(b_controller_client, E2E::COMMAND_TIMEOUT)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
+      migration_peer, b_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    denied = b_controller_im.read_attribute(session: b_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    denied.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_status.as(Matter::InteractionModel::AttributeStatusIB)
+      .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
+
+    Matter::Controller::SharedFabric.grant_joint_admin(anchor_im, anchor_session, anchor_peer,
+      1_u16, 0xA201_u64, 1_u16, 11_u16, "B ecosystem controllers", b_controller)
+    b_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(b_group_cat, b_group_version)).id
+    wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
+      0xA201_u64, b_cat_subject, 120.seconds)
+    turned_on = b_controller_im.invoke(session: b_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_ON, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(turned_on)
+    on_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    on_data = on_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(on_data.to_slice).should be_true
+
+    migration_target.restart!
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
+      migration_peer, b_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    persisted = b_controller_im.read_attribute(session: b_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    persisted_data = persisted.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(persisted_data.to_slice).should be_true
+
     before_transfer = jfa_command("matter_joint_fabric_anchor",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-new-anchor", 0xA102_u64,
         nonce: Random::Secure.hex(8)))
@@ -707,6 +796,7 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     repeated.status.should eq("ok"), repeated.error.to_s
   ensure
+    b_controller_client.try(&.close)
     anchor_client.try(&.close)
     joiner_client.try(&.close)
     third_client.try(&.close)
