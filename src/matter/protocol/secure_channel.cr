@@ -30,6 +30,9 @@ module Matter
       # across all peers while allowing a new commissioner to make progress.
       MAX_HANDSHAKES_IN_FLIGHT = 64
 
+      # Bound rejection sampling even if a random source repeats an unusable ID.
+      SESSION_ID_ALLOCATION_ATTEMPTS = 32
+
       # SPAKE2+ context prefix (Matter spec 3.10).
       SPAKE_CONTEXT = "CHIP PAKE V1 Commissioning"
 
@@ -158,7 +161,7 @@ module Matter
       # An encrypted session ID must be nonzero and must not alias either an
       # established session or any handshake that may still establish one.
       private def allocate_responder_session_id : UInt16
-        loop do
+        SESSION_ID_ALLOCATION_ATTEMPTS.times do
           id = @session_id_candidate.call
           next if id == 0_u16 || @registry.session(id)
           next if @pase_handshakes.values.any?(&.responder_session_id.==(id))
@@ -166,6 +169,7 @@ module Matter
           next if @case_resume_handshakes.values.any?(&.responder_session_id.==(id))
           return id
         end
+        raise Matter::ProtocolError.new("Could not allocate an unused responder session ID")
       end
 
       # Handles a Secure Channel message. Returns whether it was one this

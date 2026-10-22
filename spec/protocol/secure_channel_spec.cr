@@ -151,6 +151,25 @@ describe Matter::Protocol::SecureChannel do
     candidates.should be_empty
   end
 
+  it "bounds rejected CASE responder ID draws without sending Sigma2" do
+    draws = 0
+    occupied_id = 0x2222_u16
+    fixture = build_secure_channel(-> {
+      draws += 1
+      occupied_id
+    })
+    active = Matter::Session::SecureContext.new(occupied_id, 0x1111_u16,
+      Matter::Session::SessionType::Unicast, Bytes.new(16), Bytes.new(16))
+    fixture.registry.establish_session(active)
+    fabric = case_test_fabric
+    fixture.fabric_table.add_fabric(fabric).should be_true
+
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x1111_u16), PEER).should be_true
+    draws.should eq(Matter::Protocol::SecureChannel::SESSION_ID_ALLOCATION_ATTEMPTS)
+    fixture.transport.sent_packets.should be_empty
+    fixture.channel.handshakes_in_flight.should eq(0)
+  end
+
   it "keeps a separate handshake per exchange, so two commissioners do not collide" do
     fixture = build_secure_channel
 
