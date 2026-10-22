@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Soil Measurement revision 1
+
+- Add the Matter 1.6 Soil Measurement server and Soil Sensor device type. The
+  fixed accuracy structure reports a single full-span SoilMoisture range with
+  at most 10.00% maximum error; nullable percentage readings are range checked
+  before publication. A Soil Sensor example is read through official chip-tool.
+
 ### Level Control revision 7 conformance slice
 
 - Apply Operate and Manage write privileges from the Matter 1.6 XML, retain

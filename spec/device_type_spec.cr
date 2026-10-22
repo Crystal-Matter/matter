@@ -73,6 +73,16 @@ describe Matter::DeviceType do
       end
     end
 
+    it "defines the Matter 1.6 Soil Sensor with required soil measurement" do
+      device_type = Matter::DeviceType.for(Matter::DeviceType::SOIL_SENSOR)
+
+      device_type.name.should eq("Soil Sensor")
+      device_type.revision.should eq(1_u16)
+      device_type.requires_cluster?(0x0003_u32).should be_true
+      device_type.requires_cluster?(0x0430_u32).should be_true
+      device_type.supports_optional_cluster?(0x0402_u32).should be_true
+    end
+
     it "checks cluster requirements" do
       device_type = Matter::DeviceType.on_off_light
 
