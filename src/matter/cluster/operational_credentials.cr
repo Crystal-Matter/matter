@@ -475,7 +475,7 @@ module Matter
       # ameba:enable Naming/AccessorMethodName
 
       def sign_vid_verification_request(request : Tlv::SignVIDVerificationRequest) : Tlv::SignVIDVerificationResponse | InteractionModel::Status
-        return InteractionModel::Status.invalid_command unless request.client_challenge.size == 32
+        return InteractionModel::Status.constraint_error unless request.client_challenge.size == 32
         fabric = @fabric_table.get_fabric(request.fabric_index)
         return InteractionModel::Status.constraint_error unless fabric
         session_id = request_session_id

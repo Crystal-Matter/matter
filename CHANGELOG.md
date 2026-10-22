@@ -47,6 +47,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returns InvalidCommand; SetVIDVerificationStatement returns ConstraintError,
   matching the Matter 1.6 operational range of 1 through 0xFFF4 and the
   official `TC_OPCREDS_3_8` boundary check.
+- Return ConstraintError for a well-typed SignVIDVerificationRequest challenge
+  whose length is not 32 bytes, as required by official `TC_OPCREDS_3_8` step 5.
 
 ### Wake On LAN
 

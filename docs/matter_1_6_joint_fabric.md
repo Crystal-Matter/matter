@@ -64,6 +64,8 @@ item below as covered only to the extent of its cited tests.
   requires a trusted operational root or verified VID statement.
   AddNOC and SetVIDVerificationStatement enforce operational Vendor IDs from
   1 through 0xFFF4; reserved IDs return their Matter 1.6 command statuses.
+  SignVIDVerificationRequest reports ConstraintError for a challenge with an
+  invalid length while preserving the command's typed TLV decoding.
 - DNS-SD understands Joint Fabric `JF` role bits and `CM=3`. A Joint Fabric
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with

@@ -1,6 +1,18 @@
 require "../support/operational_credentials_helpers"
 
 describe "OperationalCredentials SignVIDVerificationRequest" do
+  it "reports ConstraintError for a well-typed challenge with the wrong length on the command wire" do
+    cluster = Matter::Cluster::OperationalCredentials.new(Matter::FabricTable.new(Matter::Storage::Memory.new))
+    [31, 33].each do |length|
+      request = Matter::Cluster::OperationalCredentials::Tlv::SignVIDVerificationRequest.new(
+        1_u8, Bytes.new(length, 0x5A_u8))
+      response = cluster.invoke_command(
+        Matter::Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
+        request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
+      response.should eq(Matter::InteractionModel::Status.constraint_error)
+    end
+  end
+
   it "rejects reserved AddNOC administrator Vendor IDs before entering commissioning" do
     cluster = Matter::Cluster::OperationalCredentials.new(Matter::FabricTable.new(Matter::Storage::Memory.new))
     [0_u16, 0xFFF5_u16, 0xFFFF_u16].each do |vendor_id|
