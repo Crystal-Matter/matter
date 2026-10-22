@@ -781,10 +781,7 @@ module Matter
           )
         rescue ex : ArgumentError
           Log.warn(exception: ex) { "ScanNetworks rejected" }
-          return Tlv::ScanNetworksResponse.new(
-            status_code: OUT_OF_RANGE_STATUS,
-            debug_text: ex.message
-          )
+          return scan_networks_response(OUT_OF_RANGE_STATUS, ex.message)
         end
 
         # Call high-level handler (pass true - failsafe checks done at protocol layer)
@@ -823,11 +820,27 @@ module Matter
                          end
 
         # Use TLV::Serializable struct for response
+        scan_networks_response(
+          Tlv::StatusCode.new(response.networking_status.value),
+          response.debug_text,
+          wifi_results,
+          thread_results
+        )
+      end
+
+      # Feature-present scan result lists are required by Matter 1.6 even when
+      # the scan found no networks or returned a networking error.
+      private def scan_networks_response(
+        status_code : Tlv::StatusCode,
+        debug_text : String? = nil,
+        wifi_results : Array(Tlv::WiFiInterfaceScanResult)? = nil,
+        thread_results : Array(Tlv::ThreadInterfaceScanResult)? = nil,
+      ) : Tlv::ScanNetworksResponse
         Tlv::ScanNetworksResponse.new(
-          status_code: Tlv::StatusCode.new(response.networking_status.value),
-          debug_text: response.debug_text,
-          wifi_scan_results: wifi_results.try { |wifi_res| wifi_res.empty? ? nil : wifi_res },
-          thread_scan_results: thread_results.try { |thread_res| thread_res.empty? ? nil : thread_res }
+          status_code: status_code,
+          debug_text: debug_text,
+          wifi_scan_results: @feature_map.wi_fi_network_interface? ? (wifi_results || [] of Tlv::WiFiInterfaceScanResult) : nil,
+          thread_scan_results: @feature_map.thread_network_interface? ? (thread_results || [] of Tlv::ThreadInterfaceScanResult) : nil
         )
       end
 

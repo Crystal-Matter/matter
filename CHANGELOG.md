@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Network commissioning scan responses
+
+- Include the feature-required Wi-Fi or Thread scan result list on the wire
+  even when a scan finds no networks or reports a networking error. An empty
+  list remains an empty TLV array instead of disappearing from the response.
+
 ### Operational Credentials fabric-scoped commands
 
 - Encode UpdateNOC with only NOCValue and optional ICACValue, and
@@ -37,6 +43,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restoring stale runtime values; clamp a restored known CurrentLevel to the
   configured range. Mark CurrentLevel as a scene attribute and reject zero
   writes to nullable DefaultMoveRate, whose defined range starts at 1.
+
 ### Group Key Management revision 3
 
 - Advertise the Matter 1.6 revision 3 ClusterRevision while retaining the
