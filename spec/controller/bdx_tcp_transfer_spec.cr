@@ -5,16 +5,25 @@ require "../../src/matter/transport/tcp_enabled_transport"
 
 private alias BdxTcp = Matter::Protocol::Bdx
 
+private class MeasuredBdxTcpTransport < Matter::Transport::TcpEnabledTransport
+  getter max_sent_packet_size : Int32 = 0
+
+  protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
+    @max_sent_packet_size = {@max_sent_packet_size, data.size}.max if peer_address.port == TOKEN_PORT
+    super
+  end
+end
+
 # A complete encrypted BDX exchange exercises TCP framing, connection routing,
 # and the existing device/controller handler without an external commissioner.
 describe "BDX over encrypted Matter TCP" do
   it "streams blocks on a connection-bound CASE session without UDP MRP" do
     require_udp_sockets!
-    transport = Matter::Transport::TcpEnabledTransport.new(port: 0)
+    transport = MeasuredBdxTcpTransport.new(port: 0)
     handler = Matter::Protocol::MessageHandler.new(transport,
       setup_pin: 20202021_u32, discriminator: 3840_u16,
       fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
-    contents = Bytes.new(1537) { |index| (index % 251).to_u8 }
+    contents = Bytes.new(8193) { |index| (index % 251).to_u8 }
     handler.bdx.on_download = ->(_session : Matter::Session::SecureContext, init : BdxTcp::Wire::Init) do
       init.file_designator == "download".to_slice ? BdxTcp::Responder::Source.new(IO::Memory.new(contents), contents.size.to_u64).as(BdxTcp::Responder::Source?) : nil
     end
@@ -64,8 +73,9 @@ describe "BDX over encrypted Matter TCP" do
     begin
       sink = IO::Memory.new
       bdx.download(controller_session, peer, "download".to_slice,
-        sink, max_bytes: 2048_u64, block_size: 512_u16).should eq(contents.size.to_u64)
+        sink, max_bytes: 9000_u64, block_size: 4096_u16).should eq(contents.size.to_u64)
       sink.to_slice.should eq(contents)
+      transport.max_sent_packet_size.should be > Matter::Transport::UDPTransport::MAX_DATAGRAM_SIZE
       controller.transport.as(Matter::Transport::TcpEnabledTransport).pending_reliable_count.should eq(0)
       transport.pending_reliable_count.should eq(0)
     ensure

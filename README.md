@@ -366,9 +366,12 @@ port and advertise `T=1`. A controller opts in with
 device's operational IP address, then passes the returned connection token as
 the `peer` to `CasePairing#pair` and subsequent client methods. The token is
 valid only while that TCP connection remains open; reconnecting requires a new
-CASE session. UDP stays available on the same port. TCP packets remain capped
-at 1280 bytes until maximum-payload negotiation and large Interaction Model
-messages are implemented.
+CASE session. UDP stays available on the same port. TCP packets are bounded at
+63,000 bytes and can carry larger Read and Invoke responses or BDX blocks on
+the connection-bound secure session. The library uses a conservative
+60,000-byte Interaction Model payload budget. Oversized subscription updates
+are logged without advancing their event cursor; chunked update delivery is
+still pending.
 
 ### Bulk Data Exchange
 

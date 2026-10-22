@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/transport/tcp_enabled_transport"
+require "../../src/matter/protocol/response_sender"
 
 private alias TcpTransport = Matter::Transport::TcpEnabledTransport
 private alias Codec = Matter::Codec::MessageCodec
@@ -24,6 +25,31 @@ end
 describe TcpTransport do
   before_each { require_udp_sockets! }
 
+  it "grants the large IM budget only to a live connection-bound secure session" do
+    server = TcpTransport.new(port: 0)
+    client = TcpTransport.new(port: 0)
+    server.start
+    client.start
+    begin
+      peer = client.connect_tcp(Socket::IPAddress.new("::1", server.port))
+      session = Matter::Session::SecureContext.new(
+        session_id: 1_u16, peer_session_id: 2_u16,
+        session_type: Matter::Session::SessionType::Unicast,
+        encryption_key: Bytes.new(16, 1_u8), decryption_key: Bytes.new(16, 2_u8))
+      sender = Matter::Protocol::ResponseSender.new(client, Matter::Protocol::MrpCache.new(client))
+      sender.im_payload_limit(session, peer).should eq(Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE)
+      session.bind_tcp_peer(peer)
+      sender.im_payload_limit(session, peer).should eq(Matter::Protocol::IMHandler::MAX_TCP_REPORT_PAYLOAD_SIZE)
+      sender.im_payload_limit(session, Socket::IPAddress.new("::1", server.port))
+        .should eq(Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE)
+      client.disconnect_tcp(peer)
+      sender.im_payload_limit(session, peer).should eq(Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE)
+    ensure
+      client.close
+      server.close
+    end
+  end
+
   it "routes framed Matter packets and replies through a live TCP connection token" do
     server = TcpTransport.new(port: 0)
     client = TcpTransport.new(port: 0)
@@ -45,7 +71,7 @@ describe TcpTransport do
       peer.port.should eq(0)
       client.tcp_peer?(peer).should be_true
       expect_raises(Matter::ProtocolError) do
-        client.send_raw(Bytes.new(TcpTransport::APPLICATION_MESSAGE_LIMIT + 1, 0_u8), peer)
+        client.send_raw(Bytes.new(TcpTransport::MAX_TCP_PACKET_SIZE + 1, 0_u8), peer)
       end
       client.send_message(tcp_test_message(7_u16), peer)
 
@@ -125,7 +151,9 @@ describe TcpTransport do
         sleep 10.milliseconds
       end
       server.tcp_connection_count.should eq(1)
-      socket.write(Bytes[0x01, 0x05, 0x00, 0x00]) # 1281 > default limit
+      oversized = Bytes.new(Matter::Transport::TcpFrameCodec::LENGTH_PREFIX_SIZE)
+      IO::ByteFormat::LittleEndian.encode((TcpTransport::MAX_TCP_PACKET_SIZE + 1).to_u32, oversized)
+      socket.write(oversized)
       deadline = Time.instant + 2.seconds
       until server.tcp_connection_count == 0 || Time.instant >= deadline
         sleep 10.milliseconds
@@ -133,6 +161,35 @@ describe TcpTransport do
       server.tcp_connection_count.should eq(0)
     ensure
       socket.close
+      server.close
+    end
+  end
+
+  it "receives a framed Matter packet larger than the UDP MTU" do
+    server = TcpTransport.new(port: 0)
+    client = TcpTransport.new(port: 0)
+    incoming = Channel(Codec::Message).new(1)
+    server.on_message = ->(msg : Codec::Message, _peer : Socket::IPAddress) {
+      incoming.send(msg)
+      nil
+    }
+    server.start
+    client.start
+    begin
+      peer = client.connect_tcp(Socket::IPAddress.new("::1", server.port))
+      original = tcp_test_message(25_u16)
+      large = Codec::Message.new(original.packet_header, original.payload_header,
+        Bytes.new(4096, 0xa5_u8))
+      client.send_message(large, peer)
+      received = nil.as(Codec::Message?)
+      select
+      when received = incoming.receive
+      when timeout(2.seconds)
+      end
+      received.should_not be_nil
+      received.as(Codec::Message).payload.should eq(large.payload)
+    ensure
+      client.close
       server.close
     end
   end

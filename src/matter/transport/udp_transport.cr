@@ -354,6 +354,9 @@ module Matter
       # The one place bytes leave the process. Specs override this to capture
       # what would have gone out rather than bind a socket.
       protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
+        if data.size > MAX_DATAGRAM_SIZE
+          raise Matter::ProtocolError.new("Matter UDP packet exceeds datagram limit")
+        end
         # The transport owns an AF_INET6 dual-stack socket. Darwin rejects an
         # AF_INET destination on that socket even with IPV6_V6ONLY disabled;
         # send IPv4 destinations through their mapped IPv6 representation.

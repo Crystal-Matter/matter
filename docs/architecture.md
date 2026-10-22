@@ -152,8 +152,15 @@ rejects invalid frame lengths before allocation, times out incomplete frames
 and idle sockets, and rejects group packets. TCP does not use UDP MRP retries.
 TCP CASE sessions and their subscriptions are not restored after restart;
 controllers establish a new CASE session on a new connection.
-TCP application packets remain limited to 1280 bytes until large-payload CASE
-negotiation and Interaction Model sizing are implemented.
+The pinned Matter 1.6 SDK permits large payloads for a secure session whose
+peer transport is TCP; CASE does not exchange a separate maximum-payload
+field. Crystal Matter caps TCP packets at 63,000 bytes, and uses a 60,000-byte
+Interaction Model TLV budget only on a live TCP token bound to the secure
+session. UDP retains its 1280-byte packet cap and 1100-byte TLV budget. BDX
+may negotiate blocks up to 60,000 bytes on TCP; UDP stays at 1024 bytes.
+Subscription updates that exceed their transport budget are logged and left
+unsent with the event cursor unchanged. Chunked updates on a device-initiated
+exchange still need their own acknowledgement state.
 
 Unsecured Secure Channel replies use a separate bounded replay cache keyed by
 the sending socket, optional source Node ID, and request counter. The transport

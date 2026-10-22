@@ -15,9 +15,11 @@ module Matter
     class TcpEnabledTransport < UDPTransport
       Log = ::Log.for("matter.transport.tcp_enabled_transport")
 
-      # CASE 1.6 in this library has no max-payload negotiation yet. Keep
-      # application packets at the ordinary Matter UDP limit on both paths.
-      APPLICATION_MESSAGE_LIMIT   = UDPTransport::MAX_DATAGRAM_SIZE
+      # The Matter SDK's default large packet buffer is 64,000 bytes and its
+      # TCP frame includes four more bytes. Leave headroom for builds with
+      # slightly smaller reserves and bound allocations before authentication.
+      MAX_TCP_PACKET_SIZE         = 63_000
+      APPLICATION_MESSAGE_LIMIT   = MAX_TCP_PACKET_SIZE
       DEFAULT_MAX_TCP_CONNECTIONS = 16
       READ_TIMEOUT                = 10.seconds
       FRAME_TIMEOUT               = 10.seconds
@@ -141,10 +143,10 @@ module Matter
         end
         connection = @tcp_mutex.synchronize { @tcp_connections[peer_address]? }
         raise Matter::TransportError.new("Matter TCP connection is closed") unless connection
-        if data.size > APPLICATION_MESSAGE_LIMIT
-          raise Matter::ProtocolError.new("Matter TCP large payload is not negotiated")
+        if data.size > MAX_TCP_PACKET_SIZE
+          raise Matter::ProtocolError.new("Matter TCP packet exceeds large payload limit")
         end
-        frame = TcpFrameCodec.encode(data.to_slice, APPLICATION_MESSAGE_LIMIT)
+        frame = TcpFrameCodec.encode(data.to_slice, MAX_TCP_PACKET_SIZE)
         connection.write_mutex.synchronize do
           raise Matter::TransportError.new("Matter TCP connection is closed") if connection.socket.closed?
           connection.socket.write(frame)
@@ -221,7 +223,7 @@ module Matter
       end
 
       private def read_loop(socket : TCPSocket, token : Socket::IPAddress) : Nil
-        codec = TcpFrameCodec.new(APPLICATION_MESSAGE_LIMIT)
+        codec = TcpFrameCodec.new(MAX_TCP_PACKET_SIZE)
         buffer = Bytes.new(READ_BUFFER_SIZE)
         last_activity = Time.instant
         frame_started_at : Time::Instant? = nil
@@ -257,8 +259,8 @@ module Matter
 
       private def dispatch_tcp_packet(wire : Bytes, token : Socket::IPAddress) : Nil
         raise Matter::ProtocolError.new("Matter TCP packet is truncated") if wire.size < MIN_PACKET_SIZE
-        if wire.size > APPLICATION_MESSAGE_LIMIT
-          raise Matter::ProtocolError.new("Matter TCP large payload is not negotiated")
+        if wire.size > MAX_TCP_PACKET_SIZE
+          raise Matter::ProtocolError.new("Matter TCP packet exceeds large payload limit")
         end
         packet = Codec::MessageCodec::Base.decode_packet(wire)
         if packet.header.session_type == Codec::MessageCodec::SessionType::Group

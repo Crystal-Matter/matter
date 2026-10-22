@@ -102,9 +102,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CASE/PASE and Interaction Model handler with UDP. Connections use one-time
   local route tokens; secure sessions stay bound to their authenticated TCP
   connection, and closed tokens cannot fall back to UDP.
-- Retain the 1280-byte application-packet limit on TCP. The pinned Matter 1.6
-  SDK does not exchange a maximum TCP payload in CASE session parameters, so
-  large-payload interactions remain unavailable pending negotiation support.
+- Permit a bounded 63,000-byte TCP packet, 60,000-byte Interaction Model
+  payload, and negotiated BDX block for a live connection-bound secure session.
+  The pinned Matter 1.6 SDK selects its large-payload budget from the TCP peer
+  transport, without a separate CASE maximum-payload exchange. Keep the UDP
+  packet cap at 1280 bytes and reject oversized subscription updates without
+  advancing their event cursor; chunked subscription updates remain pending.
 
 ### Controller session ID allocation
 

@@ -264,9 +264,20 @@ module Matter
         events : Array(InteractionModel::EventReportIB),
       ) : Nil
         payload = IMHandler.encode_report_data(reports, subscription.subscription_id, event_reports: events)
+        limit = @sender.im_payload_limit(subscription.session, subscription.peer)
+        if payload.size > limit
+          Log.warn do
+            "Subscription update omitted: subscription_id=#{subscription.subscription_id} " \
+            "payload=#{payload.size} exceeds transport limit=#{limit}"
+          end
+          return
+        end
         Log.trace { "Subscription update ReportData TLV (#{payload.size} bytes): #{payload.hexstring}" }
 
         @sender.send_report(subscription.session, subscription.peer, payload)
+        if latest_event = events.compact_map(&.event_data.try(&.event_number)).max?
+          subscription.last_event_number = latest_event
+        end
         subscription.last_report_time = Time.utc
       end
 
@@ -282,14 +293,13 @@ module Matter
         )
       end
 
-      # Turns *records* into reports and advances the subscription's cursor.
+      # Turns *records* into reports. The cursor advances only after sending.
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),
       ) : Array(InteractionModel::EventReportIB)
         return [] of InteractionModel::EventReportIB if records.empty?
 
-        subscription.last_event_number = records.last.event_number
         records.map { |record| InteractionModel::EventReportIB.new(event_data: IMHandler.build_event_data(record)) }
       end
 

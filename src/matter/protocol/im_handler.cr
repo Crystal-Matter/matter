@@ -649,6 +649,9 @@ module Matter
       # Matter payload header (~13) + MAC tag (16) = ~89 bytes overhead
       # 1280 - 89 = ~1191 bytes available for TLV payload, use 1100 for safety margin
       MAX_REPORT_PAYLOAD_SIZE = 1100
+      # The default SDK TCP large-buffer limit is 64,000 bytes. Reserve room
+      # for Matter packet/payload headers, MIC, and the frame length prefix.
+      MAX_TCP_REPORT_PAYLOAD_SIZE = 60_000
 
       # Bytes reserved in every chunk for the ReportData structure itself:
       # structure start (~1) + attribute array start (~2) + moreChunkedMessages
@@ -673,14 +676,18 @@ module Matter
         attribute_reports : Array(InteractionModel::AttributeReportIB),
         subscription_id : UInt32? = nil,
         event_reports : Array(InteractionModel::EventReportIB)? = nil,
+        max_payload_size : Int32 = MAX_REPORT_PAYLOAD_SIZE,
       ) : Array(Tuple(Bytes, Bool))
+        unless max_payload_size.in?(MAX_REPORT_PAYLOAD_SIZE..MAX_TCP_REPORT_PAYLOAD_SIZE)
+          raise Matter::ConfigurationError.new("IM report payload limit is out of range")
+        end
         chunks = [] of Tuple(Bytes, Bool)
         events = event_reports || [] of InteractionModel::EventReportIB
 
         # Pre-encode every report so its wire size is known before packing
-        encoded_attributes = attribute_reports.flat_map { |report| fit_attribute_report(report) }
+        encoded_attributes = attribute_reports.flat_map { |report| fit_attribute_report(report, max_payload_size) }
           .map { |report| {report, report.to_slice} }
-        encoded_events = events.map { |report| fit_event_report(report) }
+        encoded_events = events.map { |report| fit_event_report(report, max_payload_size) }
           .map { |report| {report, report.to_slice} }
         total = encoded_attributes.size + encoded_events.size
 
@@ -715,13 +722,13 @@ module Matter
           encoded = index < encoded_attributes.size ? encoded_attributes[index][1] : encoded_events[index - encoded_attributes.size][1]
           empty_chunk = current_attributes.empty? && current_events.empty?
 
-          if current_size + encoded.size > MAX_REPORT_PAYLOAD_SIZE && !empty_chunk
+          if current_size + encoded.size > max_payload_size && !empty_chunk
             # Chunk is full, output what we have and retry this report
             flush.call(false)
             next
           end
 
-          if empty_chunk && current_size + encoded.size > MAX_REPORT_PAYLOAD_SIZE
+          if empty_chunk && current_size + encoded.size > max_payload_size
             raise Matter::ProtocolError.new("Report exceeds maximum payload after size reduction (#{encoded.size} bytes)")
           end
 
@@ -744,8 +751,9 @@ module Matter
       # Split one oversized Array attribute as a REPLACE-ALL prefix followed by
       # list-index item reports. A scalar or indivisible list item is answered
       # with ResourceExhausted rather than an oversized UDP datagram.
-      private def self.fit_attribute_report(report : InteractionModel::AttributeReportIB) : Array(InteractionModel::AttributeReportIB)
-        return [report] if report.to_slice.size <= MAX_REPORT_ITEM_SIZE
+      private def self.fit_attribute_report(report : InteractionModel::AttributeReportIB, max_payload_size : Int32) : Array(InteractionModel::AttributeReportIB)
+        max_item_size = max_payload_size - REPORT_DATA_OVERHEAD - SUBSCRIPTION_ID_OVERHEAD - EVENT_ARRAY_OVERHEAD
+        return [report] if report.to_slice.size <= max_item_size
         data = report.attribute_data
         return [resource_exhausted_attribute(report)] unless data && data.data.header.element_type.array?
         return [resource_exhausted_attribute(report)] if data.path.list_index || data.path.list_index_null?
@@ -761,13 +769,13 @@ module Matter
             node: data.path.node, enable_tag_compression: data.path.enable_tag_compression,
             wildcard_path_flags: data.path.wildcard_path_flags)
           item_report = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(item_path, item, data.data_version))
-          if item_report.to_slice.size > MAX_REPORT_ITEM_SIZE
+          if item_report.to_slice.size > max_item_size
             return [resource_exhausted_attribute(report)]
           end
 
           candidate = prefix + [item]
           candidate_report = InteractionModel::AttributeReportIB.new(attribute_data: InteractionModel::AttributeDataIB.new(data.path, TLV::Any.new(candidate, nil, as_array: true), data.data_version))
-          if result.size == 1 && candidate_report.to_slice.size <= MAX_REPORT_ITEM_SIZE
+          if result.size == 1 && candidate_report.to_slice.size <= max_item_size
             prefix = candidate
             result[0] = candidate_report
           else
@@ -784,8 +792,9 @@ module Matter
         InteractionModel::AttributeReportIB.new(attribute_status: InteractionModel::AttributeStatusIB.new(path: path, status: status))
       end
 
-      private def self.fit_event_report(report : InteractionModel::EventReportIB) : InteractionModel::EventReportIB
-        return report if report.to_slice.size <= MAX_REPORT_ITEM_SIZE
+      private def self.fit_event_report(report : InteractionModel::EventReportIB, max_payload_size : Int32) : InteractionModel::EventReportIB
+        max_item_size = max_payload_size - REPORT_DATA_OVERHEAD - SUBSCRIPTION_ID_OVERHEAD - EVENT_ARRAY_OVERHEAD
+        return report if report.to_slice.size <= max_item_size
         path = report.event_data.try(&.path) || report.event_status.try(&.path)
         raise Matter::ProtocolError.new("Event report has no path") unless path
         status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
@@ -953,19 +962,23 @@ module Matter
       def self.encode_chunked_invoke_response(
         invoke_responses : Array(InteractionModel::InvokeResponseIB),
         suppress_response : Bool = false,
+        max_payload_size : Int32 = MAX_REPORT_PAYLOAD_SIZE,
       ) : Array(Bytes)
+        unless max_payload_size.in?(MAX_REPORT_PAYLOAD_SIZE..MAX_TCP_REPORT_PAYLOAD_SIZE)
+          raise Matter::ConfigurationError.new("IM invoke payload limit is out of range")
+        end
         chunks = [] of Bytes
         current = [] of InteractionModel::InvokeResponseIB
 
         invoke_responses.each do |response|
           candidate = current + [response]
-          if encode_invoke_response(candidate, more_chunked_messages: true).size > MAX_REPORT_PAYLOAD_SIZE
+          if encode_invoke_response(candidate, more_chunked_messages: true).size > max_payload_size
             unless current.empty?
               chunks << encode_invoke_response(current, more_chunked_messages: true)
               current = [] of InteractionModel::InvokeResponseIB
             end
 
-            if encode_invoke_response([response]).size > MAX_REPORT_PAYLOAD_SIZE
+            if encode_invoke_response([response]).size > max_payload_size
               path = response.command_data.try(&.command_path) || response.command_status.try(&.command_path)
               raise Matter::ProtocolError.new("Invoke response exceeds maximum payload without a command path") unless path
               status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
