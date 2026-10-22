@@ -4,7 +4,7 @@ require "./support/main"
 # Matter Temperature Sensor Device Example
 #
 # - Presents as a Temperature Sensor (endpoint 1)
-# - Exposes Identify + TemperatureMeasurement clusters
+# - Endpoint 2 demonstrates unavailable capability bounds and absent Tolerance
 # - Picks a random temperature in [15.0, 35.0] C every 10 seconds
 module MatterTemperatureSensor
   class Device < Matter::Device
@@ -36,6 +36,14 @@ module MatterTemperatureSensor
         as: :temperature
       cluster Matter::Cluster::Identify, identify_type: :visible_light
       cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Temperature Sensor")]
+    end
+
+    endpoint 2, device_type: Matter::DeviceType::TEMPERATURE_SENSOR do
+      cluster Matter::Cluster::TemperatureMeasurement,
+        measured_value: 2250_i16,
+        min_measured_value: nil,
+        max_measured_value: nil
+      cluster Matter::Cluster::Identify, identify_type: :visible_light
     end
 
     on(:temperature, :temperature_changed) do |_old_value, new_value|

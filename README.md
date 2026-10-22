@@ -257,6 +257,11 @@ Localization, Power Source Configuration, Flow Measurement, and Air Quality.
 Applications can add these clusters to endpoints through the device DSL.
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
+Temperature Measurement reports Matter 1.6 revision 6. Its fixed minimum and
+maximum default to `nil` when a device cannot report a capability limit; readings
+are checked against each known limit. Pass `tolerance:` to expose the optional,
+fixed Tolerance attribute, including zero. Omit it when unsupported. Sensor
+readings start from the configured value after restart and are not persisted.
 
 The root node's General Diagnostics cluster answers TimeSnapshot with monotonic
 milliseconds since startup. Its nullable POSIX time remains absent until an
