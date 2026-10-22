@@ -98,6 +98,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0503 | Wake On LAN Cluster | 1 | 1 | — | — |
 | 0x0505 | Target Navigator Cluster | 2 | 2 | — | — |
 | 0x0506 | Media Playback Cluster | 2 | 2 | — | — |
+| 0x0507 | Media Input Cluster | 1 | 1 | — | — |
 | 0x0508 | Low Power Cluster | 1 | 1 | — | — |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — | — |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | — |
@@ -242,6 +243,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0506 | command | 0x000C | feature(AT) | declared; requires `:audio_tracks` |
 | 0x0506 | command | 0x000D | feature(TT) | declared; requires `:text_tracks` |
 | 0x0506 | command | 0x000E | feature(TT) | declared; requires `:text_tracks` |
+| 0x0507 | command | 0x0003 | feature(NU) | declared; requires `:name_updates` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:
 

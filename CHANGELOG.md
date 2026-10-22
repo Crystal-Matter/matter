@@ -75,6 +75,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   regressions cover both acknowledged paths, failed file flushes, and a failed
   journal clear.
 
+### Media Input
+
+- Add the Matter 1.6 revision 1 Media Input server with typed InputInfo,
+  InputType and command payloads. SelectInput updates CurrentInput after
+  host acceptance, ShowInputStatus and HideInputStatus delegate presentation
+  to the host, and feature-gated RenameInput updates the catalog. A
+  synthetic Aggregator fixture exercises the cluster through official
+  chip-tool, without claiming a complete media device type.
+
 ### Keypad Input
 
 - Translate accepted SendKey repeats into host Press, Hold, and Release
