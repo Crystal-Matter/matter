@@ -24,6 +24,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   belonging to other fabrics.
   The provisional AUX and MNGD features remain disabled.
 
+### Ecosystem Information for bridged nodes
+
+- Add the Matter 1.6 Ecosystem Information cluster with read-only, persistent,
+  fabric-scoped device and location directories. A bridge can publish
+  application-consented metadata per fabric; removing a fabric erases its
+  entries. Empty directories represent unavailable metadata. A separate
+  synthetic bridge fixture verifies two-fabric isolation and restart reads
+  through official chip-tool.
+
 ### Network commissioning scan responses
 
 - Include the feature-required Wi-Fi or Thread scan result list on the wire

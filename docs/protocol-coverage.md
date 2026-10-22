@@ -13,8 +13,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 64
-- Matching known revisions: 52
+- Crystal declarations for those IDs: 65
+- Matching known revisions: 53
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -148,7 +148,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0555 | Push AV Stream Transport Cluster | 2 | — | cluster absent |
 | 0x0556 | Chime Cluster | 2 | — | cluster absent |
 | 0x0700 | Commodity Tariff Cluster | 1 | — | cluster absent |
-| 0x0750 | Ecosystem Information Cluster | 1 | — | cluster absent |
+| 0x0750 | Ecosystem Information Cluster | 1 | 1 | — |
 | 0x0751 | Commissioner Control Cluster | 1 | — | cluster absent |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — |
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — |
