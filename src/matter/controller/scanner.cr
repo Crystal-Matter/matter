@@ -524,6 +524,14 @@ module Matter
       end
 
       private def parse_srv_record(record : DNS::Packet::ResourceRecord) : Tuple(Int32?, String?)
+        # Received DNS packets may compress the SRV target against a name
+        # elsewhere in the packet. The DNS parser resolves that pointer while
+        # it still has the complete message. Records constructed in memory
+        # have no parsed resource, so decode their uncompressed data below.
+        if parsed = record.resource.as?(DNS::Resource::SRV)
+          return {parsed.port.to_i32, parsed.target}
+        end
+
         io = IO::Memory.new(record.resource_data)
 
         begin

@@ -3,6 +3,9 @@ require "../../src/matter/controller"
 require "../../src/matter/mdns/service_type"
 require "../../src/matter/mdns/record_builder"
 
+# DNS compression pointer to the first resource record name (after the header).
+DNS_FIRST_ANSWER_POINTER = 0xC00C_u16
+
 class Matter::Controller::Scanner
   # Exercise the packet parser without depending on multicast delivery.
   def process_packet_for_spec(packet : DNS::Packet, peer : Socket::IPAddress = Socket::IPAddress.new("127.0.0.1", MDNS_PORT)) : Nil
@@ -138,6 +141,42 @@ describe Matter::Controller::Scanner do
 
       scanner.process_packet_for_spec(DNS::Packet.from_slice(packet.to_slice), Socket::IPAddress.new("::1", 5353))
       scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
+      scanner.close
+    end
+
+    it "resolves a commissionable SRV target compressed against an earlier answer" do
+      require_udp_sockets!
+      scanner = Matter::Controller::Scanner.new
+      instance = "A1B2C3D4E5F60708._matterc._udp.local"
+      hostname = "sdk-bridge.local"
+      address = Socket::IPAddress.new("fd42:4d41:5454::1", 0)
+      builder = Matter::MDNS::RecordBuilder
+      srv_data = IO::Memory.new
+      srv_data.write_bytes(0_u16, IO::ByteFormat::BigEndian) # priority
+      srv_data.write_bytes(0_u16, IO::ByteFormat::BigEndian) # weight
+      srv_data.write_bytes(5533_u16, IO::ByteFormat::BigEndian)
+      srv_data.write_bytes(DNS_FIRST_ANSWER_POINTER, IO::ByteFormat::BigEndian)
+      srv = DNS::Packet::ResourceRecord.new(
+        name: instance,
+        type: Matter::MDNS::RecordBuilder::TYPE_SRV,
+        class_code: Matter::MDNS::RecordBuilder::CLASS_IN_CACHE_FLUSH,
+        ttl: 120.seconds,
+        resource_data: srv_data.to_slice
+      )
+      packet = DNS::Packet.new(id: 0_u16, response: true, answers: [
+        builder.build_aaaa(hostname, address, 120.seconds),
+        srv,
+        builder.build_txt(instance, {"D" => "2656", "CM" => "2"}, 120.seconds),
+      ])
+
+      decoded = DNS::Packet.from_slice(packet.to_slice)
+      decoded.answers[1].resource.as(DNS::Resource::SRV).target.should eq(hostname)
+      scanner.process_packet_for_spec(decoded, Socket::IPAddress.new("::1", 5353))
+      device = scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice)
+      device.hostname.should eq(hostname)
+      device.port.should eq(5533)
+      device.discriminator.should eq(2656)
+      device.addresses.map(&.address).should eq([address.address])
       scanner.close
     end
     it "resolves each operational SRV target from only its own host A/AAAA records" do

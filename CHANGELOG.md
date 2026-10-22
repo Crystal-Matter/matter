@@ -64,6 +64,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attested target VID/PID with the approved request before AddNOC. Host consent
   and actual target commissioning remain application responsibilities.
 
+### Controller mDNS discovery
+
+- Resolve compressed DNS SRV targets from the decoded packet when discovering
+  Matter devices. This allows a controller to find an SDK bridge whose
+  operational and commissionable advertisements share a hostname.
+
 ### Scenes Management fabric isolation
 
 - Scope all Scenes Management commands and FabricSceneInfo reads to the
