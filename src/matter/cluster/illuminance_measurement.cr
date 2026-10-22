@@ -16,9 +16,9 @@ module Matter
     # - null indicates invalid measurement
     # - Range: 1 lx to 3.576 Mlx (MeasuredValue: 1 to 0xFFFE)
     #
-    # Specification: Matter 1.4 § 2.2
+    # Specification: Matter 1.6 Illuminance Measurement (revision 5)
     class IlluminanceMeasurement < Base
-      cluster 0x0400, revision: 3
+      cluster 0x0400, revision: 5
 
       # Illuminance value limits
       MIN_ILLUMINANCE =     0_u16 # Too low to measure
@@ -45,10 +45,11 @@ module Matter
 
       # Value of 0 indicates too low to measure
       attribute 0x0000, :measured_value, UInt16, nullable: true, min: MIN_ILLUMINANCE, max: MAX_ILLUMINANCE
-      attribute 0x0001, :min_measured_value, UInt16, nullable: true, min: MIN_MEASURED_VALUE_RANGE.begin, max: MIN_MEASURED_VALUE_RANGE.end
-      attribute 0x0002, :max_measured_value, UInt16, nullable: true, max: MAX_ILLUMINANCE
-      attribute 0x0003, :tolerance, UInt16, nullable: true, optional: true, max: MAX_TOLERANCE, present_if: :tolerance
-      attribute 0x0004, :light_sensor_type, LightSensorType, nullable: true, optional: true, present_if: :light_sensor_type
+      attribute 0x0001, :min_measured_value, UInt16, nullable: true, fixed: true, min: MIN_MEASURED_VALUE_RANGE.begin, max: MIN_MEASURED_VALUE_RANGE.end, validate: :reject_fixed_attribute_change!
+      attribute 0x0002, :max_measured_value, UInt16, nullable: true, fixed: true, max: MAX_ILLUMINANCE, validate: :reject_fixed_attribute_change!
+      # Nil disables the optional attribute; when present, Tolerance is always a number on the wire.
+      attribute 0x0003, :tolerance, UInt16, nullable: true, fixed: true, optional: true, max: MAX_TOLERANCE, present_if: :tolerance, validate: :reject_fixed_attribute_change!
+      attribute 0x0004, :light_sensor_type, LightSensorType, nullable: true, fixed: true, optional: true, present_if: :light_sensor_type, validate: :reject_fixed_attribute_change!
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @measured_value : UInt16? = nil,
@@ -67,10 +68,11 @@ module Matter
         end
 
         if (min = @min_measured_value) && (max = @max_measured_value)
-          raise ArgumentError.new("min_measured_value must be <= max_measured_value") if min > max
+          raise ArgumentError.new("max_measured_value must be at least min_measured_value + 1") if max <= min
         end
 
         if measured = @measured_value
+          raise ArgumentError.new("measured_value must be <= #{MAX_ILLUMINANCE}") if measured > MAX_ILLUMINANCE
           raise ArgumentError.new("measured_value must be >= min_measured_value") if below_minimum?(measured)
           raise ArgumentError.new("measured_value must be <= max_measured_value") if above_maximum?(measured)
         end
@@ -86,6 +88,7 @@ module Matter
       # measurable range.
       def update_illuminance(value : UInt16?) : Nil
         if value
+          raise ArgumentError.new("Illuminance #{value} is above maximum #{MAX_ILLUMINANCE}") if value > MAX_ILLUMINANCE
           raise ArgumentError.new("Illuminance #{value} is below minimum measurable value #{@min_measured_value}") if below_minimum?(value)
           raise ArgumentError.new("Illuminance #{value} is above maximum measurable value #{@max_measured_value}") if above_maximum?(value)
         end
@@ -95,6 +98,10 @@ module Matter
       # Called with the previous and the new value whenever MeasuredValue changes
       def on_illuminance_changed(&block : UInt16?, UInt16? -> Nil) : Nil
         on_measured_value_changed(&block)
+      end
+
+      private def reject_fixed_attribute_change!(_value) : Nil
+        raise ArgumentError.new("fixed illuminance attributes cannot change after construction")
       end
 
       # 0 (too low to measure) is always valid

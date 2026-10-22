@@ -26,6 +26,10 @@ module MatterAmbientLightSensor
     endpoint 1, device_type: Matter::DeviceType::LIGHT_SENSOR do
       cluster Matter::Cluster::IlluminanceMeasurement,
         measured_value: Matter::Cluster::IlluminanceMeasurement.from_lux(rand(MIN_LUX..MAX_LUX)),
+        min_measured_value: Matter::Cluster::IlluminanceMeasurement.from_lux(1.0),
+        max_measured_value: Matter::Cluster::IlluminanceMeasurement.from_lux(2000.0),
+        tolerance: 0_u16,
+        light_sensor_type: Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode,
         as: :illuminance
       cluster Matter::Cluster::Identify, identify_type: :visible_led
       cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Ambient Light Sensor")]

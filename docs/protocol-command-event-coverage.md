@@ -66,7 +66,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
 | 0x0202 | Fan Control Cluster | 6 | 5 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 7 | — | — |
-| 0x0400 | Illuminance Measurement Cluster | 5 | 3 | — | — |
+| 0x0400 | Illuminance Measurement Cluster | 5 | 5 | — | — |
 | 0x0402 | Temperature Measurement Cluster | 6 | 4 | — | — |
 | 0x0403 | Pressure Measurement Cluster | 5 | 3 | — | — |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |

@@ -1,6 +1,82 @@
 require "../spec_helper"
 
 describe Matter::Cluster::IlluminanceMeasurement do
+  describe "Matter 1.6 revision 5" do
+    it "reports revision 5 through the global attribute" do
+      cluster = build(Matter::Cluster::IlluminanceMeasurement)
+      read(cluster, Matter::Cluster::Base::GLOBAL_CLUSTER_REVISION).should eq(5_u16)
+    end
+
+    it "marks configuration attributes fixed while the live reading remains mutable" do
+      cluster = build(Matter::Cluster::IlluminanceMeasurement,
+        tolerance: 0_u16,
+        light_sensor_type: Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode
+      )
+      fixed_ids = {
+        Matter::Cluster::IlluminanceMeasurement::ATTR_MIN_MEASURED_VALUE,
+        Matter::Cluster::IlluminanceMeasurement::ATTR_MAX_MEASURED_VALUE,
+        Matter::Cluster::IlluminanceMeasurement::ATTR_TOLERANCE,
+        Matter::Cluster::IlluminanceMeasurement::ATTR_LIGHT_SENSOR_TYPE,
+      }
+      cluster.attributes.find! { |attribute| attribute.id.id == Matter::Cluster::IlluminanceMeasurement::ATTR_MEASURED_VALUE }.fixed?.should be_false
+      fixed_ids.each do |id|
+        cluster.attributes.find! { |attribute| attribute.id.id == id }.fixed?.should be_true
+      end
+    end
+
+    it "rejects host changes to fixed configuration without changing DataVersion" do
+      cluster = build(Matter::Cluster::IlluminanceMeasurement,
+        min_measured_value: 1_u16,
+        max_measured_value: 1000_u16,
+        tolerance: 10_u16,
+        light_sensor_type: Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode
+      )
+      version = cluster.data_version
+
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.min_measured_value = 2_u16 }
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.max_measured_value = 999_u16 }
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.tolerance = 11_u16 }
+      expect_raises(ArgumentError, /fixed illuminance/) { cluster.light_sensor_type = Matter::Cluster::IlluminanceMeasurement::LightSensorType::CMOS }
+
+      cluster.min_measured_value.should eq(1_u16)
+      cluster.max_measured_value.should eq(1000_u16)
+      cluster.tolerance.should eq(10_u16)
+      cluster.light_sensor_type.should eq(Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode)
+      cluster.data_version.should eq(version)
+    end
+
+    it "requires at least one step between non-null minimum and maximum" do
+      expect_raises(ArgumentError, /max_measured_value must be at least min_measured_value \+ 1/) do
+        build(Matter::Cluster::IlluminanceMeasurement,
+          min_measured_value: 500_u16,
+          max_measured_value: 500_u16
+        )
+      end
+      build(Matter::Cluster::IlluminanceMeasurement,
+        min_measured_value: 500_u16,
+        max_measured_value: 501_u16
+      ).max_measured_value.should eq(501_u16)
+    end
+
+    it "rejects the nullable sentinel as a concrete reading" do
+      expect_raises(ArgumentError, /measured_value must be <= 65534/) do
+        build(Matter::Cluster::IlluminanceMeasurement, measured_value: 65535_u16)
+      end
+
+      cluster = build(Matter::Cluster::IlluminanceMeasurement, measured_value: 100_u16)
+      version = cluster.data_version
+      expect_raises(ArgumentError, /above maximum/) { cluster.update_illuminance(65535_u16) }
+      cluster.measured_value.should eq(100_u16)
+      cluster.data_version.should eq(version)
+    end
+
+    it "reports a non-null optional tolerance when advertised" do
+      cluster = build(Matter::Cluster::IlluminanceMeasurement, tolerance: 0_u16)
+      read(cluster, Matter::Cluster::IlluminanceMeasurement::ATTR_TOLERANCE).should eq(0_u16)
+      cluster.attributes.find! { |attribute| attribute.id.id == Matter::Cluster::IlluminanceMeasurement::ATTR_TOLERANCE }.optional?.should be_true
+    end
+  end
+
   describe "initialization" do
     it "creates with default values" do
       cluster = build(Matter::Cluster::IlluminanceMeasurement)
@@ -51,7 +127,7 @@ describe Matter::Cluster::IlluminanceMeasurement do
     end
 
     it "validates min/max relationship" do
-      expect_raises(ArgumentError, /min_measured_value must be <= max_measured_value/) do
+      expect_raises(ArgumentError, /max_measured_value must be at least min_measured_value \+ 1/) do
         build(Matter::Cluster::IlluminanceMeasurement,
           min_measured_value: 10000_u16,
           max_measured_value: 5000_u16

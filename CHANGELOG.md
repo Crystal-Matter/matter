@@ -38,6 +38,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   HoldTime to its simulated detector samples; physical sensing and entry
   threshold filtering remain device-owned.
 
+### Illuminance Measurement revision 5
+
+- Advertise revision 5, mark the four sensor configuration attributes fixed,
+  require MaxMeasuredValue to exceed a non-null MinMeasuredValue, and reject the
+  nullable sentinel as a concrete reading. Reject later host changes to fixed
+  configuration without changing DataVersion. The ambient-light chip-tool test
+  reads ClusterRevision and the configured bounds, tolerance, and sensor type.
+
 ### Cross-ecosystem Joint Fabric control
 
 - Let a joining Administrator issue a group-CAT controller identity under
