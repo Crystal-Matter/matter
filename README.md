@@ -350,6 +350,12 @@ stays in the protocol layer.
 
 Pressure Sensor example: `examples/matter_pressure_sensor_device.cr` exposes Matter 1.6 Pressure Measurement revision 5 with the Extended feature. Configure physical bounds and scale at construction; report new readings through `update_pressure` and `update_scaled_pressure`. Measured readings are not persisted.
 
+The opt-in [Ambient Context Sensing server](docs/ambient-context-sensing.md)
+exposes the provisional Matter 1.6 HumanActivity feature. A host reports
+classified observations, while the cluster maintains HoldTime, the active
+semantic tag, and typed start/end events. The other features remain
+unadvertised.
+
 ## Examples
 
 Ten example devices live in `./examples`, all written on the DSL.

@@ -94,6 +94,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool test exercise reads and restart without claiming a complete media
   device type or supplying physical sleep/wake behavior.
 
+### Ambient Context Sensing HumanActivity slice
+
+- Add an opt-in provisional Matter 1.6 Ambient Context Sensing revision 1 server
+  with the HumanActivity feature, canonical SemanticTag payloads, bounded
+  HoldTime and one active detection. Host observations emit typed start and end
+  events; official chip-tool exercises the deterministic example hook. The
+  other feature bits remain unavailable.
+
 ### Soil Measurement revision 1
 
 - Add the Matter 1.6 Soil Measurement server and Soil Sensor device type. The
