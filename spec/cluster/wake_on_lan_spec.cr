@@ -27,8 +27,16 @@ describe WakeOnLan do
     attribute_ids(cluster).should contain(WakeOnLan::ATTR_LINK_LOCAL_ADDRESS)
     read(cluster, WakeOnLan::ATTR_MAC_ADDRESS).should eq("12345678ABCD")
     read(cluster, WakeOnLan::ATTR_LINK_LOCAL_ADDRESS).should eq(link_local)
-    cluster.get_attribute_metadata(WakeOnLan::ATTR_MAC_ADDRESS).as(Matter::Cluster::AttributeMetadata).writable?.should be_false
-    cluster.get_attribute_metadata(WakeOnLan::ATTR_LINK_LOCAL_ADDRESS).as(Matter::Cluster::AttributeMetadata).writable?.should be_false
+    mac : String = cluster.mac_address
+    ipv6 : Bytes = cluster.link_local_address
+    mac.should eq("12345678ABCD")
+    ipv6.should eq(link_local)
+    [WakeOnLan::ATTR_MAC_ADDRESS, WakeOnLan::ATTR_LINK_LOCAL_ADDRESS].each do |id|
+      metadata = cluster.get_attribute_metadata(id).as(Matter::Cluster::AttributeMetadata)
+      metadata.optional?.should be_true
+      metadata.fixed?.should be_true
+      metadata.writable?.should be_false
+    end
   end
 
   it "rejects invalid MAC formats and non-link-local IPv6 addresses before advertisement" do

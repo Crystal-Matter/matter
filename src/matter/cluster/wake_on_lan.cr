@@ -14,12 +14,12 @@ module Matter
       LINK_LOCAL_SECOND_BYTE_MASK   = 0xc0_u8
       LINK_LOCAL_SECOND_BYTE_PREFIX = 0x80_u8
 
-      attribute 0x0000, :mac_address, String, nullable: true, optional: true,
-        fixed: true, max_length: 12, present_if: :mac_address,
-        validate: :reject_fixed_attribute_change!
-      attribute 0x0001, :link_local_address, Bytes, nullable: true, optional: true,
+      attribute 0x0000, :mac_address, String, optional: true,
+        fixed: true, max_length: 12, computed: true, present_if: :mac_address_present?
+      attribute 0x0001, :link_local_address, Bytes, optional: true,
         fixed: true, computed: true, present_if: :link_local_address_present?
 
+      @mac_address : String?
       @link_local_address : Bytes?
 
       def initialize(endpoint_id : DataType::EndpointNumber,
@@ -41,16 +41,25 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
-      def link_local_address : Bytes?
-        @link_local_address.try(&.dup)
+      def mac_address : String
+        @mac_address || raise ArgumentError.new("mac_address is not configured")
+      end
+
+      def link_local_address : Bytes
+        address = @link_local_address || raise ArgumentError.new("link_local_address is not configured")
+        address.dup
+      end
+
+      def mac_address=(_value : String) : Nil
+        raise ArgumentError.new("fixed Wake On LAN addresses cannot change after construction")
+      end
+
+      private def mac_address_present? : Bool
+        !@mac_address.nil?
       end
 
       private def link_local_address_present? : Bool
         !@link_local_address.nil?
-      end
-
-      private def reject_fixed_attribute_change!(_value) : Nil
-        raise ArgumentError.new("fixed Wake On LAN addresses cannot change after construction")
       end
     end
   end
