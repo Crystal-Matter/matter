@@ -39,7 +39,7 @@ module ScenesFabricE2E
 end
 
 describe "Scenes Management across independent chip-tool fabrics" do
-  device = E2E::Device["matter_level_control"]
+  device = E2E::Device["matter_scenes_fabric"]
 
   it "isolates scenes and erases the removed fabric before index reuse" do
     device.commission!
