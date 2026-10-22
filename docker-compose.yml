@@ -58,6 +58,11 @@ services:
     environment:
       E2E_DEVICE: matter_tls_certificate_management
 
+  tls-client-management:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_tls_client_management
+
   joint-fabric-administrator:
     <<: *device
     environment:

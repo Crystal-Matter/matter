@@ -157,7 +157,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — |
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — |
 | 0x0801 | TLS Certificate Management Cluster | 1 | 1 | opt-in; host backend holds client private keys |
-| 0x0802 | TLS Client Management Cluster | 1 | — | cluster absent |
+| 0x0802 | TLS Client Management Cluster | 1 | 1 | opt-in; certificate-backed endpoint registry, host owns TLS connections |
 | 0x0B06 | Meter Identification Cluster | 1 | — | cluster absent |
 | 0x0B07 | Commodity Metering Cluster | 1 | — | cluster absent |
 
