@@ -9,25 +9,53 @@ import argparse
 import base64
 import json
 import os
+import signal
 import socket
+import ssl
 import subprocess
 import sys
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
 import yaml
 
 from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN, JFC_PROMPT_PATTERN
+from sdk_jfc_dcl_mirror import sdk_public_root_der
 
 
-def run_command(argv, log_path, timeout=300):
+def run_command(argv, log_path, timeout=300, env=None):
     with log_path.open("wb") as output:
         result = subprocess.run(argv, stdout=output, stderr=subprocess.STDOUT,
-                                timeout=timeout, check=False)
+                                timeout=timeout, check=False, env=env)
     if result.returncode:
         raise RuntimeError(f"command exited {result.returncode}: {' '.join(map(str, argv))}; "
                            f"log tail:\n{log_path.read_text(errors='replace')[-5000:]}")
+
+
+def write_dcl_state(path, mode, certificate):
+    temporary = path.with_suffix(".next")
+    temporary.write_text(json.dumps({"mode": mode,
+                                     "root_der": base64.b64encode(certificate).decode()}))
+    temporary.replace(path)
+
+
+def await_test_dcl(process, certificate, timeout=15):
+    context = ssl.create_default_context(cafile=str(certificate))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"test DCL mirror exited: {process.returncode}")
+        try:
+            with urllib.request.urlopen(
+                    "https://127.0.0.1/dcl/pki/noc-vid-root-certificates/65521",
+                    context=context, timeout=1) as response:
+                if response.status == 200:
+                    return
+        except (OSError, ssl.SSLError):
+            time.sleep(0.1)
+    raise RuntimeError("test HTTPS DCL mirror did not become ready")
 
 
 def await_bridge(port, process):
@@ -98,6 +126,8 @@ def run(args):
     processes = []
     bridge = None
     bridge_log = None
+    dcl = None
+    dcl_log = None
     try:
         b_env = os.environ.copy()
         b_env.update(MATTER_JFA_PORT="5541", MATTER_JFA_PROVISIONED_ANCHOR="1",
@@ -134,6 +164,30 @@ def run(args):
         b_root.write_bytes(b_identity["inspected_root_certificate"])
         print("PASS: SDK JFC commissioned Crystal B JFA as Anchor", flush=True)
 
+        # Publish only the SDK-owned issuer's public X.509 root. The mirror is
+        # an isolated test server, not a substitute for a synchronized DCL.
+        root_der = sdk_public_root_der(jfc_state)
+        dcl_state = logs / "test-dcl-state.json"
+        dcl_cert = logs / "test-dcl-cert.pem"
+        dcl_key = logs / "test-dcl-key.pem"
+        run_command(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+                     "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1",
+                     "-addext", "subjectAltName=IP:127.0.0.1",
+                     "-addext", "basicConstraints=critical,CA:TRUE",
+                     "-addext", "keyUsage=critical,digitalSignature,keyCertSign",
+                     "-keyout", str(dcl_key), "-out", str(dcl_cert)],
+                    logs / "test-dcl-certificate.log")
+        write_dcl_state(dcl_state, "active", root_der)
+        dcl_log = (logs / "test-dcl-mirror.log").open("wb")
+        dcl = subprocess.Popen(["sudo", "-n", sys.executable,
+            str(Path(__file__).with_name("sdk_jfc_dcl_mirror.py")),
+            "--state", str(dcl_state), "--cert", str(dcl_cert), "--key", str(dcl_key)],
+            stdout=dcl_log, stderr=subprocess.STDOUT, start_new_session=True)
+        await_test_dcl(dcl, dcl_cert)
+        crystal_dcl_env = os.environ.copy()
+        crystal_dcl_env.update(SSL_CERT_FILE=str(dcl_cert),
+                               MATTER_JCM_TEST_DCL_GATEWAY_URL="https://127.0.0.1")
+
         identity_json = logs / "b-identity.json"
         identity_json.write_text(json.dumps({
             "icac_certificate": base64.b64encode(b_identity["inspected_icac_certificate"]).decode(),
@@ -144,7 +198,8 @@ def run(args):
                      MATTER_JFA_BOOTSTRAP_STATE_PATH=str(bootstrap),
                      MATTER_JFA_COMMAND_PATH=str(a_command),
                      MATTER_JFA_JCM_REQUEST_PATH=str(a_exchange),
-                     MATTER_JFA_VID_TRUST_ROOT_PATH=str(b_root),
+                     MATTER_JFA_TEST_DCL_GATEWAY_URL="https://127.0.0.1",
+                     SSL_CERT_FILE=str(dcl_cert),
                      MATTER_JFA_ANCHOR_OPERATIONAL_PORT="5541",
                      MATTER_JFA_TRANSFER_PEERS="a103=127.0.0.1")
         a = ManagedProcess("crystal-a", [str(args.jfa), "--no-interactive"], a_state, logs, a_env)
@@ -160,9 +215,42 @@ def run(args):
         jfc.expect(JFC_PROMPT_PATTERN, 30, opened)
         print("PASS: SDK JFC opened B Joint Commissioning window", flush=True)
 
+        for mode, expected in (("wrong-vid", "deny"), ("removed", "deny"),
+                               ("active", "accept")):
+            write_dcl_state(dcl_state, mode, root_der)
+            run_command([str(args.driver), "probe-dcl", b_code, "5541",
+                         "https://127.0.0.1", expected],
+                        logs / f"test-dcl-{mode}.log", timeout=90,
+                        env=crystal_dcl_env)
+        print("PASS: live SDK issuer root denied for wrong VID/removed DCL records and accepted when active", flush=True)
+
+        denied_env = crystal_dcl_env.copy()
+        denied_env["MATTER_JCM_TEST_CONSENT"] = "deny"
         run_command([str(args.driver), "commission", str(bootstrap), a_code, b_code,
                      str(b_root), str(a_exchange), str(a_command), str(cross_icac),
-                     "5540", "5541"], logs / "crystal-jcm-driver.log", timeout=360)
+                     "5540", "5541"], logs / "crystal-jcm-consent-denied.log",
+                    timeout=360, env=denied_env)
+        print("PASS: trusted SDK-issued root denied by explicit Joint Commissioning consent", flush=True)
+
+        # The denied attempt armed the target fail-safe. Restarting the test
+        # JFA rolls it back before the authorized attempt opens a fresh window.
+        b.close()
+        processes.remove(b)
+        b = ManagedProcess("crystal-b-restarted", [str(args.jfa), "--no-interactive"],
+                           b_state, logs, b_env)
+        processes.append(b)
+        b.expect(r"Starting in Operational Mode", 60)
+        b.start_background_drain()
+        reopened = jfc.command("pairing open-joint-commissioning-window 11 1 400 1000 1261")
+        b_code = jfc.expect(r"Manual pairing code:\s*\[([^\]]+)\]", 90, reopened).group(1)
+        jfc.expect(JFC_PROMPT_PATTERN, 30, reopened)
+
+        allowed_env = crystal_dcl_env.copy()
+        allowed_env["MATTER_JCM_TEST_SKIP_ANCHOR_COMMISSION"] = "1"
+        run_command([str(args.driver), "commission", str(bootstrap), a_code, b_code,
+                     str(b_root), str(a_exchange), str(a_command), str(cross_icac),
+                     "5540", "5541"], logs / "crystal-jcm-driver.log", timeout=360,
+                    env=allowed_env)
         print("PASS: Crystal A JCM received Anchor-originated CommissioningComplete and Datastore registration", flush=True)
 
         csr_result = json.loads(csr_mailbox.read_text())
@@ -192,6 +280,16 @@ def run(args):
                 bridge.wait(timeout=5)
         if bridge_log is not None:
             bridge_log.close()
+        if dcl is not None:
+            if dcl.poll() is None:
+                os.killpg(dcl.pid, signal.SIGTERM)
+                try:
+                    dcl.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(dcl.pid, signal.SIGKILL)
+                    dcl.wait(timeout=5)
+        if dcl_log is not None:
+            dcl_log.close()
 
 
 def main():

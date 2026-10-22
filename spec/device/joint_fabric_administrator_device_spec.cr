@@ -40,9 +40,28 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def anchor_verification_client_for_spec(node_id : UInt64) : Matter::Controller::Client
     anchor_verification_client(node_id)
   end
+
+  def anchor_trust_for_spec(vendor_id : UInt16, root_path : String?, test_dcl_url : String?) : Matter::Controller::VidVerification::OperationalTrustAnchors
+    anchor_trust(vendor_id, root_path, test_dcl_url)
+  end
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "selects an explicit test DCL trust source without falling back to a static root" do
+    device = InspectableJointFabricAdministratorDevice.new
+    trust = device.anchor_trust_for_spec(0xFFF1_u16, nil, "https://127.0.0.1")
+    trust.should be_a(Matter::Controller::VidVerification::DclOperationalTrustAnchors)
+    expect_raises(Matter::ConfigurationError) do
+      device.anchor_trust_for_spec(0xFFF1_u16, nil, "http://127.0.0.1")
+    end
+    expect_raises(Matter::ConfigurationError) do
+      device.anchor_trust_for_spec(0xFFF1_u16, nil, "https://dcl.example")
+    end
+    expect_raises(Matter::ConfigurationError) do
+      device.anchor_trust_for_spec(0xFFF1_u16, nil, nil)
+    end
+  end
+
   it "decodes a legacy command YAML without the new removal interruption flag" do
     path = File.join(Dir.tempdir, "matter-jfa-legacy-command-#{Random::Secure.hex(6)}.yml")
     request = MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA102_u64,

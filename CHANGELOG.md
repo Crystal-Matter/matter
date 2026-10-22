@@ -24,6 +24,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attribute or DataVersion. The humidity sensor example now checks the revision
   through official chip-tool.
 
+### Joint Fabric SDK DCL and consent interoperability
+
+- Add an opt-in HTTPS test DCL mirror that publishes the official SDK JFC's
+  public operational root. The live JCM fixture tests wrong-VID and removed
+  root rejection, active-root acceptance, explicit consent denial, and a
+  successful consented commission. The JFA example can select this loopback
+  mirror without a static trust fallback.
+
 ### Cross-ecosystem Joint Fabric control
 
 - Let a joining Administrator issue a group-CAT controller identity under
