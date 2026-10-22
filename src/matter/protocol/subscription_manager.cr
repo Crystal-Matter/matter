@@ -257,16 +257,73 @@ module Matter
         end
       end
 
-      # Sends one subscription update and marks the subscription reported.
+      # Pack updates to the active transport's payload budget. Each packet is
+      # a complete subscription ReportData on a fresh exchange, so a large
+      # journal batch does not leave every later event stuck behind its head.
       private def send_update(
         subscription : ActiveSubscription,
         reports : Array(InteractionModel::AttributeReportIB),
         events : Array(InteractionModel::EventReportIB),
       ) : Nil
+        limit = @sender.im_payload_limit(subscription.session, subscription.peer)
+        batch_reports = [] of InteractionModel::AttributeReportIB
+        batch_events = [] of InteractionModel::EventReportIB
+        event_cursor = nil.as(UInt64?)
+
+        reports.each do |report|
+          unless update_fits?(subscription, batch_reports + [report], batch_events, limit)
+            send_update_batch(subscription, batch_reports, batch_events, event_cursor) unless batch_reports.empty? && batch_events.empty?
+            batch_reports.clear
+            batch_events.clear
+            event_cursor = nil
+          end
+          if update_fits?(subscription, [report], [] of InteractionModel::EventReportIB, limit)
+            batch_reports << report
+          else
+            Log.warn { "Subscription attribute update omitted: subscription_id=#{subscription.subscription_id} report=#{report.to_slice.size} exceeds transport limit=#{limit}" }
+          end
+        end
+
+        events.each do |event|
+          number = event.event_data.try(&.event_number)
+          unless update_fits?(subscription, batch_reports, batch_events + [event], limit)
+            send_update_batch(subscription, batch_reports, batch_events, event_cursor) unless batch_reports.empty? && batch_events.empty?
+            batch_reports.clear
+            batch_events.clear
+            event_cursor = nil
+          end
+          if update_fits?(subscription, batch_reports, [event], limit)
+            batch_events << event
+            event_cursor = number if number
+          elsif data = event.event_data
+            # An indivisible event cannot be retransmitted in a smaller
+            # packet. Report ResourceExhausted for its path before advancing
+            # the cursor, then continue with later events.
+            status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
+            error = InteractionModel::EventReportIB.new(event_status: InteractionModel::EventStatusIB.new(data.path, status))
+            send_update_batch(subscription, [] of InteractionModel::AttributeReportIB, [error], data.event_number)
+          else
+            Log.warn { "Subscription event status omitted: subscription_id=#{subscription.subscription_id} exceeds transport limit=#{limit}" }
+          end
+        end
+
+        send_update_batch(subscription, batch_reports, batch_events, event_cursor) unless batch_reports.empty? && batch_events.empty?
+      end
+
+      private def update_fits?(subscription : ActiveSubscription,
+                               reports : Array(InteractionModel::AttributeReportIB),
+                               events : Array(InteractionModel::EventReportIB), limit : Int32) : Bool
+        IMHandler.encode_report_data(reports, subscription.subscription_id, event_reports: events).size <= limit
+      end
+
+      private def send_update_batch(subscription : ActiveSubscription,
+                                    reports : Array(InteractionModel::AttributeReportIB),
+                                    events : Array(InteractionModel::EventReportIB),
+                                    event_cursor : UInt64?) : Nil
         payload = IMHandler.encode_report_data(reports, subscription.subscription_id, event_reports: events)
         Log.trace { "Subscription update ReportData TLV (#{payload.size} bytes): #{payload.hexstring}" }
-
         @sender.send_report(subscription.session, subscription.peer, payload)
+        subscription.last_event_number = event_cursor if event_cursor
         subscription.last_report_time = Time.utc
       end
 
@@ -282,14 +339,13 @@ module Matter
         )
       end
 
-      # Turns *records* into reports and advances the subscription's cursor.
+      # Turns *records* into reports. The cursor advances only after sending.
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),
       ) : Array(InteractionModel::EventReportIB)
         return [] of InteractionModel::EventReportIB if records.empty?
 
-        subscription.last_event_number = records.last.event_number
         records.map { |record| InteractionModel::EventReportIB.new(event_data: IMHandler.build_event_data(record)) }
       end
 

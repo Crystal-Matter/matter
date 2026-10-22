@@ -2,6 +2,21 @@ require "../spec_helper"
 require "../../src/matter/protocol/im_handler"
 
 describe Matter::Protocol::IMHandler do
+  it "keeps a four-kilobyte command response intact within a TCP invoke budget" do
+    path = Matter::InteractionModel::CommandPath.new(0_u16, 0x0028_u32, 1_u32)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.new("B" * 4096, nil))
+    response = Matter::InteractionModel::InvokeResponseIB.new(command_data: data)
+
+    chunks = Matter::Protocol::IMHandler.encode_chunked_invoke_response([response],
+      max_payload_size: Matter::Protocol::IMHandler::MAX_TCP_REPORT_PAYLOAD_SIZE)
+
+    chunks.size.should eq 1
+    chunks.first.size.should be > Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE
+    chunks.first.size.should be <= Matter::Protocol::IMHandler::MAX_TCP_REPORT_PAYLOAD_SIZE
+    decoded = Matter::InteractionModel::InvokeResponseMessage.from_slice(chunks.first)
+    decoded.invoke_responses.first.command_data.try(&.command_fields.try(&.value.as(String))).should eq("B" * 4096)
+  end
+
   it "encodes large invoke response arrays as acknowledged chunks within the IPv6 payload budget" do
     responses = Array.new(30) do |index|
       path = Matter::InteractionModel::CommandPath.new(0_u16, 0x0028_u32, index.to_u32)

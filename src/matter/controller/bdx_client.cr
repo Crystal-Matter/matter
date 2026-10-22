@@ -25,7 +25,7 @@ module Matter
                    max_bytes : UInt64 = MAX_DOWNLOAD_BYTES,
                    block_size : UInt16 = DEFAULT_BLOCK_SIZE) : UInt64
         validate_case!(session)
-        validate_block_size!(block_size)
+        validate_block_size!(block_size, session, peer)
         exchange = @client.next_exchange_id
         init = Protocol::Bdx::Wire::Init.new(Protocol::Bdx::Wire::Opcode::ReceiveInit,
           supported_drives,
@@ -75,7 +75,7 @@ module Matter
                  file_designator : Bytes, source : IO, length : UInt64,
                  block_size : UInt16 = DEFAULT_BLOCK_SIZE) : UInt64
         validate_case!(session)
-        validate_block_size!(block_size)
+        validate_block_size!(block_size, session, peer)
         exchange = @client.next_exchange_id
         init = Protocol::Bdx::Wire::Init.new(Protocol::Bdx::Wire::Opcode::SendInit,
           supported_drives,
@@ -115,8 +115,17 @@ module Matter
         end
       end
 
-      private def validate_block_size!(size : UInt16) : Nil
+      private def validate_block_size!(size : UInt16, session : Session::SecureContext,
+                                       peer : Socket::IPAddress) : Nil
         raise Matter::ConfigurationError.new("BDX block size must be positive") if size == 0
+        limit = if session.tcp_session? && session.accepts_peer?(peer)
+                  Protocol::Bdx::Transfer::MAX_TCP_BLOCK_SIZE
+                else
+                  DEFAULT_BLOCK_SIZE
+                end
+        if size > limit
+          raise Matter::ConfigurationError.new("BDX block size exceeds transport payload limit")
+        end
       end
 
       private def supported_drives : Protocol::Bdx::Wire::TransferControl

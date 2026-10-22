@@ -32,6 +32,12 @@ module Matter
                                         message_counter : UInt32,
                                         peer : Socket::IPAddress? = nil) : Bool
       abstract def clear_reliable_session(session_id : UInt16) : Nil
+
+      # Stream transports override this for their connection-local route.
+      # A UDP or BTP peer is not a Matter TCP connection token.
+      def tcp_peer?(peer : Socket::IPAddress) : Bool
+        false
+      end
     end
   end
 end

@@ -202,7 +202,8 @@ module Matter
         reports = read_attributes(request.attribute_requests, session,
           request.fabric_filtered != false, request.data_version_filters)
         events = read_events(request.event_requests, request.event_filters, session)
-        chunks = IMHandler.encode_chunked_report_data(reports, nil, events)
+        chunks = IMHandler.encode_chunked_report_data(reports, nil, events,
+          max_payload_size: @sender.im_payload_limit(session, peer))
         first_chunk, _ = chunks.first
         remaining_chunks = chunks[1..].map(&.[0])
         Log.debug { "ReadResponse: #{reports.size} attribute report(s), #{events.size} event report(s) in #{chunks.size} chunk(s)" }
@@ -274,7 +275,8 @@ module Matter
         # reported twice: the priming report never carries a higher number.
         last_event_number = @node.event_journal.latest_event_number
         events = read_events(request.event_requests, request.event_filters, session)
-        chunks = IMHandler.encode_chunked_report_data(reports, subscription_id, events)
+        chunks = IMHandler.encode_chunked_report_data(reports, subscription_id, events,
+          max_payload_size: @sender.im_payload_limit(session, peer))
         first_chunk, _ = chunks.first
         remaining_chunks = chunks[1..].map(&.[0])
         Log.debug { "Initial ReportData: #{reports.size} attribute report(s), #{events.size} event report(s) in #{chunks.size} chunk(s)" }
@@ -410,7 +412,8 @@ module Matter
         end
 
         chunks = IMHandler.encode_chunked_invoke_response(invoke_responses,
-          suppress_response: request.suppress_response || false)
+          suppress_response: request.suppress_response || false,
+          max_payload_size: @sender.im_payload_limit(session, peer))
         @sender.send_im_response(
           original_msg: original_msg,
           peer: peer,

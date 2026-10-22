@@ -13,6 +13,31 @@ private def bdx_case_session(id : UInt16 = 1_u16) : Matter::Session::SecureConte
 end
 
 describe Bdx::Responder do
+  it "negotiates a four-kilobyte block only for a TCP-bound CASE session" do
+    contents = Bytes.new(5000, 0x3a_u8)
+    responder = Bdx::Responder.new
+    responder.on_download = ->(_session : Matter::Session::SecureContext, _init : Bdx::Wire::Init) do
+      Bdx::Responder::Source.new(IO::Memory.new(contents), contents.size.to_u64).as(Bdx::Responder::Source?)
+    end
+    init = Bdx::Wire::Init.new(Bdx::Wire::Opcode::ReceiveInit,
+      Bdx::Wire::TransferControl::ReceiverDrive, 4096_u16, Bytes[0x66])
+
+    udp = bdx_case_session
+    udp_step = responder.receive(udp, 26_u16, init.opcode, init.to_slice)
+    udp_step.message.as(Bdx::Wire::Accept).max_block_size.should be <= Bdx::Responder::MAX_BLOCK_SIZE
+    responder.abort(udp, 26_u16)
+
+    tcp = bdx_case_session(3_u16)
+    tcp.bind_tcp_peer(Socket::IPAddress.new("fd00::1234", 0))
+    tcp_step = responder.receive(tcp, 27_u16, init.opcode, init.to_slice)
+    tcp_step.message.as(Bdx::Wire::Accept).max_block_size.should eq(4096_u16)
+    query = Bdx::Wire::BlockCounterMessage.new(Bdx::Wire::Opcode::BlockQuery, 0_u32)
+    block = responder.receive(tcp, 27_u16, query.opcode, query.to_slice)
+      .message.as(Bdx::Wire::BlockData)
+    block.data.size.should eq(4096)
+    responder.close
+  end
+
   it "downloads a named source only after its CASE authorization callback accepts it" do
     responder = Bdx::Responder.new
     responder.on_download = ->(session : Matter::Session::SecureContext, init : Bdx::Wire::Init) do

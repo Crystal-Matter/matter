@@ -491,7 +491,7 @@ describe Matter::Controller::Scanner do
         txt_records: {
           "SII" => "500",
           "SAI" => "300",
-          "T"   => "1",
+          "T"   => "4",
         },
         service_type: Matter::MDNS::ServiceType::Operational,
         expires_at: Time.utc + 120.seconds

@@ -83,6 +83,17 @@ private def bdx_client_case_session : Matter::Session::SecureContext
 end
 
 describe Matter::Controller::BdxClient do
+  it "rejects a UDP block that would exceed its negotiated transport budget" do
+    responder = Matter::Protocol::Bdx::Responder.new
+    client = BdxLoopbackClient.new(responder)
+    bdx = Matter::Controller::BdxClient.new(client)
+    expect_raises(Matter::ConfigurationError) do
+      bdx.download(bdx_client_case_session, BDX_CLIENT_PEER, Bytes[0x66],
+        IO::Memory.new, block_size: (Matter::Controller::BdxClient::DEFAULT_BLOCK_SIZE + 1).to_u16)
+    end
+    responder.active_count.should eq(0)
+  end
+
   it "downloads a named stream through Accept, queries, EOF, and final ACK" do
     responder = Matter::Protocol::Bdx::Responder.new
     responder.on_download = ->(_session : Matter::Session::SecureContext, init : BdxClientWire::Init) do

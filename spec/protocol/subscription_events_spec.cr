@@ -17,13 +17,26 @@ private record EventSubscriptionFixture,
   # subscription starts from whatever the journal already holds.
   base_event_number : UInt64
 
+private class FailingSubscriptionTransport < Matter::Spec::CaptureTransport
+  property fail_on_send : Int32? = nil
+  getter send_attempts = 0
+
+  protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
+    @send_attempts += 1
+    if @fail_on_send == @send_attempts
+      raise Matter::TransportError.new("simulated subscription send failure")
+    end
+    super
+  end
+end
+
 # A handler with a door lock on endpoint 1 and one active subscription whose
 # event paths and damping the caller chooses.
 private def event_subscription_fixture(
   event_paths : Array(Matter::InteractionModel::EventPath),
   min_interval : UInt16 = 0_u16,
+  transport : Matter::Spec::CaptureTransport = Matter::Spec::CaptureTransport.new_for_spec,
 ) : EventSubscriptionFixture
-  transport = Matter::Spec::CaptureTransport.new_for_spec
   storage = Matter::Storage::Memory.new
   handler = Matter::Protocol::MessageHandler.new(
     transport: transport,
@@ -89,6 +102,68 @@ private def lock_event_path(urgent : Bool) : Matter::InteractionModel::EventPath
 end
 
 describe "Subscription event reporting" do
+  it "drains a journal batch across bounded subscription updates" do
+    fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new])
+    count = 40
+    count.times do
+      fixture.handler.node.event_journal.record(
+        ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
+        TLV::Any.new("event payload" * 4, nil))
+    end
+
+    fixture.handler.subscriptions.notify_events
+
+    expected = (fixture.base_event_number + 1_u64..fixture.base_event_number + count.to_u64).to_a
+    reported_events(fixture).should eq(expected)
+    fixture.transport.sent_packets.size.should be > 1
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(expected.last)
+
+    fixture.handler.close
+  end
+
+  it "keeps unsent events queued when a later batch fails to send" do
+    transport = FailingSubscriptionTransport.new_for_spec
+    fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new], transport: transport)
+    40.times do
+      fixture.handler.node.event_journal.record(
+        ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
+        TLV::Any.new("event payload" * 4, nil))
+    end
+    transport.fail_on_send = 2
+
+    expect_raises(Matter::TransportError) { fixture.handler.subscriptions.notify_events }
+    delivered = reported_events(fixture)
+    delivered.should_not be_empty
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(delivered.last)
+
+    transport.fail_on_send = nil
+    fixture.handler.subscriptions.notify_events
+    reported_events(fixture).should eq((fixture.base_event_number + 1_u64..fixture.base_event_number + 40_u64).to_a)
+    fixture.handler.close
+  end
+
+  it "reports ResourceExhausted for one indivisible event and continues" do
+    fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new])
+    fixture.handler.node.event_journal.record(
+      ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
+      TLV::Any.new("Z" * 1500, nil))
+    fixture.handler.subscriptions.notify_events
+
+    report = Matter::InteractionModel::ReportDataMessage.from_slice(
+      decrypt(fixture.transport.sent_packets.last[0], fixture.session))
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB)).first.event_status
+      .as(Matter::InteractionModel::EventStatusIB).status.status.should eq(
+      Matter::InteractionModel::StatusCode::ResourceExhausted.value)
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 1_u64)
+
+    fixture.handler.node.event_journal.record(
+      ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
+      TLV::Any.new("small", nil))
+    fixture.handler.subscriptions.notify_events
+    reported_events(fixture).should eq([fixture.base_event_number + 2_u64])
+    fixture.handler.close
+  end
+
   it "drains the journal from last_event_number on each report" do
     fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new])
 

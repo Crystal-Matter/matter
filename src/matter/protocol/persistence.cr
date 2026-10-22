@@ -58,6 +58,7 @@ module Matter
 
         def session_established(registry : SessionRegistry, session : Session::SecureContext) : Nil
           return unless session.case_session?
+          return if session.tcp_session?
 
           write_session(session)
         rescue ex
@@ -66,6 +67,7 @@ module Matter
 
         def session_updated(registry : SessionRegistry, session : Session::SecureContext) : Nil
           return unless session.case_session?
+          return if session.tcp_session?
 
           if debouncer = @write_debouncer
             @dirty_mutex.synchronize { @dirty_sessions[session.session_id] = session }
@@ -145,9 +147,9 @@ module Matter
           @backend.write(SESSIONS, session.session_id.to_s, session.to_record.to_document)
         end
 
-        # Restores CASE sessions whose fabric still exists; every other stored
-        # session (unknown fabric, undecodable document) is deleted so a reset
-        # or decommission cannot resurrect a broken secure session.
+        # Restores UDP CASE sessions whose fabric still exists. A TCP route is
+        # connection-local and cannot survive process restart; prune it along
+        # with unknown-fabric and undecodable sessions.
         private def restore_sessions(registry : SessionRegistry, fabric_table : FabricTable) : Nil
           restored = 0
           pruned = 0
@@ -156,7 +158,7 @@ module Matter
             session = Session::SecureContext.from_record(Session::SecureContext::SessionRecord.from_document(document))
             fabric_index = session.fabric_index
 
-            if session.case_session? && fabric_index && fabric_table.get_fabric(fabric_index)
+            if session.case_session? && !session.tcp_session? && fabric_index && fabric_table.get_fabric(fabric_index)
               registry.sessions[session.session_id] = session
               restored += 1
             else

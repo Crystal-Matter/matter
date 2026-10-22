@@ -81,6 +81,30 @@ describe Matter::Protocol::Persistence::StorageBackend do
       storage.ids(SESSIONS).should eq(["111"])
     end
 
+    it "never persists a connection-bound TCP CASE session" do
+      storage = Matter::Storage::Memory.new
+      registry = build_registry(storage)
+      backend = Matter::Protocol::Persistence::StorageBackend.new(storage)
+      session = case_session(111_u16, 1_u8)
+      session.bind_tcp_peer(Socket::IPAddress.new("fd00::1", 0))
+
+      backend.session_established(registry, session)
+      backend.session_updated(registry, session)
+      storage.ids(SESSIONS).should be_empty
+    end
+
+    it "prunes a legacy saved TCP CASE session on restore" do
+      storage = Matter::Storage::Memory.new
+      table = Matter::FabricTable.new(storage)
+      table.add_fabric(build_fabric(1_u8))
+      session = case_session(111_u16, 1_u8)
+      session.bind_tcp_peer(Socket::IPAddress.new("fd00::1", 0))
+      storage.write(SESSIONS, "111", session.to_record.to_document)
+
+      restored_registry(storage, table).sessions.should be_empty
+      storage.ids(SESSIONS).should be_empty
+    end
+
     it "removes the session document" do
       storage = Matter::Storage::Memory.new
       registry = build_registry(storage)

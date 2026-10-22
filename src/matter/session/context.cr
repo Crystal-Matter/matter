@@ -2,6 +2,7 @@ require "../crypto/crypto"
 require "../datatype/*"
 require "../storage/record"
 require "../transport/message_counter"
+require "socket"
 
 module Matter
   module Session
@@ -37,6 +38,8 @@ module Matter
 
     # Secure session context holding encryption keys and state
     class SecureContext
+      TCP_ROUTE_PORT = 0
+
       property session_id : UInt16
       property peer_session_id : UInt16
       property session_type : SessionType
@@ -67,6 +70,24 @@ module Matter
       # fabric_index: the fabric index for CASE sessions (nil for PASE)
       property? case_session : Bool
       property fabric_index : UInt8?
+
+      # A TCP session is bound to one live connection token. The record can
+      # recognize a legacy saved TCP session, but persistence does not write
+      # one: a route token must never survive a restart.
+      property? tcp_session : Bool = false
+      getter tcp_peer : Socket::IPAddress? = nil
+
+      def bind_tcp_peer(peer : Socket::IPAddress) : Nil
+        unless peer.port == TCP_ROUTE_PORT
+          raise Matter::ConfigurationError.new("Matter TCP session requires a connection token")
+        end
+        @tcp_session = true
+        @tcp_peer = peer
+      end
+
+      def accepts_peer?(peer : Socket::IPAddress) : Bool
+        @tcp_session ? @tcp_peer == peer : peer.port != TCP_ROUTE_PORT
+      end
 
       def initialize(
         @session_id : UInt16,
@@ -152,6 +173,7 @@ module Matter
         getter fabric_index : UInt8?
         getter peer_subject_ids : Array(UInt64) = [] of UInt64
         getter peer_icac : Bytes? = nil
+        getter? tcp_session : Bool = false
         getter created_at : Time
         getter last_activity_at : Time
 
@@ -173,6 +195,7 @@ module Matter
           @last_activity_at : Time,
           @peer_subject_ids : Array(UInt64) = [] of UInt64,
           @peer_icac : Bytes? = nil,
+          @tcp_session : Bool = false,
         )
         end
       end
@@ -195,7 +218,8 @@ module Matter
           created_at: @creation_time,
           last_activity_at: @last_activity_time,
           peer_subject_ids: @peer_subject_ids,
-          peer_icac: @peer_icac
+          peer_icac: @peer_icac,
+          tcp_session: @tcp_session
         )
       end
 
@@ -219,6 +243,7 @@ module Matter
         context.last_activity_time = record.last_activity_at
         context.peer_subject_ids = record.peer_subject_ids.dup
         context.peer_icac = record.peer_icac.try(&.dup)
+        context.tcp_session = record.tcp_session?
         context
       end
     end

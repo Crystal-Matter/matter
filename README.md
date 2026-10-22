@@ -359,6 +359,20 @@ only after CASE authenticates that peer.
 Link-local IPv6 hints retain their interface scope across commissioning and
 controller restart so the saved route remains usable when mDNS is unavailable.
 
+Matter TCP is available as an opt-in transport for commissioned IP devices:
+pass `tcp_enabled: true` to the device constructor to listen on its operational
+port and advertise `T=4` (TCP server support). A controller opts in with
+`Client.new(tcp_enabled: true)`, calls `client.connect_tcp(address)` with the
+device's operational IP address, then passes the returned connection token as
+the `peer` to `CasePairing#pair` and subsequent client methods. The token is
+valid only while that TCP connection remains open; reconnecting requires a new
+CASE session. UDP stays available on the same port. TCP packets are bounded at
+63,000 bytes and can carry larger Read and Invoke responses or BDX blocks on
+the connection-bound secure session. The library uses a conservative
+60,000-byte Interaction Model payload budget. Oversized subscription updates
+are logged without advancing their event cursor; chunked update delivery is
+still pending.
+
 ### Bulk Data Exchange
 
 `Controller::BdxClient` transfers named streams on a CASE session. The caller

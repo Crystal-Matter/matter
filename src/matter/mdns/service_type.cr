@@ -183,6 +183,10 @@ module Matter
 
     # Operational information for mDNS advertisement
     struct OperationalInfo
+      # Core operational TXT T bit 2 advertises a TCP listener. Bit 0 is
+      # reserved, so T=1 does not tell SDK controllers to connect over TCP.
+      TCP_SERVER_TXT_VALUE = "4"
+
       property compressed_fabric_id : Bytes # 8-byte HKDF-derived compressed fabric ID
       property node_id : UInt64
       # Session intervals are optional - only set for ICD (sleepy) devices
@@ -213,7 +217,7 @@ module Matter
         end
 
         if @tcp_supported
-          records["T"] = "1"
+          records["T"] = TCP_SERVER_TXT_VALUE
         end
 
         records

@@ -22,6 +22,7 @@ module Matter
       # Matter default port
       MATTER_PORT        = 5540
       IPV4_MAPPED_PREFIX = "::ffff:"
+      TCP_ROUTE_PORT     = 0
 
       # How long the receive loop waits for a datagram before looping.
       RECEIVE_TIMEOUT = 100.milliseconds
@@ -162,6 +163,33 @@ module Matter
         @running = false
         @receive_fiber = nil
         Log.info { "UDP transport bound: [::]:#{@port} (dual-stack)" }
+      end
+
+      # TCP-enabled transports can discover that an ephemeral UDP port is
+      # already occupied by a TCP listener before their own listener starts.
+      # Rebind before the receive loop runs, keeping the old socket until the
+      # replacement and its multicast memberships are ready.
+      protected def rebind_ephemeral_port(port : Int32) : Nil
+        raise Matter::ConfigurationError.new("Cannot rebind a running UDP transport") if @running
+
+        replacement = UDPSocket.new(Socket::Family::INET6)
+        begin
+          replacement.ipv6_only = false
+          replacement.reuse_address = true
+          replacement.reuse_port = true
+          replacement.bind("::", port)
+          replacement.read_timeout = RECEIVE_TIMEOUT
+          @joined_groups.each { |address| replacement.join_group(address) }
+        rescue ex
+          replacement.close unless replacement.closed?
+          raise ex
+        end
+
+        previous = @socket
+        @socket = replacement
+        @port = replacement.local_address.port
+        previous.close unless previous.closed?
+        Log.info { "UDP transport rebound: [::]:#{@port} (dual-stack)" }
       end
 
       # Start receiving messages in background
@@ -353,6 +381,9 @@ module Matter
       # The one place bytes leave the process. Specs override this to capture
       # what would have gone out rather than bind a socket.
       protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
+        if data.size > MAX_DATAGRAM_SIZE
+          raise Matter::ProtocolError.new("Matter UDP packet exceeds datagram limit")
+        end
         # The transport owns an AF_INET6 dual-stack socket. Darwin rejects an
         # AF_INET destination on that socket even with IPV6_V6ONLY disabled;
         # send IPv4 destinations through their mapped IPv6 representation.
@@ -463,6 +494,12 @@ module Matter
       end
 
       private def handle_received_data(data : Bytes, peer_address : Socket::IPAddress) : Nil
+        # Port zero is reserved for in-memory TCP route tokens. A network UDP
+        # packet must never enter a TCP-bound CASE session under that identity.
+        if peer_address.port == TCP_ROUTE_PORT
+          Log.debug { "Ignoring UDP packet with source port zero" }
+          return
+        end
         if data.size < MIN_PACKET_SIZE
           Log.warn { "Packet too small (#{data.size} bytes, minimum #{MIN_PACKET_SIZE}); ignoring malformed packet" }
           return
@@ -631,8 +668,17 @@ module Matter
           end
         end
 
-        # Give a controller sharing this listener first refusal. Copy the
-        # observer set before calling out so an observer may unregister itself.
+        dispatch_message(message, peer_address)
+      rescue ex : Exception
+        # Decode / processing errors for a single datagram
+        Log.debug(exception: ex) { "Error handling received data (peer=#{peer_address.address}:#{peer_address.port} bytes=#{data.size})" }
+      end
+
+      # Give a controller sharing this listener first refusal. Copy the
+      # observer set before calling out so an observer may unregister itself.
+      # TCP subclasses use the same dispatch path without UDP's MRP state.
+      protected def dispatch_message(message : Codec::MessageCodec::Message,
+                                     peer_address : Socket::IPAddress) : Nil
         observers = @observer_mutex.synchronize { @message_observers.values.to_a }
         return if observers.any?(&.call(message, peer_address))
 
@@ -643,9 +689,6 @@ module Matter
         else
           Log.warn { "No on_message callback registered" }
         end
-      rescue ex : Exception
-        # Decode / processing errors for a single datagram
-        Log.debug(exception: ex) { "Error handling received data (peer=#{peer_address.address}:#{peer_address.port} bytes=#{data.size})" }
       end
 
       private def sweep_unsecured_counters(now : Time::Instant,

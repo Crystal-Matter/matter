@@ -207,6 +207,19 @@ module Matter
         end
       end
 
+      # A closed TCP route cannot be reused, so release every secure session
+      # bound to its local token together with its subscriptions.
+      def delete_tcp_route_sessions(peer : Socket::IPAddress) : Nil
+        @mutex.synchronize do
+          @sessions.values
+            .select { |session| session.tcp_session? && session.tcp_peer == peer }
+            .each do |session|
+              remove_session_and_subscriptions(session.session_id)
+              @on_session_removed.try(&.call(session.session_id))
+            end
+        end
+      end
+
       # Registers a subscription that has completed its handshake.
       def add_subscription(subscription : ActiveSubscription) : Nil
         @mutex.synchronize do

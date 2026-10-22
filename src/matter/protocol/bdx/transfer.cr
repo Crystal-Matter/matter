@@ -6,6 +6,7 @@ module Matter
       # One synchronous BDX v0 stream after Init/Accept negotiation. A caller
       # transports each returned message on the same encrypted exchange.
       class Transfer
+        MAX_TCP_BLOCK_SIZE = 60_000_u16
         enum Drive
           Sender
           Receiver

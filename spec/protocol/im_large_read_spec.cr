@@ -8,6 +8,20 @@ private def large_read_report(value : TLV::Any) : Matter::InteractionModel::Attr
 end
 
 describe "large Read responses" do
+  it "keeps a four-kilobyte scalar intact within a TCP report budget" do
+    report = large_read_report(TLV::Any.new("A" * 4096, nil))
+
+    chunks = Matter::Protocol::IMHandler.encode_chunked_report_data([report],
+      max_payload_size: Matter::Protocol::IMHandler::MAX_TCP_REPORT_PAYLOAD_SIZE)
+
+    chunks.size.should eq 1
+    chunks.first[0].size.should be > Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE
+    chunks.first[0].size.should be <= Matter::Protocol::IMHandler::MAX_TCP_REPORT_PAYLOAD_SIZE
+    data = Matter::InteractionModel::ReportDataMessage.from_slice(chunks.first[0])
+      .attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first.attribute_data
+    data.try(&.data.value.as(String)).should eq("A" * 4096)
+  end
+
   it "splits an oversized list attribute into ordered item reports" do
     values = Array.new(20) { |index| "#{index}:" + "A" * 100 }
     report = large_read_report(TLV::Any.from_slice(values.to_tlv))

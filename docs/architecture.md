@@ -140,6 +140,28 @@ The table also covers unsecured controller handshake requests. Four retries
 are allowed before removal. Session removal clears that session's entries,
 and transport shutdown clears the table.
 
+`TcpEnabledTransport` is an opt-in `UDPTransport` subclass that also listens
+for Matter TCP on the same numeric port. It frames each complete Matter packet
+with a four-byte little-endian length. Each TCP socket gets an unpredictable
+in-memory IPv6 route token with port zero; this token is never a network
+destination. CASE Sigma1/Sigma3 use the token as their exchange peer, and
+authenticated secure sessions bind to that exact connection. A different TCP
+connection or a UDP packet cannot reuse the session. Closed tokens fail sends
+instead of falling back to UDP. The listener limits active connections,
+rejects invalid frame lengths before allocation, times out incomplete frames
+and idle sockets, and rejects group packets. TCP does not use UDP MRP retries.
+TCP CASE sessions and their subscriptions are not restored after restart;
+controllers establish a new CASE session on a new connection.
+The pinned Matter 1.6 SDK permits large payloads for a secure session whose
+peer transport is TCP; CASE does not exchange a separate maximum-payload
+field. Crystal Matter caps TCP packets at 63,000 bytes, and uses a 60,000-byte
+Interaction Model TLV budget only on a live TCP token bound to the secure
+session. UDP retains its 1280-byte packet cap and 1100-byte TLV budget. BDX
+may negotiate blocks up to 60,000 bytes on TCP; UDP stays at 1024 bytes.
+Subscription updates that exceed their transport budget are logged and left
+unsent with the event cursor unchanged. Chunked updates on a device-initiated
+exchange still need their own acknowledgement state.
+
 Unsecured Secure Channel replies use a separate bounded replay cache keyed by
 the sending socket, optional source Node ID, and request counter. The transport
 keeps the exact request and response datagrams for one minute. If an identical
@@ -390,6 +412,11 @@ builds, in order, `Device::Persistence` (which creates the fabric table), `Trans
 `Protocol::MessageHandler` (which creates the `Node`), and `MDNS::Responder`; then it builds and
 wires the clusters, restores cluster state, installs the `LifecycleManager` and restores dynamic
 endpoints.
+`tcp_enabled: true` selects `TcpEnabledTransport`, which retains UDP and starts
+the TCP listener on the same port. Only this opt-in mode advertises the
+operational `T=4` TXT key. Controllers choose TCP explicitly with
+`Client.new(tcp_enabled: true)` followed by `Client#connect_tcp` and use its
+returned route token for CASE and subsequent interactions.
 
 * `#start` — advertise, start the responder, start the transport. Returns immediately.
 * `#await_shutdown` — blocks until `#shutdown!` is called.

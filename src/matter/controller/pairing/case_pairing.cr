@@ -258,7 +258,7 @@ module Matter
           secure_context.peer_subject_ids = verified_responder.subject_ids
           secure_context.peer_icac = verified_responder.icac
 
-          client.register_session(secure_context)
+          client.register_session(secure_context, peer: peer)
           save_resumption_record(Session::Case::ResumptionStore::Record.new(
             fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
             peer_node_id, encrypted_data2.resumption_id, shared_secret,
@@ -298,7 +298,7 @@ module Matter
             message_type: MSG_STATUS_REPORT,
             payload: Session::Pase::Definitions::StatusReport.new.to_bytes,
             initiator_message: true, requires_ack: true)
-          client.register_session(session)
+          client.register_session(session, peer: peer)
           save_resumption_record(Session::Case::ResumptionStore::Record.new(
             fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
             peer_node_id, sigma2.resumption_id, record.shared_secret,

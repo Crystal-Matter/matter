@@ -195,7 +195,7 @@ module Matter
 
           pase = Pairing::PasePairing.new(@crypto)
           pase_session = pase.pair(@client, peer_addr, pin_code, timeout: @timeout)
-          @client.register_session(pase_session)
+          @client.register_session(pase_session, peer: peer_addr)
 
           im = ImClient.new(@client, @timeout)
 

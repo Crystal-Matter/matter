@@ -15,6 +15,7 @@ module Matter
         Log                        = ::Log.for("matter.protocol.bdx.responder")
         MAX_ACTIVE_TRANSFERS       =        4
         MAX_BLOCK_SIZE             = 1024_u16
+        MAX_TCP_BLOCK_SIZE         = Transfer::MAX_TCP_BLOCK_SIZE
         DEFAULT_MAX_TRANSFER_BYTES = 64_u64 * 1024 * 1024
         IDLE_TIMEOUT               = 5.minutes
 
@@ -187,7 +188,8 @@ module Matter
           if offset = init.start_offset
             return Step.new(status: Transfer::StatusCode::StartOffsetNotSupported) unless offset == 0
           end
-          size = {init.max_block_size, MAX_BLOCK_SIZE}.min
+          transport_limit = session.tcp_session? ? MAX_TCP_BLOCK_SIZE : MAX_BLOCK_SIZE
+          size = {init.max_block_size, transport_limit}.min
           if requested = init.length
             return Step.new(status: Transfer::StatusCode::LengthTooLarge) if requested > @max_transfer_bytes
           end

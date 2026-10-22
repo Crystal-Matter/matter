@@ -1,6 +1,7 @@
 require "../fabric_table"
 require "../node"
 require "../transport/udp_transport"
+require "../transport/tcp_enabled_transport"
 require "../protocol/message_handler"
 require "./dsl"
 require "./persistence"
@@ -32,7 +33,7 @@ module Matter
   #
   # Provides:
   # - Persistence (fabrics, sessions, cluster state, identity) on a `Storage::Backend`
-  # - UDP transport + Protocol MessageHandler
+  # - UDP transport (with opt-in TCP listener) + Protocol MessageHandler
   # - Default Root Node clusters (including OperationalCredentials)
   # - Descriptor injection and auto-population
   # - mDNS responder + lifecycle management (commissioning <-> operational)
@@ -141,6 +142,7 @@ module Matter
       @tc_required_acknowledgements : UInt16 = 0_u16,
       @icd_configuration : Cluster::IcdManagement::Configuration? = nil,
       @regulatory_location_capability : Cluster::GeneralCommissioning::RegulatoryLocationType = Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
+      @tcp_enabled : Bool = false,
     )
       # Matter Core 1.6 §11.10.6.4 requires IndoorOutdoor for nodes without
       # radio network interfaces. This device API currently models one network.
@@ -153,7 +155,11 @@ module Matter
       @fabric_table = @persistence.fabric_table
       @hostname = hostname || @persistence.commissioning_hostname
 
-      @transport = Transport::UDPTransport.new(port: port)
+      @transport = if @tcp_enabled
+                     Transport::TcpEnabledTransport.new(port: port)
+                   else
+                     Transport::UDPTransport.new(port: port)
+                   end
       @message_handler = Protocol::MessageHandler.new(
         transport: @transport,
         setup_pin: setup_pin,
@@ -245,7 +251,7 @@ module Matter
       restore_dynamic_endpoints
     end
 
-    # Starts mDNS and UDP transport and syncs advertisements for the current fabric set.
+    # Starts mDNS and the configured transport and syncs advertisements for the current fabric set.
     # Returns immediately after starting - use `await_shutdown` to block until shutdown.
     # Pass `ota_restart: true` when resuming after an OTA update so Level
     # Control retains its pre-update CurrentLevel (Matter 1.6 §1.6.6.15).
@@ -256,8 +262,10 @@ module Matter
       before_start
       @lifecycle.sync_advertisements
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode
+      # Start the TCP listener before publishing T=4 in operational mDNS.
+      @transport.start if @tcp_enabled
       @responder.start
-      @transport.start
+      @transport.start unless @tcp_enabled
       @started = true
       start_time_zone_polling
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::GeneralDiagnostics)
@@ -477,7 +485,7 @@ module Matter
         node_id: fabric.node_id,
         session_idle_interval: icd && icd.operating_mode.sit? ? icd.idle_mode_duration * 1000_u32 : nil,
         session_active_interval: icd.try(&.active_mode_duration),
-        tcp_supported: false
+        tcp_supported: @tcp_enabled
       )
     end
 

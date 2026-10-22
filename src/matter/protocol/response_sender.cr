@@ -9,6 +9,7 @@ require "../transport/udp_transport"
 require "./message_type"
 require "./bdx/transfer"
 require "./mrp_cache"
+require "./im_handler"
 
 module Matter
   module Protocol
@@ -32,6 +33,16 @@ module Matter
       def initialize(@transport : Transport::PacketTransport, @mrp_cache : MrpCache)
       end
 
+      # A large IM payload is allowed only on the authenticated session's
+      # currently live TCP connection. The same device may still serve UDP.
+      def im_payload_limit(session : Session::SecureContext, peer : Socket::IPAddress) : Int32
+        if session.tcp_session? && session.accepts_peer?(peer) && @transport.tcp_peer?(peer)
+          IMHandler::MAX_TCP_REPORT_PAYLOAD_SIZE
+        else
+          IMHandler::MAX_REPORT_PAYLOAD_SIZE
+        end
+      end
+
       # Sends an Interaction Model message on the exchange *original_msg*
       # arrived on.
       #
@@ -46,6 +57,9 @@ module Matter
         payload : Bytes,
         cache_for_mrp : Bool = false,
       ) : Nil
+        if payload.size > im_payload_limit(session, peer)
+          raise Matter::ProtocolError.new("IM response exceeds transport payload limit")
+        end
         payload_header = Codec::MessageCodec::PayloadHeader.new(
           exchange_id: original_msg.payload_header.exchange_id,
           protocol_id: ProtocolId::InteractionModel.value,
@@ -60,7 +74,7 @@ module Matter
 
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           payload_header.exchange_id, counter)
-        if cache_for_mrp && original_msg.packet_header.session_id != 0
+        if cache_for_mrp && !session.tcp_session? && original_msg.packet_header.session_id != 0
           @mrp_cache.store(original_msg.packet_header.session_id, original_msg.packet_header.message_id, udp_packet.dup)
         end
         @on_im_message_sent.try(&.call)
@@ -132,12 +146,14 @@ module Matter
           acknowledged_message_id: original_msg.payload_header.requires_acknowledge? ? original_msg.packet_header.message_id : nil)
         packet, counter = Session::SecureMessage.encode(session, payload_header, payload,
           source_node_id: session.local_node_id, destination_node_id: session.peer_node_id)
-        if append_to_cache
-          @mrp_cache.append(original_msg.packet_header.session_id,
-            original_msg.packet_header.message_id, packet.dup)
-        else
-          @mrp_cache.store(original_msg.packet_header.session_id,
-            original_msg.packet_header.message_id, packet.dup)
+        unless session.tcp_session?
+          if append_to_cache
+            @mrp_cache.append(original_msg.packet_header.session_id,
+              original_msg.packet_header.message_id, packet.dup)
+          else
+            @mrp_cache.store(original_msg.packet_header.session_id,
+              original_msg.packet_header.message_id, packet.dup)
+          end
         end
         @transport.send_reliable_raw(packet, peer, session.session_id,
           payload_header.exchange_id, counter)
@@ -174,6 +190,9 @@ module Matter
         peer : Socket::IPAddress,
         payload : Bytes,
       ) : Nil
+        if payload.size > im_payload_limit(session, peer)
+          raise Matter::ProtocolError.new("Subscription update exceeds transport payload limit")
+        end
         exchange_id = @next_exchange_id
         @next_exchange_id = @next_exchange_id &+ 1
 
