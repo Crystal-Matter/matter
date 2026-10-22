@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Level Control startup state
+
+- Apply Lighting StartUpCurrentLevel after restoring persisted cluster state on
+  ordinary device startup: zero selects MinLevel, null retains CurrentLevel,
+  and another value selects that level. `Device#start(ota_restart: true)`
+  retains the pre-update level after an OTA restart. The cluster continues to
+  advertise revision 6 while the remaining revision 7 behavior is audited.
+
 ### General Commissioning regulatory defaults
 
 - Let wireless devices configure their fixed LocationCapability at construction.

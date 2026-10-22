@@ -275,6 +275,11 @@ transition, the server cancels that transition and clears `RemainingTime`.
 `MinLevel` and `MaxLevel` are fixed configuration values: restoring saved
 runtime state keeps the newly configured bounds and clamps a restored known
 `CurrentLevel` into them.
+For a Lighting endpoint, `StartUpCurrentLevel` takes effect after persisted state
+is restored on ordinary `Device#start`: zero selects `MinLevel`, null retains
+the previous `CurrentLevel`, and another value selects that level. After an
+OTA update, call `Device#start(ota_restart: true)` to retain the pre-update
+level regardless of `StartUpCurrentLevel`.
 The server continues to advertise revision 6; the remaining revision 7 audit
 is in [docs/level-control-revision-7.md](docs/level-control-revision-7.md).
 
