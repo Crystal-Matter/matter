@@ -46,7 +46,8 @@ module Matter
             endpoint_id: 0_u16,
             cluster_id: Cluster::AdministratorCommissioning::CLUSTER_ID,
             command_id: Cluster::AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
-            fields: request.to_slice
+            fields: request.to_slice,
+            timed_request: true
           )
 
           # The command uses a status-only InvokeResponse.

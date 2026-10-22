@@ -42,7 +42,8 @@ module ChipTool
               endpoint_id: endpoint_id,
               cluster_id: Matter::Cluster::AdministratorCommissioning::CLUSTER_ID,
               command_id: Matter::Cluster::AdministratorCommissioning::CMD_REVOKE_COMMISSIONING,
-              fields: Bytes.empty
+              fields: Bytes.empty,
+              timed_request: true
             )
 
             if status = resp.invoke_responses.first?.try(&.command_status).try(&.status)

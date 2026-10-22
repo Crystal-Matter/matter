@@ -448,6 +448,7 @@ module Matter
         fabric_index : UInt8? = nil,
         peer_subject_ids : Array(UInt64)? = nil,
         list_state : WriteListState = WriteListState.new,
+        timed_interaction : Bool = false,
       ) : Array(InteractionModel::AttributeStatusIB)
         write_responses = [] of InteractionModel::AttributeStatusIB
         requests = write_requests || [] of InteractionModel::AttributeDataIB
@@ -492,6 +493,11 @@ module Matter
           if metadata
             unless authorized?(clusters, metadata.write_access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+              write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+              next
+            end
+            if metadata.writable? && metadata.timed? && !timed_interaction
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::NeedsTimedInteraction.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
               next
             end
@@ -828,6 +834,7 @@ module Matter
         peer_subject_ids : Array(UInt64)? = nil,
         peer_address : Socket::IPAddress? = nil,
         peer_icac : Bytes? = nil,
+        timed_interaction : Bool = false,
       ) : Array(InteractionModel::InvokeResponseIB)
         invoke_responses = [] of InteractionModel::InvokeResponseIB
 
@@ -858,6 +865,12 @@ module Matter
           if metadata = cluster.commands.find { |cmd| cmd.id.id == path.command }
             unless authorized?(clusters, metadata.access, endpoint_id, path.cluster, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+              cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
+              invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
+              next
+            end
+            if metadata.timed? && !timed_interaction
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::NeedsTimedInteraction.value)
               cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
               invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
               next

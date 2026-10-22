@@ -141,7 +141,8 @@ module ChipTool
                 endpoint_id: 0_u16,
                 cluster_id: Matter::Cluster::AdministratorCommissioning::CLUSTER_ID,
                 command_id: Matter::Cluster::AdministratorCommissioning::CMD_OPEN_BASIC_COMMISSIONING_WINDOW,
-                fields: request.to_slice
+                fields: request.to_slice,
+                timed_request: true
               )
               if status = resp.invoke_responses.first?.try(&.command_status).try(&.status)
                 unless status.status == Matter::InteractionModel::StatusCode::Success.value
