@@ -378,8 +378,9 @@ Provision the same epoch key and Group ID on each receiving device through
 GroupKeyManagement, add endpoint membership through Groups, and grant a Group
 ACL before sending. The controller retains only the derived operational key.
 KeySetWrite requires the first 16-byte epoch key and start time; additional
-epochs must be contiguous and have increasing start times. The Matter 1.6
-Groupcast (GCAST) feature is provisional and is not advertised.
+epochs must be contiguous and have increasing start times. Group Key
+Management advertises Matter 1.6 revision 3. Its optional provisional
+Groupcast (GCAST) feature is not advertised.
 
 ```crystal
 group = Matter::Controller::GroupInvoker.new(client, store)
