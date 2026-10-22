@@ -125,6 +125,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   LastChangedTime has Operate write access and persists across restart. Fixed
   direction and replacement products reject later host changes.
   A three-endpoint example is exercised with official chip-tool.
+### Temperature Measurement revision 6
+
+- Align Temperature Measurement with Matter 1.6 revision 6. MinMeasuredValue
+  and MaxMeasuredValue now default to null when capability limits are unknown;
+  Min, Max, and optional nonnullable Tolerance report fixed quality. Validate
+  readings against each known bound and reject invalid direct host updates
+  before changing state. Fixed capabilities reject later host changes.
+  MeasuredValue remains volatile. The temperature
+  sensor example and chip-tool E2E cover nullable bounds and restart.
 
 ### Cross-ecosystem Joint Fabric control
 

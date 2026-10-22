@@ -9,9 +9,9 @@ describe Matter::Cluster::TemperatureMeasurement do
       cluster.cluster_id.id.should eq(0x0402_u32)
       cluster.name.should eq("TemperatureMeasurement")
       cluster.measured_value.should be_nil
-      cluster.min_measured_value.should eq(-27315_i16)
-      cluster.max_measured_value.should eq(32767_i16)
-      cluster.tolerance.should be_nil
+      cluster.min_measured_value.should be_nil
+      cluster.max_measured_value.should be_nil
+      cluster.tolerance.should eq(0_u16)
     end
 
     it "creates with custom values" do
@@ -45,7 +45,7 @@ describe Matter::Cluster::TemperatureMeasurement do
     end
 
     it "rejects min > max" do
-      expect_raises(ArgumentError, /min_measured_value must be <= max_measured_value/) do
+      expect_raises(ArgumentError, /min_measured_value must be < max_measured_value/) do
         build(Matter::Cluster::TemperatureMeasurement,
           min_measured_value: 5000_i16,
           max_measured_value: 1000_i16
