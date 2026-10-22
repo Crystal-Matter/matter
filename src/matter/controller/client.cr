@@ -40,6 +40,7 @@ module Matter
       @unsecured_source_node_id : DataType::NodeId?
       @owns_transport : Bool
       @transport_observer_id : Int32?
+      @tcp_disconnect_observer_id : Int32?
       @owned_unsecured_exchanges : Set(Tuple(UInt16, Socket::IPAddress))
       @session_id_in_use : Proc(UInt16, Bool)?
 
@@ -55,6 +56,7 @@ module Matter
         @owns_transport = transport.nil?
         @transport = transport || (tcp_enabled ? Transport::TcpEnabledTransport.new(port: port) : Transport::UDPTransport.new(port: port))
         @transport_observer_id = nil
+        @tcp_disconnect_observer_id = nil
         @owned_unsecured_exchanges = Set(Tuple(UInt16, Socket::IPAddress)).new
         @unsecured_source_node_id = unsecured_source_node_id ? DataType::NodeId.new(unsecured_source_node_id) : DataType::NodeId.random_operational
 
@@ -75,6 +77,17 @@ module Matter
         @deferred_mutex = Mutex.new
         @next_exchange_id = Random.rand(UInt16).to_u16
 
+        if tcp = @transport.as?(Transport::TcpEnabledTransport)
+          @tcp_disconnect_observer_id = tcp.add_connection_closed_observer do |peer|
+            closed_sessions = @sessions.values.select { |session| session.tcp_session? && session.tcp_peer == peer }
+            closed_sessions.each { |session| @sessions.delete(session.session_id) }
+            ids = closed_sessions.map(&.session_id).to_set
+            @ack_packets.reject! { |(session_id, _), _| ids.includes?(session_id) }
+            @deferred_mutex.synchronize { @deferred_messages.reject! { |message| message.peer == peer } }
+            @owned_unsecured_exchanges.reject! { |entry| entry[1] == peer }
+          end
+        end
+
         if @owns_transport
           @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) { handle_transport_message(msg, peer) }
           @transport.start
@@ -91,6 +104,10 @@ module Matter
       end
 
       def close : Nil
+        if id = @tcp_disconnect_observer_id
+          @transport.as(Transport::TcpEnabledTransport).remove_connection_closed_observer(id)
+          @tcp_disconnect_observer_id = nil
+        end
         if id = @transport_observer_id
           @transport.remove_message_observer(id)
           @transport_observer_id = nil

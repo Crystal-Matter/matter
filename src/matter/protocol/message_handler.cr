@@ -12,6 +12,7 @@ require "../session/context"
 require "../session/secure_message"
 require "../session/group_secure_packet"
 require "../transport/group_multicast"
+require "../transport/tcp_enabled_transport"
 require "../transport/udp_transport"
 require "./interaction_router"
 require "./bdx/responder"
@@ -157,6 +158,7 @@ module Matter
           subscription_grace_period: subscription_grace_period,
           transport_retry_window: transport_retry_window
         )
+        @tcp_disconnect_observer_id = nil.as(Int32?)
         @on_commissioned = nil
         @operational_credentials_cluster = nil
 
@@ -230,6 +232,11 @@ module Matter
         @transport.on_group_packet = ->(wire : Bytes, peer : Socket::IPAddress) do
           handle_group_packet(wire, peer)
         end
+        if tcp = @transport.as?(Transport::TcpEnabledTransport)
+          @tcp_disconnect_observer_id = tcp.add_connection_closed_observer do |peer|
+            @registry.delete_tcp_route_sessions(peer)
+          end
+        end
 
         # Restore persisted protocol state (CASE sessions + subscriptions)
         if persistence = @persistence
@@ -246,6 +253,10 @@ module Matter
       # Stops the registry background sweep. The transport is closed by its
       # owner; this releases what the handler itself started.
       def close : Nil
+        if id = @tcp_disconnect_observer_id
+          @transport.as(Transport::TcpEnabledTransport).remove_connection_closed_observer(id)
+          @tcp_disconnect_observer_id = nil
+        end
         unless @inbound_messages.closed?
           @inbound_messages.close
           @inbound_done.receive

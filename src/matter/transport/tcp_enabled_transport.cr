@@ -25,6 +25,7 @@ module Matter
       FRAME_TIMEOUT               = 10.seconds
       IDLE_TIMEOUT                = 5.minutes
       CONNECT_TIMEOUT             = 5.seconds
+      WRITE_TIMEOUT               = 5.seconds
       READ_BUFFER_SIZE            = 4096
       TOKEN_PORT                  = UDPTransport::TCP_ROUTE_PORT
 
@@ -46,6 +47,8 @@ module Matter
       @tcp_running : Bool
       @tcp_token_nonce : Bytes
       @next_tcp_route_id : UInt64
+      @connection_closed_observers : Hash(Int32, Proc(Socket::IPAddress, Nil))
+      @next_connection_closed_observer_id : Int32
 
       def initialize(port : Int32 = MATTER_PORT,
                      @max_tcp_connections : Int32 = DEFAULT_MAX_TCP_CONNECTIONS)
@@ -58,7 +61,24 @@ module Matter
         @tcp_running = false
         @tcp_token_nonce = Random::Secure.random_bytes(6)
         @next_tcp_route_id = 0_u64
+        @connection_closed_observers = {} of Int32 => Proc(Socket::IPAddress, Nil)
+        @next_connection_closed_observer_id = 0
         super(port: port)
+      end
+
+      # Shared transports can serve a device and several controllers. Each
+      # owner removes only the secure sessions bound to the closed route.
+      def add_connection_closed_observer(&block : Socket::IPAddress -> Nil) : Int32
+        @tcp_mutex.synchronize do
+          @next_connection_closed_observer_id += 1
+          id = @next_connection_closed_observer_id
+          @connection_closed_observers[id] = block
+          id
+        end
+      end
+
+      def remove_connection_closed_observer(id : Int32) : Nil
+        @tcp_mutex.synchronize { @connection_closed_observers.delete(id) }
       end
 
       def start : Nil
@@ -106,9 +126,20 @@ module Matter
       end
 
       def disconnect_tcp(peer : Socket::IPAddress) : Nil
-        connection = @tcp_mutex.synchronize { @tcp_connections.delete(peer) }
-        connection.try do |entry|
-          entry.socket.close unless entry.socket.closed?
+        connection, observers = @tcp_mutex.synchronize do
+          {@tcp_connections.delete(peer), @connection_closed_observers.values.to_a}
+        end
+        return unless connection
+
+        connection.socket.close unless connection.socket.closed?
+        unless observers.empty?
+          spawn do
+            observers.each do |observer|
+              observer.call(peer)
+            rescue ex
+              Log.error(exception: ex) { "TCP connection cleanup callback failed" }
+            end
+          end
         end
       end
 
@@ -162,14 +193,8 @@ module Matter
           server.close unless server.closed?
           @tcp_server = nil
         end
-        connections = @tcp_mutex.synchronize do
-          saved = @tcp_connections.values.to_a
-          @tcp_connections.clear
-          saved
-        end
-        connections.each do |connection|
-          connection.socket.close unless connection.socket.closed?
-        end
+        tokens = @tcp_mutex.synchronize { @tcp_connections.keys.to_a }
+        tokens.each { |token| disconnect_tcp(token) }
       end
 
       private def accept_loop(server : TCPServer) : Nil
@@ -199,6 +224,7 @@ module Matter
           route
         end
         socket.read_timeout = READ_TIMEOUT
+        socket.write_timeout = WRITE_TIMEOUT
         socket.tcp_nodelay = true
         spawn { read_loop(socket, token) }
         token

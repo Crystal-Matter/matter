@@ -60,6 +60,16 @@ describe "controller and device CASE over Matter TCP" do
         controller.send_encrypted_request(session, other_connection, 0x0001_u16,
           0x02_u8, Bytes.empty)
       end
+
+      # Closing one connection must release its CASE session on both peers;
+      # otherwise repeated reconnects consume the device registry's slots.
+      controller.transport.as(Matter::Transport::TcpEnabledTransport).disconnect_tcp(peer)
+      deadline = Time.instant + 2.seconds
+      while (controller.session?(session.session_id) || handler.sessions.has_key?(session.peer_session_id)) && Time.instant < deadline
+        sleep 10.milliseconds
+      end
+      controller.session?(session.session_id).should be_nil
+      handler.sessions.has_key?(session.peer_session_id).should be_false
     ensure
       handler.close
       controller.close
