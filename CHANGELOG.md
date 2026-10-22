@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### General Commissioning regulatory defaults
+
+- Let wireless devices configure their fixed LocationCapability at construction.
+  Initialize RegulatoryConfig to that same value, as required by Matter 1.6,
+  including after a restart. Keep Ethernet-only devices at IndoorOutdoor.
+
 ### Access Control revision 3
 
 - Encode mandatory nullable ACL Subjects, Targets, and target fields, and emit fabric-sensitive

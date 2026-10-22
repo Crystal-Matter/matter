@@ -223,9 +223,8 @@ module Matter::Cluster
       end
 
       it "rejects location exceeding capability" do
-        cluster = GeneralCommissioning.new
-        # Set capability to Indoor only
-        cluster.location_capability = GeneralCommissioning::RegulatoryLocationType::Indoor
+        cluster = GeneralCommissioning.new(
+          location_capability: GeneralCommissioning::RegulatoryLocationType::Indoor)
 
         request = GeneralCommissioning::SetRegulatoryConfigRequest.new(
           new_regulatory_config: GeneralCommissioning::RegulatoryLocationType::Outdoor,
@@ -236,8 +235,8 @@ module Matter::Cluster
         response = (cluster.regulatory_config = request)
 
         response.error_code.should eq(GeneralCommissioning::CommissioningError::ValueOutsideRange)
-        cluster.regulatory_config.should eq(GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor) # Not changed
-        cluster.breadcrumb.should eq(0_u64)                                                              # Not updated on error
+        cluster.regulatory_config.should eq(GeneralCommissioning::RegulatoryLocationType::Indoor) # Not changed
+        cluster.breadcrumb.should eq(0_u64)                                                       # Not updated on error
       end
 
       it "rejects invalid country code format" do
@@ -290,7 +289,6 @@ module Matter::Cluster
     describe "regulatory location validation" do
       it "allows any location with IndoorOutdoor capability" do
         cluster = GeneralCommissioning.new
-        cluster.location_capability = GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor
 
         [
           GeneralCommissioning::RegulatoryLocationType::Indoor,
@@ -309,8 +307,8 @@ module Matter::Cluster
       end
 
       it "restricts to Indoor only with Indoor capability" do
-        cluster = GeneralCommissioning.new
-        cluster.location_capability = GeneralCommissioning::RegulatoryLocationType::Indoor
+        cluster = GeneralCommissioning.new(
+          location_capability: GeneralCommissioning::RegulatoryLocationType::Indoor)
 
         # Indoor should succeed
         request1 = GeneralCommissioning::SetRegulatoryConfigRequest.new(
@@ -436,7 +434,8 @@ module Matter::Cluster
 
     describe "breadcrumb atomicity" do
       it "updates breadcrumb only on successful command execution" do
-        cluster = GeneralCommissioning.new
+        cluster = GeneralCommissioning.new(
+          location_capability: GeneralCommissioning::RegulatoryLocationType::Indoor)
         cluster.breadcrumb.should eq(0_u64)
 
         # Successful ArmFailSafe updates breadcrumb
@@ -448,7 +447,6 @@ module Matter::Cluster
         cluster.breadcrumb.should eq(100_u64)
 
         # Failed SetRegulatoryConfig doesn't update breadcrumb
-        cluster.location_capability = GeneralCommissioning::RegulatoryLocationType::Indoor
         reg_request = GeneralCommissioning::SetRegulatoryConfigRequest.new(
           new_regulatory_config: GeneralCommissioning::RegulatoryLocationType::Outdoor,
           country_code: "US",

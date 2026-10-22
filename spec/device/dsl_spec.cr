@@ -164,6 +164,23 @@ describe Matter::Device::DSL do
   end
 
   describe "network" do
+    it "passes a Wi-Fi device's fixed regulatory capability to General Commissioning" do
+      indoor = Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::Indoor
+      device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT,
+        regulatory_location_capability: indoor)
+
+      device.general_commissioning.location_capability.should eq(indoor)
+      device.general_commissioning.regulatory_config.should eq(indoor)
+    end
+
+    it "requires IndoorOutdoor regulatory capability on Ethernet-only devices" do
+      indoor = Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::Indoor
+      expect_raises(Matter::ConfigurationError) do
+        DslSpecBridge.new(Matter::Storage::Memory.new, port: DslSpec::EPHEMERAL_PORT,
+          regulatory_location_capability: indoor)
+      end
+    end
+
     it "enables Terms and Conditions on root General Commissioning from device options" do
       device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT,
         tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)

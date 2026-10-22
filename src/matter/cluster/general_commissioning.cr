@@ -290,8 +290,18 @@ module Matter
         @feature_map : Feature = Feature::None,
         @tc_min_required_version : UInt16? = nil,
         @tc_required_acknowledgements : UInt16 = 0_u16,
+        location_capability : RegulatoryLocationType = RegulatoryLocationType::IndoorOutdoor,
       )
+        @location_capability = location_capability
+        @regulatory_config = location_capability
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+      end
+
+      # LocationCapability is a fixed manufacturer capability. The DSL's
+      # generated local setter would otherwise let application code change it
+      # after RegulatoryConfig has been initialized from the original value.
+      def location_capability=(_value : RegulatoryLocationType) : Nil
+        raise ConfigurationError.new("LocationCapability is fixed at construction")
       end
 
       # ========================================================================
