@@ -80,14 +80,53 @@ module Matter
       struct CapabilityMinimaStruct
         include TLV::Serializable
 
+        MIN_CASE_SESSIONS_PER_FABRIC =      3_u16
+        MIN_SUBSCRIPTIONS_PER_FABRIC =      3_u16
+        MIN_SIMULTANEOUS_INVOCATIONS =      1_u16
+        MIN_SIMULTANEOUS_WRITES      =      1_u16
+        MIN_READ_PATHS               =      9_u16
+        MIN_SUBSCRIBE_PATHS          =      3_u16
+        MAX_CAPABILITY_COUNT         = 10_000_u16
+
         @[TLV::Field(tag: 0)]
         property case_sessions_per_fabric : UInt16
 
         @[TLV::Field(tag: 1)]
         property subscriptions_per_fabric : UInt16
 
-        def initialize(@case_sessions_per_fabric : UInt16 = 3_u16,
-                       @subscriptions_per_fabric : UInt16 = 3_u16)
+        @[TLV::Field(tag: 2)]
+        property simultaneous_invocations_supported : UInt16
+
+        @[TLV::Field(tag: 3)]
+        property simultaneous_writes_supported : UInt16
+
+        @[TLV::Field(tag: 4)]
+        property read_paths_supported : UInt16
+
+        @[TLV::Field(tag: 5)]
+        property subscribe_paths_supported : UInt16
+
+        def initialize(@case_sessions_per_fabric : UInt16 = MIN_CASE_SESSIONS_PER_FABRIC,
+                       @subscriptions_per_fabric : UInt16 = MIN_SUBSCRIPTIONS_PER_FABRIC,
+                       @simultaneous_invocations_supported : UInt16 = MIN_SIMULTANEOUS_INVOCATIONS,
+                       @simultaneous_writes_supported : UInt16 = MIN_SIMULTANEOUS_WRITES,
+                       @read_paths_supported : UInt16 = MIN_READ_PATHS,
+                       @subscribe_paths_supported : UInt16 = MIN_SUBSCRIBE_PATHS)
+          validate!
+        end
+
+        def validate! : Nil
+          validate_count(@case_sessions_per_fabric, MIN_CASE_SESSIONS_PER_FABRIC, "CaseSessionsPerFabric")
+          validate_count(@subscriptions_per_fabric, MIN_SUBSCRIPTIONS_PER_FABRIC, "SubscriptionsPerFabric")
+          validate_count(@simultaneous_invocations_supported, MIN_SIMULTANEOUS_INVOCATIONS, "SimultaneousInvocationsSupported")
+          validate_count(@simultaneous_writes_supported, MIN_SIMULTANEOUS_WRITES, "SimultaneousWritesSupported")
+          validate_count(@read_paths_supported, MIN_READ_PATHS, "ReadPathsSupported")
+          validate_count(@subscribe_paths_supported, MIN_SUBSCRIBE_PATHS, "SubscribePathsSupported")
+        end
+
+        private def validate_count(value : UInt16, minimum : UInt16, name : String) : Nil
+          return if value >= minimum && value <= MAX_CAPABILITY_COUNT
+          raise Matter::ConfigurationError.new("#{name} must be between #{minimum} and #{MAX_CAPABILITY_COUNT}")
         end
       end
 
@@ -194,6 +233,7 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise Matter::ConfigurationError.new("MaxPathsPerInvoke must be positive") if @max_paths_per_invoke == 0_u16
         raise Matter::ConfigurationError.new("ConfigurationVersion must be positive") if @configuration_version == 0_u32
+        @capability_minima.validate!
 
         # Default node_label to product_name if not explicitly set
         # This ensures iOS/controllers show a meaningful device name
@@ -201,6 +241,38 @@ module Matter
 
         # Default product_label to product_name if not explicitly set
         @product_label = product_label || @product_name
+      end
+
+      # A lower value cannot describe a newer configuration. The uint32 wrap
+      # restarts at the first valid version.
+      def configuration_version=(value : UInt32) : Nil
+        if value == 0_u32 || (value < @configuration_version && !(@configuration_version == UInt32::MAX && value == INITIAL_CONFIGURATION_VERSION))
+          raise Matter::ConfigurationError.new("ConfigurationVersion must advance or wrap to one")
+        end
+        previous_def(value)
+      end
+
+      def capability_minima=(value : CapabilityMinimaStruct) : Nil
+        value.validate!
+        previous_def(value)
+      end
+
+      def self.next_configuration_version(current : UInt32) : UInt32
+        current == UInt32::MAX ? INITIAL_CONFIGURATION_VERSION : current + 1_u32
+      end
+
+      # Advance once after a successful logical configuration change.
+      def increase_configuration_version(&) : Nil
+        yield
+        increase_configuration_version
+      end
+
+      def increase_configuration_version : Nil
+        self.configuration_version = BasicInformation.next_configuration_version(@configuration_version)
+      end
+
+      private def after_restore_state : Nil
+        self.configuration_version = INITIAL_CONFIGURATION_VERSION if @configuration_version == 0_u32
       end
 
       private def valid_location?(code : String) : Bool

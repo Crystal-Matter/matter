@@ -22,6 +22,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   range starting at zero, with MaxLevel no greater than 254. The advertised
   cluster revision remains 6 pending the remaining revision 7 behavior audit.
 
+### Basic Information configuration version
+
+- Add an explicit operation to advance ConfigurationVersion once after a
+  successful logical configuration change, including uint32 wrap to one.
+  Reject zero and direct regressions, and preserve the advanced value across
+  restart. Runtime endpoint additions and removals advance it automatically;
+  startup endpoint reconstruction does not. Repair an invalid saved zero
+  before advertising the attribute.
+- Encode the four additional mandatory Matter 1.6 revision 6 fields in
+  CapabilityMinimaStruct, with spec-bounded defaults and provisioned values.
+
 ### General Diagnostics snapshot and boot event
 
 - Implement revision 2 TimeSnapshot command and nullable POSIX response field.

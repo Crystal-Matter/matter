@@ -99,6 +99,7 @@ module Matter
     # and the parameters it was built from.
     @dynamic_endpoints : Hash(UInt16, Tuple(String, Storage::Document)) = {} of UInt16 => Tuple(String, Storage::Document)
     @restoring_endpoints : Bool = false
+    @started : Bool = false
 
     def basic_info : Cluster::BasicInformation
       @basic_info.as(Cluster::BasicInformation)
@@ -227,6 +228,7 @@ module Matter
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode
       @responder.start
       @transport.start
+      @started = true
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::GeneralDiagnostics)
         .try(&.emit_boot_reason_event)
       on_started
@@ -245,6 +247,7 @@ module Matter
     # Signals shutdown, stops all services, and unblocks all `await_shutdown` waiters.
     # Safe to call from signal handlers or other fibers.
     def shutdown! : Nil
+      @started = false
       # Persist all session state before shutdown to ensure message counters
       # and other session data are saved for clean reconnection after restart
       @message_handler.persist_all_sessions
@@ -727,6 +730,7 @@ module Matter
       endpoint = Endpoint.new(DataType::EndpointNumber.new(endpoint_id), device_types)
       clusters.each { |cluster| endpoint.add_cluster(cluster) }
       @node.add_endpoint(endpoint)
+      basic_info.increase_configuration_version if @started
 
       # Tell controllers a new endpoint exists - they read its attributes on
       # their own (same pattern as remove_endpoint).
@@ -748,6 +752,7 @@ module Matter
 
       endpoint = @node.remove_endpoint(endpoint_id)
       return false unless endpoint
+      basic_info.increase_configuration_version if @started
 
       endpoint.clusters.each_value { |cluster| @persistence.forget_cluster(cluster) }
       save_dynamic_endpoints if @dynamic_endpoints.delete(endpoint_id)

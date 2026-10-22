@@ -93,6 +93,51 @@ describe Matter::Cluster::BasicInformation do
       expect_raises(Matter::ConfigurationError) { build(Matter::Cluster::BasicInformation, 0, max_paths_per_invoke: 0_u16) }
       expect_raises(Matter::ConfigurationError) { build(Matter::Cluster::BasicInformation, 0, configuration_version: 0_u32) }
     end
+
+    it "increments ConfigurationVersion after one logical configuration change" do
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+      observed = 0_u32
+
+      cluster.increase_configuration_version do
+        observed = cluster.configuration_version
+        cluster.node_label = "Changed"
+        cluster.location = "AU"
+      end
+
+      observed.should eq(1_u32)
+      cluster.configuration_version.should eq(2_u32)
+      cluster.node_label.should eq("Changed")
+      cluster.location.should eq("AU")
+    end
+
+    it "does not increment ConfigurationVersion when the configuration change fails" do
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+
+      expect_raises(Matter::ConfigurationError, /change failed/) do
+        cluster.increase_configuration_version do
+          raise Matter::ConfigurationError.new("change failed")
+        end
+      end
+
+      cluster.configuration_version.should eq(1_u32)
+    end
+
+    it "wraps ConfigurationVersion from UInt32::MAX to one" do
+      cluster = build(Matter::Cluster::BasicInformation, 0, configuration_version: UInt32::MAX)
+
+      cluster.increase_configuration_version
+
+      cluster.configuration_version.should eq(1_u32)
+    end
+
+    it "rejects direct ConfigurationVersion regressions and zero" do
+      cluster = build(Matter::Cluster::BasicInformation, 0, configuration_version: 3_u32)
+
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 2_u32 }
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 0_u32 }
+
+      cluster.configuration_version.should eq(3_u32)
+    end
   end
 
   describe "TLV attribute encoding - read_attribute" do
@@ -139,7 +184,11 @@ describe Matter::Cluster::BasicInformation do
     it "reads CAPABILITY_MINIMA with TLV struct encoding" do
       capability = Matter::Cluster::BasicInformation::CapabilityMinimaStruct.new(
         case_sessions_per_fabric: 5_u16,
-        subscriptions_per_fabric: 10_u16
+        subscriptions_per_fabric: 10_u16,
+        simultaneous_invocations_supported: 4_u16,
+        simultaneous_writes_supported: 5_u16,
+        read_paths_supported: 12_u16,
+        subscribe_paths_supported: 6_u16
       )
 
       cluster = build(Matter::Cluster::BasicInformation, 0,
@@ -150,6 +199,46 @@ describe Matter::Cluster::BasicInformation do
       parsed = Matter::Cluster::BasicInformation::CapabilityMinimaStruct.from_tlv(read_tlv(cluster, Matter::Cluster::BasicInformation::ATTR_CAPABILITY_MINIMA))
       parsed.case_sessions_per_fabric.should eq(5)
       parsed.subscriptions_per_fabric.should eq(10)
+      parsed.simultaneous_invocations_supported.should eq(4_u16)
+      parsed.simultaneous_writes_supported.should eq(5_u16)
+      parsed.read_paths_supported.should eq(12_u16)
+      parsed.subscribe_paths_supported.should eq(6_u16)
+    end
+
+    it "advertises every mandatory revision 6 CapabilityMinima field" do
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+      parsed = Matter::Cluster::BasicInformation::CapabilityMinimaStruct.from_tlv(
+        read_tlv(cluster, Matter::Cluster::BasicInformation::ATTR_CAPABILITY_MINIMA)
+      )
+
+      parsed.simultaneous_invocations_supported.should be >= 1_u16
+      parsed.simultaneous_writes_supported.should be >= 1_u16
+      parsed.read_paths_supported.should be >= 9_u16
+      parsed.subscribe_paths_supported.should be >= 3_u16
+    end
+
+    it "rejects CapabilityMinima values outside Matter 1.6 bounds" do
+      minima = Matter::Cluster::BasicInformation::CapabilityMinimaStruct
+
+      expect_raises(Matter::ConfigurationError) { minima.new(case_sessions_per_fabric: 2_u16) }
+      expect_raises(Matter::ConfigurationError) { minima.new(subscriptions_per_fabric: 10_001_u16) }
+      expect_raises(Matter::ConfigurationError) { minima.new(simultaneous_invocations_supported: 0_u16) }
+      expect_raises(Matter::ConfigurationError) { minima.new(simultaneous_writes_supported: 0_u16) }
+      expect_raises(Matter::ConfigurationError) { minima.new(read_paths_supported: 8_u16) }
+      expect_raises(Matter::ConfigurationError) { minima.new(subscribe_paths_supported: 2_u16) }
+    end
+
+    it "rejects a mutated invalid CapabilityMinima when provisioning the cluster" do
+      capability = Matter::Cluster::BasicInformation::CapabilityMinimaStruct.new
+      capability.read_paths_supported = 8_u16
+
+      expect_raises(Matter::ConfigurationError) do
+        build(Matter::Cluster::BasicInformation, 0, capability_minima: capability)
+      end
+
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+      expect_raises(Matter::ConfigurationError) { cluster.capability_minima = capability }
+      cluster.capability_minima.read_paths_supported.should eq(9_u16)
     end
 
     it "reads PRODUCT_APPEARANCE with TLV struct encoding" do

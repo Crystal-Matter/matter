@@ -98,6 +98,8 @@ module Matter
     #   `InteractionModel::Status` rejects the write, returning a value of the
     #   attribute's type replaces the one written, anything else keeps it.
     # * `after_write :name do ... end` — runs after the value was assigned.
+    # * `after_restore_state` — optional private hook called after persisted
+    #   attributes and DataVersion are restored, to repair invalid legacy data.
     #
     # `requires:` is a feature symbol (`:lighting`), a `{feature: Bool}` literal
     # (all must match), an array of those (any may match) or a constant holding
@@ -857,6 +859,9 @@ module Matter
                 @{{ decl[:name].id }} = state.{{ decl[:name].id }}
               {% end %}
               @data_version = state.data_version
+              {% if @type.has_method?("after_restore_state") %}
+                after_restore_state
+              {% end %}
             rescue ex
               {{ log }}.warn(exception: ex) { "#{name} restore_state failed; starting fresh" }
             end

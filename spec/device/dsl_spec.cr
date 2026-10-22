@@ -330,9 +330,11 @@ describe Matter::Device::DSL do
         bridge.add_endpoint(:bridged_light, name: "Porch", unique_id: "porch-1")
         second = bridge.add_endpoint(:bridged_light, name: "Hall", unique_id: "hall-1")
         second.get_cluster!(Matter::Cluster::OnOff).on = true
+        bridge.basic_info.increase_configuration_version
         DslSpec.stop(bridge)
 
         restarted = DslSpec.bridge(path)
+        restarted.basic_info.configuration_version.should eq(2_u32)
         DslSpec.endpoint_labels(restarted).should eq({1_u16 => "Porch", 2_u16 => "Hall"})
         restarted.node.get_cluster!(1_u16, Matter::Cluster::BridgedDeviceBasicInformation).unique_id.should eq("porch-1")
         restarted.node.get_cluster!(2_u16, Matter::Cluster::BridgedDeviceBasicInformation).unique_id.should eq("hall-1")

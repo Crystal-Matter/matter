@@ -14,6 +14,17 @@ describe "matter_switch example" do
     read_value(device, "basicinformation", "product-name", "ProductName", 0).should eq "Crystal Switch"
   end
 
+  it "reports Matter 1.6 capability minima and configuration version" do
+    capabilities = expect_success(device.read("basicinformation", "capability-minima", 0))
+    capabilities.int("CaseSessionsPerFabric").should eq(3_i64)
+    capabilities.int("SubscriptionsPerFabric").should eq(3_i64)
+    capabilities.int("SimultaneousInvocationsSupported").should eq(1_i64)
+    capabilities.int("SimultaneousWritesSupported").should eq(1_i64)
+    capabilities.int("ReadPathsSupported").should eq(9_i64)
+    capabilities.int("SubscribePathsSupported").should eq(3_i64)
+    read_int(device, "basicinformation", "configuration-version", "ConfigurationVersion", 0).should eq(1_i64)
+  end
+
   it "lists endpoint 1 in the root descriptor" do
     expect_success(device.read("descriptor", "parts-list", 0)).int_list("PartsList").should contain(1_i64)
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x0100_i64

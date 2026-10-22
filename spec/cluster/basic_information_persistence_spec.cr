@@ -64,4 +64,27 @@ describe Matter::Cluster::BasicInformation do
     cluster.data_version.should eq(7_u32)
     cluster.save_state.as(Matter::Storage::Document)["configuration_version"].should eq(1_i64)
   end
+
+  it "persists an advanced ConfigurationVersion across restart" do
+    source = Matter::Cluster::BasicInformation.new(endpoint(0), product_name: "Bridge")
+    source.increase_configuration_version { source.node_label = "Updated" }
+
+    restored = Matter::Cluster::BasicInformation.new(endpoint(0), product_name: "Bridge")
+    restored.restore_state(source.save_state.as(Matter::Storage::Document))
+
+    restored.configuration_version.should eq(2_u32)
+    restored.node_label.should eq("Updated")
+  end
+
+  it "repairs an invalid persisted zero ConfigurationVersion before advertising it" do
+    source = Matter::Cluster::BasicInformation.new(endpoint(0), product_name: "Bridge")
+    document = source.save_state.as(Matter::Storage::Document)
+    document["configuration_version"] = 0_i64
+
+    restored = Matter::Cluster::BasicInformation.new(endpoint(0), product_name: "Bridge")
+    restored.restore_state(document)
+
+    restored.configuration_version.should eq(Matter::Cluster::BasicInformation::INITIAL_CONFIGURATION_VERSION)
+    restored.save_state.as(Matter::Storage::Document)["configuration_version"].should eq(1_i64)
+  end
 end
