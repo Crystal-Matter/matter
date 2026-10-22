@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric legacy IPK recovery
+
+- Repair a legacy Anchor Datastore whose GroupKeySetID zero lacks the fabric
+  IPK, and write the repaired key to storage before serving the Datastore.
+  Startup fails closed if that repair cannot be saved.
+
 ### Joint Fabric scoped IPv6 handoff
 
 - Preserve the interface scope of a discovered link-local IPv6 peer when the

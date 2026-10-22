@@ -54,6 +54,70 @@ describe MatterJointFabricAdministrator::Device do
     reconstructed.zone_id.should eq(peer.zone_id)
   end
 
+  it "durably repairs a legacy Anchor Datastore IPK before serving it after restart" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    root_key = crypto.create_key_pair
+    icac_key = crypto.create_key_pair
+    noc_key = crypto.create_key_pair
+    fabric_id = 0xA100_u64
+    node_id = 0xA102_u64
+    root = Matter::Crypto::MatterCertificate::Builder.root(root_key, 1_u64, Bytes[1], crypto)
+    icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[2], crypto, anchor: true)
+    noc = Matter::Crypto::MatterCertificate::Builder.node(
+      noc_key.public_key, fabric_id, node_id, icac_key, 1_u64, Bytes[3], crypto,
+      issuer_icac_id: 2_u64, issuer_certificate: icac,
+      case_authenticated_tag: 0xFFFE_0001_u32)
+    fabric = Matter::Fabric.new(fabric_id, 1_u8, node_id, root_key.public_key, noc, noc_key,
+      Bytes.new(16, 0xA5_u8), intermediate_cert: icac, root_cert: root,
+      cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0001_u32)])
+    path = File.join(Dir.tempdir, "matter-jfa-legacy-ipk-#{Random::Secure.hex(6)}.yml")
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
+    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{path}.csr"
+
+    first = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    first.fabric_table.add_fabric(fabric).should be_true
+    legacy = first.joint_fabric_datastore
+    legacy.configure_anchor(root, node_id, fabric.vendor_id, "Legacy Anchor").success?.should be_true
+    legacy.group_key_set_list.first.epoch_key0.should be_nil
+    first.persistence.save_cluster(legacy).should be_true
+    first.shutdown!
+
+    repaired = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    repaired.prepare_for_start
+    served = repaired.joint_fabric_datastore
+    served.request_is_case_session = true
+    key_sets = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct).from_tlv(
+      served.read_attribute(Matter::Cluster::JointFabricDatastore::ATTR_GROUP_KEY_SET_LIST, 1_u8).as(TLV::Any).to_slice)
+    key_sets.find!(&.group_key_set_id.==(0_u16)).epoch_key0.should eq(fabric.ipk)
+
+    # Opening a second backend immediately models a process loss before the
+    # normal debounced cluster-state save or graceful shutdown.
+    after_crash = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    after_crash.joint_fabric_datastore.group_key_set_list
+      .find!(&.group_key_set_id.==(0_u16)).epoch_key0.should eq(fabric.ipk)
+  ensure
+    first.try(&.shutdown!)
+    repaired.try(&.shutdown!)
+    after_crash.try(&.shutdown!)
+    File.delete?(path) if path
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+  end
+
   it "starts Anchor verification from the operational listener without taking ownership of it" do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
       ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
