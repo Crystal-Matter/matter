@@ -1,6 +1,26 @@
 require "../spec_helper"
 
 describe "Matter 1.6 Groupcast adoption wire behavior" do
+  it "requires Administer privilege to read adoption state" do
+    root = Matter::DataType::EndpointNumber.new(0_u16)
+    keys = Matter::Cluster::GroupKeyManagement.new(root,
+      feature_map: Matter::Cluster::GroupKeyManagement::Feature::Groupcast)
+    metadata = keys.get_attribute_metadata(Matter::Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION)
+      .as(Matter::Cluster::AttributeMetadata)
+    metadata.access.should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+    metadata.write_access.should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+  end
+
+  it "marks auxiliary ACL changes omitted as the Access Control XML requires" do
+    root = Matter::DataType::EndpointNumber.new(0_u16)
+    acl = Matter::Cluster::AccessControl.new(root,
+      feature_map: Matter::Cluster::AccessControl::Feature::Auxiliary)
+    metadata = acl.get_attribute_metadata(Matter::Cluster::AccessControl::ATTR_AUXILIARY_ACL)
+      .as(Matter::Cluster::AttributeMetadata)
+    metadata.access.should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+    metadata.omit_changes?.should be_true
+  end
+
   it "rejects oversized endpoint membership before installing a supplied key" do
     root = Matter::DataType::EndpointNumber.new(0_u16)
     keys = Matter::Cluster::GroupKeyManagement.new(root,

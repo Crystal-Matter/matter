@@ -46,5 +46,9 @@ describe "Matter 1.6 Groupcast Listener advertisement" do
     expect_success(device.read("groupkeymanagement", "group-key-map", 0)).output.should contain("0 entries")
     expect_success(device.invoke("groupcast", "leave-group", [group_id.to_s], 0))
     expect_success(device.read("groupcast", "membership", 0)).output.should contain("0 entries")
+    view_acl = %([{"fabricIndex":1,"privilege":1,"authMode":2,"subjects":[],"targets":[]}])
+    expect_success(device.write("accesscontrol", "acl", view_acl, 0))
+    expect_success(device.read("groupcast", "membership", 0))
+    expect_failure(device.read("groupkeymanagement", "groupcast-adoption", 0), "UNSUPPORTED_ACCESS")
   end
 end

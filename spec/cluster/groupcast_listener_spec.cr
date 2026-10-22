@@ -42,8 +42,10 @@ describe "Matter 1.6 Groupcast Listener" do
     end
     listener.membership(1_u8).map(&.group_id).should eq([0x1234_u16])
     listener.membership(2_u8).should be_empty
+    listener.read_attribute(GroupcastServer::ATTR_MEMBERSHIP, nil).as(TLV::Any).as_list.should be_empty
     acl.auxiliary_acl(1_u8).size.should eq(1)
     acl.auxiliary_acl(2_u8).should be_empty
+    acl.read_attribute(GroupAcl::ATTR_AUXILIARY_ACL, nil).as(TLV::Any).as_list.should be_empty
     acl.check_access(0x1234_u64, 1_u8, GroupAcl::AccessControlEntryPrivilege::Operate,
       endpoint: 1_u16, auth_mode: GroupAcl::AccessControlEntryAuthMode::Group).should be_true
     acl.check_access(0x1234_u64, 2_u8, GroupAcl::AccessControlEntryPrivilege::Operate,
@@ -90,5 +92,26 @@ describe "Matter 1.6 Groupcast Listener" do
     recovered.membership(1_u8).should be_empty
     recovered_keys.groupcast_adopted?(1_u8).should be_false
     recovered_acl.auxiliary_acl(1_u8).should be_empty
+  end
+
+  it "keeps LeaveGroupResponse within its 20-endpoint wire bound" do
+    listener, _keys, acl = listener_fixture
+    acl.acl = [GroupAcl::AccessControlEntry.new(GroupAcl::AccessControlEntryPrivilege::Administer,
+      GroupAcl::AccessControlEntryAuthMode::CASE, [10_u64], nil, 1_u8)]
+    endpoints = (1_u16..21_u16).to_a
+    as_fabric(listener, 1_u8) do
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(0x1234_u16, endpoints, 1_u16,
+        key: Bytes.new(16, 0xAA_u8))).should eq(Matter::InteractionModel::Status.success)
+
+      listener.leave_group(GroupcastServer::LeaveGroupRequest.new(0x1234_u16))
+        .should eq(Matter::InteractionModel::Status.constraint_error)
+      listener.membership(1_u8).first.endpoints.should eq(endpoints)
+
+      removed = listener.leave_group(GroupcastServer::LeaveGroupRequest.new(0x1234_u16, endpoints.first(20)))
+        .as(GroupcastServer::LeaveGroupResponse)
+      removed.endpoints.should eq(endpoints.first(20))
+      listener.leave_group(GroupcastServer::LeaveGroupRequest.new(0x1234_u16))
+        .as(GroupcastServer::LeaveGroupResponse).endpoints.should eq([21_u16])
+    end
   end
 end

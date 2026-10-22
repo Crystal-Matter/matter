@@ -252,7 +252,8 @@ module Matter
       end
 
       def membership(fabric_index : UInt8?) : Array(MembershipStruct)
-        entries = fabric_index ? @membership.select { |entry| entry.fabric_index == fabric_index } : @membership
+        return [] of MembershipStruct unless fabric_index
+        entries = @membership.select { |entry| entry.fabric_index == fabric_index }
         entries.map do |entry|
           MembershipStruct.new(entry.group_id, entry.endpoints.dup, entry.key_set_id,
             entry.has_auxiliary_acl?, entry.mcast_addr_policy, entry.fabric_index)
@@ -323,6 +324,10 @@ module Matter
         return InteractionModel::Status.not_found unless index
         existing = @membership[index]
         removed = requested.nil? || requested.empty? ? existing.endpoints.dup : existing.endpoints.select { |endpoint| requested.includes?(endpoint) }
+        # LeaveGroupResponse.Endpoints has a 20-entry limit even though a
+        # Membership can contain 255 endpoints. Keep the membership intact so
+        # callers can withdraw large groups in bounded endpoint batches.
+        return InteractionModel::Status.constraint_error if removed.size > MAX_LEAVE_ENDPOINTS
         remaining = existing.endpoints.reject { |endpoint| removed.includes?(endpoint) }
         @group_keys.replace_groupcast_membership(existing.group_id, remaining, existing.key_set_id, fabric)
         @membership.reject! { |entry| entry.fabric_index == fabric && entry.group_id == request.group_id }

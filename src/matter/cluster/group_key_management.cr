@@ -358,7 +358,8 @@ module Matter
       attribute 0x0002, :max_groups_per_fabric, UInt16, default: DEFAULT_MAX_GROUPS_PER_FABRIC, fixed: true
       attribute 0x0003, :max_group_keys_per_fabric, UInt16, default: DEFAULT_MAX_GROUP_KEYS_PER_FABRIC, fixed: true
       attribute 0x0004, :groupcast_adoption, Array(GroupcastAdoptionStruct), computed: true,
-        writable: true, write_access: :administer, fabric_scoped: true, requires: :groupcast
+        writable: true, read_access: :administer, write_access: :administer,
+        fabric_scoped: true, requires: :groupcast
 
       command 0x00, :key_set_write, request: KeySetWriteRequest, access: :administer
       command 0x01, :key_set_read, request: KeySetReadRequest, response: KeySetReadResponse, response_id: 0x02, access: :administer

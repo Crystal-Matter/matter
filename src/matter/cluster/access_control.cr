@@ -178,7 +178,7 @@ module Matter
       attribute 0x0003, :targets_per_access_control_entry, UInt16, default: DEFAULT_TARGETS_PER_ENTRY, fixed: true
       attribute 0x0004, :access_control_entries_per_fabric, UInt16, default: DEFAULT_ENTRIES_PER_FABRIC, fixed: true
       attribute 0x0007, :auxiliary_acl, Array(AccessControlEntry), computed: true,
-        read_access: :administer, fabric_scoped: true, requires: :auxiliary
+        read_access: :administer, fabric_scoped: true, omit_changes: true, requires: :auxiliary
 
       event 0x00, :access_control_entry_changed, priority: :info, access: :administer
       event 0x01, :access_control_extension_changed, priority: :info, access: :administer, requires: :extension
@@ -228,7 +228,8 @@ module Matter
       end
 
       def auxiliary_acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)
-        fabric_index ? @auxiliary_acl.select { |entry| entry.fabric_index == fabric_index } : @auxiliary_acl
+        return [] of AccessControlEntry unless fabric_index
+        @auxiliary_acl.select { |entry| entry.fabric_index == fabric_index }
       end
 
       # A Groupcast listener's auxiliary ACL is derived from Membership. Keep

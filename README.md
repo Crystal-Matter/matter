@@ -501,11 +501,12 @@ An always-on device can opt into the provisional Matter 1.6 Groupcast Listener
 on root endpoint 0 with `groupcast_listener: true` in its `Matter::Device`
 constructor. The switch example accepts `MATTER_GROUPCAST_LISTENER=1` for this
 mode. It advertises Groupcast LN, Group Key Management GCAST, and Access
-Control AUX together. A CASE controller with Manage privilege can install a
-key set with Group Key Management KeySetWrite and join an endpoint using
-Groupcast JoinGroup. Administer privilege is required to supply key bytes or
-enable an auxiliary Group ACL. Groupcast membership, key mappings, adopted
-fabric state, and auxiliary access survive a device restart. A fabric that
+Control AUX together. A CASE controller with Administer privilege installs a
+key set with Group Key Management KeySetWrite; Manage privilege then permits
+joining an endpoint using Groupcast JoinGroup. Administer privilege is required
+to supply key bytes or enable an auxiliary Group ACL. Groupcast membership,
+key mappings, adopted fabric state, and auxiliary access survive a device
+restart. A fabric that
 writes GroupcastAdoption=true reads an empty legacy GroupKeyMap/GroupTable and
 must manage membership through Groupcast commands. Sender and per-group
 multicast address features are not advertised.
@@ -519,7 +520,7 @@ group.install_epoch_key(fabric.fabric_id, fabric.root_public_key,
   0x1234_u16, epoch_key)
 group.invoke(fabric.fabric_id, 0x1234_u16,
   Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
-  root_public_key: fabric.root_public_key)
+  root_public_key: fabric.root_public_key, iana_address: true)
 group.write(fabric.fabric_id, 0x1234_u16,
   Matter::Cluster::LevelControl::CLUSTER_ID,
   Matter::Cluster::LevelControl::ATTR_OPTIONS, TLV::Any.new(1_u8, nil),
