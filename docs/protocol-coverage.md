@@ -13,8 +13,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 55
-- Matching known revisions: 40
+- Crystal declarations for those IDs: 64
+- Matching known revisions: 50
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -111,16 +111,16 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 3 | — |
 | 0x0406 | Occupancy Sensing Cluster | 7 | 5 | — |
-| 0x040C | Carbon Monoxide Concentration Measurement | 5 | — | cluster absent |
-| 0x040D | Carbon Dioxide Concentration Measurement | 5 | 3 | — |
-| 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | — | cluster absent |
-| 0x0415 | Ozone Concentration Measurement | 5 | — | cluster absent |
-| 0x042A | PM2.5 Concentration Measurement | 5 | — | cluster absent |
-| 0x042B | Formaldehyde Concentration Measurement | 5 | — | cluster absent |
-| 0x042C | PM1 Concentration Measurement | 5 | — | cluster absent |
-| 0x042D | PM10 Concentration Measurement | 5 | — | cluster absent |
-| 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | — | cluster absent |
-| 0x042F | Radon Concentration Measurement | 5 | — | cluster absent |
+| 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — |
+| 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — |
+| 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — |
+| 0x0415 | Ozone Concentration Measurement | 5 | 5 | — |
+| 0x042A | PM2.5 Concentration Measurement | 5 | 5 | — |
+| 0x042B | Formaldehyde Concentration Measurement | 5 | 5 | — |
+| 0x042C | PM1 Concentration Measurement | 5 | 5 | — |
+| 0x042D | PM10 Concentration Measurement | 5 | 5 | — |
+| 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — |
+| 0x042F | Radon Concentration Measurement | 5 | 5 | — |
 | 0x0430 | Soil Measurement Cluster | 1 | — | cluster absent |
 | 0x0431 | Ambient Context Sensing Cluster | 1 | — | cluster absent |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | — | cluster absent |

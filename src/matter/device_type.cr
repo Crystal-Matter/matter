@@ -43,6 +43,7 @@ module Matter
     PRESSURE_SENSOR    = 0x0305_u32 # Pressure Sensor
     FLOW_SENSOR        = 0x0306_u32 # Flow Sensor
     HUMIDITY_SENSOR    = 0x0307_u32 # Humidity Sensor
+    AIR_QUALITY_SENSOR = 0x002C_u32 # Air Quality Sensor
 
     # Closure Device Types
     DOOR_LOCK                  = 0x000A_u32 # Door Lock
@@ -218,6 +219,20 @@ module Matter
       )
     end
 
+    def self.air_quality_sensor : DeviceType
+      new(
+        DataType::DeviceTypeId.new(AIR_QUALITY_SENSOR),
+        "Air Quality Sensor",
+        1_u16,
+        required_server_clusters: [0x001D_u32, 0x0003_u32, 0x005B_u32],
+        optional_server_clusters: [
+          0x0402_u32, 0x0405_u32, 0x040C_u32, 0x040D_u32, 0x0413_u32,
+          0x0415_u32, 0x042A_u32, 0x042B_u32, 0x042C_u32, 0x042D_u32,
+          0x042E_u32, 0x042F_u32,
+        ]
+      )
+    end
+
     def self.door_lock : DeviceType
       new(
         DataType::DeviceTypeId.new(DOOR_LOCK),
@@ -288,6 +303,7 @@ module Matter
       when DIMMER_SWITCH              then dimmer_switch
       when CONTACT_SENSOR             then contact_sensor
       when TEMPERATURE_SENSOR         then temperature_sensor
+      when AIR_QUALITY_SENSOR         then air_quality_sensor
       when DOOR_LOCK                  then door_lock
       when THERMOSTAT                 then thermostat
       when FAN                        then fan
@@ -329,6 +345,7 @@ module Matter
       when PRESSURE_SENSOR            then "Pressure Sensor"
       when FLOW_SENSOR                then "Flow Sensor"
       when HUMIDITY_SENSOR            then "Humidity Sensor"
+      when AIR_QUALITY_SENSOR         then "Air Quality Sensor"
       when DOOR_LOCK                  then "Door Lock"
       when DOOR_LOCK_CONTROLLER       then "Door Lock Controller"
       when WINDOW_COVERING            then "Window Covering"

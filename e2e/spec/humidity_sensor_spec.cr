@@ -24,4 +24,14 @@ describe "matter_humidity_sensor example" do
     expect_success(device.write("identify", "identify-time", 60))
     read_int(device, "identify", "identify-time", "IdentifyTime").should be_in(1..60)
   end
+
+  it "reads Matter 1.6 concentration clusters on an Air Quality Sensor endpoint" do
+    expect_success(device.read("descriptor", "device-type-list", 2)).int("DeviceType").should eq 0x002C_i64
+    read_int(device, "carbondioxideconcentrationmeasurement", "cluster-revision", "ClusterRevision", 2).should eq 5
+    read_int(device, "carbonmonoxideconcentrationmeasurement", "cluster-revision", "ClusterRevision", 2).should eq 5
+    read_int(device, "carbondioxideconcentrationmeasurement", "measurement-medium", "MeasurementMedium", 2).should eq 0
+    read_int(device, "carbonmonoxideconcentrationmeasurement", "level-value", "LevelValue", 2).should eq 1
+    measured = read_value(device, "carbondioxideconcentrationmeasurement", "measured-value", "MeasuredValue", 2).split(/\s+/).first.to_f32
+    measured.should eq 425.0_f32
+  end
 end

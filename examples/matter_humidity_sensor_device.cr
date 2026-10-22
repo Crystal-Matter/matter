@@ -36,6 +36,20 @@ module MatterHumiditySensor
       cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Humidity Sensor")]
     end
 
+    # A second endpoint exercises the standard Air Quality Sensor device type
+    # and two derived concentration clusters over the same CASE session.
+    endpoint 2, device_type: Matter::DeviceType::AIR_QUALITY_SENSOR do
+      cluster Matter::Cluster::Identify, identify_type: :visible_led
+      cluster Matter::Cluster::AirQuality, air_quality: Matter::Cluster::AirQuality::Level::Good
+      cluster Matter::Cluster::CarbonDioxideConcentrationMeasurement,
+        measurement_unit: Matter::Cluster::CarbonDioxideConcentrationMeasurement::MeasurementUnit::Ppm,
+        measured_value: 425.0_f32,
+        min_measured_value: 0.0_f32,
+        max_measured_value: 5000.0_f32
+      cluster Matter::Cluster::CarbonMonoxideConcentrationMeasurement,
+        level_value: Matter::Cluster::CarbonMonoxideConcentrationMeasurement::LevelValue::Low
+    end
+
     on(:humidity, :humidity_changed) do |_old_value, new_value|
       notify "Humidity: #{format_humidity(new_value)}" if new_value
     end
