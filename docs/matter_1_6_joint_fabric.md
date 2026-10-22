@@ -328,6 +328,35 @@ commissioned fabric, so the official chip-tool E2E can read both directories,
 restart the bridge and verify two-fabric isolation.
 The ordinary bridge example does not enable this fixture.
 
+`Cluster::CommissionerControl` provides the Matter 1.6 wire schema and a
+host-driven approval state machine for a fabric-synchronizing Aggregator. It
+advertises `FabricSynchronization` only after a host configures both callbacks:
+one to start approval and one to open the intended target's enhanced
+commissioning window. `RequestCommissioningApproval` records the CASE fabric,
+client NodeID and RequestID, and the host later calls `resolve_approval` to
+emit a result event visible only on that fabric. Without a host, requests
+receive a failure result and `CommissionNode` cannot return a window. The
+approval callback must enqueue consent work and return promptly; the host
+resolves the request asynchronously after a decision. Approval is consumed on
+the first matching `CommissionNode` attempt. The host calls
+`expire_approval` when its manufacturer-defined validity interval ends. Fabric
+removal and restart also discard outstanding approvals.
+At most 64 requests are tracked; accepting a new one retires the oldest and
+emits a failure result if that older request was still pending. Each accepted
+request has a local generation token so a late host decision cannot approve a
+later request that reuses the same wire RequestID.
+
+The host must obtain any user consent it requires, open the target window,
+honor `ResponseTimeoutSeconds`, and verify the commissioned target's attested
+VendorID and ProductID against the earlier request. The cluster validates the
+reverse-window wire parameters, but does not perform target commissioning or
+attestation. Ordinary device and bridge examples do not advertise it, and the
+current slice is not a complete reverse-commissioning flow.
+`examples/matter_commissioner_control_device.cr` is an opt-in synthetic
+Aggregator used only for chip-tool interoperability testing. It auto-approves
+one test VID/PID pair and returns dummy reverse-window bytes; it does not open
+a target window or commission a node.
+
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor
 CAT check. The controller's `OperationalTrustAnchors` implementation must
 validate the source of an operational root or VID Verification Statement. An
