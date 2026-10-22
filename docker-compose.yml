@@ -213,6 +213,11 @@ services:
     environment:
       E2E_DEVICE: matter_temperature_control
 
+  temperature-alarm:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_temperature_alarm
+
   thermostat-ui:
     <<: *device
     environment:

@@ -247,6 +247,16 @@ persist, and the host can report a local control change with
 `update_temperature_setpoint` or `update_selected_temperature_level`.
 See `examples/matter_temperature_control_device.cr` for both feature choices.
 
+`Cluster::TemperatureAlarm` exposes the Matter 1.6 Alarm Base attributes and
+Notify event with over and/or under temperature thresholds in hundredths of a
+degree Celsius. Devices select the OVER or UNDER features (or both), optional
+major/minor thresholds, and individual adjustable threshold features. Call
+`update_temperature` with physical readings; it recomputes State and reports
+transitions. Optional Reset and ModifyEnabledAlarms commands support latching
+and masking. Register `on_set_thresholds` to accept threshold changes from a
+controller before the cluster commits them. See
+`examples/matter_temperature_alarm_device.cr` for a synthetic sensor.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
