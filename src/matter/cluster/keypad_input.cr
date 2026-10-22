@@ -8,6 +8,24 @@ module Matter
     class KeypadInput < Base
       cluster 0x0509, revision: 1
 
+      KEY_REPEAT_WINDOW = 200.milliseconds
+      alias ReleaseTimer = Proc(Time::Span, Proc(Nil), Nil)
+
+      # Actions are local host notifications, not Matter cluster events. The
+      # SendKeyResponse still reports only the protocol's three Status values.
+      enum KeyAction
+        Press
+        Hold
+        Release
+      end
+
+      private class PressState
+        property deadline : Time::Instant
+
+        def initialize(@deadline : Time::Instant)
+        end
+      end
+
       feature :navigation_key_codes, bit: 0
       feature :location_keys, bit: 1
       feature :number_keys, bit: 2
@@ -140,10 +158,22 @@ module Matter
         response: SendKeyResponse, response_id: 0x01, access: :operate
 
       @on_send_key : Proc(CecKeyCode, Status)?
+      @on_key_action : Proc(CecKeyCode, KeyAction, UInt8?, Nil)?
+      @key_mutex = Mutex.new
+      @active_keys = {} of {UInt8?, CecKeyCode} => PressState
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::None,
-                     supported_keys : Array(CecKeyCode) = [] of CecKeyCode)
+                     supported_keys : Array(CecKeyCode) = [] of CecKeyCode,
+                     @clock : Proc(Time::Instant) = -> { Time.instant },
+                     release_timer : ReleaseTimer? = nil)
+        @release_timer = release_timer || ->(delay : Time::Span, callback : Proc(Nil)) do
+          spawn do
+            sleep delay
+            callback.call
+          end
+          nil
+        end
         raise ArgumentError.new("supported_keys contains duplicates") unless supported_keys.uniq.size == supported_keys.size
         raise ArgumentError.new("Reserved CEC code cannot be supported") if supported_keys.includes?(CecKeyCode::Reserved)
         if supported_keys.includes?(CecKeyCode::SetupMenu) && !@feature_map.location_keys?
@@ -172,11 +202,79 @@ module Matter
         @on_send_key = block
       end
 
+      # Invoked once for an accepted press, on each same-key repeat within the
+      # window, and after the last repeat has gone quiet for 200 ms. The fabric
+      # is captured from the authenticated command context; each cluster
+      # instance already scopes events to its endpoint.
+      def on_key_action(&block : CecKeyCode, KeyAction, UInt8? -> Nil) : Nil
+        @on_key_action = block
+      end
+
       def send_key(request : SendKeyRequest) : SendKeyResponse
         key = CecKeyCode.from_value?(request.key_code)
         return SendKeyResponse.new(Status::UnsupportedKey) unless key && @supported_keys.includes?(key)
         status = @on_send_key.try(&.call(key)) || Status::InvalidKeyInCurrentState
+        return SendKeyResponse.new(status) unless status.success?
+
+        now = @clock.call
+        flush_key_releases(now)
+        fabric = request_fabric_index
+        identity = {fabric, key}
+        action, fresh = @key_mutex.synchronize do
+          previous = @active_keys[identity]?
+          if previous
+            previous.deadline = now + KEY_REPEAT_WINDOW
+            {KeyAction::Hold, nil}
+          else
+            state = PressState.new(now + KEY_REPEAT_WINDOW)
+            @active_keys[identity] = state
+            {KeyAction::Press, state}
+          end
+        end
+        notify_key_action(key, action, fabric)
+        schedule_release(identity, fresh, KEY_REPEAT_WINDOW) if fresh
         SendKeyResponse.new(status)
+      end
+
+      # Also useful for a host with its own event loop or a deterministic
+      # injected clock. Stale timer callbacks cannot release a renewed hold.
+      def flush_key_releases(now : Time::Instant = @clock.call) : Nil
+        expired = [] of {UInt8?, CecKeyCode}
+        @key_mutex.synchronize do
+          @active_keys.each do |identity, state|
+            expired << identity if state.deadline <= now
+          end
+          expired.each { |identity| @active_keys.delete(identity) }
+        end
+        expired.each { |fabric, key| notify_key_action(key, KeyAction::Release, fabric) }
+      end
+
+      private def schedule_release(identity : {UInt8?, CecKeyCode}, state : PressState, delay : Time::Span) : Nil
+        @release_timer.call(delay, -> { release_or_reschedule(identity, state) })
+      end
+
+      private def release_or_reschedule(identity : {UInt8?, CecKeyCode}, state : PressState) : Nil
+        delay = nil.as(Time::Span?)
+        released = false
+        @key_mutex.synchronize do
+          if @active_keys[identity]?.same?(state)
+            remaining = state.deadline - @clock.call
+            if remaining <= Time::Span.zero
+              @active_keys.delete(identity)
+              released = true
+            else
+              delay = remaining
+            end
+          end
+        end
+        notify_key_action(identity[1], KeyAction::Release, identity[0]) if released
+        schedule_release(identity, state, delay) if delay
+      end
+
+      private def notify_key_action(key : CecKeyCode, action : KeyAction, fabric : UInt8?) : Nil
+        @on_key_action.try(&.call(key, action, fabric))
+      rescue ex
+        Log.error(exception: ex) { "Keypad Input #{action} callback failed on endpoint #{@endpoint_id.number}" }
       end
     end
   end
