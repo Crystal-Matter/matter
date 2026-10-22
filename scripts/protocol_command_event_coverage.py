@@ -16,7 +16,7 @@ from pathlib import Path
 
 from protocol_coverage import CLUSTER_DECLARATION, source_digest
 
-MEMBER_DECLARATION = re.compile(r"^\s*(command|event)\s+(0x[0-9a-fA-F]+|\d+)\s*,", re.MULTILINE)
+MEMBER_DECLARATION = re.compile(r"^[ \t]*(command|event)\s+(0x[0-9a-fA-F]+|\d+)\s*,", re.MULTILINE)
 REQUIRES = re.compile(r"\brequires:\s*(\{[^}]*\}|\[[^]]*\]|:[a-zA-Z_][a-zA-Z_0-9]*)")
 
 
@@ -202,9 +202,21 @@ def load_crystal_members(crystal_root: Path) -> dict[int, CrystalCluster]:
             member_id = int(member_code, 0)
             if member_id in destination:
                 raise ValueError(f"Duplicate {kind} ID 0x{member_id:04X}: {path}")
+            # Crystal's formatter may wrap a DSL declaration after a comma.
+            # Include more-indented continuation lines, stopping before the
+            # next statement at the declaration's indentation.
+            indent = len(match.group(0)) - len(match.group(0).lstrip())
             end = source.find("\n", match.end())
-            line = source[match.start():end if end >= 0 else len(source)]
-            requires = REQUIRES.search(line)
+            end = len(source) if end < 0 else end
+            while end < len(source):
+                next_end = source.find("\n", end + 1)
+                next_end = len(source) if next_end < 0 else next_end
+                continuation = source[end + 1:next_end]
+                if not continuation.strip() or len(continuation) - len(continuation.lstrip()) <= indent:
+                    break
+                end = next_end
+            declaration = source[match.start():end]
+            requires = REQUIRES.search(declaration)
             destination[member_id] = requires.group(1) if requires else "—"
         clusters[cluster_id] = CrystalCluster(cluster_id, int(revision), commands, events)
     return clusters

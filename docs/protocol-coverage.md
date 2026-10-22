@@ -7,14 +7,11 @@ It does not verify types, feature-dependent requirements, commands, events,
 behavior, interoperability,
 or certification. A matching row is not a completeness claim.
 
-See [server command and event declaration audit](protocol-command-event-coverage.md)
-for a separate comparison of literal command and event IDs.
-
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 54
-- Matching known revisions: 38
+- Crystal declarations for those IDs: 55
+- Matching known revisions: 39
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -80,7 +77,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0071 | HEPA Filter Monitoring | 1 | — | cluster absent |
 | 0x0072 | Activated Carbon Filter Monitoring | 1 | — | cluster absent |
 | 0x0079 | Water Tank Level Monitoring | 1 | — | cluster absent |
-| 0x0080 | Boolean State Configuration Cluster | 2 | — | cluster absent |
+| 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — |

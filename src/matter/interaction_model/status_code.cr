@@ -60,9 +60,10 @@ module Matter
       # (Matter Core 8.10.1, another general code inside the 0xC0-0xFF range)
       UnsupportedEvent = 0xC7
       FailsafeRequired = 0xCA
+      InvalidInState   = 0xCB
 
-      # Cluster-specific range 0xC0-0xFF
-      # Applications can define cluster-specific error codes in this range
+      # Other values in 0xC0-0xFF may be cluster-specific. The named general
+      # statuses above keep their assigned meanings in that range.
 
       def success?
         self == Success
@@ -95,6 +96,7 @@ module Matter
         when UnsupportedCluster    then "Unsupported Cluster"
         when UnsupportedEvent      then "Unsupported Event"
         when FailsafeRequired      then "Failsafe Required"
+        when InvalidInState        then "Invalid In State"
         else                            "Unknown Status (#{Hex.u8(value)})"
         end
       end
