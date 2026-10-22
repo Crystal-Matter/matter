@@ -7,7 +7,7 @@ describe Matter::Cluster::PressureMeasurement do
       cluster.measured_value.should be_nil
       cluster.min_measured_value.should be_nil
       cluster.max_measured_value.should be_nil
-      cluster.tolerance.should be_nil
+      cluster.tolerance.should eq(0_u16)
     end
 
     it "creates with custom values" do
@@ -32,7 +32,7 @@ describe Matter::Cluster::PressureMeasurement do
     end
 
     it "validates min/max relationship" do
-      expect_raises(ArgumentError, /min_measured_value must be <= max_measured_value/) do
+      expect_raises(ArgumentError, /min_measured_value must be < max_measured_value/) do
         build(Matter::Cluster::PressureMeasurement,
           min_measured_value: 1200_i16,
           max_measured_value: 800_i16

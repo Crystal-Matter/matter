@@ -265,6 +265,8 @@ command requests and `CommandResponse#response` use `TLV::Any?`. Pass `TLV::Any.
 write a scalar or `request.to_tlv(nil)` for a `TLV::Serializable` command struct. Wire encoding
 stays in the protocol layer.
 
+Pressure Sensor example: `examples/matter_pressure_sensor_device.cr` exposes Matter 1.6 Pressure Measurement revision 5 with the Extended feature. Configure physical bounds and scale at construction; report new readings through `update_pressure` and `update_scaled_pressure`. Measured readings are not persisted.
+
 ## Examples
 
 Ten example devices live in `./examples`, all written on the DSL.
