@@ -409,7 +409,7 @@ describe "three provisioned Joint Fabric Administrators" do
     third_acl_data = third_acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     third_acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(third_acl_data.to_slice)
-    third_acl.any?(&.subjects.includes?(0xFFFF_FFFD_FFFF_0001_u64)).should be_true
+    third_acl.any? { |entry| entry.subjects.try(&.includes?(0xFFFF_FFFD_FFFF_0001_u64)) || false }.should be_true
 
     joined_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client, joiner_peer,
       anchor_bootstrap.fabric, peer_node_id: 0xA103_u64, timeout: E2E::COMMAND_TIMEOUT)

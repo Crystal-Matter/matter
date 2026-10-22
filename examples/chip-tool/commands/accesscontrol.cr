@@ -64,8 +64,12 @@ module ChipTool
               puts "    Privilege: #{e.privilege.value}"
               puts "    AuthMode: #{e.auth_mode.value}"
               puts "    Subjects"
-              e.subjects.each_with_index do |subj, i|
-                puts "      [#{i}]: 0x#{subj.to_s(16)}"
+              if subjects = e.subjects
+                subjects.each_with_index do |subj, i|
+                  puts "      [#{i}]: 0x#{subj.to_s(16)}"
+                end
+              else
+                puts "      null"
               end
               if targets = e.targets
                 puts "    Targets"

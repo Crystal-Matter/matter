@@ -634,6 +634,11 @@ Matter 1.6 AuxiliaryType entries belong to the separate provisional
 AuxiliaryACL feature. Primary ACL writes containing AuxiliaryType are rejected;
 the controller ACL JSON helper rejects the field too, instead of dropping it.
 Crystal devices do not advertise the provisional AUX feature.
+Access Control revision 3 emits fabric-sensitive ACL and Extension change
+events for authenticated administrator writes. Reading those events requires
+Administer privilege. The MNGD feature is also disabled; this revision does
+not provide an Access Restriction List. ACL and Extension writes require a
+fabric-associated CASE session; fabricless PASE writes are rejected.
 
 This provides shared trust and explicit ACL administration for a locally owned
 fabric. Matter 1.6 Joint Fabric support is in progress: the Administrator and

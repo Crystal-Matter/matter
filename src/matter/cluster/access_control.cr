@@ -15,7 +15,7 @@ module Matter
     class AccessControl < Base
       Log = ::Log.for("matter.cluster.access_control")
 
-      cluster 0x001F, revision: 2, persist_state: false
+      cluster 0x001F, revision: 3, persist_state: false
 
       feature :extension, bit: 0 # EXTS - Extension attribute and its change event
 
@@ -48,16 +48,22 @@ module Matter
         Groupcast = 1
       end
 
+      enum ChangeType : UInt8
+        Changed = 0
+        Added   = 1
+        Removed = 2
+      end
+
       struct Target
         include TLV::Serializable
 
-        @[TLV::Field(tag: 0, optional: true)]
+        @[TLV::Field(tag: 0, optional: false)]
         property cluster : UInt32?
 
-        @[TLV::Field(tag: 1, optional: true)]
+        @[TLV::Field(tag: 1, optional: false)]
         property endpoint : UInt16?
 
-        @[TLV::Field(tag: 2, optional: true)]
+        @[TLV::Field(tag: 2, optional: false)]
         property device_type : UInt32?
 
         def initialize(@cluster : UInt32? = nil, @endpoint : UInt16? = nil, @device_type : UInt32? = nil)
@@ -74,10 +80,10 @@ module Matter
         @[TLV::Field(tag: 2)]
         property auth_mode : AccessControlEntryAuthMode
 
-        @[TLV::Field(tag: 3)]
-        property subjects : Array(UInt64) # Node IDs or group IDs
+        @[TLV::Field(tag: 3, optional: false)]
+        property subjects : Array(UInt64)? # Null means all subjects
 
-        @[TLV::Field(tag: 4, optional: true)]
+        @[TLV::Field(tag: 4, optional: false)]
         property targets : Array(Target)? # nil means all targets
 
         @[TLV::Field(tag: 5, optional: true)]
@@ -90,7 +96,7 @@ module Matter
 
         def initialize(@privilege : AccessControlEntryPrivilege,
                        @auth_mode : AccessControlEntryAuthMode,
-                       @subjects : Array(UInt64),
+                       @subjects : Array(UInt64)?,
                        @targets : Array(Target)?,
                        @fabric_index : UInt8? = nil,
                        @auxiliary_type : AccessControlAuxiliaryType? = nil)
@@ -104,10 +110,50 @@ module Matter
         @[TLV::Field(tag: 1)]
         property data : Bytes
 
-        @[TLV::Field(tag: 254)]
-        property fabric_index : UInt8
+        @[TLV::Field(tag: 254, optional: true)]
+        property fabric_index : UInt8?
 
-        def initialize(@data : Bytes, @fabric_index : UInt8)
+        def initialize(@data : Bytes, @fabric_index : UInt8? = nil)
+        end
+      end
+
+      struct EntryChangedEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1, optional: false)]
+        property admin_node_id : UInt64?
+
+        @[TLV::Field(tag: 2, optional: false)]
+        property admin_passcode_id : UInt16?
+
+        @[TLV::Field(tag: 3)]
+        property change_type : ChangeType
+
+        @[TLV::Field(tag: 4, optional: false)]
+        property latest_value : AccessControlEntry?
+
+        def initialize(@admin_node_id : UInt64?, @admin_passcode_id : UInt16?,
+                       @change_type : ChangeType, @latest_value : AccessControlEntry?)
+        end
+      end
+
+      struct ExtensionChangedEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1, optional: false)]
+        property admin_node_id : UInt64?
+
+        @[TLV::Field(tag: 2, optional: false)]
+        property admin_passcode_id : UInt16?
+
+        @[TLV::Field(tag: 3)]
+        property change_type : ChangeType
+
+        @[TLV::Field(tag: 4, optional: false)]
+        property latest_value : ExtensionEntry?
+
+        def initialize(@admin_node_id : UInt64?, @admin_passcode_id : UInt16?,
+                       @change_type : ChangeType, @latest_value : ExtensionEntry?)
         end
       end
 
@@ -121,11 +167,35 @@ module Matter
       attribute 0x0003, :targets_per_access_control_entry, UInt16, default: DEFAULT_TARGETS_PER_ENTRY, fixed: true
       attribute 0x0004, :access_control_entries_per_fabric, UInt16, default: DEFAULT_ENTRIES_PER_FABRIC, fixed: true
 
-      event 0x00, :access_control_entry_changed, priority: :info
-      event 0x01, :access_control_extension_changed, priority: :info, requires: :extension
+      event 0x00, :access_control_entry_changed, priority: :info, access: :administer
+      event 0x01, :access_control_extension_changed, priority: :info, access: :administer, requires: :extension
 
       @acl = [] of AccessControlEntry
       @extension = [] of ExtensionEntry
+      @acl_before_write = [] of AccessControlEntry
+      @extension_before_write = [] of ExtensionEntry
+
+      before_write :acl do |_entries|
+        @acl_before_write = acl(@request_fabric_index).dup
+        nil
+      end
+
+      after_write :acl do
+        if fabric_index = @request_fabric_index
+          emit_acl_changes(@acl_before_write, acl(fabric_index), fabric_index)
+        end
+      end
+
+      before_write :extension do |_entries|
+        @extension_before_write = extension(@request_fabric_index).dup
+        nil
+      end
+
+      after_write :extension do
+        if fabric_index = @request_fabric_index
+          emit_extension_changes(@extension_before_write, extension(fabric_index), fabric_index)
+        end
+      end
 
       def initialize(endpoint_id : DataType::EndpointNumber, @feature_map : Feature = Feature::Extension)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
@@ -157,14 +227,14 @@ module Matter
 
         getter privilege : AccessControlEntryPrivilege
         getter auth_mode : AccessControlEntryAuthMode
-        getter subjects : Array(UInt64)
+        getter subjects : Array(UInt64)?
         getter targets : Array(PersistedTarget)?
         getter fabric_index : UInt8?
 
         def initialize(
           @privilege : AccessControlEntryPrivilege,
           @auth_mode : AccessControlEntryAuthMode,
-          @subjects : Array(UInt64),
+          @subjects : Array(UInt64)?,
           @targets : Array(PersistedTarget)?,
           @fabric_index : UInt8?,
         )
@@ -210,7 +280,9 @@ module Matter
               fabric_index: entry.fabric_index
             )
           end,
-          extension: @extension.map { |entry| PersistedExtensionEntry.new(entry.data, entry.fabric_index) }
+          extension: @extension.compact_map do |entry|
+            entry.fabric_index.try { |index| PersistedExtensionEntry.new(entry.data, index) }
+          end
         ).to_document
       end
 
@@ -250,9 +322,10 @@ module Matter
                        auth_mode : AccessControlEntryAuthMode = AccessControlEntryAuthMode::CASE) : Bool
         # Find matching ACL entries for this fabric
         matching_entries = @acl.select do |entry|
+          subjects = entry.subjects
           entry.fabric_index == fabric_index &&
             entry.auth_mode == auth_mode &&
-            (entry.subjects.empty? || entry.subjects.any? { |acl_subject| subject_matches?(acl_subject, subject) })
+            (!subjects || subjects.empty? || subjects.any? { |acl_subject| subject_matches?(acl_subject, subject) })
         end
 
         # Check if any entry grants sufficient privilege
@@ -335,8 +408,19 @@ module Matter
           raise Matter::ClusterError.new("Primary ACL entries cannot carry AuxiliaryType", InteractionModel::StatusCode::Failure)
         end
         fabric_index = request_fabric_index
+        exceeds_fabric_limit = if fabric_index
+                                 entries.size > access_control_entries_per_fabric
+                               else
+                                 entries.group_by(&.fabric_index).values.any? { |fabric_entries| fabric_entries.size > access_control_entries_per_fabric }
+                               end
+        if exceeds_fabric_limit || entries.any? do |entry|
+             (entry.subjects.try(&.size) || 0) > subjects_per_access_control_entry ||
+             (entry.targets.try(&.size) || 0) > targets_per_access_control_entry
+           end
+          raise Matter::ClusterError.new("ACL entry exceeds the advertised limit", InteractionModel::StatusCode::ConstraintError)
+        end
         entries.map! do |entry|
-          entry.fabric_index ||= fabric_index
+          entry.fabric_index = fabric_index if fabric_index
           entry
         end
         if fabric_index
@@ -351,7 +435,13 @@ module Matter
       # Replaces the accessing fabric's Extension entries (all entries outside a fabric).
       def extension=(entries : Array(ExtensionEntry)) : Nil
         fabric_index = request_fabric_index
+        if entries.any? { |entry| entry.data.size > 128 || !valid_extension_data?(entry.data) }
+          raise Matter::ClusterError.new("Invalid Access Control Extension data", InteractionModel::StatusCode::ConstraintError)
+        end
         if fabric_index
+          if entries.size > 1
+            raise Matter::ClusterError.new("Only one Extension entry is allowed per fabric", InteractionModel::StatusCode::ConstraintError)
+          end
           entries.map! do |entry|
             entry.fabric_index = fabric_index
             entry
@@ -359,9 +449,76 @@ module Matter
           @extension.reject! { |entry| entry.fabric_index == fabric_index }
           @extension.concat(entries)
         else
+          if entries.any? { |entry| entry.fabric_index.nil? } || entries.group_by(&.fabric_index).any? { |_index, items| items.size > 1 }
+            raise Matter::ClusterError.new("Extension entry needs one FabricIndex per fabric", InteractionModel::StatusCode::ConstraintError)
+          end
           @extension = entries
         end
         increment_version_and_notify(ATTR_EXTENSION)
+      end
+
+      private def valid_extension_data?(data : Bytes) : Bool
+        io = IO::Memory.new(data)
+        value = TLV::Any.from_io(io)
+        return false unless io.pos == data.size && value.header.anonymous? && value.header.element_type.list?
+        value.as_list.all? do |item|
+          type = item.header.tag_type
+          type.common_profile? || type.vendor_profile?
+        end
+      rescue
+        false
+      end
+
+      # The SDK reports per-entry changes for administrator writes, but does
+      # not report internal startup restore or fabric cleanup as admin edits.
+      private def emit_acl_changes(previous : Array(AccessControlEntry), current : Array(AccessControlEntry), fabric_index : UInt8) : Nil
+        admin_node_id, admin_passcode_id = change_administrator
+        return if admin_node_id.nil? && admin_passcode_id.nil?
+
+        {previous.size, current.size}.max.times do |index|
+          old_entry = previous[index]?
+          new_entry = current[index]?
+          next if old_entry && new_entry && old_entry.to_slice == new_entry.to_slice
+
+          change_type = if !old_entry
+                          ChangeType::Added
+                        elsif !new_entry
+                          ChangeType::Removed
+                        else
+                          ChangeType::Changed
+                        end
+          emit_event(EVENT_ACCESS_CONTROL_ENTRY_CHANGED,
+            EntryChangedEvent.new(admin_node_id, admin_passcode_id, change_type, new_entry), fabric_index)
+        end
+      end
+
+      private def emit_extension_changes(previous : Array(ExtensionEntry), current : Array(ExtensionEntry), fabric_index : UInt8) : Nil
+        admin_node_id, admin_passcode_id = change_administrator
+        return if admin_node_id.nil? && admin_passcode_id.nil?
+
+        {previous.size, current.size}.max.times do |index|
+          old_entry = previous[index]?
+          new_entry = current[index]?
+          next if old_entry && new_entry && old_entry.to_slice == new_entry.to_slice
+
+          change_type = if !old_entry
+                          ChangeType::Added
+                        elsif !new_entry
+                          ChangeType::Removed
+                        else
+                          ChangeType::Changed
+                        end
+          emit_event(EVENT_ACCESS_CONTROL_EXTENSION_CHANGED,
+            ExtensionChangedEvent.new(admin_node_id, admin_passcode_id, change_type, new_entry), fabric_index)
+        end
+      end
+
+      private def change_administrator : Tuple(UInt64?, UInt16?)
+        if request_is_case_session?
+          {@request_peer_node_id, nil}
+        else
+          {nil, nil}
+        end
       end
     end
   end

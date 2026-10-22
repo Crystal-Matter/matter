@@ -2,6 +2,16 @@ require "../spec_helper"
 require "../../src/matter/cluster/access_control"
 require "../../src/matter/protocol/im_handler"
 
+# These tests isolate Access Control TLV round-tripping from IM authorization.
+# A fabric-less PASE write is rejected by IM before reaching this decoder.
+private def encoding_write(cluster : Matter::Cluster::AccessControl, attribute : UInt32, value) : Matter::InteractionModel::Status
+  cluster.write_attribute(attribute, TLV::Serializable.serialize_value(value, nil))
+end
+
+private def extension_payload(value : UInt8) : Bytes
+  TLV::Any.new(TLV::List{TLV::Any.new(value, {1_u16, 1_u16})}).to_slice
+end
+
 describe Matter::Cluster::AccessControl do
   describe "iPhone ACL write request" do
     # This is the actual decrypted WriteRequest payload captured from an iPhone during commissioning
@@ -27,7 +37,7 @@ describe Matter::Cluster::AccessControl do
       # Now try to decode it with the access control cluster
       cluster = build(Matter::Cluster::AccessControl, 0)
 
-      status = write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, acl_value)
+      status = encoding_write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, acl_value)
 
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
 
@@ -62,7 +72,7 @@ describe Matter::Cluster::AccessControl do
 
       # Try round-trip
       cluster2 = build(Matter::Cluster::AccessControl, 0)
-      status = write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+      status = encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
       cluster2.acl.size.should eq(1)
     end
@@ -77,7 +87,7 @@ describe Matter::Cluster::AccessControl do
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_ACL)
 
         # Write it back
-        status = write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+        status = encoding_write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
         status.status.should eq(Matter::InteractionModel::StatusCode::Success)
         cluster.acl.should be_empty
       end
@@ -101,7 +111,7 @@ describe Matter::Cluster::AccessControl do
 
         # Decode into new cluster
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        status = write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+        status = encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
         status.status.should eq(Matter::InteractionModel::StatusCode::Success)
 
         # Verify decoded entry
@@ -130,11 +140,11 @@ describe Matter::Cluster::AccessControl do
         # Round-trip
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_ACL)
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+        encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
 
         # Verify
         cluster2.acl.size.should eq(1)
-        cluster2.acl[0].subjects.size.should eq(3)
+        cluster2.acl[0].subjects.try(&.size).should eq(3)
         cluster2.acl[0].subjects.should eq([0x1111_u64, 0x2222_u64, 0x3333_u64])
       end
 
@@ -167,7 +177,7 @@ describe Matter::Cluster::AccessControl do
         # Round-trip
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_ACL)
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+        encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
 
         # Verify
         cluster2.acl.size.should eq(1)
@@ -205,7 +215,7 @@ describe Matter::Cluster::AccessControl do
         # Round-trip
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_ACL)
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+        encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
 
         # Verify
         cluster2.acl.size.should eq(3)
@@ -219,7 +229,7 @@ describe Matter::Cluster::AccessControl do
 
         # Try to write invalid data
         invalid_data = Bytes[0xFF, 0xFF, 0xFF]
-        status = write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, invalid_data)
+        status = encoding_write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, invalid_data)
 
         status.status.should eq(Matter::InteractionModel::StatusCode::InvalidDataType)
       end
@@ -233,7 +243,7 @@ describe Matter::Cluster::AccessControl do
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION)
 
         # Write it back
-        status = write(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION, encoded)
+        status = encoding_write(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION, encoded)
         status.status.should eq(Matter::InteractionModel::StatusCode::Success)
         cluster.extension.should be_empty
       end
@@ -243,7 +253,7 @@ describe Matter::Cluster::AccessControl do
 
         # Add extension entry
         extension = Matter::Cluster::AccessControl::ExtensionEntry.new(
-          data: Bytes[0x01, 0x02, 0x03, 0x04],
+          data: extension_payload(0x01_u8),
           fabric_index: 1_u8
         )
         cluster.extension << extension
@@ -251,12 +261,12 @@ describe Matter::Cluster::AccessControl do
         # Round-trip
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION)
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        status = write(cluster2, Matter::Cluster::AccessControl::ATTR_EXTENSION, encoded)
+        status = encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_EXTENSION, encoded)
         status.status.should eq(Matter::InteractionModel::StatusCode::Success)
 
         # Verify
         cluster2.extension.size.should eq(1)
-        cluster2.extension[0].data.should eq(Bytes[0x01, 0x02, 0x03, 0x04])
+        cluster2.extension[0].data.should eq(extension_payload(0x01_u8))
         cluster2.extension[0].fabric_index.should eq(1_u8)
       end
 
@@ -265,24 +275,24 @@ describe Matter::Cluster::AccessControl do
 
         # Add multiple extensions
         cluster.extension << Matter::Cluster::AccessControl::ExtensionEntry.new(
-          data: Bytes[0xAA, 0xBB],
+          data: extension_payload(0xAA_u8),
           fabric_index: 1_u8
         )
         cluster.extension << Matter::Cluster::AccessControl::ExtensionEntry.new(
-          data: Bytes[0xCC, 0xDD, 0xEE],
+          data: extension_payload(0xCC_u8),
           fabric_index: 2_u8
         )
 
         # Round-trip
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION)
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        write(cluster2, Matter::Cluster::AccessControl::ATTR_EXTENSION, encoded)
+        encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_EXTENSION, encoded)
 
         # Verify
         cluster2.extension.size.should eq(2)
-        cluster2.extension[0].data.should eq(Bytes[0xAA, 0xBB])
+        cluster2.extension[0].data.should eq(extension_payload(0xAA_u8))
         cluster2.extension[0].fabric_index.should eq(1_u8)
-        cluster2.extension[1].data.should eq(Bytes[0xCC, 0xDD, 0xEE])
+        cluster2.extension[1].data.should eq(extension_payload(0xCC_u8))
         cluster2.extension[1].fabric_index.should eq(2_u8)
       end
 
@@ -291,7 +301,7 @@ describe Matter::Cluster::AccessControl do
 
         # Try to write invalid data
         invalid_data = Bytes[0xFF, 0xFF, 0xFF]
-        status = write(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION, invalid_data)
+        status = encoding_write(cluster, Matter::Cluster::AccessControl::ATTR_EXTENSION, invalid_data)
 
         status.status.should eq(Matter::InteractionModel::StatusCode::InvalidDataType)
       end
@@ -320,7 +330,7 @@ describe Matter::Cluster::AccessControl do
         # Round-trip
         encoded = read_tlv(cluster, Matter::Cluster::AccessControl::ATTR_ACL)
         cluster2 = build(Matter::Cluster::AccessControl, 0)
-        write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+        encoding_write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
 
         # Verify fabric isolation is preserved
         cluster2.acl.size.should eq(2)

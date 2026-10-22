@@ -7,12 +7,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Access Control revision 3
+
+- Encode mandatory nullable ACL Subjects, Targets, and target fields, and emit fabric-sensitive
+  AccessControlEntryChanged and AccessControlExtensionChanged events for
+  authenticated administrator writes. Event reads require Administer privilege;
+  rejected writes do not emit change events. Scope ACL writes to the
+  authenticated fabric and validate the advertised ACL and Extension limits.
+  Reject fabricless PASE ACL and Extension writes before they can replace entries
+  belonging to other fabrics.
+  The provisional AUX and MNGD features remain disabled.
+
 ### Network commissioning scan responses
 
 - Include the feature-required Wi-Fi or Thread scan result list on the wire
   even when a scan finds no networks or reports a networking error. An empty
   list remains an empty TLV array instead of disappearing from the response.
-
 ### Operational Credentials fabric-scoped commands
 
 - Encode UpdateNOC with only NOCValue and optional ICACValue, and
@@ -56,7 +66,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Repair a legacy Anchor Datastore whose GroupKeySetID zero lacks the fabric
   IPK, and write the repaired key to storage before serving the Datastore.
   Startup fails closed if that repair cannot be saved.
-
 ### Joint Fabric scoped IPv6 handoff
 
 - Preserve the interface scope of a discovered link-local IPv6 peer when the

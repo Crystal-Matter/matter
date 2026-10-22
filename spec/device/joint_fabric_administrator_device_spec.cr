@@ -544,7 +544,7 @@ describe MatterJointFabricAdministrator::Device do
     anchor_identity.intermediate_private_key.should eq(icac_key.private_key)
     ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"] = "#{bootstrap_path}.removed"
     device.install_test_fabric(fabric)
-    device.access_control.acl(1_u8).count(&.subjects.includes?(admin_subject)).should eq(1)
+    device.access_control.acl(1_u8).count { |entry| entry.subjects.try(&.includes?(admin_subject)) || false }.should eq(1)
     state_store.load.fabric_for(fabric_id, root_key.public_key, node_id).root_private_key
       .should eq(root_key.private_key)
     installed_key = device.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT)

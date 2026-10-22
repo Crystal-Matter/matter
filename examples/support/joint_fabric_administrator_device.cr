@@ -791,7 +791,10 @@ module MatterJointFabricAdministrator
       version = fabric.cats.find(&.identity_value.==(0xFFFF_u16)).try(&.version) || 1_u16
       subject = Matter::DataType::NodeId.from_case_authenticated_tag(
         Matter::DataType::CaseAuthenticatedTag.create(0xFFFF_u16, version)).id
-      return if acl.get_acl_for_fabric(fabric.fabric_index).any?(&.subjects.includes?(subject))
+      return if acl.get_acl_for_fabric(fabric.fabric_index).any? do |entry|
+                  subjects = entry.subjects
+                  subjects.nil? || subjects.empty? || subjects.includes?(subject)
+                end
 
       entries = acl.acl.dup
       entries << Matter::Cluster::AccessControl::AccessControlEntry.new(
@@ -1533,8 +1536,9 @@ module MatterJointFabricAdministrator
       entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(data.to_slice)
       changed = false
       entries.each do |entry|
-        next unless entry.subjects.includes?(old_subject)
-        entry.subjects = entry.subjects.map { |subject| subject == old_subject ? new_subject : subject }
+        subjects = entry.subjects
+        next unless subjects && subjects.includes?(old_subject)
+        entry.subjects = subjects.map { |subject| subject == old_subject ? new_subject : subject }
         changed = true
       end
       return unless changed
