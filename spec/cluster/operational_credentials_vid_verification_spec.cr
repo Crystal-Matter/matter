@@ -46,6 +46,32 @@ describe "OperationalCredentials SignVIDVerificationRequest" do
     table.get_fabric(1_u8).as(Matter::Fabric).vendor_id.should eq(0xFFF4_u16)
   end
 
+  it "notifies Fabrics and NOCs subscribers when VID metadata changes and rolls back" do
+    table = Matter::FabricTable.new(Matter::Storage::Memory.new)
+    table.add_fabric(OpCredsTestHelpers.create_test_fabric(0x1111_u64, 1_u8)).should be_true
+    cluster = Matter::Cluster::OperationalCredentials.new(table)
+    cluster.request_fabric_index = 1_u8
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) {
+      changed << attribute
+      nil
+    }
+    cluster.credentials.pending.noc_added_or_updated = true
+    cluster.set_vid_verification_statement(
+      Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
+        vendor_id: 0x1234_u16, vid_verification_statement: Bytes.new(85, 0x11_u8),
+        vvsc: Bytes.new(400, 0x22_u8)
+      )
+    ).should eq(Matter::InteractionModel::Status.success)
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_FABRICS)
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+
+    changed.clear
+    cluster.on_failsafe_expired
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_FABRICS)
+    changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+  end
+
   it "signs the exact fabric binding and session challenges with the selected NOC key" do
     crypto = Matter::Crypto::StandardCrypto.new
     root_key = crypto.create_key_pair

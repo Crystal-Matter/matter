@@ -469,6 +469,8 @@ module Matter
         end
         @fabric_table.update_fabric(fabric)
         increment_version
+        notify_changed(ATTR_FABRICS) unless request.vendor_id.nil? && request.vid_verification_statement.nil?
+        notify_changed(ATTR_NOCS) unless request.vvsc.nil?
         InteractionModel::Status.success
       end
 
@@ -639,14 +641,21 @@ module Matter
 
       # Failsafe timer expired - drop everything that was pending
       def on_failsafe_expired
+        restored_vid_metadata = false
         @vid_failsafe_snapshot.each do |index, previous|
           next unless fabric = @fabric_table.get_fabric(index)
           fabric.vendor_id = previous[0]
           fabric.vid_verification_statement = previous[1]
           fabric.vvsc = previous[2]
           @fabric_table.update_fabric(fabric)
+          restored_vid_metadata = true
         end
         @vid_failsafe_snapshot.clear
+        if restored_vid_metadata
+          increment_version
+          notify_changed(ATTR_FABRICS)
+          notify_changed(ATTR_NOCS)
+        end
         credentials.reset_pending
       end
 

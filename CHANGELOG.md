@@ -49,6 +49,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   official `TC_OPCREDS_3_8` boundary check.
 - Return ConstraintError for a well-typed SignVIDVerificationRequest challenge
   whose length is not 32 bytes, as required by official `TC_OPCREDS_3_8` step 5.
+- Notify Fabrics and NOCs subscribers when SetVIDVerificationStatement changes
+  operational metadata or a pending NOC update rolls that metadata back.
 
 ### Wake On LAN
 
