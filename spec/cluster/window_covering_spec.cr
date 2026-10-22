@@ -145,7 +145,7 @@ describe Matter::Cluster::WindowCovering do
     )
 
     it "upOrOpen sets target to 0%" do
-      cluster.target_position_lift_percent100ths.should eq(0_u16)
+      cluster.target_position_lift_percent100ths.should be_nil
     end
 
     it "downOrClose would set target to 100%" do
@@ -167,7 +167,7 @@ describe Matter::Cluster::WindowCovering do
       cluster = build(Matter::Cluster::WindowCovering)
       request = Matter::Cluster::WindowCovering::GoToLiftPercentageRequest.new(10001_u16)
       expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_LIFT_PERCENTAGE, request), Matter::InteractionModel::StatusCode::ConstraintError)
-      cluster.target_position_lift_percent100ths.should eq(0_u16)
+      cluster.target_position_lift_percent100ths.should be_nil
     end
 
     it "rejects missing percentage fields" do
@@ -181,7 +181,7 @@ describe Matter::Cluster::WindowCovering do
       request = Matter::Cluster::WindowCovering::GoToTiltPercentageRequest.new(6789_u16)
       expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_TILT_PERCENTAGE, request))
       read(cluster, Matter::Cluster::WindowCovering::ATTR_TARGET_POSITION_TILT_PERCENT100THS).should eq(6789_u16)
-      read(cluster, Matter::Cluster::WindowCovering::ATTR_CURRENT_POSITION_TILT_PERCENT100THS).should eq(0_u16)
+      read(cluster, Matter::Cluster::WindowCovering::ATTR_CURRENT_POSITION_TILT_PERCENT100THS).should be_nil
       read(cluster, Matter::Cluster::WindowCovering::ATTR_CURRENT_POSITION_TILT_PERCENTAGE).should be_nil
       read(cluster, Matter::Cluster::WindowCovering::ATTR_NUMBER_OF_ACTUATIONS_TILT).should eq(0_u16)
     end
@@ -191,7 +191,7 @@ describe Matter::Cluster::WindowCovering do
         feature_map: Matter::Cluster::WindowCovering::Feature::Tilt | Matter::Cluster::WindowCovering::Feature::PositionAwareTilt)
       request = Matter::Cluster::WindowCovering::GoToTiltPercentageRequest.new(10001_u16)
       expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_TILT_PERCENTAGE, request), Matter::InteractionModel::StatusCode::ConstraintError)
-      cluster.target_position_tilt_percent100ths.should eq(0_u16)
+      cluster.target_position_tilt_percent100ths.should be_nil
     end
   end
 

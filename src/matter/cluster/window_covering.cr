@@ -7,13 +7,12 @@ module Matter
     # Provides control for various types of window coverings such as blinds,
     # shades, curtains, etc.
     #
-    # Matter Specification: Core 1.4 § 5.3 - Window Covering Cluster
+    # Matter Specification: Core 1.6 § 5.3 - Window Covering Cluster
     #
     # Features:
     # - Lift (LF): Supports lift/lower position control
     # - Tilt (TL): Supports tilt control
     # - PositionAwareLift (PA_LF): Supports precise lift positioning
-    # - AbsolutePosition (ABS): Supports absolute position control
     # - PositionAwareTilt (PA_TL): Supports precise tilt positioning
     class WindowCovering < Base
       cluster 0x0102, revision: 6
@@ -21,8 +20,9 @@ module Matter
       feature :lift, bit: 0                # LF - Lift/lower control
       feature :tilt, bit: 1                # TL - Tilt control
       feature :position_aware_lift, bit: 2 # PA_LF - Precise lift positioning
-      feature :absolute_position, bit: 3   # ABS - Absolute position
       feature :position_aware_tilt, bit: 4 # PA_TL - Precise tilt positioning
+
+      SUPPORTED_FEATURES = Feature::Lift | Feature::Tilt | Feature::PositionAwareLift | Feature::PositionAwareTilt
 
       # Fully open and fully closed in the percent100ths attributes
       OPEN_POSITION_PERCENT100THS =      0_u16
@@ -75,10 +75,23 @@ module Matter
       # OperationalStatus bitmap
       @[Flags]
       enum OperationalStatus : UInt8
-        GlobalLiftMoving = 0x03 # Bits 0-1: Lift movement
-        GlobalTiltMoving = 0x0C # Bits 2-3: Tilt movement
-        GlobalReserved   = 0x30 # Bits 4-5: Reserved
+        GlobalOpening = 0x01
+        GlobalClosing = 0x02
+        LiftOpening   = 0x04
+        LiftClosing   = 0x08
+        TiltOpening   = 0x10
+        TiltClosing   = 0x20
       end
+
+      enum MovementStatus : UInt8
+        Stopped = 0
+        Opening = 1
+        Closing = 2
+      end
+
+      STATUS_FIELD_MASK = 0x03_u8
+      LIFT_STATUS_SHIFT =       2
+      TILT_STATUS_SHIFT =       4
 
       # ConfigStatus bitmap
       @[Flags]
@@ -128,20 +141,18 @@ module Matter
       attribute 0x0008, :current_position_lift_percentage, UInt8, nullable: true, optional: true, requires: {lift: true, position_aware_lift: true}
       attribute 0x0009, :current_position_tilt_percentage, UInt8, nullable: true, optional: true, requires: {tilt: true, position_aware_tilt: true}
       attribute 0x000A, :operational_status, OperationalStatus, default: OperationalStatus::None
-      attribute 0x000B, :target_position_lift_percent100ths, UInt16, default: OPEN_POSITION_PERCENT100THS, nullable: true, max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}
-      attribute 0x000C, :target_position_tilt_percent100ths, UInt16, default: OPEN_POSITION_PERCENT100THS, nullable: true, max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}
+      attribute 0x000B, :target_position_lift_percent100ths, UInt16, nullable: true, max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}
+      attribute 0x000C, :target_position_tilt_percent100ths, UInt16, nullable: true, max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}
       attribute 0x000D, :end_product_type, EndProductType, default: EndProductType::RollerShade, fixed: true
-      attribute 0x000E, :current_position_lift_percent100ths, UInt16, default: OPEN_POSITION_PERCENT100THS, nullable: true, persist: true, max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}
-      attribute 0x000F, :current_position_tilt_percent100ths, UInt16, default: OPEN_POSITION_PERCENT100THS, nullable: true, persist: true, max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}
+      attribute 0x000E, :current_position_lift_percent100ths, UInt16, nullable: true, persist: true, max: MAX_POSITION_PERCENT100THS, requires: {lift: true, position_aware_lift: true}
+      attribute 0x000F, :current_position_tilt_percent100ths, UInt16, nullable: true, persist: true, max: MAX_POSITION_PERCENT100THS, requires: {tilt: true, position_aware_tilt: true}
       attribute 0x0017, :mode, Mode, default: Mode::None, writable: true, write_access: :manage
       attribute 0x001A, :safety_status, UInt16, default: 0_u16, optional: true
 
       command 0x00, :up_or_open
       command 0x01, :down_or_close
       command 0x02, :stop_motion
-      command 0x04, :go_to_lift_value, optional: true, requires: {lift: true, absolute_position: true}
       command 0x05, :go_to_lift_percentage, request: GoToLiftPercentageRequest, requires: {lift: true, position_aware_lift: true}
-      command 0x07, :go_to_tilt_value, optional: true, requires: {tilt: true, absolute_position: true}
       command 0x08, :go_to_tilt_percentage, request: GoToTiltPercentageRequest, requires: {tilt: true, position_aware_tilt: true}
 
       def initialize(
@@ -150,6 +161,15 @@ module Matter
         covering_type : CoveringType = CoveringType::Rollershade,
         @end_product_type : EndProductType = EndProductType::RollerShade,
       )
+        raise ArgumentError.new("WindowCovering has unsupported feature bits") if (@feature_map.value & ~SUPPORTED_FEATURES.value) != 0
+        raise ArgumentError.new("WindowCovering requires Lift or Tilt") unless @feature_map.lift? || @feature_map.tilt?
+        if @feature_map.position_aware_lift? && !@feature_map.lift?
+          raise ArgumentError.new("PositionAwareLift requires Lift")
+        end
+        if @feature_map.position_aware_tilt? && !@feature_map.tilt?
+          raise ArgumentError.new("PositionAwareTilt requires Tilt")
+        end
+
         @type = covering_type
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
@@ -162,14 +182,16 @@ module Matter
       # ------------------------------------------------------------------------
 
       def up_or_open : InteractionModel::Status
-        move_lift_to(OPEN_POSITION_PERCENT100THS)
+        move_to(OPEN_POSITION_PERCENT100THS, MovementStatus::Opening)
       end
 
       def down_or_close : InteractionModel::Status
-        move_lift_to(MAX_POSITION_PERCENT100THS)
+        move_to(MAX_POSITION_PERCENT100THS, MovementStatus::Closing)
       end
 
       def stop_motion : InteractionModel::Status
+        self.target_position_lift_percent100ths = current_position_lift_percent100ths if @feature_map.position_aware_lift?
+        self.target_position_tilt_percent100ths = current_position_tilt_percent100ths if @feature_map.position_aware_tilt?
         self.operational_status = OperationalStatus::None
         InteractionModel::Status.success
       end
@@ -186,14 +208,47 @@ module Matter
         return InteractionModel::Status.constraint_error if percentage > MAX_POSITION_PERCENT100THS
 
         self.target_position_tilt_percent100ths = percentage
-        self.operational_status = OperationalStatus::GlobalTiltMoving
+        set_movement_status(lift_movement_status,
+          movement_toward(current_position_tilt_percent100ths, percentage))
+        InteractionModel::Status.success
+      end
+
+      private def move_to(percentage : UInt16, direction : MovementStatus) : InteractionModel::Status
+        self.target_position_lift_percent100ths = percentage if @feature_map.position_aware_lift?
+        self.target_position_tilt_percent100ths = percentage if @feature_map.position_aware_tilt?
+        set_movement_status(
+          @feature_map.lift? ? direction : MovementStatus::Stopped,
+          @feature_map.tilt? ? direction : MovementStatus::Stopped)
         InteractionModel::Status.success
       end
 
       private def move_lift_to(percentage : UInt16) : InteractionModel::Status
         self.target_position_lift_percent100ths = percentage if @feature_map.position_aware_lift?
-        self.operational_status = OperationalStatus::GlobalLiftMoving
+        set_movement_status(movement_toward(current_position_lift_percent100ths, percentage),
+          tilt_movement_status)
         InteractionModel::Status.success
+      end
+
+      private def movement_toward(current : UInt16?, target : UInt16) : MovementStatus
+        return MovementStatus::Stopped unless current
+        return MovementStatus::Closing if current < target
+        return MovementStatus::Opening if current > target
+
+        MovementStatus::Stopped
+      end
+
+      private def lift_movement_status : MovementStatus
+        MovementStatus.new((operational_status.value >> LIFT_STATUS_SHIFT) & STATUS_FIELD_MASK)
+      end
+
+      private def tilt_movement_status : MovementStatus
+        MovementStatus.new((operational_status.value >> TILT_STATUS_SHIFT) & STATUS_FIELD_MASK)
+      end
+
+      private def set_movement_status(lift : MovementStatus, tilt : MovementStatus) : Nil
+        global = lift.stopped? ? tilt : lift
+        encoded = global.value | (lift.value << LIFT_STATUS_SHIFT) | (tilt.value << TILT_STATUS_SHIFT)
+        self.operational_status = OperationalStatus.new(encoded.to_u8)
       end
     end
   end

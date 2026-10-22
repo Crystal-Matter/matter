@@ -2,22 +2,24 @@ require "./e2e_helper"
 
 # Dimmable light, color light and window covering endpoints.
 module LevelControlE2E
-  COLOR_ENDPOINT         =  2
-  COVERING_ENDPOINT      =  3
-  GROUP_ID               = 42
-  GROUP_NAME             = "Reading room"
-  TARGET_HUE             =   90
-  OFF_TARGET_HUE         =  120
-  COLOR_TEMPERATURE      =  300
-  LIFT_POSITION          = 5000
-  NO_TRANSITION          = "0"
-  TIMED_TRANSITION       = "50"
-  NO_OPTIONS             = "0"
-  SHORTEST_HUE_DIRECTION = "0"
-  COLOR_OPTIONS          = 1
-  COLOR_OPTIONS_CLEAR    = 0
-  EXECUTE_IF_OFF         = 1
-  COVERING_MODE          = 1
+  COLOR_ENDPOINT          =  2
+  COVERING_ENDPOINT       =  3
+  GROUP_ID                = 42
+  GROUP_NAME              = "Reading room"
+  TARGET_HUE              =   90
+  OFF_TARGET_HUE          =  120
+  COLOR_TEMPERATURE       =  300
+  LIFT_POSITION           = 5000
+  NO_TRANSITION           = "0"
+  TIMED_TRANSITION        = "50"
+  NO_OPTIONS              = "0"
+  SHORTEST_HUE_DIRECTION  = "0"
+  COLOR_OPTIONS           =    1
+  COLOR_OPTIONS_CLEAR     =    0
+  EXECUTE_IF_OFF          =    1
+  COVERING_MODE           =    1
+  COVERING_OPENING_STATUS = 0x05
+  COVERING_CLOSING_STATUS = 0x0A
 end
 
 describe "matter_level_control example" do
@@ -165,6 +167,14 @@ describe "matter_level_control example" do
 
   it "moves the window lift and reads and writes its attributes" do
     endpoint = LevelControlE2E::COVERING_ENDPOINT
+    read_value(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq "null"
+    read_value(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq "null"
+    expect_success(device.invoke("windowcovering", "down-or-close", endpoint: endpoint))
+    read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq 10_000
+    read_int(device, "windowcovering", "operational-status", "OperationalStatus", endpoint).should eq LevelControlE2E::COVERING_CLOSING_STATUS
+    expect_success(device.invoke("windowcovering", "up-or-open", endpoint: endpoint))
+    read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq 0
+    read_int(device, "windowcovering", "operational-status", "OperationalStatus", endpoint).should eq LevelControlE2E::COVERING_OPENING_STATUS
     expect_success(device.invoke("windowcovering", "go-to-lift-percentage", [LevelControlE2E::LIFT_POSITION.to_s], endpoint: endpoint))
     read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
     expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_MODE, endpoint))
