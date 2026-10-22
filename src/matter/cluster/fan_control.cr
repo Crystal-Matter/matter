@@ -15,7 +15,7 @@ module Matter
     # - Step (STEP): Step command support for incremental speed changes
     # - AirflowDirection (DIR): Airflow direction attribute
     #
-    # Specification: Matter 1.4 § 4.4
+    # Specification: Matter 1.6 Fan Control cluster
     class FanControl < Base
       cluster 0x0202, revision: 5
 
@@ -31,8 +31,9 @@ module Matter
       PERCENT_LOWEST_ON =   1_u8
       PERCENT_MAX       = 100_u8
 
-      # SpeedMax is at least one speed step
-      SPEED_MAX_MIN = 1_u8
+      # SpeedMax is a count of 1 to 100 speed steps.
+      SPEED_MAX_MIN =   1_u8
+      SPEED_MAX_MAX = 100_u8
 
       # Fan mode values
       enum FanMode : UInt8
@@ -102,7 +103,7 @@ module Matter
       attribute 0x0001, :fan_mode_sequence, FanModeSequence, default: FanModeSequence::OffLowMedHigh, fixed: true
       attribute 0x0002, :percent_setting, UInt8, default: PERCENT_OFF, nullable: true, writable: true, max: PERCENT_MAX
       attribute 0x0003, :percent_current, UInt8, default: PERCENT_OFF, max: PERCENT_MAX
-      attribute 0x0004, :speed_max, UInt8, default: PERCENT_MAX, fixed: true, min: SPEED_MAX_MIN, max: PERCENT_MAX, requires: :multi_speed
+      attribute 0x0004, :speed_max, UInt8, default: SPEED_MAX_MAX, fixed: true, min: SPEED_MAX_MIN, max: SPEED_MAX_MAX, requires: :multi_speed
       attribute 0x0005, :speed_setting, UInt8, default: PERCENT_OFF, nullable: true, writable: true, requires: :multi_speed
       attribute 0x0006, :speed_current, UInt8, default: PERCENT_OFF, requires: :multi_speed
       attribute 0x0007, :rock_support, RockSupport, default: RockSupport::None, fixed: true, requires: :rocking
@@ -116,14 +117,16 @@ module Matter
       # Percent per Step command
       property step_percent : UInt8
 
+      # MultiSpeed remains the default for existing applications. Explicit
+      # feature maps can omit it and then Speed* attributes stay off the wire.
       def initialize(endpoint_id : DataType::EndpointNumber,
-                     @feature_map : Feature = Feature::None,
+                     @feature_map : Feature = Feature::MultiSpeed,
                      @fan_mode : FanMode = FanMode::Off,
                      @fan_mode_sequence : FanModeSequence = FanModeSequence::OffLowMedHigh,
                      @percent_setting : UInt8? = PERCENT_OFF,
                      @percent_current : UInt8 = PERCENT_OFF,
                      # MultiSpeed feature
-                     @speed_max : UInt8 = PERCENT_MAX,
+                     @speed_max : UInt8 = SPEED_MAX_MAX,
                      @speed_setting : UInt8? = PERCENT_OFF,
                      @speed_current : UInt8 = PERCENT_OFF,
                      # Rocking feature
@@ -136,9 +139,6 @@ module Matter
                      @airflow_direction : AirflowDirectionEnum = AirflowDirectionEnum::Forward,
                      # Step command step size (percent per step)
                      @step_percent : UInt8 = 25_u8)
-        # MultiSpeed is always enabled — percent and speed stay in sync transparently
-        @feature_map |= Feature::MultiSpeed
-
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         if setting = @percent_setting
@@ -147,21 +147,34 @@ module Matter
         raise ArgumentError.new("percent_current must be between 0 and 100") if @percent_current > PERCENT_MAX
 
         raise ArgumentError.new("speed_max must be at least 1") if @speed_max < SPEED_MAX_MIN
+        raise ArgumentError.new("speed_max must be at most 100") if @speed_max > SPEED_MAX_MAX
         if setting = @speed_setting
           raise ArgumentError.new("speed_setting must be <= speed_max") if setting > @speed_max
         end
         raise ArgumentError.new("speed_current must be <= speed_max") if @speed_current > @speed_max
 
+        auto_sequence = @fan_mode_sequence.in?(FanModeSequence::OffLowMedHighAuto,
+          FanModeSequence::OffLowHighAuto, FanModeSequence::OffHighAuto)
+        if @feature_map.auto? != auto_sequence
+          raise ArgumentError.new("Auto feature must match FanModeSequence")
+        end
+
         unless mode_supported?(@fan_mode, @fan_mode_sequence)
           raise ArgumentError.new("FanMode #{@fan_mode} not supported by FanModeSequence #{@fan_mode_sequence}")
         end
 
-        if @feature_map.rocking? && !(@rock_setting & ~@rock_support).none?
-          raise ArgumentError.new("rock_setting contains unsupported modes")
+        if @feature_map.rocking?
+          raise ArgumentError.new("rock_support must include at least one mode") if @rock_support.none?
+          unless (@rock_setting & ~@rock_support).none?
+            raise ArgumentError.new("rock_setting contains unsupported modes")
+          end
         end
 
-        if @feature_map.wind? && !(@wind_setting & ~@wind_support).none?
-          raise ArgumentError.new("wind_setting contains unsupported modes")
+        if @feature_map.wind?
+          raise ArgumentError.new("wind_support must include at least one mode") if @wind_support.none?
+          unless (@wind_setting & ~@wind_support).none?
+            raise ArgumentError.new("wind_setting contains unsupported modes")
+          end
         end
       end
 

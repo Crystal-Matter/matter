@@ -77,7 +77,7 @@ module MatterAirConditioner
 
     endpoint FAN_ENDPOINT, device_type: Matter::DeviceType::FAN do
       cluster Matter::Cluster::FanControl,
-        feature_map: :step,
+        feature_map: Matter::Cluster::FanControl::Feature::Step | Matter::Cluster::FanControl::Feature::MultiSpeed,
         fan_mode: :off,
         fan_mode_sequence: :off_low_med_high,
         speed_max: FAN_SPEED_MAX,

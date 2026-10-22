@@ -25,6 +25,7 @@ describe Matter::Cluster::FanControl do
 
     it "creates with OffLowMedHighAuto sequence" do
       cluster = build(Matter::Cluster::FanControl,
+        feature_map: Matter::Cluster::FanControl::Feature::Auto,
         fan_mode: Matter::Cluster::FanControl::FanMode::Auto,
         fan_mode_sequence: Matter::Cluster::FanControl::FanModeSequence::OffLowMedHighAuto
       )
@@ -45,6 +46,12 @@ describe Matter::Cluster::FanControl do
         build(Matter::Cluster::FanControl,
           percent_current: 101_u8
         )
+      end
+    end
+
+    it "bounds SpeedMax to the Matter 1.6 range" do
+      expect_raises(ArgumentError, /speed_max/) do
+        build(Matter::Cluster::FanControl, speed_max: 101_u8)
       end
     end
 
@@ -69,10 +76,88 @@ describe Matter::Cluster::FanControl do
 
       sequences.each do |sequence|
         cluster = build(Matter::Cluster::FanControl,
+          feature_map: sequence.in?(Matter::Cluster::FanControl::FanModeSequence::OffLowMedHighAuto,
+            Matter::Cluster::FanControl::FanModeSequence::OffLowHighAuto,
+            Matter::Cluster::FanControl::FanModeSequence::OffHighAuto) ? Matter::Cluster::FanControl::Feature::Auto : Matter::Cluster::FanControl::Feature::None,
           fan_mode: Matter::Cluster::FanControl::FanMode::Off,
           fan_mode_sequence: sequence
         )
         cluster.fan_mode.should eq(Matter::Cluster::FanControl::FanMode::Off)
+      end
+    end
+
+    it "exposes only mandatory attributes when no optional feature is selected" do
+      cluster = build(Matter::Cluster::FanControl,
+        feature_map: Matter::Cluster::FanControl::Feature::None)
+
+      cluster.feature_map.should eq(Matter::Cluster::FanControl::Feature::None)
+      cluster.attributes.map(&.id.id).should_not contain(Matter::Cluster::FanControl::ATTR_SPEED_MAX)
+      cluster.attributes.map(&.id.id).should_not contain(Matter::Cluster::FanControl::ATTR_SPEED_SETTING)
+      cluster.attributes.map(&.id.id).should_not contain(Matter::Cluster::FanControl::ATTR_SPEED_CURRENT)
+      read_status(cluster, Matter::Cluster::FanControl::ATTR_SPEED_MAX).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAttribute)
+
+      expect_status(write(cluster, Matter::Cluster::FanControl::ATTR_PERCENT_SETTING, 40_u8),
+        Matter::InteractionModel::StatusCode::Success)
+      cluster.percent_current.should eq(40_u8)
+    end
+
+    it "keeps the default multi-speed feature for existing configurations" do
+      cluster = build(Matter::Cluster::FanControl)
+      cluster.feature_map.multi_speed?.should be_true
+      cluster.attributes.map(&.id.id).should contain(Matter::Cluster::FanControl::ATTR_SPEED_MAX)
+    end
+
+    it "requires AUT for an Auto sequence and forbids an Auto-less sequence with AUT" do
+      expect_raises(ArgumentError, /Auto.*feature|feature.*Auto/) do
+        build(Matter::Cluster::FanControl,
+          fan_mode_sequence: Matter::Cluster::FanControl::FanModeSequence::OffLowMedHighAuto)
+      end
+      expect_raises(ArgumentError, /Auto.*feature|feature.*Auto/) do
+        build(Matter::Cluster::FanControl,
+          feature_map: Matter::Cluster::FanControl::Feature::Auto,
+          fan_mode_sequence: Matter::Cluster::FanControl::FanModeSequence::OffLowMedHigh)
+      end
+    end
+
+    it "requires a nonempty supported movement map for RCK and WND" do
+      expect_raises(ArgumentError, /rock_support/) do
+        build(Matter::Cluster::FanControl,
+          feature_map: Matter::Cluster::FanControl::Feature::Rocking)
+      end
+      expect_raises(ArgumentError, /wind_support/) do
+        build(Matter::Cluster::FanControl,
+          feature_map: Matter::Cluster::FanControl::Feature::Wind)
+      end
+    end
+
+    it "rejects reserved movement bits on the wire" do
+      rock = build(Matter::Cluster::FanControl,
+        feature_map: Matter::Cluster::FanControl::Feature::Rocking,
+        rock_support: Matter::Cluster::FanControl::RockSupport::RockLeftRight)
+      wind = build(Matter::Cluster::FanControl,
+        feature_map: Matter::Cluster::FanControl::Feature::Wind,
+        wind_support: Matter::Cluster::FanControl::WindSupport::SleepWind)
+
+      expect_status(write(rock, Matter::Cluster::FanControl::ATTR_ROCK_SETTING, 0x80_u8),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      expect_status(write(wind, Matter::Cluster::FanControl::ATTR_WIND_SETTING, 0x80_u8),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      rock.rock_setting.should eq(Matter::Cluster::FanControl::RockSupport::None)
+      wind.wind_setting.should eq(Matter::Cluster::FanControl::WindSupport::None)
+    end
+
+    it "rejects initial rocking and wind settings outside the supported maps" do
+      expect_raises(ArgumentError, /rock_setting/) do
+        build(Matter::Cluster::FanControl,
+          feature_map: Matter::Cluster::FanControl::Feature::Rocking,
+          rock_support: Matter::Cluster::FanControl::RockSupport::RockLeftRight,
+          rock_setting: Matter::Cluster::FanControl::RockSupport::RockUpDown)
+      end
+      expect_raises(ArgumentError, /wind_setting/) do
+        build(Matter::Cluster::FanControl,
+          feature_map: Matter::Cluster::FanControl::Feature::Wind,
+          wind_support: Matter::Cluster::FanControl::WindSupport::SleepWind,
+          wind_setting: Matter::Cluster::FanControl::WindSupport::NaturalWind)
       end
     end
   end
@@ -390,6 +475,7 @@ describe Matter::Cluster::FanControl do
     it "models a smart fan with automatic mode" do
       # Fan with Auto mode support
       fan = build(Matter::Cluster::FanControl,
+        feature_map: Matter::Cluster::FanControl::Feature::Auto,
         fan_mode_sequence: Matter::Cluster::FanControl::FanModeSequence::OffLowMedHighAuto
       )
 
