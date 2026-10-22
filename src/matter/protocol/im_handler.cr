@@ -845,6 +845,8 @@ module Matter
         peer_address : Socket::IPAddress? = nil,
         peer_icac : Bytes? = nil,
         timed_interaction : Bool = false,
+        session_identity : UInt64? = nil,
+        exchange_id : UInt16? = nil,
       ) : Array(InteractionModel::InvokeResponseIB)
         invoke_responses = [] of InteractionModel::InvokeResponseIB
 
@@ -899,6 +901,8 @@ module Matter
             cluster.request_peer_node_id = peer_subject_ids.try(&.first?)
             cluster.request_peer_address = peer_address
             cluster.request_peer_icac = peer_icac
+            cluster.request_session_identity = session_identity
+            cluster.request_exchange_id = exchange_id
             cluster.request_fabric_filtered = true
             safe_invoke_command(cluster, path, cmd_data.command_fields, session_id, is_case_session, fabric_index)
           end

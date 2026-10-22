@@ -353,14 +353,14 @@ The ordinary bridge example does not enable this fixture.
 `Cluster::CommissionerControl` provides the Matter 1.6 wire schema and a
 host-driven approval state machine for a fabric-synchronizing Aggregator. It
 advertises `FabricSynchronization` only after a host configures both callbacks:
-one to start approval and one to open the intended target's enhanced
-commissioning window. `RequestCommissioningApproval` records the CASE fabric,
+one to start approval and one to prepare a response with deferred commissioning
+work. `RequestCommissioningApproval` records the CASE fabric,
 client NodeID and RequestID, and the host later calls `resolve_approval` to
 emit a result event visible only on that fabric. Without a host, requests
 receive a failure result and `CommissionNode` cannot return a window. The
 approval callback must enqueue consent work and return promptly; the host
-resolves the request asynchronously after a decision. Approval is consumed on
-the first matching `CommissionNode` attempt. The host calls
+resolves the request asynchronously after a decision. Approval is consumed
+when a matching `CommissionNode` has prepared a valid response. The host calls
 `expire_approval` when its manufacturer-defined validity interval ends. Fabric
 removal and restart also discard outstanding approvals.
 At most 64 requests are tracked; accepting a new one retires the oldest and
@@ -368,16 +368,50 @@ emits a failure result if that older request was still pending. Each accepted
 request has a local generation token so a late host decision cannot approve a
 later request that reuses the same wire RequestID.
 
-The host must obtain any user consent it requires, open the target window,
-honor `ResponseTimeoutSeconds`, and verify the commissioned target's attested
-VendorID and ProductID against the earlier request. The cluster validates the
-reverse-window wire parameters, but does not perform target commissioning or
-attestation. Ordinary device and bridge examples do not advertise it, and the
-current slice is not a complete reverse-commissioning flow.
+The host must obtain any user consent it requires before approving. The
+`prepare_window` callback creates a `PreparedWindow`: public enhanced-window
+parameters and a private commissioning task holding the setup PIN. The cluster
+validates the wire parameters and returns them immediately. Only after the
+matching encrypted InvokeResponse has been sent does the protocol layer start
+the task, outside its session lock. This ordering matters: the client opens
+the intended target's window only after receiving `ReverseOpenCommissioningWindow`.
+The host must finish preparation within `ResponseTimeoutSeconds` and its task
+must use the approved VendorID/ProductID when calling
+`Controller::Commissioning::Commissioner#pairing_code` with `expected_identity`.
+That option checks both IDs after device attestation and before AddNOC. A
+failed preparation leaves the approval available for a retry; a prepared
+response consumes it even if the response send fails, so a fresh approval is
+required. Ordinary device and bridge examples do not advertise this cluster,
+and the current slice is not a complete reverse-commissioning flow.
 `examples/matter_commissioner_control_device.cr` is an opt-in synthetic
 Aggregator used only for chip-tool interoperability testing. It auto-approves
-one test VID/PID pair and returns dummy reverse-window bytes; it does not open
-a target window or commission a node.
+one test VID/PID pair and returns dummy reverse-window bytes with a no-op
+deferred task; it does not open a target window or commission a node.
+
+For a real two-fabric SDK interoperability run, use
+`e2e/interop/sdk_reverse_commissioning.sh` on Linux x64. It pins the official
+SDK to `v1.6.0.0`, builds its RPC-enabled `fabric-admin` and
+`fabric-bridge-app`, and uses `examples/matter_reverse_commissioning_device.cr`
+as the Crystal Aggregator. The fixture first commissions that Aggregator onto
+a Crystal-owned source fabric. The SDK FabricAdmin commissions its local bridge
+onto an independent destination fabric, then joins the Aggregator to that
+fabric through an Enhanced Commissioning Window. The SDK's real
+`fabricsync add-bridge` command requests approval, receives the
+`ReverseOpenCommissioningWindow` response, and opens its local bridge window
+over Pigweed RPC. Crystal then attests and commissions the SDK bridge onto the
+source fabric, checking the approved test VID/PID before AddNOC. The harness
+verifies both nodes report two commissioned fabrics over fresh CASE sessions.
+Logs are retained under `tmp/interop-sdk-reverse/`. This test requires
+`MATTER_REVERSE_TEST_CONSENT=1` and loads the pinned SDK FFF1 test PAA and
+development Certification Declaration signer certificates into this example's attestation
+trust store. Those are opt-in test policy and trust, not a production consent UI
+or a production attestation authority.
+The [official SDK v1.6.0.0 run](https://github.com/Crystal-Matter/matter/actions/runs/39799454842)
+completed this flow: SDK approval and enhanced-window handoff, Crystal's
+attestation and AddNOC of the SDK bridge, and fresh CASE reads showing two
+fabrics on both the Aggregator and bridge. The SDK test fixture did not
+configure a DAC revocation delegate; production deployments must supply their
+own revocation policy and consent UI.
 
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor
 CAT check. The controller's `OperationalTrustAnchors` implementation must

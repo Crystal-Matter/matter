@@ -55,7 +55,7 @@ describe Commissioner do
     cluster.configure_host(
       ->(approval : Commissioner::ApprovalRequest) { requested << approval; nil },
       ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
-        commissioner_window.as(Commissioner::ReverseOpenCommissioningWindowResponse?)
+        Commissioner::PreparedWindow.new(commissioner_window, -> { nil }).as(Commissioner::PreparedWindow?)
       end
     )
     cluster.supported_device_categories.should eq(Commissioner::FABRIC_SYNCHRONIZATION)
@@ -98,9 +98,9 @@ describe Commissioner do
     cluster.configure_host(
       ->(approval : Commissioner::ApprovalRequest) { requested << approval; nil },
       ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
-        Commissioner::ReverseOpenCommissioningWindowResponse.new(
+        response = Commissioner::ReverseOpenCommissioningWindowResponse.new(
           180_u16, Bytes.new(96, 0_u8), 3840_u16, 1000_u32, Bytes.new(16, 0_u8))
-          .as(Commissioner::ReverseOpenCommissioningWindowResponse?)
+        Commissioner::PreparedWindow.new(response, -> { nil }).as(Commissioner::PreparedWindow?)
       end
     )
     commissioner_context(cluster)
@@ -129,7 +129,7 @@ describe Commissioner do
     cluster.configure_host(
       ->(approval : Commissioner::ApprovalRequest) { requested << approval; nil },
       ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
-        commissioner_window.as(Commissioner::ReverseOpenCommissioningWindowResponse?)
+        Commissioner::PreparedWindow.new(commissioner_window, -> { nil }).as(Commissioner::PreparedWindow?)
       end
     )
     commissioner_context(cluster)
@@ -161,7 +161,7 @@ describe Commissioner do
       ->(approval : Commissioner::ApprovalRequest) { requested << approval; nil },
       ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
         cluster.remove_fabric(1_u8)
-        commissioner_window.as(Commissioner::ReverseOpenCommissioningWindowResponse?)
+        Commissioner::PreparedWindow.new(commissioner_window, -> { nil }).as(Commissioner::PreparedWindow?)
       end
     )
     commissioner_context(cluster)
@@ -170,5 +170,98 @@ describe Commissioner do
     cluster.resolve_approval(requested.first, Matter::InteractionModel::StatusCode::Success).should be_true
     cluster.commission_node(Commissioner::CommissionNodeRequest.new(1_u64))
       .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::Failure)
+  end
+
+  it "prepares reverse-window credentials without starting commissioning before response delivery" do
+    cluster = Commissioner.new(Matter::DataType::EndpointNumber.new(0_u16))
+    requests = [] of Commissioner::ApprovalRequest
+    started = 0
+    cluster.configure_host(
+      ->(approval : Commissioner::ApprovalRequest) { requests << approval; nil },
+      ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
+        Commissioner::PreparedWindow.new(commissioner_window, -> { started += 1; nil }).as(Commissioner::PreparedWindow?)
+      end
+    )
+    commissioner_context(cluster)
+    cluster.request_commissioning_approval(Commissioner::RequestCommissioningApprovalRequest.new(51_u64, 1_u16, 1_u16))
+      .status.should eq(Matter::InteractionModel::StatusCode::Success)
+    cluster.resolve_approval(requests.first, Matter::InteractionModel::StatusCode::Success).should be_true
+    cluster.commission_node(Commissioner::CommissionNodeRequest.new(51_u64))
+      .as(Commissioner::ReverseOpenCommissioningWindowResponse).discriminator.should eq(3840_u16)
+    started.should eq(0)
+    cluster.take_pending_commissions.size.should eq(1)
+    started.should eq(0)
+  end
+
+  it "releases a preparation claim after callback failure or invalid parameters, then consumes a valid response" do
+    cluster = Commissioner.new(Matter::DataType::EndpointNumber.new(0_u16))
+    requests = [] of Commissioner::ApprovalRequest
+    attempts = 0
+    cluster.configure_host(
+      ->(approval : Commissioner::ApprovalRequest) { requests << approval; nil },
+      ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
+        attempts += 1
+        case attempts
+        when 1
+          raise Matter::CommissioningError.new("temporary preparation failure")
+        when 2
+          invalid = Commissioner::ReverseOpenCommissioningWindowResponse.new(
+            180_u16, Bytes.new(96, 0_u8), 3840_u16, 1000_u32, Bytes.new(16, 0_u8))
+          Commissioner::PreparedWindow.new(invalid, -> { nil }).as(Commissioner::PreparedWindow?)
+        else
+          Commissioner::PreparedWindow.new(commissioner_window, -> { nil }).as(Commissioner::PreparedWindow?)
+        end
+      end)
+    commissioner_context(cluster)
+    cluster.request_commissioning_approval(Commissioner::RequestCommissioningApprovalRequest.new(61_u64, 1_u16, 1_u16))
+    cluster.resolve_approval(requests.first, Matter::InteractionModel::StatusCode::Success)
+    expect_raises(Matter::CommissioningError) do
+      cluster.commission_node(Commissioner::CommissionNodeRequest.new(61_u64))
+    end
+    cluster.commission_node(Commissioner::CommissionNodeRequest.new(61_u64))
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.commission_node(Commissioner::CommissionNodeRequest.new(61_u64))
+      .as(Commissioner::ReverseOpenCommissioningWindowResponse)
+    cluster.commission_node(Commissioner::CommissionNodeRequest.new(61_u64))
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::Failure)
+    attempts.should eq(3)
+  end
+
+  it "does not start a drained task after its fabric has been removed" do
+    cluster = Commissioner.new(Matter::DataType::EndpointNumber.new(0_u16))
+    requests = [] of Commissioner::ApprovalRequest
+    started = 0
+    cluster.configure_host(
+      ->(approval : Commissioner::ApprovalRequest) { requests << approval; nil },
+      ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
+        Commissioner::PreparedWindow.new(commissioner_window, -> { started += 1; nil })
+          .as(Commissioner::PreparedWindow?)
+      end)
+    commissioner_context(cluster)
+    cluster.request_commissioning_approval(Commissioner::RequestCommissioningApprovalRequest.new(71_u64, 1_u16, 1_u16))
+    cluster.resolve_approval(requests.first, Matter::InteractionModel::StatusCode::Success)
+    cluster.commission_node(Commissioner::CommissionNodeRequest.new(71_u64))
+      .as(Commissioner::ReverseOpenCommissioningWindowResponse)
+    task = cluster.take_pending_commissions.first
+    cluster.remove_fabric(1_u8)
+    task.call
+    started.should eq(0)
+  end
+
+  it "drops PIN-bearing pending work when its approval expires" do
+    cluster = Commissioner.new(Matter::DataType::EndpointNumber.new(0_u16))
+    requests = [] of Commissioner::ApprovalRequest
+    cluster.configure_host(
+      ->(approval : Commissioner::ApprovalRequest) { requests << approval; nil },
+      ->(_approval : Commissioner::ApprovalRequest, _command : Commissioner::CommissionNodeRequest) do
+        Commissioner::PreparedWindow.new(commissioner_window, -> { nil }).as(Commissioner::PreparedWindow?)
+      end)
+    commissioner_context(cluster)
+    cluster.request_commissioning_approval(Commissioner::RequestCommissioningApprovalRequest.new(81_u64, 1_u16, 1_u16))
+    cluster.resolve_approval(requests.first, Matter::InteractionModel::StatusCode::Success)
+    cluster.commission_node(Commissioner::CommissionNodeRequest.new(81_u64))
+      .as(Commissioner::ReverseOpenCommissioningWindowResponse)
+    cluster.expire_approval(requests.first).should be_true
+    cluster.take_pending_commissions.should be_empty
   end
 end

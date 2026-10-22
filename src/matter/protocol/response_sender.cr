@@ -58,12 +58,11 @@ module Matter
           source_node_id: original_msg.packet_header.destination_node_id || session.local_node_id,
           destination_node_id: original_msg.packet_header.source_node_id)
 
+        @transport.send_reliable_raw(udp_packet, peer, session.session_id,
+          payload_header.exchange_id, counter)
         if cache_for_mrp && original_msg.packet_header.session_id != 0
           @mrp_cache.store(original_msg.packet_header.session_id, original_msg.packet_header.message_id, udp_packet.dup)
         end
-
-        @transport.send_reliable_raw(udp_packet, peer, session.session_id,
-          payload_header.exchange_id, counter)
         @on_im_message_sent.try(&.call)
       end
 

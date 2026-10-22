@@ -17,6 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
       - name: Free space for the official SDK build
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL

@@ -24,6 +24,19 @@ module Matter
         label : String?,
         generation : UInt64
 
+      # Preparing the response must not wait for the target to enter its
+      # commissioning window. The client opens that window only after it
+      # receives the response; `commission` runs after the response is sent.
+      record PreparedWindow,
+        response : ReverseOpenCommissioningWindowResponse,
+        commission : Proc(Nil)
+
+      private record PendingCommission,
+        approval : ApprovalRequest,
+        session_identity : UInt64?,
+        exchange_id : UInt16?,
+        commission : Proc(Nil)
+
       struct RequestCommissioningApprovalRequest
         include TLV::Serializable
 
@@ -103,6 +116,7 @@ module Matter
         getter request : ApprovalRequest
         property status : InteractionModel::StatusCode? = nil
         property? consumed : Bool = false
+        property? preparing : Bool = false
 
         def initialize(@request : ApprovalRequest)
         end
@@ -119,26 +133,28 @@ module Matter
 
       @approvals = {} of Tuple(UInt8, UInt64, UInt64) => Approval
       @approval_order = [] of Tuple(UInt8, UInt64, UInt64)
+      @pending_commissions = [] of PendingCommission
       @next_approval_generation = 0_u64
       @approval_mutex = Mutex.new
       @on_approval_requested : Proc(ApprovalRequest, Nil)? = nil
-      @on_reverse_window : Proc(ApprovalRequest, CommissionNodeRequest, ReverseOpenCommissioningWindowResponse?)? = nil
+      @on_prepare_window : Proc(ApprovalRequest, CommissionNodeRequest, PreparedWindow?)? = nil
 
       # Both callbacks must be supplied before FabricSynchronization is
       # advertised. The first promptly queues consent work and returns; the
-      # host later calls resolve_approval asynchronously. The second opens
-      # the target window and returns its enhanced-window parameters.
+      # host later calls resolve_approval asynchronously. The second
+      # generates response parameters and a deferred commissioning task.
+      # The task must commission only the approved VID/PID after attestation.
       def configure_host(
         approval_requested : Proc(ApprovalRequest, Nil),
-        reverse_window : Proc(ApprovalRequest, CommissionNodeRequest, ReverseOpenCommissioningWindowResponse?),
+        prepare_window : Proc(ApprovalRequest, CommissionNodeRequest, PreparedWindow?),
       ) : Nil
         @on_approval_requested = approval_requested
-        @on_reverse_window = reverse_window
+        @on_prepare_window = prepare_window
         increment_version_and_notify(ATTR_SUPPORTED_DEVICE_CATEGORIES)
       end
 
       def supported_device_categories : UInt32
-        @on_approval_requested && @on_reverse_window ? FABRIC_SYNCHRONIZATION : 0_u32
+        @on_approval_requested && @on_prepare_window ? FABRIC_SYNCHRONIZATION : 0_u32
       end
 
       def request_commissioning_approval(request : RequestCommissioningApprovalRequest) : InteractionModel::Status
@@ -155,6 +171,9 @@ module Matter
           else
             if @approvals.size >= MAX_TRACKED_APPROVALS
               evicted = @approvals.delete(@approval_order.shift)
+              if old = evicted
+                @pending_commissions.reject! { |entry| entry.approval == old.request }
+              end
             end
             @next_approval_generation += 1_u64
             current = ApprovalRequest.new(context[0], context[1], request.request_id,
@@ -210,21 +229,73 @@ module Matter
         key = {context[0], context[1], request.request_id}
         approval = @approval_mutex.synchronize do
           entry = @approvals[key]?
-          if entry && entry.status == InteractionModel::StatusCode::Success && !entry.consumed?
-            entry.consumed = true
+          if entry && entry.status == InteractionModel::StatusCode::Success && !entry.consumed? && !entry.preparing?
+            entry.preparing = true
             entry.request
           end
         end
         return InteractionModel::Status.failure unless approval
-        callback = @on_reverse_window || return InteractionModel::Status.failure
-        response = callback.call(approval, request) || return InteractionModel::Status.failure
-        return InteractionModel::Status.constraint_error unless valid_window?(response)
-        still_approved = @approval_mutex.synchronize do
-          entry = @approvals[key]?
-          entry && entry.request == approval && entry.status == InteractionModel::StatusCode::Success && entry.consumed?
+        begin
+          callback = @on_prepare_window || return InteractionModel::Status.failure
+          prepared = callback.call(approval, request) || return InteractionModel::Status.failure
+          return InteractionModel::Status.constraint_error unless valid_window?(prepared.response)
+          still_approved = @approval_mutex.synchronize do
+            entry = @approvals[key]?
+            if entry && entry.request == approval && entry.status == InteractionModel::StatusCode::Success && entry.preparing?
+              entry.consumed = true
+              @pending_commissions << PendingCommission.new(approval,
+                request_session_identity, request_exchange_id, prepared.commission)
+              true
+            else
+              false
+            end
+          end
+          return InteractionModel::Status.failure unless still_approved
+          prepared.response
+        ensure
+          @approval_mutex.synchronize do
+            entry = @approvals[key]?
+            entry.preparing = false if entry && entry.request == approval
+          end
         end
-        return InteractionModel::Status.failure unless still_approved
-        response
+      end
+
+      # The protocol layer drains these only after handing InvokeResponse to
+      # the transport. A failed send discards them, including their PIN-bearing
+      # host closures, without starting commissioning.
+      def take_pending_commissions(session_identity : UInt64? = nil, exchange_id : UInt16? = nil) : Array(Proc(Nil))
+        @approval_mutex.synchronize do
+          pending = @pending_commissions.select do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+          @pending_commissions.reject! do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+          pending.compact_map do |entry|
+            approval = entry.approval
+            current = @approvals[approval_key(approval)]?
+            if current && current.request == approval
+              # Fabric removal can race with a task already drained from the
+              # queue but still waiting for the protocol lock to be released.
+              -> do
+                active = @approval_mutex.synchronize do
+                  present = @approvals[approval_key(approval)]?
+                  present && present.request == approval
+                end
+                entry.commission.call if active
+                nil
+              end
+            end
+          end
+        end
+      end
+
+      def discard_pending_commissions(session_identity : UInt64? = nil, exchange_id : UInt16? = nil) : Nil
+        @approval_mutex.synchronize do
+          @pending_commissions.reject! do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+        end
       end
 
       # The manufacturer decides how long an approval remains valid. Its host
@@ -236,6 +307,7 @@ module Matter
           next false unless entry && entry.request == request
           @approvals.delete(key)
           @approval_order.delete(key)
+          @pending_commissions.reject! { |pending| pending.approval == request }
           true
         end
       end
@@ -245,6 +317,7 @@ module Matter
         @approval_mutex.synchronize do
           @approvals.reject! { |key, _| key[0] == fabric_index }
           @approval_order.reject! { |key| key[0] == fabric_index }
+          @pending_commissions.reject! { |entry| entry.approval.fabric_index == fabric_index }
         end
       end
 

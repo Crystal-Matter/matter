@@ -48,9 +48,10 @@ module MatterCommissionerControl
           nil
         end,
         ->(_approval : Control::ApprovalRequest, _request : Control::CommissionNodeRequest) do
-          Control::ReverseOpenCommissioningWindowResponse.new(
+          response = Control::ReverseOpenCommissioningWindowResponse.new(
             180_u16, Bytes.new(97, 0_u8), 3840_u16, 1000_u32, Bytes.new(16, 0_u8)
-          ).as(Control::ReverseOpenCommissioningWindowResponse?)
+          )
+          Control::PreparedWindow.new(response, -> { nil }).as(Control::PreparedWindow?)
         end
       )
       super
