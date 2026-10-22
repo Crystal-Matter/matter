@@ -101,7 +101,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0105 | Closure Dimension Cluster | 1 | — | cluster absent |
 | 0x0150 | Service Area Cluster | 2 | — | cluster absent |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | — | cluster absent |
-| 0x0201 | Thermostat Cluster | 11 | 9 | — |
+| 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower feature, shared-limit, and Auto deadband behavior covered; other revision 11 gaps remain |
 | 0x0202 | Fan Control Cluster | 6 | 5 | — |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | — | cluster absent |
 | 0x0300 | Color Control Cluster | 9 | 7 | — |
