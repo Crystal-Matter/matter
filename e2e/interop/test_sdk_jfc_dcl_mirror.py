@@ -41,6 +41,8 @@ class DclMirrorTest(unittest.TestCase):
             subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048",
                             "-sha256", "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1",
                             "-addext", "subjectAltName=IP:127.0.0.1",
+                            "-addext", "basicConstraints=critical,CA:TRUE",
+                            "-addext", "keyUsage=critical,digitalSignature,keyCertSign",
                             "-keyout", str(key), "-out", str(cert)],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(state))
