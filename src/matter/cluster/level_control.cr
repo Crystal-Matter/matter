@@ -215,10 +215,10 @@ module Matter
         end
       end
 
-      attribute 0x0000, :current_level, UInt8, default: DEFAULT_MIN_LEVEL, persist: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL
+      attribute 0x0000, :current_level, UInt8, default: DEFAULT_MIN_LEVEL, nullable: true, persist: true, scene: true, min: LOWEST_LEVEL, max: HIGHEST_LEVEL, on_change: :current_level_updated
       attribute 0x0001, :remaining_time, UInt16, default: 0_u16, requires: :lighting
-      attribute 0x0002, :min_level, UInt8, default: DEFAULT_MIN_LEVEL, persist: true, fixed: true
-      attribute 0x0003, :max_level, UInt8, default: HIGHEST_LEVEL, persist: true, fixed: true
+      attribute 0x0002, :min_level, UInt8, default: DEFAULT_MIN_LEVEL, persist: false, fixed: true
+      attribute 0x0003, :max_level, UInt8, default: HIGHEST_LEVEL, persist: false, fixed: true
       attribute 0x0004, :current_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
       attribute 0x0005, :min_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
       attribute 0x0006, :max_frequency, UInt16, default: 0_u16, persist: true, requires: :frequency
@@ -227,7 +227,7 @@ module Matter
       attribute 0x0011, :on_level, UInt8, nullable: true, writable: true
       attribute 0x0012, :on_transition_time, UInt16, nullable: true, writable: true, optional: true, requires: :lighting
       attribute 0x0013, :off_transition_time, UInt16, nullable: true, writable: true, optional: true, requires: :lighting
-      attribute 0x0014, :default_move_rate, UInt8, nullable: true, writable: true, optional: true, requires: :lighting
+      attribute 0x0014, :default_move_rate, UInt8, nullable: true, writable: true, optional: true, min: 1, requires: :lighting
       attribute 0x4000, :start_up_current_level, UInt8, nullable: true, writable: true, requires: :lighting
 
       # OnLevel must lie within the level range the device reports.
@@ -255,14 +255,15 @@ module Matter
         @feature_map : Feature = Feature::OnOff | Feature::Lighting,
       )
         @min_level = min_level || DEFAULT_MIN_LEVEL
-        @current_level = current_level || @min_level
+        initial_level = current_level || @min_level
+        @current_level = initial_level
         if @max_level > HIGHEST_LEVEL
           raise ArgumentError.new("MaxLevel exceeds the Matter level ceiling")
         end
         if @feature_map.lighting? && (@min_level != DEFAULT_MIN_LEVEL || @max_level != HIGHEST_LEVEL)
           raise ArgumentError.new("Lighting requires MinLevel=1 and MaxLevel=254")
         end
-        unless (@min_level..@max_level).includes?(@current_level)
+        unless (@min_level..@max_level).includes?(initial_level)
           raise ArgumentError.new("CurrentLevel must be between MinLevel and MaxLevel")
         end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
@@ -270,7 +271,7 @@ module Matter
         @transition_last_advanced_at = nil
         @transition_duration = nil
         @transition_target = nil
-        @transition_origin = @current_level
+        @transition_origin = initial_level
         @transition_fiber_running = false
         @on_off_cluster = nil
         @turn_off_on_completion = false
@@ -286,6 +287,16 @@ module Matter
       @on_off_cluster : OnOff?
       @turn_off_on_completion : Bool
       @suppress_on_effect : Bool
+
+      private def after_restore_state : Nil
+        @current_level = @current_level.try(&.clamp(@min_level, @max_level))
+      end
+
+      private def current_level_updated(level : UInt8?) : Nil
+        return if level
+        clear_transition
+        @turn_off_on_completion = false
+      end
 
       # Endpoint wires the sibling OnOff server when the OO feature is enabled.
       def bind_on_off(cluster : OnOff?) : Nil
@@ -349,27 +360,30 @@ module Matter
       private def move_towards(mode : MoveMode, requested_rate : UInt8?, with_on_off : Bool = false) : InteractionModel::Status
         rate = requested_rate || @default_move_rate
         return InteractionModel::Status.invalid_command if rate == 0
+        return InteractionModel::Status.failure if @current_level.nil?
 
         target = mode.up? ? @max_level : @min_level
         return transition_to(target, 0_u16, with_on_off: with_on_off) unless rate
 
         advance_transition
-        distance = (target.to_i - @current_level.to_i).abs
+        return InteractionModel::Status.failure unless current_level = @current_level
+        distance = (target.to_i - current_level.to_i).abs
         duration = ((distance.to_f * 1000.0) / rate).ceil.to_i.milliseconds
         start_transition(target, duration, with_on_off: with_on_off)
       end
 
       private def step_by(mode : StepMode, step_size : UInt8, transition_time : UInt16?, with_on_off : Bool = false) : InteractionModel::Status
         advance_transition
+        return InteractionModel::Status.failure unless current_level = @current_level
         # A null Step transition is immediate; OnOffTransitionTime supplies
         # the default only for MoveToLevel commands.
         step_time = transition_time || 0_u16
         case mode
         when .up?
-          target = @current_level.to_u16 + step_size
+          target = current_level.to_u16 + step_size
           transition_to([target, @max_level.to_u16].min.to_u8, step_time, with_on_off: with_on_off)
         when .down?
-          target = @current_level.to_i16 - step_size
+          target = current_level.to_i16 - step_size
           transition_to([target, @min_level.to_i16].max.to_u8, step_time, with_on_off: with_on_off)
         else
           InteractionModel::Status.invalid_command
@@ -378,13 +392,17 @@ module Matter
 
       private def halt : InteractionModel::Status
         advance_transition
+        clear_transition
+        @turn_off_on_completion = false
+        InteractionModel::Status.success
+      end
+
+      private def clear_transition : Nil
         @transition_started_at = nil
         @transition_last_advanced_at = nil
         @transition_duration = nil
         @transition_target = nil
-        @turn_off_on_completion = false
         self.remaining_time = 0_u16
-        InteractionModel::Status.success
       end
 
       private def transition_to(level : UInt8, transition_time : UInt16? = nil, with_on_off : Bool = false) : InteractionModel::Status
@@ -408,18 +426,14 @@ module Matter
             @turn_off_on_completion = true
           end
         end
-        if duration <= 0.seconds || target == @current_level
-          @transition_started_at = nil
-          @transition_last_advanced_at = nil
-          @transition_duration = nil
-          @transition_target = nil
+        if duration <= 0.seconds || @current_level.nil? || target == @current_level
+          clear_transition
           self.current_level = target
-          self.remaining_time = 0_u16
           finish_on_off_coupling
           return InteractionModel::Status.success
         end
 
-        @transition_origin = @current_level
+        @transition_origin = @current_level.as(UInt8)
         @transition_target = target
         @transition_duration = duration
         @transition_started_at = Time.instant
@@ -456,6 +470,7 @@ module Matter
         fraction = (elapsed.total_milliseconds / duration.total_milliseconds).clamp(0.0, 1.0)
         level = @transition_origin.to_i + ((target.to_i - @transition_origin.to_i) * fraction).round.to_i
         self.current_level = level.clamp(@min_level.to_i, @max_level.to_i).to_u8
+        return if @current_level.nil?
         remaining = ((duration - elapsed).total_milliseconds / DECISECOND_MS).ceil.to_i
         self.remaining_time = remaining.clamp(0, UInt16::MAX.to_i).to_u16
       end
@@ -487,9 +502,12 @@ module Matter
         (effective_options & EXECUTE_IF_OFF) != 0
       end
 
-      # Called with the previous and the new level whenever CurrentLevel changes
+      # Called only when both the previous and new levels are known. Use
+      # on_current_level_changed to observe transitions into or out of null.
       def on_level_changed(&block : UInt8, UInt8 -> Nil) : Nil
-        on_current_level_changed(&block)
+        on_current_level_changed do |old_level, new_level|
+          block.call(old_level, new_level) if old_level && new_level
+        end
       end
 
       # ------------------------------------------------------------------------

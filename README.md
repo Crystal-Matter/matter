@@ -264,6 +264,16 @@ membership, hue, color temperature, and lift position commands.
 Level Control defaults to a Lighting range of 1–254. When using Level Control
 for a non-lighting application, set `feature_map: Matter::Cluster::LevelControl::Feature::None`
 to allow a custom range that starts at zero.
+`CurrentLevel` can be unknown (`nil`), including after a stored-state restart. The
+server reports TLV null until it learns a level. `MoveToLevel` sets a known target
+immediately from that state; relative `Move` and `Step` return Failure because
+they have no known starting level. If a level becomes unknown during a timed
+transition, the server cancels that transition and clears `RemainingTime`.
+`MinLevel` and `MaxLevel` are fixed configuration values: restoring saved
+runtime state keeps the newly configured bounds and clamps a restored known
+`CurrentLevel` into them.
+The server continues to advertise revision 6; the remaining revision 7 audit
+is in [docs/level-control-revision-7.md](docs/level-control-revision-7.md).
 
 ### Example projects
 

@@ -13,7 +13,7 @@ describe "LevelControl transition timing" do
     cluster.current_level.should eq(10_u8)
     read(cluster, TimedLevel::ATTR_REMAINING_TIME).should eq(10_u16)
     cluster.advance_transition(started + 500.milliseconds)
-    cluster.current_level.should be_close(60, 2)
+    cluster.current_level.as(UInt8).should be_close(60, 2)
     read(cluster, TimedLevel::ATTR_REMAINING_TIME).as(UInt8 | UInt16).to_i.should be <= 5
     cluster.advance_transition(started + 1100.milliseconds)
     cluster.current_level.should eq(110_u8)
@@ -26,7 +26,7 @@ describe "LevelControl transition timing" do
       TimedLevel::StepRequest.new(TimedLevel::StepMode::Up, 100_u8, 10_u16, 0_u8, 0_u8))
     started = Time.instant
     cluster.advance_transition(started + 500.milliseconds)
-    stopped_level = cluster.current_level
+    stopped_level = cluster.current_level.as(UInt8)
     stopped_level.should be_close(100, 2)
 
     invoke(cluster, TimedLevel::CMD_STOP, TimedLevel::StopRequest.new(0_u8, 0_u8))
@@ -42,7 +42,7 @@ describe "LevelControl transition timing" do
     started = Time.instant
     cluster.current_level.should eq(40_u8)
     cluster.advance_transition(started + 1.second)
-    cluster.current_level.should be_close(60, 1)
+    cluster.current_level.as(UInt8).should be_close(60, 1)
     cluster.advance_transition(started + 20.seconds)
     cluster.current_level.should eq(TimedLevel::HIGHEST_LEVEL)
   end

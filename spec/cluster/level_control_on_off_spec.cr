@@ -70,7 +70,7 @@ describe "LevelControl OnOff coupling" do
     invoke(level, CoupledLevel::CMD_STOP_WITH_ON_OFF,
       CoupledLevel::StopWithOnOffRequest.new(0_u8, 0_u8))
     level.advance_transition(started + 2.seconds)
-    level.current_level.should be > 1_u8
+    level.current_level.as(UInt8).should be > 1_u8
     on_off.on_off?.should be_true
   end
 end
