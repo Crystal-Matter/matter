@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric scoped IPv6 handoff
+
+- Preserve the interface scope of a discovered link-local IPv6 peer when the
+  joining Administrator is passed to the Anchor for its ICAC exchange. The
+  Anchor can reconstruct the same scoped CASE route after the local handoff.
+
 ### General Diagnostics device load
 
 - Advertise General Diagnostics revision 3 and its mandatory DeviceLoadStatus

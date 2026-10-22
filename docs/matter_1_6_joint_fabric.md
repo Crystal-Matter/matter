@@ -249,6 +249,11 @@ The SDK may also refresh CASE between Announce, ICACCSRRequest, and AddICAC.
 Crystal keeps the VID decision and CSR owner bound to the authenticated
 Anchor node and fabric across those sessions; a different node or fabric
 cannot reuse either decision.
+The local Anchor ICAC exchange handoff retains a discovered link-local IPv6
+peer's interface scope in its persisted request, so the Anchor's follow-up
+CASE and Announce use the same interface. A scoped-address round-trip spec and
+the Docker two-JFA handoff path cover the request; a live multi-interface
+link-local network run remains to be exercised.
 The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
 `TC_JFADMIN_2_1` each passed all steps against Crystal in
 [the integrated multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)
