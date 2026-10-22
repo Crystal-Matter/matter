@@ -38,6 +38,11 @@ services:
       E2E_DEVICE: matter_shared_switch
       E2E_BINARY: matter_switch
 
+  resource-monitoring:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_resource_monitoring
+
   time-zone:
     <<: *device
     environment:

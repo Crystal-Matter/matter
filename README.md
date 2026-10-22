@@ -260,6 +260,17 @@ Applications can update observed link values and counters on that cluster.
 Software Diagnostics is available as an optional cluster for applications
 that can provide process and heap metrics.
 
+Resource Monitoring exposes the Matter 1.6 HEPA filter, activated-carbon
+filter, and water-tank cluster identities with a shared schema. Applications
+choose the Condition, Warning, and ReplacementProductList features per
+endpoint, report assessments with `update_resource`, and may expose an
+optional `ResetCondition` command. Register `on_reset_condition` to confirm
+that the physical resource was replaced or refilled before a reset succeeds.
+The command restores Condition to 100 for downward degradation or 0 for
+upward degradation, and sets ChangeIndication to OK. Optional
+LastChangedTime is controller-writable and retained across restarts; an
+application may set it when it knows when the resource changed.
+
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;
 command requests and `CommandResponse#response` use `TLV::Any?`. Pass `TLV::Any.new(50_u8)` to
 write a scalar or `request.to_tlv(nil)` for a `TLV::Serializable` command struct. Wire encoding

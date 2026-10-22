@@ -24,6 +24,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   attribute or DataVersion. The humidity sensor example now checks the revision
   through official chip-tool.
 
+### Resource Monitoring
+
+- Add opt-in Matter 1.6 HEPA Filter Monitoring, Activated Carbon Filter
+  Monitoring, and Water Tank Level Monitoring servers (0x0071, 0x0072,
+  0x0079; revision 1). Condition, Warning, and ReplacementProductList are
+  optional features. The optional ResetCondition command requires host
+  acceptance before resetting Condition and ChangeIndication; optional
+  LastChangedTime has Operate write access and persists across restart.
+  A three-endpoint example is exercised with official chip-tool.
+
 ### Cross-ecosystem Joint Fabric control
 
 - Let a joining Administrator issue a group-CAT controller identity under
