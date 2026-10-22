@@ -114,4 +114,23 @@ describe "Matter 1.6 Groupcast Listener" do
         .as(GroupcastServer::LeaveGroupResponse).endpoints.should eq([21_u16])
     end
   end
+
+  it "rejects a present empty LeaveGroup endpoints list without changing membership" do
+    listener, keys, acl = listener_fixture
+    acl.acl = [GroupAcl::AccessControlEntry.new(GroupAcl::AccessControlEntryPrivilege::Administer,
+      GroupAcl::AccessControlEntryAuthMode::CASE, [10_u64], nil, 1_u8)]
+    as_fabric(listener, 1_u8) do
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(0x1234_u16, [1_u16], 1_u16,
+        key: Bytes.new(16, 0xAA_u8))).should eq(Matter::InteractionModel::Status.success)
+
+      [0x1234_u16, 0_u16].each do |group_id|
+        request = GroupcastServer::LeaveGroupRequest.from_slice(
+          GroupcastServer::LeaveGroupRequest.new(group_id, [] of UInt16).to_slice)
+        request.endpoints.should eq([] of UInt16)
+        listener.leave_group(request).should eq(Matter::InteractionModel::Status.constraint_error)
+        listener.membership(1_u8).first.endpoints.should eq([1_u16])
+        keys.operational_group_table(1_u8).first.endpoints.should eq([1_u16])
+      end
+    end
+  end
 end

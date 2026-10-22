@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 76
-- Matching known revisions: 73
+- Crystal declarations for those IDs: 77
+- Matching known revisions: 74
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -80,7 +80,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0061 | RVC Operational State Cluster | 3 | — | cluster absent |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | — | cluster absent |
-| 0x0065 | Groupcast Cluster | 1 | — | cluster absent |
+| 0x0065 | Groupcast Cluster | 1 | 1 | opt-in Listener only; Sender and PerGroup remain unadvertised |
 | 0x0071 | HEPA Filter Monitoring | 1 | — | cluster absent |
 | 0x0072 | Activated Carbon Filter Monitoring | 1 | — | cluster absent |
 | 0x0079 | Water Tank Level Monitoring | 1 | — | cluster absent |

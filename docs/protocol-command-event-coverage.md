@@ -7,12 +7,12 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 74
+- Implemented standard cluster IDs compared: 77
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 111
-- Feature or complex conditional IDs absent from Crystal: 23
-- Feature or complex conditional IDs declared without literal `requires:`: 10
+- Conditional command/event declarations for review: 117
+- Feature or complex conditional IDs absent from Crystal: 22
+- Feature or complex conditional IDs declared without literal `requires:`: 16
   (Neither count alone establishes a conformance failure.)
 
 | Cluster ID | XML name | XML rev | Crystal rev | Mandatory server commands absent | Mandatory events absent |
@@ -56,6 +56,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
 | 0x0060 | Operational State Cluster | 3 | 3 | — | — |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — | — |
+| 0x0065 | Groupcast Cluster | 1 | 1 | — | — |
 | 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — | — |
@@ -64,11 +65,11 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0101 | Door Lock Cluster | 10 | 9 | — | — |
 | 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
-| 0x0202 | Fan Control Cluster | 6 | 5 | — | — |
+| 0x0202 | Fan Control Cluster | 6 | 6 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — | — |
 | 0x0400 | Illuminance Measurement Cluster | 5 | 5 | — | — |
 | 0x0402 | Temperature Measurement Cluster | 6 | 4 | — | — |
-| 0x0403 | Pressure Measurement Cluster | 5 | 3 | — | — |
+| 0x0403 | Pressure Measurement Cluster | 5 | 5 | — | — |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 5 | — | — |
 | 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | OccupancyChanged when OccupancyEvent is selected |
@@ -82,13 +83,17 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042D | PM10 Concentration Measurement | 5 | 5 | — | — |
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
+| 0x0430 | Soil Measurement Cluster | 1 | 1 | — | — |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
+| 0x0503 | Wake On LAN Cluster | 1 | 1 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — | — |
+| 0x0801 | TLS Certificate Management Cluster | 1 | 1 | — | — |
+| 0x0802 | TLS Client Management Cluster | 1 | 1 | — | — |
 
 ## Conditional requirements requiring review
 
@@ -107,7 +112,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x001F | command | 0x0000 | feature(MNGD) | absent |
 | 0x001F | event | 0x0001 | feature(EXTS) | declared; requires `:extension` |
 | 0x001F | event | 0x0002 | feature(MNGD) | absent |
-| 0x001F | event | 0x0003 | feature(AUX) | absent |
+| 0x001F | event | 0x0003 | feature(AUX) | declared; requires `:auxiliary` |
 | 0x0028 | event | 0x0003 | attribute() | declared; requires `—` |
 | 0x0030 | command | 0x0006 | feature(TC) | declared; requires `:terms_and_conditions` |
 | 0x0031 | command | 0x0000 | (feature(WI) or feature(TH)) | declared; requires `—` |
@@ -146,6 +151,12 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0060 | command | 0x0000 | command() | declared; requires `—` |
 | 0x0060 | command | 0x0001 | command() | declared; requires `—` |
 | 0x0060 | command | 0x0003 | command() | declared; requires `—` |
+| 0x0065 | command | 0x0000 | otherwiseConform | declared; requires `—` |
+| 0x0065 | command | 0x0001 | otherwiseConform | declared; requires `—` |
+| 0x0065 | command | 0x0003 | otherwiseConform | declared; requires `—` |
+| 0x0065 | command | 0x0004 | feature(LN) | declared; requires `—` |
+| 0x0065 | command | 0x0005 | otherwiseConform | declared; requires `—` |
+| 0x0065 | event | 0x0000 | otherwiseConform | declared; requires `—` |
 | 0x0080 | command | 0x0000 | feature(SPRS) | declared; requires `:alarm_suppress` |
 | 0x0080 | command | 0x0001 | (feature(VIS) or feature(AUD)) | declared; requires `[:visual, :audible]` |
 | 0x0080 | event | 0x0000 | (feature(VIS) or feature(AUD)) | declared; requires `[:visual, :audible]` |
@@ -207,7 +218,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0300 | command | 0x0047 | (feature(HS) or feature(XY) or feature(CT)) | declared; requires `[:hue_saturation, :xy, :color_temperature]` |
 | 0x0300 | command | 0x004B | feature(CT) | declared; requires `:color_temperature` |
 | 0x0300 | command | 0x004C | feature(CT) | declared; requires `:color_temperature` |
-| 0x0406 | event | 0x0000 | feature(OCCEVENT) | declared; requires `—` |
+| 0x0406 | event | 0x0000 | feature(OCCEVENT) | declared; requires `:occupancy_event` |
 | 0x0452 | command | 0x0004 | feature(PC) | declared; requires `:pan_change` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:

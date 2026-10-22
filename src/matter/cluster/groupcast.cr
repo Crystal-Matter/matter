@@ -310,9 +310,9 @@ module Matter
       def leave_group(request : LeaveGroupRequest) : LeaveGroupResponse | InteractionModel::Status
         fabric = accessing_fabric
         requested = request.endpoints
-        return InteractionModel::Status.constraint_error if requested && requested.size > MAX_LEAVE_ENDPOINTS
+        return InteractionModel::Status.constraint_error if requested && (requested.empty? || requested.size > MAX_LEAVE_ENDPOINTS)
         if request.group_id == 0_u16
-          return InteractionModel::Status.constraint_error if requested && !requested.empty?
+          return InteractionModel::Status.constraint_error if requested
           affected = membership(fabric)
           return InteractionModel::Status.not_found if affected.empty?
           affected.each { |entry| @group_keys.replace_groupcast_membership(entry.group_id, [] of UInt16, entry.key_set_id, fabric) }
@@ -323,7 +323,7 @@ module Matter
         index = @membership.index { |entry| entry.fabric_index == fabric && entry.group_id == request.group_id }
         return InteractionModel::Status.not_found unless index
         existing = @membership[index]
-        removed = requested.nil? || requested.empty? ? existing.endpoints.dup : existing.endpoints.select { |endpoint| requested.includes?(endpoint) }
+        removed = requested.nil? ? existing.endpoints.dup : existing.endpoints.select { |endpoint| requested.includes?(endpoint) }
         # LeaveGroupResponse.Endpoints has a 20-entry limit even though a
         # Membership can contain 255 endpoints. Keep the membership intact so
         # callers can withdraw large groups in bounded endpoint batches.
