@@ -787,8 +787,7 @@ module Matter
       end
 
       bridged_clusters.each(&.increase_configuration_version)
-      current = basic_info.configuration_version
-      basic_info.configuration_version = current == UInt32::MAX ? 1_u32 : current + 1_u32
+      basic_info.increase_configuration_version
     end
 
     # Returns all endpoint IDs currently registered (excluding endpoint 0)

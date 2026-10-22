@@ -119,6 +119,14 @@ module Matter
         @node_label = node_label || ""
       end
 
+      def configuration_version=(value : UInt32?) : Nil
+        current = @configuration_version
+        if value && (value == 0_u32 || (current && value < current && !(current == UInt32::MAX && value == 1_u32)))
+          raise Matter::ConfigurationError.new("ConfigurationVersion must advance or wrap to one")
+        end
+        previous_def(value)
+      end
+
       # A bridge decides which external changes alter a bridged device's
       # configuration. The attribute is optional, so a caller must provision
       # it before advancing the version. The parent bridge version is advanced
