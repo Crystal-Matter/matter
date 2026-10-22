@@ -58,7 +58,8 @@ module Matter
         attribute 0x0000, :condition, UInt8, default: ResourceMonitoring::MAX_CONDITION,
           requires: :condition, max: ResourceMonitoring::MAX_CONDITION, validate: :validate_condition!
         attribute 0x0001, :degradation_direction, ResourceMonitoring::DegradationDirection,
-          default: ResourceMonitoring::DegradationDirection::Down, fixed: true, requires: :condition
+          default: ResourceMonitoring::DegradationDirection::Down, fixed: true, requires: :condition,
+          validate: :reject_fixed_attribute_change!
         attribute 0x0002, :change_indication, ResourceMonitoring::ChangeIndication,
           default: ResourceMonitoring::ChangeIndication::Ok, validate: :validate_indication!
         attribute 0x0003, :in_place_indicator, Bool, default: true,
@@ -68,7 +69,7 @@ module Matter
           present_if: :last_changed_time_supported?
         attribute 0x0005, :replacement_product_list, Array(ResourceMonitoring::ReplacementProduct),
           default: [] of ResourceMonitoring::ReplacementProduct, fixed: true,
-          requires: :replacement_product_list
+          requires: :replacement_product_list, validate: :reject_fixed_attribute_change!
 
         command 0x00, :reset_condition, access: :operate, optional: true,
           present_if: :reset_condition_supported?
@@ -158,6 +159,10 @@ module Matter
 
         private def full_condition : UInt8
           @degradation_direction.up? ? 0_u8 : ResourceMonitoring::MAX_CONDITION
+        end
+
+        private def reject_fixed_attribute_change!(_value) : Nil
+          raise ArgumentError.new("fixed resource attributes cannot change after construction")
         end
 
         private def validate_condition!(value : UInt8) : Nil

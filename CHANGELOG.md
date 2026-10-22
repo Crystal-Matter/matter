@@ -31,7 +31,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   0x0079; revision 1). Condition, Warning, and ReplacementProductList are
   optional features. The optional ResetCondition command requires host
   acceptance before resetting Condition and ChangeIndication; optional
-  LastChangedTime has Operate write access and persists across restart.
+  LastChangedTime has Operate write access and persists across restart. Fixed
+  direction and replacement products reject later host changes.
   A three-endpoint example is exercised with official chip-tool.
 
 ### Cross-ecosystem Joint Fabric control

@@ -52,6 +52,25 @@ describe "Matter 1.6 Resource Monitoring family" do
     cluster.data_version.should eq(initial_version)
   end
 
+  it "rejects host setters for fixed resource configuration" do
+    product = Resource::ReplacementProduct.new(Resource::ProductIdentifierType::Oem, "filter-1")
+    cluster = build(Hepa, feature_map: Hepa::Feature::Condition | Hepa::Feature::ReplacementProductList,
+      degradation_direction: Resource::DegradationDirection::Down,
+      replacement_product_list: [product])
+    version = cluster.data_version
+
+    expect_raises(ArgumentError, /fixed resource/) do
+      cluster.degradation_direction = Resource::DegradationDirection::Up
+    end
+    expect_raises(ArgumentError, /fixed resource/) do
+      cluster.replacement_product_list = [] of Resource::ReplacementProduct
+    end
+
+    cluster.degradation_direction.should eq(Resource::DegradationDirection::Down)
+    cluster.replacement_product_list.should eq([product])
+    cluster.data_version.should eq(version)
+  end
+
   it "validates condition and warning feature on host reports" do
     cluster = build(Carbon, feature_map: Carbon::Feature::Condition)
     expect_raises(ArgumentError) { cluster.update_resource(101_u8, Resource::ChangeIndication::Critical) }
