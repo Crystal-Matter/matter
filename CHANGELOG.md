@@ -37,6 +37,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   callbacks. Include a synthetic RVC and official chip-tool interoperability
   coverage.
 
+### Channel
+
+- Add the Matter 1.6 revision 2 Channel server with typed channel, lineup,
+  program guide, and recording payloads. Numeric tuning and wraparound skip
+  are available without optional features; text matching follows the canonical
+  identifier, affiliate, call sign, name, number priority. CL, LI, EG, and RP
+  gate their attributes and commands. Host callbacks supply program guide
+  data and recording actions. A synthetic TV fixture exercises the server with
+  official chip-tool.
+
 ### Joint Fabric transfer recovery
 
 - Extend the three-Administrator live scenario with a restart after
