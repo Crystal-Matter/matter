@@ -406,6 +406,12 @@ Logs are retained under `tmp/interop-sdk-reverse/`. This test requires
 development Certification Declaration signer certificates into this example's attestation
 trust store. Those are opt-in test policy and trust, not a production consent UI
 or a production attestation authority.
+The [official SDK v1.6.0.0 run](https://github.com/Crystal-Matter/matter/actions/runs/39799454842)
+completed this flow: SDK approval and enhanced-window handoff, Crystal's
+attestation and AddNOC of the SDK bridge, and fresh CASE reads showing two
+fabrics on both the Aggregator and bridge. The SDK test fixture did not
+configure a DAC revocation delegate; production deployments must supply their
+own revocation policy and consent UI.
 
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor
 CAT check. The controller's `OperationalTrustAnchors` implementation must
