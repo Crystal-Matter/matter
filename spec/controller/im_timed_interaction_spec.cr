@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/controller/im_client"
+require "../../src/matter/controller/commissioning/window_opener"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/user_label"
 require "../../src/matter/protocol/message_handler"
@@ -123,6 +124,30 @@ private def timed_interaction_fixture : TimedInteractionFixture
 end
 
 describe Matter::Controller::ImClient do
+  it "opens an enhanced commissioning window over a timed CASE exchange" do
+    fixture = timed_interaction_fixture
+    admin = Matter::Cluster::AdministratorCommissioning.new(Matter::DataType::EndpointNumber.new(0_u16))
+    fixture.handler.clusters[{0_u16, Matter::Cluster::AdministratorCommissioning::CLUSTER_ID}] = admin
+    im = Matter::Controller::ImClient.new(fixture.client)
+    opener = Matter::Controller::Commissioning::CommissioningWindowOpener.new
+
+    opener.open_enhanced(im, fixture.session, fixture.peer, 300_u16, 1_000_u32,
+      3840_u16, 20202021_u32, Bytes.new(32, 0x11_u8))
+
+    fixture.client.sent.map(&.message_type).should eq([
+      Matter::InteractionModel::MessageType::TimedRequest.value,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+    ])
+    fixture.client.sent[0].exchange_id.should eq(fixture.client.sent[1].exchange_id)
+    request = Matter::InteractionModel::InvokeRequestMessage.from_slice(fixture.client.sent.last.payload)
+    request.timed_request.should be_true
+    admin.window_status.should eq(Matter::Commissioning::WindowStatus::EnhancedWindowOpen)
+    admin.revoke_commissioning!
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
   it "encodes a DataVersion precondition on a single write" do
     fixture = timed_interaction_fixture
     im = Matter::Controller::ImClient.new(fixture.client)
