@@ -2,7 +2,8 @@ require "./cluster"
 
 module Matter
   module Cluster
-    # Wire types shared by the Matter 1.6 electrical power and energy clusters.
+    # Measurement accuracy wire types shared by the Matter 1.6 electrical and
+    # soil measurement clusters.
     module ElectricalMeasurement
       MEASUREMENT_LIMIT = 4_611_686_018_427_387_904_i64
       PERCENT_LIMIT     =                    10_000_u16
@@ -25,6 +26,7 @@ module Matter
         ElectricalEnergy = 14
         ReactiveEnergy   = 15
         ApparentEnergy   = 16
+        SoilMoisture     = 17
       end
 
       struct AccuracyRange

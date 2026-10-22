@@ -179,6 +179,11 @@ services:
     environment:
       E2E_DEVICE: matter_humidity_sensor
 
+  soil-sensor:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_soil_sensor
+
   contact-sensor:
     <<: *device
     environment:
@@ -269,6 +274,7 @@ services:
       pressure-sensor: { condition: service_healthy }
       temperature-control: { condition: service_healthy }
       humidity-sensor: { condition: service_healthy }
+      soil-sensor: { condition: service_healthy }
       contact-sensor: { condition: service_healthy }
       motion-sensor: { condition: service_healthy }
       ambient-light-sensor: { condition: service_healthy }
