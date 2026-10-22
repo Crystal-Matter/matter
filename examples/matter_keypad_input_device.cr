@@ -34,6 +34,9 @@ module MatterKeypadInput
         # SendKeyResponse, as required by the cluster protocol.
         key.power? ? Keypad::Status::InvalidKeyInCurrentState : Keypad::Status::Success
       end
+      keypad.on_key_action do |key, action, fabric|
+        puts "Keypad #{action}: #{key} on fabric #{fabric || "local"}"
+      end
       super
     end
   end
