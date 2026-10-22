@@ -241,6 +241,18 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
       end
       cluster.configuration_version.should eq(4_u32)
     end
+
+    it "rejects decreasing a provisioned version outside the specified wrap" do
+      cluster = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-monotonic", configuration_version: 7_u32)
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 6_u32 }
+      cluster.configuration_version.should eq(7_u32)
+
+      cluster.configuration_version = UInt32::MAX
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 2_u32 }
+      cluster.configuration_version = 1_u32
+      cluster.configuration_version.should eq(1_u32)
+    end
   end
 
   describe "#attributes" do
