@@ -89,7 +89,8 @@ def run(args):
             "--fabric-bridge-server-port", str(SDK_BRIDGE_RPC_PORT),
             "--commissioner-vendor-id", "0xFFF1"], admin_state, logs)
         processes.append(admin)
-        admin.expect(r">>>[ \t]*(?:\r|$)", 90)
+        # The SDK can log immediately after its prompt on the same PTY line.
+        admin.expect(r"^>>>[ \t]*", 90)
         await_output(bridge, r"Connected to Fabric-Admin", 30)
 
         local = admin.command(f"fabricsync add-local-bridge {SDK_BRIDGE_NODE_ID} "
