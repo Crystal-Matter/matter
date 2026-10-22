@@ -77,6 +77,13 @@ unsynchronized after each restart. Applications add it explicitly to a root
 endpoint; TZ, NTP, and trusted-time-source features are not advertised until
 platform services for them are available.
 
+`Cluster::FanControl` implements Matter 1.6 revision 6. Select optional
+MultiSpeed, Auto, Rocking, Wind, Step, and AirflowDirection features in the
+endpoint's feature map. FanMode survives a restart; percent, speed, motion, and
+direction settings start from the application's configured values. The
+air-conditioner example enables MultiSpeed and Step and is exercised with the
+official chip-tool.
+
 ## Building a device
 
 A device is a `Matter::Device` subclass that declares what it is. This is the switch example in

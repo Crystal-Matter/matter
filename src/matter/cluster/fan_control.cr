@@ -17,7 +17,7 @@ module Matter
     #
     # Specification: Matter 1.6 Fan Control cluster
     class FanControl < Base
-      cluster 0x0202, revision: 5
+      cluster 0x0202, revision: 6
 
       feature :multi_speed, bit: 0       # SPD - Multi-speed fan control
       feature :auto, bit: 1              # AUTO - Automatic mode support
@@ -99,18 +99,18 @@ module Matter
         Reverse = 1
       end
 
-      attribute 0x0000, :fan_mode, FanMode, default: FanMode::Off, writable: true
+      attribute 0x0000, :fan_mode, FanMode, default: FanMode::Off, writable: true, write_access: :operate
       attribute 0x0001, :fan_mode_sequence, FanModeSequence, default: FanModeSequence::OffLowMedHigh, fixed: true
-      attribute 0x0002, :percent_setting, UInt8, default: PERCENT_OFF, nullable: true, writable: true, max: PERCENT_MAX
+      attribute 0x0002, :percent_setting, UInt8, default: PERCENT_OFF, nullable: true, writable: true, write_access: :operate, persist: false, max: PERCENT_MAX
       attribute 0x0003, :percent_current, UInt8, default: PERCENT_OFF, max: PERCENT_MAX
       attribute 0x0004, :speed_max, UInt8, default: SPEED_MAX_MAX, fixed: true, min: SPEED_MAX_MIN, max: SPEED_MAX_MAX, requires: :multi_speed
-      attribute 0x0005, :speed_setting, UInt8, default: PERCENT_OFF, nullable: true, writable: true, requires: :multi_speed
+      attribute 0x0005, :speed_setting, UInt8, default: PERCENT_OFF, nullable: true, writable: true, write_access: :operate, persist: false, requires: :multi_speed
       attribute 0x0006, :speed_current, UInt8, default: PERCENT_OFF, requires: :multi_speed
       attribute 0x0007, :rock_support, RockSupport, default: RockSupport::None, fixed: true, requires: :rocking
-      attribute 0x0008, :rock_setting, RockSupport, default: RockSupport::None, writable: true, requires: :rocking
+      attribute 0x0008, :rock_setting, RockSupport, default: RockSupport::None, writable: true, write_access: :operate, persist: false, requires: :rocking
       attribute 0x0009, :wind_support, WindSupport, default: WindSupport::None, fixed: true, requires: :wind
-      attribute 0x000A, :wind_setting, WindSupport, default: WindSupport::None, writable: true, requires: :wind
-      attribute 0x000B, :airflow_direction, AirflowDirectionEnum, default: AirflowDirectionEnum::Forward, writable: true, requires: :airflow_direction
+      attribute 0x000A, :wind_setting, WindSupport, default: WindSupport::None, writable: true, write_access: :operate, persist: false, requires: :wind
+      attribute 0x000B, :airflow_direction, AirflowDirectionEnum, default: AirflowDirectionEnum::Forward, writable: true, write_access: :operate, persist: false, requires: :airflow_direction
 
       command 0x00, :step, request: StepRequest, requires: :step
 
