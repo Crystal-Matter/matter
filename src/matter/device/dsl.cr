@@ -219,6 +219,7 @@ module Matter
           tc_min_required_version : UInt16? = nil,
           tc_required_acknowledgements : UInt16 = 0_u16,
           icd_configuration : ::Matter::Cluster::IcdManagement::Configuration? = nil,
+          regulatory_location_capability : ::Matter::Cluster::GeneralCommissioning::RegulatoryLocationType = ::Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
         )
           super
         end

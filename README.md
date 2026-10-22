@@ -128,6 +128,9 @@ The declarations are:
   Wi-Fi and Thread devices need a `Matter::Network::Backend` passed as `network_backend:` when
   constructed. The backend performs scans, provisioning, removal, and connection; without one,
   wireless commands report an error instead of claiming the network changed.
+  Wireless devices can pass `regulatory_location_capability:` at construction to set the fixed
+  General Commissioning LocationCapability and its initial RegulatoryConfig together. The default
+  is `IndoorOutdoor`; Ethernet-only devices must keep that value.
 * `endpoint number, device_type: do ... end` — an endpoint and, inside the block, one `cluster`
   declaration per cluster. `as: :switch` adds a typed accessor (`switch : Cluster::OnOff`).
   The endpoint is validated against its device types when it is registered, so a device type

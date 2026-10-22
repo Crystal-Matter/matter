@@ -135,7 +135,13 @@ module Matter
       @tc_min_required_version : UInt16? = nil,
       @tc_required_acknowledgements : UInt16 = 0_u16,
       @icd_configuration : Cluster::IcdManagement::Configuration? = nil,
+      @regulatory_location_capability : Cluster::GeneralCommissioning::RegulatoryLocationType = Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
     )
+      # Matter Core 1.6 §11.10.6.4 requires IndoorOutdoor for nodes without
+      # radio network interfaces. This device API currently models one network.
+      if commissioning_network_type.ethernet? && !@regulatory_location_capability.indoor_outdoor?
+        raise ConfigurationError.new("Ethernet-only devices require IndoorOutdoor regulatory capability")
+      end
       @ip_addresses = ip_addresses || default_ip_addresses
 
       @persistence = Persistence.new(storage, max_fabrics: max_fabrics)
@@ -467,9 +473,11 @@ module Matter
                                 Cluster::GeneralCommissioning.new(endpoint_0,
                                   feature_map: Cluster::GeneralCommissioning::Feature::TermsAndConditions,
                                   tc_min_required_version: tc_version,
-                                  tc_required_acknowledgements: @tc_required_acknowledgements)
+                                  tc_required_acknowledgements: @tc_required_acknowledgements,
+                                  location_capability: @regulatory_location_capability)
                               else
-                                Cluster::GeneralCommissioning.new(endpoint_0)
+                                Cluster::GeneralCommissioning.new(endpoint_0,
+                                  location_capability: @regulatory_location_capability)
                               end
       access_control = Cluster::AccessControl.new(endpoint_0)
       @general_commissioning = general_commissioning
