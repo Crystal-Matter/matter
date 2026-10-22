@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Window Covering position and feature composition
+
+- Remove the AbsolutePosition feature and commands retired by Matter 1.6, and
+  reject unsupported or dependent-only feature maps. Start nullable lift and
+  tilt positions as unknown rather than assuming fully open. Apply UpOrOpen
+  and DownOrClose to both supported axes with direction-aware
+  OperationalStatus fields, and make StopMotion set each target to its last
+  reported current position. The cluster still advertises revision 6 while
+  further revision 8 behavior is implemented.
+
 ### Commissioner Control host approval interface
 
 - Add the Matter 1.6 Commissioner Control wire model and a fail-closed
