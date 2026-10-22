@@ -51,6 +51,9 @@ item below as covered only to the extent of its cited tests.
   Groupcast JoinGroup/LeaveGroup. RefreshNode imports Groupcast membership
   when present. The target derives fabric-scoped AuxiliaryACL entries for
   authorized group endpoints and hides legacy GKM maps from an adopted fabric.
+  An opt-in Sender on the same shared fabric can provision send-only membership
+  with no listener endpoints and transmit authenticated group commands using
+  its fabric credentials and a durable outbound counter.
 - The Joint Commissioning workflow verifies the joining administrator's
   operational VID proof, NOC chain, and Administrator CAT before issuing a
   NOC. The reachable Anchor Administrator device performs Announce and the

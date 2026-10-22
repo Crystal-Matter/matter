@@ -222,6 +222,7 @@ module Matter
           regulatory_location_capability : ::Matter::Cluster::GeneralCommissioning::RegulatoryLocationType = ::Matter::Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
           tcp_enabled : Bool = false,
           groupcast_listener : Bool = false,
+          groupcast_sender : Bool = false,
         )
           super
         end

@@ -12,7 +12,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 117
 - Feature or complex conditional IDs absent from Crystal: 22
-- Feature or complex conditional IDs declared without literal `requires:`: 16
+- Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
 | Cluster ID | XML name | XML rev | Crystal rev | Mandatory server commands absent | Mandatory events absent |
@@ -157,7 +157,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0065 | command | 0x0000 | otherwiseConform | declared; requires `—` |
 | 0x0065 | command | 0x0001 | otherwiseConform | declared; requires `—` |
 | 0x0065 | command | 0x0003 | otherwiseConform | declared; requires `—` |
-| 0x0065 | command | 0x0004 | feature(LN) | declared; requires `—` |
+| 0x0065 | command | 0x0004 | feature(LN) | declared; requires `:listener` |
 | 0x0065 | command | 0x0005 | otherwiseConform | declared; requires `—` |
 | 0x0065 | event | 0x0000 | otherwiseConform | declared; requires `—` |
 | 0x0080 | command | 0x0000 | feature(SPRS) | declared; requires `:alarm_suppress` |
