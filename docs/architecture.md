@@ -414,7 +414,7 @@ wires the clusters, restores cluster state, installs the `LifecycleManager` and 
 endpoints.
 `tcp_enabled: true` selects `TcpEnabledTransport`, which retains UDP and starts
 the TCP listener on the same port. Only this opt-in mode advertises the
-operational `T=1` TXT key. Controllers choose TCP explicitly with
+operational `T=4` TXT key. Controllers choose TCP explicitly with
 `Client.new(tcp_enabled: true)` followed by `Client#connect_tcp` and use its
 returned route token for CASE and subsequent interactions.
 

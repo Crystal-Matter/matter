@@ -43,6 +43,11 @@ services:
     environment:
       E2E_DEVICE: matter_time_zone
 
+  tcp-large-payload:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_tcp_large_payload
+
   joint-fabric-administrator:
     <<: *device
     environment:
@@ -237,6 +242,7 @@ services:
       switch: { condition: service_healthy }
       shared-switch: { condition: service_healthy }
       time-zone: { condition: service_healthy }
+      tcp-large-payload: { condition: service_healthy }
       joint-fabric-administrator: { condition: service_healthy }
       joint-fabric-anchor: { condition: service_healthy }
       joint-fabric-joiner: { condition: service_healthy }

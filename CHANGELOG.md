@@ -108,6 +108,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transport, without a separate CASE maximum-payload exchange. Keep the UDP
   packet cap at 1280 bytes and reject oversized subscription updates without
   advancing their event cursor; chunked subscription updates remain pending.
+- Advertise operational `T=4` for TCP server support. The former `T=1` sets a
+  reserved bit and prevented the official SDK from opening TCP CASE. A dedicated
+  chip-tool end-to-end test now commissions the device over UDP, then reads 96
+  FixedLabel entries over TCP CASE and verifies an encrypted ReportData packet
+  exceeds the 1280-byte UDP limit.
 
 ### Controller session ID allocation
 

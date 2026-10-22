@@ -361,7 +361,7 @@ controller restart so the saved route remains usable when mDNS is unavailable.
 
 Matter TCP is available as an opt-in transport for commissioned IP devices:
 pass `tcp_enabled: true` to the device constructor to listen on its operational
-port and advertise `T=1`. A controller opts in with
+port and advertise `T=4` (TCP server support). A controller opts in with
 `Client.new(tcp_enabled: true)`, calls `client.connect_tcp(address)` with the
 device's operational IP address, then passes the returned connection token as
 the `peer` to `CasePairing#pair` and subsequent client methods. The token is

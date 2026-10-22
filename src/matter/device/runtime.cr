@@ -262,7 +262,7 @@ module Matter
       before_start
       @lifecycle.sync_advertisements
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode
-      # Start the TCP listener before publishing T=1 in operational mDNS.
+      # Start the TCP listener before publishing T=4 in operational mDNS.
       @transport.start if @tcp_enabled
       @responder.start
       @transport.start unless @tcp_enabled

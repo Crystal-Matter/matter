@@ -122,7 +122,7 @@ describe Matter::MDNS::Responder do
       txt_records = info.to_txt_records
       txt_records["SII"].should eq("500")
       txt_records["SAI"].should eq("300")
-      txt_records["T"].should eq("1")
+      txt_records["T"].should eq("4")
     end
 
     it "omits TCP flag when not supported" do
