@@ -7,10 +7,10 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 68
+- Implemented standard cluster IDs compared: 70
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 107
+- Conditional command/event declarations for review: 108
 - Feature or complex conditional IDs absent from Crystal: 28
 - Feature or complex conditional IDs declared without literal `requires:`: 8
   (Neither count alone establishes a conformance failure.)
@@ -81,6 +81,8 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — | — |
+| 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
+| 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
@@ -201,6 +203,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0300 | command | 0x004B | feature(CT) | declared; requires `:color_temperature` |
 | 0x0300 | command | 0x004C | feature(CT) | declared; requires `:color_temperature` |
 | 0x0406 | event | 0x0000 | feature(OCCEVENT) | declared; requires `—` |
+| 0x0452 | command | 0x0004 | feature(PC) | declared; requires `:pan_change` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:
 

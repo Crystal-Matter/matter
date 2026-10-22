@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thread Border Router Management
+
+- Add an opt-in Matter 1.6 Thread Border Router Management server (`0x0452`,
+  revision 1) with the six mandatory attributes and CASE/Manage dataset
+  commands. SetActive requires a timed invoke and an armed fail-safe; the host
+  performs bounded activation and rollback. PANChange gates timed SetPending.
+  Thread credentials remain in the host backend and are not saved in cluster
+  persistence. Physical Thread routing still requires a compatible host stack.
+
 ### Thread Network Directory
 
 - Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.
