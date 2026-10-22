@@ -8,6 +8,7 @@ on:
       - 'e2e/interop/sdk_reverse_commissioning*'
       - 'examples/matter_reverse_commissioning_device.cr'
       - 'src/matter/cluster/commissioner_control.cr'
+      - 'src/matter/controller/client.cr'
       - 'src/matter/controller/commissioning/**'
       - 'src/matter/protocol/**'
 
