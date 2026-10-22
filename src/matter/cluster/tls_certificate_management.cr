@@ -88,6 +88,8 @@ module Matter
       property on_persist : Proc(Nil)?
       property root_in_use : Proc(UInt8, UInt16, Bool)?
       property client_in_use : Proc(UInt8, UInt16, Bool)?
+      property managed_root_in_use : Proc(UInt8, UInt16, Bool)?
+      property managed_client_in_use : Proc(UInt8, UInt16, Bool)?
 
       getter max_root_certificates : UInt8
       getter max_client_certificates : UInt8
@@ -160,7 +162,8 @@ module Matter
         fabric = accessing_fabric
         return fabric if fabric.is_a?(InteractionModel::Status)
         return InteractionModel::Status.constraint_error if request.caid > MAX_CERTIFICATE_ID
-        return InteractionModel::Status.invalid_in_state if @root_in_use.try(&.call(fabric, request.caid))
+        return InteractionModel::Status.invalid_in_state if @root_in_use.try(&.call(fabric, request.caid)) ||
+                                                            @managed_root_in_use.try(&.call(fabric, request.caid))
         before = @roots.size
         @roots.reject! { |entry| entry.fabric_index == fabric && entry.caid == request.caid }
         return InteractionModel::Status.not_found if @roots.size == before
@@ -239,7 +242,8 @@ module Matter
         fabric = accessing_fabric
         return fabric if fabric.is_a?(InteractionModel::Status)
         return InteractionModel::Status.constraint_error if request.ccdid > MAX_CERTIFICATE_ID
-        return InteractionModel::Status.invalid_in_state if @client_in_use.try(&.call(fabric, request.ccdid))
+        return InteractionModel::Status.invalid_in_state if @client_in_use.try(&.call(fabric, request.ccdid)) ||
+                                                            @managed_client_in_use.try(&.call(fabric, request.ccdid))
         before = @clients.size
         @clients.reject! { |entry| entry.fabric_index == fabric && entry.ccdid == request.ccdid }
         return InteractionModel::Status.not_found if @clients.size == before
@@ -253,6 +257,10 @@ module Matter
 
       def has_client?(fabric : UInt8, ccdid : UInt16) : Bool
         !client(fabric, ccdid).nil?
+      end
+
+      def has_provisioned_client?(fabric : UInt8, ccdid : UInt16) : Bool
+        !!client(fabric, ccdid).try(&.certificate)
       end
 
       def remove_fabric(fabric : UInt8) : Nil

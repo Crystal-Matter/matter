@@ -104,6 +104,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   packets by default, so SDK peers accept its PASE and CASE handshakes. Preserve
   the caller's explicit unsecured source Node ID when provided.
 
+### TLS Client Management
+
+- Add opt-in Matter 1.6 TLS Client Management (0x0802, revision 1) with
+  per-fabric TLS endpoint provisioning, lookup, reference counts, persistence,
+  and fabric removal cleanup. Endpoint references now prevent removing a root
+  or client certificate from the paired TLS Certificate Management cluster.
+  An official chip-tool fixture covers the endpoint lifecycle across restart
+  and two fabrics.
+
 ### TLS Certificate Management
 
 - Add the opt-in Matter 1.6 TLS Certificate Management cluster (0x0801,

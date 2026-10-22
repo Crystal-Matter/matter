@@ -178,10 +178,19 @@ keys. Provisioning a client certificate checks that its public key matches
 the saved CSR key. Certificate size can reach 3000 bytes, so enable the
 opt-in TCP transport (`tcp_enabled: true`) for large Matter messages. See
 `examples/matter_tls_certificate_management_device.cr` for an isolated
-chip-tool fixture. TLS Client Management (0x0802) and a host TLS connection
-policy are separate integrations; applications can install
-`root_in_use`/`client_in_use` callbacks to prevent removal of referenced
-certificates.
+chip-tool fixture. TLS Client Management (0x0802) can be enabled beside the
+certificate cluster on endpoint 0 with
+`cluster Matter::Cluster::TlsClientManagement`. It stores each fabric's
+hostname, port, CAID, optional CCDID, and a host-managed reference count. It
+requires the certificate cluster, validates certificate references on
+provisioning, and blocks removal of referenced certificates. Host consumers
+call `change_reference_count(fabric, endpoint_id, delta)` while an endpoint
+is in use. A host with an unsynchronized clock can set the cluster's
+`time_valid` callback to reject provisioning with `InvalidTime`. The host
+still owns TLS sockets, DNS, connection policy, and
+certificate verification for those connections; this cluster is the Matter
+configuration interface. See
+`examples/matter_tls_client_management_device.cr` for the chip-tool fixture.
 
 Every device includes the OTA Software Update Requestor cluster on endpoint 0.
 An administrator can write one DefaultOTAProviders entry on each fabric. The

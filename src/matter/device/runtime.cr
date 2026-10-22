@@ -23,6 +23,7 @@ require "../cluster/network_commissioning"
 require "../cluster/group_key_management"
 require "../cluster/ota_requestor"
 require "../cluster/tls_certificate_management"
+require "../cluster/tls_client_management"
 require "../cluster/icd_management"
 require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
@@ -182,6 +183,7 @@ module Matter
       @message_handler.clusters.values.each do |cluster|
         wire_ecosystem_information(cluster)
         wire_tls_certificate_management(cluster)
+        wire_tls_client_management(cluster)
         validate_thread_network_directory(cluster)
       end
       @message_handler.setup_cluster_notifications
@@ -234,6 +236,7 @@ module Matter
             end
           end
           cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
+          cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
         end
         icd_management.try do |fabric_icd|
@@ -821,6 +824,7 @@ module Matter
       clusters.each do |cluster|
         wire_ecosystem_information(cluster)
         wire_tls_certificate_management(cluster)
+        wire_tls_client_management(cluster)
         validate_thread_network_directory(cluster)
         endpoint.add_cluster(cluster)
       end
@@ -846,8 +850,26 @@ module Matter
     private def wire_tls_certificate_management(cluster : Cluster::Base) : Nil
       if tls = cluster.as?(Cluster::TlsCertificateManagement)
         tls.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+        tls.managed_root_in_use = ->(fabric : UInt8, caid : UInt16) do
+          @node.get_cluster(Cluster::TlsClientManagement).try(&.root_in_use?(fabric, caid)) || false
+        end
+        tls.managed_client_in_use = ->(fabric : UInt8, ccdid : UInt16) do
+          @node.get_cluster(Cluster::TlsClientManagement).try(&.client_in_use?(fabric, ccdid)) || false
+        end
         tls.on_persist = -> do
           raise StorageError.new("Could not persist TLS certificates") unless @persistence.save_cluster(tls)
+          nil
+        end
+      end
+    end
+
+    private def wire_tls_client_management(cluster : Cluster::Base) : Nil
+      if tls = cluster.as?(Cluster::TlsClientManagement)
+        tls.certificate_management = @node.get_cluster(Cluster::TlsCertificateManagement)
+        raise ConfigurationError.new("TLS Client Management requires TLS Certificate Management") unless tls.certificate_management
+        tls.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+        tls.on_persist = -> do
+          raise StorageError.new("Could not persist TLS endpoints") unless @persistence.save_cluster(tls)
           nil
         end
       end
