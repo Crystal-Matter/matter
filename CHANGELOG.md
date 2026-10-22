@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Temperature Control
+
+- Add an opt-in Matter 1.6 Temperature Control server (`0x0056`, revision 1)
+  for numeric centi-degree setpoints or ordered named levels. Numeric endpoints
+  can advertise a discrete Step. The read-only attributes and SetTemperature
+  command are feature-gated; range, step alignment, level labels and indexes
+  are validated. A host callback accepts or refuses commands before state
+  changes; accepted settings persist across restart. A synthetic two-endpoint
+  fixture exercises both feature choices with official chip-tool.
+
 ### Scenes Management fabric isolation
 
 - Scope all Scenes Management commands and FabricSceneInfo reads to the

@@ -64,7 +64,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0053 | Laundry Washer Controls Cluster | 2 | — | cluster absent |
 | 0x0054 | RVC Run Mode Cluster | 4 | — | cluster absent |
 | 0x0055 | RVC Clean Mode Cluster | 5 | — | cluster absent |
-| 0x0056 | Temperature Control Cluster | 1 | — | cluster absent |
+| 0x0056 | Temperature Control Cluster | 1 | 1 | — |
 | 0x0057 | Refrigerator Alarm Cluster | 1 | — | cluster absent |
 | 0x0059 | Dishwasher Mode Cluster | 3 | — | cluster absent |
 | 0x005B | Air Quality Cluster | 1 | 1 | — |

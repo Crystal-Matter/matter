@@ -52,6 +52,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0045 | Boolean State Cluster | 3 | 3 | — | — |
 | 0x0046 | ICD Management Cluster | 3 | 3 | — | — |
 | 0x0050 | Mode Select Cluster | 2 | 2 | — | — |
+| 0x0056 | Temperature Control Cluster | 1 | 1 | — | — |
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
 | 0x0060 | Operational State Cluster | 3 | 3 | — | — |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — | — |

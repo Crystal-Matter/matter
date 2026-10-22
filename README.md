@@ -191,6 +191,16 @@ and peer there; command callbacks do not expose files by themselves.
 
 ### Cluster values
 
+An appliance can opt in to `Cluster::TemperatureControl` to expose either a
+numeric setpoint in hundredths of a degree Celsius or ordered, named levels.
+`TemperatureNumber` and `TemperatureLevel` are exclusive; `TemperatureStep`
+requires the numeric feature. Call `on_set_temperature` with a host callback
+that applies the physical setting and returns an interaction model status.
+Commands return `InvalidInState` until a host is registered. Accepted settings
+persist, and the host can report a local control change with
+`update_temperature_setpoint` or `update_selected_temperature_level`.
+See `examples/matter_temperature_control_device.cr` for both feature choices.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
