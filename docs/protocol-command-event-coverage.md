@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 111
-- Feature or complex conditional IDs absent from Crystal: 28
+- Feature or complex conditional IDs absent from Crystal: 23
 - Feature or complex conditional IDs declared without literal `requires:`: 11
   (Neither count alone establishes a conformance failure.)
 
@@ -122,12 +122,12 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0036 | command | 0x0000 | feature(ERRCNT) | declared; requires `:error_counts` |
 | 0x0037 | command | 0x0000 | (feature(PKTCNT) or feature(ERRCNT)) | declared; requires `[:packet_counts, :error_counts]` |
 | 0x0038 | command | 0x0001 | feature(TSC) | absent |
-| 0x0038 | command | 0x0002 | feature(TZ) | absent |
-| 0x0038 | command | 0x0004 | feature(TZ) | absent |
+| 0x0038 | command | 0x0002 | feature(TZ) | declared; requires `:time_zone` |
+| 0x0038 | command | 0x0004 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | command | 0x0005 | feature(NTPC) | absent |
-| 0x0038 | event | 0x0000 | feature(TZ) | absent |
-| 0x0038 | event | 0x0001 | feature(TZ) | absent |
-| 0x0038 | event | 0x0002 | feature(TZ) | absent |
+| 0x0038 | event | 0x0000 | feature(TZ) | declared; requires `:time_zone` |
+| 0x0038 | event | 0x0001 | feature(TZ) | declared; requires `:time_zone` |
+| 0x0038 | event | 0x0002 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0004 | feature(TSC) | absent |
 | 0x0039 | command | 0x0080 | feature(BIS) | absent |
 | 0x0039 | event | 0x0080 | feature(BIS) | absent |

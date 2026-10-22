@@ -25,6 +25,7 @@ require "../cluster/icd_management"
 require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
 require "../cluster/thread_network_diagnostics"
+require "../cluster/time_synchronization"
 
 module Matter
   # A Matter device application.
@@ -67,11 +68,12 @@ module Matter
 
     # Application document holding the endpoints added at runtime from an
     # `endpoint_template`, and the keys of one of its entries.
-    DYNAMIC_ENDPOINTS_ID = "endpoints"
-    ENDPOINTS_KEY        = "endpoints"
-    ENDPOINT_ID_KEY      = "endpoint_id"
-    TEMPLATE_KEY         = "template"
-    PARAMETERS_KEY       = "parameters"
+    DYNAMIC_ENDPOINTS_ID    = "endpoints"
+    TIME_ZONE_POLL_INTERVAL = 1.second
+    ENDPOINTS_KEY           = "endpoints"
+    ENDPOINT_ID_KEY         = "endpoint_id"
+    TEMPLATE_KEY            = "template"
+    PARAMETERS_KEY          = "parameters"
 
     getter persistence : Persistence
     getter fabric_table : FabricTable
@@ -100,6 +102,9 @@ module Matter
     @dynamic_endpoints : Hash(UInt16, Tuple(String, Storage::Document)) = {} of UInt16 => Tuple(String, Storage::Document)
     @restoring_endpoints : Bool = false
     @started : Bool = false
+    @time_zone_polling : Bool = false
+    @time_zone_poll_done : Channel(Nil)? = nil
+    @time_zone_poll_fiber : Fiber? = nil
 
     def basic_info : Cluster::BasicInformation
       @basic_info.as(Cluster::BasicInformation)
@@ -254,6 +259,7 @@ module Matter
       @responder.start
       @transport.start
       @started = true
+      start_time_zone_polling
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::GeneralDiagnostics)
         .try(&.emit_boot_reason_event)
       on_started
@@ -272,7 +278,17 @@ module Matter
     # Signals shutdown, stops all services, and unblocks all `await_shutdown` waiters.
     # Safe to call from signal handlers or other fibers.
     def shutdown! : Nil
+      # An application event callback may request shutdown from the polling
+      # fiber. Let that callback unwind before a separate fiber joins it and
+      # closes the event journal; joining here would deadlock.
+      if Fiber.current == @time_zone_poll_fiber
+        @time_zone_polling = false
+        spawn { shutdown! }
+        return
+      end
       @started = false
+      @time_zone_polling = false
+      @time_zone_poll_done.try(&.receive?)
       # Persist all session state before shutdown to ensure message counters
       # and other session data are saved for clean reconnection after restart
       @message_handler.persist_all_sessions
@@ -288,7 +304,40 @@ module Matter
     rescue error
       Log.error(exception: error) { "error performing shutdown" }
     ensure
-      @shutdown_channel.close
+      # The poll-fiber callback only schedules shutdown; its replacement fiber
+      # closes the channel after services have actually stopped.
+      @shutdown_channel.close unless Fiber.current == @time_zone_poll_fiber
+    end
+
+    # Only a root node advertising the optional TimeZone feature needs this
+    # poll. Shutdown joins the fiber before closing the persistence journal.
+    private def start_time_zone_polling : Nil
+      return if @time_zone_polling
+      time_zones = [] of Cluster::TimeSynchronization
+      @message_handler.clusters.each_value do |cluster|
+        if time_zone = cluster.as?(Cluster::TimeSynchronization)
+          time_zones << time_zone if time_zone.feature_map.time_zone?
+        end
+      end
+      return if time_zones.empty?
+
+      @time_zone_polling = true
+      done = Channel(Nil).new
+      @time_zone_poll_done = done
+      @time_zone_poll_fiber = spawn do
+        while @time_zone_polling
+          sleep TIME_ZONE_POLL_INTERVAL
+          break unless @time_zone_polling
+          begin
+            time_zones.each(&.advance_time_state)
+          rescue error
+            Log.error(exception: error) { "TimeZone polling stopped after a cluster error" }
+            @time_zone_polling = false
+          end
+        end
+      ensure
+        done.close
+      end
     end
 
     # ------------------------------------------------------------------------
