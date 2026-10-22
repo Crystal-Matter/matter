@@ -368,6 +368,12 @@ readings and emit the Matter 1.6 measurement events. Power Topology exposes a
 fixed set of available endpoints; `update_active_endpoints` changes its
 nonvolatile active subset when DynamicPowerFlow is enabled.
 
+Electrical utility meters can advertise `MeterIdentification` on a `0x0511`
+endpoint. Pass nullable meter type, point-of-delivery and serial metadata at
+construction; `protocol_version` is optional. Enable `PowerThreshold` only
+when the device can expose its contractual or equipment power limit. The
+`examples/matter_utility_meter_device.cr` fixture shows a complete endpoint.
+
 Wi-Fi device declarations expose Wi-Fi Network Diagnostics at endpoint 0.
 Applications can update observed link values and counters on that cluster.
 Software Diagnostics is available as an optional cluster for applications

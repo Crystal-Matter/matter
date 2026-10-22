@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Meter Identification
+
+- Add the Matter 1.6 revision 1 Meter Identification server and Electrical
+  Utility Meter device type. Hosts provide nullable meter identity and optional
+  protocol metadata; the PowerThreshold feature exposes the standard TLV
+  structure with optional power values and a nullable source. A synthetic
+  utility meter is exercised by the official chip-tool across restart.
+
 ### Joint Fabric transfer recovery
 
 - Extend the three-Administrator live scenario with a restart after

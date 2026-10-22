@@ -36,15 +36,16 @@ module Matter
     PUMP                = 0x0303_u32 # Pump
 
     # Sensor Device Types
-    CONTACT_SENSOR     = 0x0015_u32 # Contact Sensor
-    LIGHT_SENSOR       = 0x0106_u32 # Light Sensor
-    OCCUPANCY_SENSOR   = 0x0107_u32 # Occupancy Sensor
-    TEMPERATURE_SENSOR = 0x0302_u32 # Temperature Sensor
-    PRESSURE_SENSOR    = 0x0305_u32 # Pressure Sensor
-    FLOW_SENSOR        = 0x0306_u32 # Flow Sensor
-    HUMIDITY_SENSOR    = 0x0307_u32 # Humidity Sensor
-    AIR_QUALITY_SENSOR = 0x002C_u32 # Air Quality Sensor
-    SOIL_SENSOR        = 0x0045_u32 # Soil Sensor
+    CONTACT_SENSOR           = 0x0015_u32 # Contact Sensor
+    LIGHT_SENSOR             = 0x0106_u32 # Light Sensor
+    OCCUPANCY_SENSOR         = 0x0107_u32 # Occupancy Sensor
+    TEMPERATURE_SENSOR       = 0x0302_u32 # Temperature Sensor
+    PRESSURE_SENSOR          = 0x0305_u32 # Pressure Sensor
+    FLOW_SENSOR              = 0x0306_u32 # Flow Sensor
+    HUMIDITY_SENSOR          = 0x0307_u32 # Humidity Sensor
+    AIR_QUALITY_SENSOR       = 0x002C_u32 # Air Quality Sensor
+    SOIL_SENSOR              = 0x0045_u32 # Soil Sensor
+    ELECTRICAL_UTILITY_METER = 0x0511_u32 # Electrical Utility Meter
 
     # Closure Device Types
     DOOR_LOCK                  = 0x000A_u32 # Door Lock
@@ -244,6 +245,15 @@ module Matter
       )
     end
 
+    def self.electrical_utility_meter : DeviceType
+      new(
+        DataType::DeviceTypeId.new(ELECTRICAL_UTILITY_METER),
+        "Electrical Utility Meter",
+        1_u16,
+        required_server_clusters: [0x001D_u32, 0x0B06_u32]
+      )
+    end
+
     def self.door_lock : DeviceType
       new(
         DataType::DeviceTypeId.new(DOOR_LOCK),
@@ -316,6 +326,7 @@ module Matter
       when TEMPERATURE_SENSOR         then temperature_sensor
       when AIR_QUALITY_SENSOR         then air_quality_sensor
       when SOIL_SENSOR                then soil_sensor
+      when ELECTRICAL_UTILITY_METER   then electrical_utility_meter
       when DOOR_LOCK                  then door_lock
       when THERMOSTAT                 then thermostat
       when FAN                        then fan
@@ -359,6 +370,7 @@ module Matter
       when HUMIDITY_SENSOR            then "Humidity Sensor"
       when AIR_QUALITY_SENSOR         then "Air Quality Sensor"
       when SOIL_SENSOR                then "Soil Sensor"
+      when ELECTRICAL_UTILITY_METER   then "Electrical Utility Meter"
       when DOOR_LOCK                  then "Door Lock"
       when DOOR_LOCK_CONTROLLER       then "Door Lock Controller"
       when WINDOW_COVERING            then "Window Covering"
