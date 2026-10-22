@@ -318,6 +318,12 @@ lockout and schedule visibility require Manage. The
 `examples/matter_thermostat_ui_device.cr` fixture includes the cluster on a
 Thermostat device and is exercised by official chip-tool.
 
+`Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
+Register `on_sleep` to accept or refuse requests; the callback should schedule
+the physical transition after the command response. The synthetic
+`examples/matter_low_power_device.cr` fixture records requests for its
+chip-tool interoperability test.
+
 Cluster reads return `TLV::Any` or an interaction model status. Attribute writes take `TLV::Any`;
 command requests and `CommandResponse#response` use `TLV::Any?`. Pass `TLV::Any.new(50_u8)` to
 write a scalar or `request.to_tlv(nil)` for a `TLV::Serializable` command struct. Wire encoding

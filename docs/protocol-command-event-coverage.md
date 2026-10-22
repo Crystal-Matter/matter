@@ -88,6 +88,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
 | 0x0503 | Wake On LAN Cluster | 1 | 1 | — | — |
+| 0x0508 | Low Power Cluster | 1 | 1 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
