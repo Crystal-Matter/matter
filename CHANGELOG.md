@@ -50,6 +50,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   intentionally unsynchronized after restart. A synthetic root device checks
   the wire behavior with official chip-tool.
 
+### Reverse commissioning handoff
+
+- Prepare Commissioner Control's enhanced-window response before starting the
+  reverse commissioner. Run host commissioning only after the matching CASE
+  InvokeResponse is sent, outside the protocol lock; discard the task if its
+  response send fails. Match pending work to the secure session object and
+  exchange, preserve approvals across failed preparation, and compare the
+  attested target VID/PID with the approved request before AddNOC. Host consent
+  and actual target commissioning remain application responsibilities.
+
 ### Scenes Management fabric isolation
 
 - Scope all Scenes Management commands and FabricSceneInfo reads to the

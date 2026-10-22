@@ -2,6 +2,7 @@ require "../cluster/basic_information"
 require "../cluster/general_diagnostics"
 require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
+require "../cluster/commissioner_control"
 require "../cluster/group_key_management"
 require "../cluster/scenes_management"
 require "../codec/message_codec"
@@ -182,8 +183,14 @@ module Matter
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
-        @router.on_invoke_response_sent = -> { @bdx_initiator.start_pending }
-        @router.on_invoke_response_failed = -> { @bdx_initiator.discard_pending }
+        @router.on_invoke_response_sent = ->(session_identity : UInt64, exchange_id : UInt16) do
+          start_pending_commissions(session_identity, exchange_id)
+          @bdx_initiator.start_pending
+        end
+        @router.on_invoke_response_failed = ->(session_identity : UInt64, exchange_id : UInt16) do
+          @bdx_initiator.discard_pending
+          discard_pending_commissions(session_identity, exchange_id)
+        end
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
         @inbound_messages = Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress)).new(INBOUND_QUEUE_LIMIT)
@@ -284,6 +291,29 @@ module Matter
                               session.peer_node_id.try(&.id) == peer_node_id
           @bdx_initiator.queue(session, peer, designator, content)
         end
+      end
+
+      private def commissioner_controls : Array(Cluster::CommissionerControl)
+        @node.clusters.values.compact_map(&.as?(Cluster::CommissionerControl))
+      end
+
+      private def start_pending_commissions(session_identity : UInt64, exchange_id : UInt16) : Nil
+        commissioner_controls.each do |control|
+          control.take_pending_commissions(session_identity, exchange_id).each do |commission|
+            spawn do
+              # The router's callback runs under the protocol lock. Wait for
+              # that InvokeRequest to release it before performing controller IO.
+              @registry.synchronize { nil }
+              commission.call
+            rescue ex
+              Log.error(exception: ex) { "Deferred reverse commissioning failed" }
+            end
+          end
+        end
+      end
+
+      private def discard_pending_commissions(session_identity : UInt64, exchange_id : UInt16) : Nil
+        commissioner_controls.each(&.discard_pending_commissions(session_identity, exchange_id))
       end
 
       # The clusters of the node, keyed by `{endpoint, cluster}`.

@@ -156,6 +156,7 @@ module Matter
           defer_completion : Bool = false,
           friendly_name : String? = nil,
           tc_acknowledgements : Tuple(UInt16, UInt16)? = nil,
+          expected_identity : Tuple(UInt16, UInt16)? = nil,
         ) : PendingCommissioningHandoff?
           if @datastore_registrar && friendly_name.nil?
             raise Matter::ConfigurationError.new("Datastore registration requires a friendly name")
@@ -258,6 +259,9 @@ module Matter
                       raise Matter::AuthenticationError.new("PASE session has no attestation challenge")
           dac_public_key = verifier.verify_attestation(dac, pai, attestation.attestation_elements,
             attestation.attestation_signature, attestation_nonce, challenge, vendor_id, product_id)
+          # A reverse-commissioning approval names one target. Compare only
+          # after the Device Attestation Procedure authenticates BasicInfo.
+          verify_expected_identity!(expected_identity, vendor_id, product_id)
           fail_safe_window = rearm_fail_safe_if_needed(im, pase_session, peer_addr, fail_safe_window)
 
           # The caller must obtain user consent; commissioning never silently
@@ -441,6 +445,15 @@ module Matter
             registrar.refresh(fabric, node_id)
           end
           node
+        end
+
+        # Called after DeviceAttestationVerifier has authenticated the target's
+        # Basic Information VID/PID and before adding operational credentials.
+        protected def verify_expected_identity!(expected : Tuple(UInt16, UInt16)?,
+                                                vendor_id : UInt16, product_id : UInt16) : Nil
+          return unless expected
+          raise Matter::AuthenticationError.new("Reverse commissioning VendorID differs from approved target") if vendor_id != expected[0]
+          raise Matter::AuthenticationError.new("Reverse commissioning ProductID differs from approved target") if product_id != expected[1]
         end
 
         # Core §5.5 step 8 applies to every WI/TH Network Commissioning

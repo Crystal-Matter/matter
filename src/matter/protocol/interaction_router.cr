@@ -22,8 +22,8 @@ module Matter
     class InteractionRouter
       Log = ::Log.for("matter.protocol.interaction_router")
 
-      property on_invoke_response_sent : Proc(Nil)?
-      property on_invoke_response_failed : Proc(Nil)?
+      property on_invoke_response_sent : Proc(UInt64, UInt16, Nil)?
+      property on_invoke_response_failed : Proc(UInt64, UInt16, Nil)?
 
       WRITE_CHUNK_TIMEOUT = 60.seconds
 
@@ -394,7 +394,9 @@ module Matter
           peer_subject_ids(session),
           peer,
           session.peer_icac,
-          timed_interaction: request.timed_request == true
+          timed_interaction: request.timed_request == true,
+          session_identity: session.object_id.to_u64,
+          exchange_id: original_msg.payload_header.exchange_id
         )
 
         status_count = invoke_responses.count { |response| response.command_status != nil }
@@ -421,10 +423,10 @@ module Matter
           @subscriptions.await_invoke(original_msg.payload_header.exchange_id,
             SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..]))
         end
-        @on_invoke_response_sent.try(&.call)
+        @on_invoke_response_sent.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
-        @on_invoke_response_failed.try(&.call)
+        @on_invoke_response_failed.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         Log.error(exception: ex) do
           "Error handling InvokeRequest: peer=#{peer.address}:#{peer.port} session_id=#{session.session_id} " \
           "exchange=#{original_msg.payload_header.exchange_id} msg_id=#{original_msg.packet_header.message_id} " \

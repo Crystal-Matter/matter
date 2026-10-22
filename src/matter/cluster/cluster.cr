@@ -117,6 +117,9 @@ module Matter
       # Request context (populated by the protocol layer for the current operation).
       # These are intentionally prefixed to avoid colliding with cluster-specific state.
       property request_session_id : UInt64? = nil
+      # Identity of the live secure session, distinct from its reusable wire ID.
+      property request_session_identity : UInt64? = nil
+      property request_exchange_id : UInt16? = nil
       property request_peer_node_id : UInt64? = nil
       # Authenticated CASE NOC subjects (node ID and CATs) for this request.
       property request_peer_subject_ids : Array(UInt64)? = nil
