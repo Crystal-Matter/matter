@@ -67,4 +67,24 @@ describe "matter_air_conditioner example" do
     expect_success(device.invoke("onoff", "toggle", endpoint: fan))
     read_bool(device, "onoff", "on-off", "OnOff", fan).should eq !before
   end
+
+  it "exposes Fan Control revision 6 and its feature-gated Step behavior" do
+    read_int(device, "fancontrol", "cluster-revision", "ClusterRevision", fan).should eq(6_i64)
+    read_int(device, "fancontrol", "feature-map", "FeatureMap", fan).should eq(17_i64)
+    expect_success(device.read("fancontrol", "accepted-command-list", fan))
+      .int_list("AcceptedCommandList").should eq([0_i64])
+
+    expect_success(device.write("fancontrol", "percent-setting", 0, fan))
+    expect_success(device.invoke("fancontrol", "step", ["0"], endpoint: fan))
+    read_int(device, "fancontrol", "percent-setting", "PercentSetting", fan).should eq(20_i64)
+  end
+
+  it "retains FanMode but resets volatile settings after restart" do
+    expect_success(device.write("fancontrol", "fan-mode", 3, fan))
+    expect_success(device.write("fancontrol", "percent-setting", 75, fan))
+    device.restart!
+    read_int(device, "fancontrol", "fan-mode", "FanMode", fan).should eq(3_i64)
+    read_int(device, "fancontrol", "percent-setting", "PercentSetting", fan).should eq(0_i64)
+    read_int(device, "fancontrol", "speed-setting", "SpeedSetting", fan).should eq(0_i64)
+  end
 end

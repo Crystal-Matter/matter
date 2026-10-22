@@ -136,13 +136,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fan Control feature conformance
 
+- Complete the Matter 1.6 Fan Control revision 6 audit: advertise revision 6,
+  require Operate privilege for all writable attributes, and persist only
+  FanMode as required by the revised quality flags. The air-conditioner
+  chip-tool fixture checks Step, revision metadata, and restart behavior.
 - Preserve the existing MultiSpeed default while allowing explicit feature maps
   without MultiSpeed to omit SpeedMax, SpeedSetting, and SpeedCurrent from the
   wire. Require Auto-compatible mode sequences when the Auto feature is enabled
   and require nonempty RockSupport and WindSupport maps for the corresponding
   features. Bound SpeedMax to 1–100. The air-conditioner example now explicitly
-  selects MultiSpeed with Step. Fan Control continues to advertise revision 5
-  pending a full revision 6 behavioral audit.
+  selects MultiSpeed with Step.
 
 ### Commissioner Control host approval interface
 
