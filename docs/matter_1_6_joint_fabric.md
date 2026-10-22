@@ -281,8 +281,11 @@ against merged `develop`.
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
    scope for host-provisioned DER CRLs; automated DCL CRL retrieval is outside
    this library. The Docker fixture opts into Matter test PAA/CD roots.
-   Provisioned Datastores created before IPK seeding need their
-   GroupKeySetID zero repaired before the fail-closed migration path can run.
+   Provisioned Datastores created before IPK seeding now repair their
+   GroupKeySetID zero from the installed Anchor fabric IPK on startup. The
+   repair is saved before the Datastore is served and startup fails closed if
+   it cannot be saved; a file-backed restart regression covers process loss
+   before the normal debounced save.
    Exercise restart and network interruption at each per-device journal stage
    with independent ecosystem devices before claiming conformance.
 

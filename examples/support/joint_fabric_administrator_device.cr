@@ -35,6 +35,7 @@ module MatterJointFabricAdministrator
     DEFAULT_OPERATIONAL_PORT              =       5540
     ADMIN_GROUP_ID                        =      1_u16
     ANCHOR_GROUP_ID                       =      2_u16
+    ANCHOR_IPK_KEY_SET_ID                 =      0_u16
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -517,7 +518,19 @@ module MatterJointFabricAdministrator
         administrator_commissioning.window_open?
       }
       unless datastore.status.state == Datastore::DatastoreStateEnum::DeletePending
-        datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor", fabric.ipk)
+        # Older Anchor stores may contain a zero key set without its IPK.
+        # Persist the repaired key before this JFA serves the Datastore: a
+        # debounced write alone can be lost on a process crash.
+        ipk_needs_repair = datastore.group_key_set_list.find do |entry|
+          entry.group_key_set_id == ANCHOR_IPK_KEY_SET_ID
+        end.try(&.epoch_key0) != fabric.ipk
+        status = datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor", fabric.ipk)
+        if ipk_needs_repair
+          raise Matter::StorageError.new("Could not repair Anchor Datastore IPK") unless status.success?
+          unless persistence.save_cluster(datastore)
+            raise Matter::StorageError.new("Could not persist repaired Anchor Datastore IPK")
+          end
+        end
         seed_joint_fabric_groups(datastore)
         seed_anchor_administrator(datastore, fabric, icac)
       end
