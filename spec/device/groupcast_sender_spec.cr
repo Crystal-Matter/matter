@@ -130,4 +130,63 @@ describe Matter::Device::GroupcastSender do
   ensure
     FileUtils.rm_rf(directory) if directory
   end
+
+  it "forwards only the originating CASE fabric's joined groups" do
+    directory = File.join(Dir.tempdir, "matter-device-sender-fabric-#{Random::Secure.hex(8)}")
+    Dir.mkdir(directory)
+    backend = Matter::Storage::YamlFile.new(File.join(directory, "state.yml")).tap(&.open)
+    table = Matter::FabricTable.new(backend)
+    first_fabric = sender_test_fabric(1_u8, 0x1234_5678_9abc_def0_u64)
+    second_fabric = sender_test_fabric(2_u8, 0x1234_5678_9abc_def1_u64)
+    table.add_fabric(first_fabric).should be_true
+    table.add_fabric(second_fabric).should be_true
+    root = Matter::DataType::EndpointNumber.new(0_u16)
+    keys = DeviceGKM.new(root, feature_map: DeviceGKM::Feature::Groupcast, max_groups_per_fabric: 0_u16)
+    acl = Matter::Cluster::AccessControl.new(root)
+    acl.acl = [1_u8, 2_u8].map do |index|
+      Matter::Cluster::AccessControl::AccessControlEntry.new(
+        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+        [10_u64], nil, index)
+    end
+    groupcast = DeviceGC.new(root, keys, acl, feature_map: DeviceGC::Feature::Sender)
+    groupcast.request_is_case_session = true
+    groupcast.request_peer_node_id = 10_u64
+    groupcast.request_peer_subject_ids = [10_u64]
+    { {1_u8, 0x5551_u16, 7_u16, Bytes.new(16, 0xAA_u8)},
+     {2_u8, 0x5552_u16, 8_u16, Bytes.new(16, 0xBB_u8)} }.each do |index, group_id, key_set_id, key|
+      groupcast.request_fabric_index = index
+      groupcast.join_group(DeviceGC::JoinGroupRequest.new(group_id, [] of UInt16,
+        key_set_id, key: key)).should eq(Matter::InteractionModel::Status.success)
+    end
+    capture = Matter::Spec::CaptureTransport.new_for_spec
+    sender = Matter::Protocol::GroupMessageSender.new(capture,
+      Matter::Session::GroupOutgoingCounters.new(backend))
+    outbound = Matter::Device::GroupcastSender.new(table, groupcast, keys, sender)
+    source = Matter::Cluster::OnOff.new(Matter::DataType::EndpointNumber.new(1_u16))
+    source.on_state_changed do |state|
+      outbound.invoke_joined_for_request(source, Matter::Cluster::OnOff::CLUSTER_ID,
+        Matter::Cluster::OnOff::CMD_ON) if state && source.request_command_active? && source.request_is_case_session?
+    end
+    source.invoke_command(Matter::Cluster::OnOff::CMD_ON,
+      is_case_session: true, fabric_index: 1_u8).should eq(Matter::InteractionModel::Status.success)
+    capture.sent_packets.size.should eq(1)
+    operational = Matter::Session::GroupSecurePacket.derive_operational_key(
+      Bytes.new(16, 0xAA_u8), first_fabric.compressed_fabric_id)
+    key = Matter::Session::GroupSecurePacket::Key.new(1_u8, 0x5551_u16,
+      operational, first_fabric.fabric_id)
+    decoded = Matter::Session::GroupSecurePacket.new([key]).decode(capture.sent_packets.first[0])
+    decoded.message.packet_header.source_node_id.as(Matter::DataType::NodeId).id.should eq(first_fabric.node_id)
+
+    expect_raises(Matter::ConfigurationError, /active CASE/) do
+      outbound.invoke_joined_for_request(source, Matter::Cluster::OnOff::CLUSTER_ID,
+        Matter::Cluster::OnOff::CMD_ON)
+    end
+    source.off
+    source.invoke_command(Matter::Cluster::OnOff::CMD_ON).should eq(Matter::InteractionModel::Status.success)
+    capture.sent_packets.size.should eq(1)
+    backend.close
+  ensure
+    FileUtils.rm_rf(directory) if directory
+  end
 end

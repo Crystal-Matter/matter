@@ -141,6 +141,13 @@ module Matter
       groupcast_outbound.invoke(fabric_index, group_id, cluster_id, command_id, fields)
     end
 
+    # Forward from a synchronous CASE command callback to all joined Sender
+    # groups on that command's authenticated fabric.
+    def send_groupcast_invoke_for_request(source : Cluster::Base, cluster_id : UInt32,
+                                          command_id : UInt32, fields : Bytes = Bytes.empty) : Nil
+      groupcast_outbound.invoke_joined_for_request(source, cluster_id, command_id, fields)
+    end
+
     def send_groupcast_write(fabric_index : UInt8, group_id : UInt16,
                              cluster_id : UInt32, attribute_id : UInt32,
                              value : TLV::Any) : Nil

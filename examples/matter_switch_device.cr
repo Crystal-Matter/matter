@@ -33,6 +33,11 @@ module MatterSwitch
 
     on(:switch, :state_changed) do |state|
       notify "Switch is now: #{state ? "ON" : "OFF"}", "Data version: #{switch.data_version}"
+      if state && ENV["MATTER_GROUPCAST_FORWARD_ON"]? == "1" &&
+         switch.request_command_active? && switch.request_is_case_session?
+        send_groupcast_invoke_for_request(switch,
+          Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON)
+      end
     end
 
     def console_notes : Array(String)

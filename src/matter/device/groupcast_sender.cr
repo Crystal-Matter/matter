@@ -23,6 +23,18 @@ module Matter
         raise ConfigurationError.new("Groupcast Sender feature is disabled") unless @groupcast.feature_map.sender?
       end
 
+      # Fan out a command to Sender memberships on the fabric that issued the
+      # current CASE command. A stale request context or local state change
+      # cannot cause a send after command dispatch has finished.
+      def invoke_joined_for_request(source : Cluster::Base, cluster_id : UInt32,
+                                    command_id : UInt32, fields : Bytes = Bytes.empty) : Nil
+        fabric_index = source.request_fabric_index if source.request_command_active? && source.request_is_case_session?
+        raise ConfigurationError.new("Groupcast forwarding requires an active CASE command") unless fabric_index
+        @groupcast.membership(fabric_index).each do |entry|
+          invoke(fabric_index, entry.group_id, cluster_id, command_id, fields)
+        end
+      end
+
       def invoke(fabric_index : UInt8, group_id : UInt16, cluster_id : UInt32,
                  command_id : UInt32, fields : Bytes = Bytes.empty) : Nil
         fabric, key, policy = selection(fabric_index, group_id)

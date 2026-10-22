@@ -131,6 +131,15 @@ module Matter
       property request_group_id : UInt16? = nil
       property? request_fabric_filtered : Bool = true
 
+      @request_command_depth : UInt32 = 0_u32
+
+      # True only while a command handler (including its synchronous callbacks)
+      # is running. Request identity fields remain available after dispatch, so
+      # callbacks that forward a command must check this as well as CASE.
+      def request_command_active? : Bool
+        @request_command_depth > 0_u32
+      end
+
       # IMHandler sets request_* fields immediately before dispatch. A fiber
       # waiting in a cluster callback must retain its own authenticated
       # context until that operation finishes.
@@ -408,9 +417,11 @@ module Matter
       # own status, a codec or argument failure is `InvalidCommand` and anything
       # else is a bug reported as `Failure`.
       def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil, is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
+        previous_depth = @request_command_depth
         return InteractionModel::Status.unsupported_command unless get_command_metadata(command_id)
 
         # The request context the handlers read
+        @request_command_depth = previous_depth + 1_u32
         @request_session_id = session_id
         @request_is_case_session = is_case_session
         @request_fabric_index = fabric_index
@@ -426,6 +437,8 @@ module Matter
       rescue ex
         Log.error(exception: ex) { "#{self.class.name}: command 0x#{command_id.to_s(16)} failed" }
         InteractionModel::Status.failure
+      ensure
+        @request_command_depth = previous_depth if previous_depth
       end
 
       # Handle command implementation (to be overridden)

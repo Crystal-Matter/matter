@@ -540,6 +540,9 @@ alone or together with Listener. The switch example accepts
 or add AuxiliaryACL entries. Device application code calls
 `send_groupcast_invoke(fabric_index, group_id, cluster_id, command_id, fields)`
 or `send_groupcast_write(fabric_index, group_id, cluster_id, attribute_id, value)`.
+For a synchronous CASE command callback,
+`send_groupcast_invoke_for_request(source_cluster, cluster_id, command_id, fields)`
+forwards only to Sender memberships on the command's authenticated fabric.
 These methods require a durable storage backend for node-global outbound
 message counters, an installed fabric, Groupcast membership, and a current
 epoch key. The PerGroup address feature is not advertised; Sender traffic uses
