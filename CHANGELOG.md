@@ -71,6 +71,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   transition is safe through an explicit callback; denied commands leave the
   state unchanged.
 
+### Door Lock operating-mode conformance
+
+- Correct `SoundVolume` wire values (`High = 2`, `Medium = 3`) and use a valid
+  inverse `SupportedOperatingModes` default. Reject unsupported mode writes and
+  feature maps that omit the required User feature for credentials. Door Lock
+  continues to advertise revision 9 pending persistent credential storage and
+  Aliro feature support; see [Door Lock conformance](docs/door-lock-conformance.md).
+
 ### Thread Network Directory
 
 - Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.

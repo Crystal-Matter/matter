@@ -111,6 +111,10 @@ describe "write_attribute with typed TLV values (chip-tool)" do
 
     result = write_via_im(lock, Matter::Cluster::DoorLock::ATTR_SOUND_VOLUME, TLV::Any.new(3_u8))
     result.status.status.should eq success
+    lock.sound_volume.should eq Matter::Cluster::DoorLock::SoundVolume::Medium
+
+    result = write_via_im(lock, Matter::Cluster::DoorLock::ATTR_SOUND_VOLUME, TLV::Any.new(2_u8))
+    result.status.status.should eq success
     lock.sound_volume.should eq Matter::Cluster::DoorLock::SoundVolume::High
 
     result = write_via_im(lock, Matter::Cluster::DoorLock::ATTR_ENABLE_ONE_TOUCH_LOCKING, TLV::Any.new(true))
