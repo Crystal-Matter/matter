@@ -37,7 +37,7 @@ describe "Cluster::Base ClusterRevision" do
                    {Matter::Cluster::Groups, 4_u16},
                    {Matter::Cluster::IcdManagement, 3_u16},
                    {Matter::Cluster::Identify, 6_u16},
-                   {Matter::Cluster::LevelControl, 6_u16},
+                   {Matter::Cluster::LevelControl, 7_u16},
                    {Matter::Cluster::OnOff, 6_u16},
                    {Matter::Cluster::WindowCovering, 8_u16},
                  ] %}

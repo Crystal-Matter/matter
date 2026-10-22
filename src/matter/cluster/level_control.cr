@@ -1,6 +1,7 @@
 require "log"
 require "./cluster"
 require "./on_off"
+require "./color_control"
 
 module Matter
   module Cluster
@@ -18,11 +19,12 @@ module Matter
     class LevelControl < Base
       Log = ::Log.for("matter.cluster.level_control")
 
-      TRANSITION_TICK = 100.milliseconds
-      DECISECOND_MS   =   100.0
-      EXECUTE_IF_OFF  = 0x01_u8
+      TRANSITION_TICK            = 100.milliseconds
+      DECISECOND_MS              =   100.0
+      EXECUTE_IF_OFF             = 0x01_u8
+      COUPLE_COLOR_TEMP_TO_LEVEL = 0x02_u8
 
-      cluster 0x0008, revision: 6
+      cluster 0x0008, revision: 7
 
       feature :on_off, bit: 0    # OO - Dependency with On/Off cluster
       feature :lighting, bit: 1  # LT - Lighting control interface
@@ -274,6 +276,8 @@ module Matter
         @transition_origin = initial_level
         @transition_fiber_running = false
         @on_off_cluster = nil
+        @color_control_cluster = nil
+        @command_couple_color_temperature = nil
         @turn_off_on_completion = false
         @suppress_on_effect = false
       end
@@ -285,6 +289,8 @@ module Matter
       @transition_origin : UInt8
       @transition_fiber_running : Bool
       @on_off_cluster : OnOff?
+      @color_control_cluster : ColorControl?
+      @command_couple_color_temperature : Bool?
       @turn_off_on_completion : Bool
       @suppress_on_effect : Bool
 
@@ -306,7 +312,12 @@ module Matter
       end
 
       private def current_level_updated(level : UInt8?) : Nil
-        return if level
+        if level
+          if feature_map.lighting? && (@command_couple_color_temperature.nil? ? (@options & COUPLE_COLOR_TEMP_TO_LEVEL) != 0 : @command_couple_color_temperature)
+            @color_control_cluster.try &.sync_color_temperature_with_level(level)
+          end
+          return
+        end
         clear_transition
         @turn_off_on_completion = false
       end
@@ -331,23 +342,28 @@ module Matter
         end
       end
 
+      # Endpoint binds a Color Control server on the same endpoint regardless of add order.
+      def bind_color_control(cluster : ColorControl?) : Nil
+        @color_control_cluster = cluster
+      end
+
       # ------------------------------------------------------------------------
       # Commands
       # ------------------------------------------------------------------------
 
       def move_to_level(request : MoveToLevelRequest) : InteractionModel::Status
         return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
-        transition_to(request.level, request.transition_time)
+        transition_to(request.level, request.transition_time, couple_color_temperature: couple_color_temperature?(request.mask, request.override))
       end
 
       def move(request : MoveRequest) : InteractionModel::Status
         return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
-        move_towards(request.move_mode, request.rate)
+        move_towards(request.move_mode, request.rate, couple_color_temperature: couple_color_temperature?(request.mask, request.override))
       end
 
       def step(request : StepRequest) : InteractionModel::Status
         return InteractionModel::Status.success unless execute_if_off?(request.mask, request.override)
-        step_by(request.step_mode, request.step_size, request.transition_time)
+        step_by(request.step_mode, request.step_size, request.transition_time, couple_color_temperature: couple_color_temperature?(request.mask, request.override))
       end
 
       def stop(request : StopRequest) : InteractionModel::Status
@@ -356,15 +372,15 @@ module Matter
       end
 
       def move_to_level_with_on_off(request : MoveToLevelWithOnOffRequest) : InteractionModel::Status
-        transition_to(request.level, request.transition_time, with_on_off: true)
+        transition_to(request.level, request.transition_time, with_on_off: true, couple_color_temperature: couple_color_temperature?(request.mask, request.override))
       end
 
       def move_with_on_off(request : MoveWithOnOffRequest) : InteractionModel::Status
-        move_towards(request.move_mode, request.rate, with_on_off: true)
+        move_towards(request.move_mode, request.rate, with_on_off: true, couple_color_temperature: couple_color_temperature?(request.mask, request.override))
       end
 
       def step_with_on_off(request : StepWithOnOffRequest) : InteractionModel::Status
-        step_by(request.step_mode, request.step_size, request.transition_time, with_on_off: true)
+        step_by(request.step_mode, request.step_size, request.transition_time, with_on_off: true, couple_color_temperature: couple_color_temperature?(request.mask, request.override))
       end
 
       def stop_with_on_off(request : StopWithOnOffRequest) : InteractionModel::Status
@@ -376,22 +392,24 @@ module Matter
         InteractionModel::Status.success
       end
 
-      private def move_towards(mode : MoveMode, requested_rate : UInt8?, with_on_off : Bool = false) : InteractionModel::Status
+      private def move_towards(mode : MoveMode, requested_rate : UInt8?, with_on_off : Bool = false,
+                               couple_color_temperature : Bool = false) : InteractionModel::Status
         rate = requested_rate || @default_move_rate
         return InteractionModel::Status.invalid_command if rate == 0
         return InteractionModel::Status.failure if @current_level.nil?
 
         target = mode.up? ? @max_level : @min_level
-        return transition_to(target, 0_u16, with_on_off: with_on_off) unless rate
+        return transition_to(target, 0_u16, with_on_off: with_on_off, couple_color_temperature: couple_color_temperature) unless rate
 
         advance_transition
         return InteractionModel::Status.failure unless current_level = @current_level
         distance = (target.to_i - current_level.to_i).abs
         duration = ((distance.to_f * 1000.0) / rate).ceil.to_i.milliseconds
-        start_transition(target, duration, with_on_off: with_on_off)
+        start_transition(target, duration, with_on_off: with_on_off, couple_color_temperature: couple_color_temperature)
       end
 
-      private def step_by(mode : StepMode, step_size : UInt8, transition_time : UInt16?, with_on_off : Bool = false) : InteractionModel::Status
+      private def step_by(mode : StepMode, step_size : UInt8, transition_time : UInt16?, with_on_off : Bool = false,
+                          couple_color_temperature : Bool = false) : InteractionModel::Status
         advance_transition
         return InteractionModel::Status.failure unless current_level = @current_level
         # A null Step transition is immediate; OnOffTransitionTime supplies
@@ -400,10 +418,10 @@ module Matter
         case mode
         when .up?
           target = current_level.to_u16 + step_size
-          transition_to([target, @max_level.to_u16].min.to_u8, step_time, with_on_off: with_on_off)
+          transition_to([target, @max_level.to_u16].min.to_u8, step_time, with_on_off: with_on_off, couple_color_temperature: couple_color_temperature)
         when .down?
           target = current_level.to_i16 - step_size
-          transition_to([target, @min_level.to_i16].max.to_u8, step_time, with_on_off: with_on_off)
+          transition_to([target, @min_level.to_i16].max.to_u8, step_time, with_on_off: with_on_off, couple_color_temperature: couple_color_temperature)
         else
           InteractionModel::Status.invalid_command
         end
@@ -421,17 +439,21 @@ module Matter
         @transition_last_advanced_at = nil
         @transition_duration = nil
         @transition_target = nil
+        @command_couple_color_temperature = nil
         self.remaining_time = 0_u16
       end
 
-      private def transition_to(level : UInt8, transition_time : UInt16? = nil, with_on_off : Bool = false) : InteractionModel::Status
+      private def transition_to(level : UInt8, transition_time : UInt16? = nil, with_on_off : Bool = false,
+                                couple_color_temperature : Bool? = nil) : InteractionModel::Status
         ticks = transition_time || @on_off_transition_time
         duration = (ticks.to_i * 100).milliseconds
-        start_transition(level.clamp(@min_level, @max_level), duration, with_on_off: with_on_off)
+        start_transition(level.clamp(@min_level, @max_level), duration, with_on_off: with_on_off, couple_color_temperature: couple_color_temperature)
       end
 
-      private def start_transition(target : UInt8, duration : Time::Span, with_on_off : Bool = false) : InteractionModel::Status
+      private def start_transition(target : UInt8, duration : Time::Span, with_on_off : Bool = false,
+                                   couple_color_temperature : Bool? = nil) : InteractionModel::Status
         advance_transition
+        couple_color_temperature = couple_color_temperature.nil? ? couple_color_temperature?(0_u8, 0_u8) : couple_color_temperature
         @turn_off_on_completion = false
         if with_on_off && (on_off = @on_off_cluster)
           if target > @min_level
@@ -447,7 +469,10 @@ module Matter
         end
         if duration <= 0.seconds || @current_level.nil? || target == @current_level
           clear_transition
+          @command_couple_color_temperature = couple_color_temperature
+          @color_control_cluster.try &.sync_color_temperature_with_level(target) if target == @current_level && couple_color_temperature
           self.current_level = target
+          @command_couple_color_temperature = nil
           finish_on_off_coupling
           return InteractionModel::Status.success
         end
@@ -457,6 +482,7 @@ module Matter
         @transition_duration = duration
         @transition_started_at = Time.instant
         @transition_last_advanced_at = @transition_started_at
+        @command_couple_color_temperature = couple_color_temperature
         self.remaining_time = (duration.total_milliseconds / DECISECOND_MS).ceil.to_u16
         start_transition_fiber
         InteractionModel::Status.success
@@ -482,6 +508,7 @@ module Matter
           @transition_last_advanced_at = nil
           @transition_duration = nil
           @transition_target = nil
+          @command_couple_color_temperature = nil
           finish_on_off_coupling
           return
         end
@@ -519,6 +546,10 @@ module Matter
 
         effective_options = (@options & ~mask) | (override & mask)
         (effective_options & EXECUTE_IF_OFF) != 0
+      end
+
+      private def couple_color_temperature?(mask : UInt8, override : UInt8) : Bool
+        feature_map.lighting? && (((@options & ~mask) | (override & mask)) & COUPLE_COLOR_TEMP_TO_LEVEL) != 0
       end
 
       # Called only when both the previous and new levels are known. Use

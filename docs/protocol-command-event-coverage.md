@@ -7,12 +7,12 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 71
+- Implemented standard cluster IDs compared: 74
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 111
 - Feature or complex conditional IDs absent from Crystal: 23
-- Feature or complex conditional IDs declared without literal `requires:`: 11
+- Feature or complex conditional IDs declared without literal `requires:`: 10
   (Neither count alone establishes a conformance failure.)
 
 | Cluster ID | XML name | XML rev | Crystal rev | Mandatory server commands absent | Mandatory events absent |
@@ -20,7 +20,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0003 | Identify Cluster | 6 | 6 | — | — |
 | 0x0004 | Groups Cluster | 4 | 4 | — | — |
 | 0x0006 | On/Off Cluster | 6 | 6 | — | — |
-| 0x0008 | Level Control Cluster | 7 | 6 | — | — |
+| 0x0008 | Level Control Cluster | 7 | 7 | — | — |
 | 0x001D | Descriptor Cluster | 3 | 3 | — | — |
 | 0x001E | Binding Cluster | 1 | 1 | — | — |
 | 0x001F | Access Control Cluster | 3 | 3 | — | — |

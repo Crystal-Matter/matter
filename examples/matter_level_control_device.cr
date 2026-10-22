@@ -52,7 +52,9 @@ module MatterLevelControl
     endpoint COLOR_LIGHT_ENDPOINT, device_type: Matter::DeviceType::EXTENDED_COLOR_LIGHT do
       cluster Matter::Cluster::OnOff, feature_map: :lighting
       cluster Matter::Cluster::LevelControl
-      cluster Matter::Cluster::ColorControl
+      cluster Matter::Cluster::ColorControl,
+        color_mode: Matter::Cluster::ColorControl::ColorMode::ColorTemperatureMireds,
+        couple_color_temp_to_level_min_mireds: 200_u16
       cluster Matter::Cluster::Groups
       cluster Matter::Cluster::ScenesManagement
       cluster Matter::Cluster::Identify, identify_type: :visible_light

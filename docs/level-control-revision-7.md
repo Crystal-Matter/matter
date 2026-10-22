@@ -1,6 +1,6 @@
 # Level Control revision 7 audit
 
-The server still advertises revision 6. The pinned Matter 1.6
+The server advertises revision 7. The pinned Matter 1.6
 `LevelControl.xml` revision history says revision 7 makes MinLevel and
 MaxLevel mandatory, marks them fixed, and removes their previous persistence
 quality. CurrentLevel remains nullable and nonvolatile, with scene quality.
@@ -15,14 +15,14 @@ write privileges with the XML, makes only CurrentLevel and
 StartUpCurrentLevel nonvolatile, exposes all eight mandatory commands without
 requiring the optional OnOff feature, and marks Frequency CurrentFrequency as
 a scene attribute. Direct host CurrentLevel assignments now validate the
-configured bounds before changing the value. The advertised revision stays
-at 6 because the following behavior is still incomplete:
-
-- The Lighting `Options.CoupleColorTempToLevel` bit should couple level changes
-  to Color Control's color temperature when the sibling server is present.
-  The current Level Control implementation handles ExecuteIfOff but does not
-  implement color-temperature coupling. Matter.js covers the behavior in
-  `ColorTemperatureCouplingTest.ts`.
+configured bounds before changing the value. The Lighting
+`Options.CoupleColorTempToLevel` bit now couples level changes to the sibling
+Color Control server on the same endpoint. It uses the effective command
+option, tracks timed transitions, and maps level 1 to the physical maximum
+temperature in mireds and level 254 to the coupling minimum. Coupling requires
+the Color Temperature feature and active color temperature mode. The related
+Color Control cluster still advertises revision 7 pending its separate
+revision 9 conformance work.
 
 The canonical XML in the pinned Matter 1.6 SDK is
 `data_model/1.6/clusters/LevelControl.xml`; relevant attributes are 0x0000,

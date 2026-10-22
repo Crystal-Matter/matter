@@ -45,6 +45,8 @@ module Matter
       DEFAULT_PHYSICAL_MIN_MIREDS      = 147_u16 # ~6800K
       DEFAULT_PHYSICAL_MAX_MIREDS      = 500_u16 # ~2000K
       PHYSICAL_MIN_MIREDS_LOWER_BOUND  =   1_u16
+      LEVEL_MIN_FOR_COUPLING           =    1_u8
+      LEVEL_MAX_FOR_COUPLING           =  254_u8
 
       # Color loop defaults from the specification
       DEFAULT_COLOR_LOOP_TIME       =     25_u16
@@ -112,6 +114,7 @@ module Matter
         @color_temp_physical_max_mireds : UInt16 = DEFAULT_PHYSICAL_MAX_MIREDS,
         @color_mode : ColorMode = ColorMode::CurrentHueAndCurrentSaturation,
         @options : UInt8 = 0_u8,
+        @couple_color_temp_to_level_min_mireds : UInt16? = nil,
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
@@ -182,6 +185,29 @@ module Matter
       # The endpoint links a sibling OnOff cluster regardless of add order.
       def bind_on_off(cluster : OnOff?) : Nil
         @on_off_cluster = cluster
+      end
+
+      # Level Control asks Color Control to follow each effective level change.
+      # Coupling is meaningful only while color temperature is the active mode.
+      def sync_color_temperature_with_level(level : UInt8) : Nil
+        return unless feature_map.color_temperature?
+        return unless @color_mode.color_temperature_mireds? || @enhanced_color_mode.color_temperature_mireds?
+
+        minimum = (@couple_color_temp_to_level_min_mireds || @color_temp_physical_min_mireds)
+          .clamp(@color_temp_physical_min_mireds, @color_temp_physical_max_mireds)
+        maximum = @color_temp_physical_max_mireds
+        mireds = if level <= LEVEL_MIN_FOR_COUPLING
+                   maximum
+                 elsif level >= LEVEL_MAX_FOR_COUPLING
+                   minimum
+                 else
+                   (maximum.to_i - ((maximum.to_i - minimum.to_i) * level.to_i) // LEVEL_MAX_FOR_COUPLING.to_i).to_u16
+                 end
+        @movement = nil
+        @transition = nil
+        select_color_mode(MovementKind::ColorTemperature)
+        move_to_color_temperature(mireds)
+        self.remaining_time = NO_TRANSITION
       end
 
       # ------------------------------------------------------------------------
