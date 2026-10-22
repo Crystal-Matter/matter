@@ -105,7 +105,7 @@ describe Matter::Cluster::AccessControl do
         fabric_index: 1_u8
       )
 
-      entry.subjects.size.should eq(3)
+      entry.subjects.try(&.size).should eq(3)
     end
 
     it "creates entry with targets" do

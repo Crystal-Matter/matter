@@ -389,7 +389,8 @@ describe "Access Control Integration" do
 
       # Write the updated ACL list
       acl_cluster.acl.clear
-      status = write(acl_cluster, Matter::Cluster::AccessControl::ATTR_ACL, encoded_new_acl)
+      status = write(acl_cluster, Matter::Cluster::AccessControl::ATTR_ACL, encoded_new_acl,
+        is_case_session: true, fabric_index: fabric_index, peer_subject_ids: [admin_subject])
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
 
       # Verify both users now have access
@@ -449,7 +450,8 @@ describe "Access Control Integration" do
 
       # Decode into new cluster
       cluster2 = Matter::Cluster::AccessControl.new(endpoint_id)
-      status = write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded)
+      status = write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded,
+        is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [0x1111_u64])
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
 
       # Verify all entries match

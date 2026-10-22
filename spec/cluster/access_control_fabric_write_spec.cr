@@ -16,12 +16,15 @@ private struct AuxiliaryAclEntryWire
   @[TLV::Field(tag: 3)]
   property subjects : Array(UInt64)
 
+  @[TLV::Field(tag: 4, optional: false)]
+  property targets : Array(FabricWriteAcl::Target)?
+
   @[TLV::Field(tag: 5)]
   property auxiliary_type : UInt8
 
   def initialize(@privilege : FabricWriteAcl::AccessControlEntryPrivilege,
                  @auth_mode : FabricWriteAcl::AccessControlEntryAuthMode,
-                 @subjects : Array(UInt64), @auxiliary_type : UInt8)
+                 @subjects : Array(UInt64), @auxiliary_type : UInt8, @targets : Array(FabricWriteAcl::Target)? = nil)
   end
 end
 
@@ -49,6 +52,10 @@ private def write_on_second_fabric(cluster : FabricWriteAcl, attribute_id : UInt
     is_case_session: true, fabric_index: 2_u8, peer_subject_ids: [202_u64]).first.status.status
 end
 
+private def fabric_extension_data(value : UInt8) : Bytes
+  TLV::Any.new(TLV::List{TLV::Any.new(value, {1_u16, 1_u16})}).to_slice
+end
+
 describe "fabric-scoped access control writes" do
   it "stores omitted FabricIndex from the authenticated session and preserves other fabrics" do
     cluster = fabric_write_cluster
@@ -66,14 +73,14 @@ describe "fabric-scoped access control writes" do
   it "stores extension entries under the session fabric instead of the supplied index" do
     cluster = fabric_write_cluster
     cluster.extension = [
-      FabricWriteAcl::ExtensionEntry.new(Bytes[0xA1], 1_u8),
-      FabricWriteAcl::ExtensionEntry.new(Bytes[0xB1], 2_u8),
+      FabricWriteAcl::ExtensionEntry.new(fabric_extension_data(0xA1_u8), 1_u8),
+      FabricWriteAcl::ExtensionEntry.new(fabric_extension_data(0xB1_u8), 2_u8),
     ]
-    replacement = FabricWriteAcl::ExtensionEntry.new(Bytes[0xB2], 1_u8)
+    replacement = FabricWriteAcl::ExtensionEntry.new(fabric_extension_data(0xB2_u8), 1_u8)
 
     write_on_second_fabric(cluster, FabricWriteAcl::ATTR_EXTENSION, [replacement]).should eq(Matter::InteractionModel::StatusCode::Success.value)
-    cluster.extension.select { |entry| entry.fabric_index == 1_u8 }.map(&.data).should eq([Bytes[0xA1]])
-    cluster.extension.select { |entry| entry.fabric_index == 2_u8 }.map(&.data).should eq([Bytes[0xB2]])
+    cluster.extension.select { |entry| entry.fabric_index == 1_u8 }.map(&.data).should eq([fabric_extension_data(0xA1_u8)])
+    cluster.extension.select { |entry| entry.fabric_index == 2_u8 }.map(&.data).should eq([fabric_extension_data(0xB2_u8)])
   end
 
   it "rejects a Matter 1.6 AuxiliaryType in the primary ACL without changing either fabric" do

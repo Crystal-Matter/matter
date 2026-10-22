@@ -490,6 +490,16 @@ module Matter
           end
 
           metadata = cluster.get_attribute_metadata(attribute_id)
+          # ACL and Extension replace entries in the accessing fabric. A PASE
+          # session has no fabric, so forwarding its write to the cluster would
+          # replace the entire persisted multi-fabric list.
+          if cluster_id == Cluster::AccessControl::CLUSTER_ID &&
+             (attribute_id == Cluster::AccessControl::ATTR_ACL || attribute_id == Cluster::AccessControl::ATTR_EXTENSION) &&
+             (!is_case_session || fabric_index.nil?)
+            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+            write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+            next
+          end
           if metadata
             unless authorized?(clusters, metadata.write_access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)

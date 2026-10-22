@@ -291,7 +291,7 @@ module Matter
         return if entries.any? do |entry|
                     entry.auth_mode == Cluster::AccessControl::AccessControlEntryAuthMode::CASE &&
                     entry.privilege == Cluster::AccessControl::AccessControlEntryPrivilege::Administer &&
-                    entry.targets.nil? && entry.subjects.includes?(controller_node_id)
+                    entry.targets.nil? && (entry.subjects.try(&.includes?(controller_node_id)) || false)
                   end
 
         entries << Cluster::AccessControl::AccessControlEntry.new(

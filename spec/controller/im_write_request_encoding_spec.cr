@@ -30,7 +30,8 @@ describe "IM write request encoding" do
     write_requests.size.should eq 1
 
     cluster = build(Matter::Cluster::AccessControl, 0)
-    status = write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, write_requests[0].data)
+    status = write(cluster, Matter::Cluster::AccessControl::ATTR_ACL, write_requests[0].data,
+      is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [1_u64])
     status.status.should eq Matter::InteractionModel::StatusCode::Success
   end
 end

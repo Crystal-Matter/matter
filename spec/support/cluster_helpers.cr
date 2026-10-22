@@ -55,7 +55,9 @@ end
 # `TLV::Serializable` structs) or a ready-made `TLV::Any`.
 # Note: the IM path only carries the IM status code, so `cluster_status` is
 # not available on the returned status.
-def write(cluster : Matter::Cluster::Base, attribute_id : UInt32, value) : Matter::InteractionModel::Status
+def write(cluster : Matter::Cluster::Base, attribute_id : UInt32, value,
+          is_case_session : Bool = false, fabric_index : UInt8? = nil,
+          peer_subject_ids : Array(UInt64)? = nil) : Matter::InteractionModel::Status
   data = TLV::Serializable.serialize_value(value, nil)
   endpoint_id = cluster.endpoint_id.number
   cluster_id = cluster.cluster_id.id
@@ -73,7 +75,9 @@ def write(cluster : Matter::Cluster::Base, attribute_id : UInt32, value) : Matte
   parsed = Matter::Protocol::IMHandler.parse_write_request(request.to_slice)
   raise "failed to parse WriteRequest for attribute 0x#{attribute_id.to_s(16)}" unless parsed
 
-  results = Matter::Protocol::IMHandler.write_attributes(parsed.write_requests, { {endpoint_id, cluster_id} => cluster })
+  results = Matter::Protocol::IMHandler.write_attributes(parsed.write_requests,
+    { {endpoint_id, cluster_id} => cluster }, is_case_session: is_case_session,
+    fabric_index: fabric_index, peer_subject_ids: peer_subject_ids)
   status_ib = results.first.status
   Matter::InteractionModel::Status.new(Matter::InteractionModel::StatusCode.new(status_ib.status), status_ib.cluster_status)
 end
