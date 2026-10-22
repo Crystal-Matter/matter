@@ -51,6 +51,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose length is not 32 bytes, as required by official `TC_OPCREDS_3_8` step 5.
 - Notify Fabrics and NOCs subscribers when SetVIDVerificationStatement changes
   operational metadata or a pending NOC update rolls that metadata back.
+- Roll back uncommitted AddNOC and UpdateNOC changes when ArmFailSafe receives
+  zero expiry or the timer expires. Restore the persisted CASE identity and
+  fabric-scoped attributes, refresh operational discovery, retire old sessions,
+  and notify Fabrics and NOCs subscribers. Preserve committed credentials after
+  CommissioningComplete. The official `TC_OPCREDS_3_8` previously failed at
+  step 18 because the pending fabric remained visible after ArmFailSafe(0).
 
 ### Wake On LAN
 

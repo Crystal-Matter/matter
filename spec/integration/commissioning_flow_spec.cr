@@ -428,7 +428,7 @@ module Matter
 
         response.error_code.should eq(Cluster::GeneralCommissioning::CommissioningError::OK)
         general_comm.failsafe_armed?.should be_false
-        general_comm.breadcrumb.should eq(100_u64) # Not updated on disarm
+        general_comm.breadcrumb.should eq(0_u64) # Expiry rolls back commissioning state
       end
     end
 

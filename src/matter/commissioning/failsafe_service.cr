@@ -112,11 +112,10 @@ module Matter
           end
         end
 
-        # Disarm: the commissioner abandons the session without a rollback and
-        # the breadcrumb keeps its value.
+        # A zero expiry abandons commissioning and rolls back pending state.
         if expiry_length_seconds == 0
-          Log.info { "Disarming failsafe" } if @context
-          disarm
+          Log.info { "Expiring failsafe on zero expiry" } if @context
+          expire
           return Outcome.new
         end
 

@@ -67,7 +67,12 @@ item below as covered only to the extent of its cited tests.
   SignVIDVerificationRequest reports ConstraintError for a challenge with an
   invalid length while preserving the command's typed TLV decoding. VID
   metadata changes and fail-safe rollback report Fabrics and NOCs updates to
-  active subscribers.
+  active subscribers. ArmFailSafe(0) removes a pending AddNOC fabric or restores
+  an UpdateNOC identity while the device remains running. The fail-safe's NOC
+  rollback snapshot is currently in memory: a process crash after AddNOC or
+  UpdateNOC and before expiry can leave the provisional fabric record in
+  persistent storage. A durable pending-credential journal and startup recovery
+  remain necessary before claiming crash-safe commissioning rollback.
 - DNS-SD understands Joint Fabric `JF` role bits and `CM=3`. A Joint Fabric
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with

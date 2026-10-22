@@ -69,6 +69,7 @@ module Matter
       def install! : Nil
         @operational_credentials.on_fabric_added = ->(fabric : Fabric) { handle_fabric_added(fabric) }
         @operational_credentials.on_fabric_removed = ->(fabric_index : UInt8) { handle_fabric_removed(fabric_index) }
+        @operational_credentials.on_fabric_updated = ->(fabric : Fabric) { handle_fabric_updated(fabric) }
       end
 
       private def handle_fabric_added(fabric : Fabric) : Nil
@@ -103,24 +104,7 @@ module Matter
         # commissioners (notably iOS) abort.
         #
         # To avoid this, defer session deletion by a short grace period.
-        session_ids = @registry.sessions
-          .select { |_, session| session.fabric_index == fabric_index }
-          .keys
-
-        if session_ids.empty?
-          Log.debug { "No sessions found for removed fabric #{fabric_index}" }
-        else
-          delay = @fabric_session_cleanup_delay
-          if delay <= Time::Span.zero
-            session_ids.each { |session_id| @registry.delete_session(session_id) }
-          else
-            Log.debug { "Deferring cleanup of #{session_ids.size} session(s) for fabric #{fabric_index} by #{delay.total_milliseconds}ms" }
-            spawn do
-              sleep delay
-              session_ids.each { |session_id| @registry.delete_session(session_id) }
-            end
-          end
-        end
+        retire_fabric_sessions(fabric_index)
 
         # Re-advertise remaining operational services (or switch back to commissioning).
         @responder.stop_operational_advertisement
@@ -136,6 +120,32 @@ module Matter
           end
         else
           switch_to_operational
+        end
+      end
+
+      private def handle_fabric_updated(fabric : Fabric) : Nil
+        # The old CASE session can finish its UpdateNOC response before it is
+        # retired. Newly established sessions use the replacement identity.
+        retire_fabric_sessions(fabric.fabric_index)
+        @responder.stop_operational_advertisement
+        switch_to_operational
+      end
+
+      private def retire_fabric_sessions(fabric_index : UInt8) : Nil
+        session_ids = @registry.sessions
+          .select { |_, session| session.fabric_index == fabric_index }
+          .keys
+        return if session_ids.empty?
+
+        delay = @fabric_session_cleanup_delay
+        if delay <= Time::Span.zero
+          session_ids.each { |session_id| @registry.delete_session(session_id) }
+        else
+          Log.debug { "Deferring cleanup of #{session_ids.size} session(s) for fabric #{fabric_index} by #{delay.total_milliseconds}ms" }
+          spawn do
+            sleep delay
+            session_ids.each { |session_id| @registry.delete_session(session_id) }
+          end
         end
       end
 

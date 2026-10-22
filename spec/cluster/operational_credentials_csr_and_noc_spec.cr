@@ -461,7 +461,7 @@ describe Matter::Cluster::OperationalCredentials do
           initial_fabric_index = cluster.fabrics[0].fabric_index
 
           # Reset failsafe context to simulate new failsafe period
-          cluster.on_failsafe_expired
+          cluster.on_failsafe_success
           cluster.failsafe_armed = true
           cluster.request_session_id = 54321_u64
           cluster.request_fabric_index = initial_fabric_index

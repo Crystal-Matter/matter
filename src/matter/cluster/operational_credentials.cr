@@ -246,6 +246,7 @@ module Matter
         session_lookup, :session_lookup=,
         on_fabric_added, :on_fabric_added=,
         on_fabric_removed, :on_fabric_removed=,
+        on_fabric_updated, :on_fabric_updated=,
         set_attestation_credentials, set_attestation_from_manager,
         restore_root_cert,
         to: credentials
@@ -641,6 +642,7 @@ module Matter
 
       # Failsafe timer expired - drop everything that was pending
       def on_failsafe_expired
+        credentials.rollback_pending
         restored_vid_metadata = false
         @vid_failsafe_snapshot.each do |index, previous|
           next unless fabric = @fabric_table.get_fabric(index)
@@ -656,7 +658,6 @@ module Matter
           notify_changed(ATTR_FABRICS)
           notify_changed(ATTR_NOCS)
         end
-        credentials.reset_pending
       end
 
       # Failsafe disarmed successfully - the credentials are committed
@@ -680,6 +681,10 @@ module Matter
       # Bump the data version after a credential change
       def credentials_changed : Nil
         increment_version
+        notify_changed(ATTR_NOCS)
+        notify_changed(ATTR_FABRICS)
+        notify_changed(ATTR_COMMISSIONED_FABRICS)
+        notify_changed(ATTR_TRUSTED_ROOT_CERTIFICATES)
       end
 
       # A fabric was added: the Matter spec requires an ACL entry granting the
@@ -699,6 +704,7 @@ module Matter
         end
 
         @general_commissioning_cluster.try(&.record_added_fabric(fabric.fabric_index))
+        credentials_changed
       end
 
       # A fabric was removed: so is every piece of data scoped to it

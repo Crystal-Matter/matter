@@ -115,6 +115,18 @@ module Matter
     class CredentialService
       Log = ::Log.for("matter.commissioning.credential_service")
 
+      private struct NocUpdateSnapshot
+        getter fabric_index : UInt8
+        getter noc : Bytes
+        getter icac : Bytes?
+        getter key : Crypto::Key
+        getter node_id : UInt64
+        getter cats : Array(DataType::CaseAuthenticatedTag)
+
+        def initialize(@fabric_index, @noc, @icac, @key, @node_id, @cats)
+        end
+      end
+
       # Uncompressed P-256 public key: 0x04 || x (32) || y (32)
       PUBLIC_KEY_SIZE          =         65
       PUBLIC_KEY_UNCOMPRESSED  =    0x04_u8
@@ -185,8 +197,13 @@ module Matter
       # A fabric was removed via RemoveFabric
       property on_fabric_removed : Proc(UInt8, Nil)?
 
+      # A fabric's operational identity changed via UpdateNOC or rollback.
+      property on_fabric_updated : Proc(Fabric, Nil)?
+
       @attestation_key : Crypto::Key?
       @pending_noc_key : Crypto::Key?
+      @pending_added_fabric_index : UInt8?
+      @pending_noc_update : NocUpdateSnapshot?
       @attestation_cert_manager : Certificate::AttestationCertificateManager?
 
       def initialize(@target : CredentialTarget, @fabric_table : FabricTable)
@@ -428,6 +445,7 @@ module Matter
         end
 
         @pending.noc_added_or_updated = true
+        @pending_added_fabric_index = fabric.fabric_index
 
         # The administrator gets its ACL entry and the failsafe learns the
         # fabric, so CommissioningComplete may arrive on the new CASE session.
@@ -500,6 +518,10 @@ module Matter
           return NocOutcome.new(NocStatus::InvalidPublicKey, debug_text: "NOC public key does not match CSR")
         end
 
+        @pending_noc_update = NocUpdateSnapshot.new(
+          fabric.fabric_index, fabric.operational_cert, fabric.intermediate_cert,
+          fabric.operational_key, fabric.node_id, fabric.cats.dup)
+
         fabric.operational_cert = noc
         fabric.intermediate_cert = icac
         fabric.operational_key = @pending_noc_key.as(Crypto::Key)
@@ -512,6 +534,8 @@ module Matter
         @fabric_table.update_fabric(fabric)
 
         @pending.noc_added_or_updated = true
+        @target.credentials_changed
+        notify_fabric_updated(fabric)
 
         NocOutcome.new(NocStatus::Ok, fabric.fabric_index)
       end
@@ -601,6 +625,34 @@ module Matter
       def reset_pending : Nil
         @pending.reset
         @pending_noc_key = nil
+        @pending_added_fabric_index = nil
+        @pending_noc_update = nil
+      end
+
+      # Undo the NOC change made under an expired fail-safe. The table write
+      # persists the restored CASE identity before the next session arrives.
+      def rollback_pending : Nil
+        if index = @pending_added_fabric_index
+          remove_fabric(index) if @fabric_table.get_fabric(index)
+        elsif snapshot = @pending_noc_update
+          if fabric = @fabric_table.get_fabric(snapshot.fabric_index)
+            fabric.operational_cert = snapshot.noc
+            fabric.intermediate_cert = snapshot.icac
+            fabric.operational_key = snapshot.key
+            fabric.node_id = snapshot.node_id
+            fabric.cats = snapshot.cats
+            @fabric_table.update_fabric(fabric)
+            @target.credentials_changed
+            notify_fabric_updated(fabric)
+          end
+        end
+        reset_pending
+      end
+
+      private def notify_fabric_updated(fabric : Fabric) : Nil
+        @on_fabric_updated.try(&.call(fabric))
+      rescue ex
+        Log.error(exception: ex) { "Failed to publish updated fabric #{fabric.fabric_index}" }
       end
 
       # ======================================================================

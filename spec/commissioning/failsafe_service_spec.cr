@@ -93,7 +93,7 @@ module Matter::Commissioning
         service.complete(3_u8, case_session: true).ok?.should be_true
       end
 
-      it "disarms without rolling back on a zero expiry" do
+      it "rolls back pending state on a zero expiry" do
         target = RecordingRollbackTarget.new
         service = FailsafeService.new(target)
         breadcrumbs = [] of UInt64
@@ -105,8 +105,8 @@ module Matter::Commissioning
         outcome.ok?.should be_true
         service.armed?.should be_false
         service.context.should be_nil
-        breadcrumbs.should be_empty
-        target.windows_closed.should eq(0)
+        breadcrumbs.should eq([0_u64])
+        target.windows_closed.should eq(1)
       end
     end
 
