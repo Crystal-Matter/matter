@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Commissioner Control host approval interface
+
+- Add the Matter 1.6 Commissioner Control wire model and a fail-closed
+  per-fabric, per-node approval state machine. An explicit host callback handles
+  approval and target commissioning-window creation; a missing host cannot
+  approve requests. No device advertises this cluster by default.
+
 ### Level Control startup state
 
 - Apply Lighting StartUpCurrentLevel after restoring persisted cluster state on

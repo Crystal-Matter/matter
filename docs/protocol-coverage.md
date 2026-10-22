@@ -149,7 +149,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0556 | Chime Cluster | 2 | — | cluster absent |
 | 0x0700 | Commodity Tariff Cluster | 1 | — | cluster absent |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — |
-| 0x0751 | Commissioner Control Cluster | 1 | — | cluster absent |
+| 0x0751 | Commissioner Control Cluster | 1 | 1 | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — |
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — |
 | 0x0801 | TLS Certificate Management Cluster | 1 | — | cluster absent |

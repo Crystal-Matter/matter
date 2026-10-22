@@ -217,6 +217,7 @@ module Matter
               raise StorageError.new("Could not persist erased Ecosystem Information for fabric #{fabric_index}")
             end
           end
+          cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
         end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
