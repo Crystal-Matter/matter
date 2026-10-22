@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Keypad Input
+
+- Add the Matter 1.6 revision 1 Keypad Input server with all canonical CEC
+  key values, NavigationKeyCodes, LocationKeys, and NumberKeys feature bits,
+  and a typed SendKeyResponse. Advertised features accept their promised key
+  sets; the host may declare additional keys and decides
+  whether each press is valid in its current state. A synthetic Aggregator
+  fixture exercises the command with official chip-tool without claiming a
+  complete media device type.
+
 ### Thermostat User Interface Configuration
 
 - Add the Matter 1.6 revision 2 Thermostat User Interface Configuration
