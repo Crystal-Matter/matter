@@ -192,8 +192,9 @@ describe Matter::Cluster::OperationalCredentials do
       cluster = build_op_creds_cluster
 
       noc = Bytes.new(100, 0x01_u8)
-      command_data = create_update_noc_request_tlv(noc, nil, 1_u8)
-      result = invoke(cluster, Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC, command_data)
+      command_data = create_update_noc_request_tlv(noc, nil)
+      result = invoke(cluster, Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC, command_data,
+        is_case_session: true, fabric_index: 1_u8)
       result.should be_a(Matter::Cluster::CommandResponse)
     end
 

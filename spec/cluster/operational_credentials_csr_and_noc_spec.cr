@@ -426,84 +426,91 @@ describe Matter::Cluster::OperationalCredentials do
 
     describe "NOC update flow" do
       it "completes CSR(update) → UpdateNOC flow" do
-        cluster = build_op_creds_cluster
+        2.times do |wire_case|
+          cluster = build_op_creds_cluster
 
-        # First, add a fabric using the commissioning flow
-        cluster.request_session_id = 12345_u64
-        cluster.failsafe_armed = true
+          # First, add a fabric using the commissioning flow
+          cluster.request_session_id = 12345_u64
+          cluster.failsafe_armed = true
 
-        # Initial commissioning
-        nonce = Bytes.new(32, 0x42_u8)
-        csr_request_tlv = create_csr_request_tlv(nonce, false)
-        csr_result = invoke(cluster,
-          Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
-          csr_request_tlv
-        )
+          # Initial commissioning
+          nonce = Bytes.new(32, 0x42_u8)
+          csr_request_tlv = create_csr_request_tlv(nonce, false)
+          csr_result = invoke(cluster,
+            Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
+            csr_request_tlv
+          )
 
-        authority = TestCertificateAuthority.default
-        root_cert = authority.root_certificate
-        add_root_tlv = create_add_trusted_root_cert_request_tlv(root_cert)
-        invoke(cluster,
-          Matter::Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
-          add_root_tlv
-        )
+          authority = TestCertificateAuthority.default
+          root_cert = authority.root_certificate
+          add_root_tlv = create_add_trusted_root_cert_request_tlv(root_cert)
+          invoke(cluster,
+            Matter::Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
+            add_root_tlv
+          )
 
-        original_noc = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
+          original_noc = create_mock_noc_with_key(0x1234567890ABCDEF_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
-        ipk = Bytes.new(16, 0x02_u8)
-        add_noc_tlv = create_add_noc_request_tlv(original_noc, nil, ipk, 0xABCD_u64, 0xFFF1_u16)
-        invoke(cluster,
-          Matter::Cluster::OperationalCredentials::CMD_ADD_NOC,
-          add_noc_tlv
-        )
+          ipk = Bytes.new(16, 0x02_u8)
+          add_noc_tlv = create_add_noc_request_tlv(original_noc, nil, ipk, 0xABCD_u64, 0xFFF1_u16)
+          invoke(cluster,
+            Matter::Cluster::OperationalCredentials::CMD_ADD_NOC,
+            add_noc_tlv
+          )
 
-        initial_fabric_index = cluster.fabrics[0].fabric_index
+          initial_fabric_index = cluster.fabrics[0].fabric_index
 
-        # Reset failsafe context to simulate new failsafe period
-        cluster.on_failsafe_expired
-        cluster.failsafe_armed = true
-        cluster.request_session_id = 54321_u64
-        cluster.request_fabric_index = initial_fabric_index
+          # Reset failsafe context to simulate new failsafe period
+          cluster.on_failsafe_expired
+          cluster.failsafe_armed = true
+          cluster.request_session_id = 54321_u64
+          cluster.request_fabric_index = initial_fabric_index
 
-        # Now update the NOC
-        # Step 1: Generate CSR for update
-        update_nonce = Bytes.new(32, 0x99_u8)
-        update_csr_request_tlv = create_csr_request_tlv(update_nonce, true) # is_for_update = true
-        # An UpdateNOC CSR is only valid on the CASE session of the fabric it updates
-        csr_result = invoke(cluster,
-          Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
-          update_csr_request_tlv,
-          session_id: 54321_u64,
-          is_case_session: true,
-          fabric_index: initial_fabric_index
-        )
+          # Now update the NOC
+          # Step 1: Generate CSR for update
+          update_nonce = Bytes.new(32, 0x99_u8)
+          update_csr_request_tlv = create_csr_request_tlv(update_nonce, true) # is_for_update = true
+          # An UpdateNOC CSR is only valid on the CASE session of the fabric it updates
+          csr_result = invoke(cluster,
+            Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST,
+            update_csr_request_tlv,
+            session_id: 54321_u64,
+            is_case_session: true,
+            fabric_index: initial_fabric_index
+          )
 
-        # Step 2: Update NOC with new certificate (same fabric_id)
-        new_noc = create_mock_noc_with_key(0xFEDCBA0987654321_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
+          # Step 2: Update NOC with new certificate (same fabric_id)
+          new_noc = create_mock_noc_with_key(0xFEDCBA0987654321_u64, 0x0011223344556677_u64, csr_public_key(csr_result.as(Matter::Cluster::CommandResponse)))
 
-        update_noc_tlv = create_update_noc_request_tlv(new_noc, nil, initial_fabric_index)
-        result = invoke(cluster,
-          Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC,
-          update_noc_tlv,
-          session_id: 54321_u64,
-          fabric_index: initial_fabric_index
-        )
+          update_noc_tlv = if wire_case == 0
+                             CanonicalUpdateNocWire.new(new_noc).to_tlv(nil)
+                           else
+                             LegacyUpdateNocWire.new(new_noc, 2_u8).to_tlv(nil)
+                           end
+          result = invoke(cluster,
+            Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC,
+            update_noc_tlv,
+            session_id: 54321_u64,
+            is_case_session: true,
+            fabric_index: initial_fabric_index
+          )
 
-        result.should be_a(Matter::Cluster::CommandResponse)
+          result.should be_a(Matter::Cluster::CommandResponse)
 
-        # Parse response to check status
-        parsed = result.as(Matter::Cluster::CommandResponse).response.as(TLV::Any)
-        response = parsed.value.as(TLV::Structure)
-        status = response[0_u8].value.as(Int)
-        status.should eq(0) # Success
+          # Parse response to check status
+          parsed = result.as(Matter::Cluster::CommandResponse).response.as(TLV::Any)
+          response = parsed.value.as(TLV::Structure)
+          status = response[0_u8].value.as(Int)
+          status.should eq(0) # Success
 
-        # Verify fabric was updated, not added
-        cluster.commissioned_fabrics.should eq(1_u8)
+          # Verify fabric was updated, not added
+          cluster.commissioned_fabrics.should eq(1_u8)
 
-        # Verify node_id changed
-        fabric = cluster.fabrics[0]
-        fabric.node_id.should eq(0xFEDCBA0987654321_u64)
-        fabric.fabric_id.should eq(0x0011223344556677_u64) # Same fabric_id
+          # Verify node_id changed
+          fabric = cluster.fabrics[0]
+          fabric.node_id.should eq(0xFEDCBA0987654321_u64)
+          fabric.fabric_id.should eq(0x0011223344556677_u64) # Same fabric_id
+        end
       end
 
       it "rejects UpdateNOC with AddTrustedRoot in failsafe" do
@@ -573,7 +580,7 @@ describe Matter::Cluster::OperationalCredentials do
         # Try UpdateNOC - should fail because root cert was set
         noc_bytes = create_mock_noc(0x2222222222222222_u64, 0xAAAAAAAAAAAAAAAA_u64)
 
-        update_noc_tlv = create_update_noc_request_tlv(noc_bytes, nil, fabric_index)
+        update_noc_tlv = create_update_noc_request_tlv(noc_bytes, nil)
         result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC,
           update_noc_tlv,

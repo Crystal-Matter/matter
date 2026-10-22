@@ -444,28 +444,21 @@ module Matter
           @[TLV::Field(tag: 0)]
           property noc_value : Slice(UInt8)
 
-          @[TLV::Field(tag: 1)]
+          @[TLV::Field(tag: 1, optional: true)]
           property icac_value : Slice(UInt8)?
 
-          @[TLV::Field(tag: 254)]
-          property fabric_index : UInt8
-
-          def initialize(@noc_value : Slice(UInt8), @fabric_index : UInt8, @icac_value : Slice(UInt8)? = nil)
+          def initialize(@noc_value : Slice(UInt8), @icac_value : Slice(UInt8)? = nil)
           end
         end
 
         # Input to the OperationalCredentials updateFabricLabel command
-        # Note: fabric_index is optional - if not provided, it should be taken from the session context
         struct UpdateFabricLabelRequest
           include TLV::Serializable
 
           @[TLV::Field(tag: 0)]
           property label : String
 
-          @[TLV::Field(tag: 254)]
-          property fabric_index : UInt8?
-
-          def initialize(@label : String, @fabric_index : UInt8? = nil)
+          def initialize(@label : String)
           end
         end
 

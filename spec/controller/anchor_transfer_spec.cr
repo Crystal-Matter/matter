@@ -89,6 +89,7 @@ private class FakeRotationImClient < Matter::Controller::ImClient
   getter arm_seconds = [] of UInt16
   getter noc_request : Matter::Cluster::OperationalCredentials::Tlv::AddNocRequest?
   getter update_request : Matter::Cluster::OperationalCredentials::Tlv::UpdateNocRequest?
+  getter update_wire : TLV::Any?
   property? reject_noc = false
   property? reject_complete = false
 
@@ -132,6 +133,7 @@ private class FakeRotationImClient < Matter::Controller::ImClient
       value = TLV::Any.from_slice(Matter::Cluster::OperationalCredentials::Tlv::TlvNocResponse.new(status, 2_u8).to_slice)
     elsif cluster_id == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
           command_id == Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC
+      @update_wire = TLV::Any.from_slice(fields)
       @update_request = Matter::Cluster::OperationalCredentials::Tlv::UpdateNocRequest.from_slice(fields)
       response_id = Matter::Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
       value = TLV::Any.from_slice(Matter::Cluster::OperationalCredentials::Tlv::TlvNocResponse.new(
@@ -648,7 +650,7 @@ describe Matter::Controller::AnchorTransfer::AdministratorRotation do
       Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
     ])
     request = im.update_request.as(Matter::Cluster::OperationalCredentials::Tlv::UpdateNocRequest)
-    request.fabric_index.should eq(3_u8)
+    im.update_wire.as(TLV::Any)[254_u8]?.should be_nil
     Matter::Crypto::MatterCertificate.subject_ids_from_tlv(request.noc_value)
       .should contain(0xFFFF_FFFD_FFFE_0002_u64)
   ensure

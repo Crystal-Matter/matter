@@ -539,7 +539,8 @@ describe Matter::Cluster::OperationalCredentials do
         # Update label
         result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_UPDATE_FABRIC_LABEL,
-          create_update_fabric_label_request("MyFabricLabel", fabric_index)
+          create_update_fabric_label_request("MyFabricLabel"),
+          is_case_session: true, fabric_index: fabric_index
         )
 
         result.should be_a(Matter::Cluster::CommandResponse)
@@ -582,21 +583,24 @@ describe Matter::Cluster::OperationalCredentials do
         end
 
         # Set label on first fabric
-        fabric1_index = cluster.fabrics[0].fabric_index
+        fabric_indices = cluster.fabric_table.all_fabrics.map(&.fabric_index)
+        fabric1_index = fabric_indices[0]
         cluster.request_fabric_index = fabric1_index
 
         invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_UPDATE_FABRIC_LABEL,
-          create_update_fabric_label_request("SharedLabel", fabric1_index)
+          create_update_fabric_label_request("SharedLabel"),
+          is_case_session: true, fabric_index: fabric1_index
         )
 
         # Try to set same label on second fabric
-        fabric2_index = cluster.fabrics[1].fabric_index
+        fabric2_index = fabric_indices[1]
         cluster.request_fabric_index = fabric2_index
 
         result = invoke(cluster,
           Matter::Cluster::OperationalCredentials::CMD_UPDATE_FABRIC_LABEL,
-          create_update_fabric_label_request("SharedLabel", fabric2_index) # Same label!
+          create_update_fabric_label_request("SharedLabel"), # Same label!
+          is_case_session: true, fabric_index: fabric2_index
         )
 
         # Should return LabelConflict error

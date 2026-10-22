@@ -346,8 +346,7 @@ module Matter
                            Cluster::OperationalCredentials::CLUSTER_ID,
                            Cluster::OperationalCredentials::CMD_UPDATE_NOC,
                            Cluster::OperationalCredentials::Tlv::UpdateNocRequest.new(
-                             noc, @existing_fabric_index.as(UInt8),
-                             @bootstrap.fabric.intermediate_cert).to_slice)
+                             noc, @bootstrap.fabric.intermediate_cert).to_slice)
                        else
                          add_noc = Cluster::OperationalCredentials::Tlv::AddNocRequest.new(
                            noc, @bootstrap.fabric.intermediate_cert,

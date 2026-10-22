@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Operational Credentials fabric-scoped commands
+
+- Encode UpdateNOC with only NOCValue and optional ICACValue, and
+  UpdateFabricLabel with only Label. Derive the fabric exclusively from the
+  authenticated CASE session, including when a legacy request supplies an
+  extra FabricIndex field. Reject fabricless PASE invokes before they can
+  update another fabric.
+
 ### Timed Interaction Model enforcement
 
 - Enforce timed command and writable attribute metadata on encrypted unicast
@@ -29,7 +37,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restoring stale runtime values; clamp a restored known CurrentLevel to the
   configured range. Mark CurrentLevel as a scene attribute and reject zero
   writes to nullable DefaultMoveRate, whose defined range starts at 1.
-
 ### Group Key Management revision 3
 
 - Advertise the Matter 1.6 revision 3 ClusterRevision while retaining the
@@ -37,7 +44,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   disabled. Omit deprecated multicast policy tag 8 from new key sets and
   KeySetRead responses while accepting legacy input. Verify the revision
   through official chip-tool groupcast E2E.
-
 ### Joint Fabric legacy IPK recovery
 
 - Repair a legacy Anchor Datastore whose GroupKeySetID zero lacks the fabric
