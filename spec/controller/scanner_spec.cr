@@ -78,19 +78,23 @@ describe Matter::Controller::Scanner do
         builder.build_srv(instance, 5540, "v6-only.local", 120.seconds),
         builder.build_aaaa("v6-only.local", Socket::IPAddress.new("::1", 0), 120.seconds),
       ])
-      scanner.start
-      port = scanner.ipv6_port_for_spec
-      port.should_not be_nil
-      if port
-        sender.send(packet.to_slice, Socket::IPAddress.new("::1", port))
+      begin
+        scanner.start
+        port = scanner.ipv6_port_for_spec
+        port.should_not be_nil
+        if port
+          destination = Socket::IPAddress.new("::1", port)
+          deadline = Time.instant + 5.seconds
+          until scanner.get_device(instance) || Time.instant >= deadline
+            sender.send(packet.to_slice, destination)
+            sleep 100.milliseconds
+          end
+        end
+        scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
+      ensure
+        sender.close
+        scanner.close
       end
-      deadline = Time.instant + 1.second
-      until scanner.get_device(instance) || Time.instant >= deadline
-        sleep 10.milliseconds
-      end
-      scanner.get_device(instance).as(Matter::Controller::DiscoveredDevice).addresses.map(&.address).should eq(["::1"])
-      sender.close
-      scanner.close
     end
     it "resolves each operational SRV target from only its own host A/AAAA records" do
       require_udp_sockets!
