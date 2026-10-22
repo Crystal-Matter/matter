@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Group Key Management revision 3
+
+- Advertise the Matter 1.6 revision 3 ClusterRevision while retaining the
+  existing key-management behavior with optional provisional Groupcast
+  disabled. Omit deprecated multicast policy tag 8 from new key sets and
+  KeySetRead responses while accepting legacy input. Verify the revision
+  through official chip-tool groupcast E2E.
+
 ### Joint Fabric legacy IPK recovery
 
 - Repair a legacy Anchor Datastore whose GroupKeySetID zero lacks the fabric

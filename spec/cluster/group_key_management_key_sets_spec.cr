@@ -3,6 +3,17 @@ require "../support/group_key_management_helpers"
 module Matter::Cluster
   describe GroupKeyManagement do
     describe "initialization" do
+      it "advertises Matter 1.6 revision 3 without provisional Groupcast" do
+        cluster = build(GroupKeyManagement, 0)
+        cluster.cluster_revision.should eq(3_u16)
+        cluster.feature_map.should eq(GroupKeyManagement::Feature::None)
+      end
+
+      it "omits the deprecated multicast policy from a new key set" do
+        key_set = GroupKeyManagement::GroupKeySetStruct.new(group_key_set_id: 1_u16)
+        key_set.to_tlv(nil).as_structure.has_key?(8_u8).should be_false
+      end
+
       it "creates cluster with default settings" do
         cluster = build(GroupKeyManagement, 0)
         cluster.max_groups_per_fabric.should eq(12)
@@ -324,6 +335,18 @@ module Matter::Cluster
         # But start times should be present
         response.as(GroupKeyManagement::KeySetReadResponse).group_key_set.epoch_start_time0.should eq(1000_u64)
         response.as(GroupKeyManagement::KeySetReadResponse).group_key_set.epoch_start_time1.should eq(2000_u64)
+      end
+
+      it "omits deprecated multicast policy when reading a legacy key set" do
+        cluster = build(GroupKeyManagement, 0)
+        key_set = Cluster.create_key_set(id: 1_u16)
+        key_set.group_key_multicast_policy = GroupKeyManagement::GroupKeyMulticastPolicyEnum::PerGroupId
+        cluster.handle_key_set_write(GroupKeyManagement::KeySetWriteRequest.new(key_set), 1_u8)
+
+        response = cluster.handle_key_set_read(GroupKeyManagement::KeySetReadRequest.new(1_u16), 1_u8)
+        response.should_not be_nil
+        response.as(GroupKeyManagement::KeySetReadResponse).to_tlv(nil).as_structure[0_u8]
+          .as_structure.has_key?(8_u8).should be_false
       end
 
       it "isolates fabrics" do

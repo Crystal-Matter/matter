@@ -11,6 +11,7 @@ describe "private groupcast interoperability" do
 
   it "accepts mapped group commands only with membership and Group ACL, including after restart" do
     device.commission!
+    read_int(device, "groupkeymanagement", "cluster-revision", "ClusterRevision", 0).should eq(3)
     key_set = %({"groupKeySetID":#{keyset_id},"groupKeySecurityPolicy":0,"epochKey0":"#{epoch_key}","epochStartTime0":1110000,"epochKey1":null,"epochStartTime1":null,"epochKey2":null,"epochStartTime2":null})
     expect_success(device.chip("groupkeymanagement", "key-set-write", key_set, device.node, "0"))
     mapping = %([{"groupId":#{group_id},"groupKeySetID":#{keyset_id},"fabricIndex":1}])

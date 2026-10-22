@@ -33,7 +33,7 @@ describe "Cluster::Base ClusterRevision" do
                    {Matter::Cluster::ColorControl, 7_u16},
                    {Matter::Cluster::Descriptor, 3_u16},
                    {Matter::Cluster::DoorLock, 9_u16},
-                   {Matter::Cluster::GroupKeyManagement, 2_u16},
+                   {Matter::Cluster::GroupKeyManagement, 3_u16},
                    {Matter::Cluster::Groups, 4_u16},
                    {Matter::Cluster::IcdManagement, 3_u16},
                    {Matter::Cluster::Identify, 6_u16},

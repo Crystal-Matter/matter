@@ -18,9 +18,11 @@ module Matter
     # - Strict Validation: Epoch keys must be ordered, security policies enforced
     # - Cryptographic Operations: HKDF-based key derivation for operational keys
     class GroupKeyManagement < Base
-      cluster 0x003F, revision: 2, persist_state: false
+      cluster 0x003F, revision: 3, persist_state: false
 
       feature :cache_and_sync, bit: 0 # Currently provisional/disabled
+      # Revision 3's Groupcast feature is optional and remains disabled until
+      # the Groupcast cluster can manage the corresponding fabric mappings.
 
       DEFAULT_MAX_GROUPS_PER_FABRIC     = 12_u16
       DEFAULT_MAX_GROUP_KEYS_PER_FABRIC =  3_u16
@@ -89,7 +91,7 @@ module Matter
         @[TLV::Field(tag: 7)]
         property epoch_start_time2 : UInt64?
 
-        # Multicast policy (currently unused, defaults to PerGroupId)
+        # Deprecated in Matter 1.6; retained for decoding legacy key sets.
         @[TLV::Field(tag: 8, optional: true)]
         property group_key_multicast_policy : GroupKeyMulticastPolicyEnum?
 
@@ -102,7 +104,7 @@ module Matter
           @epoch_start_time1 : UInt64? = nil,
           @epoch_key2 : Bytes? = nil,
           @epoch_start_time2 : UInt64? = nil,
-          @group_key_multicast_policy : GroupKeyMulticastPolicyEnum? = GroupKeyMulticastPolicyEnum::PerGroupId,
+          @group_key_multicast_policy : GroupKeyMulticastPolicyEnum? = nil,
         )
         end
 
@@ -467,8 +469,7 @@ module Matter
           epoch_key1: nil,
           epoch_start_time1: key_set.epoch_start_time1,
           epoch_key2: nil,
-          epoch_start_time2: key_set.epoch_start_time2,
-          group_key_multicast_policy: key_set.group_key_multicast_policy
+          epoch_start_time2: key_set.epoch_start_time2
         )
 
         KeySetReadResponse.new(sanitized)

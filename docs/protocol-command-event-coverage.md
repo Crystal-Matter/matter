@@ -45,7 +45,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x003B | Switch Cluster | 2 | 2 | — | — |
 | 0x003C | Administrator Commissioning Cluster | 1 | 1 | — | — |
 | 0x003E | Operational Credentials Cluster | 2 | 2 | — | — |
-| 0x003F | Group Key Management Cluster | 3 | 2 | — | — |
+| 0x003F | Group Key Management Cluster | 3 | 3 | — | — |
 | 0x0040 | Fixed Label Cluster | 1 | 1 | — | — |
 | 0x0041 | User Label Cluster | 1 | 1 | — | — |
 | 0x0045 | Boolean State Cluster | 3 | 3 | — | — |
