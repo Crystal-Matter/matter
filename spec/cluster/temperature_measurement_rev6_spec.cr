@@ -52,6 +52,21 @@ describe "Matter 1.6 Temperature Measurement revision 6" do
     cluster.data_version.should eq(version)
   end
 
+  it "rejects host changes to fixed capabilities without changing DataVersion" do
+    cluster = build(Temperature, min_measured_value: 1000_i16,
+      max_measured_value: 3000_i16, tolerance: 25_u16)
+    version = cluster.data_version
+
+    expect_raises(ArgumentError, /fixed temperature/) { cluster.min_measured_value = 1100_i16 }
+    expect_raises(ArgumentError, /fixed temperature/) { cluster.max_measured_value = 2900_i16 }
+    expect_raises(ArgumentError, /fixed temperature/) { cluster.tolerance = 26_u16 }
+
+    cluster.min_measured_value.should eq(1000_i16)
+    cluster.max_measured_value.should eq(3000_i16)
+    cluster.tolerance.should eq(25_u16)
+    cluster.data_version.should eq(version)
+  end
+
   it "distinguishes absent optional Tolerance from a supported nonnullable zero" do
     absent = build(Temperature)
     read_status(absent, Temperature::ATTR_TOLERANCE).status.should eq(IMCode::UnsupportedAttribute)

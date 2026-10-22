@@ -131,7 +131,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and MaxMeasuredValue now default to null when capability limits are unknown;
   Min, Max, and optional nonnullable Tolerance report fixed quality. Validate
   readings against each known bound and reject invalid direct host updates
-  before changing state. MeasuredValue remains volatile. The temperature
+  before changing state. Fixed capabilities reject later host changes.
+  MeasuredValue remains volatile. The temperature
   sensor example and chip-tool E2E cover nullable bounds and restart.
 
 ### Cross-ecosystem Joint Fabric control

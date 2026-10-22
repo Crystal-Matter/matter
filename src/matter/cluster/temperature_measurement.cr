@@ -27,12 +27,13 @@ module Matter
       attribute 0x0000, :measured_value, Int16, nullable: true,
         validate: :validate_measured_value!
       attribute 0x0001, :min_measured_value, Int16, nullable: true,
-        fixed: true, min: MIN_TEMPERATURE, max: MAX_TEMPERATURE - 1
+        fixed: true, min: MIN_TEMPERATURE, max: MAX_TEMPERATURE - 1,
+        validate: :reject_fixed_attribute_change!
       attribute 0x0002, :max_measured_value, Int16, nullable: true,
-        fixed: true
+        fixed: true, validate: :reject_fixed_attribute_change!
       attribute 0x0003, :tolerance, UInt16, default: 0_u16,
         optional: true, fixed: true, max: MAX_TOLERANCE,
-        present_if: :tolerance_supported?
+        present_if: :tolerance_supported?, validate: :reject_fixed_attribute_change!
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @measured_value : Int16? = nil,
@@ -75,6 +76,10 @@ module Matter
       # Called with the previous and the new value whenever MeasuredValue changes
       def on_temperature_changed(&block : Int16?, Int16? -> Nil) : Nil
         on_measured_value_changed(&block)
+      end
+
+      private def reject_fixed_attribute_change!(_value) : Nil
+        raise ArgumentError.new("fixed temperature attributes cannot change after construction")
       end
 
       private def measurable?(value : Int16) : Bool
