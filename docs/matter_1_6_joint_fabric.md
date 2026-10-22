@@ -402,8 +402,9 @@ over Pigweed RPC. Crystal then attests and commissions the SDK bridge onto the
 source fabric, checking the approved test VID/PID before AddNOC. The harness
 verifies both nodes report two commissioned fabrics over fresh CASE sessions.
 Logs are retained under `tmp/interop-sdk-reverse/`. This test requires
-`MATTER_REVERSE_TEST_CONSENT=1` and uses the SDK/Crystal development PAA trust
-fixture; those are opt-in test policy and trust, not a production consent UI
+`MATTER_REVERSE_TEST_CONSENT=1` and loads the pinned SDK development PAA and
+Certification Declaration signer certificates into this example's attestation
+trust store. Those are opt-in test policy and trust, not a production consent UI
 or a production attestation authority.
 
 Only authenticated CASE NOC subjects may satisfy an Administrator or Anchor

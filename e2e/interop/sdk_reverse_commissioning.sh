@@ -58,6 +58,7 @@ PY
   ) 2>&1 | tee "${log_dir}/crystal-build.log"
 fi
 
+export MATTER_REVERSE_SDK_ROOT="${sdk_root}"
 python3 "${repo_root}/e2e/interop/sdk_reverse_commissioning_live.py" \
   --sdk "${sdk_root}" \
   --aggregator "${MATTER_REVERSE_AGGREGATOR_BIN:-${log_dir}/matter_reverse_aggregator}" \

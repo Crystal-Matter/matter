@@ -19,6 +19,9 @@ module MatterReverseCommissioning
     ITERATIONS             = 1000_u32
     SALT_LENGTH            =       32
     COMMISSION_TIMEOUT     = 90.seconds
+    SDK_ROOT_ENV           = "MATTER_REVERSE_SDK_ROOT"
+    SDK_PAA_CERT           = "credentials/development/attestation/Chip-Development-PAA-Cert.der"
+    SDK_CD_CERT_GLOB       = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
 
     identity vendor: "Spider-Gazelle", product: "Reverse Commissioning Aggregator",
       vendor_id: TEST_VENDOR_ID,
@@ -36,6 +39,28 @@ module MatterReverseCommissioning
 
     def console_notes : Array(String)
       ["Opt-in SDK reverse-commissioning fixture; no production approval policy"]
+    end
+
+    # The SDK bridge uses the pinned upstream development DAC/PAI and CD
+    # signer. Only this opt-in interop fixture adds those public test roots.
+    private def sdk_attestation_trust : Matter::Controller::AttestationTrustStore
+      sdk_root = ENV[SDK_ROOT_ENV]? ||
+                 raise Matter::ConfigurationError.new("Missing pinned SDK root for reverse commissioning attestation")
+      trust = Matter::Controller::AttestationTrustStore.matter_test_fixture
+      trust.paa_certificates << File.read(File.join(sdk_root, SDK_PAA_CERT)).to_slice.dup
+      signer_paths = Dir.glob(File.join(sdk_root, SDK_CD_CERT_GLOB))
+      raise Matter::ConfigurationError.new("No SDK development CD signers found") if signer_paths.empty?
+      signer_paths.each do |path|
+        signer = OpenSSL::X509::Certificate.from_der(File.read(path).to_slice)
+        extension = signer.extensions.find { |entry| entry.oid == "subjectKeyIdentifier" } ||
+                    raise Matter::ConfigurationError.new("SDK CD signer has no subject key identifier")
+        ski = extension.value.gsub(/[^0-9A-Fa-f]/, "").upcase
+        unless ski.matches?(/\A[0-9A-F]{40}\z/)
+          raise Matter::ConfigurationError.new("SDK CD signer has invalid subject key identifier")
+        end
+        trust.cd_signers[ski] = signer.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+      end
+      trust
     end
 
     protected def before_start : Nil
@@ -72,7 +97,7 @@ module MatterReverseCommissioning
               commissioner = Matter::Controller::Commissioning::Commissioner.new(store, client,
                 timeout: COMMISSION_TIMEOUT,
                 attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-                  Matter::Controller::AttestationTrustStore.matter_test_fixture))
+                  sdk_attestation_trust))
               code = Matter::SetupPayload.generate_manual_code(discriminator, pin)
               commissioner.pairing_code(SOURCE_BRIDGE_NODE_ID, code,
                 expected_identity: {approval.vendor_id, approval.product_id})
