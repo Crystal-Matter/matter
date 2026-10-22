@@ -29,6 +29,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Thread credentials remain in the host backend and are not saved in cluster
   persistence. Physical Thread routing still requires a compatible host stack.
 
+### Operational State server
+
+- Add the Matter 1.6 Operational State (0x0060) revision 3 server. It reports
+  phase, state and error data, emits typed error and completion events, and
+  optionally exposes Start, Stop, Pause and Resume. The default instance is
+  monitor-only. Appliance hosts opt into commands and decide whether each
+  transition is safe through an explicit callback; denied commands leave the
+  state unchanged.
+
 ### Thread Network Directory
 
 - Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.
