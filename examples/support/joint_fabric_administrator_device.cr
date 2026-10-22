@@ -1417,6 +1417,9 @@ module MatterJointFabricAdministrator
         outgoing_session = nil.as(Matter::Session::SecureContext?)
         if journal.stage.ready?
           outgoing_peer = resolve_transfer_peer(scanner, identity.compressed_fabric_id, outgoing_node_id)
+          ::Log.for("matter.example.joint_fabric_administrator").info do
+            "Administrator removal CASE pairing with outgoing node 0x#{outgoing_node_id.to_s(16)}"
+          end
           outgoing_session = Matter::Controller::Pairing::CasePairing.new.pair(client, outgoing_peer,
             identity, peer_node_id: outgoing_node_id)
         end
@@ -1439,6 +1442,9 @@ module MatterJointFabricAdministrator
             raise Matter::StorageError.new("Could not persist Administrator CAT version") unless persistence.save_cluster(datastore)
             persistence.flush
             self_peer = Socket::IPAddress.new("127.0.0.1", self.port)
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with local Anchor before NOC rotation"
+            end
             self_session = Matter::Controller::Pairing::CasePairing.new.pair(client, self_peer,
               identity, peer_node_id: own_fabric.node_id)
             Matter::Controller::AnchorTransfer::AdministratorRotation.new(client, im,
@@ -1448,6 +1454,9 @@ module MatterJointFabricAdministrator
             configure_propagator(own_fabric, own_fabric.root_cert.as(Bytes))
             active_identity = controller_store.load.fabric_for(own_fabric.fabric_id,
               own_fabric.root_public_key, own_fabric.node_id)
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with local Anchor after NOC rotation"
+            end
             active_session = Matter::Controller::Pairing::CasePairing.new.pair(client, self_peer,
               active_identity, peer_node_id: own_fabric.node_id)
             tighten_administrator_acl(im, active_session, self_peer, admin_version)
@@ -1459,12 +1468,18 @@ module MatterJointFabricAdministrator
             active_bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(
               active_identity, bootstrap.anchor_icac_private_key)
             peer = resolve_transfer_peer(scanner, active_identity.compressed_fabric_id, node_id)
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with participant 0x#{node_id.to_s(16)} before NOC rotation"
+            end
             session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
               active_identity, peer_node_id: node_id)
             index = remote_fabric_index(im, session, peer, own_fabric)
             Matter::Controller::AnchorTransfer::AdministratorRotation.new(client, im,
               session, peer, node_id, active_bootstrap, admin_version, anchor_version,
               existing_fabric: true, existing_fabric_index: index).transition!
+            ::Log.for("matter.example.joint_fabric_administrator").info do
+              "Administrator removal CASE pairing with participant 0x#{node_id.to_s(16)} after NOC rotation"
+            end
             refreshed_session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
               active_identity, peer_node_id: node_id)
             tighten_administrator_acl(im, refreshed_session, peer, admin_version)
