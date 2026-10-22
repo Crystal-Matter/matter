@@ -75,4 +75,30 @@ describe "Device commissioning window advertising" do
     info.commissioning_mode.should eq(Matter::MDNS::CommissioningMode::Enhanced)
     device.responder.stop_commissioning
   end
+
+  it "closes the enhanced window after CommissioningComplete" do
+    device = CommissioningWindowTestDevice.new
+    window = device.administrator_commissioning
+    window.open_enhanced_window(900_u16, 1_u8, 0xFFF1_u16)
+    window.window_open?.should be_true
+
+    failsafe = device.general_commissioning.failsafe
+    failsafe.arm(60_u16, 0_u64, 1_u8, pase_session: false).ok?.should be_true
+    failsafe.complete(1_u8, case_session: true).ok?.should be_true
+
+    window.window_open?.should be_false
+  end
+
+  it "closes the enhanced window when the commissioning failsafe rolls back" do
+    device = CommissioningWindowTestDevice.new
+    window = device.administrator_commissioning
+    window.open_enhanced_window(900_u16, 1_u8, 0xFFF1_u16)
+    window.window_open?.should be_true
+
+    failsafe = device.general_commissioning.failsafe
+    failsafe.arm(60_u16, 0_u64, 1_u8, pase_session: false).ok?.should be_true
+    failsafe.expire
+
+    window.window_open?.should be_false
+  end
 end

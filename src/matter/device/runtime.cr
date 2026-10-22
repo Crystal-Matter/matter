@@ -524,6 +524,9 @@ module Matter
 
       administrator_commissioning = Cluster::AdministratorCommissioning.new(endpoint_0)
       @administrator_commissioning = administrator_commissioning
+      general_commissioning.on_close_commissioning_window = -> do
+        administrator_commissioning.close_window if administrator_commissioning.window_open?
+      end
 
       general_diagnostics = Cluster::GeneralDiagnostics.new(endpoint_0)
       general_diagnostics.on_device_load_status = ->(fabric_index : UInt8?) do

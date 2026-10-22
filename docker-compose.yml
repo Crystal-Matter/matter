@@ -133,6 +133,12 @@ services:
     environment:
       E2E_DEVICE: matter_level_control
 
+  scenes-fabric:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_scenes_fabric
+      E2E_BINARY: matter_level_control
+
   door-lock:
     <<: *device
     environment:
@@ -230,6 +236,7 @@ services:
       joint-fabric-lifecycle-target: { condition: service_healthy }
       joint-fabric-migration-target: { condition: service_healthy }
       level-control: { condition: service_healthy }
+      scenes-fabric: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }
       humidity-sensor: { condition: service_healthy }

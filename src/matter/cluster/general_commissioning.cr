@@ -183,6 +183,10 @@ module Matter
       # Longest network commissioning step a commissioner should allow for
       property max_network_commissioning_seconds : UInt16 = DEFAULT_COMMISSIONING_SECONDS
 
+      # The device runtime closes the AdministratorCommissioning window after
+      # both successful CommissioningComplete and fail-safe rollback.
+      property on_close_commissioning_window : Proc(Nil)?
+
       # Country code (stored for rollback purposes)
       property country_code : String = "XX" # Default: unknown/unspecified
 
@@ -519,6 +523,7 @@ module Matter
       # Close commissioning window
       def close_commissioning_window : Nil
         failsafe.commissioning_window_open = false
+        @on_close_commissioning_window.try(&.call)
         Log.info { "Commissioning window closed" }
       end
 

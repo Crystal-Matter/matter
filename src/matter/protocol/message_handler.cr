@@ -3,6 +3,7 @@ require "../cluster/general_diagnostics"
 require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
 require "../cluster/group_key_management"
+require "../cluster/scenes_management"
 require "../codec/message_codec"
 require "../fabric_table"
 require "../node"
@@ -706,6 +707,7 @@ module Matter
         @node.get_cluster(Cluster::GroupKeyManagement).try(&.remove_fabric(fabric_index))
         @node.clusters.each_value do |cluster|
           cluster.as?(Cluster::Groups).try(&.remove_fabric(fabric_index))
+          cluster.as?(Cluster::ScenesManagement).try(&.remove_fabric(fabric_index))
         end
         refresh_group_memberships
       end
