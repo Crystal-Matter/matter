@@ -57,25 +57,27 @@ module Matter
       def invoke(fabric_id : UInt64, group_id : UInt16, cluster_id : UInt32,
                  command_id : UInt32, fields : Bytes = Bytes.empty,
                  root_public_key : Bytes? = nil,
-                 controller_node_id : UInt64? = nil) : Nil
+                 controller_node_id : UInt64? = nil,
+                 iana_address : Bool = false) : Nil
         fabric, key = select_group(fabric_id, group_id, root_public_key, controller_node_id)
         path = InteractionModel::CommandPath.new(nil, cluster_id, command_id)
         command_fields = fields.empty? ? nil : TLV::Any.from_slice(fields)
         command = InteractionModel::CommandDataIBTlv.new(path, command_fields)
         @sender.invoke(fabric.fabric_id, LOCAL_FABRIC_INDEX, fabric.controller_node_id,
-          key, [command])
+          key, [command], iana_address: iana_address)
       end
 
       # Group writes are one-way and have no endpoint or data version in the path.
       def write(fabric_id : UInt64, group_id : UInt16, cluster_id : UInt32,
                 attribute_id : UInt32, value : TLV::Any,
                 root_public_key : Bytes? = nil,
-                controller_node_id : UInt64? = nil) : Nil
+                controller_node_id : UInt64? = nil,
+                iana_address : Bool = false) : Nil
         fabric, key = select_group(fabric_id, group_id, root_public_key, controller_node_id)
         path = InteractionModel::AttributePath.new(nil, cluster_id, attribute_id)
         attribute = InteractionModel::AttributeDataIB.new(path, value)
         @sender.write(fabric.fabric_id, LOCAL_FABRIC_INDEX, fabric.controller_node_id,
-          key, [attribute])
+          key, [attribute], iana_address: iana_address)
       end
 
       private def select_group(fabric_id : UInt64, group_id : UInt16,

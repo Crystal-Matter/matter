@@ -39,6 +39,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   at most 10.00% maximum error; nullable percentage readings are range checked
   before publication. A Soil Sensor example is read through official chip-tool.
 
+### Matter 1.6 Groupcast Listener
+
+- Add an opt-in root Groupcast Listener with persistent, fabric-scoped
+  membership and IANA multicast reception. Enable GKM GroupcastAdoption and
+  Access Control AuxiliaryACL together, hide legacy group maps after adoption,
+  and derive group access only for member endpoints. Datastore propagation
+  uses Groupcast JoinGroup/LeaveGroup on adopting targets and records failed
+  adoption against the pending group entry.
+
 ### Level Control revision 7 color temperature coupling
 
 - Link Level Control and Color Control on the same endpoint. The Lighting

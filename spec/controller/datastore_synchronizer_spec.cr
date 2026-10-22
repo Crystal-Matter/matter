@@ -5,6 +5,7 @@ private alias Datastore = Matter::Cluster::JointFabricDatastore
 
 private class DatastoreImClient < Matter::Controller::ImClient
   getter commands = [] of UInt32
+  getter command_paths = [] of Tuple(UInt32, UInt32)
   getter writes = [] of Tuple(UInt32, UInt32, Bytes)
   property? success = true
   property response_code : Matter::InteractionModel::StatusCode? = nil
@@ -14,6 +15,9 @@ private class DatastoreImClient < Matter::Controller::ImClient
   getter group_memberships = Hash(UInt16, Array(Matter::DataType::GroupId)).new
   getter binding_entries = Hash(UInt16, Array(Matter::Cluster::Binding::Target)).new
   property key_set_ids = [] of UInt16
+  property groupcast_memberships = [] of Matter::Cluster::Groupcast::MembershipStruct
+  property? groupcast_adopted = false
+  property? reject_groupcast_adoption = false
 
   def initialize(@client : Matter::Controller::Client)
     super(@client)
@@ -28,6 +32,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
     fields : Bytes = Bytes.empty,
   ) : Matter::InteractionModel::InvokeResponseMessage
     @commands << command_id
+    @command_paths << {cluster_id, command_id}
     response_id = command_id
     response_fields = nil.as(TLV::Any?)
     if cluster_id == Matter::Cluster::Groups::CLUSTER_ID
@@ -44,6 +49,26 @@ private class DatastoreImClient < Matter::Controller::ImClient
           command_id == Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES
       response_id = Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES_RESPONSE
       response_fields = TLV::Any.from_slice(Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.new(@key_set_ids).to_slice)
+    elsif cluster_id == Matter::Cluster::Groupcast::CLUSTER_ID
+      if command_id == Matter::Cluster::Groupcast::CMD_JOIN_GROUP
+        request = Matter::Cluster::Groupcast::JoinGroupRequest.from_slice(fields)
+        existing = @groupcast_memberships.find(&.group_id.==(request.group_id))
+        endpoints = ((existing.try(&.endpoints) || [] of UInt16) + request.endpoints).uniq
+        @groupcast_memberships.reject! { |entry| entry.group_id == request.group_id }
+        @groupcast_memberships << Matter::Cluster::Groupcast::MembershipStruct.new(request.group_id,
+          endpoints, request.key_set_id, false, fabric_index: 1_u8)
+      elsif command_id == Matter::Cluster::Groupcast::CMD_LEAVE_GROUP
+        request = Matter::Cluster::Groupcast::LeaveGroupRequest.from_slice(fields)
+        existing = @groupcast_memberships.find(&.group_id.==(request.group_id))
+        removed = existing.try(&.endpoints.select { |endpoint| (request.endpoints || [] of UInt16).includes?(endpoint) }) || [] of UInt16
+        if existing
+          existing.endpoints.reject! { |endpoint| removed.includes?(endpoint) }
+          @groupcast_memberships.reject! { |entry| entry.group_id == request.group_id } if existing.endpoints.empty?
+        end
+        response_id = Matter::Cluster::Groupcast::CMD_LEAVE_GROUP_RESPONSE
+        response_fields = TLV::Any.from_slice(Matter::Cluster::Groupcast::LeaveGroupResponse.new(
+          request.group_id, removed).to_slice)
+      end
     end
     path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id, command: response_id)
     if response_fields
@@ -71,7 +96,13 @@ private class DatastoreImClient < Matter::Controller::ImClient
             elsif cluster_id == Matter::Cluster::Binding::CLUSTER_ID
               (@binding_entries[endpoint_id]? || [] of Matter::Cluster::Binding::Target).to_tlv
             elsif cluster_id == Matter::Cluster::GroupKeyManagement::CLUSTER_ID
-              ([] of Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).to_tlv
+              if attribute_id == Matter::Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION
+                (@groupcast_adopted ? [Matter::Cluster::GroupKeyManagement::GroupcastAdoptionStruct.new(true, 1_u8)] : [] of Matter::Cluster::GroupKeyManagement::GroupcastAdoptionStruct).to_tlv
+              else
+                ([] of Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).to_tlv
+              end
+            elsif cluster_id == Matter::Cluster::Groupcast::CLUSTER_ID
+              @groupcast_memberships.to_tlv
             else
               @acl_entries.to_tlv
             end
@@ -91,8 +122,13 @@ private class DatastoreImClient < Matter::Controller::ImClient
     suppress_response : Bool = false,
   ) : Matter::InteractionModel::WriteResponseMessage
     @writes << {cluster_id, attribute_id, value}
+    adoption_write = cluster_id == Matter::Cluster::GroupKeyManagement::CLUSTER_ID &&
+                     attribute_id == Matter::Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION
+    if adoption_write && !@reject_groupcast_adoption
+      @groupcast_adopted = Array(Matter::Cluster::GroupKeyManagement::GroupcastAdoptionStruct).from_tlv(value).any?(&.groupcast_adopted?)
+    end
     path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id)
-    code = @response_code || (@success ? Matter::InteractionModel::StatusCode::Success : Matter::InteractionModel::StatusCode::Failure)
+    code = @response_code || ((@success && !(@reject_groupcast_adoption && adoption_write)) ? Matter::InteractionModel::StatusCode::Success : Matter::InteractionModel::StatusCode::Failure)
     status = Matter::InteractionModel::StatusIB.new(code.value)
     Matter::InteractionModel::WriteResponseMessage.new([Matter::InteractionModel::AttributeStatusIB.new(path, status)])
   end
@@ -109,6 +145,64 @@ private def datastore_session : Matter::Session::SecureContext
 end
 
 describe Matter::Controller::DatastoreSynchronizer do
+  it "records adoption rejection against the pending group and does not invoke JoinGroup" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.server_lists[0_u16] = [Matter::Cluster::Groupcast::CLUSTER_ID]
+    im.reject_groupcast_adoption = true
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(0x1234_u64,
+      "Shared", 7_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      0x100_u64, 1_u16, 0x1234_u16, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.groupcast_adopted?.should be_false
+    im.command_paths.any? { |path| path[0] == Matter::Cluster::Groupcast::CLUSTER_ID }.should be_false
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+  ensure
+    client.try(&.close)
+  end
+
+  it "adopts a Groupcast-only target and commits the Anchor group without Groups" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.server_lists[0_u16] = [Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+                              Matter::Cluster::Groupcast::CLUSTER_ID]
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.group_key_set_list = [Datastore::DatastoreGroupKeySetStruct.new(7_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0x77_u8), 1_u64, nil, nil, nil, nil)]
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(0x1234_u64,
+      "Shared", 7_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    store.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(0x100_u64, 7_u16, pending)]
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      0x100_u64, 1_u16, 0x1234_u16, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.groupcast_adopted?.should be_true
+    im.command_paths.should contain({Matter::Cluster::Groupcast::CLUSTER_ID,
+                                     Matter::Cluster::Groupcast::CMD_JOIN_GROUP})
+    im.command_paths.any? { |path| path[0] == Matter::Cluster::Groups::CLUSTER_ID }.should be_false
+    im.groupcast_memberships.first.endpoints.should eq([1_u16])
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      0x100_u64, 1_u16, 0x1234_u16,
+      Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8))]
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.command_paths.should contain({Matter::Cluster::Groupcast::CLUSTER_ID,
+                                     Matter::Cluster::Groupcast::CMD_LEAVE_GROUP})
+    im.groupcast_memberships.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
   it "reconciles Descriptor PartsList before completing a pending node" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)

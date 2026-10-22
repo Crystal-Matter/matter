@@ -46,6 +46,11 @@ item below as covered only to the extent of its cited tests.
   1.6 schemas and cluster handlers. Datastore entries track Pending,
   Committed, DeletePending, and CommitFailed. The controller synchronizer
   applies key sets, groups, ACLs, and bindings to nodes and records outcomes.
+  An opt-in Groupcast Listener target accepts the provisioned key sets through
+  GKM, adopts the fabric, and applies endpoint group membership through root
+  Groupcast JoinGroup/LeaveGroup. RefreshNode imports Groupcast membership
+  when present. The target derives fabric-scoped AuxiliaryACL entries for
+  authorized group endpoints and hides legacy GKM maps from an adopted fabric.
 - The Joint Commissioning workflow verifies the joining administrator's
   operational VID proof, NOC chain, and Administrator CAT before issuing a
   NOC. The reachable Anchor Administrator device performs Announce and the

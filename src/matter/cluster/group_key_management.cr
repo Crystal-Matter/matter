@@ -21,8 +21,7 @@ module Matter
       cluster 0x003F, revision: 3, persist_state: false
 
       feature :cache_and_sync, bit: 0 # Currently provisional/disabled
-      # Revision 3's Groupcast feature is optional and remains disabled until
-      # the Groupcast cluster can manage the corresponding fabric mappings.
+      feature :groupcast, bit: 1      # Opt-in with the Root Node Groupcast server
 
       DEFAULT_MAX_GROUPS_PER_FABRIC     = 12_u16
       DEFAULT_MAX_GROUP_KEYS_PER_FABRIC =  3_u16
@@ -261,6 +260,22 @@ module Matter
         end
       end
 
+      # Matter 1.6 §11.2.6.5. A missing entry means the fabric has not adopted
+      # Groupcast yet. The incoming FabricIndex is ignored in favor of CASE.
+      struct GroupcastAdoptionStruct
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0)]
+        property? groupcast_adopted : Bool
+
+        @[TLV::Field(tag: 254, optional: true)]
+        property fabric_index : UInt8?
+
+        def initialize(@groupcast_adopted : Bool, @fabric_index : UInt8? = nil)
+        end
+      end
+
       # KeySetWrite command request
       # Matter Core Spec §11.2.8.1
       struct KeySetWriteRequest
@@ -342,6 +357,9 @@ module Matter
       end
       attribute 0x0002, :max_groups_per_fabric, UInt16, default: DEFAULT_MAX_GROUPS_PER_FABRIC, fixed: true
       attribute 0x0003, :max_group_keys_per_fabric, UInt16, default: DEFAULT_MAX_GROUP_KEYS_PER_FABRIC, fixed: true
+      attribute 0x0004, :groupcast_adoption, Array(GroupcastAdoptionStruct), computed: true,
+        writable: true, read_access: :administer, write_access: :administer,
+        fabric_scoped: true, requires: :groupcast
 
       command 0x00, :key_set_write, request: KeySetWriteRequest, access: :administer
       command 0x01, :key_set_read, request: KeySetReadRequest, response: KeySetReadResponse, response_id: 0x02, access: :administer
@@ -350,6 +368,7 @@ module Matter
 
       @group_key_map = [] of GroupKeyMapStruct
       @group_table = [] of GroupInfoMapStruct
+      @groupcast_adoption = [] of GroupcastAdoptionStruct
 
       # Internal storage (fabric-scoped)
       # Key: fabricIndex, Value: GroupKeySetStruct (with actual keys stored)
@@ -368,6 +387,9 @@ module Matter
       # Replaces the accessing fabric's GroupKeyMap entries.
       def group_key_map=(entries : Array(GroupKeyMapStruct)) : Nil
         fabric_index = accessing_fabric_index
+        if groupcast_adopted?(fabric_index)
+          raise Matter::ClusterError.new("GroupKeyMap is read-only after Groupcast adoption", InteractionModel::StatusCode::InvalidInState)
+        end
         entries.map! do |entry|
           entry.fabric_index = fabric_index
           entry
@@ -410,11 +432,58 @@ module Matter
       # The fabric-scoped lists hold only the accessing fabric's entries; a
       # read outside a fabric sees none.
       def group_key_map(fabric_index : UInt8?) : Array(GroupKeyMapStruct)
-        @group_key_map.select { |entry| entry.fabric_index == fabric_index }
+        return [] of GroupKeyMapStruct if fabric_index && groupcast_adopted?(fabric_index)
+        operational_group_key_map(fabric_index)
       end
 
       def group_table(fabric_index : UInt8?) : Array(GroupInfoMapStruct)
+        return [] of GroupInfoMapStruct if fabric_index && groupcast_adopted?(fabric_index)
+        operational_group_table(fabric_index)
+      end
+
+      def operational_group_key_map(fabric_index : UInt8?) : Array(GroupKeyMapStruct)
+        @group_key_map.select { |entry| entry.fabric_index == fabric_index }
+      end
+
+      def operational_group_table(fabric_index : UInt8?) : Array(GroupInfoMapStruct)
         @group_table.select { |entry| entry.fabric_index == fabric_index }
+      end
+
+      def groupcast_adoption(fabric_index : UInt8?) : Array(GroupcastAdoptionStruct)
+        @groupcast_adoption.select { |entry| entry.fabric_index == fabric_index }
+      end
+
+      def groupcast_adopted?(fabric_index : UInt8) : Bool
+        @groupcast_adoption.any? { |entry| entry.fabric_index == fabric_index && entry.groupcast_adopted? }
+      end
+
+      def groupcast_adoption=(entries : Array(GroupcastAdoptionStruct)) : Nil
+        fabric_index = accessing_fabric_index
+        if entries.size > 1
+          raise Matter::ClusterError.new("Only one GroupcastAdoption entry is allowed per fabric", InteractionModel::StatusCode::ConstraintError)
+        end
+        @groupcast_adoption.reject! { |entry| entry.fabric_index == fabric_index }
+        entries.each do |entry|
+          @groupcast_adoption << GroupcastAdoptionStruct.new(entry.groupcast_adopted?, fabric_index)
+        end
+        increment_version_and_notify(ATTR_GROUPCAST_ADOPTION)
+        notify_changed(ATTR_GROUP_KEY_MAP)
+        notify_changed(ATTR_GROUP_TABLE)
+      end
+
+      # Groupcast owns the operational mapping even after adoption makes the
+      # legacy GKM attributes appear empty on the wire. This is the source used
+      # for authenticated group packets and local multicast joins.
+      def replace_groupcast_membership(group_id : UInt16, endpoints : Array(UInt16),
+                                       key_set_id : UInt16, fabric_index : UInt8) : Nil
+        @group_key_map.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        @group_table.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        unless endpoints.empty?
+          @group_key_map << GroupKeyMapStruct.new(group_id, key_set_id, fabric_index)
+          @group_table << GroupInfoMapStruct.new(group_id, endpoints.dup, nil, fabric_index)
+        end
+        increment_version_and_notify(ATTR_GROUP_KEY_MAP)
+        notify_changed(ATTR_GROUP_TABLE)
       end
 
       # KeySetWrite command handler
@@ -569,6 +638,7 @@ module Matter
       # Handles a complete list replacement or chip-tool's empty-list clear
       # followed by list-item appends. FabricIndex on the wire is ignored.
       def write_group_key_map(value : TLV::Any, fabric_index : UInt8) : InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state if groupcast_adopted?(fabric_index)
         if list = value.as_list?
           return InteractionModel::Status.resource_exhausted if list.size > max_groups_per_fabric
           entries = list.map { |item| GroupKeyMapWriteStruct.from_tlv(item) }
@@ -671,8 +741,10 @@ module Matter
         @key_sets.delete(fabric_index)
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index }
         @group_table.reject! { |entry| entry.fabric_index == fabric_index }
+        @groupcast_adoption.reject! { |entry| entry.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
         notify_changed(ATTR_GROUP_TABLE)
+        notify_changed(ATTR_GROUPCAST_ADOPTION) if @feature_map.groupcast?
       end
 
       # Get a key set by ID (for cryptographic operations)
@@ -765,12 +837,14 @@ module Matter
         getter key_sets : Hash(UInt8, Array(PersistedKeySet))
         getter group_key_map : Array(GroupKeyMapStruct)
         getter group_table : Array(GroupInfoMapStruct)
+        getter groupcast_adoption : Array(GroupcastAdoptionStruct) = [] of GroupcastAdoptionStruct
 
         def initialize(
           @data_version : UInt32,
           @key_sets : Hash(UInt8, Array(PersistedKeySet)),
           @group_key_map : Array(GroupKeyMapStruct),
           @group_table : Array(GroupInfoMapStruct),
+          @groupcast_adoption : Array(GroupcastAdoptionStruct) = [] of GroupcastAdoptionStruct,
         )
         end
       end
@@ -785,7 +859,8 @@ module Matter
           data_version: @data_version,
           key_sets: key_sets,
           group_key_map: @group_key_map,
-          group_table: @group_table
+          group_table: @group_table,
+          groupcast_adoption: @groupcast_adoption
         ).to_document
       end
 
@@ -802,6 +877,7 @@ module Matter
 
         @group_key_map = state.group_key_map
         @group_table = state.group_table
+        @groupcast_adoption = state.groupcast_adoption
 
         @data_version = state.data_version
       rescue ex

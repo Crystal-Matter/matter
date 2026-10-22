@@ -21,6 +21,7 @@ require "../cluster/administrator_commissioning"
 require "../cluster/general_diagnostics"
 require "../cluster/network_commissioning"
 require "../cluster/group_key_management"
+require "../cluster/groupcast"
 require "../cluster/ota_requestor"
 require "../cluster/tls_certificate_management"
 require "../cluster/tls_client_management"
@@ -145,6 +146,7 @@ module Matter
       @icd_configuration : Cluster::IcdManagement::Configuration? = nil,
       @regulatory_location_capability : Cluster::GeneralCommissioning::RegulatoryLocationType = Cluster::GeneralCommissioning::RegulatoryLocationType::IndoorOutdoor,
       @tcp_enabled : Bool = false,
+      @groupcast_listener : Bool = false,
     )
       # Matter Core 1.6 §11.10.6.4 requires IndoorOutdoor for nodes without
       # radio network interfaces. This device API currently models one network.
@@ -564,7 +566,8 @@ module Matter
                                 Cluster::GeneralCommissioning.new(endpoint_0,
                                   location_capability: @regulatory_location_capability)
                               end
-      access_control = Cluster::AccessControl.new(endpoint_0)
+      access_control = Cluster::AccessControl.new(endpoint_0,
+        feature_map: @groupcast_listener ? Cluster::AccessControl::Feature::Extension | Cluster::AccessControl::Feature::Auxiliary : Cluster::AccessControl::Feature::Extension)
       @general_commissioning = general_commissioning
       @access_control = access_control
       operational_credentials = Cluster::OperationalCredentials.new(
@@ -608,7 +611,14 @@ module Matter
         general_commissioning.breadcrumb = value
         nil
       end
-      group_key_management = Cluster::GroupKeyManagement.new(endpoint_0)
+      group_key_management = if @groupcast_listener
+                               Cluster::GroupKeyManagement.new(endpoint_0,
+                                 feature_map: Cluster::GroupKeyManagement::Feature::Groupcast,
+                                 max_groups_per_fabric: 0_u16)
+                             else
+                               Cluster::GroupKeyManagement.new(endpoint_0)
+                             end
+      groupcast = @groupcast_listener ? Cluster::Groupcast.new(endpoint_0, group_key_management, access_control) : nil
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)
       icd_management = @icd_configuration.try { |config| Cluster::IcdManagement.new(endpoint_0, configuration: config) }
       diagnostic_logs = Cluster::DiagnosticLogs.new(endpoint_0)
@@ -666,6 +676,7 @@ module Matter
         ota_requestor,
         diagnostic_logs,
       ].each { |cluster| root.add_cluster(cluster) }
+      root.add_cluster(groupcast.as(Cluster::Groupcast)) if groupcast
       root.add_cluster(icd_management.as(Cluster::IcdManagement)) if icd_management
       root.add_cluster(ethernet_diagnostics.as(Cluster::EthernetNetworkDiagnostics)) if ethernet_diagnostics
       root.add_cluster(wifi_diagnostics.as(Cluster::WiFiNetworkDiagnostics)) if wifi_diagnostics
@@ -680,6 +691,11 @@ module Matter
         )
         clusters.each { |cluster| endpoint.add_cluster(cluster) }
         @node.add_endpoint(endpoint)
+      end
+
+      if listener = groupcast
+        listener.endpoint_exists = ->(endpoint_id : UInt16) { !@node.endpoint(endpoint_id).nil? }
+        listener.on_membership_changed = -> { @message_handler.refresh_group_memberships }
       end
 
       refresh_root_parts_list

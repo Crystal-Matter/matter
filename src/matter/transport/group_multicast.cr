@@ -4,6 +4,13 @@ module Matter
   module Transport
     # Matter PerGroupId multicast address (Core §2.5.6.2).
     module GroupMulticast
+      # IANA-assigned IPv6 address used by Matter 1.6 Groupcast Listener.
+      IANA_ADDRESS = "ff05::fa"
+
+      def self.iana_address(port : Int32 = UDPTransport::MATTER_PORT) : Socket::IPAddress
+        Socket::IPAddress.new(IANA_ADDRESS, port)
+      end
+
       def self.address(fabric_id : UInt64, group_id : UInt16, port : Int32 = UDPTransport::MATTER_PORT) : Socket::IPAddress
         raise ArgumentError.new("Group ID zero is reserved") if group_id == 0
         io = IO::Memory.new

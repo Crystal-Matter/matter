@@ -80,7 +80,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0061 | RVC Operational State Cluster | 3 | — | cluster absent |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | — | cluster absent |
-| 0x0065 | Groupcast Cluster | 1 | — | cluster absent |
+| 0x0065 | Groupcast Cluster | 1 | 1 | opt-in Listener only; Sender and PerGroup remain unadvertised |
 | 0x0071 | HEPA Filter Monitoring | 1 | — | cluster absent |
 | 0x0072 | Activated Carbon Filter Monitoring | 1 | — | cluster absent |
 | 0x0079 | Water Tank Level Monitoring | 1 | — | cluster absent |
