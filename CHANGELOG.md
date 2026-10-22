@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   joining Administrator is passed to the Anchor for its ICAC exchange. The
   Anchor can reconstruct the same scoped CASE route after the local handoff.
 
+### Bridged configuration versions
+
+- Advance optional Bridged Device Basic Information ConfigurationVersion for explicit bridge
+  configuration changes, wrapping to one after UInt32 max. Standalone and grouped changes also
+  advance the bridge root version once; both versions persist across restarts.
+
 ### General Diagnostics device load
 
 - Advertise General Diagnostics revision 3 and its mandatory DeviceLoadStatus

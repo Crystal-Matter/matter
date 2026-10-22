@@ -119,6 +119,36 @@ module Matter
         @node_label = node_label || ""
       end
 
+      def configuration_version=(value : UInt32?) : Nil
+        current = @configuration_version
+        if current && !value
+          raise Matter::ConfigurationError.new("ConfigurationVersion cannot be removed after provisioning")
+        end
+        if value && (value == 0_u32 || (current && value < current && !(current == UInt32::MAX && value == 1_u32)))
+          raise Matter::ConfigurationError.new("ConfigurationVersion must advance or wrap to one")
+        end
+        previous_def(value)
+      end
+
+      # A bridge decides which external changes alter a bridged device's
+      # configuration. The attribute is optional, so a caller must provision
+      # it before advancing the version. The parent bridge version is advanced
+      # by Device#increase_bridged_configuration_version.
+      def increase_configuration_version(&) : Nil
+        require_configuration_version
+        yield
+        increase_configuration_version
+      end
+
+      def increase_configuration_version : Nil
+        current = require_configuration_version
+        self.configuration_version = current == UInt32::MAX ? 1_u32 : current + 1_u32
+      end
+
+      private def require_configuration_version : UInt32
+        @configuration_version || raise Matter::ConfigurationError.new("ConfigurationVersion is not enabled for this bridged device")
+      end
+
       # Journals the StartUp event and returns its encoded body.
       def emit_start_up_event(software_version : UInt32) : Bytes
         payload = StartUpEvent.new(software_version)

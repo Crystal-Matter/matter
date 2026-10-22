@@ -210,6 +210,54 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
     end
   end
 
+  describe "#increase_configuration_version" do
+    it "requires the optional attribute to be provisioned" do
+      cluster = build(Matter::Cluster::BridgedDeviceBasicInformation, unique_id: "bridge-absent")
+      expect_raises(Matter::ConfigurationError) { cluster.increase_configuration_version }
+      cluster.configuration_version.should be_nil
+    end
+
+    it "advances after a completed change and wraps past UInt32::MAX to one" do
+      cluster = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-version", configuration_version: 1_u32)
+      cluster.increase_configuration_version do
+        cluster.node_label = "Updated"
+      end
+      cluster.configuration_version.should eq(2_u32)
+      cluster.node_label.should eq("Updated")
+
+      cluster.configuration_version = UInt32::MAX
+      cluster.increase_configuration_version
+      cluster.configuration_version.should eq(1_u32)
+    end
+
+    it "does not advance when the application change fails" do
+      cluster = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-failed", configuration_version: 4_u32)
+      expect_raises(Matter::ConfigurationError) do
+        cluster.increase_configuration_version do
+          raise Matter::ConfigurationError.new("device rejected change")
+        end
+      end
+      cluster.configuration_version.should eq(4_u32)
+    end
+
+    it "rejects decreasing a provisioned version outside the specified wrap" do
+      cluster = build(Matter::Cluster::BridgedDeviceBasicInformation,
+        unique_id: "bridge-monotonic", configuration_version: 7_u32)
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 6_u32 }
+      cluster.configuration_version.should eq(7_u32)
+
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = nil }
+      cluster.configuration_version.should eq(7_u32)
+
+      cluster.configuration_version = UInt32::MAX
+      expect_raises(Matter::ConfigurationError) { cluster.configuration_version = 2_u32 }
+      cluster.configuration_version = 1_u32
+      cluster.configuration_version.should eq(1_u32)
+    end
+  end
+
   describe "#attributes" do
     it "includes required Reachable attribute" do
       cluster = build(Matter::Cluster::BridgedDeviceBasicInformation, unique_id: "test-bridged")

@@ -765,6 +765,31 @@ module Matter
       true
     end
 
+    # Call after the application detects a configuration change on one
+    # bridged device. The bridge version changes alongside the bridged one.
+    def increase_bridged_configuration_version(endpoint_id : UInt16) : Nil
+      increase_bridged_configuration_version([endpoint_id])
+    end
+
+    # Coalesce one logical change spanning several bridged devices into a
+    # single increment of the bridge root version. Validate all endpoints
+    # before changing any version, since ConfigurationVersion is optional on
+    # a bridged device.
+    def increase_bridged_configuration_version(endpoint_ids : Array(UInt16)) : Nil
+      unique_ids = endpoint_ids.uniq
+      return if unique_ids.empty?
+
+      bridged_clusters = unique_ids.map do |endpoint_id|
+        cluster = @node.get_cluster(endpoint_id, Cluster::BridgedDeviceBasicInformation)
+        raise ConfigurationError.new("Endpoint #{endpoint_id} has no BridgedDeviceBasicInformation") unless cluster
+        raise ConfigurationError.new("Endpoint #{endpoint_id} has no ConfigurationVersion") unless cluster.configuration_version
+        cluster
+      end
+
+      bridged_clusters.each(&.increase_configuration_version)
+      basic_info.increase_configuration_version
+    end
+
     # Returns all endpoint IDs currently registered (excluding endpoint 0)
     def endpoint_ids : Array(UInt16)
       @node.endpoint_ids.reject { |endpoint_id| endpoint_id == Node::ROOT_ENDPOINT_ID }

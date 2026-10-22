@@ -71,6 +71,16 @@ class DslSpecBridge < Matter::Device
     cluster Matter::Cluster::Identify
     cluster Matter::Cluster::Groups
   end
+
+  endpoint_template :versioned_bridged_light,
+    device_type: [Matter::DeviceType::ON_OFF_LIGHT, Matter::DeviceType::BRIDGED_NODE],
+    parameters: {name: String, unique_id: String, configuration_version: Int64} do
+    cluster Matter::Cluster::OnOff
+    cluster Matter::Cluster::BridgedDeviceBasicInformation,
+      node_label: name, unique_id: unique_id, configuration_version: configuration_version.to_u32
+    cluster Matter::Cluster::Identify
+    cluster Matter::Cluster::Groups
+  end
 end
 
 module DslSpec
@@ -103,6 +113,10 @@ module DslSpec
       labels[endpoint_id] = endpoint.get_cluster!(Matter::Cluster::BridgedDeviceBasicInformation).node_label
     end
     labels
+  end
+
+  def self.bridged_info(device : Matter::Device, endpoint_id : UInt16) : Matter::Cluster::BridgedDeviceBasicInformation
+    device.node.get_cluster!(endpoint_id, Matter::Cluster::BridgedDeviceBasicInformation)
   end
 end
 
@@ -341,6 +355,66 @@ describe Matter::Device::DSL do
         restarted.node.endpoint!(Matter::Node::ROOT_ENDPOINT_ID).descriptor.parts_list.should eq([1_u16, 2_u16])
         restarted.node.get_cluster!(1_u16, Matter::Cluster::OnOff).on?.should be_false
         restarted.node.get_cluster!(2_u16, Matter::Cluster::OnOff).on?.should be_true
+        DslSpec.stop(restarted)
+      end
+    end
+
+    it "advances one bridged ConfigurationVersion and the bridge root once" do
+      DslSpec.with_temp_file do |path|
+        bridge = DslSpec.bridge(path)
+        endpoint = bridge.add_endpoint(:versioned_bridged_light,
+          name: "Porch", unique_id: "porch-1", configuration_version: 1_u32)
+
+        bridge.increase_bridged_configuration_version(endpoint.number)
+        DslSpec.bridged_info(bridge, endpoint.number).configuration_version.should eq(2_u32)
+        bridge.basic_info.configuration_version.should eq(2_u32)
+        DslSpec.stop(bridge)
+      end
+    end
+
+    it "coalesces grouped bridged changes into one root increment" do
+      DslSpec.with_temp_file do |path|
+        bridge = DslSpec.bridge(path)
+        first = bridge.add_endpoint(:versioned_bridged_light,
+          name: "Porch", unique_id: "porch-1", configuration_version: 1_u32)
+        second = bridge.add_endpoint(:versioned_bridged_light,
+          name: "Hall", unique_id: "hall-1", configuration_version: 1_u32)
+
+        bridge.increase_bridged_configuration_version([first.number, second.number, first.number])
+        DslSpec.bridged_info(bridge, first.number).configuration_version.should eq(2_u32)
+        DslSpec.bridged_info(bridge, second.number).configuration_version.should eq(2_u32)
+        bridge.basic_info.configuration_version.should eq(2_u32)
+        DslSpec.stop(bridge)
+      end
+    end
+
+    it "rejects an unversioned member before changing any grouped version" do
+      DslSpec.with_temp_file do |path|
+        bridge = DslSpec.bridge(path)
+        versioned = bridge.add_endpoint(:versioned_bridged_light,
+          name: "Porch", unique_id: "porch-1", configuration_version: 1_u32)
+        unversioned = bridge.add_endpoint(:bridged_light, name: "Hall", unique_id: "hall-1")
+
+        expect_raises(Matter::ConfigurationError) do
+          bridge.increase_bridged_configuration_version([versioned.number, unversioned.number])
+        end
+        DslSpec.bridged_info(bridge, versioned.number).configuration_version.should eq(1_u32)
+        bridge.basic_info.configuration_version.should eq(1_u32)
+        DslSpec.stop(bridge)
+      end
+    end
+
+    it "persists both bridged and bridge versions through restart" do
+      DslSpec.with_temp_file do |path|
+        bridge = DslSpec.bridge(path)
+        endpoint = bridge.add_endpoint(:versioned_bridged_light,
+          name: "Porch", unique_id: "porch-1", configuration_version: 1_u32)
+        bridge.increase_bridged_configuration_version(endpoint.number)
+        DslSpec.stop(bridge)
+
+        restarted = DslSpec.bridge(path)
+        DslSpec.bridged_info(restarted, endpoint.number).configuration_version.should eq(2_u32)
+        restarted.basic_info.configuration_version.should eq(2_u32)
         DslSpec.stop(restarted)
       end
     end
