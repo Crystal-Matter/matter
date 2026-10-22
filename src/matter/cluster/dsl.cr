@@ -87,6 +87,8 @@ module Matter
     #   `TLV::Serializable` struct which is wrapped as
     #   `CommandResponse.new(response_id || id, ...)`. With `response:` or
     #   `response_id:`, `CMD_NAME_RESPONSE` holds the response command id.
+    #   `present_if: :predicate` calls `predicate(command_id)` at runtime and
+    #   omits the command from metadata and dispatch when it returns false.
     #   A command without a handler fails to compile unless `optional: true`,
     #   in which case it is left out of the tables. Before a handler runs,
     #   `Base#invoke_command` has set `request_session_id`,
@@ -133,7 +135,7 @@ module Matter
         :read_access, :write_access, :min, :max, :max_length, :scene,
         :omit_changes, :timed, :fabric_scoped, :callback, :on_change, :computed, :present_if,
       ]
-      COMMAND_OPTIONS  = [:request, :response, :response_id, :requires, :timed, :access, :optional, :handler]
+      COMMAND_OPTIONS  = [:request, :response, :response_id, :requires, :present_if, :timed, :access, :optional, :handler]
       PRIVILEGES       = [:view, :proxy_view, :operate, :manage, :administer]
       EVENT_PRIORITIES = [:debug, :info, :critical]
 
@@ -284,6 +286,7 @@ module Matter
           {% raise "#{@type}: command :#{name.id} access: must be one of #{::Matter::Cluster::DSL::PRIVILEGES.join(", ").id}" %}
         {% end %}
         {% raise "#{@type}: command :#{name.id} handler: must be a symbol" if options[:handler] && !options[:handler].is_a?(SymbolLiteral) %}
+        {% raise "#{@type}: command :#{name.id} present_if: must be a symbol" if options[:present_if] && !options[:present_if].is_a?(SymbolLiteral) %}
         {% raise "#{@type}: command :#{name.id} declared twice" if @type.constant("COMMAND_DECLS").any? { |command| command[:name] == name } %}
         {% requires = options[:requires] %}
         {% requires = requires.resolve if requires.is_a?(Path) %}
@@ -297,6 +300,7 @@ module Matter
              response:    options[:response],
              response_id: response_id,
              requires:    requires,
+             present_if:  options[:present_if],
              timed:       options[:timed],
              access:      options[:access],
              optional:    options[:optional],
@@ -518,9 +522,16 @@ module Matter
           {% end %}
 
           {% for decl in implemented_commands %}
-            {% if decl[:requires] %}
+            {% if decl[:requires] || decl[:present_if] %}
               private def dsl_command_{{ decl[:name].id }}_supported? : Bool
-                dsl_feature_condition({{ decl[:requires] }})
+                {% if decl[:requires] %}
+                  return false unless dsl_feature_condition({{ decl[:requires] }})
+                {% end %}
+                {% if decl[:present_if] %}
+                  {{ decl[:present_if].id }}(CMD_{{ decl[:name].id.upcase }})
+                {% else %}
+                  true
+                {% end %}
               end
             {% end %}
           {% end %}
@@ -555,7 +566,7 @@ module Matter
               case command_id
               {% for decl in implemented_commands %}
                 when CMD_{{ decl[:name].id.upcase }}
-                  {% if decl[:requires] %}dsl_command_{{ decl[:name].id }}_supported?{% else %}true{% end %}
+                  {% if decl[:requires] || decl[:present_if] %}dsl_command_{{ decl[:name].id }}_supported?{% else %}true{% end %}
               {% end %}
               else
                 false
@@ -649,7 +660,7 @@ module Matter
           end
 
           def commands : Array(::Matter::Cluster::CommandMetadata)
-            {% if implemented_commands.any? { |decl| decl[:requires] } %}
+            {% if implemented_commands.any? { |decl| decl[:requires] || decl[:present_if] } %}
               COMMANDS.select { |command| dsl_command_supported?(command.id.id) }
             {% else %}
               COMMANDS

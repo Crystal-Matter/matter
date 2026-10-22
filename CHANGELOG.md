@@ -24,6 +24,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retains the pre-update level after an OTA restart. The cluster continues to
   advertise revision 6 while the remaining revision 7 behavior is audited.
 
+### Actions cluster
+
+- Add the Matter 1.6 Actions server cluster (revision 1): bounded ActionList and
+  EndpointLists, optional HTTPS SetupURL, all 12 command request forms, and
+  StateChanged/ActionFailed events. Applications register an explicit callback
+  to execute actions; the cluster reports state and handles duration expiry.
+  It does not alter other endpoints itself.
+
 ### General Commissioning regulatory defaults
 
 - Let wireless devices configure their fixed LocationCapability at construction.

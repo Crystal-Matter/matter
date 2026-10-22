@@ -34,6 +34,16 @@ describe "matter_bridge example" do
     end
   end
 
+  it "advertises Actions on the aggregator and invokes the explicit host callback" do
+    read_int(device, "actions", "cluster-revision", "ClusterRevision", 0).should eq(1_i64)
+    read_value(device, "actions", "action-list", "ActionList", 0).should eq("1 entries")
+    endpoints = bridged_endpoints.call
+    before = endpoints.map { |endpoint| read_bool(device, "onoff", "on-off", "OnOff", endpoint) }
+    expect_success(device.invoke("actions", "instant-action", ["1"], endpoint: 0))
+    after = endpoints.map { |endpoint| read_bool(device, "onoff", "on-off", "OnOff", endpoint) }
+    after.should eq(before.map { |state| !state })
+  end
+
   it "writes a bridged device node label" do
     endpoint = bridged_endpoints.call.first
     expect_success(device.write("bridgeddevicebasicinformation", "node-label", "Porch Light", endpoint))

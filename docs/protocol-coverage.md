@@ -13,8 +13,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 65
-- Matching known revisions: 53
+- Crystal declarations for those IDs: 66
+- Matching known revisions: 54
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -28,7 +28,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x001D | Descriptor Cluster | 3 | 3 | — |
 | 0x001E | Binding Cluster | 1 | 1 | — |
 | 0x001F | Access Control Cluster | 3 | 3 | — |
-| 0x0025 | Actions Cluster | 1 | — | cluster absent |
+| 0x0025 | Actions Cluster | 1 | 1 | — |
 | 0x0028 | Basic Information Cluster | 6 | 6 | — |
 | 0x0029 | OTA Software Update Provider Cluster | 1 | 1 | — |
 | 0x002A | OTA Software Update Requestor Cluster | 1 | 1 | — |
