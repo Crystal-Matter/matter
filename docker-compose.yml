@@ -164,6 +164,11 @@ services:
     environment:
       E2E_DEVICE: matter_temperature_sensor
 
+  pressure-sensor:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_pressure_sensor
+
   temperature-control:
     <<: *device
     environment:
@@ -261,6 +266,7 @@ services:
       scenes-fabric: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }
+      pressure-sensor: { condition: service_healthy }
       temperature-control: { condition: service_healthy }
       humidity-sensor: { condition: service_healthy }
       contact-sensor: { condition: service_healthy }

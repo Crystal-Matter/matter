@@ -111,7 +111,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0300 | Color Control Cluster | 9 | 7 | — |
 | 0x0400 | Illuminance Measurement Cluster | 5 | 5 | Fixed sensor configuration, nullable bounds and reading, optional Tolerance/LightSensorType; host owns sampling |
 | 0x0402 | Temperature Measurement Cluster | 6 | 4 | — |
-| 0x0403 | Pressure Measurement Cluster | 5 | 3 | — |
+| 0x0403 | Pressure Measurement Cluster | 5 | 5 | Extended feature, optional tolerances, fixed sensor bounds and scale |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 5 | Nullable immutable limits, fixed optional tolerance, and host reading validation |
 | 0x0406 | Occupancy Sensing Cluster | 7 | 7 | HoldTime limits and synchronized legacy delay, modality-gated timing, optional OccupancyEvent; entry threshold filtering remains device-owned |
