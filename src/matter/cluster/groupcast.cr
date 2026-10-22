@@ -241,6 +241,7 @@ module Matter
 
       @membership = [] of MembershipStruct
       @test_fabric = 0_u8
+      @test_operation = GroupcastTestingEnum::DisableTesting
       @test_deadline : Time::Instant? = nil
       @test_generation = 0_u32
       property endpoint_exists : Proc(UInt16, Bool)?
@@ -416,6 +417,7 @@ module Matter
           return InteractionModel::Status.constraint_error
         end
         @test_generation &+= 1_u32
+        @test_operation = request.test_operation
         if request.test_operation.disable_testing?
           @test_fabric = 0_u8
           @test_deadline = nil
@@ -436,7 +438,10 @@ module Matter
       def record_group_message(fabric : UInt8?, group_id : UInt16?,
                                result : GroupcastTestResultEnum,
                                endpoint_id : UInt16? = nil, cluster_id : UInt32? = nil,
-                               element_id : UInt32? = nil, access_allowed : Bool? = nil) : Nil
+                               element_id : UInt32? = nil, access_allowed : Bool? = nil,
+                               sender : Bool = false) : Nil
+        selected_direction = sender ? @test_operation.enable_sender_testing? : @test_operation.enable_listener_testing?
+        return unless selected_direction
         return unless test_active? && (fabric.nil? || @test_fabric == fabric)
         emit_event(EVENT_GROUPCAST_TESTING,
           GroupcastTestingEvent.new(result, group_id, endpoint_id, cluster_id, element_id, access_allowed), @test_fabric)
@@ -446,6 +451,7 @@ module Matter
         if @test_fabric == fabric
           @test_generation &+= 1_u32
           @test_fabric = 0_u8
+          @test_operation = GroupcastTestingEnum::DisableTesting
           @test_deadline = nil
           increment_version_and_notify(ATTR_FABRIC_UNDER_TEST)
         end
@@ -522,6 +528,7 @@ module Matter
           true
         else
           @test_fabric = 0_u8
+          @test_operation = GroupcastTestingEnum::DisableTesting
           @test_deadline = nil
           increment_version_and_notify(ATTR_FABRIC_UNDER_TEST)
           false

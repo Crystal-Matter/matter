@@ -24,7 +24,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   AuxiliaryACL and survives restart. Device applications can send one-way
   authenticated group Invoke and Write requests using their commissioned
   fabric, active epoch key, IANA multicast address, and durable counters.
-  SenderTesting now accepts its feature-gated operation. An official chip-tool
+  SenderTesting now accepts its feature-gated operation and emits only outbound
+  test results, while ListenerTesting emits only inbound results. An official chip-tool
   test commissions a Sender and Listener on one fabric and verifies multicast
   On delivery before and after the Sender restarts.
 

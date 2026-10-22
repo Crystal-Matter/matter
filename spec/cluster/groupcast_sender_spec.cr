@@ -84,4 +84,29 @@ describe "Matter 1.6 Groupcast Sender" do
     combined.groupcast_testing(SenderGC::GroupcastTestingRequest.new(
       SenderGC::GroupcastTestingEnum::EnableSenderTesting, 10_u16)).should eq(SenderStatus.success)
   end
+
+  it "emits only the selected direction's test events on an LN+SD node" do
+    combined, _keys, _acl = sender_cluster(SenderGC::Feature::Sender | SenderGC::Feature::Listener)
+    events = [] of Tuple(UInt32, UInt8?)
+    combined.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, fabric : UInt8?) do
+      events << {id, fabric}
+      nil
+    end
+    event = SenderGC::EVENT_GROUPCAST_TESTING
+    result = SenderGC::GroupcastTestResultEnum::Success
+
+    combined.groupcast_testing(SenderGC::GroupcastTestingRequest.new(
+      SenderGC::GroupcastTestingEnum::EnableListenerTesting, 10_u16)).should eq(SenderStatus.success)
+    combined.record_group_message(1_u8, 0x1234_u16, result, sender: true)
+    events.should be_empty
+    combined.record_group_message(1_u8, 0x1234_u16, result)
+    events.should eq([{event, 1_u8}])
+
+    combined.groupcast_testing(SenderGC::GroupcastTestingRequest.new(
+      SenderGC::GroupcastTestingEnum::EnableSenderTesting, 10_u16)).should eq(SenderStatus.success)
+    combined.record_group_message(1_u8, 0x1234_u16, result)
+    events.should eq([{event, 1_u8}])
+    combined.record_group_message(1_u8, 0x1234_u16, result, sender: true)
+    events.should eq([{event, 1_u8}, {event, 1_u8}])
+  end
 end

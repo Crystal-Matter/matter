@@ -48,12 +48,12 @@ module Matter
           Log.error(exception: ex) { "Could not send Groupcast Invoke (fabric=#{fabric_index}, group=#{group_id})" }
           @groupcast.record_group_message(fabric_index, group_id,
             Cluster::Groupcast::GroupcastTestResultEnum::SendFailure,
-            cluster_id: cluster_id, element_id: command_id)
+            cluster_id: cluster_id, element_id: command_id, sender: true)
           raise ex
         end
         @groupcast.record_group_message(fabric_index, group_id,
           Cluster::Groupcast::GroupcastTestResultEnum::Success,
-          cluster_id: cluster_id, element_id: command_id)
+          cluster_id: cluster_id, element_id: command_id, sender: true)
       end
 
       def write(fabric_index : UInt8, group_id : UInt16, cluster_id : UInt32,
@@ -68,12 +68,12 @@ module Matter
           Log.error(exception: ex) { "Could not send Groupcast Write (fabric=#{fabric_index}, group=#{group_id})" }
           @groupcast.record_group_message(fabric_index, group_id,
             Cluster::Groupcast::GroupcastTestResultEnum::SendFailure,
-            cluster_id: cluster_id, element_id: attribute_id)
+            cluster_id: cluster_id, element_id: attribute_id, sender: true)
           raise ex
         end
         @groupcast.record_group_message(fabric_index, group_id,
           Cluster::Groupcast::GroupcastTestResultEnum::Success,
-          cluster_id: cluster_id, element_id: attribute_id)
+          cluster_id: cluster_id, element_id: attribute_id, sender: true)
       end
 
       private def selection(fabric_index : UInt8, group_id : UInt16)
