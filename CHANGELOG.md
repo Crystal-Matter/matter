@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Color Control revision 9
+
+- Report fixed primary count and coordinates, require the CT coupling minimum,
+  and apply the nonvolatile startup color temperature on ordinary restarts.
+  Encode ColorLoopActive as bounded uint8, enforce feature dependencies, and
+  align Options and startup attribute write privileges with Matter 1.6.
+  Official chip-tool checks revision, required attributes, and restart behavior.
+
 ### Wake On LAN
 
 - Add the Matter 1.6 Wake On LAN server (`0x0503`, revision 1). A host can

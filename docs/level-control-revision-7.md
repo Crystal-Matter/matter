@@ -21,8 +21,8 @@ Color Control server on the same endpoint. It uses the effective command
 option, tracks timed transitions, and maps level 1 to the physical maximum
 temperature in mireds and level 254 to the coupling minimum. Coupling requires
 the Color Temperature feature and active color temperature mode. The related
-Color Control cluster still advertises revision 7 pending its separate
-revision 9 conformance work.
+Color Control cluster advertises revision 9 and supplies the required coupling
+minimum.
 
 The canonical XML in the pinned Matter 1.6 SDK is
 `data_model/1.6/clusters/LevelControl.xml`; relevant attributes are 0x0000,

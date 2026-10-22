@@ -26,8 +26,11 @@ value does not change. Rejected or ExecuteIfOff-suppressed commands leave the
 modes alone.
 
 Only commands advertised by enabled features are available. The cluster
-continues to advertise revision 7. Matter 1.6 defines revision 9; its full
-behavioral audit remains open, including the advertised
-StartUpColorTemperatureMireds power-on behavior and feature-map dependency
-checks. Optional calibration attributes and device-specific color-space
-conversion are not implemented.
+advertises revision 9. It reports a nullable fixed NumberOfPrimaries and
+requires configured X/Y values for each reported primary. A CT light reports
+CoupleColorTempToLevelMinMireds and retains the nullable
+StartUpColorTemperatureMireds setting. Ordinary startup applies that setting
+after persistence restore and selects color temperature mode; OTA startup
+preserves operational color. ColorLoopActive is encoded as the XML's bounded
+uint8 value. Feature-map dependencies are checked at construction. Optional
+calibration attributes and device-specific color-space conversion remain open.
