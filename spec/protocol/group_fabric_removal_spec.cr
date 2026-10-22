@@ -34,6 +34,8 @@ describe "group fabric removal" do
     endpoint = Matter::Endpoint.new(Matter::DataType::EndpointNumber.new(1_u16))
     groups = Matter::Cluster::Groups.new(Matter::DataType::EndpointNumber.new(1_u16))
     endpoint.add_cluster(groups)
+    scenes = Matter::Cluster::ScenesManagement.new(Matter::DataType::EndpointNumber.new(1_u16))
+    endpoint.add_cluster(scenes)
     handler.node.add_endpoint(endpoint)
     handler.setup_cluster_notifications
 
@@ -46,6 +48,9 @@ describe "group fabric removal" do
         groups.add_group(Matter::Cluster::Groups::AddGroupRequest.new(
           Matter::DataType::GroupId.new(index.to_u16), "Fabric #{index}"))
       end
+      scenes.invoke_command(Matter::Cluster::ScenesManagement::CMD_ADD_SCENE,
+        Matter::Cluster::AddSceneRequest.new(1_u16, index, 0_u32, "Fabric #{index}", [] of TLV::Any).to_tlv(nil),
+        is_case_session: true, fabric_index: index)
       gkm.group_table(index).size.should eq(1)
       transport.group_memberships.size.should eq(index.to_i - 1)
       gkm.add_group_key_map(index.to_u16, 5_u16, index)
@@ -70,6 +75,8 @@ describe "group fabric removal" do
       groups.request_fabric_index = 2_u8
       groups.member_of?(2_u16).should be_true
     end
+    scenes.has_scene?(1_u16, 1_u8, 1_u8).should be_false
+    scenes.has_scene?(1_u16, 2_u8, 2_u8).should be_true
 
     fabric_table.add_fabric(group_test_fabric(1_u8, 0x300_u64)).should be_true
     handler.refresh_group_memberships
@@ -78,5 +85,6 @@ describe "group fabric removal" do
       groups.request_fabric_index = 1_u8
       groups.group_count.should eq(0)
     end
+    scenes.scene_count(1_u8).should eq(0)
   end
 end

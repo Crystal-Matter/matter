@@ -7,12 +7,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Scenes Management fabric isolation
+
+- Scope all Scenes Management commands and FabricSceneInfo reads to the
+  authenticated fabric. A second fabric can now use the same GroupID and
+  SceneID without reading, replacing, recalling, or deleting the first
+  fabric's scene. RemoveFabric erases only that fabric's persisted scenes and
+  scene info before its local index is reused.
+- Close the enhanced AdministratorCommissioning window when a commissioner
+  completes or rolls back commissioning, releasing its PAKE state and allowing
+  another administrator to open a fresh window immediately.
+
 ### Controller session ID allocation
 
 - Choose nonzero, unused local session IDs before PASE and CASE advertise them.
   Retry random candidates against both the controller registry and shared
   transport reservations, then fail before sending when no candidate is usable.
-
 ### Joint Fabric Administrator removal recovery
 
 - Extend the three-administrator Docker test through a second restart after
@@ -25,7 +35,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unchanged. Legacy command-channel YAML files default the new test-only
   interruption flag to false. Remaining live interruption points are tracked
   in the Joint Fabric guide.
-
 ### Thread Border Router Management
 
 - Add an opt-in Matter 1.6 Thread Border Router Management server (`0x0452`,

@@ -566,6 +566,11 @@ commissioned node and hands back a manual pairing code for it.
 
 ### Sharing a fabric between controllers
 
+Scenes Management keeps scene tables per fabric. Controllers on one shared
+fabric see the same scenes; a controller on an independent fabric can reuse a
+GroupID and SceneID without exposing or changing the first fabric's scene.
+Removing a fabric also removes its scenes before its local index is reused.
+
 An existing controller that owns a fabric's root signing key can issue a
 separate operational identity to another controller. Both identities use the
 same fabric ID, trust root, and IPK, but have distinct Node IDs and private

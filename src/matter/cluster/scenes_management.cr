@@ -385,9 +385,8 @@ module Matter
 
       feature :scene_names, bit: 0 # SN - Store names for scenes
 
-      # Scenes are fabric-scoped, but the command handlers do not yet take the
-      # accessing fabric from the session, so scene tables and SceneInfo
-      # default to the first commissioned fabric.
+      # Used only by the direct, local convenience methods below. A network
+      # command must always use its authenticated request fabric instead.
       DEFAULT_FABRIC_INDEX = 1_u8
 
       # Minimum Scene Table size the specification allows (Matter 1.4 §1.4.8.1).
@@ -576,8 +575,8 @@ module Matter
       end
 
       # FabricSceneInfo attribute (0x02): the accessing fabric's scene info
-      def fabric_scene_info(fabric_index : UInt8?) : Array(SceneInfoTlv)
-        fabric_index ||= DEFAULT_FABRIC_INDEX
+      def fabric_scene_info(fabric_index : UInt8?) : Array(SceneInfoTlv) | InteractionModel::Status
+        return InteractionModel::Status.unsupported_access unless fabric_index
         scene_info = @scene_info_by_fabric[fabric_index]? || SceneInfo.new(fabric_index: fabric_index)
 
         [SceneInfoTlv.new(
@@ -595,7 +594,7 @@ module Matter
       # ------------------------------------------------------------------------
 
       def add_scene(request : AddSceneRequest) : SceneStatusResponse
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         key = {fabric_index, request.group_id, request.scene_id}
 
         if fabric_full?(fabric_index) && !@scenes.has_key?(key)
@@ -614,7 +613,7 @@ module Matter
       end
 
       def view_scene(request : ViewSceneRequest) : ViewSceneResponseTlv
-        key = {DEFAULT_FABRIC_INDEX, request.group_id, request.scene_id}
+        key = {scene_fabric_index, request.group_id, request.scene_id}
 
         if scene = @scenes[key]?
           view_scene_response(InteractionModel::StatusCode::Success, request.group_id, request.scene_id, scene)
@@ -624,7 +623,7 @@ module Matter
       end
 
       def remove_scene(request : RemoveSceneRequest) : SceneStatusResponse
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         key = {fabric_index, request.group_id, request.scene_id}
 
         if @scenes.delete(key)
@@ -636,7 +635,7 @@ module Matter
       end
 
       def remove_all_scenes(request : RemoveAllScenesRequest) : RemoveAllScenesResponse
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         @scenes.reject! { |key, _| key[0] == fabric_index && key[1] == request.group_id }
         update_fabric_scene_info(fabric_index)
 
@@ -644,7 +643,7 @@ module Matter
       end
 
       def store_scene(request : StoreSceneRequest) : SceneStatusResponse
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         key = {fabric_index, request.group_id, request.scene_id}
 
         if fabric_full?(fabric_index) && !@scenes.has_key?(key)
@@ -667,7 +666,7 @@ module Matter
       end
 
       def recall_scene(request : RecallSceneRequest) : InteractionModel::Status
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         key = {fabric_index, request.group_id, request.scene_id}
 
         scene_data = @scenes[key]?
@@ -692,7 +691,7 @@ module Matter
       end
 
       def get_scene_membership(request : GetSceneMembershipRequest) : GetSceneMembershipResponse
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         scene_list = @scenes.keys.select { |key| key[0] == fabric_index && key[1] == request.group_id }.map { |key| key[2] }
 
         GetSceneMembershipResponse.new(
@@ -704,7 +703,7 @@ module Matter
       end
 
       def copy_scene(request : CopySceneRequest) : CopySceneResponse
-        fabric_index = DEFAULT_FABRIC_INDEX
+        fabric_index = scene_fabric_index
         copy_all = (request.mode & COPY_MODE_ALL_SCENES) != 0
 
         if copy_all
@@ -728,6 +727,11 @@ module Matter
 
       private def fabric_full?(fabric_index : UInt8) : Bool
         scene_count(fabric_index) >= @scene_table_size
+      end
+
+      private def scene_fabric_index : UInt8
+        request_fabric_index || raise Matter::ClusterError.new("Scene commands require a fabric-scoped session",
+          InteractionModel::StatusCode::UnsupportedAccess)
       end
 
       private def remaining_capacity(fabric_index : UInt8) : UInt8
@@ -789,6 +793,15 @@ module Matter
           @scene_info_by_fabric[fabric_index] = info
           increment_version_and_notify(ATTR_FABRIC_SCENE_INFO)
         end
+      end
+
+      # Fabric indexes are reusable. Erase both scene data and the fabric's
+      # SceneInfo before another commissioner can receive the same index.
+      def remove_fabric(fabric_index : UInt8) : Nil
+        previous_size = @scenes.size
+        @scenes.reject! { |key, _| key[0] == fabric_index }
+        removed_info = @scene_info_by_fabric.delete(fabric_index)
+        increment_version_and_notify(ATTR_FABRIC_SCENE_INFO) if @scenes.size != previous_size || removed_info
       end
 
       # Persistence support
