@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat User Interface Configuration
+
+- Add the Matter 1.6 revision 2 Thermostat User Interface Configuration
+  server with the required display and keypad enums and the optional schedule
+  programming visibility attribute. Writes use the XML Operate and Manage
+  privileges, reject values outside the declared enums, and persist across
+  restarts. A thermostat example exercises reads and writes with chip-tool.
+
 ### Color Control revision 9
 
 - Report fixed primary count and coordinates, require the CT coupling minimum,

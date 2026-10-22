@@ -184,6 +184,11 @@ services:
     environment:
       E2E_DEVICE: matter_temperature_control
 
+  thermostat-ui:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_thermostat_ui
+
   humidity-sensor:
     <<: *device
     environment:
