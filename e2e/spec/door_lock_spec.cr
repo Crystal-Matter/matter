@@ -133,4 +133,24 @@ describe "matter_door_lock example" do
     expect_success(device.invoke("doorlock", "get-user", ["4"])).int("userStatus").should eq(3_i64)
     expect_failure(device.invoke("doorlock", "unlock-door", options: timed + disposable_pin), "FAILURE")
   end
+
+  it "rejects a duplicate PIN through chip-tool without changing the existing credential" do
+    add = Matter::Cluster::DoorLock::DataOperationType::Add.value.to_s
+    modify = Matter::Cluster::DoorLock::DataOperationType::Modify.value.to_s
+    first = %({"credentialType":1,"credentialIndex":4})
+    second = %({"credentialType":1,"credentialIndex":5})
+    duplicate = %({"credentialType":1,"credentialIndex":6})
+    expect_success(device.invoke("doorlock", "set-user", ["0", "6", "First", "666", "1", "0", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", [add, first, "7777", "6", "1", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", [add, second, "8888", "7", "1", "0"], options: timed))
+
+    result = expect_success(device.invoke("doorlock", "set-credential", [add, duplicate, "7777", "8", "1", "0"], options: timed))
+    result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Duplicate.value.to_i64), result.output
+    expect_success(device.invoke("doorlock", "get-credential-status", [duplicate])).bool("credentialExists").should be_false
+    expect_success(device.invoke("doorlock", "get-user", ["8"])).int("userStatus").should eq(0_i64)
+
+    result = expect_success(device.invoke("doorlock", "set-credential", [modify, second, "7777", "7", "1", "0"], options: timed))
+    result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Duplicate.value.to_i64), result.output
+    expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "8888"]))
+  end
 end

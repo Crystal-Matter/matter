@@ -506,6 +506,9 @@ module Matter
           if credentials.has_key?(key) || validate_credential_input(record.credential, record.credential_data, allow_aliro: aliro)
             raise StorageError.new("Invalid or duplicate persisted Door Lock credential")
           end
+          if duplicate_pin_or_rfid_data?(credentials.values, record.credential, record.credential_data)
+            raise StorageError.new("Duplicate persisted Door Lock PIN or RFID credential")
+          end
           if aliro
             public_key = record.credential_data.hexstring
             if aliro_public_keys.includes?(public_key)
@@ -1316,6 +1319,9 @@ module Matter
           if @credentials.has_key?(credential_key)
             status = StatusCode::Occupied
           else
+            if duplicate_pin_or_rfid_data?(@credentials.values, request.credential, request.credential_data)
+              return set_credential_response(request, StatusCode::Duplicate)
+            end
             if aliro_credential_type?(request.credential.credential_type)
               if @credentials.values.any? { |record| aliro_credential_type?(record.credential.credential_type) && record.credential_data == request.credential_data }
                 return set_credential_response(request, StatusCode::Duplicate)
@@ -1367,6 +1373,9 @@ module Matter
         when DataOperationType::Modify
           if existing = @credentials[credential_key]?
             affected_user_index = existing.user_index
+            if duplicate_pin_or_rfid_data?(@credentials.values, request.credential, request.credential_data)
+              return set_credential_response(request, StatusCode::Duplicate)
+            end
             if aliro_credential_type?(request.credential.credential_type) &&
                @credentials.any? { |key, record| key != credential_key && aliro_credential_type?(record.credential.credential_type) && record.credential_data == request.credential_data }
               return set_credential_response(request, StatusCode::Duplicate)
@@ -1909,6 +1918,17 @@ module Matter
 
       private def credential_key(credential : Credential) : Tuple(UInt8, UInt16)
         {credential.credential_type.value.to_u8, credential.credential_index}
+      end
+
+      private def duplicate_pin_or_rfid_data?(records : Enumerable(CredentialRecord), credential : Credential, data : Bytes) : Bool
+        type = credential.credential_type
+        return false unless type.pin? || type.rfid?
+
+        records.any? do |record|
+          record.credential.credential_type == type &&
+            record.credential.credential_index != credential.credential_index &&
+            record.credential_data == data
+        end
       end
 
       private def next_available_credential_index(type : CredentialType, current_index : UInt16) : UInt16?

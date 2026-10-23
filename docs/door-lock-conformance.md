@@ -22,6 +22,15 @@ disabled and non-access users cannot operate the lock with that PIN. The
 example's chip-tool test creates a user and PIN credential, restarts the
 device, reads them back, and unlocks with the restored PIN.
 
+SetCredential rejects duplicate PIN or RFID bytes in another slot of the
+same credential type with the Door Lock `Duplicate` status. Add and Modify
+check this before changing users or credentials; the official chip-tool
+scenario verifies a rejected duplicate PIN over the wire. The two credential
+types have separate value spaces. A saved database containing duplicate PIN
+or RFID data fails restoration before changing live lock state, so the host
+must correct those records rather than silently assigning one code to two
+users.
+
 The backend contains credential bytes and other device secrets, so deployments
 must protect its files or database with appropriate access controls.
 
