@@ -563,8 +563,11 @@ The PFR+STA profile also accepts a host-approved request to shift a future
 forecast within its earliest-start and latest-end window. EarliestStartTime may
 be null for immediate availability. CancelRequest restores the host schedule,
 and a conflicting opt-out cancels the adjustment. The synthetic washer-dryer
-exercises this flow. PAU, FA, and CON remain unavailable; the server rejects
-those feature bits.
+exercises this flow. The separate PFR+PAU profile accepts host-approved pauses
+of its active, pausable forecast slot within its advertised duration bounds;
+ResumeRequest, expiry, host state changes and conflicting opt-out end the pause
+with a Resumed event. The synthetic pausable washer exercises this profile.
+FA and CON remain unavailable; the server rejects those feature bits.
 
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer

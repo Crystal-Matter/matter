@@ -53,6 +53,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
 
+### Device Energy Management pausable operation
+
+- Add the Matter 1.6 PFR+PAU profile with per-slot pause bounds, host-approved
+  PauseRequest/ResumeRequest, Paused/Resumed events, duration expiry, and
+  opt-out/host-state cancellation. An official chip-tool scenario exercises a
+  synthetic washer's pause, resume, expiry, and restart behavior.
+
 ### Device Energy Management start time adjustment
 
 - Add the Matter 1.6 PFR+STA profile with nullable earliest start, bounded
