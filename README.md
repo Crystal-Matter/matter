@@ -551,8 +551,15 @@ the requesting fabric index for host policy. The server validates requested
 power and duration, opt-out and online state, reports active state, emits
 PowerAdjustStart/End, and ends a session on cancellation, timeout, fault,
 offline state, or a new opt-out. A restart begins online without replaying an
-old power adjustment. PFR, SFR, STA, PAU, FA, and CON remain unavailable and
-are never advertised. Those six feature areas are planned as follow-up slices.
+old power adjustment. This PA profile never advertises unrelated feature bits.
+
+The same server supports standalone PFR or SFR reporting profiles. A host
+reports a nullable `Forecast` with 1–10 bounded slots; PFR slots include power
+and energy estimates, while SFR slots include a stable manufacturer state.
+Forecasts are copied on assignment and read, require advancing IDs, and are
+volatile across restarts. The host can refresh elapsed and remaining slot time
+without flooding subscriptions. The synthetic washer-dryer shows PFR reporting.
+STA, PAU, FA, and CON remain unavailable; the server rejects those feature bits.
 
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer

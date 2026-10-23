@@ -3,9 +3,9 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Device Energy Management (0x0098), revision 4.
-    # This server implements the PowerAdjustment feature. The host owns the
-    # appliance and must accept a requested power before protocol state moves.
-    # Other optional feature bits are rejected until their behavior is added.
+    # This server supports one of the PowerAdjustment, PowerForecastReporting,
+    # or StateForecastReporting profiles. The host owns physical operation and
+    # supplies forecasts. Adjustment features remain unavailable.
     class DeviceEnergyManagement < Base
       Log = ::Log.for("matter.cluster.device_energy_management")
 
@@ -19,9 +19,11 @@ module Matter
       feature :forecast_adjustment, bit: 5
       feature :constraint_based_adjustment, bit: 6
 
-      MAX_POWER_RANGES           = 8
+      MAX_POWER_RANGES           =  8
+      MAX_FORECAST_SLOTS         = 10
+      MAX_SLOT_COSTS             =  5
       CAPABILITY_REPORT_INTERVAL = 10.seconds
-      SUPPORTED_FEATURES         = Feature::PowerAdjustment
+      FORECAST_REPORT_INTERVAL   = 10.seconds
 
       enum ESAType : UInt8
         EVSE                =   0
@@ -73,6 +75,144 @@ module Matter
         NoAdjustment                = 0
         LocalOptimizationAdjustment = 1
         GridOptimizationAdjustment  = 2
+      end
+
+      enum ForecastUpdateReason : UInt8
+        InternalOptimization = 0
+        LocalOptimization    = 1
+        GridOptimization     = 2
+      end
+
+      enum CostType : UInt8
+        Financial    = 0
+        GHGEmissions = 1
+        Comfort      = 2
+        Temperature  = 3
+      end
+
+      struct Cost
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter cost_type : CostType
+
+        @[TLV::Field(tag: 1)]
+        getter value : Int32
+
+        @[TLV::Field(tag: 2)]
+        getter decimal_points : UInt8
+
+        @[TLV::Field(tag: 3, optional: true)]
+        getter currency : UInt16?
+
+        def initialize(@cost_type : CostType, @value : Int32,
+                       @decimal_points : UInt8, @currency : UInt16? = nil)
+          raise ArgumentError.new("currency exceeds 999") if @currency.try { |currency| currency > 999_u16 }
+        end
+      end
+
+      struct Slot
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter min_duration : UInt32
+        @[TLV::Field(tag: 1)]
+        getter max_duration : UInt32
+        @[TLV::Field(tag: 2)]
+        getter default_duration : UInt32
+        @[TLV::Field(tag: 3)]
+        getter elapsed_slot_time : UInt32
+        @[TLV::Field(tag: 4)]
+        getter remaining_slot_time : UInt32
+        @[TLV::Field(tag: 8, optional: true)]
+        getter manufacturer_esa_state : UInt16?
+        @[TLV::Field(tag: 9, optional: true)]
+        getter nominal_power : Int64?
+        @[TLV::Field(tag: 10, optional: true)]
+        getter min_power : Int64?
+        @[TLV::Field(tag: 11, optional: true)]
+        getter max_power : Int64?
+        @[TLV::Field(tag: 12, optional: true)]
+        getter nominal_energy : Int64?
+        @[TLV::Field(tag: 13, optional: true)]
+        @costs : Array(Cost)?
+
+        def initialize(@min_duration : UInt32, @max_duration : UInt32,
+                       @default_duration : UInt32, @elapsed_slot_time : UInt32,
+                       @remaining_slot_time : UInt32,
+                       @manufacturer_esa_state : UInt16? = nil,
+                       @nominal_power : Int64? = nil, @min_power : Int64? = nil,
+                       @max_power : Int64? = nil, @nominal_energy : Int64? = nil,
+                       costs : Array(Cost)? = nil)
+          unless @min_duration <= @default_duration && @default_duration <= @max_duration
+            raise ArgumentError.new("slot duration is outside minimum and maximum")
+          end
+          raise ArgumentError.new("too many slot costs") if costs && costs.size > MAX_SLOT_COSTS
+          @costs = costs.try(&.dup)
+        end
+
+        def duplicate : Slot
+          Slot.new(@min_duration, @max_duration, @default_duration,
+            @elapsed_slot_time, @remaining_slot_time, @manufacturer_esa_state,
+            @nominal_power, @min_power, @max_power, @nominal_energy, @costs)
+        end
+
+        def costs : Array(Cost)?
+          @costs.try(&.dup)
+        end
+
+        def with_progress(elapsed : UInt32, remaining : UInt32) : Slot
+          Slot.new(@min_duration, @max_duration, @default_duration,
+            elapsed, remaining, @manufacturer_esa_state,
+            @nominal_power, @min_power, @max_power, @nominal_energy, @costs)
+        end
+      end
+
+      struct Forecast
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter forecast_id : UInt32
+        @[TLV::Field(tag: 1)]
+        getter active_slot_number : UInt16?
+        @[TLV::Field(tag: 2)]
+        getter start_time : UInt32
+        @[TLV::Field(tag: 3)]
+        getter end_time : UInt32
+        @[TLV::Field(tag: 6)]
+        getter? is_pausable : Bool
+        @[TLV::Field(tag: 7)]
+        @slots : Array(Slot)
+        @[TLV::Field(tag: 8)]
+        getter forecast_update_reason : ForecastUpdateReason
+
+        def initialize(@forecast_id : UInt32, @active_slot_number : UInt16?,
+                       @start_time : UInt32, @end_time : UInt32,
+                       @is_pausable : Bool, slots : Array(Slot),
+                       @forecast_update_reason : ForecastUpdateReason)
+          raise ArgumentError.new("forecast end precedes start") if @end_time < @start_time
+          raise ArgumentError.new("forecast requires 1–10 slots") unless (1..MAX_FORECAST_SLOTS).includes?(slots.size)
+          if (active = @active_slot_number) && active >= slots.size
+            raise ArgumentError.new("active slot is outside the forecast")
+          end
+          @slots = slots.map(&.duplicate)
+        end
+
+        def duplicate : Forecast
+          Forecast.new(@forecast_id, @active_slot_number, @start_time, @end_time,
+            @is_pausable, @slots, @forecast_update_reason)
+        end
+
+        def slots : Array(Slot)
+          @slots.map(&.duplicate)
+        end
+
+        def with_slot_progress(index : UInt16, elapsed : UInt32, remaining : UInt32) : Forecast
+          updated = @slots.map(&.duplicate)
+          updated[index] = updated[index].with_progress(elapsed, remaining)
+          Forecast.new(@forecast_id, @active_slot_number, @start_time, @end_time,
+            @is_pausable, updated, @forecast_update_reason)
+        end
       end
 
       struct PowerAdjust
@@ -162,7 +302,11 @@ module Matter
       attribute 0x0004, :abs_max_power, Int64, computed: true
       attribute 0x0005, :power_adjustment_capability, PowerAdjustCapability,
         nullable: true, computed: true, requires: :power_adjustment
-      attribute 0x0007, :opt_out_state, OptOutState, computed: true
+      attribute 0x0006, :forecast, Forecast, nullable: true, computed: true,
+        requires: [:power_forecast_reporting, :state_forecast_reporting]
+      attribute 0x0007, :opt_out_state, OptOutState, computed: true,
+        requires: [:power_adjustment, :start_time_adjustment, :pausable,
+                   :forecast_adjustment, :constraint_based_adjustment]
 
       command 0x00, :power_adjust_request, request: PowerAdjustRequest,
         access: :operate, requires: :power_adjustment
@@ -177,6 +321,9 @@ module Matter
       @esa_state : ESAState = ESAState::Online
       @opt_out_state : OptOutState = OptOutState::NoOptOut
       @power_adjustment_capability : PowerAdjustCapability?
+      @forecast : Forecast?
+      @last_forecast_id : UInt32?
+      @last_forecast_report : Time::Instant?
       @active_adjustment : PowerAdjustRequest?
       @active_started : Time::Instant?
       @active_fabric_index : UInt8?
@@ -193,7 +340,14 @@ module Matter
                      power_adjustment_capability : PowerAdjustCapability? = nil,
                      @feature_map : Feature = Feature::PowerAdjustment)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        raise ArgumentError.new("only PA is implemented") unless @feature_map == SUPPORTED_FEATURES
+        unless @feature_map.in?(Feature::PowerAdjustment,
+                 Feature::PowerForecastReporting,
+                 Feature::StateForecastReporting)
+          raise ArgumentError.new("select exactly one supported DEM profile: PA, PFR, or SFR")
+        end
+        if !@feature_map.power_adjustment? && power_adjustment_capability
+          raise ArgumentError.new("power capability requires PA")
+        end
         raise ArgumentError.new("AbsMinPower exceeds AbsMaxPower") if @abs_min_power > @abs_max_power
         validate_capability!(power_adjustment_capability)
         if power_adjustment_capability && !power_adjustment_capability.cause.no_adjustment?
@@ -226,8 +380,43 @@ module Matter
         @power_adjustment_capability.try(&.duplicate)
       end
 
+      def forecast : Forecast?
+        @forecast.try(&.duplicate)
+      end
+
       def opt_out_state : OptOutState
         @opt_out_state
+      end
+
+      # The host publishes a new indicative forecast. A repeated ID is not an
+      # update; later IDs may wrap at UInt32::MAX. Progress-only changes use
+      # report_slot_progress so subscriptions are not flooded each second.
+      def report_forecast(value : Forecast?) : Nil
+        unless @feature_map.power_forecast_reporting? || @feature_map.state_forecast_reporting?
+          raise ArgumentError.new("forecast reporting feature is disabled")
+        end
+        validate_forecast!(value) if value
+        if value && (previous = @last_forecast_id)
+          distance = value.forecast_id &- previous
+          unless distance > 0_u32 && distance < 0x8000_0000_u32
+            raise ArgumentError.new("ForecastID must increase (wrapping is permitted)")
+          end
+        end
+        was_null = @forecast.nil?
+        return if value.nil? && was_null
+        @forecast = value.try(&.duplicate)
+        @last_forecast_id = value.forecast_id if value
+        forecast_changed(force_report: was_null != value.nil?)
+      end
+
+      # These two values are read live but are expressly excluded from
+      # Forecast subscription notifications by the cluster specification.
+      def report_slot_progress(index : UInt16, elapsed : UInt32,
+                               remaining : UInt32) : Nil
+        forecast = @forecast
+        raise ArgumentError.new("no active forecast") unless forecast
+        raise ArgumentError.new("slot index is outside the forecast") if index >= forecast.slots.size
+        @forecast = forecast.with_slot_progress(index, elapsed, remaining)
       end
 
       def on_power_adjust(&block : PowerAdjustRequest, UInt8? -> InteractionModel::Status) : Nil
@@ -243,6 +432,9 @@ module Matter
       def report_abs_power_limits(minimum : Int64, maximum : Int64) : Nil
         raise ArgumentError.new("AbsMinPower exceeds AbsMaxPower") if minimum > maximum
         validate_capability!(@power_adjustment_capability, minimum, maximum)
+        if current_forecast = @forecast
+          validate_forecast!(current_forecast, minimum, maximum)
+        end
         if @abs_min_power != minimum
           @abs_min_power = minimum
           increment_version_and_notify(ATTR_ABS_MIN_POWER)
@@ -350,6 +542,41 @@ module Matter
               raise ArgumentError.new("power range exceeds absolute limits")
             end
           end
+        end
+      end
+
+      private def validate_forecast!(value : Forecast,
+                                     minimum_limit : Int64 = @abs_min_power,
+                                     maximum_limit : Int64 = @abs_max_power) : Nil
+        raise ArgumentError.new("Pausable forecast requires PAU") if value.is_pausable?
+        value.slots.each do |slot|
+          if @feature_map.power_forecast_reporting?
+            minimum = slot.min_power
+            maximum = slot.max_power
+            nominal = slot.nominal_power
+            unless minimum && maximum && nominal && slot.nominal_energy
+              raise ArgumentError.new("PFR slot needs nominal, minimum, maximum power, and energy")
+            end
+            unless minimum_limit <= minimum && minimum <= nominal &&
+                   nominal <= maximum && maximum <= maximum_limit
+              raise ArgumentError.new("PFR slot power exceeds nameplate or slot range")
+            end
+            raise ArgumentError.new("PFR slot cannot contain manufacturer state") if slot.manufacturer_esa_state
+          else
+            raise ArgumentError.new("SFR slot needs manufacturer state") unless slot.manufacturer_esa_state
+            if slot.nominal_power || slot.min_power || slot.max_power || slot.nominal_energy
+              raise ArgumentError.new("SFR slot cannot contain PFR power fields")
+            end
+          end
+        end
+      end
+
+      private def forecast_changed(force_report : Bool = false) : Nil
+        increment_version
+        now = Time.instant
+        if force_report || (last = @last_forecast_report).nil? || now - last >= FORECAST_REPORT_INTERVAL
+          @last_forecast_report = now
+          notify_changed(ATTR_FORECAST)
         end
       end
 
