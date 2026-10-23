@@ -41,6 +41,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Appliance modes
 
+- Keep fixed mode catalogues isolated from caller and read-result mutations.
+  When stored CurrentMode is absent from an updated catalogue, restore the
+  host-configured mode instead.
 - Add Matter 1.6 revision 3 Dishwasher Mode and Laundry Washer Mode servers
   with shared Mode Base request/response types and validation of unique mode
   values, labels, and tag sets. Supported

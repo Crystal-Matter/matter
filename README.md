@@ -284,6 +284,9 @@ can use `on_change_to_mode` to perform or refuse a physical transition; a
 refusal returns a ChangeToModeResponse with a failure status and text. These
 clusters expose neither the OnOff feature nor StartUpMode/OnMode. The synthetic
 `examples/matter_appliance_modes_device.cr` exercises both with chip-tool.
+SupportedModes is copied at construction and on read. If persisted CurrentMode
+is no longer in the host's configured catalogue, the configured initial mode
+is restored.
 
 `Cluster::RefrigeratorAlarm` reports the Matter 1.6 DoorOpen alarm after the
 appliance's chosen open duration. Its `Mask`, `State`, and fixed `Supported`

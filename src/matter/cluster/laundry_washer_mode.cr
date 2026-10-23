@@ -23,12 +23,19 @@ module Matter
 
       property on_change_to_mode : ModeBase::TransitionCallback? = nil
 
+      @configured_current_mode : UInt8
+
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @supported_modes : Array(ModeBase::Option),
                      @current_mode : UInt8)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         ModeBase.validate_modes!(@supported_modes, @current_mode, DERIVED_TAGS)
-        @supported_modes = @supported_modes.dup
+        @supported_modes = ModeBase.copy_modes(@supported_modes)
+        @configured_current_mode = @current_mode
+      end
+
+      def supported_modes : Array(ModeBase::Option)
+        ModeBase.copy_modes(@supported_modes)
       end
 
       def change_to_mode(request : ModeBase::ChangeToModeRequest) : ModeBase::ChangeToModeResponse
@@ -39,6 +46,10 @@ module Matter
 
       private def validate_current_mode(mode : UInt8) : Nil
         ModeBase.validate_current_mode!(@supported_modes, mode)
+      end
+
+      private def after_restore_state : Nil
+        @current_mode = @configured_current_mode unless @supported_modes.any?(&.mode.==(@current_mode))
       end
     end
   end

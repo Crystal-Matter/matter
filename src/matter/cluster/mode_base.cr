@@ -92,6 +92,11 @@ module Matter
 
       alias TransitionCallback = Proc(UInt8, UInt8, ChangeToModeResponse)
 
+      # Keep fixed catalogues independent of host-owned arrays and read results.
+      def self.copy_modes(options : Array(Option)) : Array(Option)
+        options.map { |option| Option.new(option.label, option.mode, option.mode_tags) }
+      end
+
       def self.validate_modes!(options : Array(Option), current_mode : UInt8, derived_tags : Array(UInt16)) : Nil
         unless options.size.in?(MIN_SUPPORTED_MODES..MAX_SUPPORTED_MODES)
           raise ArgumentError.new("SupportedModes must contain #{MIN_SUPPORTED_MODES} to #{MAX_SUPPORTED_MODES} entries")
