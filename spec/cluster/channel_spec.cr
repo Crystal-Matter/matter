@@ -49,6 +49,23 @@ describe Channel do
     cluster.current_channel.should be_nil
   end
 
+  it "keeps the advertised channel list isolated from caller and reader mutations" do
+    channels = [Channel::ChannelInfo.new(7_u16, 1_u16, "Seven"),
+                Channel::ChannelInfo.new(9_u16, 0_u16, "Nine")]
+    cluster = build(Channel, feature_map: Channel::Feature::ChannelList, channels: channels)
+    original_version = cluster.data_version
+
+    channels.clear
+    cluster.channel_list.clear
+
+    cluster.channel_list.size.should eq(2)
+    cluster.data_version.should eq(original_version)
+    cluster.on_select { |_channel| true }
+    expect_status(invoke(cluster, Channel::CMD_CHANGE_CHANNEL_BY_NUMBER,
+      Channel::ChangeChannelByNumberRequest.new(9_u16, 0_u16)), IMCode::Success)
+    cluster.current_channel.try(&.name).should eq("Nine")
+  end
+
   it "does not claim a tune succeeded without a host handler" do
     channel = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
     cluster = build(Channel, channels: [channel])
