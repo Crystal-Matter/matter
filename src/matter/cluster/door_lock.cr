@@ -60,9 +60,10 @@ module Matter
       PROGRAMMING_PIN_INDEX = 0_u16
 
       # Lowest accepted values of the credential policy attributes
-      MIN_WRONG_CODE_ENTRY_LIMIT =  1_u8
-      MIN_TEMPORARY_DISABLE_TIME =  1_u8
-      MIN_EXPIRING_USER_TIMEOUT  = 1_u16
+      MIN_WRONG_CODE_ENTRY_LIMIT =     1_u8
+      MIN_TEMPORARY_DISABLE_TIME =     1_u8
+      MIN_EXPIRING_USER_TIMEOUT  =    1_u16
+      MAX_EXPIRING_USER_TIMEOUT  = 2880_u16
 
       # Every bit of LocalProgrammingFeatures set
       ALL_LOCAL_PROGRAMMING_FEATURES = 0xFF_u8
@@ -98,6 +99,12 @@ module Matter
         Invalid
         Restricted
       end
+
+      private record PinMatch, result : PinAuthorization, user_index : UInt16? = nil,
+        credential : Credential? = nil, error : OperationError? = nil
+
+      private record Authorization, status : InteractionModel::Status? = nil,
+        user_index : UInt16? = nil, credential : Credential? = nil
 
       private record LocalScheduleTime, epoch_seconds : Int64, day_mask : UInt8, minute_of_day : Int32
 
@@ -137,9 +144,9 @@ module Matter
       attribute 0x002C, :local_programming_features, UInt8, default: ALL_LOCAL_PROGRAMMING_FEATURES, writable: true, write_access: :administer, optional: true
       attribute 0x0030, :wrong_code_entry_limit, UInt8, default: DEFAULT_WRONG_CODE_ENTRY_LIMIT, writable: true, write_access: :administer, min: MIN_WRONG_CODE_ENTRY_LIMIT, requires: [:pin_credential, :rfid_credential]
       attribute 0x0031, :user_code_temporary_disable_time, UInt8, default: DEFAULT_TEMPORARY_DISABLE_SECONDS, writable: true, write_access: :administer, min: MIN_TEMPORARY_DISABLE_TIME, requires: [:pin_credential, :rfid_credential]
-      attribute 0x0032, :send_pin_over_the_air, Bool, default: true, writable: true, write_access: :administer, optional: true, requires: {pin_credential: true, user: false}
+      attribute 0x0032, :send_pin_over_the_air, Bool, default: false, writable: true, write_access: :administer, optional: true, requires: {pin_credential: true, user: false}
       attribute 0x0033, :require_pin_for_remote_operation, Bool, default: false, writable: true, write_access: :administer, requires: {pin_credential: true, credential_over_the_air_access: true}
-      attribute 0x0035, :expiring_user_timeout, UInt16, default: DEFAULT_EXPIRING_USER_TIMEOUT, writable: true, write_access: :administer, min: MIN_EXPIRING_USER_TIMEOUT, optional: true, requires: :user
+      attribute 0x0035, :expiring_user_timeout, UInt16, default: DEFAULT_EXPIRING_USER_TIMEOUT, writable: true, write_access: :administer, min: MIN_EXPIRING_USER_TIMEOUT, max: MAX_EXPIRING_USER_TIMEOUT, optional: true, requires: :user
       attribute 0x0080, :aliro_reader_verification_key, Bytes, nullable: true, computed: true, read_access: :administer, requires: :aliro_provisioning
       attribute 0x0081, :aliro_reader_group_identifier, Bytes, nullable: true, computed: true, read_access: :administer, requires: :aliro_provisioning
       attribute 0x0082, :aliro_reader_group_sub_identifier, Bytes, computed: true, fixed: true, read_access: :administer, requires: :aliro_provisioning
@@ -172,7 +179,7 @@ module Matter
       event 0x00, :door_lock_alarm, priority: :critical, payload: Events::DoorLockAlarm
       event 0x01, :door_state_change, priority: :critical, requires: :door_position_sensor, payload: Events::DoorStateChange
       event 0x02, :lock_operation, priority: :critical, payload: Events::LockOperation
-      event 0x03, :lock_operation_error, priority: :critical
+      event 0x03, :lock_operation_error, priority: :critical, payload: Events::LockOperationError
       event 0x04, :lock_user_change, priority: :info, requires: :user, payload: Events::LockUserChange
 
       struct UserRecord
@@ -187,6 +194,7 @@ module Matter
         property credentials : Array(Credential)
         property creator_fabric_index : UInt8?
         property last_modified_fabric_index : UInt8?
+        property expiring_user_expires_at : Time?
 
         def initialize(
           @user_index : UInt16,
@@ -198,6 +206,7 @@ module Matter
           @credentials : Array(Credential) = [] of Credential,
           @creator_fabric_index : UInt8? = nil,
           @last_modified_fabric_index : UInt8? = nil,
+          @expiring_user_expires_at : Time? = nil,
         )
         end
       end
@@ -334,6 +343,7 @@ module Matter
       @failed_remote_pin_attempts : UInt8 = 0_u8
       @lockout_until : Time? = nil
       @relock_generation : UInt64 = 0_u64
+      @user_expiry_generations = {} of UInt16 => UInt64
 
       getter default_pin_code : String
 
@@ -373,7 +383,7 @@ module Matter
         @aliro_reader_delegate : AliroReaderDelegate? = nil,
         @wrong_code_entry_limit : UInt8 = DEFAULT_WRONG_CODE_ENTRY_LIMIT,
         @user_code_temporary_disable_time : UInt8 = DEFAULT_TEMPORARY_DISABLE_SECONDS,
-        @send_pin_over_the_air : Bool = true,
+        @send_pin_over_the_air : Bool = false,
         @require_pin_for_remote_operation : Bool = false,
         @expiring_user_timeout : UInt16 = DEFAULT_EXPIRING_USER_TIMEOUT,
         @default_pin_code : String = DEFAULT_PIN_CODE,
@@ -406,6 +416,7 @@ module Matter
         raise ArgumentError.new("min_rfid_code_length must be <= max_rfid_code_length") if @min_rfid_code_length > @max_rfid_code_length
         raise ArgumentError.new("wrong_code_entry_limit must be >= 1") if @wrong_code_entry_limit < MIN_WRONG_CODE_ENTRY_LIMIT
         raise ArgumentError.new("user_code_temporary_disable_time must be >= 1") if @user_code_temporary_disable_time < MIN_TEMPORARY_DISABLE_TIME
+        raise ArgumentError.new("expiring_user_timeout must be 1..2880 minutes") unless @expiring_user_timeout.in?(MIN_EXPIRING_USER_TIMEOUT..MAX_EXPIRING_USER_TIMEOUT)
 
         if @feature_map.user?
           # Keep a default programming user slot for easier integration testing.
@@ -556,6 +567,18 @@ module Matter
         end
       end
 
+      private def after_restore_state : Nil
+        @user_expiry_generations.keys.each { |user_index| cancel_user_expiry(user_index) }
+        @users.keys.each do |user_index|
+          expire_user_if_due(user_index)
+          if user = @users[user_index]?
+            if user.user_type.expiring_user? && user.user_status.occupied_enabled? && (deadline = user.expiring_user_expires_at)
+              arm_user_expiry(user_index, deadline)
+            end
+          end
+        end
+      end
+
       # These local APIs stage Aliro material for a future reader delegate.
       # They do not enable the Aliro Matter feature bits or wire commands.
       def aliro_reader_config : AliroReaderConfig?
@@ -661,8 +684,24 @@ module Matter
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless record
         user_index = record.user_index
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless user_index
+        expire_user_if_due(user_index)
         user = @users[user_index]?
-        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless user && user.user_status.occupied_enabled? && schedule_allows_user?(user)
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless user
+        if user.user_status != UserStatus::OccupiedEnabled
+          report_lock_operation_error(LockOperationType::Unlock, OperationSource::Aliro, OperationError::DisabledUserDenied,
+            Authorization.new(nil, user_index, record.credential))
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        unless schedule_allows_user?(user)
+          report_lock_operation_error(LockOperationType::Unlock, OperationSource::Aliro, OperationError::Restricted,
+            Authorization.new(nil, user_index, record.credential))
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        if user.user_type.expiring_user? && @local_time_provider.call.nil?
+          report_lock_operation_error(LockOperationType::Unlock, OperationSource::Aliro, OperationError::Restricted,
+            Authorization.new(nil, user_index, record.credential))
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
 
         if user.user_type.non_access_user?
           emit_aliro_lock_operation(LockOperationType::NonAccessUserEvent, user_index, record.credential)
@@ -681,6 +720,11 @@ module Matter
         operation = user.user_type.forced_user? ? LockOperationType::ForcedUserEvent : LockOperationType::Unlock
         emit_aliro_lock_operation(operation, user_index, used_credential)
         emit_door_lock_alarm(Events::DoorLockAlarm.new(AlarmCode::ForcedUser)) if user.user_type.forced_user?
+        if user.user_type.disposable_user?
+          disable_user(user_index)
+        elsif user.user_type.expiring_user? && !user.expiring_user_expires_at
+          start_user_expiry(user_index)
+        end
         InteractionModel::Status.success
       end
 
@@ -858,50 +902,54 @@ module Matter
 
       def lock(pin : String? = nil, source : OperationSource = OperationSource::Remote) : InteractionModel::Status
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
-        if auth = authorize_remote_operation(pin)
-          return auth
+        authorization = authorize_remote_operation(pin, LockOperationType::Lock, source)
+        if status = authorization.status
+          return status
         end
 
         cancel_pending_relock
         self.lock_state = LockState::Locked
-        report_lock_operation(LockOperationType::Lock, source)
+        complete_lock_operation(LockOperationType::Lock, source, authorization)
         InteractionModel::Status.success
       end
 
       def unlock(pin : String? = nil, source : OperationSource = OperationSource::Remote) : InteractionModel::Status
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
-        if auth = authorize_remote_operation(pin)
-          return auth
+        authorization = authorize_remote_operation(pin, LockOperationType::Unlock, source)
+        if status = authorization.status
+          return status
         end
 
         self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
-        report_lock_operation(LockOperationType::Unlock, source)
+        complete_lock_operation(LockOperationType::Unlock, source, authorization)
         InteractionModel::Status.success
       end
 
       def unlock_with_timeout(timeout_seconds : UInt16, pin : String? = nil, source : OperationSource = OperationSource::Remote) : InteractionModel::Status
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
-        if auth = authorize_remote_operation(pin)
-          return auth
+        authorization = authorize_remote_operation(pin, LockOperationType::Unlock, source)
+        if status = authorization.status
+          return status
         end
 
         self.lock_state = LockState::Unlocked
         schedule_relock(timeout_seconds.to_u32)
-        report_lock_operation(LockOperationType::Unlock, source)
+        complete_lock_operation(LockOperationType::Unlock, source, authorization)
         InteractionModel::Status.success
       end
 
       def unbolt(pin : String? = nil, source : OperationSource = OperationSource::Remote) : InteractionModel::Status
         return InteractionModel::Status.unsupported_command unless @feature_map.unbolting?
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
-        if auth = authorize_remote_operation(pin)
-          return auth
+        authorization = authorize_remote_operation(pin, LockOperationType::Unlatch, source)
+        if status = authorization.status
+          return status
         end
 
         self.lock_state = LockState::Unlatched
         schedule_relock(@auto_relock_time)
-        report_lock_operation(LockOperationType::Unlatch, source)
+        complete_lock_operation(LockOperationType::Unlatch, source, authorization)
         InteractionModel::Status.success
       end
 
@@ -941,17 +989,47 @@ module Matter
       # Journals the LockOperation event for a completed operation. Remote
       # operations carry the fabric and node that asked for them; a local one
       # carries neither.
-      private def report_lock_operation(operation : LockOperationType, source : OperationSource) : Nil
+      private def report_lock_operation(operation : LockOperationType, source : OperationSource, authorization : Authorization) : Nil
         fabric_index = @request_fabric_index
         emit_lock_operation(
           Events::LockOperation.new(
             lock_operation_type: operation,
             operation_source: source,
+            user_index: authorization.user_index,
             fabric_index: fabric_index,
-            source_node: @request_peer_node_id
+            source_node: @request_peer_node_id,
+            credentials: authorization.credential.try { |credential| [credential] }
           ),
           fabric_index
         )
+      end
+
+      private def report_lock_operation_error(operation : LockOperationType, source : OperationSource,
+                                              error : OperationError, authorization : Authorization = Authorization.new) : Nil
+        emit_lock_operation_error(Events::LockOperationError.new(
+          lock_operation_type: operation,
+          operation_source: source,
+          operation_error: error,
+          user_index: authorization.user_index,
+          fabric_index: @request_fabric_index,
+          source_node: @request_peer_node_id,
+          credentials: authorization.credential.try { |credential| [credential] }
+        ), @request_fabric_index)
+      end
+
+      private def complete_lock_operation(operation : LockOperationType, source : OperationSource, authorization : Authorization) : Nil
+        user = authorization.user_index.try { |index| @users[index]? }
+        forced = user && user.user_type.forced_user?
+        report_lock_operation(forced ? LockOperationType::ForcedUserEvent : operation, source, authorization)
+        emit_door_lock_alarm(Events::DoorLockAlarm.new(AlarmCode::ForcedUser)) if forced
+
+        if user
+          if user.user_type.disposable_user? && (operation.unlock? || operation.unlatch?)
+            disable_user(user.user_index)
+          elsif user.user_type.expiring_user? && !user.expiring_user_expires_at
+            start_user_expiry(user.user_index)
+          end
+        end
       end
 
       # ------------------------------------------------------------------------
@@ -1114,6 +1192,13 @@ module Matter
             return InteractionModel::Status.cluster_failure(StatusCode::NotFound)
           end
 
+          restarts_expiry = request.user_status.try { |status| status != user.user_status } || false
+          restarts_expiry ||= request.user_type.try { |type| type != user.user_type } || false
+          if restarts_expiry
+            user.expiring_user_expires_at = nil
+            cancel_user_expiry(request.user_index)
+          end
+
           if user_name = request.user_name
             user.user_name = user_name
           end
@@ -1148,6 +1233,8 @@ module Matter
 
       def get_user(request : GetUserRequest) : GetUserResponse
         return vacant_user_response(request.user_index, nil) unless valid_user_index?(request.user_index)
+
+        expire_user_if_due(request.user_index)
 
         next_user = @users.keys.select { |index| index > request.user_index }.sort!.first?
 
@@ -1545,53 +1632,128 @@ module Matter
         false
       end
 
-      private def authorize_remote_operation(pin : String?) : InteractionModel::Status?
+      private def authorize_remote_operation(pin : String?, operation : LockOperationType, source : OperationSource) : Authorization
         requires_pin = @feature_map.pin_credential? && @feature_map.credential_over_the_air_access? && @require_pin_for_remote_operation
 
         if requires_pin
           pin_value = pin
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless pin_value
-          return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) if pin_value.empty?
-
-          case pin_authorization(pin_value)
-          when PinAuthorization::Invalid
-            record_failed_pin_attempt
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
-          when PinAuthorization::Restricted
-            return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+          if pin_value.nil? || pin_value.empty?
+            report_lock_operation_error(operation, source, OperationError::InvalidCredential)
+            return Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::InvalidField))
           end
-          clear_failed_pin_state
-          return
+          return authorize_pin(pin_value, operation, source)
         end
 
         if pin && !pin.empty? && @feature_map.pin_credential?
-          case pin_authorization(pin)
-          when PinAuthorization::Invalid
-            record_failed_pin_attempt
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
-          when PinAuthorization::Restricted
-            return InteractionModel::Status.cluster_failure(StatusCode::Failure)
-          end
-          clear_failed_pin_state
+          return authorize_pin(pin, operation, source)
         end
 
-        nil
+        Authorization.new
       end
 
-      private def pin_authorization(pin : String) : PinAuthorization
-        return PinAuthorization::Allowed if pin == @default_pin_code
+      private def authorize_pin(pin : String, operation : LockOperationType, source : OperationSource) : Authorization
+        match = pin_authorization(pin)
+        authorization = Authorization.new(nil, match.user_index, match.credential)
+        case match.result
+        when PinAuthorization::Allowed
+          clear_failed_pin_state
+          authorization
+        when PinAuthorization::Invalid
+          record_failed_pin_attempt
+          report_lock_operation_error(operation, source, OperationError::InvalidCredential)
+          Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::InvalidField))
+        when PinAuthorization::Restricted
+          report_lock_operation_error(operation, source, match.error || OperationError::Restricted, authorization)
+          Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::Failure), match.user_index, match.credential)
+        else
+          Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::Failure))
+        end
+      end
+
+      private def pin_authorization(pin : String) : PinMatch
+        return PinMatch.new(PinAuthorization::Allowed) if pin == @default_pin_code
 
         recognized = false
+        restricted : PinMatch? = nil
         @credentials.values.each do |credential|
           next unless credential.credential.credential_type.pin? && String.new(credential.credential_data) == pin
           recognized = true
           user_index = credential.user_index
           next unless user_index
           user = @users[user_index]?
-          next unless user && user.user_status == UserStatus::OccupiedEnabled && user.user_type != UserType::NonAccessUser
-          return PinAuthorization::Allowed if schedule_allows_user?(user)
+          next unless user
+          context = PinMatch.new(PinAuthorization::Restricted, user_index, credential.credential)
+          if user.user_status != UserStatus::OccupiedEnabled || expire_user_if_due(user_index)
+            restricted ||= PinMatch.new(PinAuthorization::Restricted, user_index, credential.credential, OperationError::DisabledUserDenied)
+            next
+          end
+          if user.user_type.non_access_user? || !schedule_allows_user?(user) || (user.user_type.expiring_user? && !@local_time_provider.call)
+            restricted ||= context
+            next
+          end
+          return PinMatch.new(PinAuthorization::Allowed, user_index, credential.credential)
         end
-        recognized ? PinAuthorization::Restricted : PinAuthorization::Invalid
+        restricted || PinMatch.new(recognized ? PinAuthorization::Restricted : PinAuthorization::Invalid)
+      end
+
+      private def start_user_expiry(user_index : UInt16) : Nil
+        now = @local_time_provider.call
+        return unless now
+        user = @users[user_index]?
+        return unless user && user.user_type.expiring_user? && user.user_status.occupied_enabled?
+        return if user.expiring_user_expires_at
+
+        deadline = now + @expiring_user_timeout.minutes
+        user.expiring_user_expires_at = deadline
+        @users[user_index] = user
+        increment_version
+        arm_user_expiry(user_index, deadline)
+      end
+
+      private def arm_user_expiry(user_index : UInt16, deadline : Time) : Nil
+        now = @local_time_provider.call
+        return unless now
+        remaining = deadline - now
+        return if remaining <= 0.seconds
+
+        generation = (@user_expiry_generations[user_index]? || 0_u64) &+ 1_u64
+        @user_expiry_generations[user_index] = generation
+        spawn do
+          sleep remaining
+          expire_user_if_due(user_index) if @user_expiry_generations[user_index]? == generation
+        end
+      end
+
+      private def cancel_user_expiry(user_index : UInt16) : Nil
+        @user_expiry_generations[user_index] = (@user_expiry_generations[user_index]? || 0_u64) &+ 1_u64
+      end
+
+      private def expire_user_if_due(user_index : UInt16) : Bool
+        user = @users[user_index]?
+        return false unless user && user.user_type.expiring_user? && user.user_status.occupied_enabled?
+        deadline = user.expiring_user_expires_at
+        return false unless deadline
+        now = @local_time_provider.call
+        return false unless now && now >= deadline
+
+        disable_user(user_index)
+        true
+      end
+
+      private def disable_user(user_index : UInt16) : Nil
+        user = @users[user_index]?
+        return unless user && user.user_status.occupied_enabled?
+        user.user_status = UserStatus::OccupiedDisabled
+        @users[user_index] = user
+        cancel_user_expiry(user_index)
+        increment_version
+        emit_lock_user_change(Events::LockUserChange.new(
+          lock_data_type: LockDataType::UserIndex,
+          data_operation_type: DataOperationType::Modify,
+          operation_source: OperationSource::Unspecified,
+          user_index: user_index,
+          data_index: user_index
+        ))
       end
 
       private def record_failed_pin_attempt : Nil
@@ -1652,6 +1814,7 @@ module Matter
       end
 
       private def clear_user_record(user_index : UInt16) : Nil
+        cancel_user_expiry(user_index)
         @users.delete(user_index)
 
         @credentials.keys.select { |key| @credentials[key]?.try(&.user_index) == user_index }.each do |key|
