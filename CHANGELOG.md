@@ -82,6 +82,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scanners now expand simple local cluster macros with literal arguments, so
   the reports no longer mislabel these implemented clusters as absent.
 
+### Water Heater Mode and Management
+
+- Add Matter 1.6 Water Heater Mode (0x009E, revision 1) and Water Heater
+  Management (0x0094, revision 2) servers. The mode server validates required
+  Off/Manual tags, handles ChangeToMode responses, and keeps CurrentMode across
+  restart. Management gates energy and tank percentage fields by feature,
+  validates BoostInfo, and emits BoostStarted/BoostEnded around host-approved
+  Boost and CancelBoost transitions. A thermostat-backed example exercises
+  both clusters with official chip-tool.
+
 ### Joint Fabric VVS interoperability
 
 - Add a pinned matter.js 0.18.0 live device test for Crystal VID verification.

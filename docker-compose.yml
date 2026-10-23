@@ -43,6 +43,11 @@ services:
     environment:
       E2E_DEVICE: matter_resource_monitoring
 
+  water-heater:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_water_heater
+
   groupcast-listener:
     <<: *device
     environment:

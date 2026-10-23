@@ -88,7 +88,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — |
-| 0x0094 | Water Heater Management Cluster | 2 | — | cluster absent |
+| 0x0094 | Water Heater Management Cluster | 2 | 2 | Host controls thermostat, heat source, and boost acceptance |
 | 0x0095 | Commodity Price Cluster | 4 | — | cluster absent |
 | 0x0097 | Messages Cluster | 3 | — | cluster absent |
 | 0x0098 | Device Energy Management Cluster | 4 | — | cluster absent |
@@ -96,7 +96,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x009B | Energy Preference Cluster | 1 | — | cluster absent |
 | 0x009C | Power Topology Cluster | 1 | 1 | — |
 | 0x009D | Energy EVSE Mode Cluster | 2 | — | cluster absent |
-| 0x009E | Water Heater Mode Cluster | 1 | — | cluster absent |
+| 0x009E | Water Heater Mode Cluster | 1 | 1 | Mode Base response and required Off/Manual tags; host controls transitions |
 | 0x009F | Device Energy Management Mode Cluster | 2 | — | cluster absent |
 | 0x00A0 | Electrical Grid Conditions Cluster | 1 | — | cluster absent |
 | 0x0101 | Door Lock Cluster | 10 | 9 | SoundVolume and OperatingModes behavior corrected; durable credentials and Aliro support remain |
