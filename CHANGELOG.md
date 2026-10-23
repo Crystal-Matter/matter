@@ -31,6 +31,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RFID data before changing live lock state; affected hosts must remove the
   duplicate records before restoring that saved database.
 
+### Messages
+
+- Add the Matter 1.6 revision 3 Messages server with typed message payloads,
+  fabric-scoped queued messages and host-triggered events, global active message
+  IDs, durable queue state, and cleanup on fabric removal. The Content App exercises
+  present, restart, and cancel through official chip-tool. Optional confirmation,
+  response, reply, and protected-message features remain unavailable until a
+  host can provide their required user interactions; automatic Duration expiry
+  remains to be implemented.
+
 ### Electrical Grid Conditions
 
 - Add the Matter 1.6 revision 1 Electrical Grid Conditions server with typed
