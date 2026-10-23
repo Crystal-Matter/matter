@@ -326,6 +326,23 @@ The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
 [the integrated multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)
 against merged `develop`.
 
+`e2e/interop/matterjs_vvs_live.py` checks the VVS-bearing VID path against an
+independent matter.js 0.18.0 device, pinned to commit
+`7e1f5d7892dcea4330828b6a82d31ffe2a04cc0b`. The Crystal controller
+commissions the device, installs an 85-byte VVS and Matter-TLV VVSC through
+SetVIDVerificationStatement on its commissioned fabric, and reads the exact
+bytes and FabricIndex back through OperationalCredentials. Each VID check then
+opens a new CASE session, obtains a fresh SignVIDVerificationRequest response
+from matter.js, and reads Root/ICA records from a local HTTPS DCL-shaped
+fixture. It rejects wrong VID, wrong root, and removed Root/ICA records; it
+accepts the Root→ICA→VVSC chain and VVS signature when the records are active.
+The signer and DCL records are generated for the test. matter.js 0.18.0 uses a
+Matter 1.6.1 model and supplies an ordinary device here, rather than an
+independent Joint Fabric Administrator. Its own VVS verifier still does not
+validate the DCL certificate path. This test proves independent device wire
+and signature interoperability with Crystal's verifier; production DCL
+freshness and a VVS-bearing JFA consent/JCM exchange remain to be verified.
+
 ## Work required for interoperable Joint Commissioning
 
 1. Exercise independent consent decisions with real ecosystem policies and
@@ -337,14 +354,17 @@ against merged `develop`.
    an RCAC to a DCL root by VID, RCAC ID, public key, and SKID, and validates
    a VVS signature through a signer-specific leaf and a Root/ICA CA chain. The
    official SDK v1.6 implements the root lookup path but marks its VVS path
-   unsupported, so independent VVS interoperability remains unproven.
+   unsupported. The matter.js device test above covers VVS-bearing wire
+   verification with a synthetic signer and DCL fixture; a VVS-bearing
+   joining Administrator and independently deployed trust/consent policies
+   remain unverified.
    Deployment must authenticate and freshen its DCL gateway. The optional
    Matter-TLV VVSC is checked for its signed signer profile and issuer path.
    The Appendix F.5 fixed-vector spec checks fabric-binding and VVS-bearing
    signed-message byte layout against official SDK bytes. Its signed-message
    case substitutes a locally generated root key because the published vector
-   does not supply that root's private key. This establishes encoding agreement,
-   not independent VVS certificate-chain or live DCL interoperability.
+   does not supply that root's private key. This establishes encoding agreement;
+   the separate matter.js device test covers the live VVS certificate path.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer, A removal, B restart after a lost RemoveFabric
@@ -490,8 +510,10 @@ gateway whose ledger synchronization and transport you trust. The optional
 Matter-TLV VVSC is checked for its VVS identifier, issuer name, validity,
 digital-signature usage, non-CA status, SKID/AKID, and signature under its
 DCL-approved Root/ICA issuer. The
-SDK v1.6 does not implement independent VVS path verification, so this path
-still needs an independent ecosystem interoperability run.
+SDK v1.6 does not implement independent VVS path verification. The pinned
+matter.js device run above exercises its independent on-wire responder and
+Crystal's full VVS trust path; an independent VVS-bearing Joint Fabric
+Administrator and production DCL source remain to be exercised.
 
 For administrator removal, Matter 1.6 recommends transferring to a fresh
 trusted root after rotating Administrator CAT credentials, because an ICAC

@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric VVS interoperability
+
+- Add a pinned matter.js 0.18.0 live device test for Crystal VID verification.
+  It commissions the independent device, installs and reads back VVS/VVSC on
+  the correct fabric, then checks fresh CASE SignVID responses against an
+  HTTPS test DCL Root/ICA chain. Wrong VID, root, and removed records deny;
+  active records accept. The signer and DCL records are synthetic, and this
+  device test does not exercise JFA consent or production ledger freshness.
+
 ### Durable fail-safe credential recovery
 
 - Write a durable undo journal before provisional AddNOC and UpdateNOC fabric

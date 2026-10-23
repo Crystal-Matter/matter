@@ -1,0 +1,51 @@
+name: Matter.js VVS over-wire interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/matterjs-vvs-interop.yml'
+      - 'e2e/interop/matterjs_vvs_*'
+      - 'src/matter/controller/vid_verification*'
+      - 'docs/matter_1_6_joint_fabric.md'
+
+jobs:
+  matterjs-vvs-device:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: matter-js/matter.js
+          ref: 7e1f5d7892dcea4330828b6a82d31ffe2a04cc0b
+          path: matter-js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: matter-js/package-lock.json
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Install Crystal dependencies
+        run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Install matter.js dependencies
+        run: npm ci --prefix matter-js
+      - name: Compile Crystal live VID verifier
+        run: |
+          mkdir -p bin
+          crystal build e2e/interop/matterjs_vvs_driver.cr -o bin/matterjs-vvs-driver --error-trace
+      - name: Verify VVS from independent matter.js device
+        timeout-minutes: 20
+        run: |
+          python3 e2e/interop/matterjs_vvs_live.py \
+            --matter-js matter-js --driver bin/matterjs-vvs-driver \
+            --log-dir tmp/interop-matterjs-vvs
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matterjs-vvs-interop-logs
+          path: tmp/interop-matterjs-vvs/*.log
+          if-no-files-found: warn
