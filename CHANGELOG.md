@@ -26,6 +26,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   structure with optional power values and a nullable source. A synthetic
   utility meter is exercised by the official chip-tool across restart.
 
+### Robotic vacuum cleaner clusters
+
+- Add Matter 1.6 RVC Run Mode revision 4, RVC Clean Mode revision 5, and RVC
+  Operational State revision 3. Mode catalogues enforce the derived Idle,
+  Cleaning, Vacuum/Mop, and exclusive-tag requirements. DirectModeChange is
+  opt-in; the two mode clusters coordinate active-cycle restrictions.
+  Operational State reports derived errors and states, supports paired
+  Pause/Resume and optional GoHome, and delegates physical actions to host
+  callbacks. Include a synthetic RVC and official chip-tool interoperability
+  coverage.
+
 ### Joint Fabric transfer recovery
 
 - Extend the three-Administrator live scenario with a restart after
