@@ -23,6 +23,18 @@ describe "Matter 1.6 Smoke CO Alarm interoperability" do
 
   it "commissions and exposes revision two and both sensor feature states" do
     device.commission!
+    expect_success(device.read("descriptor", "parts-list", 0)).int_list("PartsList").should eq([1_i64, 2_i64])
+    detector = expect_success(device.read("descriptor", "device-type-list", 1))
+    detector.int("DeviceType").should eq(0x0076_i64)
+    detector.int("Revision").should eq(2_i64)
+    detector_servers = expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList")
+    detector_servers.should contain(0x0003_i64)
+    detector_servers.should contain(0x005C_i64)
+    power = expect_success(device.read("descriptor", "device-type-list", 2))
+    power.int("DeviceType").should eq(0x0011_i64)
+    power.int("Revision").should eq(1_i64)
+    expect_success(device.read("descriptor", "server-list", 2)).int_list("ServerList").should contain(0x002F_i64)
+    expect_success(device.read("powersource", "endpoint-list", 2)).int_list("EndpointList").should eq([1_i64])
     read_smoke_co(device, 0xFFFD_u32).should eq(2_i64)
     read_smoke_co(device, 0xFFFC_u32).should eq(3_i64)
     read_smoke_co(device, 0x0000_u32).should eq(0_i64)

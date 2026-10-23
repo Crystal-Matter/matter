@@ -45,6 +45,7 @@ module Matter
     FLOW_SENSOR              = 0x0306_u32 # Flow Sensor
     HUMIDITY_SENSOR          = 0x0307_u32 # Humidity Sensor
     AIR_QUALITY_SENSOR       = 0x002C_u32 # Air Quality Sensor
+    SMOKE_CO_ALARM           = 0x0076_u32 # Smoke CO Alarm
     SOIL_SENSOR              = 0x0045_u32 # Soil Sensor
     ELECTRICAL_UTILITY_METER = 0x0511_u32 # Electrical Utility Meter
 
@@ -76,6 +77,8 @@ module Matter
     getter required_server_clusters : Array(UInt32)
     getter optional_server_clusters : Array(UInt32)
     getter required_server_attributes : Hash(UInt32, Array(UInt32))
+    # Device types which must also appear somewhere on the node.
+    getter required_node_device_types : Array(UInt32)
 
     def initialize(
       @device_type_id : DataType::DeviceTypeId,
@@ -84,6 +87,7 @@ module Matter
       @required_server_clusters : Array(UInt32) = [] of UInt32,
       @optional_server_clusters : Array(UInt32) = [] of UInt32,
       @required_server_attributes : Hash(UInt32, Array(UInt32)) = {} of UInt32 => Array(UInt32),
+      @required_node_device_types : Array(UInt32) = [] of UInt32,
     )
     end
 
@@ -116,6 +120,38 @@ module Matter
         "Joint Fabric Administrator",
         1_u16,
         required_server_clusters: [0x0752_u32, 0x0753_u32]
+      )
+    end
+
+    def self.power_source : DeviceType
+      new(
+        DataType::DeviceTypeId.new(POWER_SOURCE),
+        "Power Source",
+        1_u16,
+        required_server_clusters: [
+          0x001D_u32, # Descriptor
+          0x002F_u32, # Power Source
+        ]
+      )
+    end
+
+    def self.smoke_co_alarm : DeviceType
+      new(
+        DataType::DeviceTypeId.new(SMOKE_CO_ALARM),
+        "Smoke CO Alarm",
+        2_u16,
+        required_server_clusters: [
+          0x001D_u32, # Descriptor
+          0x0003_u32, # Identify
+          0x005C_u32, # Smoke CO Alarm
+        ],
+        optional_server_clusters: [
+          0x0004_u32, # Groups
+          0x0402_u32, # Temperature Measurement
+          0x0405_u32, # Relative Humidity Measurement
+          0x040C_u32, # Carbon Monoxide Concentration Measurement
+        ],
+        required_node_device_types: [POWER_SOURCE]
       )
     end
 
@@ -359,7 +395,9 @@ module Matter
     def self.for(device_type : UInt32) : DeviceType
       case device_type
       when ROOT_NODE                  then root_node
+      when POWER_SOURCE               then power_source
       when JOINT_FABRIC_ADMINISTRATOR then joint_fabric_administrator
+      when SMOKE_CO_ALARM             then smoke_co_alarm
       when ON_OFF_LIGHT               then on_off_light
       when DIMMABLE_LIGHT             then dimmable_light
       when ON_OFF_PLUG_IN_UNIT        then on_off_plug_in_unit
@@ -390,6 +428,7 @@ module Matter
       when ROOT_NODE                  then "Root Node"
       when JOINT_FABRIC_ADMINISTRATOR then "Joint Fabric Administrator"
       when POWER_SOURCE               then "Power Source"
+      when SMOKE_CO_ALARM             then "Smoke CO Alarm"
       when OTA_REQUESTOR              then "OTA Requestor"
       when OTA_PROVIDER               then "OTA Provider"
       when AGGREGATOR                 then "Aggregator"
