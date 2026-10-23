@@ -14,6 +14,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dependency of Matter. The driver-neutral SQL layer uses a tagged JSON document
   codec, supports nested atomic transactions, and versions its physical schema
   for future migrations and a PostgreSQL adapter.
+- Cover Joint Fabric controller restart on SQLite: preserve the controller's
+  fabric credentials and pending Datastore node journal, roll back a failed
+  state change, then resume RefreshNode without replaying AddPendingNode.
 
 ### Joint Fabric VVS interoperability
 
