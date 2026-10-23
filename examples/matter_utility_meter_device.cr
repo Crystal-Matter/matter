@@ -5,6 +5,7 @@ require "./support/main"
 # and contractual limits from its metering backend.
 module MatterUtilityMeter
   alias Meter = Matter::Cluster::MeterIdentification
+  alias Grid = Matter::Cluster::ElectricalGridConditions
 
   class Device < Matter::Device
     include Examples::Console
@@ -29,6 +30,21 @@ module MatterUtilityMeter
           power_threshold: 12_000_i64,
           apparent_power_threshold: 15_000_i64,
           power_threshold_source: Meter::PowerThresholdSource::Contract)
+      cluster Grid,
+        feature_map: Grid::Feature::Forecasting,
+        local_generation_available: false,
+        current_conditions: Grid::Condition.new(
+          1_845_000_000_u32, 1_845_003_600_u32,
+          220_i16, Grid::ThreeLevel::Medium,
+          220_i16, Grid::ThreeLevel::Medium),
+        forecast_conditions: [
+          Grid::Condition.new(1_845_003_601_u32, 1_845_007_200_u32,
+            180_i16, Grid::ThreeLevel::Low,
+            180_i16, Grid::ThreeLevel::Low),
+          Grid::Condition.new(1_845_007_201_u32, nil,
+            260_i16, Grid::ThreeLevel::High,
+            260_i16, Grid::ThreeLevel::High),
+        ]
     end
   end
 end

@@ -394,6 +394,12 @@ construction; `protocol_version` is optional. Enable `PowerThreshold` only
 when the device can expose its contractual or equipment power limit. The
 `examples/matter_utility_meter_device.cr` fixture shows a complete endpoint.
 
+`ElectricalGridConditions` revision 1 adds nullable current carbon conditions,
+controller-writable local-generation availability, and the optional Forecasting
+list to that utility-meter example. The server checks period ordering and
+local/grid agreement when generation is absent, then emits a typed event when
+current conditions change. The forecast list is limited to 56 periods.
+
 Wi-Fi device declarations expose Wi-Fi Network Diagnostics at endpoint 0.
 Applications can update observed link values and counters on that cluster.
 Software Diagnostics is available as an optional cluster for applications
