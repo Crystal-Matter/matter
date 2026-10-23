@@ -92,6 +92,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   protocol metadata; the PowerThreshold feature exposes the standard TLV
   structure with optional power values and a nullable source. A synthetic
   utility meter is exercised by the official chip-tool across restart.
+### Microwave Oven Control
+
+- Add the Matter 1.6 revision 1 Microwave Oven Control server with numeric
+  power, optional min/max/step limits and AddMoreTime, and host-approved
+  SetCookingParameters coupled to Microwave Oven Mode. Validate all settings
+  before applying any cluster state. Extend the synthetic appliance chip-tool
+  test with invalid commands, accepted settings, and restart persistence.
+
 ### Microwave Oven Mode
 
 - Add the Matter 1.6 revision 2 Microwave Oven Mode server with validated,
