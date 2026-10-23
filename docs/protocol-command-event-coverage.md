@@ -8,10 +8,10 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 121
+- Implemented standard cluster IDs compared: 122
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 151
+- Conditional command/event declarations for review: 153
 - Feature or complex conditional IDs absent from Crystal: 28
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -65,6 +65,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0057 | Refrigerator Alarm Cluster | 1 | 1 | — | — |
 | 0x0059 | Dishwasher Mode Cluster | 3 | 3 | — | — |
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
+| 0x005C | Smoke CO Alarm Cluster | 2 | 2 | — | — |
 | 0x005D | Dishwasher Alarm Cluster | 1 | 1 | — | — |
 | 0x005E | Microwave Oven Mode Cluster | 2 | 2 | — | — |
 | 0x005F | Microwave Oven Control Cluster | 1 | 1 | — | — |
@@ -193,6 +194,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0046 | command | 0x0000 | feature(CIP) | declared; requires `:check_in_protocol_support` |
 | 0x0046 | command | 0x0002 | feature(CIP) | declared; requires `:check_in_protocol_support` |
 | 0x0046 | command | 0x0003 | feature(LITS) | declared; requires `—` |
+| 0x005C | event | 0x0000 | feature(SMOKE) | declared; requires `:smoke_alarm` |
+| 0x005C | event | 0x0001 | feature(CO) | declared; requires `:co_alarm` |
 | 0x0060 | command | 0x0000 | command() | declared; requires `—` |
 | 0x0060 | command | 0x0001 | command() | declared; requires `—` |
 | 0x0060 | command | 0x0003 | command() | declared; requires `—` |
