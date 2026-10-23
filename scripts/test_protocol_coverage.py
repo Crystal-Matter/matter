@@ -9,6 +9,7 @@ from protocol_coverage import build_report, load_crystal_clusters, load_xml_clus
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "protocol_coverage"
+CLUSTER_SOURCE = Path(__file__).resolve().parents[1] / "src" / "matter" / "cluster"
 
 
 class ProtocolCoverageTests(unittest.TestCase):
@@ -32,6 +33,20 @@ class ProtocolCoverageTests(unittest.TestCase):
         self.assertEqual(sample.revision, 2)
         self.assertEqual(sample.attributes, {0x0000, 0x0003, 0x0007})
         self.assertEqual(sample.optional_attributes, {0x0007})
+
+    def test_local_macro_with_literal_cluster_ids(self):
+        clusters = load_crystal_clusters(FIXTURES / "crystal")
+        for cluster_id in (0x1237, 0x1238):
+            self.assertEqual(clusters[cluster_id].revision, 2)
+            self.assertEqual(clusters[cluster_id].attributes, {0x0000, 0x0001})
+            self.assertEqual(clusters[cluster_id].optional_attributes, {0x0001})
+
+    def test_resource_monitoring_family_is_counted(self):
+        clusters = load_crystal_clusters(CLUSTER_SOURCE)
+        for cluster_id in (0x0071, 0x0072, 0x0079):
+            self.assertEqual(clusters[cluster_id].revision, 1)
+            self.assertEqual(clusters[cluster_id].attributes, set(range(6)))
+            self.assertEqual(clusters[cluster_id].optional_attributes, {3, 4})
 
     def test_report_distinguishes_missing_cluster_revision_and_attributes(self):
         report = build_report(load_xml_clusters(FIXTURES / "xml"),

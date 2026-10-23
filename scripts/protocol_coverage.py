@@ -20,6 +20,10 @@ CLUSTER_DECLARATION = re.compile(
     r"^\s*cluster\s+(0x[0-9a-fA-F]+|\d+)\s*,\s*revision:\s*(\d+)\b",
     re.MULTILINE,
 )
+LOCAL_MACRO = re.compile(
+    r"(?ms)^([ \t]*)macro[ \t]+([A-Za-z_]\w*)\(([^)\n]*)\)[ \t]*\n(.*?)^\1end[ \t]*$"
+)
+LITERAL_MACRO_ARGUMENT = re.compile(r"(?:[A-Za-z_]\w*|0x[0-9a-fA-F]+|\d+)\Z")
 ATTRIBUTE_DECLARATION = re.compile(
     r"^\s*attribute\s+(0x[0-9a-fA-F]+|\d+)\s*,",
     re.MULTILINE,
@@ -83,6 +87,36 @@ class CoverageEntry:
 class CoverageReport:
     entries: dict[int, CoverageEntry]
     crystal_only: frozenset[int]
+
+
+def declaration_sources(source: str) -> list[str]:
+    """Include simple local macros instantiated with literal arguments.
+
+    This is a narrowly scoped declaration audit, not a Crystal macro evaluator.
+    The expansion covers the cluster-family pattern used by Resource Monitoring.
+    """
+    # A macro body is not an instantiated cluster by itself. Scan only its
+    # literal call expansions, alongside ordinary declarations outside macros.
+    results = [LOCAL_MACRO.sub("", source)]
+    for macro in LOCAL_MACRO.finditer(source):
+        _, name, parameters_text, body = macro.groups()
+        if not re.search(r"\bcluster\s+\{\{", body):
+            continue
+        parameters = [part.strip() for part in parameters_text.split(",")]
+        if not parameters or any(not re.fullmatch(r"[A-Za-z_]\w*", part) for part in parameters):
+            raise ValueError(f"Unsupported cluster macro parameters: {name}")
+        invocation = re.compile(rf"(?m)^[ \t]*{re.escape(name)}[ \t]+([^\n]+)$")
+        for call in invocation.finditer(source):
+            arguments = [part.strip() for part in call.group(1).split(",")]
+            if len(arguments) != len(parameters) or any(
+                not LITERAL_MACRO_ARGUMENT.fullmatch(part) for part in arguments
+            ):
+                raise ValueError(f"Unsupported cluster macro invocation: {call.group(0).strip()}")
+            expanded = body
+            for parameter, argument in zip(parameters, arguments):
+                expanded = re.sub(r"\{\{\s*" + re.escape(parameter) + r"\s*\}\}", argument, expanded)
+            results.append(expanded)
+    return results
 
 
 def _unconditional_mandatory(attribute: ET.Element) -> bool:
@@ -190,42 +224,43 @@ def load_xml_clusters(xml_root: Path) -> dict[int, XmlCluster]:
 
 
 def load_crystal_clusters(crystal_root: Path) -> dict[int, CrystalCluster]:
-    """Read literal `cluster` and `attribute` DSL declarations in cluster files."""
+    """Read literal and simple same-file macro-expanded cluster DSL declarations."""
     if not crystal_root.is_dir():
         raise ValueError(f"Crystal cluster directory does not exist: {crystal_root}")
     clusters: dict[int, CrystalCluster] = {}
     for path in sorted(crystal_root.glob("*.cr")):
         source = path.read_text(encoding="utf-8")
-        declarations = CLUSTER_DECLARATION.findall(source)
-        if not declarations:
-            continue
-        if len(declarations) > 1:
-            raise ValueError(f"Multiple cluster declarations in {path}")
-        code, revision = declarations[0]
-        cluster_id = int(code, 0)
-        if cluster_id in clusters:
-            raise ValueError(f"Duplicate Crystal cluster 0x{cluster_id:04X}: {path}")
-        attributes = set()
-        optional_attributes = set()
-        lines = source.splitlines()
-        for index, line in enumerate(lines):
-            match = ATTRIBUTE_DECLARATION.match(line)
-            if match is None:
+        for declaration_source in declaration_sources(source):
+            declarations = CLUSTER_DECLARATION.findall(declaration_source)
+            if not declarations:
                 continue
-            attribute_id = int(match.group(1), 0)
-            attributes.add(attribute_id)
-            declaration = line
-            while declaration.rstrip().endswith(",") and index + 1 < len(lines):
-                index += 1
-                declaration = lines[index]
-                if OPTIONAL_LITERAL.search(declaration):
+            if len(declarations) > 1:
+                raise ValueError(f"Multiple cluster declarations in {path}")
+            code, revision = declarations[0]
+            cluster_id = int(code, 0)
+            if cluster_id in clusters:
+                raise ValueError(f"Duplicate Crystal cluster 0x{cluster_id:04X}: {path}")
+            attributes = set()
+            optional_attributes = set()
+            lines = declaration_source.splitlines()
+            for index, line in enumerate(lines):
+                match = ATTRIBUTE_DECLARATION.match(line)
+                if match is None:
+                    continue
+                attribute_id = int(match.group(1), 0)
+                attributes.add(attribute_id)
+                declaration = line
+                while declaration.rstrip().endswith(",") and index + 1 < len(lines):
+                    index += 1
+                    declaration = lines[index]
+                    if OPTIONAL_LITERAL.search(declaration):
+                        optional_attributes.add(attribute_id)
+                if OPTIONAL_LITERAL.search(line):
                     optional_attributes.add(attribute_id)
-            if OPTIONAL_LITERAL.search(line):
-                optional_attributes.add(attribute_id)
-        clusters[cluster_id] = CrystalCluster(
-            cluster_id, int(revision), frozenset(attributes),
-            frozenset(optional_attributes), path.name,
-        )
+            clusters[cluster_id] = CrystalCluster(
+                cluster_id, int(revision), frozenset(attributes),
+                frozenset(optional_attributes), path.name,
+            )
     return clusters
 
 
@@ -328,9 +363,10 @@ def render_markdown(report: CoverageReport, source_count: int, source_digest: st
         "revision thresholds are evaluated against the XML cluster revision. Crystal declarations",
         "with `optional: true` count as a gap for unconditional mandatory XML",
         "attributes even when the attribute ID is present.",
-        "Crystal parsing recognizes literal DSL declarations in `src/matter/cluster/*.cr`.",
-        "Generated declarations, dynamically computed attributes, and runtime feature",
-        "gating require separate review.",
+        "Crystal parsing recognizes literal DSL declarations and simple same-file cluster",
+        "macros instantiated with literal arguments in `src/matter/cluster/*.cr`.",
+        "Other generated declarations, dynamically computed attributes, and runtime",
+        "feature gating require separate review.",
         "",
     ]
     return "\n".join(lines)

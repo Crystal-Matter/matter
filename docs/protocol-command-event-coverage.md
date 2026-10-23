@@ -1,6 +1,6 @@
 # Matter 1.6 server command and event declaration audit
 
-This compares canonical Matter XML IDs with literal Crystal cluster DSL declarations
+This compares canonical Matter XML IDs with Crystal cluster DSL declarations
 for implemented standard clusters. A declared ID does not prove a working handler,
 correct payload, event emission, feature gating, or interoperability. This is not a completeness claim.
 Feature and complex conditions are displayed for manual review, not evaluated.
@@ -8,7 +8,7 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 85
+- Implemented standard cluster IDs compared: 88
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 120
@@ -60,6 +60,9 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | 1 | — | — |
 | 0x0065 | Groupcast Cluster | 1 | 1 | — | — |
+| 0x0071 | HEPA Filter Monitoring | 1 | 1 | — | — |
+| 0x0072 | Activated Carbon Filter Monitoring | 1 | 1 | — | — |
+| 0x0079 | Water Tank Level Monitoring | 1 | 1 | — | — |
 | 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — | — |
@@ -244,7 +247,7 @@ python3 -m unittest discover -s scripts -p 'test_protocol_command_event_coverage
 
 Only `commandToServer` commands and server events declared directly in the XML
 file are compared. Response commands, inherited members, unknown XML roots,
-commands without an explicit XML direction, dynamically generated Crystal
-declarations, and runtime feature combinations
+commands without an explicit XML direction, generated Crystal declarations
+outside simple same-file macros with literal arguments, and runtime feature combinations
 are outside this report. Revision-only conditions use the Crystal cluster's
 advertised revision; all other conditional rows require a separate conformance review.

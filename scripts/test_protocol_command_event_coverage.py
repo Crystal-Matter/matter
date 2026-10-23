@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from protocol_command_event_coverage import load_xml_members, load_crystal_members, build_report, render_markdown
 
 FIXTURES = Path(__file__).parent / "fixtures" / "command_event_coverage"
+CLUSTER_SOURCE = Path(__file__).resolve().parents[1] / "src" / "matter" / "cluster"
 
 
 class CommandEventCoverageTests(unittest.TestCase):
@@ -46,6 +47,20 @@ class CommandEventCoverageTests(unittest.TestCase):
         self.assertIn("Feature or complex conditional IDs absent from Crystal: 0", text)
         self.assertIn("Feature or complex conditional IDs declared without literal `requires:`: 1", text)
         self.assertIn("not a completeness claim", text)
+
+    def test_local_macro_with_literal_cluster_ids(self):
+        crystal = load_crystal_members(FIXTURES / "crystal")
+        for cluster_id in (0x1235, 0x1236):
+            self.assertEqual(crystal[cluster_id].revision, 2)
+            self.assertEqual(crystal[cluster_id].commands, {0: ":test"})
+            self.assertEqual(crystal[cluster_id].events, {0: "—"})
+
+    def test_resource_monitoring_family_is_counted(self):
+        crystal = load_crystal_members(CLUSTER_SOURCE)
+        for cluster_id in (0x0071, 0x0072, 0x0079):
+            self.assertEqual(crystal[cluster_id].revision, 1)
+            self.assertEqual(crystal[cluster_id].commands, {0: "—"})
+            self.assertEqual(crystal[cluster_id].events, {})
 
 
 if __name__ == "__main__":

@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 85
-- Matching known revisions: 83
+- Crystal declarations for those IDs: 88
+- Matching known revisions: 86
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -81,9 +81,9 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | 1 | — |
 | 0x0065 | Groupcast Cluster | 1 | 1 | opt-in Listener and Sender; PerGroup remains unadvertised |
-| 0x0071 | HEPA Filter Monitoring | 1 | — | cluster absent |
-| 0x0072 | Activated Carbon Filter Monitoring | 1 | — | cluster absent |
-| 0x0079 | Water Tank Level Monitoring | 1 | — | cluster absent |
+| 0x0071 | HEPA Filter Monitoring | 1 | 1 | — |
+| 0x0072 | Activated Carbon Filter Monitoring | 1 | 1 | — |
+| 0x0079 | Water Tank Level Monitoring | 1 | 1 | — |
 | 0x0080 | Boolean State Configuration Cluster | 2 | 2 | — |
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
@@ -182,6 +182,7 @@ mandatory conformance has a feature condition are excluded. Simple current
 revision thresholds are evaluated against the XML cluster revision. Crystal declarations
 with `optional: true` count as a gap for unconditional mandatory XML
 attributes even when the attribute ID is present.
-Crystal parsing recognizes literal DSL declarations in `src/matter/cluster/*.cr`.
-Generated declarations, dynamically computed attributes, and runtime feature
-gating require separate review.
+Crystal parsing recognizes literal DSL declarations and simple same-file cluster
+macros instantiated with literal arguments in `src/matter/cluster/*.cr`.
+Other generated declarations, dynamically computed attributes, and runtime
+feature gating require separate review.

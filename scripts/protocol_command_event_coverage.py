@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare canonical Matter command/event declarations with literal Crystal DSL IDs.
+"""Compare canonical Matter command/event declarations with Crystal DSL IDs.
 
 This intentionally does not evaluate feature combinations, inherited members,
 command handlers, payloads, event emission, or protocol behavior.
@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-from protocol_coverage import CLUSTER_DECLARATION, source_digest
+from protocol_coverage import CLUSTER_DECLARATION, declaration_sources, source_digest
 
 MEMBER_DECLARATION = re.compile(r"^[ \t]*(command|event)\s+(0x[0-9a-fA-F]+|\d+)\s*,", re.MULTILINE)
 REQUIRES = re.compile(r"\brequires:\s*(\{[^}]*\}|\[[^]]*\]|:[a-zA-Z_][a-zA-Z_0-9]*)")
@@ -186,39 +186,40 @@ def load_crystal_members(crystal_root: Path) -> dict[int, CrystalCluster]:
     clusters = {}
     for path in sorted(crystal_root.glob("*.cr")):
         source = path.read_text(encoding="utf-8")
-        declarations = CLUSTER_DECLARATION.findall(source)
-        if not declarations:
-            continue
-        if len(declarations) != 1:
-            raise ValueError(f"Multiple cluster declarations: {path}")
-        code, revision = declarations[0]
-        cluster_id = int(code, 0)
-        if cluster_id in clusters:
-            raise ValueError(f"Duplicate Crystal cluster 0x{cluster_id:04X}: {path}")
-        commands, events = {}, {}
-        for match in MEMBER_DECLARATION.finditer(source):
-            kind, member_code = match.groups()
-            destination = commands if kind == "command" else events
-            member_id = int(member_code, 0)
-            if member_id in destination:
-                raise ValueError(f"Duplicate {kind} ID 0x{member_id:04X}: {path}")
-            # Crystal's formatter may wrap a DSL declaration after a comma.
-            # Include more-indented continuation lines, stopping before the
-            # next statement at the declaration's indentation.
-            indent = len(match.group(0)) - len(match.group(0).lstrip())
-            end = source.find("\n", match.end())
-            end = len(source) if end < 0 else end
-            while end < len(source):
-                next_end = source.find("\n", end + 1)
-                next_end = len(source) if next_end < 0 else next_end
-                continuation = source[end + 1:next_end]
-                if not continuation.strip() or len(continuation) - len(continuation.lstrip()) <= indent:
-                    break
-                end = next_end
-            declaration = source[match.start():end]
-            requires = REQUIRES.search(declaration)
-            destination[member_id] = requires.group(1) if requires else "—"
-        clusters[cluster_id] = CrystalCluster(cluster_id, int(revision), commands, events)
+        for declaration_source in declaration_sources(source):
+            declarations = CLUSTER_DECLARATION.findall(declaration_source)
+            if not declarations:
+                continue
+            if len(declarations) != 1:
+                raise ValueError(f"Multiple cluster declarations: {path}")
+            code, revision = declarations[0]
+            cluster_id = int(code, 0)
+            if cluster_id in clusters:
+                raise ValueError(f"Duplicate Crystal cluster 0x{cluster_id:04X}: {path}")
+            commands, events = {}, {}
+            for match in MEMBER_DECLARATION.finditer(declaration_source):
+                kind, member_code = match.groups()
+                destination = commands if kind == "command" else events
+                member_id = int(member_code, 0)
+                if member_id in destination:
+                    raise ValueError(f"Duplicate {kind} ID 0x{member_id:04X}: {path}")
+                # Crystal's formatter may wrap a DSL declaration after a comma.
+                # Include more-indented continuation lines, stopping before the
+                # next statement at the declaration's indentation.
+                indent = len(match.group(0)) - len(match.group(0).lstrip())
+                end = declaration_source.find("\n", match.end())
+                end = len(declaration_source) if end < 0 else end
+                while end < len(declaration_source):
+                    next_end = declaration_source.find("\n", end + 1)
+                    next_end = len(declaration_source) if next_end < 0 else next_end
+                    continuation = declaration_source[end + 1:next_end]
+                    if not continuation.strip() or len(continuation) - len(continuation.lstrip()) <= indent:
+                        break
+                    end = next_end
+                declaration = declaration_source[match.start():end]
+                requires = REQUIRES.search(declaration)
+                destination[member_id] = requires.group(1) if requires else "—"
+            clusters[cluster_id] = CrystalCluster(cluster_id, int(revision), commands, events)
     return clusters
 
 
@@ -254,7 +255,7 @@ def render_markdown(report: dict[int, CoverageEntry], source_count: int, source_
     )
     lines = [
         "# Matter 1.6 server command and event declaration audit", "",
-        "This compares canonical Matter XML IDs with literal Crystal cluster DSL declarations",
+        "This compares canonical Matter XML IDs with Crystal cluster DSL declarations",
         "for implemented standard clusters. A declared ID does not prove a working handler,",
         "correct payload, event emission, feature gating, or interoperability. This is not a completeness claim.",
         "Feature and complex conditions are displayed for manual review, not evaluated.", "",
@@ -300,8 +301,8 @@ def render_markdown(report: dict[int, CoverageEntry], source_count: int, source_
         "```", "",
         "Only `commandToServer` commands and server events declared directly in the XML",
         "file are compared. Response commands, inherited members, unknown XML roots,",
-        "commands without an explicit XML direction, dynamically generated Crystal",
-        "declarations, and runtime feature combinations",
+        "commands without an explicit XML direction, generated Crystal declarations",
+        "outside simple same-file macros with literal arguments, and runtime feature combinations",
         "are outside this report. Revision-only conditions use the Crystal cluster's",
         "advertised revision; all other conditional rows require a separate conformance review.", "",
     ]
