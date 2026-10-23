@@ -282,6 +282,17 @@ module Matter
         abstract def authenticate(transaction : Bytes, required_step_up_data_element : String) : AliroAuthenticatedAccess?
       end
 
+      # An application-owned reader verifies a physical RFID or biometric
+      # transaction before naming a stored credential and its enrolled data. The reader must check
+      # freshness and prevent replay; the Door Lock never treats a caller's
+      # credential index or raw reader bytes as proof on their own.
+      record LocalAuthenticatedCredential, credential : Credential, credential_data : Bytes
+
+      abstract class LocalCredentialVerifier
+        abstract def ready_for?(type : CredentialType) : Bool
+        abstract def authenticate(type : CredentialType, transaction : Bytes) : LocalAuthenticatedCredential?
+      end
+
       record WeekDaySchedule, week_day : UInt8, start_hour : UInt8, start_minute : UInt8, end_hour : UInt8, end_minute : UInt8 do
         include Storage::Record
       end
@@ -336,6 +347,7 @@ module Matter
       @holiday_schedules = {} of UInt8 => HolidaySchedule
       @aliro_reader_config : AliroReaderConfig? = nil
       @aliro_reader_delegate : AliroReaderDelegate? = nil
+      @local_credential_verifier : LocalCredentialVerifier? = nil
       @aliro_config_generation : UInt64 = 0_u64
       @aliro_group_sub_identifier : Bytes = Bytes.new(0)
       @aliro_protocol_versions : Array(Bytes) = [] of Bytes
@@ -381,6 +393,7 @@ module Matter
         @number_of_aliro_credential_issuer_keys_supported : UInt16 = 0_u16,
         @number_of_aliro_endpoint_keys_supported : UInt16 = 0_u16,
         @aliro_reader_delegate : AliroReaderDelegate? = nil,
+        @local_credential_verifier : LocalCredentialVerifier? = nil,
         @wrong_code_entry_limit : UInt8 = DEFAULT_WRONG_CODE_ENTRY_LIMIT,
         @user_code_temporary_disable_time : UInt8 = DEFAULT_TEMPORARY_DISABLE_SECONDS,
         @send_pin_over_the_air : Bool = false,
@@ -392,6 +405,25 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         raise ArgumentError.new("Aliro BLE/UWB requires a radio adapter") if @feature_map.aliro_bleuwb?
+        if @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials?
+          verifier = @local_credential_verifier || raise ArgumentError.new("RFID and biometric features require a trusted local credential verifier")
+          required_types = [] of CredentialType
+          required_types << CredentialType::Rfid if @feature_map.rfid_credential?
+          if @feature_map.finger_credentials?
+            required_types << CredentialType::Fingerprint
+            required_types << CredentialType::FingerVein
+          end
+          required_types << CredentialType::Face if @feature_map.face_credentials?
+          required_types.each do |type|
+            ready = begin
+              verifier.ready_for?(type)
+            rescue ex
+              Log.error(exception: ex) { "Local credential verifier readiness check failed for #{type}" }
+              false
+            end
+            raise ArgumentError.new("Local credential verifier is not ready for #{type}") unless ready
+          end
+        end
         if @feature_map.aliro_provisioning?
           reader = @aliro_reader_delegate || raise ArgumentError.new("Aliro provisioning requires a trusted reader delegate")
           raise ArgumentError.new("Aliro reader delegate is not ready") unless reader.ready?
@@ -750,6 +782,87 @@ module Matter
           start_user_expiry(user_index)
         end
         InteractionModel::Status.success
+      end
+
+      # Called by the host when its physical reader observes a local
+      # transaction. The verifier authenticates the reader data and names a
+      # stored credential; the cluster then applies the user's access policy.
+      # This is deliberately separate from the Matter Lock/Unlock commands.
+      def perform_local_credential_transaction(type : CredentialType, transaction : Bytes) : InteractionModel::Status
+        source = local_credential_source(type)
+        return InteractionModel::Status.unsupported_command unless source && credential_type_supported?(type)
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless @actuator_enabled
+
+        verifier = @local_credential_verifier || return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        authenticated = begin
+          verifier.ready_for?(type) ? verifier.authenticate(type, transaction) : nil
+        rescue ex
+          Log.error(exception: ex) { "Local credential verification failed for #{type}" }
+          nil
+        end
+        unless authenticated && authenticated.credential.credential_type == type && credential_index_supported?(authenticated.credential)
+          report_local_credential_error(source, OperationError::InvalidCredential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
+        record = @credentials[credential_key(authenticated.credential)]?
+        unless record && record.credential_data == authenticated.credential_data
+          report_local_credential_error(source, OperationError::InvalidCredential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        user_index = record.user_index
+        unless user_index
+          report_local_credential_error(source, OperationError::Restricted, credential: authenticated.credential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        expire_user_if_due(user_index)
+        user = @users[user_index]?
+        unless user && user.user_status.occupied_enabled?
+          report_local_credential_error(source, OperationError::DisabledUserDenied, user_index, authenticated.credential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        if user.user_type.non_access_user? || !schedule_allows_user?(user) ||
+           (user.user_type.expiring_user? && @local_time_provider.call.nil?)
+          report_local_credential_error(source, OperationError::Restricted, user_index, authenticated.credential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
+        self.lock_state = LockState::Unlocked
+        schedule_relock(@auto_relock_time)
+        operation = user.user_type.forced_user? ? LockOperationType::ForcedUserEvent : LockOperationType::Unlock
+        emit_lock_operation(Events::LockOperation.new(
+          lock_operation_type: operation,
+          operation_source: source,
+          user_index: user_index,
+          credentials: [authenticated.credential]
+        ))
+        emit_door_lock_alarm(Events::DoorLockAlarm.new(AlarmCode::ForcedUser)) if user.user_type.forced_user?
+        if user.user_type.disposable_user?
+          disable_user(user_index)
+        elsif user.user_type.expiring_user? && !user.expiring_user_expires_at
+          start_user_expiry(user_index)
+        end
+        InteractionModel::Status.success
+      end
+
+      private def local_credential_source(type : CredentialType) : OperationSource?
+        case type
+        when CredentialType::Rfid
+          OperationSource::Rfid
+        when CredentialType::Fingerprint, CredentialType::FingerVein, CredentialType::Face
+          OperationSource::Biometric
+        end
+      end
+
+      private def report_local_credential_error(source : OperationSource, error : OperationError,
+                                                user_index : UInt16? = nil, credential : Credential? = nil) : Nil
+        emit_lock_operation_error(Events::LockOperationError.new(
+          lock_operation_type: LockOperationType::Unlock,
+          operation_source: source,
+          operation_error: error,
+          user_index: user_index,
+          credentials: credential.try { |value| [value] }
+        ))
       end
 
       private def emit_aliro_lock_operation(operation : LockOperationType, user_index : UInt16, credential : Credential) : Nil
@@ -1666,6 +1779,10 @@ module Matter
       end
 
       private def authorize_remote_operation(pin : String?, operation : LockOperationType, source : OperationSource) : Authorization
+        if source.rfid? || source.biometric?
+          report_lock_operation_error(operation, source, OperationError::InvalidCredential)
+          return Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::Failure))
+        end
         requires_pin = @feature_map.pin_credential? && @feature_map.credential_over_the_air_access? && @require_pin_for_remote_operation
 
         if requires_pin

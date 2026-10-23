@@ -39,6 +39,7 @@ RUN --mount=type=cache,target=/root/.cache/crystal,sharing=locked \
     ls examples/matter_*_device.cr examples/device_validation.cr | \
       xargs -P "$jobs" -I{} sh -c 'name="$(basename {} .cr | sed "s/_device$//")"; echo "==> building bin/$name"; CRYSTAL_CACHE_DIR="/root/.cache/crystal/$name" crystal build {} -o "bin/$name" --error-trace' && \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_door_lock_aliro crystal build e2e/fixture/matter_door_lock_aliro_device.cr -o bin/matter_door_lock_aliro --error-trace && \
+    CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_door_lock_verified crystal build e2e/fixture/matter_door_lock_verified_device.cr -o bin/matter_door_lock_verified --error-trace && \
     ls -la bin
 
 # ---------------------------------------------------------------------------

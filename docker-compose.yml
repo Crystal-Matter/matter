@@ -226,6 +226,12 @@ services:
     environment:
       E2E_DEVICE: matter_door_lock_aliro
 
+  door-lock-verified:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_door_lock_verified
+      MATTER_VERIFIED_RFID_HOOK_PATH: /e2e/logs/matter_door_lock_verified.trigger
+
   temperature-sensor:
     <<: *device
     environment:
