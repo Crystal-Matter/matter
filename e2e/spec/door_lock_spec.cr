@@ -104,4 +104,21 @@ describe "matter_door_lock example" do
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + scheduled_pin))
     read_int(device, "doorlock", "lock-state", "LockState").should eq unlocked
   end
+
+  it "consumes a disposable PIN only on a successful open and retains the disabled user after restart" do
+    credential = %({"credentialType":1,"credentialIndex":3})
+    disposable_pin = ["--PINCode", "5757"]
+    expect_success(device.invoke("doorlock", "set-user", ["0", "4", "One Use", "444", "1", "6", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "5757", "4", "1", "6"], options: timed))
+
+    expect_success(device.invoke("doorlock", "lock-door", options: timed + disposable_pin))
+    expect_success(device.invoke("doorlock", "unlock-door", options: timed + disposable_pin))
+    expect_success(device.invoke("doorlock", "get-user", ["4"])).int("userStatus").should eq(3_i64)
+    expect_failure(device.invoke("doorlock", "unlock-door", options: timed + disposable_pin), "FAILURE")
+
+    device.restart!
+    device.operational?.should be_true
+    expect_success(device.invoke("doorlock", "get-user", ["4"])).int("userStatus").should eq(3_i64)
+    expect_failure(device.invoke("doorlock", "unlock-door", options: timed + disposable_pin), "FAILURE")
+  end
 end
