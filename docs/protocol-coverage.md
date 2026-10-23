@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 100
-- Matching known revisions: 98
+- Crystal declarations for those IDs: 103
+- Matching known revisions: 101
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -66,8 +66,8 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0051 | Laundry Washer Mode Cluster | 3 | 3 | — |
 | 0x0052 | Refrigerator And Temperature Controlled Cabinet Mode Cluster | 3 | — | cluster absent |
 | 0x0053 | Laundry Washer Controls Cluster | 2 | — | cluster absent |
-| 0x0054 | RVC Run Mode Cluster | 4 | — | cluster absent |
-| 0x0055 | RVC Clean Mode Cluster | 5 | — | cluster absent |
+| 0x0054 | RVC Run Mode Cluster | 4 | 4 | Mode Base behavior; host-owned cleaning transitions and optional DirectModeChange |
+| 0x0055 | RVC Clean Mode Cluster | 5 | 5 | Mode Base behavior; Vacuum/Mop options and run-mode guard |
 | 0x0056 | Temperature Control Cluster | 1 | 1 | — |
 | 0x0057 | Refrigerator Alarm Cluster | 1 | 1 | — |
 | 0x0059 | Dishwasher Mode Cluster | 3 | 3 | — |
@@ -77,7 +77,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x005E | Microwave Oven Mode Cluster | 2 | — | cluster absent |
 | 0x005F | Microwave Oven Control Cluster | 1 | — | cluster absent |
 | 0x0060 | Operational State Cluster | 3 | 3 | — |
-| 0x0061 | RVC Operational State Cluster | 3 | — | cluster absent |
+| 0x0061 | RVC Operational State Cluster | 3 | 3 | typed derived states/errors, optional Pause/Resume and GoHome; host owns movement |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | 1 | — |
 | 0x0065 | Groupcast Cluster | 1 | 1 | opt-in Listener, Sender, and PerGroup; provisional |
