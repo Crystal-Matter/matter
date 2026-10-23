@@ -368,6 +368,11 @@ services:
     environment:
       E2E_DEVICE: matter_audio_output
 
+  channel:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_channel
+
   target-navigator:
     <<: *device
     environment:
