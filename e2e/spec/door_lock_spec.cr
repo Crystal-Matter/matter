@@ -23,6 +23,18 @@ describe "matter_door_lock example" do
     read_bool(device, "doorlock", "require-pinfor-remote-operation", "RequirePINforRemoteOperation").should be_true
   end
 
+  it "uses conservative Matter defaults and rejects unenforced credential rules" do
+    read_bool(device, "doorlock", "enable-one-touch-locking", "EnableOneTouchLocking").should be_false
+    read_bool(device, "doorlock", "enable-inside-status-led", "EnableInsideStatusLED").should be_false
+    read_bool(device, "doorlock", "enable-privacy-mode-button", "EnablePrivacyModeButton").should be_false
+    read_int(device, "doorlock", "local-programming-features", "LocalProgrammingFeatures").should eq(0_i64)
+
+    expect_failure(device.invoke("doorlock", "set-user", ["0", "5", "Dual", "555", "1", "0", "1"], options: timed), "FAILURE")
+    expect_success(device.invoke("doorlock", "set-user", ["0", "5", "Single", "555", "1", "0", "0"], options: timed))
+    expect_failure(device.invoke("doorlock", "set-user", ["1", "5", "Tri", "555", "1", "0", "2"], options: timed), "FAILURE")
+    expect_success(device.invoke("doorlock", "get-user", ["5"])).int("credentialRule").should eq(0_i64)
+  end
+
   it "exposes valid operating modes and Matter 1.6 sound-volume values" do
     read_int(device, "doorlock", "supported-operating-modes", "SupportedOperatingModes").should eq(0xFFF6_i64)
 
