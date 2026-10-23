@@ -66,9 +66,17 @@ describe ContentLauncher do
       ContentLauncher::LauncherResponse.new(ContentLauncher::Status::Success)
     end
     cluster.launch_url(ContentLauncher::LaunchUrlRequest.new("x" * 8193)).as(Matter::InteractionModel::Status).status.should eq(IMCode::ConstraintError)
+    invalid_color = ContentLauncher::BrandingInformation.new("Provider",
+      logo: ContentLauncher::StyleInformation.new(color: "#GGGGGG"))
+    cluster.launch_url(ContentLauncher::LaunchUrlRequest.new("https://example.test/video",
+      branding_information: invalid_color)).as(Matter::InteractionModel::Status).status.should eq(IMCode::ConstraintError)
     calls.should eq(0)
+    valid_color = ContentLauncher::BrandingInformation.new("Provider",
+      logo: ContentLauncher::StyleInformation.new(color: "#11223344"))
+    cluster.launch_url(ContentLauncher::LaunchUrlRequest.new("https://example.test/video",
+      branding_information: valid_color)).as(ContentLauncher::LauncherResponse).status.should eq(ContentLauncher::Status::Success)
     cluster.launch_url(ContentLauncher::LaunchUrlRequest.new("https://example.test/video")).as(ContentLauncher::LauncherResponse).status.should eq(ContentLauncher::Status::Success)
-    calls.should eq(1)
+    calls.should eq(2)
   end
 
   it "rejects revision two preferences unless their feature is advertised" do

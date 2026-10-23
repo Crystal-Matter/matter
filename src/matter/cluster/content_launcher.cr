@@ -20,6 +20,7 @@ module Matter
       MAX_PARAMETER_BYTES      =     1024
       MAX_LANGUAGE_CODE_BYTES  =       32
       SUPPORTED_PROTOCOLS_MASK = 0x03_u32
+      COLOR_PATTERN            = /\A#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\z/
 
       enum MetricType : UInt8
         Pixels     = 0
@@ -343,8 +344,8 @@ module Matter
 
       private def valid_style?(style : StyleInformation) : Bool
         return false if style.image_url.try { |url| url.bytesize > MAX_CONTENT_URL_BYTES }
-        # The XML allows #RRGGBB or #RRGGBBAA (7 or 9 bytes).
-        return false if style.color.try { |color| !{7, 9}.includes?(color.bytesize) }
+        # The XML allows #RRGGBB or #RRGGBBAA.
+        return false if style.color.try { |color| !color.matches?(COLOR_PATTERN) }
         true
       end
     end
