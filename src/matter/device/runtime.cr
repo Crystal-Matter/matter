@@ -1188,7 +1188,9 @@ module Matter
         definition.name,
         revision,
         definition.required_server_clusters,
-        definition.optional_server_clusters
+        definition.optional_server_clusters,
+        definition.required_server_attributes,
+        definition.required_node_device_types
       )
     end
   end

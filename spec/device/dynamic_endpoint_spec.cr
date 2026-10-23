@@ -4,6 +4,7 @@ require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
 require "../../src/matter/cluster/bridged_device_basic_information"
+require "../../src/matter/cluster/smoke_co_alarm"
 
 # Test device for dynamic endpoint tests
 class TestBridgeDevice < Matter::Device
@@ -158,6 +159,25 @@ describe "Dynamic Endpoint Management" do
       ).should be_true
 
       device.node.endpoint!(1_u16).descriptor.device_type_list[0].revision.should eq(1_u16)
+    end
+
+    it "keeps node-level requirements when a known device type has an explicit revision" do
+      device = TestBridgeDevice.new
+      number = endpoint(1)
+      clusters = [
+        Matter::Cluster::Identify.new(number),
+        Matter::Cluster::SmokeCOAlarm.new(number,
+          feature_map: Matter::Cluster::SmokeCOAlarm::Feature::SmokeAlarm),
+      ] of Matter::Cluster::Base
+
+      device.add_endpoint(
+        endpoint_id: 1_u16,
+        device_type: Matter::DeviceType::SMOKE_CO_ALARM,
+        clusters: clusters,
+        device_type_revision: 2_u16
+      ).should be_true
+
+      device.node.validate[1_u16].first.should contain("Power Source")
     end
 
     it "adds endpoint to root node parts list" do
