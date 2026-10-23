@@ -28,6 +28,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Commissioning, restart, and Anchor transfer, using a test HTTPS DCL mirror
   with removal and mismatch denial checks.
 
+### Camera AV Stream Management audio
+
+- Add the Matter 1.6 revision 2 Audio feature with typed stream allocation and
+  deallocation, capability and bandwidth checks, reference counts, microphone
+  controls, privacy hooks, and durable settings. A synthetic Aggregator endpoint
+  and official chip-tool E2E exercise the wire behavior; media transport and
+  Camera device topology remain application and follow-on work.
+
 ### Smoke and CO Alarm device type
 
 - Add the Matter 1.6 Smoke CO Alarm device type (0x0076, revision 2) and its

@@ -8,11 +8,11 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 131
+- Implemented standard cluster IDs compared: 132
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 183
-- Feature or complex conditional IDs absent from Crystal: 33
+- Conditional command/event declarations for review: 192
+- Feature or complex conditional IDs absent from Crystal: 40
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -138,6 +138,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | — | — |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | — |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | — |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO commands only; VDO/SNP absent |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | MPAN only |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | — |
@@ -334,6 +335,15 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0550 | command | 0x0000 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
 | 0x0550 | command | 0x0002 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
 | 0x0550 | command | 0x0003 | feature(USERDEFINED) | declared; requires `:user_defined` |
+| 0x0551 | command | 0x0000 | feature(ADO) | declared; requires `:audio` |
+| 0x0551 | command | 0x0002 | feature(ADO) | declared; requires `:audio` |
+| 0x0551 | command | 0x0003 | feature(VDO) | absent |
+| 0x0551 | command | 0x0005 | (feature(VDO) and (feature(WMARK) or feature(OSD))) | absent |
+| 0x0551 | command | 0x0006 | feature(VDO) | absent |
+| 0x0551 | command | 0x0007 | feature(SNP) | absent |
+| 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | absent |
+| 0x0551 | command | 0x000A | feature(SNP) | absent |
+| 0x0551 | command | 0x000C | feature(SNP) | absent |
 | 0x0552 | command | 0x0000 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
 | 0x0552 | command | 0x0001 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
 | 0x0552 | command | 0x0002 | feature(MPRESETS) | absent |
