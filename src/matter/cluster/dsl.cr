@@ -68,6 +68,8 @@ module Matter
     #   the attribute or its DataVersion.
     #   `copy_on_assign: true` copies an Array before storing a host-assigned
     #   value, so later caller mutation cannot change the attribute silently.
+    #   `copy_on_read: true` returns a shallow copy of an Array attribute.
+    #   Nested value types must also protect any mutable members they expose.
     #   `writable: true` implies `persist: true` unless `persist: false`.
     # * `attribute id, :name, Type, computed: true` — no ivar, accessors or
     #   persistence: a read calls the reader method `name` (`name?` for `Bool`)
@@ -144,7 +146,7 @@ module Matter
         :default, :writable, :persist, :persist_default, :nullable, :fixed, :optional, :requires,
         :read_access, :write_access, :min, :max, :max_length, :scene,
         :omit_changes, :timed, :fabric_scoped, :callback, :on_change, :validate, :computed, :present_if,
-        :copy_on_assign,
+        :copy_on_assign, :copy_on_read,
       ]
       COMMAND_OPTIONS  = [:request, :response, :response_id, :requires, :present_if, :timed, :access, :optional, :handler]
       PRIVILEGES       = [:view, :proxy_view, :operate, :manage, :administer]
@@ -208,11 +210,18 @@ module Matter
         {% requires = requires.resolve if requires.is_a?(Path) %}
         {% present_if = options[:present_if] %}
         {% copy_on_assign = options[:copy_on_assign] %}
+        {% copy_on_read = options[:copy_on_read] %}
         {% if copy_on_assign && copy_on_assign != true %}
           {% raise "#{@type}: attribute :#{name.id} copy_on_assign: must be true" %}
         {% end %}
         {% if copy_on_assign && !type.stringify.starts_with?("Array(") %}
           {% raise "#{@type}: attribute :#{name.id} copy_on_assign: requires an Array type" %}
+        {% end %}
+        {% if copy_on_read && copy_on_read != true %}
+          {% raise "#{@type}: attribute :#{name.id} copy_on_read: must be true" %}
+        {% end %}
+        {% if copy_on_read && !type.stringify.starts_with?("Array(") %}
+          {% raise "#{@type}: attribute :#{name.id} copy_on_read: requires an Array type" %}
         {% end %}
         {% if computed %}
           {% raise "#{@type}: attribute :#{name.id} is computed: and takes no default:" unless options[:default].nil? %}
@@ -273,7 +282,11 @@ module Matter
           @on_{{ name.id }}_changed : Proc({{ callback_types }}, Nil)?
 
           def {{ name.id }}{{ "?".id if type.resolve? == Bool }} : {{ value_type }}
-            @{{ name.id }}
+            {% if copy_on_read %}
+              {% if nullable %}@{{ name.id }}.try(&.dup){% else %}@{{ name.id }}.dup{% end %}
+            {% else %}
+              @{{ name.id }}
+            {% end %}
           end
 
           # Assigns the attribute, bumping the data version, notifying

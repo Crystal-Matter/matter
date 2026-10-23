@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Commodity Tariff
+
+- Add the Matter 1.6 revision 1 Commodity Tariff server with a validated,
+  durable Pricing calendar, active day and price projections, and both
+  mandatory lookup commands. The synthetic Aggregator fixture is covered by
+  official chip-tool E2E. Other tariff feature families remain disabled.
+
 ### Smoke and CO Alarm device type
 
 - Add the Matter 1.6 Smoke CO Alarm device type (0x0076, revision 2) and its

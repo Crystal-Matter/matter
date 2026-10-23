@@ -333,6 +333,11 @@ services:
     environment:
       E2E_DEVICE: matter_content_control
 
+  commodity-tariff:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_commodity_tariff
+
   contact-sensor:
     <<: *device
     environment:
@@ -486,6 +491,7 @@ services:
       content-app: { condition: service_healthy }
       content-app-observer: { condition: service_healthy }
       content-control: { condition: service_healthy }
+      commodity-tariff: { condition: service_healthy }
       contact-sensor: { condition: service_healthy }
       motion-sensor: { condition: service_healthy }
       ambient-light-sensor: { condition: service_healthy }
