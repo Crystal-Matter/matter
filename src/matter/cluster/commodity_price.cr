@@ -59,18 +59,19 @@ module Matter
         @[TLV::Field(tag: 4, optional: true)]
         getter description : String?
 
-        @[TLV::Field(tag: 5)]
-        getter components : Array(Component)
+        @[TLV::Field(tag: 5, optional: true)]
+        @components : Array(Component)?
 
         def initialize(@period_start : UInt32, @period_end : UInt32?,
                        @price : Int64? = nil, @price_level : Int16? = nil,
                        @description : String? = nil,
-                       components : Array(Component) = [] of Component)
-          @components = components.dup
+                       components : Array(Component)? = nil)
+          @components = components.try(&.dup)
+          @components = nil if @price.nil? && @components.try(&.empty?)
         end
 
         def components : Array(Component)
-          @components.dup
+          @components.try(&.dup) || [] of Component
         end
       end
 
@@ -225,7 +226,7 @@ module Matter
       private def detail_period(period : Period, details : UInt8) : Period
         Period.new(period.period_start, period.period_end, period.price, period.price_level,
           (details & DETAIL_DESCRIPTION) != 0 ? period.description : nil,
-          (details & DETAIL_COMPONENTS) != 0 ? period.components.dup : [] of Component)
+          (details & DETAIL_COMPONENTS) != 0 ? period.components : nil)
       end
 
       private def copy_periods(periods : Array(Period)) : Array(Period)

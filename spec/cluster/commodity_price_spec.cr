@@ -29,6 +29,9 @@ describe Commodity do
     period = Commodity::Period.new(100_u32, 200_u32, 100_i64, nil, "Flat", [component])
     period.to_tlv(nil).as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 4_u8, 5_u8])
     Commodity::Period.from_tlv(period.to_tlv(nil)).period_end.should eq(200_u32)
+    level_only = Commodity::Period.new(100_u32, nil, nil, 3_i16)
+    level_only.to_tlv(nil).as_structure.keys.should eq([0_u8, 1_u8, 3_u8])
+    Commodity::Period.from_tlv(level_only.to_tlv(nil)).components.should be_empty
   end
 
   it "validates price choice, interval, description, component sum, and forecast order" do
