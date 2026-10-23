@@ -7,6 +7,7 @@ module MatterUtilityMeter
   alias Meter = Matter::Cluster::MeterIdentification
   alias Grid = Matter::Cluster::ElectricalGridConditions
   alias Price = Matter::Cluster::CommodityPrice
+  alias CommodityMeter = Matter::Cluster::CommodityMetering
 
   CURRENT_PRICE = Price::Period.new(1_u32, nil, 100_i64, nil, "Flat rate",
     [Price::Component.new(100_i64, Price::TariffPriceType::Standard, "Energy")])
@@ -59,6 +60,11 @@ module MatterUtilityMeter
         currency: Price::Currency.new(36_u16, 2_u8),
         current_price: CURRENT_PRICE,
         price_forecast: FORECAST
+      cluster CommodityMeter,
+        metered_quantity: [CommodityMeter::MeteredQuantity.new([7_u32], 12_345_i64)],
+        metered_quantity_timestamp: 1_845_000_000_u32,
+        tariff_unit: CommodityMeter::TariffUnit::KWh,
+        maximum_metered_quantities: 2_u16
     end
   end
 end

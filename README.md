@@ -458,6 +458,12 @@ component breakdown. The server checks component totals and emits PriceChange
 when the current price changes. The utility-meter fixture exercises this
 cluster with official chip-tool.
 
+`CommodityMetering` revision 1 publishes measured quantities with tariff
+component IDs, a Matter epoch timestamp, tariff unit, and capacity. A host
+publishes all four values together with `publish`; `clear_reading` makes all
+four nullable attributes unavailable. The utility-meter fixture exposes the
+read-only cluster to official chip-tool.
+
 Wi-Fi device declarations expose Wi-Fi Network Diagnostics at endpoint 0.
 Applications can update observed link values and counters on that cluster.
 Software Diagnostics is available as an optional cluster for applications

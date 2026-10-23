@@ -8,7 +8,7 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 122
+- Implemented standard cluster IDs compared: 123
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 153
@@ -140,6 +140,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0801 | TLS Certificate Management Cluster | 1 | 1 | — | — |
 | 0x0802 | TLS Client Management Cluster | 1 | 1 | — | — |
 | 0x0B06 | Meter Identification Cluster | 1 | 1 | — | — |
+| 0x0B07 | Commodity Metering Cluster | 1 | 1 | — | — |
 
 ## Conditional requirements requiring review
 
