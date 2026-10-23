@@ -57,6 +57,8 @@ module Matter
     DOOR_LOCK_CONTROLLER       = 0x000B_u32 # Door Lock Controller
     WINDOW_COVERING            = 0x0202_u32 # Window Covering
     WINDOW_COVERING_CONTROLLER = 0x0203_u32 # Window Covering Controller
+    CLOSURE                    = 0x0230_u32 # Closure (Matter 1.6)
+    CLOSURE_PANEL              = 0x0231_u32 # Closure Panel (Matter 1.6)
 
     # HVAC Device Types
     HEATING_COOLING_UNIT = 0x0300_u32 # Heating/Cooling Unit
@@ -321,6 +323,24 @@ module Matter
       )
     end
 
+    def self.closure : DeviceType
+      new(
+        DataType::DeviceTypeId.new(CLOSURE),
+        "Closure",
+        1_u16,
+        required_server_clusters: [0x001D_u32, 0x0003_u32, 0x0104_u32]
+      )
+    end
+
+    def self.closure_panel : DeviceType
+      new(
+        DataType::DeviceTypeId.new(CLOSURE_PANEL),
+        "Closure Panel",
+        1_u16,
+        required_server_clusters: [0x001D_u32, 0x0105_u32]
+      )
+    end
+
     def self.thermostat : DeviceType
       new(
         DataType::DeviceTypeId.new(THERMOSTAT),
@@ -410,6 +430,8 @@ module Matter
       when ELECTRICAL_UTILITY_METER   then electrical_utility_meter
       when MICROWAVE_OVEN             then microwave_oven
       when DOOR_LOCK                  then door_lock
+      when CLOSURE                    then closure
+      when CLOSURE_PANEL              then closure_panel
       when THERMOSTAT                 then thermostat
       when FAN                        then fan
       when BASIC_VIDEO_PLAYER         then basic_video_player
@@ -457,6 +479,8 @@ module Matter
       when ELECTRICAL_UTILITY_METER   then "Electrical Utility Meter"
       when MICROWAVE_OVEN             then "Microwave Oven"
       when DOOR_LOCK                  then "Door Lock"
+      when CLOSURE                    then "Closure"
+      when CLOSURE_PANEL              then "Closure Panel"
       when DOOR_LOCK_CONTROLLER       then "Door Lock Controller"
       when WINDOW_COVERING            then "Window Covering"
       when WINDOW_COVERING_CONTROLLER then "Window Covering Controller"
