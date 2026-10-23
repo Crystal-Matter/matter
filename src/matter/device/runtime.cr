@@ -315,6 +315,7 @@ module Matter
           cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
+          cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
         end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
