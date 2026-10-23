@@ -80,6 +80,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x009E | Water Heater Mode Cluster | 1 | 1 | — | — |
 | 0x0101 | Door Lock Cluster | 10 | 9 | — | — |
 | 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
+| 0x0150 | Service Area Cluster | 2 | 2 | — | — |
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
 | 0x0202 | Fan Control Cluster | 6 | 6 | — | — |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — | — |

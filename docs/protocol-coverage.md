@@ -103,7 +103,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0102 | Window Covering Cluster | 8 | 8 | Actuator position reporting remains application-owned |
 | 0x0104 | Closure Control Cluster | 1 | — | cluster absent |
 | 0x0105 | Closure Dimension Cluster | 1 | — | cluster absent |
-| 0x0150 | Service Area Cluster | 2 | — | cluster absent |
+| 0x0150 | Service Area Cluster | 2 | 2 | SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | — | cluster absent |
 | 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower feature, shared-limit, and Auto deadband behavior covered; other revision 11 gaps remain |
 | 0x0202 | Fan Control Cluster | 6 | 6 | feature-gated attributes and Step; only FanMode nonvolatile |
