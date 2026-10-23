@@ -60,9 +60,9 @@ describe "matter_content_app example" do
     identifier = ContentAppE2E::TEMP_ACCOUNT_IDENTIFIER
     expect_failure(device.invoke("accountlogin", "get-setup-pin", [identifier]), "NEEDS_TIMED_INTERACTION")
     response = expect_success(device.invoke("accountlogin", "get-setup-pin", [identifier], options: timed))
-    response.value("SetupPIN").should eq(ContentAppE2E::SETUP_PIN)
+    response.value("setupPIN").should eq(ContentAppE2E::SETUP_PIN)
     mismatch = expect_success(device.invoke("accountlogin", "get-setup-pin", ["different-radio-user"], options: timed))
-    mismatch.value("SetupPIN").should eq("")
+    mismatch.value("setupPIN").should eq("")
     expect_success(device.invoke("accountlogin", "login", [identifier, ContentAppE2E::SETUP_PIN], options: timed))
     expect_success(device.invoke("accountlogin", "logout", options: timed))
     logged_out = expect_success(device.chip(["accountlogin", "read-event", "logged-out", device.node, "1"]))
