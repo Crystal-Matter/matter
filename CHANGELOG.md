@@ -15,6 +15,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against the current host catalogue. Extend the synthetic RVC and official
   chip-tool coverage with area selection and restart.
 
+### Door Lock credential rules and defaults
+
+- Match the Matter 1.6 defaults for one-touch locking, inside status LED,
+  privacy mode button, and local programming features. Reject Dual and Tri
+  user credential rules while the server supports only single-credential
+  authorization. A saved database with Dual or Tri users is not restored;
+  the host must migrate those records explicitly. Reject reserved local
+  programming bits, while migrating the former stored `0xFF` default to the
+  defined all-features mask `0x0F` without losing credentials. Hosts that
+  relied on the previous enabled defaults can pass the corresponding
+  `DoorLock` constructor options explicitly.
+
 ### Door Lock user lifecycle
 
 - Apply DisposableUser one-open policy and persisted ExpiringUser deadlines

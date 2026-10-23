@@ -53,6 +53,21 @@ The host must provide a trustworthy wall clock for absolute expiry across a
 restart. The advertised cluster revision remains 9; these tests do not
 establish complete Matter 1.6 revision 10 conformance.
 
+The optional one-touch, inside LED, and privacy button settings default to
+false, and LocalProgrammingFeatures defaults to zero, following the Matter
+1.6 XML. Applications that previously relied on enabled defaults should
+pass explicit constructor values; `0x0F` is the all-enabled mask for the four
+defined LocalProgrammingFeatures bits. Persisted boolean values retain their
+saved values across an upgrade. CredentialRulesSupport advertises Single
+only, and SetUser rejects Dual and Tri until the host can enforce access
+with multiple credentials. A saved database containing a Dual or Tri user
+fails restoration and the cluster retains its constructed state, so a
+previous multi-credential configuration cannot silently become
+single-credential access. Affected hosts must explicitly migrate those
+records to a supported Single rule. Stored masks with reserved bits are also
+rejected before changing live state, except the former `0xFF` default, which
+is normalized to `0x0F` and saved on the next flush without dropping users.
+
 Matter-side Aliro reader configuration and public-key credential management
 are available through local `DoorLock` methods. They persist with the Door Lock
 user database after a normal device persistence flush and validate P-256 keys

@@ -66,7 +66,7 @@ module Matter
       MAX_EXPIRING_USER_TIMEOUT  = 2880_u16
 
       # Every bit of LocalProgrammingFeatures set
-      ALL_LOCAL_PROGRAMMING_FEATURES = 0xFF_u8
+      ALL_LOCAL_PROGRAMMING_FEATURES = 0x0F_u8
 
       # CredentialRulesSupport with the Single rule
       CREDENTIAL_RULE_SINGLE = 0x01_u8
@@ -138,10 +138,10 @@ module Matter
       attribute 0x0026, :supported_operating_modes, UInt16, default: DEFAULT_SUPPORTED_OPERATING_MODES, fixed: true
       attribute 0x0027, :default_configuration_register, UInt16, default: 0_u16, optional: true
       attribute 0x0028, :enable_local_programming, Bool, default: true, writable: true, write_access: :administer, optional: true
-      attribute 0x0029, :enable_one_touch_locking, Bool, default: true, writable: true, write_access: :manage, optional: true
-      attribute 0x002A, :enable_inside_status_led, Bool, default: true, writable: true, write_access: :manage, optional: true
-      attribute 0x002B, :enable_privacy_mode_button, Bool, default: true, writable: true, write_access: :manage, optional: true
-      attribute 0x002C, :local_programming_features, UInt8, default: ALL_LOCAL_PROGRAMMING_FEATURES, writable: true, write_access: :administer, optional: true
+      attribute 0x0029, :enable_one_touch_locking, Bool, default: false, writable: true, write_access: :manage, optional: true
+      attribute 0x002A, :enable_inside_status_led, Bool, default: false, writable: true, write_access: :manage, optional: true
+      attribute 0x002B, :enable_privacy_mode_button, Bool, default: false, writable: true, write_access: :manage, optional: true
+      attribute 0x002C, :local_programming_features, UInt8, default: 0_u8, writable: true, write_access: :administer, max: ALL_LOCAL_PROGRAMMING_FEATURES, optional: true
       attribute 0x0030, :wrong_code_entry_limit, UInt8, default: DEFAULT_WRONG_CODE_ENTRY_LIMIT, writable: true, write_access: :administer, min: MIN_WRONG_CODE_ENTRY_LIMIT, requires: [:pin_credential, :rfid_credential]
       attribute 0x0031, :user_code_temporary_disable_time, UInt8, default: DEFAULT_TEMPORARY_DISABLE_SECONDS, writable: true, write_access: :administer, min: MIN_TEMPORARY_DISABLE_TIME, requires: [:pin_credential, :rfid_credential]
       attribute 0x0032, :send_pin_over_the_air, Bool, default: false, writable: true, write_access: :administer, optional: true, requires: {pin_credential: true, user: false}
@@ -362,10 +362,10 @@ module Matter
         @supported_operating_modes : UInt16 = DEFAULT_SUPPORTED_OPERATING_MODES,
         @default_configuration_register : UInt16 = 0_u16,
         @enable_local_programming : Bool = true,
-        @enable_one_touch_locking : Bool = true,
-        @enable_inside_status_led : Bool = true,
-        @enable_privacy_mode_button : Bool = true,
-        @local_programming_features : UInt8 = ALL_LOCAL_PROGRAMMING_FEATURES,
+        @enable_one_touch_locking : Bool = false,
+        @enable_inside_status_led : Bool = false,
+        @enable_privacy_mode_button : Bool = false,
+        @local_programming_features : UInt8 = 0_u8,
         @number_of_total_users_supported : UInt16 = DEFAULT_USERS_SUPPORTED,
         @number_of_pin_users_supported : UInt16 = DEFAULT_USERS_SUPPORTED,
         @number_of_rfid_users_supported : UInt16 = DEFAULT_USERS_SUPPORTED,
@@ -417,6 +417,8 @@ module Matter
         raise ArgumentError.new("wrong_code_entry_limit must be >= 1") if @wrong_code_entry_limit < MIN_WRONG_CODE_ENTRY_LIMIT
         raise ArgumentError.new("user_code_temporary_disable_time must be >= 1") if @user_code_temporary_disable_time < MIN_TEMPORARY_DISABLE_TIME
         raise ArgumentError.new("expiring_user_timeout must be 1..2880 minutes") unless @expiring_user_timeout.in?(MIN_EXPIRING_USER_TIMEOUT..MAX_EXPIRING_USER_TIMEOUT)
+        raise ArgumentError.new("only the Single credential rule is supported") unless @credential_rules_support == CREDENTIAL_RULE_SINGLE
+        raise ArgumentError.new("local programming features contain reserved bits") unless (@local_programming_features & ~ALL_LOCAL_PROGRAMMING_FEATURES).zero?
 
         if @feature_map.user?
           # Keep a default programming user slot for easier integration testing.
@@ -461,6 +463,18 @@ module Matter
       # A document saved by an older version has no database and retains the
       # constructor's default programming user.
       private def restore_persisted_extension(document : Storage::Document) : Nil
+        if raw_mask = document["local_programming_features"]?
+          invalid = case raw_mask
+                    when Int64
+                      raw_mask < 0 || (raw_mask > ALL_LOCAL_PROGRAMMING_FEATURES && raw_mask != 0xFF_i64)
+                    when UInt64
+                      raw_mask > ALL_LOCAL_PROGRAMMING_FEATURES && raw_mask != 0xFF_u64
+                    else
+                      false # PersistedState has already validated the field type.
+                    end
+          raise StorageError.new("Invalid persisted Door Lock local programming features") if invalid
+        end
+
         value = document[PERSISTED_DATABASE_KEY]?
         return unless value
         database = PersistedDatabase.from_document(value.as?(Storage::Document) ||
@@ -473,6 +487,9 @@ module Matter
         database.users.each do |user|
           if !valid_user_index?(user.user_index) || users.has_key?(user.user_index)
             raise StorageError.new("Invalid or duplicate persisted Door Lock user")
+          end
+          unless user.credential_rule.single?
+            raise StorageError.new("Unsupported persisted Door Lock credential rule")
           end
           user.credentials = [] of Credential
           users[user.user_index] = user
@@ -568,6 +585,10 @@ module Matter
       end
 
       private def after_restore_state : Nil
+        if @local_programming_features == 0xFF_u8
+          @local_programming_features = ALL_LOCAL_PROGRAMMING_FEATURES
+          increment_version_and_notify(ATTR_LOCAL_PROGRAMMING_FEATURES)
+        end
         @user_expiry_generations.keys.each { |user_index| cancel_user_expiry(user_index) }
         @users.keys.each do |user_index|
           expire_user_if_due(user_index)
@@ -1168,6 +1189,9 @@ module Matter
 
       def handle_set_user(request : SetUserRequest) : InteractionModel::Status
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless valid_user_index?(request.user_index)
+        if (rule = request.credential_rule) && !rule.single?
+          return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
+        end
 
         case request.operation_type
         when DataOperationType::Add
