@@ -86,4 +86,22 @@ describe "matter_door_lock example" do
     expect_success(device.invoke("doorlock", "lock-door", options: timed + pin))
     read_int(device, "doorlock", "lock-state", "LockState").should eq locked
   end
+
+  it "enforces a weekly access schedule after a device restart" do
+    credential = %({"credentialType":1,"credentialIndex":2})
+    scheduled_pin = ["--PINCode", "8642"]
+    expect_success(device.invoke("doorlock", "set-user", ["0", "3", "Cleaner", "333", "1", "2", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "8642", "3", "1", "2"], options: timed))
+    expect_failure(device.invoke("doorlock", "unlock-door", options: timed + scheduled_pin), "FAILURE")
+
+    # Every day, from midnight through the final second of 23:59.
+    expect_success(device.invoke("doorlock", "set-week-day-schedule", ["1", "3", "127", "0", "0", "23", "59"], options: timed))
+    expect_success(device.invoke("doorlock", "unlock-door", options: timed + scheduled_pin))
+    expect_success(device.invoke("doorlock", "lock-door", options: timed + pin))
+
+    device.restart!
+    device.operational?.should be_true
+    expect_success(device.invoke("doorlock", "unlock-door", options: timed + scheduled_pin))
+    read_int(device, "doorlock", "lock-state", "LockState").should eq unlocked
+  end
 end
