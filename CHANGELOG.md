@@ -60,6 +60,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PIN lockout budget. Reject Aliro feature flags until mandatory reader
   configuration is implemented. Extend the official chip-tool lock fixture.
 
+### Oven mode and cavity state
+
+- Add the Matter 1.6 Oven Mode (0x0049) and Oven Cavity Operational State
+  (0x0048) revision 2 servers. Mode Base transitions support all oven tags,
+  while cavity operation exposes optional Start/Stop and inherited state,
+  phase, countdown, and event payloads. Omit the disallowed OnOff, startup
+  mode, Pause, and Resume surfaces. Include a paired synthetic device and
+  official chip-tool interoperability coverage.
+
 ### Door Lock credential durability
 
 - Persist Door Lock users, credentials, and schedules with cluster attributes

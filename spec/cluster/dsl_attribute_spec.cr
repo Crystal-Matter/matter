@@ -92,6 +92,22 @@ describe Matter::Cluster::DSL do
     end
 
     describe "setter" do
+      it "copies opted-in arrays before storing and still notifies on changed values" do
+        cluster = build(DslSpec::CopiedList)
+        input = [1_u8]
+
+        changes = capture_changes(cluster) do
+          version_delta(cluster) { cluster.items = input }.should eq(1)
+        end
+        changes.map(&.attribute).should eq([DslSpec::CopiedList::ATTR_ITEMS])
+
+        input.clear
+        cluster.items.should eq([1_u8])
+        version_delta(cluster) { cluster.items = [1_u8] }.should eq(0)
+        version_delta(cluster) { cluster.items = [2_u8] }.should eq(1)
+        cluster.items.should eq([2_u8])
+      end
+
       it "ignores an equal value" do
         cluster = widget
         changes = capture_changes(cluster) do

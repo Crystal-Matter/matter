@@ -300,6 +300,15 @@ physical playback. Controllers can write `SelectedChime` and `Enabled`; both
 survive restart. A successful playback request emits `ChimeStartedPlaying`.
 See `examples/matter_chime_device.cr` for a synthetic doorbell.
 
+`Cluster::OvenMode` adds the Matter 1.6 revision 2 oven tags (Bake through
+Frozen Food) to the same Mode Base transition contract. It has no OnOff,
+StartUpMode, or OnMode surface. `Cluster::OvenCavityOperationalState` is a
+separate revision 2 server for physical cavity state, phase and countdown
+reporting, errors, and completion. Hosts may expose Start and Stop together;
+Pause and Resume are absent. Register `on_command` to admit remote actuation
+only when the appliance is ready. The paired synthetic fixture is in
+`examples/matter_oven_device.cr`.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
