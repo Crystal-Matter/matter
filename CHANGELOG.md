@@ -47,8 +47,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   data and recording actions. Lineup metadata refresh retains the tuned channel
   by channel number. A synthetic TV fixture exercises the server with official
   chip-tool.
-- Return an isolated ChannelList copy to host readers, keeping advertised
-  channels aligned with the validated tuning catalogue and data version.
+- Copy ChannelList on host assignment and return isolated reader copies, keeping
+  advertised channels aligned with the validated tuning catalogue and data version.
 
 ### Joint Fabric transfer recovery
 

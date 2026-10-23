@@ -66,6 +66,19 @@ describe Channel do
     cluster.current_channel.try(&.name).should eq("Nine")
   end
 
+  it "copies a host-assigned channel list before retaining it" do
+    channel = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
+    cluster = build(Channel, feature_map: Channel::Feature::ChannelList, channels: [channel])
+    replacement = [Channel::ChannelInfo.new(8_u16, 0_u16, "Eight")]
+    cluster.channel_list = replacement
+    assigned_version = cluster.data_version
+
+    replacement.clear
+
+    cluster.channel_list.should eq([Channel::ChannelInfo.new(8_u16, 0_u16, "Eight")])
+    cluster.data_version.should eq(assigned_version)
+  end
+
   it "does not claim a tune succeeded without a host handler" do
     channel = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
     cluster = build(Channel, channels: [channel])

@@ -337,7 +337,7 @@ module Matter
       # CL and LI are independent. Numeric tuning and skip are mandatory even
       # for devices that obtain their channels from an external lineup source.
       attribute 0x0000, :channel_list, Array(ChannelInfo), default: [] of ChannelInfo,
-        requires: :channel_list
+        requires: :channel_list, copy_on_assign: true
       attribute 0x0001, :lineup, LineupInfo, nullable: true, requires: :lineup_info
       attribute 0x0002, :current_channel, ChannelInfo, nullable: true, optional: true
 
