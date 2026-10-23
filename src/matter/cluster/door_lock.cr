@@ -1,4 +1,5 @@
 require "time"
+require "../crypto/key"
 require "./cluster"
 require "./door_lock/types"
 
@@ -85,6 +86,10 @@ module Matter
       MINUTES_PER_HOUR                  =    60
       LAST_MINUTE_OF_DAY                = LAST_HOUR_OF_DAY.to_i32 * MINUTES_PER_HOUR + LAST_MINUTE_OF_HOUR.to_i32
       WEEK_DAY_MASK                     = 0x7F_u8
+      ALIRO_SIGNING_KEY_LENGTH          =      32
+      ALIRO_PUBLIC_KEY_LENGTH           =      65
+      ALIRO_GROUP_IDENTIFIER_LENGTH     =      16
+      ALIRO_UNCOMPRESSED_POINT_PREFIX   = 0x04_u8
 
       private enum PinAuthorization
         Allowed
@@ -206,6 +211,24 @@ module Matter
         end
       end
 
+      # Internal reader material. The signing key is secret and is never
+      # exposed as a Matter attribute until the Aliro feature is implemented.
+      struct AliroReaderConfig
+        include Storage::Record
+
+        getter signing_key : Bytes
+        getter verification_key : Bytes
+        getter group_identifier : Bytes
+        getter group_resolving_key : Bytes?
+
+        def initialize(signing_key : Bytes, verification_key : Bytes, group_identifier : Bytes, group_resolving_key : Bytes? = nil)
+          @signing_key = signing_key.dup
+          @verification_key = verification_key.dup
+          @group_identifier = group_identifier.dup
+          @group_resolving_key = group_resolving_key.try(&.dup)
+        end
+      end
+
       record WeekDaySchedule, week_day : UInt8, start_hour : UInt8, start_minute : UInt8, end_hour : UInt8, end_minute : UInt8 do
         include Storage::Record
       end
@@ -238,6 +261,7 @@ module Matter
         getter week_day_schedules : Array(PersistedWeekDaySchedule)
         getter year_day_schedules : Array(PersistedYearDaySchedule)
         getter holiday_schedules : Array(PersistedHolidaySchedule)
+        getter aliro_reader_config : AliroReaderConfig?
 
         def initialize(
           @users : Array(UserRecord),
@@ -245,6 +269,7 @@ module Matter
           @week_day_schedules : Array(PersistedWeekDaySchedule),
           @year_day_schedules : Array(PersistedYearDaySchedule),
           @holiday_schedules : Array(PersistedHolidaySchedule),
+          @aliro_reader_config : AliroReaderConfig? = nil,
         )
         end
       end
@@ -256,6 +281,7 @@ module Matter
       @week_day_schedules = {} of Tuple(UInt16, UInt8) => WeekDaySchedule
       @year_day_schedules = {} of Tuple(UInt16, UInt8) => YearDaySchedule
       @holiday_schedules = {} of UInt8 => HolidaySchedule
+      @aliro_reader_config : AliroReaderConfig? = nil
 
       @failed_remote_pin_attempts : UInt8 = 0_u8
       @lockout_until : Time? = nil
@@ -294,6 +320,8 @@ module Matter
         @min_rfid_code_length : UInt8 = DEFAULT_MIN_RFID_CODE_LENGTH,
         @credential_rules_support : UInt8 = CREDENTIAL_RULE_SINGLE,
         @number_of_credentials_supported_per_user : UInt8 = DEFAULT_CREDENTIALS_PER_USER,
+        @number_of_aliro_credential_issuer_keys_supported : UInt16 = 0_u16,
+        @number_of_aliro_endpoint_keys_supported : UInt16 = 0_u16,
         @wrong_code_entry_limit : UInt8 = DEFAULT_WRONG_CODE_ENTRY_LIMIT,
         @user_code_temporary_disable_time : UInt8 = DEFAULT_TEMPORARY_DISABLE_SECONDS,
         @send_pin_over_the_air : Bool = true,
@@ -355,7 +383,8 @@ module Matter
           credentials: @credentials.values,
           week_day_schedules: week_days,
           year_day_schedules: year_days,
-          holiday_schedules: holidays
+          holiday_schedules: holidays,
+          aliro_reader_config: @aliro_reader_config
         ).to_document
       end
 
@@ -367,6 +396,9 @@ module Matter
         return unless value
         database = PersistedDatabase.from_document(value.as?(Storage::Document) ||
                                                    raise StorageError.new("Invalid persisted Door Lock database"))
+        if (aliro_reader = database.aliro_reader_config) && !valid_aliro_reader_config?(aliro_reader)
+          raise StorageError.new("Invalid persisted Door Lock Aliro reader configuration")
+        end
 
         users = {} of UInt16 => UserRecord
         database.users.each do |user|
@@ -379,10 +411,28 @@ module Matter
         raise StorageError.new("Too many persisted Door Lock users") if users.size > @number_of_total_users_supported
 
         credentials = {} of Tuple(UInt8, UInt16) => CredentialRecord
+        aliro_public_keys = Set(String).new
+        issuer_count = 0
+        endpoint_count = 0
         database.credentials.each do |record|
           key = credential_key(record.credential)
-          if credentials.has_key?(key) || validate_credential_input(record.credential, record.credential_data)
+          aliro = aliro_credential_type?(record.credential.credential_type)
+          if credentials.has_key?(key) || validate_credential_input(record.credential, record.credential_data, allow_aliro: aliro)
             raise StorageError.new("Invalid or duplicate persisted Door Lock credential")
+          end
+          if aliro
+            public_key = record.credential_data.hexstring
+            if aliro_public_keys.includes?(public_key)
+              raise StorageError.new("Duplicate persisted Door Lock Aliro public key")
+            end
+            aliro_public_keys << public_key
+            if record.credential.credential_type.aliro_credential_issuer_key?
+              issuer_count += 1
+              raise StorageError.new("Too many persisted Door Lock Aliro issuer keys") if issuer_count > @number_of_aliro_credential_issuer_keys_supported
+            else
+              endpoint_count += 1
+              raise StorageError.new("Too many persisted Door Lock Aliro endpoint keys") if endpoint_count > @number_of_aliro_endpoint_keys_supported
+            end
           end
           if user_index = record.user_index
             user = users[user_index]? || raise StorageError.new("Persisted Door Lock credential has no user")
@@ -429,6 +479,106 @@ module Matter
         @week_day_schedules = week_days
         @year_day_schedules = year_days
         @holiday_schedules = holidays
+        @aliro_reader_config = aliro_reader.try do |config|
+          AliroReaderConfig.new(config.signing_key, config.verification_key,
+            config.group_identifier, config.group_resolving_key)
+        end
+      end
+
+      # These local APIs stage Aliro material for a future reader delegate.
+      # They do not enable the Aliro Matter feature bits or wire commands.
+      def aliro_reader_config : AliroReaderConfig?
+        @aliro_reader_config.try do |config|
+          AliroReaderConfig.new(config.signing_key, config.verification_key,
+            config.group_identifier, config.group_resolving_key)
+        end
+      end
+
+      def configure_aliro_reader(config : AliroReaderConfig) : InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state if @aliro_reader_config
+        return InteractionModel::Status.constraint_error unless valid_aliro_reader_config?(config)
+
+        @aliro_reader_config = AliroReaderConfig.new(config.signing_key, config.verification_key,
+          config.group_identifier, config.group_resolving_key)
+        increment_version
+        InteractionModel::Status.success
+      end
+
+      def clear_aliro_reader_config : InteractionModel::Status
+        @aliro_reader_config = nil
+        increment_version
+        InteractionModel::Status.success
+      end
+
+      def provision_aliro_key(type : CredentialType, index : UInt16, user_index : UInt16, public_key : Bytes, *, fabric_index : UInt8? = nil) : StatusCode
+        return StatusCode::InvalidField unless aliro_credential_type?(type)
+        credential = Credential.new(type, index)
+        return StatusCode::InvalidField if validate_credential_input(credential, public_key, allow_aliro: true)
+        return StatusCode::InvalidField unless @users.has_key?(user_index)
+
+        key = credential_key(credential)
+        return StatusCode::Occupied if @credentials.has_key?(key)
+        return StatusCode::Duplicate if @credentials.values.any? { |record| aliro_credential_type?(record.credential.credential_type) && record.credential_data == public_key }
+
+        user = @users[user_index]
+        return StatusCode::ResourceExhausted if user.credentials.size >= @number_of_credentials_supported_per_user
+        if type.aliro_credential_issuer_key?
+          count = @credentials.values.count { |record| record.credential.credential_type.aliro_credential_issuer_key? }
+          return StatusCode::ResourceExhausted if count >= @number_of_aliro_credential_issuer_keys_supported
+        else
+          count = @credentials.values.count { |record| aliro_endpoint_key_type?(record.credential.credential_type) }
+          return StatusCode::ResourceExhausted if count >= @number_of_aliro_endpoint_keys_supported
+        end
+
+        record = CredentialRecord.new(credential, public_key.dup, user_index, fabric_index, fabric_index)
+        @credentials[key] = record
+        add_credential_to_user(record, fabric_index)
+        increment_version
+        StatusCode::Success
+      end
+
+      def aliro_key_data(type : CredentialType, index : UInt16) : Bytes?
+        return unless aliro_credential_type?(type)
+        @credentials[{type.value.to_u8, index}]?.try(&.credential_data.dup)
+      end
+
+      def clear_aliro_key(type : CredentialType, index : UInt16, *, fabric_index : UInt8? = nil) : StatusCode
+        return StatusCode::InvalidField unless aliro_credential_type?(type) && credential_index_supported?(Credential.new(type, index), allow_aliro: true)
+        return StatusCode::NotFound unless record = @credentials.delete({type.value.to_u8, index})
+
+        remove_credential_from_user(record, fabric_index || record.last_modified_fabric_index)
+        increment_version
+        StatusCode::Success
+      end
+
+      private def valid_aliro_reader_config?(config : AliroReaderConfig) : Bool
+        return false unless config.signing_key.size == ALIRO_SIGNING_KEY_LENGTH
+        return false unless valid_aliro_public_key?(config.verification_key)
+        return false unless config.group_identifier.size == ALIRO_GROUP_IDENTIFIER_LENGTH
+        if resolving_key = config.group_resolving_key
+          return false unless resolving_key.size == ALIRO_GROUP_IDENTIFIER_LENGTH
+        end
+
+        derived = OpenSSL::PKey::EC.from_private_bytes(config.signing_key, Crypto::CRYPTO_EC_CURVE_NIST)
+        derived.public_key_bytes == config.verification_key
+      rescue OpenSSL::PKey::EcError
+        false
+      end
+
+      private def valid_aliro_public_key?(public_key : Bytes) : Bool
+        return false unless public_key.size == ALIRO_PUBLIC_KEY_LENGTH && public_key[0] == ALIRO_UNCOMPRESSED_POINT_PREFIX
+        OpenSSL::PKey::EC.from_public_bytes(public_key, Crypto::CRYPTO_EC_CURVE_NIST)
+        true
+      rescue OpenSSL::PKey::EcError
+        false
+      end
+
+      private def aliro_credential_type?(type : CredentialType) : Bool
+        type.aliro_credential_issuer_key? || aliro_endpoint_key_type?(type)
+      end
+
+      private def aliro_endpoint_key_type?(type : CredentialType) : Bool
+        type.aliro_evictable_endpoint_key? || type.aliro_non_evictable_endpoint_key?
       end
 
       # ------------------------------------------------------------------------
@@ -751,6 +901,7 @@ module Matter
         next_user = @users.keys.select { |index| index > request.user_index }.sort!.first?
 
         if user = @users[request.user_index]?
+          visible_credentials = user.credentials.select { |credential| credential_type_supported?(credential.credential_type) }
           GetUserResponse.new(
             user_index: user.user_index,
             user_name: user.user_name,
@@ -758,7 +909,7 @@ module Matter
             user_status: user.user_status,
             user_type: user.user_type,
             credential_rule: user.credential_rule,
-            credentials: user.credentials.empty? ? nil : user.credentials,
+            credentials: visible_credentials.empty? ? nil : visible_credentials,
             creator_fabric_index: user.creator_fabric_index,
             last_modified_fabric_index: user.last_modified_fabric_index,
             next_user_index: next_user
@@ -908,7 +1059,8 @@ module Matter
 
       def clear_credential(request : ClearCredentialRequest) : InteractionModel::Status
         if credential = request.credential
-          unless credential.credential_index == ALL_USERS || credential_index_supported?(credential)
+          unless credential_type_supported?(credential.credential_type) &&
+                 (credential.credential_index == ALL_USERS || credential_index_supported?(credential))
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
           end
 
@@ -926,10 +1078,13 @@ module Matter
             end
           end
         else
-          @credentials.values.each do |record|
-            remove_credential_from_user(record)
+          @credentials.keys.each do |key|
+            if record = @credentials[key]?
+              next unless credential_type_supported?(record.credential.credential_type)
+              @credentials.delete(key)
+              remove_credential_from_user(record)
+            end
           end
-          @credentials.clear
         end
 
         increment_version
@@ -1217,31 +1372,31 @@ module Matter
         end
       end
 
-      private def add_credential_to_user(record : CredentialRecord) : Nil
+      private def add_credential_to_user(record : CredentialRecord, fabric_index : UInt8? = @request_fabric_index) : Nil
         return unless user_index = record.user_index
         return unless user = @users[user_index]?
 
         unless credential_belongs_to_user?(user, record.credential)
           user.credentials << record.credential
-          user.last_modified_fabric_index = @request_fabric_index
+          user.last_modified_fabric_index = fabric_index
           @users[user_index] = user
         end
       end
 
-      private def remove_credential_from_user(record : CredentialRecord) : Nil
+      private def remove_credential_from_user(record : CredentialRecord, fabric_index : UInt8? = @request_fabric_index) : Nil
         return unless user_index = record.user_index
         return unless user = @users[user_index]?
 
         user.credentials = user.credentials.reject do |credential|
           credential.credential_type == record.credential.credential_type && credential.credential_index == record.credential.credential_index
         end
-        user.last_modified_fabric_index = @request_fabric_index
+        user.last_modified_fabric_index = fabric_index
 
         @users[user_index] = user
       end
 
-      private def validate_credential_input(credential : Credential, credential_data : Bytes) : StatusCode?
-        return StatusCode::InvalidField unless credential_index_supported?(credential)
+      private def validate_credential_input(credential : Credential, credential_data : Bytes, *, allow_aliro : Bool = false) : StatusCode?
+        return StatusCode::InvalidField unless credential_index_supported?(credential, allow_aliro: allow_aliro)
 
         case credential.credential_type
         when CredentialType::ProgrammingPin
@@ -1261,7 +1416,7 @@ module Matter
         when CredentialType::AliroCredentialIssuerKey,
              CredentialType::AliroEvictableEndpointKey,
              CredentialType::AliroNonEvictableEndpointKey
-          return StatusCode::InvalidField unless @feature_map.aliro_provisioning?
+          return StatusCode::InvalidField unless allow_aliro && valid_aliro_public_key?(credential_data)
         else
           return StatusCode::InvalidField
         end
@@ -1297,6 +1452,10 @@ module Matter
           @number_of_pin_users_supported
         when CredentialType::Rfid
           @number_of_rfid_users_supported
+        when CredentialType::AliroCredentialIssuerKey
+          @number_of_aliro_credential_issuer_keys_supported
+        when CredentialType::AliroEvictableEndpointKey, CredentialType::AliroNonEvictableEndpointKey
+          @number_of_aliro_endpoint_keys_supported
         else
           @number_of_total_users_supported
         end
@@ -1318,15 +1477,15 @@ module Matter
         schedule_index >= 1_u8 && schedule_index <= @number_of_holiday_schedules_supported
       end
 
-      private def credential_index_supported?(credential : Credential) : Bool
-        return false unless credential_type_supported?(credential.credential_type)
+      private def credential_index_supported?(credential : Credential, *, allow_aliro : Bool = false) : Bool
+        return false unless credential_type_supported?(credential.credential_type, allow_aliro: allow_aliro)
         return credential.credential_index == PROGRAMMING_PIN_INDEX if credential.credential_type.programming_pin?
 
         max = max_credential_index(credential.credential_type)
         credential.credential_index >= 1_u16 && credential.credential_index <= max
       end
 
-      private def credential_type_supported?(credential_type : CredentialType) : Bool
+      private def credential_type_supported?(credential_type : CredentialType, *, allow_aliro : Bool = false) : Bool
         case credential_type
         when CredentialType::ProgrammingPin, CredentialType::Pin
           @feature_map.pin_credential?
@@ -1339,7 +1498,7 @@ module Matter
         when CredentialType::AliroCredentialIssuerKey,
              CredentialType::AliroEvictableEndpointKey,
              CredentialType::AliroNonEvictableEndpointKey
-          @feature_map.aliro_provisioning?
+          allow_aliro && @feature_map.user?
         else
           false
         end

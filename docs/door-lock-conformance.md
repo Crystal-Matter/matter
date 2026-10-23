@@ -44,3 +44,26 @@ AliroProvisioning attributes are `0x0080`–`0x0083` and `0x0087`–`0x0088`, wi
 commands `0x28`/`0x29`; AliroBLEUWB also requires `0x0084`–`0x0086`. These
 gaps keep the advertised cluster revision at 9; the tests do not establish
 complete Matter 1.6 revision 10 conformance.
+
+Matter-side Aliro reader configuration and public-key credential management
+are available through local `DoorLock` methods. They persist with the Door Lock
+user database after a normal device persistence flush and validate P-256 keys
+and configured capacities on restore. Local key provisioning accepts an explicit
+`fabric_index:` when the host has a fabric provenance; otherwise its fabric
+attribution is unset. This is host state, not a Matter command execution.
+These methods do not implement Aliro reader transport, step-up authentication,
+or the Matter Aliro attributes and commands. Applications must keep
+`AliroProvisioning` and `AliroBLEUWB` disabled until a reader delegate and the
+required wire interface are implemented. The stored reader signing key is
+secret material, so the chosen storage backend must protect it accordingly.
+Configure `number_of_aliro_credential_issuer_keys_supported` and
+`number_of_aliro_endpoint_keys_supported` when constructing the lock; both
+default to zero. `configure_aliro_reader` accepts an `AliroReaderConfig` with
+a matching 32-byte P-256 signing key and 65-byte uncompressed verification
+key, a 16-byte group identifier, and an optional 16-byte resolving key.
+`provision_aliro_key` accepts a valid 65-byte P-256 public key, an existing
+user index, and an optional explicit `fabric_index:`. Issuer keys and the two
+endpoint-key types have separate index ranges; endpoint keys share one capacity
+across both types. `clear_aliro_reader_config` and `clear_aliro_key` remove the
+staged material locally. Callers should flush device persistence after changes
+to make them survive a restart.
