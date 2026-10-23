@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 119
-- Matching known revisions: 117
+- Crystal declarations for those IDs: 120
+- Matching known revisions: 118
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -72,7 +72,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0057 | Refrigerator Alarm Cluster | 1 | 1 | — |
 | 0x0059 | Dishwasher Mode Cluster | 3 | 3 | — |
 | 0x005B | Air Quality Cluster | 1 | 1 | — |
-| 0x005C | Smoke CO Alarm Cluster | 2 | — | cluster absent |
+| 0x005C | Smoke CO Alarm Cluster | 2 | 2 | Host reports sensing, expression priority, audible output, Power Source consistency, and expiry clock |
 | 0x005D | Dishwasher Alarm Cluster | 1 | 1 | — |
 | 0x005E | Microwave Oven Mode Cluster | 2 | 2 | — |
 | 0x005F | Microwave Oven Control Cluster | 1 | 1 | — |
