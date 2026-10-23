@@ -5,12 +5,18 @@ require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
 
 private class CredentialRecoveryDevice < Matter::Device
-  def initialize(path : String)
-    super(Matter::Storage::YamlFile.new(path), port: 0)
+  def initialize(path : String, tc_min_required_version : UInt16? = nil,
+                 tc_required_acknowledgements : UInt16 = 0_u16)
+    super(Matter::Storage::YamlFile.new(path), port: 0,
+      tc_min_required_version: tc_min_required_version,
+      tc_required_acknowledgements: tc_required_acknowledgements)
   end
 
-  def initialize(storage : Matter::Storage::Backend)
-    super(storage, port: 0)
+  def initialize(storage : Matter::Storage::Backend, tc_min_required_version : UInt16? = nil,
+                 tc_required_acknowledgements : UInt16 = 0_u16)
+    super(storage, port: 0,
+      tc_min_required_version: tc_min_required_version,
+      tc_required_acknowledgements: tc_required_acknowledgements)
   end
 
   def device_name : String
@@ -52,6 +58,15 @@ private class FailCredentialYamlFile < Matter::Storage::YamlFile
   property? fail_next_cluster_write : Bool = false
   property? fail_next_journal_delete : Bool = false
   property? fail_next_fabric_write : Bool = false
+  property? fail_next_flush : Bool = false
+
+  protected def flush : Nil
+    if @fail_next_flush
+      @fail_next_flush = false
+      raise Matter::StorageError.new("Injected file flush failure")
+    end
+    super
+  end
 
   def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
     if @fail_next_fabric_write && collection == Matter::Storage::Collections::FABRICS
@@ -108,6 +123,138 @@ private def update_recovery_fabric(device : CredentialRecoveryDevice, index : UI
 end
 
 describe "durable fail-safe credential recovery" do
+  it "restores direct Terms and Conditions state after a failed file flush" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      committed_before = first.general_commissioning.save_state
+      backend.fail_next_flush = true
+
+      expect_raises(Matter::StorageError, "Injected file flush failure") do
+        first.general_commissioning.set_tc_acknowledgements(
+          Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16))
+      end
+      first.general_commissioning.save_state.should eq(committed_before)
+      backend.read(Matter::Storage::Collections::CLUSTERS,
+        first.general_commissioning.persistence_key).should be_nil
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      restarted.general_commissioning.tc_accepted_version.should eq(0_u16)
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "keeps provisional credentials and Terms and Conditions when the combined file flush fails" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.set_tc_acknowledgements(
+        Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16)
+      ).error_code.ok?.should be_true
+      committed_before = first.general_commissioning.save_state
+      journal_before = backend.read(Matter::Storage::Collections::DEVICE,
+        Matter::Commissioning::CredentialJournal::ID)
+      journal_before.should_not be_nil
+      backend.fail_next_flush = true
+
+      expect_raises(Matter::StorageError, "Injected file flush failure") do
+        first.general_commissioning.commissioning_complete(index, true)
+      end
+      first.general_commissioning.failsafe_armed?.should be_true
+      first.general_commissioning.save_state.should eq(committed_before)
+      backend.read(Matter::Storage::Collections::DEVICE,
+        Matter::Commissioning::CredentialJournal::ID).should eq(journal_before)
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      restarted.fabric_table.get_fabric(index).should be_nil
+      restarted.general_commissioning.tc_accepted_version.should eq(0_u16)
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "does not acknowledge direct Terms and Conditions acceptance if its save fails" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      backend.fail_next_cluster_write = true
+      expect_raises(Matter::StorageError) do
+        first.general_commissioning.set_tc_acknowledgements(
+          Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16))
+      end
+      first.general_commissioning.tc_accepted_version.should eq(0_u16)
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      restarted.general_commissioning.tc_accepted_version.should eq(0_u16)
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "retains Terms and Conditions acknowledged outside a fail-safe after a crash" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      first = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      first.general_commissioning.set_tc_acknowledgements(
+        Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16)
+      ).error_code.ok?.should be_true
+      first.persistence.backend.close
+
+      restarted = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      restarted.general_commissioning.tc_accepted_version.should eq(2_u16)
+      restarted.general_commissioning.tc_acknowledgements.should eq(0b0110_u16)
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "retains accepted Terms and Conditions after an acknowledged commissioning crash" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      first = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.set_tc_acknowledgements(
+        Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16)
+      ).error_code.ok?.should be_true
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+
+      # Closing only the backend models process loss: Device#shutdown! would
+      # flush the debounced cluster writer and conceal the durability gap.
+      first.persistence.backend.close
+
+      restarted = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+      restarted.fabric_table.get_fabric(index).should_not be_nil
+      restarted.general_commissioning.tc_accepted_version.should eq(2_u16)
+      restarted.general_commissioning.tc_acknowledgements.should eq(0b0110_u16)
+      restarted.general_commissioning.tc_acknowledgements_required?.should be_false
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
   it "retains an undo record when AddNOC's fabric write fails after journal flush" do
     path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
     begin
@@ -314,8 +461,12 @@ describe "durable fail-safe credential recovery" do
     path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
     begin
       backend = FailCredentialYamlFile.new(path)
-      first = CredentialRecoveryDevice.new(backend)
+      first = CredentialRecoveryDevice.new(backend,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
       index = add_recovery_fabric(first)
+      first.general_commissioning.set_tc_acknowledgements(
+        Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16)
+      ).error_code.ok?.should be_true
       terms_commits = 0
       window_closes = 0
       first.general_commissioning.failsafe.on_terms_conditions_commit = -> { terms_commits += 1; nil }
@@ -332,9 +483,12 @@ describe "durable fail-safe credential recovery" do
         Matter::Commissioning::CredentialJournal::ID).should_not be_nil
       backend.close
 
-      restarted = CredentialRecoveryDevice.new(path)
+      restarted = CredentialRecoveryDevice.new(path,
+        tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
       restarted.fabric_table.get_fabric(index).should be_nil
       restarted.access_control.acl(index).should be_empty
+      restarted.general_commissioning.tc_accepted_version.should eq(0_u16)
+      restarted.general_commissioning.tc_acknowledgements_required?.should be_true
       restarted.shutdown!
     ensure
       File.delete?(path)

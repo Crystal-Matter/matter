@@ -256,6 +256,11 @@ module Matter
       @tc_committed_acknowledgements : UInt16? = nil
       @tc_temporal_version : UInt16? = nil
       @tc_temporal_acknowledgements : UInt16? = nil
+      @tc_commit_pending : Bool = false
+
+      # Device persistence writes direct (non-fail-safe) acceptance before
+      # SetTCAcknowledgements can report success.
+      property on_tc_acceptance_write : Proc(Storage::Document, Nil)?
 
       def failsafe : Commissioning::FailsafeService
         @failsafe ||= begin
@@ -355,6 +360,8 @@ module Matter
           @tc_temporal_version = request.tc_version
           @tc_temporal_acknowledgements = request.tc_user_response
         else
+          @on_tc_acceptance_write.try(&.call(
+            PersistedTCState.new(request.tc_version, request.tc_user_response).to_document))
           @tc_committed_version = request.tc_version
           @tc_committed_acknowledgements = request.tc_user_response
         end
@@ -568,7 +575,28 @@ module Matter
 
       def save_state : Storage::Document?
         return unless @feature_map.terms_and_conditions?
-        PersistedTCState.new(@tc_committed_version, @tc_committed_acknowledgements).to_document
+        version = @tc_commit_pending ? (@tc_temporal_version || @tc_committed_version) : @tc_committed_version
+        acknowledgements = @tc_commit_pending ? (@tc_temporal_acknowledgements || @tc_committed_acknowledgements) : @tc_committed_acknowledgements
+        PersistedTCState.new(version, acknowledgements).to_document
+      end
+
+      # The state that CommissioningComplete will commit. The device writes
+      # this with the credential-journal deletion in one backend transaction,
+      # before either change can be acknowledged to the commissioner.
+      def pending_tc_commit_state : Storage::Document?
+        return unless version = @tc_temporal_version
+        PersistedTCState.new(version, @tc_temporal_acknowledgements).to_document
+      end
+
+      # During the file flush, a previously armed debouncer may try to save
+      # this cluster. Make it see the same pending acceptance as the commit
+      # transaction without changing the in-memory committed state until the
+      # transaction has actually reached disk.
+      def with_pending_tc_commit(& : -> Nil) : Nil
+        @tc_commit_pending = true
+        yield
+      ensure
+        @tc_commit_pending = false
       end
 
       def restore_state(document : Storage::Document) : Nil
@@ -600,13 +628,20 @@ module Matter
         validate_tc_values(version, acknowledgements)
       end
 
-      private def commit_tc_acceptance : Nil
+      # Also invoked inside the device's credential commit transaction. The
+      # device publishes the data-version change only after the file flush;
+      # its fail-safe callback then invokes this again as a no-op.
+      def commit_tc_acceptance(publish : Bool = true) : Nil
         return unless version = @tc_temporal_version
         @tc_committed_version = version
         @tc_committed_acknowledgements = @tc_temporal_acknowledgements
         @tc_temporal_version = nil
         @tc_temporal_acknowledgements = nil
-        increment_version # Mark committed state dirty without changing wire values.
+        increment_version if publish # Wire values were already reported by SetTCAcknowledgements.
+      end
+
+      def publish_tc_commit : Nil
+        increment_version
       end
 
       private def revert_tc_acceptance : Nil
