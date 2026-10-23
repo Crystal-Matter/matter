@@ -31,6 +31,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   development dependency only; applications include it and require the
   adapter explicitly. Add a dedicated PostgreSQL contract job to CI.
 
+### Account Login revision 2
+
+- Add host-backed GetSetupPIN, Login, and Logout with typed Matter payloads,
+  timed CASE access, a persistent per-fabric unique-request limiter, and a
+  fabric-sensitive LoggedOut event. Extend the Content App fixture and official
+  chip-tool E2E to exercise the account flow.
+
 ### Door Lock verified local credentials
 
 - Require an application supplied, ready local verifier before advertising RFID,

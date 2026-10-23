@@ -8,7 +8,7 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 119
+- Implemented standard cluster IDs compared: 120
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 135
@@ -128,6 +128,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050B | Audio Output Cluster | 1 | 1 | — | — |
 | 0x050C | Application Launcher Cluster | 2 | 2 | — | — |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | — |
+| 0x050E | Account Login Cluster | 2 | 2 | — | — |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |

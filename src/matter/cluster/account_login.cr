@@ -16,7 +16,8 @@ module Matter
 
       abstract class Host
         # Return nil when the temporary identifier does not match the current
-        # account. The host owns identifier lifetime and PIN secrecy.
+        # account. The host expires identifiers within ten minutes and owns
+        # PIN secrecy.
         abstract def setup_pin(identifier : String, fabric_index : UInt8) : String?
 
         abstract def login(identifier : String, pin : String, node : UInt64?, fabric_index : UInt8) : Bool
