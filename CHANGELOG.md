@@ -16,6 +16,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the synthetic Basic Video Player exercises these with official chip-tool.
   ScreenTime, PINManagement, and BlockContentTimeWindow cannot be selected yet.
 
+### Smoke and CO Alarm
+
+- Add the Matter 1.6 revision 2 Smoke CO Alarm server with Smoke, CO, or
+  combined feature selection; typed alarm states and events; persisted alarm
+  conditions; host-driven self tests, expiry, and physical inoperative reports;
+  and revision 2 Unmounted reporting. A synthetic combined detector and official
+  chip-tool test exercise commissioning, state reads, self-test, and restart.
+  Hosts remain responsible for sensor detection, manufacturer-certified
+  expression priority, audible/visual output, and Power Source consistency.
+
 ### Application Launcher
 
 - Add the Matter 1.6 revision 2 Application Launcher server with typed app

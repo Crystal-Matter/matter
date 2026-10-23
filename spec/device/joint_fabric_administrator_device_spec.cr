@@ -214,7 +214,10 @@ describe MatterJointFabricAdministrator::Device do
     device.start
     device.responder.advertised_commissioning_info.should be_nil
     File.write(gate, "ready")
-    sleep 1.2.seconds
+    deadline = Time.instant + 5.seconds
+    until device.responder.advertised_commissioning_info || Time.instant >= deadline
+      sleep 50.milliseconds
+    end
     device.responder.advertised_commissioning_info.should_not be_nil
   ensure
     device.try(&.shutdown!)
