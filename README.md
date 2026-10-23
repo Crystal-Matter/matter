@@ -1206,6 +1206,31 @@ On Windows, the native SQLite import library and DLL must also be installed;
 for example, `vcpkg install sqlite3:x64-windows`, with the installed `lib`
 directory in `CRYSTAL_LIBRARY_PATH` and `bin` directory in `PATH`.
 
+PostgreSQL is also opt-in. Add `pg` to your application's `shard.yml`,
+require the adapter explicitly, and pass a PostgreSQL connection URL:
+
+```yaml
+dependencies:
+  matter:
+    github: Crystal-Matter/matter
+  pg:
+    github: will/crystal-pg
+```
+
+```crystal
+require "matter"
+require "matter/storage/postgres"
+
+storage = Matter::Storage::Postgres.new(ENV.fetch("MATTER_POSTGRES_URL"))
+storage.open
+```
+
+The PostgreSQL adapter uses the same versioned tables and tagged document
+encoding as SQLite. The database user needs permission to create and drop
+`matter_storage_schema` and `matter_storage_documents`; `destroy!` removes
+only those two tables, not the PostgreSQL database. Require the adapter before
+using a `postgres://` URL with `Storage::Migrator`.
+
 A store is a set of *collections* (`fabrics`, `sessions`, `subscriptions`, `device`,
 `clusters`, `app`, `meta`), each holding *documents* keyed by id, so a file looks like
 `{collection: {id: document}}`. Documents hold 64-bit integers, floats, booleans,

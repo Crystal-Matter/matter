@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Optional PostgreSQL storage
+
+- Add an opt-in PostgreSQL backend using the existing versioned SQL schema,
+  typed document codec, and transaction implementation. The `pg` shard is a
+  development dependency only; applications include it and require the
+  adapter explicitly. Add a dedicated PostgreSQL contract job to CI.
+
 ### Door Lock verified local credentials
 
 - Require an application supplied, ready local verifier before advertising RFID,
@@ -16,7 +23,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   caller-supplied RFID/biometric operation sources cannot unlock. Add a
   synthetic RFID reader fixture and official chip-tool coverage without
   bundling a physical reader implementation.
-
 ### Door Lock duplicate credential data
 
 - Reject duplicate PIN or RFID data in a different slot of the same credential

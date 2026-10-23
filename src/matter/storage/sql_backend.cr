@@ -44,8 +44,7 @@ module Matter
 
     # Common storage implementation for relational DB drivers. Only the
     # connection URL, bind placeholder syntax, and destruction are adapter
-    # specific; this layout and typed JSON document codec also work with a
-    # future PostgreSQL driver.
+    # specific; SQLite and PostgreSQL share this layout and typed JSON codec.
     abstract class SqlBackend < Backend
       @database : DB::Database? = nil
       @connection : DB::Connection? = nil
@@ -63,6 +62,10 @@ module Matter
         false
       end
 
+      protected def prepare_schema(connection : DB::Connection) : Nil
+        SqlSchema.prepare(connection)
+      end
+
       def open? : Bool
         @mutex.synchronize { !@connection.nil? }
       end
@@ -75,7 +78,7 @@ module Matter
           begin
             connection = database.checkout
             begin
-              SqlSchema.prepare(connection)
+              prepare_schema(connection)
               connection.exec(insert_if_absent_sql, Collections::META, Collections::META_SCHEMA_ID,
                 SqlDocumentCodec.encode(Backend.schema_document))
               schema_payload = connection.query_one(read_sql, Collections::META, Collections::META_SCHEMA_ID, as: String)
@@ -127,7 +130,9 @@ module Matter
 
       def delete(collection : String, id : String) : Nil
         validate(collection, id)
-        with_connection { |connection| connection.exec(delete_sql, collection, id) }
+        with_connection do |connection|
+          mutate(connection) { connection.exec(delete_sql, collection, id) }
+        end
       end
 
       def ids(collection : String) : Array(String)
@@ -160,7 +165,9 @@ module Matter
       def clear(collection : String) : Nil
         validate_collection(collection)
         with_connection do |connection|
-          connection.exec("DELETE FROM #{SqlSchema::DOCUMENT_TABLE} WHERE collection = #{bind(1)}", collection)
+          mutate(connection) do
+            connection.exec("DELETE FROM #{SqlSchema::DOCUMENT_TABLE} WHERE collection = #{bind(1)}", collection)
+          end
         end
       end
 
@@ -220,8 +227,11 @@ module Matter
       end
 
       private def mutate(connection : DB::Connection, & : -> Nil) : Nil
-        if @current_transaction
-          yield
+        if current = @current_transaction
+          # PostgreSQL aborts a transaction after a statement error. Roll a
+          # caught mutation back to a savepoint so the outer transaction can
+          # still commit its other writes.
+          current.transaction { yield }
         else
           connection.transaction { yield }
         end

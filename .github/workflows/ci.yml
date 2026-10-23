@@ -80,6 +80,34 @@ jobs:
           name: docker-interoperability-logs
           path: tmp/e2e/logs/
           if-no-files-found: warn
+  postgres_storage:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: matter
+          POSTGRES_PASSWORD: matter
+          POSTGRES_DB: matter_storage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U matter -d matter_storage_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Install dependencies
+        run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Run PostgreSQL storage contract
+        env:
+          MATTER_TEST_POSTGRES_URL: postgres://matter:matter@127.0.0.1:5432/matter_storage_test
+        run: crystal spec spec-postgres/postgres_backend_spec.cr -v --error-trace
   test:
     strategy:
       fail-fast: false
