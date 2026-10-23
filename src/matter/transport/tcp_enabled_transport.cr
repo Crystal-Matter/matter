@@ -105,7 +105,7 @@ module Matter
         end
       end
 
-      private def listen_tcp(port : Int32) : TCPServer
+      protected def listen_tcp(port : Int32) : TCPServer
         server = TCPServer.new(Socket::Family::INET6)
         begin
           server.ipv6_only = false

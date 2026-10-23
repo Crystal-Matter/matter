@@ -16,6 +16,24 @@ private class TcpTransportForUdpBoundarySpec < TcpTransport
   end
 end
 
+private class TcpTransportWithInitialBindFailureSpec < TcpTransport
+  getter injected_bind_failures : Int32 = 0
+
+  def initialize(port : Int32 = 0)
+    super(port: port)
+    @reject_initial_tcp_bind = true
+  end
+
+  protected def listen_tcp(port : Int32) : TCPServer
+    if @reject_initial_tcp_bind && port != 0
+      @reject_initial_tcp_bind = false
+      @injected_bind_failures += 1
+      raise Socket::BindError.new("Simulated TCP bind collision")
+    end
+    super(port)
+  end
+end
+
 private def tcp_test_message(exchange_id : UInt16, message_id : UInt32 = 1_u32) : Codec::Message
   packet = Codec::PacketHeader.new(
     session_id: 0_u16, session_type: Codec::SessionType::Unicast,
@@ -27,38 +45,19 @@ private def tcp_test_message(exchange_id : UInt16, message_id : UInt32 = 1_u32) 
   Codec::Message.new(packet, payload, Bytes[0xaa, 0xbb])
 end
 
-private def tcp_transport_with_occupied_ephemeral_port : Tuple(TcpTransport, TCPServer, Int32)
-  TcpTransport::EPHEMERAL_BIND_ATTEMPTS.times do
-    transport = TcpTransport.new(port: 0)
-    original_port = transport.port
-    blocker = TCPServer.new(Socket::Family::INET6)
-    blocker.ipv6_only = false
-    begin
-      blocker.bind("::", original_port)
-      blocker.listen
-      return {transport, blocker, original_port}
-    rescue Socket::BindError
-      # Another process can acquire this TCP port after UDP chose it.
-      transport.close
-      blocker.close
-    end
-  end
-  raise Matter::TransportError.new("Could not reserve a TCP blocker for an ephemeral UDP port")
-end
-
 describe TcpTransport do
   before_each { require_udp_sockets! }
 
-  it "moves an ephemeral UDP port when TCP has acquired that port before startup" do
-    transport, blocker, original_port = tcp_transport_with_occupied_ephemeral_port
+  it "recovers a shared ephemeral port when the first TCP bind fails" do
+    transport = TcpTransportWithInitialBindFailureSpec.new(port: 0)
     begin
       transport.start
-      transport.port.should_not eq(original_port)
+      transport.injected_bind_failures.should eq(1)
+      transport.socket.local_address.port.should eq(transport.port)
       client = TCPSocket.new("::1", transport.port)
       client.close
     ensure
       transport.close
-      blocker.close
     end
   end
 
