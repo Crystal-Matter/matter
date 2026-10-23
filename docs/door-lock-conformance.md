@@ -36,10 +36,22 @@ local-time interval, which controls remote operation and the wire read of
 official chip-tool test checks a scheduled PIN across restart.
 
 A holiday boundary does not yet generate a data-version change or subscription
-report without another interaction. ExpiringUser, DisposableUser, and other
-advanced user policies remain incomplete. The advertised cluster revision
-remains 9; these tests do not establish complete Matter 1.6 revision 10
-conformance.
+report without another interaction. DisposableUser becomes disabled after its
+first successful open; a lock operation does not consume it. ExpiringUser starts
+an absolute deadline on first successful credential use. The deadline is stored
+with the user record, survives a normal persistence flush and restart, and a
+restored timer disables the user when the deadline passes. Authorization and
+GetUser also check the deadline, so a delayed timer never extends access.
+Unknown local time denies an ExpiringUser. Automatic status changes emit
+LockUserChange and mark the cluster dirty for persistence. ForcedUser PIN
+access emits the ForcedUser operation and silent alarm; failed PIN operations
+emit LockOperationError with the available user, credential, fabric, and node
+metadata. SendPINOverTheAir defaults to false and ExpiringUserTimeout accepts
+only 1–2880 minutes.
+
+The host must provide a trustworthy wall clock for absolute expiry across a
+restart. The advertised cluster revision remains 9; these tests do not
+establish complete Matter 1.6 revision 10 conformance.
 
 Matter-side Aliro reader configuration and public-key credential management
 are available through local `DoorLock` methods. They persist with the Door Lock

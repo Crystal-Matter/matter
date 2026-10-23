@@ -1000,6 +1000,17 @@ module Matter
           # involved.
           @[TLV::Field(tag: 6)]
           property credentials : Array(Credential)?
+
+          def initialize(
+            @lock_operation_type : LockOperationType,
+            @operation_source : OperationSource,
+            @operation_error : OperationError,
+            @user_index : UInt16? = nil,
+            @fabric_index : UInt8? = nil,
+            @source_node : UInt64? = nil,
+            @credentials : Array(Credential)? = nil,
+          )
+          end
         end
 
         # Body of the DoorLock doorStateChange event

@@ -15,6 +15,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against the current host catalogue. Extend the synthetic RVC and official
   chip-tool coverage with area selection and restart.
 
+### Door Lock user lifecycle
+
+- Apply DisposableUser one-open policy and persisted ExpiringUser deadlines
+  across PIN and authenticated Aliro access. Report ForcedUser PIN operations,
+  automatic user-status changes, and credential failures with typed events.
+  Set the SendPINOverTheAir default to false and bound ExpiringUserTimeout to
+  the Matter 1.6 range. Extend the official chip-tool restart scenario.
+
 ### Audio Output
 
 - Add the Matter 1.6 revision 1 Audio Output server with a typed output
