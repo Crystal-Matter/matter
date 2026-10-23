@@ -343,6 +343,10 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_commodity_tariff
+  zone-management:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_zone_management
 
   contact-sensor:
     <<: *device

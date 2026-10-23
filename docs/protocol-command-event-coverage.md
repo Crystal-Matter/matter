@@ -7,10 +7,10 @@ Feature and complex conditions are displayed for manual review, not evaluated.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 125
+- Implemented standard cluster IDs compared: 126
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 157
+- Conditional command/event declarations for review: 160
 - Feature or complex conditional IDs absent from Crystal: 29
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -132,6 +132,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050E | Account Login Cluster | 2 | 2 | — | — |
 | 0x050F | Content Control Cluster | 1 | 1 | — | — |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | — |
+| 0x0550 | Zone Management Cluster | 1 | 1 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
@@ -307,6 +308,9 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050F | command | 0x0010 | feature(BTW) | absent |
 | 0x050F | event | 0x0000 | feature(ST) | absent |
 | 0x050F | event | 0x0001 | feature(BTW) | absent |
+| 0x0550 | command | 0x0000 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
+| 0x0550 | command | 0x0002 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
+| 0x0550 | command | 0x0003 | feature(USERDEFINED) | declared; requires `:user_defined` |
 | 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:
