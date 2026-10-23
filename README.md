@@ -541,6 +541,19 @@ BoostInfo fields for one-shot, temporary setpoint, emergency heating and
 percentage targets are forwarded to `on_boost`; the host applies those physical
 policies and calls `finish_boost` when a target is reached. The server enforces
 the duration timeout and basic field constraints.
+
+`Cluster::DeviceEnergyManagement` implements the Matter 1.6 revision 4
+PowerAdjustment profile (0x0098) on the synthetic water heater. The host
+supplies the ESA type, generation flag, absolute power limits, and current
+capability ranges. It registers `on_power_adjust` and
+`on_cancel_power_adjust` to approve physical changes; both callbacks receive
+the requesting fabric index for host policy. The server validates requested
+power and duration, opt-out and online state, reports active state, emits
+PowerAdjustStart/End, and ends a session on cancellation, timeout, fault,
+offline state, or a new opt-out. A restart begins online without replaying an
+old power adjustment. PFR, SFR, STA, PAU, FA, and CON remain unavailable and
+are never advertised. Those six feature areas are planned as follow-up slices.
+
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer
 feature (`Spin` or `Rinse`) and register host selection callbacks before
