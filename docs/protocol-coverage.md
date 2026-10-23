@@ -91,7 +91,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | Host controls thermostat, heat source, and boost acceptance |
 | 0x0095 | Commodity Price Cluster | 4 | 4 | FORE forecast, detailed response commands and PriceChange event |
 | 0x0097 | Messages Cluster | 3 | 3 | Fabric-scoped queue, StartTime/Duration lifecycle, and host-triggered presentation; optional user-interaction features remain absent |
-| 0x0098 | Device Energy Management Cluster | 4 | 4 | PA, PFR, SFR, PFR+STA, or PFR+PAU profiles; FA and CON remain absent |
+| 0x0098 | Device Energy Management Cluster | 4 | 4 | PA, PFR, SFR, PFR+STA, PFR+PAU, or PFR+FA profiles; CON remains absent |
 | 0x0099 | Energy EVSE Cluster | 4 | 4 | — |
 | 0x009B | Energy Preference Cluster | 1 | 1 | BALA/LPMS feature choice; validated scales, persisted selections and restart migration |
 | 0x009C | Power Topology Cluster | 1 | 1 | — |
