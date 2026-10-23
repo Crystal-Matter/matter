@@ -142,4 +142,20 @@ jobs:
       - name: Install dependencies
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests
+        if: runner.os != 'Linux'
         run: crystal spec -v --error-trace
+      # Crystal 1.22 can produce a full-suite Ubuntu binary with malformed ELF
+      # symbol versions once it grows large enough. Keep every spec, but link
+      # two smaller binaries so they load reliably.
+      - name: Run tests on Ubuntu in two batches
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t spec_files < <(find spec -type f -name '*_spec.cr' | sort)
+          test "${#spec_files[@]}" -ge 2
+          half=$(( (${#spec_files[@]} + 1) / 2 ))
+          echo "Running ${half} of ${#spec_files[@]} spec files in batch 1"
+          crystal spec -v --error-trace "${spec_files[@]:0:half}"
+          echo "Running $((${#spec_files[@]} - half)) of ${#spec_files[@]} spec files in batch 2"
+          crystal spec -v --error-trace "${spec_files[@]:half}"
