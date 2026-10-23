@@ -79,6 +79,25 @@ describe Channel do
     cluster.data_version.should eq(assigned_version)
   end
 
+  it "keeps direct ChannelList assignments in sync with numeric tuning" do
+    seven = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
+    eight = Channel::ChannelInfo.new(8_u16, 0_u16, "Eight")
+    cluster = build(Channel, feature_map: Channel::Feature::ChannelList, channels: [seven])
+    cluster.on_select { |_channel| true }
+    expect_status(invoke(cluster, Channel::CMD_CHANGE_CHANNEL_BY_NUMBER,
+      Channel::ChangeChannelByNumberRequest.new(7_u16, 1_u16)), IMCode::Success)
+
+    cluster.channel_list = [eight]
+
+    cluster.channel_list.should eq([eight])
+    cluster.current_channel.should be_nil
+    expect_status(invoke(cluster, Channel::CMD_CHANGE_CHANNEL_BY_NUMBER,
+      Channel::ChangeChannelByNumberRequest.new(7_u16, 1_u16)), IMCode::NotFound)
+    expect_status(invoke(cluster, Channel::CMD_CHANGE_CHANNEL_BY_NUMBER,
+      Channel::ChangeChannelByNumberRequest.new(8_u16, 0_u16)), IMCode::Success)
+    cluster.current_channel.should eq(eight)
+  end
+
   it "does not claim a tune succeeded without a host handler" do
     channel = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
     cluster = build(Channel, channels: [channel])
@@ -139,6 +158,19 @@ describe Channel do
       Channel::GetProgramGuideRequest.new(200_u32, 100_u32)), IMCode::InvalidAction)
     expect_status(invoke(cluster, Channel::CMD_RECORD_PROGRAM,
       Channel::RecordProgramRequest.new("x" * 256, false)), IMCode::ConstraintError)
+  end
+
+  it "rejects oversized paging tokens supplied by the program guide host" do
+    cluster = build(Channel, feature_map: Channel::Feature::ElectronicGuide)
+    request = Channel::GetProgramGuideRequest.new(100_u32, 200_u32)
+    oversized = "x" * 8193
+    previous = Channel::ChannelPaging.new(previous_token: Channel::PageToken.new(after: oversized))
+    cluster.on_program_guide { |_request| Channel::ProgramGuideResponse.new(previous, [] of Channel::Program) }
+    expect_status(invoke(cluster, Channel::CMD_GET_PROGRAM_GUIDE, request), IMCode::Failure)
+
+    following = Channel::ChannelPaging.new(next_token: Channel::PageToken.new(before: oversized))
+    cluster.on_program_guide { |_request| Channel::ProgramGuideResponse.new(following, [] of Channel::Program) }
+    expect_status(invoke(cluster, Channel::CMD_GET_PROGRAM_GUIDE, request), IMCode::Failure)
   end
 
   it "advertises RP without EG but gates record commands, and rejects malformed payloads" do
