@@ -375,6 +375,28 @@ upward degradation, and sets ChangeIndication to OK. Optional
 LastChangedTime is controller-writable and retained across restarts; an
 application may set it when it knows when the resource changed.
 
+Water Heater Mode and Water Heater Management expose Matter 1.6 appliance
+control on a Thermostat endpoint. Configure Mode with at least an Off and a
+Manual option; mode labels and tag sets must be distinct, and manufacturer
+tags use values 0x8000–0xBFFF. Register `on_change_to_mode` so the host can
+accept or reject transitions. On restart, a saved mode that is no longer
+supported falls back to the host's configured mode. Management reports
+heat-source demand, tank percentage, and estimated heat through host setters.
+Register `on_boost` and `on_cancel_boost` before accepting remote Boost
+commands; accepted boosts
+raise revision-two events and time out after their requested duration. The
+server logs a host cancellation failure at timeout and still ends the protocol
+boost state. The optional EnergyManagement and TankPercent features gate
+their associated attributes. The host remains responsible for physical heater
+operation, thermostat setpoint checks, and accurate tank/energy estimates. See
+`examples/matter_water_heater_device.cr` for a synthetic endpoint and its
+official chip-tool E2E fixture.
+
+BoostInfo fields for one-shot, temporary setpoint, emergency heating and
+percentage targets are forwarded to `on_boost`; the host applies those physical
+policies and calls `finish_boost` when a target is reached. The server enforces
+the duration timeout and basic field constraints.
+
 `Cluster::ThermostatUserInterfaceConfiguration` adds Matter 1.6 revision 2
 display units, keypad lockout, and optional local schedule programming
 visibility to a Thermostat endpoint. All three preferences persist; the
