@@ -126,7 +126,7 @@ describe Matter::Storage::Migrator do
     end
 
     it "rejects unknown schemes" do
-      expect_raises(Matter::StorageError, /Unknown storage URI scheme "sqlite"/) { Matter::Storage::Migrator.open("sqlite:store.db") }
+      expect_raises(Matter::StorageError, /Unknown storage URI scheme "unregistered"/) { Matter::Storage::Migrator.open("unregistered:store.db") }
     end
 
     it "raises for the legacy scheme when the importer is not loaded or the file is missing" do

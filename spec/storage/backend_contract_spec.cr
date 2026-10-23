@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "log/spec"
+require "../../src/matter/storage/sqlite"
 
 # Behaviour every `Storage::Backend` must share, run against `Memory`,
 # `YamlFile` and `JsonFile`; plus the file-only guarantees (atomic flush,
@@ -486,7 +487,214 @@ describe Matter::Storage::Backend do
   BackendContract.run("Memory", ".mem") { Matter::Storage::Memory.new }
   BackendContract.run("YamlFile", ".yml") { |path| Matter::Storage::YamlFile.new(path).tap(&.open) }
   BackendContract.run("JsonFile", ".json") { |path| Matter::Storage::JsonFile.new(path).tap(&.open) }
+  BackendContract.run("Sqlite", ".sqlite3") { |path| Matter::Storage::Sqlite.new(path).tap(&.open) }
 
   BackendContract.run_file("YamlFile", ".yml") { |path| BackendContract::CountingYamlFile.new(path) }
   BackendContract.run_file("JsonFile", ".json") { |path| BackendContract::CountingJsonFile.new(path) }
+end
+
+describe Matter::Storage::Sqlite do
+  it "preserves maps whose keys resemble file JSON value wrappers" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      wrappers = Matter::Storage::Document{
+        "$bytes" => "AQID",
+        "$time"  => "2026-09-10T01:02:03Z",
+        "$float" => "Infinity",
+        "nested" => Matter::Storage::Document{"$bytes" => "AQID"}.as(Matter::Storage::Type),
+      }
+      backend.write(BackendContract::COLLECTION, BackendContract::ID, wrappers)
+      singleton = Matter::Storage::Document{"$bytes" => "AQID"}
+      backend.write(BackendContract::COLLECTION, BackendContract::OTHER_ID, singleton)
+      backend.close
+
+      reopened = Matter::Storage::Sqlite.new(path).tap(&.open)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).should eq(wrappers)
+      reopened.read(BackendContract::COLLECTION, BackendContract::OTHER_ID).should eq(singleton)
+      reopened.destroy!
+    end
+  end
+
+  it "preserves data and document types after close and reopen" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.write(BackendContract::COLLECTION, BackendContract::ID, BackendContract.sample_document)
+      backend.close
+
+      reopened = Matter::Storage::Sqlite.new(path).tap(&.open)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).should eq(BackendContract.sample_document)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).as(Matter::Storage::Document)["uint_max"].should be_a(UInt64)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).as(Matter::Storage::Document)["time"].as(Time).nanosecond.should eq(BackendContract::SAMPLE_TIME.nanosecond)
+      reopened.destroy!
+    end
+  end
+
+  it "commits the outer transaction and rolls back an exception atomically" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.write(BackendContract::COLLECTION, BackendContract::ID, Matter::Storage::Document{"n" => 1_i64})
+      expect_raises(ArgumentError) do
+        backend.transaction do
+          backend.write(BackendContract::COLLECTION, BackendContract::ID, Matter::Storage::Document{"n" => 2_i64})
+          backend.transaction { backend.write(BackendContract::COLLECTION, BackendContract::OTHER_ID, Matter::Storage::Document{"n" => 3_i64}) }
+          raise ArgumentError.new("rollback")
+        end
+      end
+      backend.close
+
+      reopened = Matter::Storage::Sqlite.new(path).tap(&.open)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).should eq(Matter::Storage::Document{"n" => 1_i64})
+      reopened.read(BackendContract::COLLECTION, BackendContract::OTHER_ID).should be_nil
+      reopened.destroy!
+    end
+  end
+
+  it "rolls back only a failed nested transaction" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.transaction do
+        backend.write(BackendContract::COLLECTION, BackendContract::ID, Matter::Storage::Document{"n" => 1_i64})
+        expect_raises(ArgumentError) do
+          backend.transaction do
+            backend.write(BackendContract::COLLECTION, BackendContract::OTHER_ID, Matter::Storage::Document{"n" => 2_i64})
+            raise ArgumentError.new("nested rollback")
+          end
+        end
+        backend.write(BackendContract::COLLECTION, BackendContract::THIRD_ID, Matter::Storage::Document{"n" => 3_i64})
+      end
+      backend.ids(BackendContract::COLLECTION).should eq([BackendContract::ID, BackendContract::THIRD_ID])
+      backend.destroy!
+    end
+  end
+
+  it "refuses a newer document schema without changing the database" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.write(Matter::Storage::Collections::META, Matter::Storage::Collections::META_SCHEMA_ID, BackendContract::NEWER_SCHEMA)
+      backend.close
+
+      expect_raises(Matter::StorageError, /schema version/) { Matter::Storage::Sqlite.new(path).open }
+      File.exists?(path).should be_true
+      backend.destroy!
+    end
+  end
+
+  it "refuses a newer physical SQL schema without changing its version" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.close
+      DB.open("sqlite3://#{URI.encode_path(path)}") do |database|
+        database.exec("UPDATE matter_storage_schema SET version = ?", Matter::Storage::SqlSchema::VERSION + 1)
+      end
+
+      expect_raises(Matter::StorageError, /SQL storage schema version/) { Matter::Storage::Sqlite.new(path).open }
+      DB.open("sqlite3://#{URI.encode_path(path)}") do |database|
+        database.scalar("SELECT version FROM matter_storage_schema").should eq(Matter::Storage::SqlSchema::VERSION + 1)
+      end
+      backend.destroy!
+    end
+  end
+
+  it "applies the first physical SQL migration to a version-zero store" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.close
+      DB.open("sqlite3://#{URI.encode_path(path)}") do |database|
+        database.exec("DROP TABLE matter_storage_documents")
+        database.exec("UPDATE matter_storage_schema SET version = ?", 0_i64)
+      end
+
+      reopened = Matter::Storage::Sqlite.new(path).tap(&.open)
+      reopened.read(Matter::Storage::Collections::META, Matter::Storage::Collections::META_SCHEMA_ID)
+        .should eq(BackendContract::SCHEMA_DOCUMENT)
+      reopened.destroy!
+    end
+  end
+
+  it "lets independent backends open the same new database" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      ready = Channel(Nil).new
+      start = Channel(Nil).new
+      done = Channel(Exception?).new
+      8.times do
+        spawn do
+          ready.send(nil)
+          start.receive
+          backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+          backend.read(Matter::Storage::Collections::META, Matter::Storage::Collections::META_SCHEMA_ID)
+            .should eq(BackendContract::SCHEMA_DOCUMENT)
+          backend.close
+          done.send(nil)
+        rescue ex
+          done.send(ex)
+        end
+      end
+      8.times { ready.receive }
+      8.times { start.send(nil) }
+      8.times { done.receive.should be_nil }
+
+      Matter::Storage::Sqlite.new(path).tap(&.open).destroy!
+    end
+  end
+
+  it "serializes concurrent writes from fibers" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      done = Channel(Exception?).new
+      8.times do |worker|
+        spawn do
+          20.times do |item|
+            backend.write(BackendContract::COLLECTION, "#{worker}:#{item}", Matter::Storage::Document{"worker" => worker.to_i64})
+          end
+          done.send(nil)
+        rescue ex
+          done.send(ex)
+        end
+      end
+      8.times { done.receive.should be_nil }
+      backend.ids(BackendContract::COLLECTION).size.should eq(160)
+      backend.destroy!
+    end
+  end
+
+  it "serializes read-modify-write transactions across fibers" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      backend.write(BackendContract::COLLECTION, BackendContract::ID, Matter::Storage::Document{"count" => 0_i64})
+      done = Channel(Exception?).new
+      8.times do
+        spawn do
+          20.times do
+            backend.transaction do
+              current = backend.read(BackendContract::COLLECTION, BackendContract::ID).as(Matter::Storage::Document)
+              count = current["count"].as(Int64)
+              Fiber.yield
+              backend.write(BackendContract::COLLECTION, BackendContract::ID,
+                Matter::Storage::Document{"count" => count + 1})
+            end
+          end
+          done.send(nil)
+        rescue ex
+          done.send(ex)
+        end
+      end
+      8.times { done.receive.should be_nil }
+      backend.read(BackendContract::COLLECTION, BackendContract::ID).should eq(Matter::Storage::Document{"count" => 160_i64})
+      backend.destroy!
+    end
+  end
+
+  it "registers an opt-in sqlite migrator scheme" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      source = Matter::Storage::Memory.new
+      source.write(BackendContract::COLLECTION, BackendContract::ID, BackendContract.sample_document)
+      target = Matter::Storage::Migrator.open("sqlite:#{path}")
+      Matter::Storage::Migrator.copy(source, target).should eq({BackendContract::COLLECTION => 1})
+      target.close
+
+      reopened = Matter::Storage::Sqlite.new(path).tap(&.open)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).should eq(BackendContract.sample_document)
+      reopened.destroy!
+    end
+  end
 end

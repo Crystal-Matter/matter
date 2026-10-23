@@ -1015,11 +1015,40 @@ end
 ## Storage
 
 Device state (fabrics, sessions, subscriptions, cluster state, identity) is persisted
-through `Matter::Storage::Backend`. Three backends ship with the library:
+through `Matter::Storage::Backend`. Three backends load by default:
 
 * `Matter::Storage::YamlFile` - one human readable YAML file (recommended)
 * `Matter::Storage::JsonFile` - the same layout as JSON
 * `Matter::Storage::Memory` - nothing persisted; state is rebuilt on every start
+
+SQLite is available as an opt-in durable backend. Add `sqlite3` to your
+application's `shard.yml` (it is only a development dependency of this library),
+then require the adapter explicitly:
+
+```yaml
+dependencies:
+  matter:
+    github: Crystal-Matter/matter
+  sqlite3:
+    github: crystal-lang/crystal-sqlite3
+```
+
+```crystal
+require "matter"
+require "matter/storage/sqlite"
+
+storage = Matter::Storage::Sqlite.new("matter.db")
+storage.open
+# Pass `storage` to a device or controller constructor accepting Storage::Backend.
+```
+
+The optional adapter also registers `sqlite:<path>` with `Storage::Migrator`,
+so applications that require it can copy existing stores into SQLite. SQLite
+uses a versioned SQL schema and a collision-free tagged JSON document encoding.
+SQL operations use transactions, including savepoints for nested transactions;
+an exception rolls back its transaction. Its common SQL layer is designed for
+a future PostgreSQL adapter. The adapter opens the file
+with SQLite WAL mode, full sync, and a five-second busy timeout.
 
 A store is a set of *collections* (`fabrics`, `sessions`, `subscriptions`, `device`,
 `clusters`, `app`, `meta`), each holding *documents* keyed by id, so a file looks like

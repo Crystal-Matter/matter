@@ -363,7 +363,9 @@ in a crash.
 
 Backends are `Storage::Memory`, `Storage::YamlFile` and `Storage::JsonFile`, all under the abstract
 `Storage::Backend` (`storage/backend.cr`); the two file backends share `FileBackend`, which does the
-atomic write and fsync. `Storage::Record` derives `to_document`/`from_document` from a type's
+atomic write and fsync. An opt-in `Storage::Sqlite` adapter uses the shared `SqlBackend` and
+versioned SQL schema; its SQLite driver is loaded only by `require "matter/storage/sqlite"`.
+`Storage::Record` derives `to_document`/`from_document` from a type's
 instance variables, and `Storage::Migrator` copies any store to any other.
 
 ## Commissioning

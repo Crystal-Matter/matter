@@ -1,6 +1,7 @@
 require "./spec_helper"
 require "log/spec"
 require "../src/matter/controller/joint_commissioning"
+require "../src/matter/storage/sqlite"
 
 private def build_fabric(fabric_index : UInt8, fabric_id : UInt64 = fabric_index.to_u64) : Matter::Fabric
   Matter::Fabric.new(
@@ -330,6 +331,12 @@ describe Matter::FabricTable do
     it "round trips a fabric id above Int64::MAX through a JSON file" do
       with_temp_file(".json") do |path|
         round_trips_through(Matter::Storage::JsonFile.new(path))
+      end
+    end
+
+    it "round trips a fabric id above Int64::MAX through SQLite" do
+      with_temp_file(".sqlite3") do |path|
+        round_trips_through(Matter::Storage::Sqlite.new(path))
       end
     end
   end

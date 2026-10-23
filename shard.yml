@@ -21,6 +21,10 @@ dependencies:
     github: spider-gazelle/openssl_ext
 
 development_dependencies:
+  sqlite3:
+    github: crystal-lang/crystal-sqlite3
+    version: ~> 0.24.0
+
   timecop:
     github: crystal-community/timecop.cr
 
