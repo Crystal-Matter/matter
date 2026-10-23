@@ -84,6 +84,18 @@ direction settings start from the application's configured values. The
 air-conditioner example enables MultiSpeed and Step and is exercised with the
 official chip-tool.
 
+`Cluster::DoorLock` uses the Matter defaults for optional local controls:
+`enable_one_touch_locking`, `enable_inside_status_led`, and
+`enable_privacy_mode_button` start false, and `local_programming_features`
+starts at zero for a new lock. Existing saved boolean values continue to
+restore; hosts that relied on the previous enabled defaults can pass those
+constructor options explicitly for a new lock or update persisted attributes.
+The server accepts only the
+Single credential rule until a host can enforce multi-credential access.
+For the previous all-enabled local programming mask, explicitly pass
+`local_programming_features: 0x0F_u8`; higher bits are reserved.
+See [Door Lock conformance](docs/door-lock-conformance.md) for its current scope.
+
 ## Building a device
 
 A device is a `Matter::Device` subclass that declares what it is. This is the switch example in
