@@ -140,6 +140,34 @@ describe DishwasherAlarm do
     second.mask.should eq(DishwasherAlarm::AlarmBitmap::None)
   end
 
+  it "emits one Notify for direct State changes and subsequent Reset" do
+    node = Matter::Node.new
+    endpoint1 = Matter::Endpoint.new(endpoint(1))
+    cluster = dishwasher_alarm(feature_map: DishwasherAlarm::Feature::Reset)
+    endpoint1.add_cluster(cluster)
+    node.add_endpoint(endpoint1)
+    path = Matter::InteractionModel::EventPath.new(
+      cluster: DishwasherAlarm::CLUSTER_ID, event: DishwasherAlarm::EVENT_NOTIFY)
+
+    cluster.state = DishwasherAlarm::AlarmBitmap::DoorError
+    cluster.state = DishwasherAlarm::AlarmBitmap::DoorError
+    first = node.event_journal.query([path])
+    first.size.should eq(1)
+    payload = DishwasherAlarm::NotifyEvent.from_tlv(first.first.data)
+    payload.active.should eq(DishwasherAlarm::AlarmBitmap::DoorError)
+    payload.inactive.should eq(DishwasherAlarm::AlarmBitmap::None)
+    payload.state.should eq(DishwasherAlarm::AlarmBitmap::DoorError)
+
+    expect_success(invoke(cluster, DishwasherAlarm::CMD_RESET,
+      DishwasherAlarm::ResetRequest.new(DishwasherAlarm::AlarmBitmap::DoorError)))
+    second = node.event_journal.query([path])
+    second.size.should eq(2)
+    reset = DishwasherAlarm::NotifyEvent.from_tlv(second.last.data)
+    reset.active.should eq(DishwasherAlarm::AlarmBitmap::None)
+    reset.inactive.should eq(DishwasherAlarm::AlarmBitmap::DoorError)
+    reset.state.should eq(DishwasherAlarm::AlarmBitmap::None)
+  end
+
   it "encodes inherited command fields at anonymous structure tag zero" do
     reset = DishwasherAlarm::ResetRequest.new(DishwasherAlarm::AlarmBitmap::DoorError)
     reset.to_tlv(nil).as_structure.keys.should eq([0_u8])

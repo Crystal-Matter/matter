@@ -68,7 +68,7 @@ module Matter
       attribute 0x0001, :latch, AlarmBitmap, default: AlarmBitmap::None,
         fixed: true, requires: :reset, validate: :reject_fixed_alarm_attribute!
       attribute 0x0002, :state, AlarmBitmap, default: AlarmBitmap::None,
-        validate: :validate_state!
+        validate: :validate_state!, on_change: :notify_state_change
       attribute 0x0003, :supported, AlarmBitmap, default: AlarmBitmap::None,
         fixed: true, validate: :reject_fixed_alarm_attribute!
 
@@ -79,6 +79,7 @@ module Matter
       event 0x00, :notify, priority: :info, payload: NotifyEvent
 
       @reported_conditions : AlarmBitmap = AlarmBitmap::None
+      @last_notified_state : AlarmBitmap = AlarmBitmap::None
       @reset_callback : Proc(AlarmBitmap, InteractionModel::Status)?
       @modify_enabled_alarms_callback : Proc(AlarmBitmap, InteractionModel::Status)?
 
@@ -167,9 +168,14 @@ module Matter
       end
 
       private def publish_state(next_state : AlarmBitmap) : Nil
-        old_state = @state
-        return if next_state == old_state
         self.state = next_state
+      end
+
+      # Every State mutation, including the generated public host setter,
+      # produces the Alarm Base Notify event exactly once.
+      private def notify_state_change(next_state : AlarmBitmap) : Nil
+        old_state = @last_notified_state
+        @last_notified_state = next_state
         emit_notify(NotifyEvent.new(
           AlarmBitmap.new(next_state.value & ~old_state.value),
           AlarmBitmap.new(old_state.value & ~next_state.value),
