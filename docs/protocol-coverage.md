@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 116
-- Matching known revisions: 114
+- Crystal declarations for those IDs: 117
+- Matching known revisions: 115
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -97,7 +97,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x009C | Power Topology Cluster | 1 | 1 | — |
 | 0x009D | Energy EVSE Mode Cluster | 2 | — | cluster absent |
 | 0x009E | Water Heater Mode Cluster | 1 | 1 | Mode Base response and required Off/Manual tags; host controls transitions |
-| 0x009F | Device Energy Management Mode Cluster | 2 | — | cluster absent |
+| 0x009F | Device Energy Management Mode Cluster | 2 | 2 | Mode Base transitions, fixed options and persisted selection; disallowed OnOff attributes absent |
 | 0x00A0 | Electrical Grid Conditions Cluster | 1 | 1 | FORE periods, nullable current conditions and typed change event |
 | 0x0101 | Door Lock Cluster | 10 | 9 | Durable users, schedules, Aliro delegate, and disposable/expiring user policies; BLE/UWB radio and remaining revision 10 audit remain |
 | 0x0102 | Window Covering Cluster | 8 | 8 | Actuator position reporting remains application-owned |
