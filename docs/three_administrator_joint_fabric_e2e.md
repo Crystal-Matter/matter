@@ -6,9 +6,13 @@ and each retains its own bootstrap Anchor service alongside the service joined
 to A. The scenario verifies both cross-signed ICAC registrations and the
 Administrator CAT ACL granted on C's joined fabric.
 
-B then transfers the Anchor role from A. The test checks that the new Anchor
-Datastore contains A, B, and C, and that C removes its A fabric and installs
-B's fabric. A follows B's Datastore over a verified CASE session. Its
+B then transfers the Anchor role from A. The fixture interrupts after
+TransferAnchorComplete, restarts B from its persisted FollowingUp journal,
+and resumes only the participant follow-up. C still has A's fabric before
+follow-up, and B's NOC and Administrator CAT version stay unchanged after
+resume. The test checks that the new Anchor Datastore contains A, B, and C,
+and that C removes its A fabric and installs B's fabric. A follows B's
+Datastore over a verified CASE session. Its
 subscription discovers Descriptor endpoints carrying the Datastore cluster,
 then selects the single endpoint that is readable on B's fabric and reports
 the authenticated Anchor root and Node ID. During promotion, the copied
@@ -20,9 +24,10 @@ promoted role, rather than requiring the bootstrap version.
 
 Finally, B removes A. The test interrupts after the remote RemoveFabric
 acknowledgement is lost, restarts B, and verifies that the persisted removal
-journal blocks replay until the operator reconciles A's fabric state. After
-reconciliation, B completes removal and retains B and C in its Administrator
-list. A repeated removal is idempotent.
+journal blocks replay until the operator reconciles A's fabric state. It also
+restarts B after a lost RemoveAdmin acknowledgement and verifies the persisted
+AdminList before reconciliation. B then completes removal and retains B and C
+in its Administrator list. A repeated removal is idempotent.
 
 Run just this scenario with `./test --e2e-only --
 e2e/spec/joint_fabric_two_jfa_spec.cr`.

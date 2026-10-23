@@ -616,9 +616,43 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8)))
     before_transfer.subscription_committed.should be_false
 
-    # B becomes the new Anchor. The device runs the controller-side transfer
-    # with its own reachable operational identity, and every JFA follows up
-    # before the journal can reach Completed.
+    # B becomes the new Anchor, but the command channel loses the result after
+    # TransferAnchorComplete and before participant follow-up. Restart B with
+    # its persisted FollowingUp journal while A and C still use A's fabric.
+    interrupted_transfer = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_before_transfer_follow_up: true))
+    interrupted_transfer.status.should eq("error")
+    interrupted_transfer.error.to_s.should contain("Injected interruption before Anchor transfer follow-up")
+    third_before_follow_up = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    third_before_follow_up.fabric_present.should be_true
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    promoted_groups_before_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+    promoted_groups_before_resume_data = promoted_groups_before_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    transfer_admin_cat_version = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+      .from_tlv(promoted_groups_before_resume_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
+      .group_cat_version
+    noc_before_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+    noc_before_resume_data = noc_before_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    transfer_anchor_noc = Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
+      .from_tlv(noc_before_resume_data.to_slice).first.noc
+    # The resumed command must perform only pending follow-up, not rotate B's
+    # credentials or recopy the frozen Datastore.
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
@@ -635,6 +669,13 @@ describe "three provisioned Joint Fabric Administrators" do
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
     promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    noc_after_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+    noc_after_resume_data = noc_after_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
+      .from_tlv(noc_after_resume_data.to_slice).first.noc.should eq(transfer_anchor_noc)
     promoted_admins = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
@@ -682,6 +723,7 @@ describe "three provisioned Joint Fabric Administrators" do
       .from_tlv(before_removal_group_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
     before_removal_cat_version = before_removal_group.group_cat_version ||
                                  raise Matter::ProtocolError.new("Administrator group CAT version is absent")
+    before_removal_cat_version.should eq(transfer_admin_cat_version)
 
     # C's user has not consented. B rejects the request before creating a
     # removal journal or sending any removal command; C stays on the fabric.
