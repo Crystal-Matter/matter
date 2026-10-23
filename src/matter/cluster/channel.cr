@@ -387,6 +387,10 @@ module Matter
         end
       end
 
+      def channel_list : Array(ChannelInfo)
+        @channel_list.dup
+      end
+
       def on_select(&block : ChannelInfo -> Bool) : Nil
         @on_select = block
       end
