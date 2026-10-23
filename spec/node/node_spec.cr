@@ -5,6 +5,8 @@ require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/level_control"
 require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
+require "../../src/matter/cluster/power_source"
+require "../../src/matter/cluster/smoke_co_alarm"
 
 # An On/Off Light endpoint with every mandatory server cluster, so `add_endpoint`
 # accepts it.
@@ -235,6 +237,37 @@ describe Matter::Node do
   end
 
   describe "#validate" do
+    it "requires a Power Source device type somewhere on a Smoke CO Alarm node" do
+      node = Matter::Node.new
+      detector_number = endpoint(1)
+      detector = Matter::Endpoint.new(detector_number, Matter::DeviceType.smoke_co_alarm)
+      detector.add_cluster(Matter::Cluster::Identify.new(detector_number))
+      detector.add_cluster(Matter::Cluster::SmokeCOAlarm.new(detector_number,
+        feature_map: Matter::Cluster::SmokeCOAlarm::Feature::SmokeAlarm))
+      node.add_endpoint(detector)
+
+      node.validate[1_u16].first.should contain("Power Source")
+      node.valid?.should be_false
+
+      power_number = endpoint(2)
+      untyped_power = Matter::Endpoint.new(power_number)
+      untyped_power.add_cluster(Matter::Cluster::PowerSource.new(power_number,
+        feature_map: Matter::Cluster::PowerSource::Feature::None))
+      node.add_endpoint(untyped_power)
+      node.valid?.should be_false # The cluster alone does not satisfy the device-type requirement.
+
+      power = Matter::Endpoint.new(power_number, Matter::DeviceType.power_source)
+      power.add_cluster(Matter::Cluster::PowerSource.new(power_number,
+        feature_map: Matter::Cluster::PowerSource::Feature::None))
+      node.add_endpoint(power)
+
+      node.validate.should be_empty
+      node.valid?.should be_true
+
+      node.remove_endpoint(2_u16)
+      node.valid?.should be_false
+    end
+
     it "is empty for a conformant node" do
       node = Matter::Node.new
       node.add_endpoint(on_off_light(1_u16))

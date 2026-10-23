@@ -178,9 +178,18 @@ module Matter
     # The validation errors of every endpoint that has any, keyed by endpoint.
     def validate : Hash(UInt16, Array(String))
       errors = {} of UInt16 => Array(String)
+      present_device_types = @endpoints.values.flat_map(&.device_types).map(&.device_type_id.id)
 
       @endpoints.each do |endpoint_id, endpoint|
         endpoint_errors = endpoint.validate
+        endpoint.device_types.each do |device_type|
+          device_type.required_node_device_types.each do |required_id|
+            unless present_device_types.includes?(required_id)
+              required_name = DeviceType.name(required_id) || Hex.u32(required_id)
+              endpoint_errors << "Missing required #{required_name} device type on node for #{device_type.name}"
+            end
+          end
+        end
         errors[endpoint_id] = endpoint_errors unless endpoint_errors.empty?
       end
 

@@ -835,6 +835,10 @@ module Matter
       end
 
       refresh_root_parts_list
+      topology_errors = @node.validate
+      unless topology_errors.empty?
+        raise ConfigurationError.new("Incomplete device-type topology: #{topology_errors}")
+      end
     end
 
     # The device types of *endpoint_id*: every endpoint 0 is a Root Node, on
@@ -1184,7 +1188,9 @@ module Matter
         definition.name,
         revision,
         definition.required_server_clusters,
-        definition.optional_server_clusters
+        definition.optional_server_clusters,
+        definition.required_server_attributes,
+        definition.required_node_device_types
       )
     end
   end
