@@ -15,8 +15,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   names are used for outputs the user has not renamed. The host callback
   confirms a physical output change and reapplies the saved route at startup; a synthetic
   Aggregator fixture exercises both commands with official chip-tool.
-- Return an isolated OutputList copy to host readers so callers cannot mutate
-  the advertised catalogue without validation or a data-version update.
+- Copy OutputList on host assignment and return isolated reader copies so callers
+  cannot mutate the advertised catalogue without validation or a data-version update.
 
 ### Meter Identification
 

@@ -111,6 +111,19 @@ describe AudioOutput do
     cluster.data_version.should eq(original_version)
   end
 
+  it "copies a host-assigned output catalogue before retaining it" do
+    cluster = build(AudioOutput, output_list: audio_outputs, current_output: 0_u8)
+    replacement = [AudioOutput::OutputInfo.new(0_u8, AudioOutput::OutputType::Internal, "Desk"),
+                   audio_outputs.last]
+    cluster.output_list = replacement
+    assigned_version = cluster.data_version
+
+    replacement.clear
+
+    cluster.output_list.first.name.should eq("Desk")
+    cluster.data_version.should eq(assigned_version)
+  end
+
   it "persists selected output and renamed names across restart" do
     cluster = build(AudioOutput, output_list: audio_outputs, current_output: 0_u8,
       feature_map: AudioOutput::Feature::NameUpdates)

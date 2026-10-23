@@ -68,7 +68,7 @@ module Matter
       end
 
       attribute 0x0000, :output_list, Array(OutputInfo), default: [] of OutputInfo,
-        persist: true, validate: :validate_output_list!
+        persist: true, validate: :validate_output_list!, copy_on_assign: true
       attribute 0x0001, :current_output, UInt8, default: 0_u8,
         persist: true, validate: :validate_current_output!
 
