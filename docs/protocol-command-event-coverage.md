@@ -8,10 +8,10 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 103
+- Implemented standard cluster IDs compared: 104
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 129
+- Conditional command/event declarations for review: 133
 - Feature or complex conditional IDs absent from Crystal: 20
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -106,6 +106,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
 | 0x0503 | Wake On LAN Cluster | 1 | 1 | — | — |
+| 0x0504 | Channel Cluster | 2 | 2 | — | — |
 | 0x0505 | Target Navigator Cluster | 2 | 2 | — | — |
 | 0x0506 | Media Playback Cluster | 2 | 2 | — | — |
 | 0x0507 | Media Input Cluster | 1 | 1 | — | — |
@@ -250,6 +251,10 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0431 | event | 0x0000 | feature(HA) | declared; requires `:human_activity` |
 | 0x0431 | event | 0x0001 | feature(HA) | declared; requires `:human_activity` |
 | 0x0452 | command | 0x0004 | feature(PC) | declared; requires `:pan_change` |
+| 0x0504 | command | 0x0000 | (feature(CL) or feature(LI)) | declared; requires `[:channel_list, :lineup_info]` |
+| 0x0504 | command | 0x0004 | feature(EG) | declared; requires `:electronic_guide` |
+| 0x0504 | command | 0x0006 | (feature(RP) and feature(EG)) | declared; requires `{record_program: true, electronic_guide: true}` |
+| 0x0504 | command | 0x0007 | (feature(RP) and feature(EG)) | declared; requires `{record_program: true, electronic_guide: true}` |
 | 0x0506 | command | 0x0006 | feature(VS) | declared; requires `:variable_speed` |
 | 0x0506 | command | 0x0007 | feature(VS) | declared; requires `:variable_speed` |
 | 0x0506 | command | 0x000B | feature(AS) | declared; requires `:advanced_seek` |
