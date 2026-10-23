@@ -131,4 +131,60 @@ describe "Matter 1.6 Water Heater Management" do
     heater.boost_state.should eq(Heater::BoostState::Inactive)
     cancellations.should eq(1)
   end
+
+  it "ends the boost and emits BoostEnded at duration even when host cancellation fails" do
+    node = Matter::Node.new
+    endpoint1 = Matter::Endpoint.new(endpoint(1))
+    heater = build(Heater, heater_types: Heater::HeatSource::ImmersionElement1)
+    endpoint1.add_cluster(heater)
+    node.add_endpoint(endpoint1)
+    heater.on_boost { |_info| HeaterStatus.success }
+    cancellations = 0
+    heater.on_cancel_boost do
+      cancellations += 1
+      HeaterStatus.invalid_in_state
+    end
+
+    expect_success(invoke(heater, Heater::CMD_BOOST,
+      Heater::BoostRequest.new(Heater::BoostInfo.new(1_u32))))
+    sleep 1.1.seconds
+
+    cancellations.should eq(1)
+    heater.boost_state.should eq(Heater::BoostState::Inactive)
+    ended = node.event_journal.query([Matter::InteractionModel::EventPath.new(
+      cluster: Heater::CLUSTER_ID, event: Heater::EVENT_BOOST_ENDED)])
+    ended.size.should eq(1)
+  end
+
+  it "does not let an earlier duration end a replacement boost" do
+    heater = build(Heater, heater_types: Heater::HeatSource::ImmersionElement1)
+    cancellations = 0
+    heater.on_boost { |_info| HeaterStatus.success }
+    heater.on_cancel_boost do
+      cancellations += 1
+      HeaterStatus.success
+    end
+    expect_success(invoke(heater, Heater::CMD_BOOST,
+      Heater::BoostRequest.new(Heater::BoostInfo.new(1_u32))))
+    sleep 0.2.seconds
+    expect_success(invoke(heater, Heater::CMD_BOOST,
+      Heater::BoostRequest.new(Heater::BoostInfo.new(30_u32))))
+    sleep 1.second
+
+    heater.boost_state.should eq(Heater::BoostState::Active)
+    cancellations.should eq(0)
+    expect_success(invoke(heater, Heater::CMD_CANCEL_BOOST))
+  end
+
+  it "ends an expired boost when the host cancellation callback raises" do
+    heater = build(Heater, heater_types: Heater::HeatSource::ImmersionElement1)
+    heater.on_boost { |_info| HeaterStatus.success }
+    heater.on_cancel_boost { raise ArgumentError.new("host cancellation failed") }
+
+    expect_success(invoke(heater, Heater::CMD_BOOST,
+      Heater::BoostRequest.new(Heater::BoostInfo.new(1_u32))))
+    sleep 1.1.seconds
+
+    heater.boost_state.should eq(Heater::BoostState::Inactive)
+  end
 end

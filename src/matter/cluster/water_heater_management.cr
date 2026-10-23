@@ -6,6 +6,8 @@ module Matter
     # The host owns the thermostat and physical heater; commands only report
     # success after its callbacks accept the requested operation.
     class WaterHeaterManagement < Base
+      Log = ::Log.for("matter.cluster.water_heater_management")
+
       cluster 0x0094, revision: 2, persist_state: false
 
       feature :energy_management, bit: 0
@@ -183,7 +185,16 @@ module Matter
       private def schedule_boost_timeout(duration : UInt32, generation : UInt64) : Nil
         spawn do
           sleep duration.seconds
-          cancel_boost if @boost_generation == generation
+          if @boost_generation == generation
+            begin
+              status = @cancel_callback.try(&.call)
+              Log.warn { "host rejected boost expiration: #{status}" } unless status && status.success?
+            rescue ex
+              Log.warn(exception: ex) { "host failed to cancel expired boost" }
+            ensure
+              finish_boost if @boost_generation == generation
+            end
+          end
         end
       end
 

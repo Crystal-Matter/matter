@@ -91,6 +91,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   validates BoostInfo, and emits BoostStarted/BoostEnded around host-approved
   Boost and CancelBoost transitions. A thermostat-backed example exercises
   both clusters with official chip-tool.
+- End an accepted boost and emit BoostEnded at its duration even if the host's
+  cancellation callback rejects or raises. Log host failures so the physical
+  heater can be diagnosed without leaving the protocol state Active.
 
 ### Joint Fabric VVS interoperability
 

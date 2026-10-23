@@ -382,9 +382,10 @@ reject transitions. Management reports heat-source demand, tank percentage,
 and estimated heat through host setters. Register `on_boost` and
 `on_cancel_boost` before accepting remote Boost commands; accepted boosts
 raise revision-two events and time out after their requested duration. The
-optional EnergyManagement and TankPercent features gate their associated
-attributes. The host remains responsible for physical heater operation,
-thermostat setpoint checks, and accurate tank/energy estimates. See
+server logs a host cancellation failure at timeout and still ends the protocol
+boost state. The optional EnergyManagement and TankPercent features gate
+their associated attributes. The host remains responsible for physical heater
+operation, thermostat setpoint checks, and accurate tank/energy estimates. See
 `examples/matter_water_heater_device.cr` for a synthetic endpoint and its
 official chip-tool E2E fixture.
 
