@@ -39,6 +39,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
 
+### Energy EVSE
+
+- Add the Matter 1.6 revision 4 Energy EVSE server with mandatory Charging
+  Preferences, typed charge commands and session events, validated daily
+  target schedules, retained charging permission, and physical relay callbacks.
+  The synthetic appliance fixture exercises the cluster through chip-tool.
+  Optional SoC, Plug and Charge, RFID, and V2X features remain unavailable.
+
 ### Application Launcher
 
 - Add the Matter 1.6 revision 2 Application Launcher server with typed app

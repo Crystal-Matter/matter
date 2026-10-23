@@ -13,6 +13,7 @@ module MatterApplianceModes
   alias Status = Matter::InteractionModel::Status
   alias EnergyMode = Matter::Cluster::DeviceEnergyManagementMode
   alias EvseMode = Matter::Cluster::EnergyEvseMode
+  alias Evse = Matter::Cluster::EnergyEvse
 
   DISHWASHER_MODES = [
     ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(DishwasherMode::ModeTag::Normal.value)]),
@@ -63,6 +64,7 @@ module MatterApplianceModes
         add_more_time: true, as: :microwave_control
       cluster EnergyMode, supported_modes: ENERGY_MODES, current_mode: 0_u8
       cluster EvseMode, supported_modes: EVSE_MODES, current_mode: 0_u8
+      cluster Evse, circuit_capacity: 32_000_i64
     end
 
     endpoint 2, device_type: Matter::DeviceType::MICROWAVE_OVEN do
@@ -74,6 +76,11 @@ module MatterApplianceModes
     end
 
     protected def before_start : Nil
+      evse = node.get_cluster!(1_u16, Evse)
+      evse.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) do
+        Status.success
+      end
+      evse.on_disable = -> { Status.success }
       control = node.get_cluster!(1_u16, MicrowaveOvenControl)
       control.on_set_cooking_parameters do |_mode, _seconds, _power, _start|
         Status.success
