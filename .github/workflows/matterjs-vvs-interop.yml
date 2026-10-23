@@ -33,7 +33,9 @@ jobs:
       - name: Install matter.js dependencies
         run: npm ci --prefix matter-js
       - name: Compile Crystal live VID verifier
-        run: crystal build e2e/interop/matterjs_vvs_driver.cr -o bin/matterjs-vvs-driver --error-trace
+        run: |
+          mkdir -p bin
+          crystal build e2e/interop/matterjs_vvs_driver.cr -o bin/matterjs-vvs-driver --error-trace
       - name: Verify VVS from independent matter.js device
         timeout-minutes: 20
         run: |
