@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Application Launcher
+
+- Add the Matter 1.6 revision 2 Application Launcher server with typed app
+  identifiers, opaque launch data, all six response statuses, optional nullable
+  CurrentApp, and ApplicationPlatform gated CatalogList and command fields.
+  Host callbacks own launch, stop, hide, and foreground focus changes; a
+  synthetic video player exercises both platform and endpoint app paths with
+  official chip-tool.
+
 ### Optional PostgreSQL storage
 
 - Add an opt-in PostgreSQL backend using the existing versioned SQL schema,
@@ -73,7 +82,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   automatic user-status changes, and credential failures with typed events.
   Set the SendPINOverTheAir default to false and bound ExpiringUserTimeout to
   the Matter 1.6 range. Extend the official chip-tool restart scenario.
-
 ### Audio Output
 
 - Add the Matter 1.6 revision 1 Audio Output server with a typed output
