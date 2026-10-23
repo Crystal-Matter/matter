@@ -328,6 +328,12 @@ Pause and Resume are absent. Register `on_command` to admit remote actuation
 only when the appliance is ready. The paired synthetic fixture is in
 `examples/matter_oven_device.cr`.
 
+`Cluster::MicrowaveOvenMode` exposes the Matter 1.6 revision 2 microwave
+catalogue with Normal and Defrost tags. The host selects a supported
+`CurrentMode`; the derived cluster disallows `ChangeToMode`, OnOff,
+StartUpMode, and OnMode. The synthetic appliance modes example exposes its
+fixed catalogue alongside the dishwasher and laundry mode clusters.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the

@@ -27,4 +27,16 @@ describe "Matter 1.6 Dishwasher and Laundry Washer Mode interoperability" do
     read_int(device, "dishwashermode", "current-mode", "CurrentMode", 1).should eq(1_i64)
     read_int(device, "laundrywashermode", "current-mode", "CurrentMode", 1).should eq(1_i64)
   end
+
+  it "exposes Microwave Oven Mode without its disallowed mode-change command" do
+    revision = expect_success(device.chip("any", "read-by-id", "0x5e", "0xfffd", device.node, "1"))
+    revision.output.should contain("Data = 2")
+    current = expect_success(device.chip("any", "read-by-id", "0x5e", "0x1", device.node, "1"))
+    current.output.should contain("Data = 0")
+    catalogue = expect_success(device.chip("any", "read-by-id", "0x5e", "0x0", device.node, "1"))
+    catalogue.output.should contain("Normal")
+    expect_failure(device.chip("any", "read-by-id", "0x5e", "0x2", device.node, "1"), "UNSUPPORTED_ATTRIBUTE")
+    expect_failure(device.chip("any", "command-by-id", "0x5e", "0x0", %({"0": "u:1"}), device.node, "1"),
+      "UNSUPPORTED_COMMAND")
+  end
 end
