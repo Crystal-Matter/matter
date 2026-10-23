@@ -35,6 +35,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Aggregator fixture exercises the wire surface with chip-tool. Per-zone
   sensitivity and focus zones remain unsupported.
 
+### Pump Configuration and Control
+
+- Add the Matter 1.6 revision 5 ConstantSpeed pump server with feature-gated
+  attributes, managed mode requests, durable settings, host telemetry, and a
+  synthetic Pump device for official chip-tool interoperability. Other
+  regulation features and optional fault events remain unsupported.
+
 ### Content Control
 
 - Add the provisional Matter 1.6 revision 1 Content Control server. Enable,
