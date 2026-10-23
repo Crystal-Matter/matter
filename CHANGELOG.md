@@ -16,6 +16,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before a recycled fabric index can be used. File-backed restart and injected
   storage failure specs cover these boundaries.
 
+### Durable Terms and Conditions acceptance
+
+- Persist SetTCAcknowledgements received outside a fail-safe before returning
+  success. On CommissioningComplete, save provisional acceptance and clear the
+  credential undo journal in one file-backed transaction. File-backed crash
+  regressions cover both acknowledged paths, failed file flushes, and a failed
+  journal clear.
+
 ### Keypad Input
 
 - Translate accepted SendKey repeats into host Press, Hold, and Release

@@ -79,8 +79,11 @@ item below as covered only to the extent of its cited tests.
   are removed and persisted before the journal is cleared. A successful
   CommissioningComplete clears the journal before acknowledging the command.
   If a later callback or the network response fails, the credentials remain
-  committed, as with a lost acknowledgement. Terms and Conditions cluster
-  state is still persisted by the device's ordinary debounced cluster writer.
+  committed, as with a lost acknowledgement. CommissioningComplete also
+  persists accepted Terms and Conditions in the same file transaction as the
+  credential journal clear; direct acceptance outside a fail-safe is persisted
+  before SetTCAcknowledgements reports success. File-backed crash regressions
+  cover both paths, failed file flushes, and a failed journal clear.
 - DNS-SD understands Joint Fabric `JF` role bits and `CM=3`. A Joint Fabric
   Administrator example exposes the mandatory device type (0x0130) and both
   clusters. It advertises Anchor status only when explicitly provisioned with
