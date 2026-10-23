@@ -53,7 +53,11 @@ item below as covered only to the extent of its cited tests.
   authorized group endpoints and hides legacy GKM maps from an adopted fabric.
   An opt-in Sender on the same shared fabric can provision send-only membership
   with no listener endpoints and transmit authenticated group commands using
-  its fabric credentials and a durable outbound counter.
+  its fabric credentials and a durable outbound counter. The optional
+  provisional PerGroup feature routes messages to Fabric ID and Group ID scoped
+  multicast addresses. Listener subscriptions and UsedMcastAddrCount follow
+  the selected policy across restart, LeaveGroup, and fabric removal; Sender-only
+  memberships count their destination policy without joining a receive socket.
 - The Joint Commissioning workflow verifies the joining administrator's
   operational VID proof, NOC chain, and Administrator CAT before issuing a
   NOC. The reachable Anchor Administrator device performs Announce and the

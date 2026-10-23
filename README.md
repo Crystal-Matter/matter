@@ -641,8 +641,20 @@ For a synchronous CASE command callback,
 forwards only to Sender memberships on the command's authenticated fabric.
 These methods require a durable storage backend for node-global outbound
 message counters, an installed fabric, Groupcast membership, and a current
-epoch key. The PerGroup address feature is not advertised; Sender traffic uses
-the IANA multicast address.
+epoch key. `groupcast_per_group: true` explicitly advertises provisional PGA
+alongside Listener or Sender. Listener applications can set
+`groupcast_max_mcast_addr_count:` to adjust the default ten policy
+addresses with PGA (one without PGA). Matter 1.6 requires at least four with
+PGA. JoinGroup's `McastAddrPolicy=PerGroup` uses a Fabric ID and Group ID
+scoped IPv6 multicast address; the default policy uses the shared IANA address.
+`UsedMcastAddrCount` counts the one IANA address when configured and each joined
+PerGroup policy address, including Sender-only memberships. Sender-only
+memberships do not subscribe a receive socket.
+JoinGroup returns ResourceExhausted before changing keys or membership when
+address capacity would be exceeded. Policy and listener subscriptions survive
+restart and are released by LeaveGroup or fabric removal. The switch example
+accepts `MATTER_GROUPCAST_PER_GROUP=1` and
+`MATTER_GROUPCAST_MAX_MCAST_ADDR_COUNT`.
 Pass `iana_address: true` to `GroupInvoker#invoke` or `#write` when sending to
 an LN-only Groupcast Listener. Legacy Groups memberships retain the default
 fabric-derived multicast address.
