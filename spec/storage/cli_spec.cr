@@ -54,7 +54,7 @@ describe Matter::Storage::CLI do
     end
 
     it "reports storage errors" do
-      status, _, error = CliSpec.run(["migrate", "--from", "memory:", "--to", "sqlite:x"])
+      status, _, error = CliSpec.run(["migrate", "--from", "memory:", "--to", "unregistered:x"])
       status.should eq(Matter::Storage::CLI::EXIT_FAILURE)
       error.should contain("Unknown storage URI scheme")
     end

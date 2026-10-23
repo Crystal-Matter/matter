@@ -103,6 +103,14 @@ jobs:
         uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal }}
+      - name: Install SQLite native library on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install sqlite3:x64-windows
+          $sqliteRoot = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed\x64-windows'
+          "CRYSTAL_LIBRARY_PATH=$(crystal env CRYSTAL_LIBRARY_PATH);$sqliteRoot\lib" >> $env:GITHUB_ENV
+          "$sqliteRoot\bin" >> $env:GITHUB_PATH
       - name: Install dependencies
         run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
       - name: Run tests

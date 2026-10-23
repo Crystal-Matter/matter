@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/controller/state_store"
+require "../../src/matter/storage/sqlite"
 require "../../examples/chip-tool/context"
 
 private def with_temp_file(& : String ->) : Nil
@@ -23,6 +24,23 @@ private def sample_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::StateStore do
+  it "persists controller fabric credentials in SQLite across restart" do
+    path = File.join(Dir.tempdir, "matter-controller-#{Random::Secure.hex(6)}.sqlite3")
+    begin
+      backend = Matter::Storage::Sqlite.new(path)
+      fabric = sample_fabric
+      Matter::Controller::StateStore.new(backend).save(Matter::Controller::State.new(fabric: fabric))
+      backend.close
+
+      reopened = Matter::Storage::Sqlite.new(path)
+      loaded = Matter::Controller::StateStore.new(reopened).load
+      loaded.fabric.as(Matter::Controller::FabricInfo).to_document.should eq(fabric.to_document)
+      reopened.destroy!
+    ensure
+      File.delete?(path)
+    end
+  end
+
   it "erases controller ICD Check-In keys when their fabric is removed" do
     backend = Matter::Storage::Memory.new
     state_store = Matter::Controller::StateStore.new(backend)
