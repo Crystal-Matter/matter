@@ -429,6 +429,13 @@ list to that utility-meter example. The server checks period ordering and
 local/grid agreement when generation is absent, then emits a typed event when
 current conditions change. The forecast list is limited to 56 periods.
 
+`CommodityPrice` revision 4 publishes a nullable current tariff price and an
+optional ordered forecast of up to 56 periods. Each period contains a price,
+price level, or both; detailed price commands can include a description and
+component breakdown. The server checks component totals and emits PriceChange
+when the current price changes. The utility-meter fixture exercises this
+cluster with official chip-tool.
+
 Wi-Fi device declarations expose Wi-Fi Network Diagnostics at endpoint 0.
 Applications can update observed link values and counters on that cluster.
 Software Diagnostics is available as an optional cluster for applications

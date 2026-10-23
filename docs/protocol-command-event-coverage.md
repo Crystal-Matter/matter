@@ -81,6 +81,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — | — |
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | — | — |
+| 0x0095 | Commodity Price Cluster | 4 | 4 | — | — |
 | 0x0097 | Messages Cluster | 3 | 3 | — | — |
 | 0x009B | Energy Preference Cluster | 1 | 1 | — | — |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |

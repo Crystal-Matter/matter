@@ -89,7 +89,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — |
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | Host controls thermostat, heat source, and boost acceptance |
-| 0x0095 | Commodity Price Cluster | 4 | — | cluster absent |
+| 0x0095 | Commodity Price Cluster | 4 | 4 | FORE forecast, detailed response commands and PriceChange event |
 | 0x0097 | Messages Cluster | 3 | 3 | Fabric-scoped queue, StartTime/Duration lifecycle, and host-triggered presentation; optional user-interaction features remain absent |
 | 0x0098 | Device Energy Management Cluster | 4 | — | cluster absent |
 | 0x0099 | Energy EVSE Cluster | 4 | — | cluster absent |

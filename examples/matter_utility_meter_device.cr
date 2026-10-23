@@ -6,6 +6,14 @@ require "./support/main"
 module MatterUtilityMeter
   alias Meter = Matter::Cluster::MeterIdentification
   alias Grid = Matter::Cluster::ElectricalGridConditions
+  alias Price = Matter::Cluster::CommodityPrice
+
+  CURRENT_PRICE = Price::Period.new(1_u32, nil, 100_i64, nil, "Flat rate",
+    [Price::Component.new(100_i64, Price::TariffPriceType::Standard, "Energy")])
+  FORECAST = [
+    Price::Period.new(10_u32, 20_u32, 125_i64, nil, "Peak rate",
+      [Price::Component.new(125_i64, Price::TariffPriceType::Standard, "Energy")]),
+  ]
 
   class Device < Matter::Device
     include Examples::Console
@@ -45,6 +53,12 @@ module MatterUtilityMeter
             260_i16, Grid::ThreeLevel::High,
             260_i16, Grid::ThreeLevel::High),
         ]
+      cluster Price,
+        feature_map: Price::Feature::Forecasting,
+        tariff_unit: Price::TariffUnit::KWh,
+        currency: Price::Currency.new(36_u16, 2_u8),
+        current_price: CURRENT_PRICE,
+        price_forecast: FORECAST
     end
   end
 end

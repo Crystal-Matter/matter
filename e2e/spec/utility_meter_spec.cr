@@ -50,3 +50,31 @@ describe "Matter 1.6 Meter Identification interoperability" do
     expect_success(device.read("electricalgridconditions", "current-conditions", 1)).output.should contain("220")
   end
 end
+
+describe "Matter 1.6 Commodity Price interoperability" do
+  device = E2E::Device["matter_utility_meter"]
+
+  it "reads the current and forecast price and requests optional details" do
+    device.commission!
+    read_int(device, "commodityprice", "cluster-revision", "ClusterRevision", 1).should eq(4_i64)
+    read_int(device, "commodityprice", "feature-map", "FeatureMap", 1).should eq(1_i64)
+    read_int(device, "commodityprice", "tariff-unit", "TariffUnit", 1).should eq(0_i64)
+    currency = expect_success(device.read("commodityprice", "currency", 1)).output
+    currency.should contain("36")
+    currency.should contain("2")
+    current = expect_success(device.read("commodityprice", "current-price", 1)).output
+    current.should contain("100")
+    forecast = expect_success(device.read("commodityprice", "price-forecast", 1)).output
+    forecast.should contain("125")
+
+    detailed = expect_success(device.invoke("commodityprice", "get-detailed-price-request", ["3"], endpoint: 1)).output
+    detailed.should contain("Flat rate")
+    detailed.should contain("Energy")
+    future = expect_success(device.invoke("commodityprice", "get-detailed-forecast-request", ["3"], endpoint: 1)).output
+    future.should contain("Peak rate")
+    future.should contain("125")
+
+    device.restart!
+    expect_success(device.read("commodityprice", "current-price", 1)).output.should contain("100")
+  end
+end
