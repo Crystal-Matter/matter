@@ -221,6 +221,11 @@ services:
     environment:
       E2E_DEVICE: matter_door_lock
 
+  door-lock-aliro:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_door_lock_aliro
+
   temperature-sensor:
     <<: *device
     environment:
@@ -409,6 +414,7 @@ services:
       level-control: { condition: service_healthy }
       scenes-fabric: { condition: service_healthy }
       door-lock: { condition: service_healthy }
+      door-lock-aliro: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }
       pressure-sensor: { condition: service_healthy }
       temperature-control: { condition: service_healthy }
