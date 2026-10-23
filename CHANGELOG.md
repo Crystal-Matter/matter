@@ -13,6 +13,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   choices, persisted selection and enablement, playback callback, and
   ChimeStartedPlaying event. Include a synthetic doorbell and chip-tool test.
 
+### Groupcast PerGroup
+
+- Add opt-in Matter 1.6 Groupcast PerGroup multicast addressing. Listener
+  subscriptions follow each membership's address policy; capacity checks count
+  configured policy addresses before a JoinGroup changes keys or membership.
+  Preserve policy across restart and release addresses on LeaveGroup and fabric
+  removal. Add a two-device shared-fabric delivery test with official chip-tool.
+
 ### Refrigerator Alarm
 
 - Add the Matter 1.6 Refrigerator Alarm server with the DoorOpen alarm,

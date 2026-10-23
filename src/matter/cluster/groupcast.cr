@@ -16,16 +16,17 @@ module Matter
       feature :sender, bit: 1
       feature :per_group, bit: 2
 
-      DEFAULT_MAX_MEMBERSHIP_COUNT =     10_u16
-      DEFAULT_MAX_MCAST_ADDR_COUNT =      1_u16
-      MAX_GROUP_ID                 = 0xFFF7_u16
-      MAX_ENDPOINT                 = 0xFFFE_u16
-      MAX_MEMBERSHIP_ENDPOINTS     =        255
-      MAX_LEAVE_ENDPOINTS          =         20
-      KEY_BYTES                    =         16
-      DEFAULT_TEST_DURATION        =     60_u16
-      MIN_TEST_DURATION            =     10_u16
-      MAX_TEST_DURATION            =   1200_u16
+      DEFAULT_MAX_MEMBERSHIP_COUNT   =     10_u16
+      DEFAULT_MAX_MCAST_ADDR_COUNT   =      1_u16
+      MIN_PER_GROUP_MCAST_ADDR_COUNT =      4_u16
+      MAX_GROUP_ID                   = 0xFFF7_u16
+      MAX_ENDPOINT                   = 0xFFFE_u16
+      MAX_MEMBERSHIP_ENDPOINTS       =        255
+      MAX_LEAVE_ENDPOINTS            =         20
+      KEY_BYTES                      =         16
+      DEFAULT_TEST_DURATION          =     60_u16
+      MIN_TEST_DURATION              =     10_u16
+      MAX_TEST_DURATION              =   1200_u16
 
       enum MulticastAddrPolicyEnum : UInt8
         IanaAddr = 0
@@ -255,12 +256,12 @@ module Matter
                      @max_mcast_addr_count : UInt16 = DEFAULT_MAX_MCAST_ADDR_COUNT)
         valid_configuration = endpoint_id.number == 0_u16 &&
                               (@feature_map.listener? || @feature_map.sender?) &&
-                              !@feature_map.per_group? &&
                               @group_keys.feature_map.groupcast? &&
                               (!@feature_map.listener? || @access_control.feature_map.auxiliary?) &&
                               @max_membership_count >= DEFAULT_MAX_MEMBERSHIP_COUNT &&
-                              @max_mcast_addr_count >= DEFAULT_MAX_MCAST_ADDR_COUNT
-        raise Matter::ConfigurationError.new("Groupcast needs LN or SD, root GKM GCAST, and AUX with LN; PGA is unavailable") unless valid_configuration
+                              @max_mcast_addr_count >= DEFAULT_MAX_MCAST_ADDR_COUNT &&
+                              (!@feature_map.per_group? || @max_mcast_addr_count >= MIN_PER_GROUP_MCAST_ADDR_COUNT)
+        raise Matter::ConfigurationError.new("Groupcast needs LN or SD, root GKM GCAST, AUX with LN, and at least four addresses with PGA") unless valid_configuration
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
@@ -274,7 +275,7 @@ module Matter
       end
 
       def used_mcast_addr_count : UInt16
-        @membership.empty? ? 0_u16 : 1_u16
+        multicast_address_count(@membership).to_u16
       end
 
       def fabric_under_test : UInt8
@@ -301,20 +302,22 @@ module Matter
           return InteractionModel::Status.resource_exhausted if @membership.size >= @max_membership_count ||
                                                                 membership(fabric).size >= @max_membership_count // 2
         end
-        return InteractionModel::Status.resource_exhausted if @max_mcast_addr_count == 0_u16
         endpoints = if existing && !request.replace_endpoints
                       (existing.endpoints + request.endpoints).uniq
                     else
                       request.endpoints.dup
                     end
         return InteractionModel::Status.constraint_error if endpoints.size > MAX_MEMBERSHIP_ENDPOINTS
-        key_status = ensure_key_set(fabric, request.key_set_id, request.key)
-        return key_status unless key_status.success?
         auxiliary_flag = request.use_auxiliary_acl
         updated = MembershipStruct.new(request.group_id,
           @feature_map.listener? ? endpoints : nil, request.key_set_id,
           @feature_map.listener? ? (auxiliary_flag.nil? ? (existing.try(&.has_auxiliary_acl?) || false) : auxiliary_flag) : nil,
-          request.mcast_addr_policy || existing.try(&.mcast_addr_policy) || MulticastAddrPolicyEnum::IanaAddr, fabric)
+          request.mcast_addr_policy || MulticastAddrPolicyEnum::IanaAddr, fabric)
+        projected = @membership.reject { |entry| entry.fabric_index == fabric && entry.group_id == request.group_id }
+        projected << updated
+        return InteractionModel::Status.resource_exhausted if multicast_address_count(projected) > @max_mcast_addr_count
+        key_status = ensure_key_set(fabric, request.key_set_id, request.key)
+        return key_status unless key_status.success?
         if @feature_map.listener?
           @group_keys.replace_groupcast_membership(updated.group_id, updated.endpoints,
             updated.key_set_id, fabric)
@@ -487,6 +490,21 @@ module Matter
           (@endpoint_exists.try(&.call(endpoint)) || @endpoint_exists.nil?)
       end
 
+      # IANA has one shared policy address; PGA uses one per fabric and group.
+      # Sender-only memberships still configure a destination address.
+      private def multicast_address_count(entries : Array(MembershipStruct)) : Int32
+        iana = false
+        per_group = 0
+        entries.each do |entry|
+          if entry.mcast_addr_policy.per_group?
+            per_group += 1
+          else
+            iana = true
+          end
+        end
+        per_group + (iana ? 1 : 0)
+      end
+
       private def ensure_key_set(fabric : UInt8, id : UInt16, key : Bytes?) : InteractionModel::Status
         if key
           return InteractionModel::Status.constraint_error unless key.size == KEY_BYTES
@@ -551,6 +569,12 @@ module Matter
 
       def restore_state(document : Storage::Document) : Nil
         state = PersistedState.from_document(document)
+        if state.membership.any?(&.mcast_addr_policy.per_group?) && !@feature_map.per_group?
+          raise Matter::ConfigurationError.new("Stored Groupcast PerGroup membership requires PGA")
+        end
+        if multicast_address_count(state.membership) > @max_mcast_addr_count
+          raise Matter::ConfigurationError.new("Stored Groupcast membership exceeds multicast address capacity")
+        end
         @membership = state.membership
         @data_version = state.data_version
         @membership.each do |entry|

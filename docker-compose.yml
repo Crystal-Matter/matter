@@ -77,6 +77,24 @@ services:
       E2E_BINARY: matter_switch
       MATTER_GROUPCAST_LISTENER: "1"
 
+  groupcast-per-group-sender:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_groupcast_per_group_sender
+      E2E_BINARY: matter_switch
+      MATTER_GROUPCAST_SENDER: "1"
+      MATTER_GROUPCAST_PER_GROUP: "1"
+      MATTER_GROUPCAST_FORWARD_ON: "1"
+
+  groupcast-per-group-listener:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_groupcast_per_group_listener
+      E2E_BINARY: matter_switch
+      MATTER_GROUPCAST_LISTENER: "1"
+      MATTER_GROUPCAST_PER_GROUP: "1"
+      MATTER_GROUPCAST_MAX_MCAST_ADDR_COUNT: "4"
+
   time-zone:
     <<: *device
     environment:

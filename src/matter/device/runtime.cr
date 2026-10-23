@@ -176,8 +176,16 @@ module Matter
       @tcp_enabled : Bool = false,
       @groupcast_listener : Bool = false,
       groupcast_sender : Bool = false,
+      groupcast_per_group : Bool = false,
+      groupcast_max_mcast_addr_count : UInt16? = nil,
     )
       @groupcast_sender_enabled = groupcast_sender
+      @groupcast_per_group_enabled = groupcast_per_group
+      @groupcast_max_mcast_addr_count = groupcast_max_mcast_addr_count ||
+                                        (groupcast_per_group ? Cluster::Groupcast::DEFAULT_MAX_MEMBERSHIP_COUNT : Cluster::Groupcast::DEFAULT_MAX_MCAST_ADDR_COUNT)
+      if @groupcast_per_group_enabled && !(@groupcast_listener || @groupcast_sender_enabled)
+        raise ConfigurationError.new("Groupcast PerGroup requires Listener or Sender")
+      end
       if @groupcast_sender_enabled && storage.path.nil?
         raise ConfigurationError.new("Groupcast Sender requires durable storage")
       end
@@ -734,9 +742,11 @@ module Matter
       groupcast_features = Cluster::Groupcast::Feature::None
       groupcast_features |= Cluster::Groupcast::Feature::Listener if @groupcast_listener
       groupcast_features |= Cluster::Groupcast::Feature::Sender if @groupcast_sender_enabled
+      groupcast_features |= Cluster::Groupcast::Feature::PerGroup if @groupcast_per_group_enabled
       groupcast = if @groupcast_listener || @groupcast_sender_enabled
                     Cluster::Groupcast.new(endpoint_0, group_key_management, access_control,
-                      feature_map: groupcast_features)
+                      feature_map: groupcast_features,
+                      max_mcast_addr_count: @groupcast_max_mcast_addr_count)
                   end
       ota_requestor = Cluster::OtaRequestor.new(endpoint_0)
       icd_management = @icd_configuration.try { |config| Cluster::IcdManagement.new(endpoint_0, configuration: config) }

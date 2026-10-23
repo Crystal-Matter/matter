@@ -223,6 +223,8 @@ module Matter
           tcp_enabled : Bool = false,
           groupcast_listener : Bool = false,
           groupcast_sender : Bool = false,
+          groupcast_per_group : Bool = false,
+          groupcast_max_mcast_addr_count : UInt16? = nil,
         )
           super
         end

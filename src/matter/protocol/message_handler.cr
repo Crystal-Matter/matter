@@ -784,7 +784,16 @@ module Matter
         addresses = @fabric_table.all_fabrics.flat_map do |fabric|
           groupcast_memberships = @node.get_cluster(Cluster::Groupcast).try(&.membership(fabric.fabric_index)) ||
                                   [] of Cluster::Groupcast::MembershipStruct
-          addresses_for_fabric = groupcast_memberships.empty? ? [] of Socket::IPAddress : [Transport::GroupMulticast.iana_address(@transport.port)]
+          addresses_for_fabric = [] of Socket::IPAddress
+          groupcast_memberships.each do |member|
+            next if member.endpoints.empty?
+            address = if member.mcast_addr_policy.per_group?
+                        Transport::GroupMulticast.address(fabric.fabric_id, member.group_id, @transport.port)
+                      else
+                        Transport::GroupMulticast.iana_address(@transport.port)
+                      end
+            addresses_for_fabric << address
+          end
           groupcast_ids = groupcast_memberships.map(&.group_id)
           mapped = group_keys.operational_group_key_map(fabric.fabric_index).map(&.group_id)
           group_keys.operational_group_table(fabric.fabric_index).each do |group|
