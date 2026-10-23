@@ -313,6 +313,13 @@ fixed catalogue, host transition callback, and persisted CurrentMode behavior.
 The deprecated OnOff dependency, StartUpMode, and OnMode are absent. The
 synthetic appliance-mode fixture exercises it with chip-tool.
 
+`Cluster::EnergyEvseMode` is the Matter 1.6 revision 2 Mode Base derivation
+for Manual, Time of Use, Solar Charging, and V2X modes. Its fixed catalogue
+must include a Manual mode that does not combine with Time of Use or Solar
+Charging. CurrentMode persists across restart, while the host callback can
+accept or refuse a requested transition. The synthetic appliance-mode fixture
+exercises it with chip-tool.
+
 `Cluster::RefrigeratorAlarm` reports the Matter 1.6 DoorOpen alarm after the
 appliance's chosen open duration. Its `Mask`, `State`, and fixed `Supported`
 attributes and `Notify` event follow Alarm Base. The derived cluster does not

@@ -104,4 +104,18 @@ describe "Matter 1.6 Dishwasher and Laundry Washer Mode interoperability" do
     device.restart!
     read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(1_i64)
   end
+
+  it "changes and retains Energy EVSE Mode with a Manual option" do
+    cluster = "energyevsemode"
+    read_int(device, cluster, "cluster-revision", "ClusterRevision", 1).should eq(2_i64)
+    read_int(device, cluster, "feature-map", "FeatureMap", 1).should eq(0_i64)
+    read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(0_i64)
+    expect_success(device.read(cluster, "supported-modes", 1)).output.should contain("Manual")
+
+    expect_success(device.invoke(cluster, "change-to-mode", ["7"], endpoint: 1)).int("status").should eq(1_i64)
+    expect_success(device.invoke(cluster, "change-to-mode", ["1"], endpoint: 1)).int("status").should eq(0_i64)
+    read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(1_i64)
+    device.restart!
+    read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(1_i64)
+  end
 end

@@ -79,6 +79,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   optimization tags, fixed mode catalogue, persisted CurrentMode and host
   transition callback. Extend the synthetic appliance-mode chip-tool fixture.
 
+### Energy EVSE Mode
+
+- Add the Matter 1.6 revision 2 Energy EVSE Mode server with validated Manual
+  mode, fixed catalogue, persisted CurrentMode, and host transition callback.
+  Extend the synthetic appliance-mode chip-tool fixture.
+
 ### Energy Preference
 
 - Add the Matter 1.6 revision 1 Energy Preference server with EnergyBalance
