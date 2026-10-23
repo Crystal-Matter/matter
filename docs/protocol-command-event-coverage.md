@@ -8,10 +8,10 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 93
+- Implemented standard cluster IDs compared: 94
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 127
+- Conditional command/event declarations for review: 128
 - Feature or complex conditional IDs absent from Crystal: 22
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -105,6 +105,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0508 | Low Power Cluster | 1 | 1 | — | — |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — | — |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | — |
+| 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
@@ -247,6 +248,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0506 | command | 0x000D | feature(TT) | declared; requires `:text_tracks` |
 | 0x0506 | command | 0x000E | feature(TT) | declared; requires `:text_tracks` |
 | 0x0507 | command | 0x0003 | feature(NU) | declared; requires `:name_updates` |
+| 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:
 

@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Chime
+
+- Add the Matter 1.6 revision 2 Chime server with validated installed sound
+  choices, persisted selection and enablement, playback callback, and
+  ChimeStartedPlaying event. Include a synthetic doorbell and chip-tool test.
+
 ### Refrigerator Alarm
 
 - Add the Matter 1.6 Refrigerator Alarm server with the DoorOpen alarm,
