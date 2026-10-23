@@ -11,8 +11,8 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Implemented standard cluster IDs compared: 120
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 135
-- Feature or complex conditional IDs absent from Crystal: 20
+- Conditional command/event declarations for review: 151
+- Feature or complex conditional IDs absent from Crystal: 28
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -129,6 +129,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050C | Application Launcher Cluster | 2 | 2 | — | — |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | — |
 | 0x050E | Account Login Cluster | 2 | 2 | — | — |
+| 0x050F | Content Control Cluster | 1 | 1 | — | — |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
@@ -281,6 +282,22 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050A | command | 0x0000 | feature(CS) | declared; requires `:content_search` |
 | 0x050A | command | 0x0001 | feature(UP) | declared; requires `:url_playback` |
 | 0x050B | command | 0x0001 | feature(NU) | declared; requires `:name_updates` |
+| 0x050F | command | 0x0000 | feature(PM) | absent |
+| 0x050F | command | 0x0001 | feature(PM) | absent |
+| 0x050F | command | 0x0005 | feature(ST) | absent |
+| 0x050F | command | 0x0006 | feature(ST) | absent |
+| 0x050F | command | 0x0007 | feature(BU) | declared; requires `:block_unrated` |
+| 0x050F | command | 0x0008 | feature(BU) | declared; requires `:block_unrated` |
+| 0x050F | command | 0x0009 | feature(OCR) | declared; requires `:on_demand_content_rating` |
+| 0x050F | command | 0x000A | feature(SCR) | declared; requires `:scheduled_content_rating` |
+| 0x050F | command | 0x000B | feature(BC) | declared; requires `:block_channels` |
+| 0x050F | command | 0x000C | feature(BC) | declared; requires `:block_channels` |
+| 0x050F | command | 0x000D | feature(BA) | declared; requires `:block_applications` |
+| 0x050F | command | 0x000E | feature(BA) | declared; requires `:block_applications` |
+| 0x050F | command | 0x000F | feature(BTW) | absent |
+| 0x050F | command | 0x0010 | feature(BTW) | absent |
+| 0x050F | event | 0x0000 | feature(ST) | absent |
+| 0x050F | event | 0x0001 | feature(BTW) | absent |
 | 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:

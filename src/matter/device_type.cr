@@ -321,6 +321,31 @@ module Matter
       )
     end
 
+    # Matter 1.6 revision 2 Basic Video Player. Content Control is provisional
+    # and optional; the media host enforces it before or during playback.
+    def self.basic_video_player : DeviceType
+      new(
+        DataType::DeviceTypeId.new(BASIC_VIDEO_PLAYER),
+        "Basic Video Player",
+        2_u16,
+        required_server_clusters: [
+          0x001D_u32, # Descriptor
+          0x0006_u32, # On/Off
+          0x0506_u32, # Media Playback
+          0x0509_u32, # Keypad Input
+        ],
+        optional_server_clusters: [
+          0x0097_u32, # Messages
+          0x0503_u32, # Wake On LAN
+          0x0504_u32, # Channel
+          0x0505_u32, # Target Navigator
+          0x0508_u32, # Low Power
+          0x050B_u32, # Audio Output
+          0x050F_u32, # Content Control
+        ]
+      )
+    end
+
     # Revision reported for a device type this library has no definition for.
     # Every Matter device type starts at revision 1.
     UNKNOWN_REVISION = 1_u16
@@ -348,6 +373,7 @@ module Matter
       when DOOR_LOCK                  then door_lock
       when THERMOSTAT                 then thermostat
       when FAN                        then fan
+      when BASIC_VIDEO_PLAYER         then basic_video_player
       else
         new(
           DataType::DeviceTypeId.new(device_type),

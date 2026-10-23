@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Content Control
+
+- Add the provisional Matter 1.6 revision 1 Content Control server. Enable,
+  BlockUnrated, on-demand and scheduled rating thresholds, blocked channels,
+  and blocked applications have typed commands and durable state. A media host
+  uses `playback_allowed?` and `on_policy_changed` to enforce playback policy;
+  the synthetic Basic Video Player exercises these with official chip-tool.
+  ScreenTime, PINManagement, and BlockContentTimeWindow cannot be selected yet.
+
 ### Application Launcher
 
 - Add the Matter 1.6 revision 2 Application Launcher server with typed app
