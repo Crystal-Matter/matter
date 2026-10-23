@@ -11,6 +11,8 @@ module Matter
     # This implementation focuses on robust server-side behavior for the most commonly
     # used Door Lock attributes and commands, including feature-gated command support.
     class DoorLock < Base
+      Log = ::Log.for("matter.cluster.door_lock")
+
       cluster 0x0101, revision: 9
 
       feature :pin_credential, bit: 0
@@ -138,6 +140,12 @@ module Matter
       attribute 0x0032, :send_pin_over_the_air, Bool, default: true, writable: true, write_access: :administer, optional: true, requires: {pin_credential: true, user: false}
       attribute 0x0033, :require_pin_for_remote_operation, Bool, default: false, writable: true, write_access: :administer, requires: {pin_credential: true, credential_over_the_air_access: true}
       attribute 0x0035, :expiring_user_timeout, UInt16, default: DEFAULT_EXPIRING_USER_TIMEOUT, writable: true, write_access: :administer, min: MIN_EXPIRING_USER_TIMEOUT, optional: true, requires: :user
+      attribute 0x0080, :aliro_reader_verification_key, Bytes, nullable: true, computed: true, read_access: :administer, requires: :aliro_provisioning
+      attribute 0x0081, :aliro_reader_group_identifier, Bytes, nullable: true, computed: true, read_access: :administer, requires: :aliro_provisioning
+      attribute 0x0082, :aliro_reader_group_sub_identifier, Bytes, computed: true, fixed: true, read_access: :administer, requires: :aliro_provisioning
+      attribute 0x0083, :aliro_expedited_transaction_supported_protocol_versions, Array(Bytes), computed: true, fixed: true, read_access: :administer, requires: :aliro_provisioning
+      attribute 0x0087, :number_of_aliro_credential_issuer_keys_supported, UInt16, default: 0_u16, fixed: true, requires: :aliro_provisioning
+      attribute 0x0088, :number_of_aliro_endpoint_keys_supported, UInt16, default: 0_u16, fixed: true, requires: :aliro_provisioning
 
       command 0x00, :lock_door, request: LockDoorRequest, timed: true
       command 0x01, :unlock_door, request: UnlockDoorRequest, timed: true
@@ -155,15 +163,17 @@ module Matter
       command 0x1B, :get_user, request: GetUserRequest, response: GetUserResponse, response_id: 0x1C, access: :administer, requires: :user
       command 0x1D, :clear_user, request: ClearUserRequest, access: :administer, timed: true, requires: :user
       command 0x22, :set_credential, request: SetCredentialRequest, response: SetCredentialResponse, response_id: 0x23, access: :administer, timed: true, requires: :user, handler: :handle_set_credential
-      command 0x24, :get_credential_status, request: GetCredentialStatusRequest, response: GetCredentialStatusResponse, response_id: 0x25, access: :administer, requires: :user
+      command 0x24, :get_credential_status, request: GetCredentialStatusRequest, response: GetCredentialStatusResponse, response_id: 0x25, access: :administer, requires: :user, handler: :handle_get_credential_status
       command 0x26, :clear_credential, request: ClearCredentialRequest, access: :administer, timed: true, requires: :user
       command 0x27, :unbolt_door, request: UnboltDoorRequest, timed: true, requires: :unbolting
+      command 0x28, :set_aliro_reader_config, request: SetAliroReaderConfigRequest, access: :administer, timed: true, requires: :aliro_provisioning, handler: :handle_set_aliro_reader_config
+      command 0x29, :clear_aliro_reader_config, access: :administer, timed: true, requires: :aliro_provisioning, handler: :handle_clear_aliro_reader_config
 
-      event 0x00, :door_lock_alarm, priority: :critical
+      event 0x00, :door_lock_alarm, priority: :critical, payload: Events::DoorLockAlarm
       event 0x01, :door_state_change, priority: :critical, requires: :door_position_sensor, payload: Events::DoorStateChange
       event 0x02, :lock_operation, priority: :critical, payload: Events::LockOperation
       event 0x03, :lock_operation_error, priority: :critical
-      event 0x04, :lock_user_change, priority: :info, requires: :user
+      event 0x04, :lock_user_change, priority: :info, requires: :user, payload: Events::LockUserChange
 
       struct UserRecord
         include Storage::Record
@@ -229,6 +239,40 @@ module Matter
         end
       end
 
+      # Returned only by a trusted reader after it has validated the Aliro
+      # transcript, freshness, Access Credential and requested `matter1` data.
+      # An issuer identity may result in a new evictable endpoint credential.
+      struct AliroAuthenticatedAccess
+        getter credential_public_key : Bytes
+        getter issuer_public_key : Bytes?
+        getter new_endpoint_public_key : Bytes?
+
+        def initialize(credential_public_key : Bytes, issuer_public_key : Bytes? = nil, new_endpoint_public_key : Bytes? = nil)
+          @credential_public_key = credential_public_key.dup
+          @issuer_public_key = issuer_public_key.try(&.dup)
+          @new_endpoint_public_key = new_endpoint_public_key.try(&.dup)
+        end
+      end
+
+      # The application supplies an Aliro transport and cryptographic verifier.
+      # `authenticate` MUST verify the complete reader transaction, its freshness,
+      # key possession, and any step-up Access Credential before returning an
+      # identity. The Door Lock never accepts a caller-supplied public key as
+      # authentication by itself. This interface does not provide BLE/UWB.
+      abstract class AliroReaderDelegate
+        # True only when a real reader transport and verifier are available.
+        abstract def ready? : Bool
+        abstract def supported_protocol_versions : Array(Bytes)
+        abstract def group_sub_identifier : Bytes
+        abstract def configure(config : AliroReaderConfig) : Bool
+        # Must obtain explicit local user permission before removing the reader
+        # configuration. This callback must either complete the clear and
+        # return true, or preserve reader state and return false/raise. A failed
+        # call leaves Matter's stored configuration intact.
+        abstract def clear_with_user_permission : Bool
+        abstract def authenticate(transaction : Bytes, required_step_up_data_element : String) : AliroAuthenticatedAccess?
+      end
+
       record WeekDaySchedule, week_day : UInt8, start_hour : UInt8, start_minute : UInt8, end_hour : UInt8, end_minute : UInt8 do
         include Storage::Record
       end
@@ -282,6 +326,10 @@ module Matter
       @year_day_schedules = {} of Tuple(UInt16, UInt8) => YearDaySchedule
       @holiday_schedules = {} of UInt8 => HolidaySchedule
       @aliro_reader_config : AliroReaderConfig? = nil
+      @aliro_reader_delegate : AliroReaderDelegate? = nil
+      @aliro_config_generation : UInt64 = 0_u64
+      @aliro_group_sub_identifier : Bytes = Bytes.new(0)
+      @aliro_protocol_versions : Array(Bytes) = [] of Bytes
 
       @failed_remote_pin_attempts : UInt8 = 0_u8
       @lockout_until : Time? = nil
@@ -322,6 +370,7 @@ module Matter
         @number_of_credentials_supported_per_user : UInt8 = DEFAULT_CREDENTIALS_PER_USER,
         @number_of_aliro_credential_issuer_keys_supported : UInt16 = 0_u16,
         @number_of_aliro_endpoint_keys_supported : UInt16 = 0_u16,
+        @aliro_reader_delegate : AliroReaderDelegate? = nil,
         @wrong_code_entry_limit : UInt8 = DEFAULT_WRONG_CODE_ENTRY_LIMIT,
         @user_code_temporary_disable_time : UInt8 = DEFAULT_TEMPORARY_DISABLE_SECONDS,
         @send_pin_over_the_air : Bool = true,
@@ -332,8 +381,17 @@ module Matter
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
-        if @feature_map.aliro_provisioning? || @feature_map.aliro_bleuwb?
-          raise ArgumentError.new("Aliro features require reader configuration attributes and commands that are not implemented")
+        raise ArgumentError.new("Aliro BLE/UWB requires a radio adapter") if @feature_map.aliro_bleuwb?
+        if @feature_map.aliro_provisioning?
+          reader = @aliro_reader_delegate || raise ArgumentError.new("Aliro provisioning requires a trusted reader delegate")
+          raise ArgumentError.new("Aliro reader delegate is not ready") unless reader.ready?
+          versions = reader.supported_protocol_versions
+          raise ArgumentError.new("Aliro protocol versions must contain 1 to 16 two-byte entries") unless versions.size.in?(1..16) && versions.all? { |entry| entry.size == 2 }
+          group_sub_identifier = reader.group_sub_identifier
+          raise ArgumentError.new("Aliro group subidentifier must be 16 bytes") unless group_sub_identifier.size == ALIRO_GROUP_IDENTIFIER_LENGTH
+          raise ArgumentError.new("Aliro issuer and endpoint capacities must be nonzero") if @number_of_aliro_credential_issuer_keys_supported.zero? || @number_of_aliro_endpoint_keys_supported.zero?
+          @aliro_protocol_versions = versions.map(&.dup)
+          @aliro_group_sub_identifier = group_sub_identifier.dup
         end
         raise ArgumentError.new("credentialOverTheAirAccess requires pinCredential") if @feature_map.credential_over_the_air_access? && !@feature_map.pin_credential?
         credential_feature = @feature_map.pin_credential? || @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials? || @feature_map.aliro_provisioning?
@@ -474,14 +532,27 @@ module Matter
           holidays[entry.holiday_index] = entry.schedule
         end
 
+        if @feature_map.aliro_provisioning? && (config = aliro_reader)
+          reader = @aliro_reader_delegate || raise StorageError.new("Aliro reader delegate unavailable")
+          applied = begin
+            reader.configure(config)
+          rescue ex
+            Log.error(exception: ex) { "Aliro reader rejected restored configuration" }
+            false
+          end
+          unless applied
+            @feature_map = @feature_map & ~Feature::AliroProvisioning
+            raise StorageError.new("Door Lock Aliro reader rejected restored configuration")
+          end
+        end
         @users = users
         @credentials = credentials
         @week_day_schedules = week_days
         @year_day_schedules = year_days
         @holiday_schedules = holidays
-        @aliro_reader_config = aliro_reader.try do |config|
-          AliroReaderConfig.new(config.signing_key, config.verification_key,
-            config.group_identifier, config.group_resolving_key)
+        @aliro_reader_config = aliro_reader.try do |restored_config|
+          AliroReaderConfig.new(restored_config.signing_key, restored_config.verification_key,
+            restored_config.group_identifier, restored_config.group_resolving_key)
         end
       end
 
@@ -497,17 +568,197 @@ module Matter
       def configure_aliro_reader(config : AliroReaderConfig) : InteractionModel::Status
         return InteractionModel::Status.invalid_in_state if @aliro_reader_config
         return InteractionModel::Status.constraint_error unless valid_aliro_reader_config?(config)
+        if @feature_map.aliro_provisioning?
+          reader = @aliro_reader_delegate || return InteractionModel::Status.failure
+          applied = begin
+            reader.configure(config)
+          rescue ex
+            Log.error(exception: ex) { "Aliro reader configuration failed" }
+            false
+          end
+          return InteractionModel::Status.failure unless applied
+        end
 
         @aliro_reader_config = AliroReaderConfig.new(config.signing_key, config.verification_key,
           config.group_identifier, config.group_resolving_key)
+        @aliro_config_generation = @aliro_config_generation &+ 1_u64
         increment_version
+        notify_changed(0x0080_u32)
+        notify_changed(0x0081_u32)
         InteractionModel::Status.success
       end
 
       def clear_aliro_reader_config : InteractionModel::Status
+        if @feature_map.aliro_provisioning?
+          reader = @aliro_reader_delegate || return InteractionModel::Status.failure
+          permitted = begin
+            reader.clear_with_user_permission
+          rescue ex
+            Log.error(exception: ex) { "Aliro reader clear failed" }
+            false
+          end
+          return InteractionModel::Status.failure unless permitted
+        end
         @aliro_reader_config = nil
+        @aliro_config_generation = @aliro_config_generation &+ 1_u64
         increment_version
+        notify_changed(0x0080_u32)
+        notify_changed(0x0081_u32)
         InteractionModel::Status.success
+      end
+
+      def aliro_reader_verification_key : Bytes?
+        @aliro_reader_config.try(&.verification_key.dup)
+      end
+
+      def aliro_reader_group_identifier : Bytes?
+        @aliro_reader_config.try(&.group_identifier.dup)
+      end
+
+      def aliro_reader_group_sub_identifier : Bytes
+        @aliro_group_sub_identifier.dup
+      end
+
+      def aliro_expedited_transaction_supported_protocol_versions : Array(Bytes)
+        @aliro_protocol_versions.map(&.dup)
+      end
+
+      # Called by the host transport with an opaque Aliro transaction. Only the
+      # trusted delegate may turn it into an authenticated key identity. The
+      # delegate is responsible for the Aliro cryptography and replay checks.
+      def perform_aliro_transaction(transaction : Bytes) : InteractionModel::Status
+        return InteractionModel::Status.unsupported_command unless @feature_map.aliro_provisioning?
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless @aliro_reader_config
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
+
+        generation = @aliro_config_generation
+        reader = @aliro_reader_delegate || return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        access = begin
+          reader.authenticate(transaction, "matter1")
+        rescue ex
+          Log.error(exception: ex) { "Aliro reader authentication failed" }
+          nil
+        end
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless generation == @aliro_config_generation && @aliro_reader_config
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless access
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless valid_aliro_public_key?(access.credential_public_key)
+
+        issuer = access.issuer_public_key
+        if issuer
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless issuer == access.credential_public_key
+          # An issuer key is only usable after the delegate verifies a step-up
+          # request. A bare issuer identity may never operate the lock.
+          proposed_key = access.new_endpoint_public_key
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless proposed_key && valid_aliro_public_key?(proposed_key)
+        elsif access.new_endpoint_public_key
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
+        record = @credentials.values.find do |candidate|
+          next false unless candidate.credential_data == access.credential_public_key
+          issuer ? candidate.credential.credential_type.aliro_credential_issuer_key? : aliro_endpoint_key_type?(candidate.credential.credential_type)
+        end
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless record
+        user_index = record.user_index
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless user_index
+        user = @users[user_index]?
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless user && user.user_status.occupied_enabled? && schedule_allows_user?(user)
+
+        if user.user_type.non_access_user?
+          emit_aliro_lock_operation(LockOperationType::NonAccessUserEvent, user_index, record.credential)
+          return InteractionModel::Status.success
+        end
+
+        used_credential = record.credential
+        if issuer && (new_key = access.new_endpoint_public_key)
+          if installed = install_aliro_step_up_key(user_index, new_key)
+            used_credential = installed
+          end
+        end
+
+        self.lock_state = LockState::Unlocked
+        schedule_relock(@auto_relock_time)
+        operation = user.user_type.forced_user? ? LockOperationType::ForcedUserEvent : LockOperationType::Unlock
+        emit_aliro_lock_operation(operation, user_index, used_credential)
+        emit_door_lock_alarm(Events::DoorLockAlarm.new(AlarmCode::ForcedUser)) if user.user_type.forced_user?
+        InteractionModel::Status.success
+      end
+
+      private def emit_aliro_lock_operation(operation : LockOperationType, user_index : UInt16, credential : Credential) : Nil
+        emit_lock_operation(Events::LockOperation.new(
+          lock_operation_type: operation,
+          operation_source: OperationSource::Aliro,
+          user_index: user_index,
+          credentials: [credential]
+        ))
+      end
+
+      private def install_aliro_step_up_key(user_index : UInt16, public_key : Bytes) : Credential?
+        return unless valid_aliro_public_key?(public_key)
+        return if @credentials.values.any? { |record| aliro_credential_type?(record.credential.credential_type) && record.credential_data == public_key }
+
+        type = CredentialType::AliroEvictableEndpointKey
+        index = next_available_credential_index(type, 0_u16)
+        user = @users[user_index]
+        endpoint_count = @credentials.values.count { |record| aliro_endpoint_key_type?(record.credential.credential_type) }
+        if !index || endpoint_count >= @number_of_aliro_endpoint_keys_supported || user.credentials.size >= @number_of_credentials_supported_per_user
+          evictable = @credentials.values
+            .select { |record| record.user_index == user_index && record.credential.credential_type.aliro_evictable_endpoint_key? }
+            .min_by?(&.credential.credential_index)
+          return unless evictable
+          index = evictable.credential.credential_index
+          @credentials.delete(credential_key(evictable.credential))
+          remove_credential_from_user(evictable, nil)
+          emit_aliro_user_change(evictable.credential, user_index, DataOperationType::Clear)
+        end
+
+        credential_index = index || return
+        credential = Credential.new(type, credential_index)
+        record = CredentialRecord.new(credential, public_key.dup, user_index)
+        @credentials[credential_key(credential)] = record
+        add_credential_to_user(record, nil)
+        emit_aliro_user_change(credential, user_index, DataOperationType::Add)
+        increment_version
+        credential
+      end
+
+      private def emit_aliro_user_change(credential : Credential, user_index : UInt16, operation : DataOperationType) : Nil
+        emit_lock_user_change(Events::LockUserChange.new(
+          lock_data_type: LockDataType::AliroEvictableEndpointKey,
+          data_operation_type: operation,
+          operation_source: OperationSource::Aliro,
+          user_index: user_index,
+          data_index: credential.credential_index
+        ))
+      end
+
+      private def emit_aliro_wire_user_change(credential : Credential, operation : DataOperationType, user_index : UInt16?) : Nil
+        data_type = case credential.credential_type
+                    when CredentialType::AliroCredentialIssuerKey     then LockDataType::AliroCredentialIssuerKey
+                    when CredentialType::AliroEvictableEndpointKey    then LockDataType::AliroEvictableEndpointKey
+                    when CredentialType::AliroNonEvictableEndpointKey then LockDataType::AliroNonEvictableEndpointKey
+                    else                                                   return
+                    end
+        emit_lock_user_change(Events::LockUserChange.new(
+          lock_data_type: data_type,
+          data_operation_type: operation,
+          operation_source: OperationSource::Remote,
+          user_index: user_index,
+          fabric_index: @request_fabric_index,
+          source_node: @request_peer_node_id,
+          data_index: credential.credential_index
+        ), @request_fabric_index)
+      end
+
+      def handle_set_aliro_reader_config(request : SetAliroReaderConfigRequest) : InteractionModel::Status
+        return InteractionModel::Status.unsupported_command unless @feature_map.aliro_provisioning?
+        return InteractionModel::Status.constraint_error if request.group_resolving_key
+        configure_aliro_reader(AliroReaderConfig.new(request.signing_key, request.verification_key, request.group_identifier))
+      end
+
+      def handle_clear_aliro_reader_config : InteractionModel::Status
+        return InteractionModel::Status.unsupported_command unless @feature_map.aliro_provisioning?
+        clear_aliro_reader_config
       end
 
       def provision_aliro_key(type : CredentialType, index : UInt16, user_index : UInt16, public_key : Bytes, *, fabric_index : UInt8? = nil) : StatusCode
@@ -947,21 +1198,41 @@ module Matter
         end
 
         created_user_index : UInt16? = nil
+        affected_user_index : UInt16? = request.user_index
 
         case request.operation_type
         when DataOperationType::Add
           if @credentials.has_key?(credential_key)
             status = StatusCode::Occupied
           else
-            if user_index = request.user_index
+            if aliro_credential_type?(request.credential.credential_type)
+              if @credentials.values.any? { |record| aliro_credential_type?(record.credential.credential_type) && record.credential_data == request.credential_data }
+                return set_credential_response(request, StatusCode::Duplicate)
+              end
+              type = request.credential.credential_type
+              count = @credentials.values.count do |record|
+                type.aliro_credential_issuer_key? ? record.credential.credential_type.aliro_credential_issuer_key? : aliro_endpoint_key_type?(record.credential.credential_type)
+              end
+              limit = type.aliro_credential_issuer_key? ? @number_of_aliro_credential_issuer_keys_supported : @number_of_aliro_endpoint_keys_supported
+              return set_credential_response(request, StatusCode::ResourceExhausted) if count >= limit
+            end
+
+            target_user_index = request.user_index
+            if target_user_index.nil? && !request.credential.credential_type.programming_pin?
+              target_user_index = (1_u16..@number_of_total_users_supported).find { |index| !@users.has_key?(index) }
+              return set_credential_response(request, StatusCode::ResourceExhausted) unless target_user_index
+            end
+            if user_index = target_user_index
               if @users.size >= @number_of_total_users_supported && !@users.has_key?(user_index)
                 return set_credential_response(request, StatusCode::ResourceExhausted)
               end
 
+              user_existed = @users.has_key?(user_index)
               ensure_user_exists(user_index, request.user_status, request.user_type)
               unless @users.has_key?(user_index)
                 return set_credential_response(request, StatusCode::ResourceExhausted)
               end
+              created_user_index = user_index unless user_existed
 
               if user = @users[user_index]?
                 if !credential_belongs_to_user?(user, request.credential) && user.credentials.size >= @number_of_credentials_supported_per_user
@@ -972,21 +1243,26 @@ module Matter
 
             record = CredentialRecord.new(
               credential: request.credential,
-              credential_data: request.credential_data,
-              user_index: request.user_index,
+              credential_data: request.credential_data.dup,
+              user_index: target_user_index,
               creator_fabric_index: @request_fabric_index,
               last_modified_fabric_index: @request_fabric_index
             )
             @credentials[credential_key] = record
             add_credential_to_user(record)
-            created_user_index = request.user_index
+            affected_user_index = target_user_index
             status = StatusCode::Success
           end
         when DataOperationType::Modify
           if existing = @credentials[credential_key]?
+            affected_user_index = existing.user_index
+            if aliro_credential_type?(request.credential.credential_type) &&
+               @credentials.any? { |key, record| key != credential_key && aliro_credential_type?(record.credential.credential_type) && record.credential_data == request.credential_data }
+              return set_credential_response(request, StatusCode::Duplicate)
+            end
             remove_credential_from_user(existing)
 
-            existing.credential_data = request.credential_data
+            existing.credential_data = request.credential_data.dup
             if new_user_index = request.user_index
               ensure_user_exists(new_user_index, request.user_status, request.user_type)
               unless @users.has_key?(new_user_index)
@@ -1001,6 +1277,7 @@ module Matter
                 end
               end
               existing.user_index = new_user_index
+              affected_user_index = new_user_index
             end
             existing.last_modified_fabric_index = @request_fabric_index
             @credentials[credential_key] = existing
@@ -1011,6 +1288,7 @@ module Matter
           end
         when DataOperationType::Clear
           if existing = @credentials.delete(credential_key)
+            affected_user_index = existing.user_index
             remove_credential_from_user(existing)
             status = StatusCode::Success
           else
@@ -1020,7 +1298,12 @@ module Matter
           status = StatusCode::InvalidField
         end
 
-        increment_version if status == StatusCode::Success
+        if status == StatusCode::Success
+          increment_version
+          if aliro_credential_type?(request.credential.credential_type)
+            emit_aliro_wire_user_change(request.credential, request.operation_type, affected_user_index)
+          end
+        end
 
         set_credential_response(request, status, created_user_index)
       end
@@ -1044,7 +1327,8 @@ module Matter
             user_index: credential.user_index,
             creator_fabric_index: credential.creator_fabric_index,
             last_modified_fabric_index: credential.last_modified_fabric_index,
-            next_credential_index: next_index
+            next_credential_index: next_index,
+            credential_data: aliro_credential_type?(credential.credential.credential_type) ? credential.credential_data.dup : nil
           )
         else
           GetCredentialStatusResponse.new(
@@ -1054,6 +1338,15 @@ module Matter
             last_modified_fabric_index: nil,
             next_credential_index: next_index
           )
+        end
+      end
+
+      def handle_get_credential_status(request : GetCredentialStatusRequest) : TLV::Serializable
+        response = get_credential_status(request)
+        if @feature_map.aliro_provisioning? && aliro_credential_type?(request.credential.credential_type)
+          AliroGetCredentialStatusResponse.new(response)
+        else
+          response
         end
       end
 
@@ -1069,12 +1362,14 @@ module Matter
             keys_to_clear.each do |key|
               if existing = @credentials.delete(key)
                 remove_credential_from_user(existing)
+                emit_aliro_wire_user_change(existing.credential, DataOperationType::Clear, existing.user_index)
               end
             end
           else
             key = credential_key(credential)
             if existing = @credentials.delete(key)
               remove_credential_from_user(existing)
+              emit_aliro_wire_user_change(existing.credential, DataOperationType::Clear, existing.user_index)
             end
           end
         else
@@ -1083,6 +1378,7 @@ module Matter
               next unless credential_type_supported?(record.credential.credential_type)
               @credentials.delete(key)
               remove_credential_from_user(record)
+              emit_aliro_wire_user_change(record.credential, DataOperationType::Clear, record.user_index)
             end
           end
         end
@@ -1416,7 +1712,7 @@ module Matter
         when CredentialType::AliroCredentialIssuerKey,
              CredentialType::AliroEvictableEndpointKey,
              CredentialType::AliroNonEvictableEndpointKey
-          return StatusCode::InvalidField unless allow_aliro && valid_aliro_public_key?(credential_data)
+          return StatusCode::InvalidField unless (allow_aliro || @feature_map.aliro_provisioning?) && valid_aliro_public_key?(credential_data)
         else
           return StatusCode::InvalidField
         end
@@ -1498,7 +1794,7 @@ module Matter
         when CredentialType::AliroCredentialIssuerKey,
              CredentialType::AliroEvictableEndpointKey,
              CredentialType::AliroNonEvictableEndpointKey
-          allow_aliro && @feature_map.user?
+          (allow_aliro || @feature_map.aliro_provisioning?) && @feature_map.user?
         else
           false
         end

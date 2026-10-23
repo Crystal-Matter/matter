@@ -29,6 +29,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preserve policy across restart and release addresses on LeaveGroup and fabric
   removal. Add a two-device shared-fabric delivery test with official chip-tool.
 
+### Door Lock Aliro reader delegate
+
+- Add an opt-in trusted host reader delegate for authenticated Aliro access,
+  issuer step-up, same-user evictable endpoint key rotation and Aliro lock/user
+  events. Expose required Aliro provisioning attributes and timed administrator
+  Set/Clear reader commands only when a delegate is supplied. Keep BLE/UWB
+  support disabled until a radio adapter is available.
+
 ### Refrigerator Alarm
 
 - Add the Matter 1.6 Refrigerator Alarm server with the DoorOpen alarm,

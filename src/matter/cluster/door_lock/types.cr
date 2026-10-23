@@ -499,14 +499,14 @@ module Matter
         @[TLV::Field(tag: 2)]
         property credential_data : Slice(UInt8)
 
-        @[TLV::Field(tag: 3)]
+        @[TLV::Field(tag: 3, optional: false)]
         property user_index : UInt16?
 
-        @[TLV::Field(tag: 4)]
+        @[TLV::Field(tag: 4, optional: false)]
         property user_status : UserStatus?
 
-        @[TLV::Field(tag: 5)]
-        property user_type : UserType
+        @[TLV::Field(tag: 5, optional: false)]
+        property user_type : UserType?
 
         def initialize(
           @operation_type : DataOperationType,
@@ -514,7 +514,7 @@ module Matter
           @credential_data : Slice(UInt8),
           @user_index : UInt16? = nil,
           @user_status : UserStatus? = nil,
-          @user_type : UserType = UserType::UnrestrictedUser,
+          @user_type : UserType? = nil,
         )
         end
       end
@@ -525,7 +525,7 @@ module Matter
         @[TLV::Field(tag: 0)]
         property status_code : StatusCode
 
-        @[TLV::Field(tag: 1)]
+        @[TLV::Field(tag: 1, optional: false)]
         property user_index : UInt16?
 
         @[TLV::Field(tag: 2)]
@@ -556,17 +556,21 @@ module Matter
         @[TLV::Field(tag: 0)]
         property? credential_exists : Bool
 
-        @[TLV::Field(tag: 1)]
+        @[TLV::Field(tag: 1, optional: false)]
         property user_index : UInt16?
 
-        @[TLV::Field(tag: 2)]
+        @[TLV::Field(tag: 2, optional: false)]
         property creator_fabric_index : UInt8?
 
-        @[TLV::Field(tag: 3)]
+        @[TLV::Field(tag: 3, optional: false)]
         property last_modified_fabric_index : UInt8?
 
         @[TLV::Field(tag: 4)]
         property next_credential_index : UInt16?
+
+        # Present for Aliro public-key credentials only.
+        @[TLV::Field(tag: 5)]
+        property credential_data : Slice(UInt8)?
 
         def initialize(
           @credential_exists : Bool,
@@ -574,7 +578,61 @@ module Matter
           @creator_fabric_index : UInt8? = nil,
           @last_modified_fabric_index : UInt8? = nil,
           @next_credential_index : UInt16? = nil,
+          @credential_data : Slice(UInt8)? = nil,
         )
+        end
+      end
+
+      # Aliro requires CredentialData to be present as null for an empty slot.
+      # The ordinary response omits tag 5 entirely for non-Aliro types.
+      struct AliroGetCredentialStatusResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property? credential_exists : Bool
+
+        @[TLV::Field(tag: 1, optional: false)]
+        property user_index : UInt16?
+
+        @[TLV::Field(tag: 2, optional: false)]
+        property creator_fabric_index : UInt8?
+
+        @[TLV::Field(tag: 3, optional: false)]
+        property last_modified_fabric_index : UInt8?
+
+        @[TLV::Field(tag: 4)]
+        property next_credential_index : UInt16?
+
+        @[TLV::Field(tag: 5, optional: false)]
+        property credential_data : Slice(UInt8)?
+
+        def initialize(response : GetCredentialStatusResponse)
+          @credential_exists = response.credential_exists?
+          @user_index = response.user_index
+          @creator_fabric_index = response.creator_fabric_index
+          @last_modified_fabric_index = response.last_modified_fabric_index
+          @next_credential_index = response.next_credential_index
+          @credential_data = response.credential_data
+        end
+      end
+
+      # Input to SetAliroReaderConfig (administer privilege, timed invoke).
+      struct SetAliroReaderConfigRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        property signing_key : Bytes
+
+        @[TLV::Field(tag: 1)]
+        property verification_key : Bytes
+
+        @[TLV::Field(tag: 2)]
+        property group_identifier : Bytes
+
+        @[TLV::Field(tag: 3)]
+        property group_resolving_key : Bytes?
+
+        def initialize(@signing_key : Bytes, @verification_key : Bytes, @group_identifier : Bytes, @group_resolving_key : Bytes? = nil)
         end
       end
 
@@ -856,6 +914,9 @@ module Matter
 
           @[TLV::Field(tag: 0)]
           property alarm_code : AlarmCode
+
+          def initialize(@alarm_code : AlarmCode)
+          end
         end
 
         # Body of the DoorLock lockOperation event
@@ -991,6 +1052,17 @@ module Matter
           # Code, Clear RFID Code, Clear Week Day Schedule, Clear Year Day Schedule, etc.).
           @[TLV::Field(tag: 6)]
           property data_index : UInt16?
+
+          def initialize(
+            @lock_data_type : LockDataType,
+            @data_operation_type : DataOperationType,
+            @operation_source : OperationSource,
+            @user_index : UInt16? = nil,
+            @fabric_index : UInt8? = nil,
+            @source_node : UInt64? = nil,
+            @data_index : UInt16? = nil,
+          )
+          end
         end
       end
     end

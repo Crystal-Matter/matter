@@ -22,6 +22,7 @@ RUN shards install --skip-postinstall --skip-executables
 
 COPY src ./src
 COPY examples ./examples
+COPY e2e/fixture ./e2e/fixture
 
 # Build all `examples/matter_*_device.cr` into `bin/matter_*` (e.g. bin/matter_switch)
 # plus the chip-tool driven validation helper used by the switch spec.
@@ -37,6 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/crystal,sharing=locked \
     jobs="$(nproc)"; [ "$jobs" -gt 2 ] && jobs=2; \
     ls examples/matter_*_device.cr examples/device_validation.cr | \
       xargs -P "$jobs" -I{} sh -c 'name="$(basename {} .cr | sed "s/_device$//")"; echo "==> building bin/$name"; CRYSTAL_CACHE_DIR="/root/.cache/crystal/$name" crystal build {} -o "bin/$name" --error-trace' && \
+    CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_door_lock_aliro crystal build e2e/fixture/matter_door_lock_aliro_device.cr -o bin/matter_door_lock_aliro --error-trace && \
     ls -la bin
 
 # ---------------------------------------------------------------------------
