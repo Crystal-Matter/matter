@@ -330,6 +330,11 @@ services:
     environment:
       E2E_DEVICE: matter_operational_state
 
+  media-playback:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_media_playback
+
   # Official connectedhomeip server used to verify Crystal-originated groupcast.
   official-group-recipient:
     image: matter-e2e-tests

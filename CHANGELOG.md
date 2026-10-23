@@ -50,6 +50,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the latest physical report. A synthetic device exercises the wire behavior
   with official chip-tool.
 
+### Media Playback
+
+- Add Matter 1.6 revision 2 Media Playback with mandatory Play, Pause, Stop,
+  typed PlaybackResponse, and host-authorized state changes. AdvancedSeek,
+  VariableSpeed, AudioTracks, TextTracks, and AudioAdvance features gate their
+  attributes and commands. A synthetic player fixture and official chip-tool
+  E2E exercise commissioning, feature metadata, and playback transitions.
+
 ### Durable fail-safe credential recovery
 
 - Write a durable undo journal before provisional AddNOC and UpdateNOC fabric
