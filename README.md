@@ -359,6 +359,14 @@ lockout and schedule visibility require Manage. The
 `examples/matter_thermostat_ui_device.cr` fixture includes the cluster on a
 Thermostat device and is exercised by official chip-tool.
 
+`Cluster::Thermostat` supports the LocalTemperatureNotExposed (LTNE) feature.
+With LTNE enabled, `update_local_temperature` feeds the internal measurement
+used by Auto mode while LocalTemperature always reads as TLV null. A direct
+`local_temperature=` call cannot expose a value on an LTNE thermostat. See the
+synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
+The Thermostat cluster still advertises revision 9; this LTNE behavior does
+not cover the remaining Matter 1.6 revision 11 features and attributes.
+
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
 Register `configure_host(accept, sleep)` to accept or refuse requests and to
 enter low power. The admission callback returns a status synchronously and must

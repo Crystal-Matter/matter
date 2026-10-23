@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat LTNE
+
+- Add the Thermostat LocalTemperatureNotExposed feature bit. Host sensor
+  updates continue to drive Auto mode, while LocalTemperature always reports
+  TLV null and direct host writes cannot expose the measurement. Include a
+  synthetic thermostat and official chip-tool check. Thermostat remains at
+  revision 9 pending its other Matter 1.6 revision 11 behaviors.
+
 ### Optional SQLite storage
 
 - Add `Matter::Storage::Sqlite` as an explicitly required durable backend.
