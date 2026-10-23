@@ -94,6 +94,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Present messages with no StartTime or Duration using one captured clock
   reading, so a millisecond tick cannot make an immediate message appear early.
 
+### Commodity Metering
+
+- Add the Matter 1.6 revision 1 read-only Commodity Metering server. Hosts
+  publish complete, capacity-checked quantities and clear unavailable data
+  atomically; official chip-tool reads the utility-meter fixture.
+
 ### Commodity Price
 
 - Add the Matter 1.6 revision 4 Commodity Price server with typed currency,

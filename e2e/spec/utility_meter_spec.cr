@@ -8,6 +8,35 @@ private def meter_read(device : E2E::Device, attribute_id : UInt32) : E2E::Resul
     "0x#{attribute_id.to_s(16)}", device.node, METER_ENDPOINT))
 end
 
+describe "Matter 1.6 Commodity Metering interoperability" do
+  device = E2E::Device["matter_utility_meter"]
+
+  it "commissions and reads typed metering values with official chip-tool" do
+    device.commission!
+    cluster_id = "0xb07"
+    revision = expect_success(device.chip("any", "read-by-id", cluster_id,
+      "0xfffd", device.node, "1")).output
+    revision.should match(/\bData = 1\b/)
+    quantities = expect_success(device.chip("any", "read-by-id", cluster_id,
+      "0x0", device.node, "1")).output
+    quantities.should contain("7")
+    quantities.should contain("12345")
+    timestamp = expect_success(device.chip("any", "read-by-id", cluster_id,
+      "0x1", device.node, "1")).output
+    timestamp.should match(/\bData = 1845000000\b/)
+    unit = expect_success(device.chip("any", "read-by-id", cluster_id,
+      "0x2", device.node, "1")).output
+    unit.should match(/\bData = 0\b/)
+    capacity = expect_success(device.chip("any", "read-by-id", cluster_id,
+      "0x3", device.node, "1")).output
+    capacity.should match(/\bData = 2\b/)
+
+    device.restart!
+    expect_success(device.chip("any", "read-by-id", cluster_id,
+      "0x0", device.node, "1")).output.should contain("12345")
+  end
+end
+
 private def meter_read_int(device : E2E::Device, attribute_id : UInt32) : Int64
   result = meter_read(device, attribute_id)
   value = result.output.scan(/\bData = (-?\d+)\b/).last?
