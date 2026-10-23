@@ -10,6 +10,7 @@ describe Matter::DeviceType do
       Matter::DeviceType::THERMOSTAT.should eq(0x0301_u32)
       Matter::DeviceType::DOOR_LOCK.should eq(0x000A_u32)
       Matter::DeviceType::CONTACT_SENSOR.should eq(0x0015_u32)
+      Matter::DeviceType::SMOKE_CO_ALARM.should eq(0x0076_u32)
     end
 
     it "defines utility device types" do
@@ -26,6 +27,21 @@ describe Matter::DeviceType do
   end
 
   describe "definitions" do
+    it "defines the Matter 1.6 Smoke CO Alarm and Power Source device types" do
+      alarm = Matter::DeviceType.for(Matter::DeviceType::SMOKE_CO_ALARM)
+      alarm.name.should eq("Smoke CO Alarm")
+      alarm.revision.should eq(2_u16)
+      alarm.requires_cluster?(Matter::Cluster::Descriptor::CLUSTER_ID).should be_true
+      alarm.requires_cluster?(Matter::Cluster::Identify::CLUSTER_ID).should be_true
+      alarm.requires_cluster?(Matter::Cluster::SmokeCOAlarm::CLUSTER_ID).should be_true
+      alarm.required_node_device_types.should contain(Matter::DeviceType::POWER_SOURCE)
+
+      power = Matter::DeviceType.for(Matter::DeviceType::POWER_SOURCE)
+      power.revision.should eq(1_u16)
+      power.requires_cluster?(Matter::Cluster::Descriptor::CLUSTER_ID).should be_true
+      power.requires_cluster?(Matter::Cluster::PowerSource::CLUSTER_ID).should be_true
+    end
+
     it "creates root node device type" do
       device_type = Matter::DeviceType.root_node
 

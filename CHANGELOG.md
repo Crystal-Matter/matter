@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Smoke and CO Alarm device type
+
+- Add the Matter 1.6 Smoke CO Alarm device type (0x0076, revision 2) and its
+  required Power Source device type topology. The example now advertises a
+  detector endpoint with Identify and a separate Power Source endpoint, and
+  chip-tool checks both Descriptor device type lists and power mapping.
+
 ### Smoke and CO Alarm
 
 - Add the Matter 1.6 revision 2 Smoke CO Alarm server with Smoke, CO, or

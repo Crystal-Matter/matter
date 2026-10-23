@@ -154,7 +154,9 @@ The declarations are:
   declaration per cluster. `as: :switch` adds a typed accessor (`switch : Cluster::OnOff`).
   The endpoint is validated against its device types when it is registered, so a device type
   missing one of its mandatory clusters is an error at start-up rather than a controller
-  complaining later.
+  complaining later. Node-level requirements are checked after endpoint assembly;
+  for example, a Smoke CO Alarm device requires a Power Source device type on
+  at least one endpoint.
 * `endpoint_template :name, device_type:, parameters: {...} do ... end` — the shape of an endpoint
   added at runtime with `add_endpoint(:name, key: value)`. Template parameters are persisted, so
   dynamic endpoints survive a restart. `examples/matter_bridge_device.cr` uses this.
