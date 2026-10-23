@@ -60,6 +60,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   messages that start now, and remove messages and emit MessageComplete when
   Duration elapses, including after a device restart.
 
+### Commodity Price
+
+- Add the Matter 1.6 revision 4 Commodity Price server with typed currency,
+  current price, forecast periods, detailed response commands, and PriceChange
+  events. Extend the synthetic utility meter and official chip-tool coverage.
+
 ### Electrical Grid Conditions
 
 - Add the Matter 1.6 revision 1 Electrical Grid Conditions server with typed
