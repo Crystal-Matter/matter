@@ -85,6 +85,21 @@ describe Messages do
     read_tlv(cluster, Messages::ATTR_MESSAGES, 2_u8).as_list.size.should eq(1)
   end
 
+  it "presents a message with no start or duration when the clock advances between reads" do
+    now_ms = 1_700_000_000_000_i64
+    clock = -> do
+      now_ms += 1_i64
+      Time.unix_ms(now_ms)
+    end
+    cluster = build(Messages, clock: clock)
+    id = message_id(15_u8)
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST,
+      present_message(id), is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
+
+    cluster.present(id, 1_u8)
+    cluster.active_message_ids.should eq([id])
+  end
+
   it "restores queued messages and erases a removed fabric" do
     cluster = build(Messages)
     id = message_id(8_u8)

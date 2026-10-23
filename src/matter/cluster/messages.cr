@@ -262,7 +262,7 @@ module Matter
         message = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         raise ArgumentError.new("unknown message") unless message
         now_ms = @clock.call.to_unix_ms.to_u128
-        raise ArgumentError.new("message is not yet available") if now_ms < start_ms(message)
+        raise ArgumentError.new("message is not yet available") if now_ms < start_ms(message, now_ms)
         if (deadline = deadline_ms(message)) && now_ms >= deadline
           process_due_messages
           raise ArgumentError.new("message has expired")
@@ -333,11 +333,13 @@ module Matter
         process_due_messages
       end
 
-      private def start_ms(message : Message) : UInt128
+      private def start_ms(message : Message, now_ms : UInt128? = nil) : UInt128
         if start = message.start_time
           (start.to_u128 + MATTER_EPOCH_UNIX_SECONDS.to_u128) * 1000_u128
+        elsif accepted_at_ms = @accepted_at_ms[message.message_id.hexstring]?
+          accepted_at_ms.to_u128
         else
-          (@accepted_at_ms[message.message_id.hexstring]? || @clock.call.to_unix_ms).to_u128
+          now_ms || @clock.call.to_unix_ms.to_u128
         end
       end
 
