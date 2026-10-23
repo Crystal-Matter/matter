@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Electrical Grid Conditions
+
+- Add the Matter 1.6 revision 1 Electrical Grid Conditions server with typed
+  nullable period data, ordered Forecasting periods, local-generation carbon
+  checks, controller writes, and CurrentConditionsChanged events. Extend the
+  synthetic utility meter and official chip-tool coverage.
+
 ### Energy Preference
 
 - Add the Matter 1.6 revision 1 Energy Preference server with EnergyBalance

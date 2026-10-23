@@ -33,4 +33,20 @@ describe "Matter 1.6 Meter Identification interoperability" do
     device.restart!
     meter_read(device, 0x0002_u32).output.should contain("MTR-2026-001")
   end
+
+  it "serves Matter 1.6 grid conditions and accepts local-generation writes" do
+    read_int(device, "electricalgridconditions", "cluster-revision", "ClusterRevision", 1).should eq(1_i64)
+    read_int(device, "electricalgridconditions", "feature-map", "FeatureMap", 1).should eq(1_i64)
+    current = expect_success(device.read("electricalgridconditions", "current-conditions", 1)).output
+    current.should contain("220")
+    forecast = expect_success(device.read("electricalgridconditions", "forecast-conditions", 1)).output
+    forecast.should contain("180")
+    forecast.should contain("260")
+
+    expect_success(device.write("electricalgridconditions", "local-generation-available", "true", 1))
+    expect_success(device.read("electricalgridconditions", "local-generation-available", 1))
+      .value("LocalGenerationAvailable").should eq("TRUE")
+    device.restart!
+    expect_success(device.read("electricalgridconditions", "current-conditions", 1)).output.should contain("220")
+  end
 end
