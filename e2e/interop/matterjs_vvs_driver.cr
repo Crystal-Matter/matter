@@ -213,8 +213,13 @@ module MatterjsVvsDriver
       begin
         verified = Matter::Controller::VidVerification.verify(im, session, address, index, trust)
         raise Matter::AuthenticationError.new("Wrong fabric verified") unless verified.descriptor.fabric_id == fabric.fabric_id
+        unless verified.descriptor.vid_verification_statement && verified.noc.vvsc
+          raise Matter::AuthenticationError.new("Verified fabric omitted the over-wire VVS or VVSC")
+        end
       rescue ex : Matter::AuthenticationError
-        raise ex unless expected == "deny"
+        unless expected == "deny" && ex.message.to_s.includes?("Vendor statement has no trusted signer")
+          raise ex
+        end
         puts "PASS: matter.js VVS-bearing fabric denied: #{ex.message}"
         return
       end
