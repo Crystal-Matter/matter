@@ -107,4 +107,64 @@ describe "Matter 1.6 appliance Mode Base derivations" do
     calls.should eq(1)
     expect_raises(ArgumentError) { dishwasher.current_mode = 7_u8 }
   end
+
+  it "reconciles persisted dishwasher mode when the host changes its catalogue" do
+    original = build(DishwasherMode, supported_modes: dishwasher_options, current_mode: 1_u8)
+    saved = original.save_state.as(Matter::Storage::Document)
+    replacement = [
+      ModeBase::Option.new("Normal", 2_u8, [ModeBase::Tag.new(DishwasherMode::ModeTag::Normal.value)]),
+      ModeBase::Option.new("Heavy", 3_u8, [ModeBase::Tag.new(DishwasherMode::ModeTag::Heavy.value)]),
+    ]
+    restored = build(DishwasherMode, supported_modes: replacement, current_mode: 2_u8)
+    restored.restore_state(saved)
+    restored.current_mode.should eq(2_u8)
+
+    still_supported = build(DishwasherMode, supported_modes: dishwasher_options, current_mode: 0_u8)
+    still_supported.restore_state(saved)
+    still_supported.current_mode.should eq(1_u8)
+  end
+
+  it "reconciles persisted laundry mode when the host changes its catalogue" do
+    original = build(LaundryWasherMode, supported_modes: laundry_options, current_mode: 1_u8)
+    saved = original.save_state.as(Matter::Storage::Document)
+    replacement = [
+      ModeBase::Option.new("Normal", 2_u8, [ModeBase::Tag.new(LaundryWasherMode::ModeTag::Normal.value)]),
+      ModeBase::Option.new("Delicate", 3_u8, [ModeBase::Tag.new(LaundryWasherMode::ModeTag::Delicate.value)]),
+    ]
+    restored = build(LaundryWasherMode, supported_modes: replacement, current_mode: 2_u8)
+    restored.restore_state(saved)
+    restored.current_mode.should eq(2_u8)
+
+    still_supported = build(LaundryWasherMode, supported_modes: laundry_options, current_mode: 0_u8)
+    still_supported.restore_state(saved)
+    still_supported.current_mode.should eq(1_u8)
+  end
+
+  it "keeps the fixed dishwasher catalogue isolated from caller and reader mutations" do
+    options = dishwasher_options
+    cluster = build(DishwasherMode, supported_modes: options, current_mode: 0_u8)
+    options.first.mode_tags.clear
+    options.first.label = "Changed"
+    exposed = cluster.supported_modes
+    exposed.first.mode_tags.clear
+    exposed.first.mode = 9_u8
+
+    cluster.supported_modes.first.label.should eq("Normal")
+    cluster.supported_modes.first.mode.should eq(0_u8)
+    cluster.supported_modes.first.mode_tags.size.should eq(1)
+  end
+
+  it "keeps the fixed laundry catalogue isolated from caller and reader mutations" do
+    options = laundry_options
+    cluster = build(LaundryWasherMode, supported_modes: options, current_mode: 0_u8)
+    options.first.mode_tags.clear
+    options.first.label = "Changed"
+    exposed = cluster.supported_modes
+    exposed.first.mode_tags.clear
+    exposed.first.mode = 9_u8
+
+    cluster.supported_modes.first.label.should eq("Normal")
+    cluster.supported_modes.first.mode.should eq(0_u8)
+    cluster.supported_modes.first.mode_tags.size.should eq(1)
+  end
 end
