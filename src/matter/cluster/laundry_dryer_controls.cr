@@ -18,7 +18,8 @@ module Matter
       end
 
       attribute 0x0000, :supported_dryness_levels, Array(DrynessLevel),
-        default: [] of DrynessLevel, validate: :validate_supported_dryness_levels!
+        default: [] of DrynessLevel, validate: :validate_supported_dryness_levels!,
+        copy_on_assign: true
       attribute 0x0001, :selected_dryness_level, DrynessLevel,
         nullable: true, writable: true, write_access: :operate,
         validate: :validate_selected_dryness_level!
@@ -32,6 +33,10 @@ module Matter
         validate_supported_dryness_levels!(@supported_dryness_levels)
         validate_selected_dryness_level!(@selected_dryness_level)
         @supported_dryness_levels = @supported_dryness_levels.dup
+      end
+
+      def supported_dryness_levels : Array(DrynessLevel)
+        @supported_dryness_levels.dup
       end
 
       # Returning a non-success status leaves the advertised selection alone.

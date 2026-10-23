@@ -23,7 +23,7 @@ module Matter
       end
 
       attribute 0x0000, :spin_speeds, Array(String), default: [] of String,
-        requires: :spin, validate: :validate_spin_speeds!
+        requires: :spin, validate: :validate_spin_speeds!, copy_on_assign: true
       attribute 0x0001, :spin_speed_current, UInt8, nullable: true,
         writable: true, write_access: :operate, requires: :spin,
         max: MAX_SPIN_INDEX, validate: :validate_spin_speed_current!
@@ -32,7 +32,7 @@ module Matter
         requires: :rinse, validate: :validate_number_of_rinses!
       attribute 0x0003, :supported_rinses, Array(NumberOfRinses),
         default: [] of NumberOfRinses, requires: :rinse,
-        validate: :validate_supported_rinses!
+        validate: :validate_supported_rinses!, copy_on_assign: true
 
       @select_spin_speed_callback : Proc(UInt8?, InteractionModel::Status)?
       @select_rinses_callback : Proc(NumberOfRinses, InteractionModel::Status)?
@@ -60,6 +60,14 @@ module Matter
         @spin_speeds = @spin_speeds.dup
         @supported_rinses = @supported_rinses.dup
         @configured_number_of_rinses = @number_of_rinses
+      end
+
+      def spin_speeds : Array(String)
+        @spin_speeds.dup
+      end
+
+      def supported_rinses : Array(NumberOfRinses)
+        @supported_rinses.dup
       end
 
       def on_select_spin_speed(&block : UInt8? -> InteractionModel::Status) : Nil

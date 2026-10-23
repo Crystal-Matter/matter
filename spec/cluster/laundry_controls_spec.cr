@@ -71,6 +71,22 @@ describe "Matter 1.6 Laundry Dryer Controls" do
     cluster.supported_dryness_levels.should eq([Dryer::DrynessLevel::Extra])
     cluster.selected_dryness_level.should eq(Dryer::DrynessLevel::Extra)
   end
+
+  it "keeps the supported dryness list isolated from readers" do
+    cluster = dryer
+    cluster.supported_dryness_levels.clear
+    cluster.supported_dryness_levels.should eq([Dryer::DrynessLevel::Low, Dryer::DrynessLevel::Normal])
+    read_tlv(cluster, Dryer::ATTR_SUPPORTED_DRYNESS_LEVELS).as_list.size.should eq(2)
+  end
+
+  it "copies a replacement dryness list supplied by the host" do
+    cluster = dryer
+    cluster.selected_dryness_level = nil
+    levels = [Dryer::DrynessLevel::Low]
+    cluster.supported_dryness_levels = levels
+    levels.clear
+    cluster.supported_dryness_levels.should eq([Dryer::DrynessLevel::Low])
+  end
 end
 
 describe "Matter 1.6 Laundry Washer Controls" do
@@ -146,5 +162,27 @@ describe "Matter 1.6 Laundry Washer Controls" do
     cluster.configure_rinse_mode([Washer::NumberOfRinses::Extra], Washer::NumberOfRinses::Extra)
     cluster.supported_rinses.should eq([Washer::NumberOfRinses::Extra])
     cluster.number_of_rinses.should eq(Washer::NumberOfRinses::Extra)
+  end
+
+  it "keeps spin and rinse lists isolated from readers" do
+    cluster = washer
+    cluster.spin_speeds.clear
+    cluster.supported_rinses.clear
+    cluster.spin_speeds.should eq(["Gentle", "Fast"])
+    cluster.supported_rinses.should eq([Washer::NumberOfRinses::None, Washer::NumberOfRinses::Normal])
+    read_tlv(cluster, Washer::ATTR_SPIN_SPEEDS).as_list.size.should eq(2)
+    read_tlv(cluster, Washer::ATTR_SUPPORTED_RINSES).as_list.size.should eq(2)
+  end
+
+  it "copies replacement spin and rinse lists supplied by the host" do
+    cluster = washer
+    speeds = ["Eco", "Fast"]
+    rinses = [Washer::NumberOfRinses::Normal]
+    cluster.spin_speeds = speeds
+    cluster.supported_rinses = rinses
+    speeds.clear
+    rinses.clear
+    cluster.spin_speeds.should eq(["Eco", "Fast"])
+    cluster.supported_rinses.should eq([Washer::NumberOfRinses::Normal])
   end
 end
