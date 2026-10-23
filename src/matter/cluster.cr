@@ -13,6 +13,7 @@ require "./cluster/label_struct"
 require "./cluster/color_control_utils"
 
 require "./cluster/access_control"
+require "./cluster/account_login"
 require "./cluster/actions"
 require "./cluster/audio_output"
 require "./cluster/administrator_commissioning"
