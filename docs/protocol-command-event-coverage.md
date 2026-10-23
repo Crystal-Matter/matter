@@ -12,7 +12,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 172
-- Feature or complex conditional IDs absent from Crystal: 37
+- Feature or complex conditional IDs absent from Crystal: 35
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -220,12 +220,12 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0091 | event | 0x0001 | feature(PERE) | declared; requires `:periodic_energy` |
 | 0x0098 | command | 0x0000 | feature(PA) | declared; requires `:power_adjustment` |
 | 0x0098 | command | 0x0001 | feature(PA) | declared; requires `:power_adjustment` |
-| 0x0098 | command | 0x0002 | feature(STA) | absent |
+| 0x0098 | command | 0x0002 | feature(STA) | declared; requires `:start_time_adjustment` |
 | 0x0098 | command | 0x0003 | feature(PAU) | absent |
 | 0x0098 | command | 0x0004 | feature(PAU) | absent |
 | 0x0098 | command | 0x0005 | feature(FA) | absent |
 | 0x0098 | command | 0x0006 | feature(CON) | absent |
-| 0x0098 | command | 0x0007 | (feature(STA) or feature(FA) or feature(CON)) | absent |
+| 0x0098 | command | 0x0007 | (feature(STA) or feature(FA) or feature(CON)) | declared; requires `:start_time_adjustment` |
 | 0x0098 | event | 0x0000 | feature(PA) | declared; requires `:power_adjustment` |
 | 0x0098 | event | 0x0001 | feature(PA) | declared; requires `:power_adjustment` |
 | 0x0098 | event | 0x0002 | feature(PAU) | absent |

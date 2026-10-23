@@ -24,6 +24,7 @@ module Matter
       MAX_SLOT_COSTS             =  5
       CAPABILITY_REPORT_INTERVAL = 10.seconds
       FORECAST_REPORT_INTERVAL   = 10.seconds
+      MATTER_EPOCH_UNIX_SECONDS  = 946_684_800_i64
 
       enum ESAType : UInt8
         EVSE                =   0
@@ -179,6 +180,10 @@ module Matter
         getter start_time : UInt32
         @[TLV::Field(tag: 3)]
         getter end_time : UInt32
+        @[TLV::Field(tag: 4, optional: true)]
+        getter earliest_start_time : UInt32?
+        @[TLV::Field(tag: 5, optional: true)]
+        getter latest_end_time : UInt32?
         @[TLV::Field(tag: 6)]
         getter? is_pausable : Bool
         @[TLV::Field(tag: 7)]
@@ -189,7 +194,9 @@ module Matter
         def initialize(@forecast_id : UInt32, @active_slot_number : UInt16?,
                        @start_time : UInt32, @end_time : UInt32,
                        @is_pausable : Bool, slots : Array(Slot),
-                       @forecast_update_reason : ForecastUpdateReason)
+                       @forecast_update_reason : ForecastUpdateReason,
+                       @earliest_start_time : UInt32? = nil,
+                       @latest_end_time : UInt32? = nil)
           raise ArgumentError.new("forecast end precedes start") if @end_time < @start_time
           raise ArgumentError.new("forecast requires 1–10 slots") unless (1..MAX_FORECAST_SLOTS).includes?(slots.size)
           if (active = @active_slot_number) && active >= slots.size
@@ -200,7 +207,8 @@ module Matter
 
         def duplicate : Forecast
           Forecast.new(@forecast_id, @active_slot_number, @start_time, @end_time,
-            @is_pausable, @slots, @forecast_update_reason)
+            @is_pausable, @slots, @forecast_update_reason,
+            @earliest_start_time, @latest_end_time)
         end
 
         def slots : Array(Slot)
@@ -211,7 +219,27 @@ module Matter
           updated = @slots.map(&.duplicate)
           updated[index] = updated[index].with_progress(elapsed, remaining)
           Forecast.new(@forecast_id, @active_slot_number, @start_time, @end_time,
-            @is_pausable, updated, @forecast_update_reason)
+            @is_pausable, updated, @forecast_update_reason,
+            @earliest_start_time, @latest_end_time)
+        end
+
+        def with_shift(start_time : UInt32, end_time : UInt32, id : UInt32,
+                       reason : ForecastUpdateReason) : Forecast
+          Forecast.new(id, @active_slot_number, start_time, end_time,
+            @is_pausable, @slots, reason, @earliest_start_time, @latest_end_time)
+        end
+      end
+
+      struct StartTimeAdjustRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter requested_start_time : UInt32
+
+        @[TLV::Field(tag: 1)]
+        getter cause : AdjustmentCause
+
+        def initialize(@requested_start_time : UInt32, @cause : AdjustmentCause)
         end
       end
 
@@ -312,6 +340,10 @@ module Matter
         access: :operate, requires: :power_adjustment
       command 0x01, :cancel_power_adjust_request,
         access: :operate, requires: :power_adjustment
+      command 0x02, :start_time_adjust_request, request: StartTimeAdjustRequest,
+        access: :operate, requires: :start_time_adjustment
+      command 0x07, :cancel_request,
+        access: :operate, requires: :start_time_adjustment
 
       event 0x00, :power_adjust_start, priority: :info,
         payload: PowerAdjustStartEvent, requires: :power_adjustment
@@ -324,6 +356,9 @@ module Matter
       @forecast : Forecast?
       @last_forecast_id : UInt32?
       @last_forecast_report : Time::Instant?
+      @original_forecast : Forecast?
+      @active_forecast_cause : AdjustmentCause?
+      @active_forecast_fabric_index : UInt8?
       @active_adjustment : PowerAdjustRequest?
       @active_started : Time::Instant?
       @active_fabric_index : UInt8?
@@ -331,6 +366,8 @@ module Matter
       @last_capability_report : Time::Instant?
       @power_adjust_callback : Proc(PowerAdjustRequest, UInt8?, InteractionModel::Status)?
       @cancel_callback : Proc(UInt8?, InteractionModel::Status)?
+      @start_time_adjust_callback : Proc(StartTimeAdjustRequest, UInt8?, InteractionModel::Status)?
+      @cancel_forecast_callback : Proc(UInt8?, InteractionModel::Status)?
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @esa_type : ESAType,
@@ -342,8 +379,9 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         unless @feature_map.in?(Feature::PowerAdjustment,
                  Feature::PowerForecastReporting,
-                 Feature::StateForecastReporting)
-          raise ArgumentError.new("select exactly one supported DEM profile: PA, PFR, or SFR")
+                 Feature::StateForecastReporting,
+                 Feature::PowerForecastReporting | Feature::StartTimeAdjustment)
+          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, or PFR+STA")
         end
         if !@feature_map.power_adjustment? && power_adjustment_capability
           raise ArgumentError.new("power capability requires PA")
@@ -391,7 +429,7 @@ module Matter
       # The host publishes a new indicative forecast. A repeated ID is not an
       # update; later IDs may wrap at UInt32::MAX. Progress-only changes use
       # report_slot_progress so subscriptions are not flooded each second.
-      def report_forecast(value : Forecast?) : Nil
+      def report_forecast(value : Forecast?, force_report : Bool = false) : Nil
         unless @feature_map.power_forecast_reporting? || @feature_map.state_forecast_reporting?
           raise ArgumentError.new("forecast reporting feature is disabled")
         end
@@ -406,7 +444,10 @@ module Matter
         return if value.nil? && was_null
         @forecast = value.try(&.duplicate)
         @last_forecast_id = value.forecast_id if value
-        forecast_changed(force_report: was_null != value.nil?)
+        @original_forecast = nil
+        @active_forecast_cause = nil
+        @active_forecast_fabric_index = nil
+        forecast_changed(force_report: force_report || was_null != value.nil?)
       end
 
       # These two values are read live but are expressly excluded from
@@ -425,6 +466,14 @@ module Matter
 
       def on_cancel_power_adjust(&block : UInt8? -> InteractionModel::Status) : Nil
         @cancel_callback = block
+      end
+
+      def on_start_time_adjust(&block : StartTimeAdjustRequest, UInt8? -> InteractionModel::Status) : Nil
+        @start_time_adjust_callback = block
+      end
+
+      def on_cancel_forecast_adjustment(&block : UInt8? -> InteractionModel::Status) : Nil
+        @cancel_forecast_callback = block
       end
 
       # The host can update its nameplate limits only while all advertised PA
@@ -481,8 +530,51 @@ module Matter
         if (active = @active_adjustment) && opted_out?(state, active.cause)
           cancel_for_host_change(EndCause::UserOptOut)
         end
+        if (cause = @active_forecast_cause) && opted_out?(state, cause)
+          cancel_forecast_for_host_change
+        end
         @opt_out_state = state
         increment_version_and_notify(ATTR_OPT_OUT_STATE)
+      end
+
+      def start_time_adjust_request(request : StartTimeAdjustRequest) : InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state unless @esa_state.online?
+        return InteractionModel::Status.invalid_in_state if opted_out?(@opt_out_state, request.cause)
+        forecast = @forecast
+        return InteractionModel::Status.invalid_in_state unless forecast && forecast.active_slot_number.nil?
+        earliest = forecast.earliest_start_time
+        latest = forecast.latest_end_time
+        return InteractionModel::Status.invalid_in_state unless latest
+        requested = request.requested_start_time
+        duration = forecast.end_time.to_u64 - forecast.start_time.to_u64
+        new_end = requested.to_u64 + duration
+        now = Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS
+        unless requested.to_i64 > now &&
+               (earliest.nil? || requested > earliest) && new_end < latest
+          return InteractionModel::Status.constraint_error
+        end
+        callback = @start_time_adjust_callback
+        return InteractionModel::Status.invalid_in_state unless callback && @cancel_forecast_callback
+        fabric_index = request_fabric_index
+        status = callback.call(request, fabric_index)
+        return status unless status.success?
+        original = @original_forecast || forecast
+        reason = request.cause.local_optimization? ? ForecastUpdateReason::LocalOptimization : ForecastUpdateReason::GridOptimization
+        shifted = forecast.with_shift(requested, new_end.to_u32, forecast.forecast_id &+ 1_u32, reason)
+        report_forecast(shifted, force_report: true)
+        @original_forecast = original.duplicate
+        @active_forecast_cause = request.cause
+        @active_forecast_fabric_index = fabric_index
+        status
+      end
+
+      def cancel_request : InteractionModel::Status
+        return InteractionModel::Status.success unless @original_forecast
+        callback = @cancel_forecast_callback
+        return InteractionModel::Status.invalid_in_state unless callback
+        status = callback.call(request_fabric_index)
+        restore_original_forecast if status.success?
+        status
       end
 
       def power_adjust_request(request : PowerAdjustRequest) : InteractionModel::Status
@@ -549,6 +641,15 @@ module Matter
                                      minimum_limit : Int64 = @abs_min_power,
                                      maximum_limit : Int64 = @abs_max_power) : Nil
         raise ArgumentError.new("Pausable forecast requires PAU") if value.is_pausable?
+        if @feature_map.start_time_adjustment?
+          earliest = value.earliest_start_time
+          latest = value.latest_end_time
+          unless latest && (earliest.nil? || earliest <= value.start_time) && value.end_time <= latest
+            raise ArgumentError.new("STA forecast needs a valid start/end window")
+          end
+        elsif value.earliest_start_time || value.latest_end_time
+          raise ArgumentError.new("forecast window requires STA")
+        end
         value.slots.each do |slot|
           if @feature_map.power_forecast_reporting?
             minimum = slot.min_power
@@ -578,6 +679,25 @@ module Matter
           @last_forecast_report = now
           notify_changed(ATTR_FORECAST)
         end
+      end
+
+      private def restore_original_forecast : Nil
+        original = @original_forecast
+        return unless original
+        current = @forecast
+        id = current ? current.forecast_id &+ 1_u32 : original.forecast_id &+ 1_u32
+        restored = original.with_shift(original.start_time, original.end_time,
+          id, ForecastUpdateReason::InternalOptimization)
+        report_forecast(restored, force_report: true)
+      end
+
+      private def cancel_forecast_for_host_change : Nil
+        status = @cancel_forecast_callback.try(&.call(@active_forecast_fabric_index))
+        Log.warn { "host rejected forecast cancellation: #{status}" } unless status && status.success?
+      rescue ex
+        Log.warn(exception: ex) { "host failed to cancel forecast adjustment" }
+      ensure
+        restore_original_forecast
       end
 
       private def change_esa_state(state : ESAState) : Nil
@@ -634,5 +754,42 @@ module Matter
         end
       end
     end
+  end
+end
+
+# EarliestStartTime is absent without STA, but mandatory nullable with STA.
+# TLV::Serializable omits nilable fields, so use explicit wire construction for
+# this one feature-dependent nullable member while retaining its TLV decoder.
+struct Matter::Cluster::DeviceEnergyManagement::Forecast
+  def to_tlv(outer_tag : Nil) : TLV::Any
+    encode_forecast(outer_tag)
+  end
+
+  def to_tlv(outer_tag : UInt8) : TLV::Any
+    encode_forecast(outer_tag)
+  end
+
+  def to_tlv(outer_tag : {UInt16, UInt16}) : TLV::Any
+    encode_forecast(outer_tag)
+  end
+
+  def to_tlv(outer_tag : {UInt16, UInt16, UInt16}) : TLV::Any
+    encode_forecast(outer_tag)
+  end
+
+  private def encode_forecast(outer_tag) : TLV::Any
+    fields = TLV::Structure.new
+    fields[0_u8] = TLV::Any.new(@forecast_id, 0_u8)
+    fields[1_u8] = TLV::Any.new(@active_slot_number, 1_u8)
+    fields[2_u8] = TLV::Any.new(@start_time, 2_u8)
+    fields[3_u8] = TLV::Any.new(@end_time, 3_u8)
+    if @latest_end_time
+      fields[4_u8] = TLV::Any.new(@earliest_start_time, 4_u8)
+      fields[5_u8] = TLV::Any.new(@latest_end_time, 5_u8)
+    end
+    fields[6_u8] = TLV::Any.new(@is_pausable, 6_u8)
+    fields[7_u8] = TLV::Serializable.serialize_value(@slots, 7_u8)
+    fields[8_u8] = TLV::Serializable.serialize_value(@forecast_update_reason, 8_u8)
+    TLV::Any.new(fields, outer_tag)
   end
 end
