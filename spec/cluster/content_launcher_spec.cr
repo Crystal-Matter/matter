@@ -30,6 +30,48 @@ describe ContentLauncher do
     url_only.commands.map(&.id.id).should eq([ContentLauncher::CMD_LAUNCH_URL])
   end
 
+  it "keeps the fixed AcceptHeader isolated from caller and reader mutations" do
+    headers = ["video/mp4"]
+    cluster = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: headers, supported_streaming_protocols: 1_u32)
+    version = cluster.data_version
+
+    headers.clear
+    cluster.accept_header.clear
+
+    cluster.accept_header.should eq(["video/mp4"])
+    read_tlv(cluster, ContentLauncher::ATTR_ACCEPT_HEADER).as_list.map(&.value.as(String)).should eq(["video/mp4"])
+    cluster.data_version.should eq(version)
+  end
+
+  it "copies a host-assigned fixed AcceptHeader before retaining it" do
+    cluster = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: ["video/mp4"], supported_streaming_protocols: 1_u32)
+    replacement = ["video/webm"]
+    cluster.accept_header = replacement
+    assigned_version = cluster.data_version
+
+    replacement.clear
+
+    cluster.accept_header.should eq(["video/webm"])
+    cluster.data_version.should eq(assigned_version)
+  end
+
+  it "restores host-configured fixed URL capabilities after restart" do
+    source = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: ["video/mp4"], supported_streaming_protocols: 1_u32)
+    saved = source.save_state.as(Matter::Storage::Document)
+    restored = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: ["video/webm"], supported_streaming_protocols: 2_u32)
+
+    restored.restore_state(saved)
+
+    restored.accept_header.should eq(["video/webm"])
+    restored.supported_streaming_protocols.should eq(2_u32)
+    read_tlv(restored, ContentLauncher::ATTR_ACCEPT_HEADER).as_list.map(&.value.as(String)).should eq(["video/webm"])
+    read(restored, ContentLauncher::ATTR_SUPPORTED_STREAMING_PROTOCOLS).should eq(2_u32)
+  end
+
   it "encodes revision two search, preferences, URL branding and responses on canonical tags" do
     parameter = ContentLauncher::Parameter.new(ContentLauncher::ParameterType::Season, "2",
       [ContentLauncher::AdditionalInfo.new("series-id", "abc")])
