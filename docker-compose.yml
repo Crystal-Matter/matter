@@ -228,6 +228,11 @@ services:
     environment:
       E2E_DEVICE: matter_appliance_modes
 
+  refrigerator-alarm:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_refrigerator_alarm
+
   thermostat-ui:
     <<: *device
     environment:

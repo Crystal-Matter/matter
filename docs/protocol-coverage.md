@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 92
-- Matching known revisions: 90
+- Crystal declarations for those IDs: 93
+- Matching known revisions: 91
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -69,7 +69,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0054 | RVC Run Mode Cluster | 4 | — | cluster absent |
 | 0x0055 | RVC Clean Mode Cluster | 5 | — | cluster absent |
 | 0x0056 | Temperature Control Cluster | 1 | 1 | — |
-| 0x0057 | Refrigerator Alarm Cluster | 1 | — | cluster absent |
+| 0x0057 | Refrigerator Alarm Cluster | 1 | 1 | — |
 | 0x0059 | Dishwasher Mode Cluster | 3 | 3 | — |
 | 0x005B | Air Quality Cluster | 1 | 1 | — |
 | 0x005C | Smoke CO Alarm Cluster | 2 | — | cluster absent |

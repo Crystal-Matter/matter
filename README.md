@@ -285,6 +285,12 @@ refusal returns a ChangeToModeResponse with a failure status and text. These
 clusters expose neither the OnOff feature nor StartUpMode/OnMode. The synthetic
 `examples/matter_appliance_modes_device.cr` exercises both with chip-tool.
 
+`Cluster::RefrigeratorAlarm` reports the Matter 1.6 DoorOpen alarm after the
+appliance's chosen open duration. Its `Mask`, `State`, and fixed `Supported`
+attributes and `Notify` event follow Alarm Base. The derived cluster does not
+advertise Reset or ModifyEnabledAlarms. Call `report_alarms` as the physical
+condition changes; see `examples/matter_refrigerator_alarm_device.cr`.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
