@@ -291,6 +291,12 @@ attributes and `Notify` event follow Alarm Base. The derived cluster does not
 advertise Reset or ModifyEnabledAlarms. Call `report_alarms` as the physical
 condition changes; see `examples/matter_refrigerator_alarm_device.cr`.
 
+`Cluster::Chime` exposes Matter 1.6 revision 2 sound selection and playback.
+Configure one or more uniquely named sounds and register `on_play` to start
+physical playback. Controllers can write `SelectedChime` and `Enabled`; both
+survive restart. A successful playback request emits `ChimeStartedPlaying`.
+See `examples/matter_chime_device.cr` for a synthetic doorbell.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
