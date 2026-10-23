@@ -35,7 +35,11 @@ module Matter
         @[TLV::Field(tag: 2)]
         getter name : String
 
-        def initialize(@index : UInt8, @output_type : OutputType, @name : String)
+        # Stored with the catalogue but absent from the Matter wire struct.
+        # Older documents have no marker and use the host's current name.
+        getter? user_renamed : Bool = false
+
+        def initialize(@index : UInt8, @output_type : OutputType, @name : String, @user_renamed : Bool = false)
           raise ArgumentError.new("output name exceeds 32 UTF-8 bytes") if @name.bytesize > NAME_MAX_BYTES
         end
       end
@@ -112,7 +116,7 @@ module Matter
         return InteractionModel::Status.not_found unless index
         original = @output_list[index]
         updated = @output_list.dup
-        updated[index] = OutputInfo.new(original.index, original.output_type, request.name)
+        updated[index] = OutputInfo.new(original.index, original.output_type, request.name, true)
         self.output_list = updated
         InteractionModel::Status.success
       end
@@ -140,8 +144,13 @@ module Matter
         saved_outputs = @output_list
         @output_list = @configured_outputs.map do |configured|
           saved = saved_outputs.find { |entry| entry.index == configured.index }
-          name = saved && saved.output_type == configured.output_type && saved.name.bytesize <= NAME_MAX_BYTES ? saved.name : configured.name
-          OutputInfo.new(configured.index, configured.output_type, name)
+          renamed = false
+          name = configured.name
+          if saved && saved.output_type == configured.output_type && saved.user_renamed? && saved.name.bytesize <= NAME_MAX_BYTES
+            renamed = true
+            name = saved.name
+          end
+          OutputInfo.new(configured.index, configured.output_type, name, renamed)
         end
         @current_output = @configured_current_output unless @output_list.any? { |entry| entry.index == @current_output }
       end

@@ -43,6 +43,8 @@ describe AudioOutput do
     output = audio_outputs.last
     output.to_tlv(nil).as_structure.keys.should eq([0_u8, 1_u8, 2_u8])
     AudioOutput::OutputInfo.from_tlv(output.to_tlv(nil)).should eq(output)
+    AudioOutput::OutputInfo.new(2_u8, AudioOutput::OutputType::Hdmi, "Renamed", true)
+      .to_tlv(nil).as_structure.keys.should eq([0_u8, 1_u8, 2_u8])
     AudioOutput::SelectOutputRequest.new(2_u8).to_tlv(nil).as_structure.keys.should eq([0_u8])
     AudioOutput::RenameOutputRequest.new(2_u8, "Bar").to_tlv(nil).as_structure.keys.should eq([0_u8, 1_u8])
   end
@@ -126,6 +128,26 @@ describe AudioOutput do
     restored.output_list.size.should eq(1)
     restored.output_list.first.output_type.should eq(AudioOutput::OutputType::Bt)
     restored.output_list.first.name.should eq("Bluetooth")
+  end
+
+  it "uses a new host default name unless the user renamed that output" do
+    original = build(AudioOutput, output_list: audio_outputs, current_output: 0_u8,
+      feature_map: AudioOutput::Feature::NameUpdates)
+    saved_default = original.save_state.as(Matter::Storage::Document)
+    saved_default["output_list"].as(Array(Matter::Storage::Type)).first
+      .as(Matter::Storage::Document).delete("user_renamed")
+    changed = [AudioOutput::OutputInfo.new(0_u8, AudioOutput::OutputType::Internal, "New speakers"), audio_outputs.last]
+    restored_default = build(AudioOutput, output_list: changed, current_output: 0_u8,
+      feature_map: AudioOutput::Feature::NameUpdates)
+    restored_default.restore_state(saved_default)
+    restored_default.output_list.first.name.should eq("New speakers")
+
+    expect_success(rename_request(original, 0_u8, "My speakers"))
+    saved_rename = original.save_state.as(Matter::Storage::Document)
+    restored_rename = build(AudioOutput, output_list: changed, current_output: 0_u8,
+      feature_map: AudioOutput::Feature::NameUpdates)
+    restored_rename.restore_state(saved_rename)
+    restored_rename.output_list.first.name.should eq("My speakers")
   end
 
   it "reapplies the restored physical route when the host callback is registered" do
