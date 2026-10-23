@@ -378,6 +378,13 @@ administrator-readable allowed vendor list. The host reports changes in the
 app's visible/focused/running state through `update_status`; the status starts
 `Stopped` after each process restart. The
 `examples/matter_content_app_device.cr` example shows this configuration.
+Basic Video Player endpoints can add the provisional Matter 1.6
+`Cluster::ContentControl` server. The supported BlockUnrated, rating, channel,
+and application features retain policy across restart; the host calls
+`playback_allowed?` and reacts to `on_policy_changed` to stop disallowed
+playback. See [the Content Control guide](docs/content-control.md) and
+`examples/matter_content_control_device.cr`.
+
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
 Temperature Measurement reports Matter 1.6 revision 6. Its fixed minimum and
@@ -1235,8 +1242,8 @@ The optional adapter also registers `sqlite:<path>` with `Storage::Migrator`,
 so applications that require it can copy existing stores into SQLite. SQLite
 uses a versioned SQL schema and a collision-free tagged JSON document encoding.
 SQL operations use transactions, including savepoints for nested transactions;
-an exception rolls back its transaction. Its common SQL layer is designed for
-a future PostgreSQL adapter. The adapter opens the file
+an exception rolls back its transaction. SQLite and PostgreSQL share the same
+SQL storage layer. The SQLite adapter opens the file
 with SQLite WAL mode, full sync, and a five-second busy timeout.
 On Windows, the native SQLite import library and DLL must also be installed;
 for example, `vcpkg install sqlite3:x64-windows`, with the installed `lib`

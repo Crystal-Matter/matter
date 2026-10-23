@@ -94,6 +94,13 @@ describe Matter::DeviceType do
       device_type.supports_optional_cluster?(0x0202_u32).should be_true
     end
 
+    it "defines the revision-two Basic Video Player requirements" do
+      device_type = Matter::DeviceType.for(Matter::DeviceType::BASIC_VIDEO_PLAYER)
+      device_type.revision.should eq(2_u16)
+      device_type.required_server_clusters.should eq([0x001D_u32, 0x0006_u32, 0x0506_u32, 0x0509_u32])
+      device_type.supports_optional_cluster?(0x050F_u32).should be_true
+    end
+
     it "checks cluster requirements" do
       device_type = Matter::DeviceType.on_off_light
 
