@@ -12,6 +12,7 @@ module MatterApplianceModes
   alias OperationalState = Matter::Cluster::OperationalState
   alias Status = Matter::InteractionModel::Status
   alias EnergyMode = Matter::Cluster::DeviceEnergyManagementMode
+  alias EvseMode = Matter::Cluster::EnergyEvseMode
 
   DISHWASHER_MODES = [
     ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(DishwasherMode::ModeTag::Normal.value)]),
@@ -35,6 +36,13 @@ module MatterApplianceModes
       [ModeBase::Tag.new(EnergyMode::ModeTag::GridOptimization.value)]),
   ]
 
+  EVSE_MODES = [
+    ModeBase::Option.new("Manual", 0_u8,
+      [ModeBase::Tag.new(EvseMode::ModeTag::Manual.value)]),
+    ModeBase::Option.new("Time of use", 1_u8,
+      [ModeBase::Tag.new(EvseMode::ModeTag::TimeOfUse.value)]),
+  ]
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -54,6 +62,7 @@ module MatterApplianceModes
       cluster MicrowaveOvenControl, mode_cluster: microwave_mode, max_cook_time: 3600_u32,
         add_more_time: true, as: :microwave_control
       cluster EnergyMode, supported_modes: ENERGY_MODES, current_mode: 0_u8
+      cluster EvseMode, supported_modes: EVSE_MODES, current_mode: 0_u8
     end
 
     endpoint 2, device_type: Matter::DeviceType::MICROWAVE_OVEN do
