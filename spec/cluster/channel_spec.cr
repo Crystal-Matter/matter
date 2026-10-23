@@ -34,6 +34,21 @@ describe Channel do
       Channel::ChangeChannelByNumberRequest.new(13_u16, 0_u16)), IMCode::NotFound)
   end
 
+  it "retains the tuned channel when its lineup metadata changes" do
+    original = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
+    cluster = build(Channel, feature_map: Channel::Feature::ChannelList, channels: [original])
+    cluster.on_select { |_channel| true }
+    expect_status(invoke(cluster, Channel::CMD_CHANGE_CHANNEL_BY_NUMBER,
+      Channel::ChangeChannelByNumberRequest.new(7_u16, 1_u16)), IMCode::Success)
+
+    renamed = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven HD")
+    cluster.update_channels([renamed])
+    cluster.current_channel.should eq(renamed)
+
+    cluster.update_channels([Channel::ChannelInfo.new(9_u16, 0_u16, "Nine")])
+    cluster.current_channel.should be_nil
+  end
+
   it "does not claim a tune succeeded without a host handler" do
     channel = Channel::ChannelInfo.new(7_u16, 1_u16, "Seven")
     cluster = build(Channel, channels: [channel])
