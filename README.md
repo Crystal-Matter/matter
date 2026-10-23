@@ -307,6 +307,12 @@ valid CurrentMode across restart. The appliance can accept or refuse changes
 through `on_change_to_mode`. The synthetic refrigerator fixture exposes it
 alongside `RefrigeratorAlarm`.
 
+`Cluster::DeviceEnergyManagementMode` is the Matter 1.6 revision 2 Mode Base
+derivation for No, Device, Local, and Grid Optimization modes. It uses the same
+fixed catalogue, host transition callback, and persisted CurrentMode behavior.
+The deprecated OnOff dependency, StartUpMode, and OnMode are absent. The
+synthetic appliance-mode fixture exercises it with chip-tool.
+
 `Cluster::RefrigeratorAlarm` reports the Matter 1.6 DoorOpen alarm after the
 appliance's chosen open duration. Its `Mask`, `State`, and fixed `Supported`
 attributes and `Notify` event follow Alarm Base. The derived cluster does not

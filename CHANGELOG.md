@@ -73,6 +73,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checks, controller writes, and CurrentConditionsChanged events. Extend the
   synthetic utility meter and official chip-tool coverage.
 
+### Device Energy Management Mode
+
+- Add the Matter 1.6 revision 2 Mode Base derivation with standard energy
+  optimization tags, fixed mode catalogue, persisted CurrentMode and host
+  transition callback. Extend the synthetic appliance-mode chip-tool fixture.
+
 ### Energy Preference
 
 - Add the Matter 1.6 revision 1 Energy Preference server with EnergyBalance

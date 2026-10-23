@@ -90,4 +90,18 @@ describe "Matter 1.6 Dishwasher and Laundry Washer Mode interoperability" do
     read_int(device, "operationalstate", "countdown-time", "CountdownTime", 2).should eq(120_i64)
     read_int(device, "microwaveovencontrol", "power-setting", "PowerSetting", 2).should eq(50_i64)
   end
+
+  it "changes and retains Device Energy Management Mode without OnOff features" do
+    cluster = "deviceenergymanagementmode"
+    read_int(device, cluster, "cluster-revision", "ClusterRevision", 1).should eq(2_i64)
+    read_int(device, cluster, "feature-map", "FeatureMap", 1).should eq(0_i64)
+    read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(0_i64)
+    expect_success(device.read(cluster, "supported-modes", 1)).output.should contain("Grid optimization")
+
+    expect_success(device.invoke(cluster, "change-to-mode", ["7"], endpoint: 1)).int("status").should eq(1_i64)
+    expect_success(device.invoke(cluster, "change-to-mode", ["1"], endpoint: 1)).int("status").should eq(0_i64)
+    read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(1_i64)
+    device.restart!
+    read_int(device, cluster, "current-mode", "CurrentMode", 1).should eq(1_i64)
+  end
 end
