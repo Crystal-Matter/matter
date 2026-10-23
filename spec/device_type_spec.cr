@@ -83,6 +83,17 @@ describe Matter::DeviceType do
       device_type.supports_optional_cluster?(0x0402_u32).should be_true
     end
 
+    it "defines the Matter 1.6 Microwave Oven with its required clusters and countdown" do
+      device_type = Matter::DeviceType.for(Matter::DeviceType::MICROWAVE_OVEN)
+
+      device_type.name.should eq("Microwave Oven")
+      device_type.revision.should eq(2_u16)
+      device_type.required_server_clusters.should eq([0x001D_u32, 0x0060_u32, 0x005E_u32, 0x005F_u32])
+      device_type.required_server_attributes[0x0060_u32].should eq([0x0002_u32])
+      device_type.supports_optional_cluster?(0x0003_u32).should be_true
+      device_type.supports_optional_cluster?(0x0202_u32).should be_true
+    end
+
     it "checks cluster requirements" do
       device_type = Matter::DeviceType.on_off_light
 

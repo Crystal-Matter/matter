@@ -76,4 +76,18 @@ describe "Matter 1.6 Dishwasher and Laundry Washer Mode interoperability" do
     read_int(device, "microwaveovencontrol", "cook-time", "CookTime", 1).should eq(150_i64)
     read_int(device, "microwaveovencontrol", "power-setting", "PowerSetting", 1).should eq(50_i64)
   end
+
+  it "exposes a conforming Microwave Oven device endpoint" do
+    expect_success(device.read("descriptor", "device-type-list", 2)).int("DeviceType").should eq(0x0079_i64)
+    read_int(device, "operationalstate", "countdown-time", "CountdownTime", 2).should eq(0_i64)
+    read_int(device, "operationalstate", "operational-state", "OperationalState", 2).should eq(0_i64)
+    read_int(device, "microwaveovenmode", "current-mode", "CurrentMode", 2).should eq(0_i64)
+    read_int(device, "microwaveovencontrol", "cook-time", "CookTime", 2).should eq(30_i64)
+
+    expect_success(device.chip("any", "command-by-id", "0x5f", "0x0",
+      %({"0": "u:1", "1": "u:120", "2": "u:50"}), device.node, "2"))
+    read_int(device, "microwaveovenmode", "current-mode", "CurrentMode", 2).should eq(1_i64)
+    read_int(device, "operationalstate", "countdown-time", "CountdownTime", 2).should eq(120_i64)
+    read_int(device, "microwaveovencontrol", "power-setting", "PowerSetting", 2).should eq(50_i64)
+  end
 end

@@ -344,6 +344,12 @@ and must provide callbacks for physical changes. PowerInWatts remains
 provisional and is not advertised. The synthetic appliance example exercises
 these commands through official chip-tool.
 
+`DeviceType::MICROWAVE_OVEN` (Matter 1.6 revision 2) requires Operational
+State, Microwave Oven Mode, and Microwave Oven Control on one endpoint. The
+Operational State instance must expose CountdownTime and its
+OperationCompletion event. The appliance example includes a real Microwave
+Oven endpoint alongside its synthetic cluster test endpoint.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
