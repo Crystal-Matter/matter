@@ -9,13 +9,23 @@ module MatterContentApp
   class AccountHost < AccountLogin::Host
     TEMP_ACCOUNT_IDENTIFIER = "crystal-radio-user"
     SETUP_PIN               = "12345678"
+    IDENTIFIER_LIFETIME     = 10.minutes
+
+    @issued_at : Time? = nil
 
     def setup_pin(identifier : String, fabric_index : UInt8) : String?
-      SETUP_PIN if identifier == TEMP_ACCOUNT_IDENTIFIER
+      return unless identifier == TEMP_ACCOUNT_IDENTIFIER
+      issued_at = @issued_at
+      return if issued_at && Time.utc - issued_at >= IDENTIFIER_LIFETIME
+      @issued_at ||= Time.utc
+      SETUP_PIN
     end
 
     def login(identifier : String, pin : String, node : UInt64?, fabric_index : UInt8) : Bool
-      identifier == TEMP_ACCOUNT_IDENTIFIER && pin == SETUP_PIN
+      issued_at = @issued_at
+      return false unless issued_at
+      identifier == TEMP_ACCOUNT_IDENTIFIER && pin == SETUP_PIN &&
+        Time.utc - issued_at < IDENTIFIER_LIFETIME
     end
 
     def logout(node : UInt64?, fabric_index : UInt8) : Bool
