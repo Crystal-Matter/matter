@@ -377,10 +377,13 @@ application may set it when it knows when the resource changed.
 
 Water Heater Mode and Water Heater Management expose Matter 1.6 appliance
 control on a Thermostat endpoint. Configure Mode with at least an Off and a
-Manual option, then register `on_change_to_mode` so the host can accept or
-reject transitions. Management reports heat-source demand, tank percentage,
-and estimated heat through host setters. Register `on_boost` and
-`on_cancel_boost` before accepting remote Boost commands; accepted boosts
+Manual option; mode labels and tag sets must be distinct, and manufacturer
+tags use values 0x8000–0xBFFF. Register `on_change_to_mode` so the host can
+accept or reject transitions. On restart, a saved mode that is no longer
+supported falls back to the host's configured mode. Management reports
+heat-source demand, tank percentage, and estimated heat through host setters.
+Register `on_boost` and `on_cancel_boost` before accepting remote Boost
+commands; accepted boosts
 raise revision-two events and time out after their requested duration. The
 server logs a host cancellation failure at timeout and still ends the protocol
 boost state. The optional EnergyManagement and TankPercent features gate

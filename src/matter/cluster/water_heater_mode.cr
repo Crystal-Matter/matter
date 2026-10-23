@@ -1,4 +1,4 @@
-require "./cluster"
+require "./mode_base"
 
 module Matter
   module Cluster
@@ -6,12 +6,10 @@ module Matter
     class WaterHeaterMode < Base
       cluster 0x009E, revision: 1
 
-      MIN_SUPPORTED_MODES =   2
-      MAX_SUPPORTED_MODES = 255
-      MIN_MODE_TAGS       =   1
-      MAX_MODE_TAGS       =   8
-      MAX_LABEL_BYTES     =  64
-      MAX_STATUS_BYTES    =  64
+      MIN_MODE_TAGS    =  1
+      MAX_MODE_TAGS    =  8
+      MAX_LABEL_BYTES  = 64
+      MAX_STATUS_BYTES = 64
 
       enum Tag : UInt16
         Auto      = 0x0000
@@ -128,18 +126,19 @@ module Matter
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @supported_modes : Array(ModeOption), @current_mode : UInt8)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        unless (MIN_SUPPORTED_MODES..MAX_SUPPORTED_MODES).includes?(@supported_modes.size)
-          raise ArgumentError.new("SupportedModes requires 2 to 255 entries")
+        shared_options = @supported_modes.map do |option|
+          tags = option.mode_tags.map { |tag| ModeBase::Tag.new(tag.value, tag.mfg_code) }
+          ModeBase::Option.new(option.label, option.mode, tags)
         end
-        ids = @supported_modes.map(&.mode)
-        raise ArgumentError.new("duplicate mode ID") if ids.uniq.size != ids.size
+        ModeBase.validate_modes!(shared_options, @current_mode,
+          [Tag::Off.value, Tag::Manual.value, Tag::Timed.value])
         {Tag::Off, Tag::Manual}.each do |required|
           unless @supported_modes.any? { |mode| mode.mode_tags.any? { |tag| tag.mfg_code.nil? && tag.value == required.value } }
             raise ArgumentError.new("SupportedModes requires #{required} tag")
           end
         end
-        validate_current_mode!(@current_mode)
         @supported_modes = @supported_modes.dup
+        @configured_current_mode = @current_mode
       end
 
       def supported_modes : Array(ModeOption)
@@ -173,6 +172,10 @@ module Matter
 
       private def validate_current_mode!(mode : UInt8) : Nil
         raise ArgumentError.new("CurrentMode is absent from SupportedModes") unless mode_supported?(mode)
+      end
+
+      private def after_restore_state : Nil
+        @current_mode = @configured_current_mode unless mode_supported?(@current_mode)
       end
 
       private def reject_fixed_modes!(_modes) : Nil

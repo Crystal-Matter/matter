@@ -47,6 +47,24 @@ describe "Matter 1.6 Water Heater Mode" do
     restored.current_mode.should eq(1_u8)
   end
 
+  it "restores a mode only while it remains in the host's supported modes" do
+    saved_mode = build(HeaterMode, supported_modes: heater_modes, current_mode: 1_u8)
+    saved = saved_mode.save_state.as(Matter::Storage::Document)
+    updated_modes = [
+      heater_modes.first,
+      HeaterMode::ModeOption.new("Manual", 2_u8, [HeaterMode::ModeTag.new(HeaterMode::Tag::Manual)]),
+    ]
+
+    restored = build(HeaterMode, supported_modes: updated_modes, current_mode: 2_u8)
+    restored.restore_state(saved)
+    restored.current_mode.should eq(2_u8)
+
+    still_supported = build(HeaterMode, supported_modes: updated_modes, current_mode: 2_u8)
+    still_supported.restore_state(build(HeaterMode, supported_modes: heater_modes, current_mode: 0_u8)
+      .save_state.as(Matter::Storage::Document))
+    still_supported.current_mode.should eq(0_u8)
+  end
+
   it "rejects conflicting primary tags and protects fixed mode configuration" do
     expect_raises(ArgumentError) do
       HeaterMode::ModeOption.new("Invalid", 3_u8, [
@@ -58,6 +76,62 @@ describe "Matter 1.6 Water Heater Mode" do
     expect_raises(ArgumentError) { mode.supported_modes = [] of HeaterMode::ModeOption }
     mode.supported_modes.clear
     mode.supported_modes.size.should eq(2)
+  end
+
+  it "rejects duplicate mode labels and equivalent tag sets in any order" do
+    duplicate_labels = [
+      HeaterMode::ModeOption.new("Same", 0_u8, [HeaterMode::ModeTag.new(HeaterMode::Tag::Off)]),
+      HeaterMode::ModeOption.new("Same", 1_u8, [HeaterMode::ModeTag.new(HeaterMode::Tag::Manual)]),
+    ]
+    expect_raises(ArgumentError) { build(HeaterMode, supported_modes: duplicate_labels, current_mode: 0_u8) }
+
+    off = HeaterMode::ModeTag.new(HeaterMode::Tag::Off)
+    auto = HeaterMode::ModeTag.new(HeaterMode::Tag::Auto)
+    equivalent_tags = [
+      HeaterMode::ModeOption.new("Off A", 0_u8, [off, auto]),
+      HeaterMode::ModeOption.new("Manual", 1_u8, [HeaterMode::ModeTag.new(HeaterMode::Tag::Manual)]),
+      HeaterMode::ModeOption.new("Off B", 2_u8, [auto, off]),
+    ]
+    expect_raises(ArgumentError) { build(HeaterMode, supported_modes: equivalent_tags, current_mode: 0_u8) }
+  end
+
+  it "rejects duplicate, unknown, and out-of-range manufacturer tags" do
+    duplicate_tags = [
+      HeaterMode::ModeOption.new("Off", 0_u8, [HeaterMode::ModeTag.new(HeaterMode::Tag::Off)]),
+      HeaterMode::ModeOption.new("Manual", 1_u8, [
+        HeaterMode::ModeTag.new(HeaterMode::Tag::Manual),
+        HeaterMode::ModeTag.new(HeaterMode::Tag::Auto),
+        HeaterMode::ModeTag.new(HeaterMode::Tag::Auto),
+      ]),
+    ]
+    expect_raises(ArgumentError) { build(HeaterMode, supported_modes: duplicate_tags, current_mode: 0_u8) }
+
+    unknown_standard = [
+      heater_modes.first,
+      HeaterMode::ModeOption.new("Manual", 1_u8, [
+        HeaterMode::ModeTag.new(HeaterMode::Tag::Manual),
+        HeaterMode::ModeTag.new(0x7000_u16),
+      ]),
+    ]
+    expect_raises(ArgumentError) { build(HeaterMode, supported_modes: unknown_standard, current_mode: 0_u8) }
+
+    invalid_manufacturer = [
+      heater_modes.first,
+      HeaterMode::ModeOption.new("Manual", 1_u8, [
+        HeaterMode::ModeTag.new(HeaterMode::Tag::Manual),
+        HeaterMode::ModeTag.new(0x4002_u16, 0xFFF1_u16),
+      ]),
+    ]
+    expect_raises(ArgumentError) { build(HeaterMode, supported_modes: invalid_manufacturer, current_mode: 0_u8) }
+
+    valid_manufacturer = [
+      heater_modes.first,
+      HeaterMode::ModeOption.new("Manual", 1_u8, [
+        HeaterMode::ModeTag.new(HeaterMode::Tag::Manual),
+        HeaterMode::ModeTag.new(0x8000_u16, 0xFFF1_u16),
+      ]),
+    ]
+    build(HeaterMode, supported_modes: valid_manufacturer, current_mode: 0_u8).supported_modes.size.should eq(2)
   end
 end
 

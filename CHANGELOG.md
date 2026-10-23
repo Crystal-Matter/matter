@@ -86,9 +86,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add Matter 1.6 Water Heater Mode (0x009E, revision 1) and Water Heater
   Management (0x0094, revision 2) servers. The mode server validates required
-  Off/Manual tags, handles ChangeToMode responses, and keeps CurrentMode across
-  restart. Management gates energy and tank percentage fields by feature,
-  validates BoostInfo, and emits BoostStarted/BoostEnded around host-approved
+  Off/Manual tags and shared Mode Base constraints (unique labels and tag sets,
+  standard tag values, and manufacturer tag range). It handles ChangeToMode
+  responses and keeps supported CurrentMode values across restart, falling back
+  to the host's configured mode if a saved value is no longer supported.
+  Management gates energy and tank percentage fields by feature, validates
+  BoostInfo, and emits BoostStarted/BoostEnded around host-approved
   Boost and CancelBoost transitions. A thermostat-backed example exercises
   both clusters with official chip-tool.
 - End an accepted boost and emit BoostEnded at its duration even if the host's
