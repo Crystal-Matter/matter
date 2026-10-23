@@ -213,28 +213,28 @@ module Matter
 
         @[TLV::Field(tag: 0)]
         getter current_state : PlaybackState
-        @[TLV::Field(tag: 1)]
-        getter start_time : UInt64
-        @[TLV::Field(tag: 2)]
-        getter duration : UInt64
-        @[TLV::Field(tag: 3)]
-        getter sampled_position : PlaybackPosition
-        @[TLV::Field(tag: 4)]
-        getter playback_speed : Float32
-        @[TLV::Field(tag: 5)]
-        getter seek_range_end : UInt64
-        @[TLV::Field(tag: 6)]
-        getter seek_range_start : UInt64
+        @[TLV::Field(tag: 1, optional: true)]
+        getter start_time : UInt64?
+        @[TLV::Field(tag: 2, optional: true)]
+        getter duration : UInt64?
+        @[TLV::Field(tag: 3, optional: true)]
+        getter sampled_position : PlaybackPosition?
+        @[TLV::Field(tag: 4, optional: true)]
+        getter playback_speed : Float32?
+        @[TLV::Field(tag: 5, optional: true)]
+        getter seek_range_end : UInt64?
+        @[TLV::Field(tag: 6, optional: true)]
+        getter seek_range_start : UInt64?
         @[TLV::Field(tag: 7, optional: true)]
         getter data : Bytes?
-        @[TLV::Field(tag: 8)]
-        getter? audio_advance_unmuted : Bool
+        @[TLV::Field(tag: 8, optional: true)]
+        getter? audio_advance_unmuted : Bool?
 
-        def initialize(@current_state : PlaybackState, @start_time : UInt64 = 0_u64,
-                       @duration : UInt64 = 0_u64, @sampled_position : PlaybackPosition = PlaybackPosition.new(0_u64, nil),
-                       @playback_speed : Float32 = 0_f32, @seek_range_end : UInt64 = 0_u64,
-                       @seek_range_start : UInt64 = 0_u64, @data : Bytes? = nil,
-                       @audio_advance_unmuted : Bool = false)
+        def initialize(@current_state : PlaybackState, @start_time : UInt64? = nil,
+                       @duration : UInt64? = nil, @sampled_position : PlaybackPosition? = nil,
+                       @playback_speed : Float32? = nil, @seek_range_end : UInt64? = nil,
+                       @seek_range_start : UInt64? = nil, @data : Bytes? = nil,
+                       @audio_advance_unmuted : Bool? = nil)
         end
       end
 
@@ -448,9 +448,15 @@ module Matter
       end
 
       private def emit_current_state(data : Bytes? = nil, audio_advance_unmuted : Bool = false) : Nil
-        emit_state_changed(StateChangedEvent.new(@current_state, @start_time || 0_u64, @duration || 0_u64,
-          @sampled_position || PlaybackPosition.new(0_u64, nil), @playback_speed,
-          @seek_range_end || 0_u64, @seek_range_start || 0_u64, data, audio_advance_unmuted))
+        advanced_seek = @feature_map.advanced_seek?
+        emit_state_changed(StateChangedEvent.new(@current_state,
+          advanced_seek ? (@start_time || 0_u64) : nil,
+          advanced_seek ? (@duration || 0_u64) : nil,
+          advanced_seek ? (@sampled_position || PlaybackPosition.new(0_u64, nil)) : nil,
+          advanced_seek ? @playback_speed : nil,
+          advanced_seek ? (@seek_range_end || 0_u64) : nil,
+          advanced_seek ? (@seek_range_start || 0_u64) : nil,
+          data, @feature_map.audio_advance? ? audio_advance_unmuted : nil))
       end
 
       private def optional_command_supported?(id : UInt32) : Bool

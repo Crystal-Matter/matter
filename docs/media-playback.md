@@ -24,6 +24,8 @@ Stop state only after `Success`. The host uses `report_state`,
 `update_seek_range`, `update_audio_tracks`, and `update_text_tracks` to publish
 its actual player state. Changes to any supported attribute emit the optional
 `StateChanged` event; grouped host updates emit one event with the final values.
+The event includes seek fields only with `AdvancedSeek` and
+`AudioAdvanceUnmuted` only with `AudioAdvance`.
 
 The [synthetic player](../examples/matter_media_playback_device.cr) is a wire
 fixture: it advertises all five features, a 120-second media item, an English

@@ -53,7 +53,7 @@ describe Matter::Cluster::MediaPlayback do
     expect_raises(ArgumentError, /absent/) { cluster.update_audio_tracks([english], french) }
   end
 
-  it "emits the revision-two StateChanged event with nullable seek fields" do
+  it "omits feature-gated StateChanged fields when those features are disabled" do
     cluster = build(Playback)
     events = [] of TLV::Any
     cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
@@ -62,16 +62,34 @@ describe Matter::Cluster::MediaPlayback do
       nil
     end
     cluster.report_state(Playback::PlaybackState::Buffering)
+    events.last.as_structure.keys.should eq([0_u8])
     payload = Playback::StateChangedEvent.from_tlv(events.last)
     payload.current_state.should eq(Playback::PlaybackState::Buffering)
-    payload.start_time.should eq(0_u64)
-    payload.duration.should eq(0_u64)
-    payload.sampled_position.updated_at.should eq(0_u64)
-    payload.sampled_position.position.should be_nil
-    payload.audio_advance_unmuted?.should be_false
+    payload.start_time.should be_nil
+    payload.duration.should be_nil
+    payload.sampled_position.should be_nil
+    payload.audio_advance_unmuted?.should be_nil
     events.size.should eq(1)
     cluster.current_state = Playback::PlaybackState::Paused
     events.size.should eq(2)
+  end
+
+  it "includes AdvancedSeek fields and AudioAdvanceUnmuted only with their features" do
+    cluster = build(Playback, feature_map: Playback::Feature::AdvancedSeek)
+    events = [] of TLV::Any
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, _event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << data
+      nil
+    end
+    cluster.report_state(Playback::PlaybackState::Playing)
+    events.last.as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8, 4_u8, 5_u8, 6_u8])
+    cluster_with_aa = build(Playback, feature_map: Playback::Feature::AdvancedSeek | Playback::Feature::VariableSpeed | Playback::Feature::AudioAdvance)
+    cluster_with_aa.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, _event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << data
+      nil
+    end
+    cluster_with_aa.report_state(Playback::PlaybackState::Playing, audio_advance_unmuted: true)
+    events.last.as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8, 4_u8, 5_u8, 6_u8, 8_u8])
   end
 
   it "rejects invalid duration and impossible reported speed without changing state" do
