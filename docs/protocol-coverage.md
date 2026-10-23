@@ -80,7 +80,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0061 | RVC Operational State Cluster | 3 | — | cluster absent |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — |
 | 0x0064 | Temperature Alarm Cluster | 1 | 1 | — |
-| 0x0065 | Groupcast Cluster | 1 | 1 | — |
+| 0x0065 | Groupcast Cluster | 1 | 1 | opt-in Listener, Sender, and PerGroup; provisional |
 | 0x0071 | HEPA Filter Monitoring | 1 | 1 | — |
 | 0x0072 | Activated Carbon Filter Monitoring | 1 | 1 | — |
 | 0x0079 | Water Tank Level Monitoring | 1 | 1 | — |
@@ -88,7 +88,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0081 | Valve Configuration and Control Cluster | 1 | 1 | — |
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — |
-| 0x0094 | Water Heater Management Cluster | 2 | 2 | — |
+| 0x0094 | Water Heater Management Cluster | 2 | 2 | Host controls thermostat, heat source, and boost acceptance |
 | 0x0095 | Commodity Price Cluster | 4 | — | cluster absent |
 | 0x0097 | Messages Cluster | 3 | — | cluster absent |
 | 0x0098 | Device Energy Management Cluster | 4 | — | cluster absent |
@@ -96,25 +96,25 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x009B | Energy Preference Cluster | 1 | — | cluster absent |
 | 0x009C | Power Topology Cluster | 1 | 1 | — |
 | 0x009D | Energy EVSE Mode Cluster | 2 | — | cluster absent |
-| 0x009E | Water Heater Mode Cluster | 1 | 1 | — |
+| 0x009E | Water Heater Mode Cluster | 1 | 1 | Mode Base response and required Off/Manual tags; host controls transitions |
 | 0x009F | Device Energy Management Mode Cluster | 2 | — | cluster absent |
 | 0x00A0 | Electrical Grid Conditions Cluster | 1 | — | cluster absent |
-| 0x0101 | Door Lock Cluster | 10 | 9 | — |
-| 0x0102 | Window Covering Cluster | 8 | 8 | — |
+| 0x0101 | Door Lock Cluster | 10 | 9 | SoundVolume and OperatingModes behavior corrected; durable credentials and Aliro support remain |
+| 0x0102 | Window Covering Cluster | 8 | 8 | Actuator position reporting remains application-owned |
 | 0x0104 | Closure Control Cluster | 1 | — | cluster absent |
 | 0x0105 | Closure Dimension Cluster | 1 | — | cluster absent |
 | 0x0150 | Service Area Cluster | 2 | — | cluster absent |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | — | cluster absent |
-| 0x0201 | Thermostat Cluster | 11 | 9 | — |
-| 0x0202 | Fan Control Cluster | 6 | 6 | — |
+| 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower feature, shared-limit, and Auto deadband behavior covered; other revision 11 gaps remain |
+| 0x0202 | Fan Control Cluster | 6 | 6 | feature-gated attributes and Step; only FanMode nonvolatile |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — |
-| 0x0400 | Illuminance Measurement Cluster | 5 | 5 | — |
+| 0x0400 | Illuminance Measurement Cluster | 5 | 5 | Fixed sensor configuration, nullable bounds and reading, optional Tolerance/LightSensorType; host owns sampling |
 | 0x0402 | Temperature Measurement Cluster | 6 | 6 | — |
-| 0x0403 | Pressure Measurement Cluster | 5 | 5 | — |
+| 0x0403 | Pressure Measurement Cluster | 5 | 5 | Extended feature, optional tolerances, fixed sensor bounds and scale |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — |
-| 0x0405 | Relative Humidity Measurement | 5 | 5 | — |
-| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — |
+| 0x0405 | Relative Humidity Measurement | 5 | 5 | Nullable immutable limits, fixed optional tolerance, and host reading validation |
+| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | HoldTime limits and synchronized legacy delay, modality-gated timing, optional OccupancyEvent; entry threshold filtering remains device-owned |
 | 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — |
 | 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — |
 | 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — |
@@ -125,8 +125,8 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042D | PM10 Concentration Measurement | 5 | 5 | — |
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — |
-| 0x0430 | Soil Measurement Cluster | 1 | 1 | — |
-| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — |
+| 0x0430 | Soil Measurement Cluster | 1 | 1 | Fixed accuracy limits and nullable validated percentage reading; Soil Sensor chip-tool E2E |
+| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | HA-only provisional slice; OC, OI, AUD and PRED remain unavailable |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — |
@@ -134,13 +134,13 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0504 | Channel Cluster | 2 | — | cluster absent |
 | 0x0505 | Target Navigator Cluster | 2 | 2 | — |
 | 0x0506 | Media Playback Cluster | 2 | 2 | — |
-| 0x0507 | Media Input Cluster | 1 | 1 | — |
-| 0x0508 | Low Power Cluster | 1 | 1 | — |
+| 0x0507 | Media Input Cluster | 1 | 1 | host-owned source switching and status display |
+| 0x0508 | Low Power Cluster | 1 | 1 | host-owned physical sleep after InvokeResponse |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — |
 | 0x050A | Content Launcher Cluster | 2 | — | cluster absent |
 | 0x050B | Audio Output Cluster | 1 | 1 | — |
 | 0x050C | Application Launcher Cluster | 2 | — | cluster absent |
-| 0x050D | Application Basic Cluster | 1 | 1 | — |
+| 0x050D | Application Basic Cluster | 1 | 1 | Fixed identity, administrator-only AllowedVendorList, volatile host status; Content App chip-tool E2E |
 | 0x050E | Account Login Cluster | 2 | — | cluster absent |
 | 0x050F | Content Control Cluster | 1 | — | cluster absent |
 | 0x0510 | Content App Observer Cluster | 1 | — | cluster absent |

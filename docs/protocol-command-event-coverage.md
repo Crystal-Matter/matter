@@ -86,7 +86,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0403 | Pressure Measurement Cluster | 5 | 5 | — | — |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 5 | — | — |
-| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | — |
+| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | OccupancyChanged when OccupancyEvent is selected |
 | 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — | — |
 | 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — | — |
 | 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — | — |
