@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock duplicate credential data
+
+- Reject duplicate PIN or RFID data in a different slot of the same credential
+  type for SetCredential Add and Modify. A rejected write leaves users and
+  credentials unchanged. Reject saved databases containing duplicate PIN or
+  RFID data before changing live lock state; affected hosts must remove the
+  duplicate records before restoring that saved database.
+
 ### Door Lock credential rules and defaults
 
 - Match the Matter 1.6 defaults for one-touch locking, inside status LED,
