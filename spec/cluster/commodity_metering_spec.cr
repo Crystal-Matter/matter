@@ -42,7 +42,7 @@ describe CommodityMeter do
     changed = capture_changes(cluster) do
       cluster.publish(source, 100_u32, CommodityMeter::TariffUnit::KWh, 2_u16)
     end
-    changed.map(&.attribute).sort.should eq([
+    changed.map(&.attribute).sort!.should eq([
       CommodityMeter::ATTR_METERED_QUANTITY,
       CommodityMeter::ATTR_METERED_QUANTITY_TIMESTAMP,
       CommodityMeter::ATTR_TARIFF_UNIT,

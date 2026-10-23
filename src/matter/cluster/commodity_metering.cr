@@ -107,7 +107,7 @@ module Matter
       private def validate_reading!(quantities : Array(MeteredQuantity)?, timestamp : UInt32?,
                                     unit : TariffUnit?, maximum : UInt16?) : Nil
         present = {!quantities.nil?, !timestamp.nil?, !unit.nil?, !maximum.nil?}
-        raise ArgumentError.new("Commodity Metering requires a complete reading") if present.any? && !present.all?
+        raise ArgumentError.new("Commodity Metering requires a complete reading") unless present.none? || present.all?
         return unless quantities && maximum
         raise ArgumentError.new("MaximumMeteredQuantities must be at least one") if maximum.zero?
         raise ArgumentError.new("MeteredQuantity exceeds MaximumMeteredQuantities") if quantities.size > maximum
