@@ -49,6 +49,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool.
 - Copy ChannelList on host assignment and return isolated reader copies, keeping
   advertised channels aligned with the validated tuning catalogue and data version.
+  Direct host assignments also replace the tuning catalogue and reconcile the
+  current channel by channel number.
+- Reject host ProgramGuideResponse paging tokens beyond the Matter 1.6
+  8192-byte limit before encoding a command response.
 
 ### Joint Fabric transfer recovery
 

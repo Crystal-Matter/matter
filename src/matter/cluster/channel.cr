@@ -11,6 +11,8 @@ module Matter
       feature :electronic_guide, bit: 2
       feature :record_program, bit: 3
 
+      MAX_PAGE_TOKEN_BYTES = 8192
+
       enum ChannelType : UInt8
         Satellite   = 0
         Cable       = 1
@@ -375,11 +377,29 @@ module Matter
       # The host can replace an external lineup without exposing ChannelList.
       # The tuning catalog and advertised attribute must stay in sync.
       def update_channels(channels : Array(ChannelInfo)) : Nil
+        if @feature_map.channel_list?
+          self.channel_list = channels
+        else
+          current = @current_channel
+          install_channels!(channels)
+          reconcile_current_channel!(current)
+        end
+      end
+
+      def channel_list=(channels : Array(ChannelInfo)) : Nil
+        current = @current_channel
+        install_channels!(channels)
+        previous_def(@channels.dup)
+        reconcile_current_channel!(current)
+      end
+
+      private def install_channels!(channels : Array(ChannelInfo)) : Nil
         numbers = channels.map { |channel| {channel.major_number, channel.minor_number} }
         raise ArgumentError.new("duplicate channel numbers") unless numbers.uniq.size == numbers.size
-        current = @current_channel
         @channels = channels.dup
-        self.channel_list = @channels.dup if @feature_map.channel_list?
+      end
+
+      private def reconcile_current_channel!(current : ChannelInfo?) : Nil
         if current
           self.current_channel = @channels.find do |channel|
             channel.major_number == current.major_number && channel.minor_number == current.minor_number
@@ -452,6 +472,8 @@ module Matter
         handler = @on_program_guide
         return InteractionModel::Status.invalid_in_state unless handler
         response = handler.call(request)
+        return InteractionModel::Status.failure unless valid_page_token?(response.paging.previous_token) &&
+                                                       valid_page_token?(response.paging.next_token)
         return InteractionModel::Status.failure unless response.program_list.all? { |program| valid_program?(program) }
         response
       end
@@ -489,10 +511,14 @@ module Matter
         return false if (channels = request.channel_list) && channels.size > 255
         return false unless valid_external_ids?(request.external_id_list)
         return false if (data = request.data) && data.size > 8092
-        if token = request.page_token
-          return false if (after = token.after) && after.bytesize > 8192
-          return false if (before = token.before) && before.bytesize > 8192
-        end
+        return false unless valid_page_token?(request.page_token)
+        true
+      end
+
+      private def valid_page_token?(token : PageToken?) : Bool
+        return true unless token
+        return false if (after = token.after) && after.bytesize > MAX_PAGE_TOKEN_BYTES
+        return false if (before = token.before) && before.bytesize > MAX_PAGE_TOKEN_BYTES
         true
       end
 
