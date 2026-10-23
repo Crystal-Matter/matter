@@ -67,14 +67,22 @@ describe "matter_door_lock example" do
     read_int(device, "doorlock", "auto-relock-time", "AutoRelockTime").should eq 30
   end
 
-  # DoorLock keeps no persisted state, so this only checks that the
-  # fabric survives a restart and the lock can still be operated afterwards.
-  it "stays commissioned across a device restart" do
+  it "keeps a commissioned fabric, user, and PIN credential across restart" do
+    credential = %({"credentialType":1,"credentialIndex":1})
+    expect_success(device.invoke("doorlock", "set-user", ["0", "2", "Guest", "222", "1", "0", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "1357", "2", "1", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "1357"]))
+
     device.restart!
     device.operational?.should be_true
     device.restart_log.should_not match(E2E::PAIRING_CODE_RE)
 
-    read_int(device, "doorlock", "lock-state", "LockState").should be_in(0..3)
+    get_user = expect_success(device.invoke("doorlock", "get-user", ["2"]))
+    get_user.value("userName").should eq("Guest"), get_user.output
+    expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_true
+    expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "1357"]))
+    read_int(device, "doorlock", "lock-state", "LockState").should eq unlocked
+
     expect_success(device.invoke("doorlock", "lock-door", options: timed + pin))
     read_int(device, "doorlock", "lock-state", "LockState").should eq locked
   end

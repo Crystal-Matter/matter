@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock credential durability
+
+- Persist Door Lock users, credentials, and schedules with cluster attributes
+  across device restart. Restore fabric attribution and reject malformed
+  tables without applying partial state. A disabled or non-access user's PIN
+  no longer authorizes remote operation. The official chip-tool test provisions
+  a user and PIN, restarts the device, and verifies continued operation.
+
 ### Thermostat LTNE
 
 - Add the Thermostat LocalTemperatureNotExposed feature bit. Host sensor

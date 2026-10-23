@@ -83,6 +83,11 @@ module Matter
     # * `persist_default: value` — for a persisted attribute added to an
     #   existing cluster schema, use this value when an older stored document
     #   lacks the field. The attribute still saves normally thereafter.
+    # * A cluster may define `extend_persisted_state(document)` and
+    #   `restore_persisted_extension(document)` to store command-managed state
+    #   alongside generated attributes. Restore runs after the feature stamp
+    #   check and before attributes are applied; validate the extension before
+    #   mutating live state.
     # * `command id, :name, **options` — see `COMMAND_OPTIONS`. Generates
     #   `CMD_NAME` and dispatches to the handler method `name` (`name(request)`
     #   when `request:` is given), or to `handler:` when that is set. A handler
@@ -858,13 +863,17 @@ module Matter
             end
 
             def save_state : ::Matter::Storage::Document?
-              PersistedState.new(
+              document = PersistedState.new(
                 {% for decl in persisted %}
                   {{ decl[:name].id }}: @{{ decl[:name].id }},
                 {% end %}
                 data_version: @data_version,
                 features: dsl_features,
               ).to_document
+              {% if @type.has_method?("extend_persisted_state") %}
+                extend_persisted_state(document)
+              {% end %}
+              document
             end
 
             # Restores the persisted attributes, ignoring a document saved under
@@ -875,6 +884,9 @@ module Matter
                 {{ log }}.info { "#{name}: persisted state was saved with FeatureMap 0x#{saved_features.to_s(16)}, now 0x#{dsl_features.to_s(16)}; starting fresh" }
                 return
               end
+              {% if @type.has_method?("restore_persisted_extension") %}
+                restore_persisted_extension(document)
+              {% end %}
               {% for decl in persisted %}
                 @{{ decl[:name].id }} = state.{{ decl[:name].id }}
               {% end %}

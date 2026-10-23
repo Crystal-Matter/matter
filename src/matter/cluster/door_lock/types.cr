@@ -363,6 +363,7 @@ module Matter
 
       struct Credential
         include TLV::Serializable
+        include Storage::Record
 
         # The credential type used to authorize the lock operation.
         @[TLV::Field(tag: 0)]

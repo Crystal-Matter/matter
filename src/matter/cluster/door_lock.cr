@@ -147,7 +147,9 @@ module Matter
       event 0x03, :lock_operation_error, priority: :critical
       event 0x04, :lock_user_change, priority: :info, requires: :user
 
-      private struct UserRecord
+      struct UserRecord
+        include Storage::Record
+
         property user_index : UInt16
         property user_name : String
         property user_unique_id : UInt32
@@ -172,7 +174,9 @@ module Matter
         end
       end
 
-      private struct CredentialRecord
+      struct CredentialRecord
+        include Storage::Record
+
         property credential : Credential
         property credential_data : Bytes
         property user_index : UInt16?
@@ -189,9 +193,50 @@ module Matter
         end
       end
 
-      private record WeekDaySchedule, week_day : UInt8, start_hour : UInt8, start_minute : UInt8, end_hour : UInt8, end_minute : UInt8
-      private record YearDaySchedule, local_start_time : UInt32, local_end_time : UInt32
-      private record HolidaySchedule, local_start_time : UInt32, local_end_time : UInt32, operating_mode : OperatingMode
+      record WeekDaySchedule, week_day : UInt8, start_hour : UInt8, start_minute : UInt8, end_hour : UInt8, end_minute : UInt8 do
+        include Storage::Record
+      end
+
+      record YearDaySchedule, local_start_time : UInt32, local_end_time : UInt32 do
+        include Storage::Record
+      end
+
+      record HolidaySchedule, local_start_time : UInt32, local_end_time : UInt32, operating_mode : OperatingMode do
+        include Storage::Record
+      end
+
+      record PersistedWeekDaySchedule, user_index : UInt16, week_day_index : UInt8, schedule : WeekDaySchedule do
+        include Storage::Record
+      end
+
+      record PersistedYearDaySchedule, user_index : UInt16, year_day_index : UInt8, schedule : YearDaySchedule do
+        include Storage::Record
+      end
+
+      record PersistedHolidaySchedule, holiday_index : UInt8, schedule : HolidaySchedule do
+        include Storage::Record
+      end
+
+      struct PersistedDatabase
+        include Storage::Record
+
+        getter users : Array(UserRecord)
+        getter credentials : Array(CredentialRecord)
+        getter week_day_schedules : Array(PersistedWeekDaySchedule)
+        getter year_day_schedules : Array(PersistedYearDaySchedule)
+        getter holiday_schedules : Array(PersistedHolidaySchedule)
+
+        def initialize(
+          @users : Array(UserRecord),
+          @credentials : Array(CredentialRecord),
+          @week_day_schedules : Array(PersistedWeekDaySchedule),
+          @year_day_schedules : Array(PersistedYearDaySchedule),
+          @holiday_schedules : Array(PersistedHolidaySchedule),
+        )
+        end
+      end
+
+      PERSISTED_DATABASE_KEY = "door_lock_database"
 
       @users = {} of UInt16 => UserRecord
       @credentials = {} of Tuple(UInt8, UInt16) => CredentialRecord
@@ -273,6 +318,99 @@ module Matter
             last_modified_fabric_index: @request_fabric_index
           )
         end
+      end
+
+      # The DSL persists writable attributes. Keep the user database in the
+      # same cluster document so a device flush commits the complete lock state.
+      private def extend_persisted_state(document : Storage::Document) : Nil
+        week_days = @week_day_schedules.map do |(user_index, index), schedule|
+          PersistedWeekDaySchedule.new(user_index, index, schedule)
+        end
+        year_days = @year_day_schedules.map do |(user_index, index), schedule|
+          PersistedYearDaySchedule.new(user_index, index, schedule)
+        end
+        holidays = @holiday_schedules.map do |index, schedule|
+          PersistedHolidaySchedule.new(index, schedule)
+        end
+
+        document[PERSISTED_DATABASE_KEY] = PersistedDatabase.new(
+          users: @users.values,
+          credentials: @credentials.values,
+          week_day_schedules: week_days,
+          year_day_schedules: year_days,
+          holiday_schedules: holidays
+        ).to_document
+      end
+
+      # Decode and validate into temporary tables before changing live state.
+      # A document saved by an older version has no database and retains the
+      # constructor's default programming user.
+      private def restore_persisted_extension(document : Storage::Document) : Nil
+        value = document[PERSISTED_DATABASE_KEY]?
+        return unless value
+        database = PersistedDatabase.from_document(value.as?(Storage::Document) ||
+                                                   raise StorageError.new("Invalid persisted Door Lock database"))
+
+        users = {} of UInt16 => UserRecord
+        database.users.each do |user|
+          if !valid_user_index?(user.user_index) || users.has_key?(user.user_index)
+            raise StorageError.new("Invalid or duplicate persisted Door Lock user")
+          end
+          user.credentials = [] of Credential
+          users[user.user_index] = user
+        end
+        raise StorageError.new("Too many persisted Door Lock users") if users.size > @number_of_total_users_supported
+
+        credentials = {} of Tuple(UInt8, UInt16) => CredentialRecord
+        database.credentials.each do |record|
+          key = credential_key(record.credential)
+          if credentials.has_key?(key) || validate_credential_input(record.credential, record.credential_data)
+            raise StorageError.new("Invalid or duplicate persisted Door Lock credential")
+          end
+          if user_index = record.user_index
+            user = users[user_index]? || raise StorageError.new("Persisted Door Lock credential has no user")
+            if user.credentials.size >= @number_of_credentials_supported_per_user
+              raise StorageError.new("Too many persisted Door Lock credentials for user")
+            end
+            user.credentials << record.credential
+            users[user_index] = user
+          end
+          credentials[key] = record
+        end
+
+        week_days = {} of Tuple(UInt16, UInt8) => WeekDaySchedule
+        database.week_day_schedules.each do |entry|
+          key = {entry.user_index, entry.week_day_index}
+          if !users.has_key?(entry.user_index) || !valid_week_day_schedule_index?(entry.week_day_index) || week_days.has_key?(key)
+            raise StorageError.new("Invalid persisted Door Lock week day schedule")
+          end
+          week_days[key] = entry.schedule
+        end
+
+        year_days = {} of Tuple(UInt16, UInt8) => YearDaySchedule
+        database.year_day_schedules.each do |entry|
+          key = {entry.user_index, entry.year_day_index}
+          if !users.has_key?(entry.user_index) || !valid_year_day_schedule_index?(entry.year_day_index) || year_days.has_key?(key) ||
+             entry.schedule.local_start_time >= entry.schedule.local_end_time
+            raise StorageError.new("Invalid persisted Door Lock year day schedule")
+          end
+          year_days[key] = entry.schedule
+        end
+
+        holidays = {} of UInt8 => HolidaySchedule
+        database.holiday_schedules.each do |entry|
+          if !valid_holiday_schedule_index?(entry.holiday_index) || holidays.has_key?(entry.holiday_index) ||
+             entry.schedule.local_start_time >= entry.schedule.local_end_time
+            raise StorageError.new("Invalid persisted Door Lock holiday schedule")
+          end
+          holidays[entry.holiday_index] = entry.schedule
+        end
+
+        @users = users
+        @credentials = credentials
+        @week_day_schedules = week_days
+        @year_day_schedules = year_days
+        @holiday_schedules = holidays
       end
 
       # ------------------------------------------------------------------------
@@ -891,7 +1029,11 @@ module Matter
 
       private def valid_pin?(pin : String) : Bool
         pin_matches_credential = @credentials.values.any? do |credential|
-          credential.credential.credential_type.pin? && String.new(credential.credential_data) == pin
+          next false unless credential.credential.credential_type.pin? && String.new(credential.credential_data) == pin
+          user_index = credential.user_index
+          next false unless user_index
+          user = @users[user_index]?
+          user && user.user_status == UserStatus::OccupiedEnabled && user.user_type != UserType::NonAccessUser
         end
 
         return true if pin_matches_credential
