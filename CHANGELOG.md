@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock verified local credentials
+
+- Require an application supplied, ready local verifier before advertising RFID,
+  fingerprint/finger-vein, or face credentials. A verified reader transaction
+  resolves to an existing credential and user, then follows enabled-user,
+  schedule, expiry, and one-use policy; unverified transactions and direct
+  caller-supplied RFID/biometric operation sources cannot unlock. Add a
+  synthetic RFID reader fixture and official chip-tool coverage without
+  bundling a physical reader implementation.
+
 ### Door Lock duplicate credential data
 
 - Reject duplicate PIN or RFID data in a different slot of the same credential

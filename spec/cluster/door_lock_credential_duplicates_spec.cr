@@ -2,11 +2,22 @@ require "../spec_helper"
 
 private alias DuplicateDoorLock = Matter::Cluster::DoorLock
 
+private class DuplicateTestVerifier < DuplicateDoorLock::LocalCredentialVerifier
+  def ready_for?(type : DuplicateDoorLock::CredentialType) : Bool
+    type.rfid?
+  end
+
+  def authenticate(type : DuplicateDoorLock::CredentialType, transaction : Bytes) : DuplicateDoorLock::LocalAuthenticatedCredential?
+    nil
+  end
+end
+
 private def duplicate_lock : DuplicateDoorLock
   build(DuplicateDoorLock,
     feature_map: DuplicateDoorLock::Feature::PinCredential |
                  DuplicateDoorLock::Feature::RfidCredential |
                  DuplicateDoorLock::Feature::User,
+    local_credential_verifier: DuplicateTestVerifier.new,
     default_pin_code: "9999")
 end
 

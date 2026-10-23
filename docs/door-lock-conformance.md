@@ -31,6 +31,23 @@ or RFID data fails restoration before changing live lock state, so the host
 must correct those records rather than silently assigning one code to two
 users.
 
+RFID and biometric feature bits now require a configured
+`DoorLock::LocalCredentialVerifier` that reports readiness for every advertised
+credential type. A host calls `perform_local_credential_transaction` with an
+opaque physical reader transaction and its credential type; the verifier must
+check the actual reader or biometric result, freshness and replay protection
+before returning an existing credential identity and its enrolled bytes. The
+cluster compares those bytes with the current persisted credential, so a
+reader mapping left behind by a Matter credential update cannot unlock. It
+then checks the user's enabled status,
+schedules, expiry and one-use policy, and emits attributed lock operation or
+error events. A direct call to `unlock(source: Rfid)` or
+`unlock(source: Biometric)` is rejected because a source label is not proof.
+The synthetic RFID fixture uses a test hook to exercise this boundary with
+official chip-tool credential management, restart, state and event reads;
+it is not a production RFID reader. Applications must supply their own trusted
+reader implementation. Aliro BLE/UWB remains gated separately.
+
 The backend contains credential bytes and other device secrets, so deployments
 must protect its files or database with appropriate access controls.
 
