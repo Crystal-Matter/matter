@@ -35,6 +35,10 @@ module Matter
       protected def bind(index : Int32) : String
         "?"
       end
+
+      protected def driver_error?(error : Exception) : Bool
+        error.is_a?(SQLite3::Exception)
+      end
     end
 
     Migrator.register_scheme("sqlite") do |path|

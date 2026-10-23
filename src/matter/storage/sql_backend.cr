@@ -57,6 +57,12 @@ module Matter
 
       protected abstract def bind(index : Int32) : String
 
+      # Driver exceptions need not inherit DB::Error. Keep their recognition in
+      # each optional adapter so this common layer has no driver dependency.
+      protected def driver_error?(error : Exception) : Bool
+        false
+      end
+
       def open? : Bool
         @mutex.synchronize { !@connection.nil? }
       end
@@ -83,12 +89,13 @@ module Matter
             end
           rescue ex
             database.close
-            raise StorageError.new("Could not open SQL storage", ex) if ex.is_a?(DB::Error)
+            raise StorageError.new("Could not open SQL storage", ex) if ex.is_a?(DB::Error) || driver_error?(ex)
             raise ex
           end
         end
-      rescue ex : DB::Error
-        raise StorageError.new("Could not open SQL storage", ex)
+      rescue ex
+        raise StorageError.new("Could not open SQL storage", ex) if ex.is_a?(DB::Error) || driver_error?(ex)
+        raise ex
       end
 
       def close : Nil
@@ -113,8 +120,7 @@ module Matter
         payload = SqlDocumentCodec.encode(Storage.deep_copy(document))
         with_connection do |connection|
           mutate(connection) do
-            connection.exec(delete_sql, collection, id)
-            connection.exec(insert_sql, collection, id, payload)
+            connection.exec(upsert_sql, collection, id, payload)
           end
         end
       end
@@ -209,6 +215,10 @@ module Matter
         "#{insert_sql} ON CONFLICT (collection, id) DO NOTHING"
       end
 
+      private def upsert_sql : String
+        "#{insert_sql} ON CONFLICT (collection, id) DO UPDATE SET payload = EXCLUDED.payload"
+      end
+
       private def mutate(connection : DB::Connection, & : -> Nil) : Nil
         if @current_transaction
           yield
@@ -223,10 +233,11 @@ module Matter
           connection = @connection || raise StorageError.new("SQL storage is not open")
           yield connection
         end
-      rescue ex : DB::Error
-        raise StorageError.new("SQL storage operation failed", ex)
       rescue ex : JSON::ParseException
         raise StorageError.new("Stored SQL document is invalid JSON", ex)
+      rescue ex
+        raise StorageError.new("SQL storage operation failed", ex) if ex.is_a?(DB::Error) || driver_error?(ex)
+        raise ex
       end
     end
   end

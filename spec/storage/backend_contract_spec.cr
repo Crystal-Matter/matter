@@ -567,6 +567,33 @@ describe Matter::Storage::Sqlite do
     end
   end
 
+  it "keeps an existing document when a failed write is caught inside a transaction" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      backend = Matter::Storage::Sqlite.new(path).tap(&.open)
+      original = Matter::Storage::Document{"n" => 1_i64}
+      backend.write(BackendContract::COLLECTION, BackendContract::ID, original)
+      backend.close
+
+      DB.open("sqlite3://#{URI.encode_path(path)}") do |database|
+        database.exec(<<-SQL)
+          CREATE TRIGGER fail_storage_insert BEFORE INSERT ON matter_storage_documents
+          WHEN NEW.collection = '#{BackendContract::COLLECTION}' AND NEW.id = '#{BackendContract::ID}'
+          BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END
+          SQL
+      end
+
+      reopened = Matter::Storage::Sqlite.new(path).tap(&.open)
+      reopened.transaction do
+        expect_raises(Matter::StorageError, /SQL storage operation failed/) do
+          reopened.write(BackendContract::COLLECTION, BackendContract::ID,
+            Matter::Storage::Document{"n" => 2_i64})
+        end
+      end
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).should eq(original)
+      reopened.destroy!
+    end
+  end
+
   it "refuses a newer document schema without changing the database" do
     BackendContract.with_temp_path(".sqlite3") do |path|
       backend = Matter::Storage::Sqlite.new(path).tap(&.open)
