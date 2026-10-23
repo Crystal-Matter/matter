@@ -8,7 +8,7 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 105
+- Implemented standard cluster IDs compared: 107
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 135
@@ -76,6 +76,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0090 | Electrical Power Measurement Cluster | 3 | 3 | — | — |
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — | — |
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | — | — |
+| 0x009B | Energy Preference Cluster | 1 | 1 | — | — |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |
 | 0x009E | Water Heater Mode Cluster | 1 | 1 | — | — |
 | 0x0101 | Door Lock Cluster | 10 | 9 | — | — |

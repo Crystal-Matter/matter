@@ -22,4 +22,19 @@ describe "Matter 1.6 Thermostat User Interface Configuration interoperability" d
     read_int(device, "thermostatuserinterfaceconfiguration", "keypad-lockout", "KeypadLockout", 1).should eq(3_i64)
     read_int(device, "thermostatuserinterfaceconfiguration", "schedule-programming-visibility", "ScheduleProgrammingVisibility", 1).should eq(1_i64)
   end
+
+  it "reads both Energy Preference scales and persists valid controller choices" do
+    read_int(device, "energypreference", "cluster-revision", "ClusterRevision", 1).should eq(1_i64)
+    read_int(device, "energypreference", "feature-map", "FeatureMap", 1).should eq(3_i64)
+    expect_success(device.read("energypreference", "energy-balances", 1))
+    expect_success(device.read("energypreference", "energy-priorities", 1))
+    expect_success(device.read("energypreference", "low-power-mode-sensitivities", 1))
+    expect_failure(device.write("energypreference", "current-energy-balance", 3, 1), "CONSTRAINT_ERROR")
+    expect_failure(device.write("energypreference", "current-low-power-mode-sensitivity", 2, 1), "CONSTRAINT_ERROR")
+    expect_success(device.write("energypreference", "current-energy-balance", 2, 1))
+    expect_success(device.write("energypreference", "current-low-power-mode-sensitivity", 1, 1))
+    device.restart!
+    read_int(device, "energypreference", "current-energy-balance", "CurrentEnergyBalance", 1).should eq(2_i64)
+    read_int(device, "energypreference", "current-low-power-mode-sensitivity", "CurrentLowPowerModeSensitivity", 1).should eq(1_i64)
+  end
 end

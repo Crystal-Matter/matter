@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Energy Preference
+
+- Add the Matter 1.6 revision 1 Energy Preference server with EnergyBalance
+  and LowPowerModeSensitivity feature gating, validated fixed scales and
+  priority pairs, writable persisted preference indices, and migration to
+  the nearest configured step after a scale change or restart. Exercise both
+  features through the thermostat UI fixture and official chip-tool.
+
 ### Service Area
 
 - Add the Matter 1.6 revision 2 Service Area server with typed area and map
