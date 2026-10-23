@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 98
-- Matching known revisions: 96
+- Crystal declarations for those IDs: 99
+- Matching known revisions: 97
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -158,7 +158,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0753 | Joint Fabric Administrator Cluster | 1 | 1 | — |
 | 0x0801 | TLS Certificate Management Cluster | 1 | 1 | opt-in; host backend holds client private keys |
 | 0x0802 | TLS Client Management Cluster | 1 | 1 | opt-in; certificate-backed endpoint registry, host owns TLS connections |
-| 0x0B06 | Meter Identification Cluster | 1 | — | cluster absent |
+| 0x0B06 | Meter Identification Cluster | 1 | 1 | — |
 | 0x0B07 | Commodity Metering Cluster | 1 | — | cluster absent |
 
 Regenerate from the official connectedhomeip `v1.6.0.0` tag:

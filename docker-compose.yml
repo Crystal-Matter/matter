@@ -261,6 +261,11 @@ services:
     environment:
       E2E_DEVICE: matter_refrigerator_alarm
 
+  utility-meter:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_utility_meter
+
   chime:
     <<: *device
     environment:
@@ -420,6 +425,7 @@ services:
       scenes-fabric: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       door-lock-aliro: { condition: service_healthy }
+      utility-meter: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }
       pressure-sensor: { condition: service_healthy }
       temperature-control: { condition: service_healthy }
