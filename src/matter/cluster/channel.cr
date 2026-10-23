@@ -377,9 +377,14 @@ module Matter
       def update_channels(channels : Array(ChannelInfo)) : Nil
         numbers = channels.map { |channel| {channel.major_number, channel.minor_number} }
         raise ArgumentError.new("duplicate channel numbers") unless numbers.uniq.size == numbers.size
+        current = @current_channel
         @channels = channels.dup
         self.channel_list = @channels.dup if @feature_map.channel_list?
-        self.current_channel = nil unless @current_channel.nil? || @channels.includes?(@current_channel)
+        if current
+          self.current_channel = @channels.find do |channel|
+            channel.major_number == current.major_number && channel.minor_number == current.minor_number
+          end
+        end
       end
 
       def on_select(&block : ChannelInfo -> Bool) : Nil

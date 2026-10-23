@@ -44,8 +44,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are available without optional features; text matching follows the canonical
   identifier, affiliate, call sign, name, number priority. CL, LI, EG, and RP
   gate their attributes and commands. Host callbacks supply program guide
-  data and recording actions. A synthetic TV fixture exercises the server with
-  official chip-tool.
+  data and recording actions. Lineup metadata refresh retains the tuned channel
+  by channel number. A synthetic TV fixture exercises the server with official
+  chip-tool.
 
 ### Joint Fabric transfer recovery
 
