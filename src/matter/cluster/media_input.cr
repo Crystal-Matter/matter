@@ -41,7 +41,12 @@ module Matter
         @[TLV::Field(tag: 3)]
         getter description : String
 
-        def initialize(@index : UInt8, @input_type : InputType, @name : String, @description : String)
+        # Stored locally so a changed host default is not mistaken for a user rename.
+        # This field has no TLV tag and is never exposed in InputList.
+        getter? user_renamed : Bool = false
+
+        def initialize(@index : UInt8, @input_type : InputType, @name : String, @description : String,
+                       @user_renamed : Bool = false)
         end
       end
 
@@ -125,7 +130,7 @@ module Matter
       def rename_input(request : RenameInputRequest) : InteractionModel::Status
         return InteractionModel::Status.not_found unless @input_list.any? { |input| input.index == request.index }
         self.input_list = @input_list.map do |input|
-          input.index == request.index ? InputInfo.new(input.index, input.input_type, request.name, input.description) : input
+          input.index == request.index ? InputInfo.new(input.index, input.input_type, request.name, input.description, true) : input
         end
         InteractionModel::Status.success
       end
@@ -146,8 +151,13 @@ module Matter
         saved_inputs = @input_list
         @input_list = @configured_inputs.map do |configured|
           saved = saved_inputs.find { |input| input.index == configured.index && input.input_type == configured.input_type }
-          name = @feature_map.name_updates? && saved ? saved.name : configured.name
-          InputInfo.new(configured.index, configured.input_type, name, configured.description)
+          renamed = @feature_map.name_updates? && saved.try(&.user_renamed?) == true
+          name = if renamed && saved
+                   saved.name
+                 else
+                   configured.name
+                 end
+          InputInfo.new(configured.index, configured.input_type, name, configured.description, renamed)
         end
         @current_input = @configured_current_input unless @input_list.any? { |input| input.index == @current_input }
       end

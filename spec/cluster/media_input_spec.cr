@@ -84,6 +84,8 @@ describe MediaInput do
     expect_status(invoke(cluster, MediaInput::CMD_RENAME_INPUT, MediaInput::RenameInputRequest.new(2_u8, "TV")), IMCode::NotFound)
     expect_status(invoke(cluster, MediaInput::CMD_RENAME_INPUT, MediaInput::RenameInputRequest.new(1_u8, "TV")), IMCode::Success)
     cluster.input_list.first.name.should eq("TV")
+    cluster.input_list.first.user_renamed?.should be_true
+    read_tlv(cluster, MediaInput::ATTR_INPUT_LIST).as_list.first.as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8])
     expect_status(invoke(cluster, MediaInput::CMD_RENAME_INPUT), IMCode::InvalidCommand)
   end
 
@@ -119,6 +121,7 @@ describe MediaInput do
 
     restored.input_list.map(&.index).should eq([1_u8, 2_u8, 3_u8])
     restored.input_list.map(&.name).should eq(["Game Console", "USB", "HDMI 3"])
+    restored.input_list.map(&.user_renamed?).should eq([true, false, false])
     restored.input_list[1].input_type.should eq(MediaInput::InputType::Usb)
     restored.input_list[1].description.should eq("New physical port")
     restored.current_input.should eq(2_u8)
@@ -135,5 +138,32 @@ describe MediaInput do
     restored.input_list.first.name.should eq("Host HDMI 2")
     restored.current_input.should eq(3_u8)
     expect_status(invoke(restored, MediaInput::CMD_SELECT_INPUT, MediaInput::SelectInputRequest.new(1_u8)), IMCode::NotFound)
+  end
+
+  it "keeps a changed host default name when the user never renamed the input" do
+    previous = build(MediaInput, feature_map: MediaInput::Feature::NameUpdates,
+      input_list: [hdmi_input(1_u8, "Old host default")])
+    saved = previous.save_state.as(Matter::Storage::Document)
+    restored = build(MediaInput, feature_map: MediaInput::Feature::NameUpdates,
+      input_list: [hdmi_input(1_u8, "New host default")])
+
+    restored.restore_state(saved)
+
+    restored.input_list.first.name.should eq("New host default")
+  end
+
+  it "loads old persisted input records without rename provenance" do
+    previous = build(MediaInput, feature_map: MediaInput::Feature::NameUpdates,
+      input_list: [hdmi_input(1_u8, "Old host default")])
+    saved = previous.save_state.as(Matter::Storage::Document)
+    saved["input_list"].as(Array(Matter::Storage::Type)).each do |entry|
+      entry.as(Matter::Storage::Document).delete("user_renamed")
+    end
+    restored = build(MediaInput, feature_map: MediaInput::Feature::NameUpdates,
+      input_list: [hdmi_input(1_u8, "New host default")])
+
+    restored.restore_state(saved)
+
+    restored.input_list.first.name.should eq("New host default")
   end
 end
