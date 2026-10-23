@@ -89,6 +89,10 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
+      def output_list : Array(OutputInfo)
+        @output_list.dup
+      end
+
       # Return false when the underlying device cannot change to this output.
       # Registration reapplies the selected output after persisted state is
       # restored, so the advertised selection matches physical routing.

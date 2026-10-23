@@ -98,6 +98,19 @@ describe AudioOutput do
     cluster.output_list.should eq(audio_outputs)
   end
 
+  it "keeps the output catalogue isolated from caller and reader mutations" do
+    configured = audio_outputs
+    cluster = build(AudioOutput, output_list: configured, current_output: 0_u8)
+    original_version = cluster.data_version
+
+    configured.clear
+    cluster.output_list.clear
+
+    cluster.output_list.should eq(audio_outputs)
+    cluster.current_output.should eq(0_u8)
+    cluster.data_version.should eq(original_version)
+  end
+
   it "persists selected output and renamed names across restart" do
     cluster = build(AudioOutput, output_list: audio_outputs, current_output: 0_u8,
       feature_map: AudioOutput::Feature::NameUpdates)
