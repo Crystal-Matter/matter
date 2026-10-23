@@ -28,7 +28,9 @@ describe "Matter 1.6 Device Energy Management forecast reporting" do
     cluster.commands.should be_empty
     cluster.events.should be_empty
     cluster.forecast.should be_nil
-    ForecastDEM::Forecast.from_tlv(power_forecast.to_tlv(nil)).slots.first.nominal_power.should eq(2_000_i64)
+    encoded = power_forecast.to_tlv(nil)
+    encoded.value.as(TLV::Structure)[1_u8].value.should be_nil
+    ForecastDEM::Forecast.from_tlv(encoded).slots.first.nominal_power.should eq(2_000_i64)
   end
 
   it "advertises SFR with manufacturer state and rejects mixed forecast slot schemas" do

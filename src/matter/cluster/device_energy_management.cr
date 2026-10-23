@@ -173,7 +173,7 @@ module Matter
 
         @[TLV::Field(tag: 0)]
         getter forecast_id : UInt32
-        @[TLV::Field(tag: 1)]
+        @[TLV::Field(tag: 1, optional: false)]
         getter active_slot_number : UInt16?
         @[TLV::Field(tag: 2)]
         getter start_time : UInt32
