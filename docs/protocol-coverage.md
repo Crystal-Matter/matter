@@ -61,11 +61,11 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0046 | ICD Management Cluster | 3 | 3 | — |
 | 0x0048 | Oven Cavity Operational State Cluster | 2 | 2 | — |
 | 0x0049 | Oven Mode Cluster | 2 | 2 | — |
-| 0x004A | Laundry Dryer Controls Cluster | 1 | — | cluster absent |
+| 0x004A | Laundry Dryer Controls Cluster | 1 | 1 | — |
 | 0x0050 | Mode Select Cluster | 2 | 2 | — |
 | 0x0051 | Laundry Washer Mode Cluster | 3 | 3 | — |
 | 0x0052 | Refrigerator And Temperature Controlled Cabinet Mode Cluster | 3 | — | cluster absent |
-| 0x0053 | Laundry Washer Controls Cluster | 2 | — | cluster absent |
+| 0x0053 | Laundry Washer Controls Cluster | 2 | 2 | — |
 | 0x0054 | RVC Run Mode Cluster | 4 | 4 | Mode Base behavior; host-owned cleaning transitions and optional DirectModeChange |
 | 0x0055 | RVC Clean Mode Cluster | 5 | 5 | Mode Base behavior; Vacuum/Mop options and run-mode guard |
 | 0x0056 | Temperature Control Cluster | 1 | 1 | — |

@@ -448,6 +448,13 @@ BoostInfo fields for one-shot, temporary setpoint, emergency heating and
 percentage targets are forwarded to `on_boost`; the host applies those physical
 policies and calls `finish_boost` when a target is reached. The server enforces
 the duration timeout and basic field constraints.
+Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
+dryness levels, spin speeds, and rinse counts. Configure at least one washer
+feature (`Spin` or `Rinse`) and register host selection callbacks before
+accepting remote writes. The host can replace supported options when its
+appliance mode changes; saved selections are checked against the current
+options after restart. See `examples/matter_laundry_combo_device.cr` for a
+synthetic washer-dryer endpoint and official chip-tool E2E fixture.
 
 `Cluster::ThermostatUserInterfaceConfiguration` adds Matter 1.6 revision 2
 display units, keypad lockout, and optional local schedule programming
