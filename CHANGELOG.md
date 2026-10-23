@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock schedule authorization
+
+- Enforce weekday and year-day access windows for scheduled users, including
+  combined restrictions, unknown local time, and persisted schedules after
+  restart. Apply holiday operating modes to remote operations and wire reads,
+  validate weekday windows, and keep schedule denial from consuming the wrong
+  PIN lockout budget. Reject Aliro feature flags until mandatory reader
+  configuration is implemented. Extend the official chip-tool lock fixture.
+
 ### Door Lock credential durability
 
 - Persist Door Lock users, credentials, and schedules with cluster attributes

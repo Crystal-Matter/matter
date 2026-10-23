@@ -38,7 +38,7 @@ describe Matter::Cluster::DoorLock do
     expect_success(invoke(first, DoorLock::CMD_SET_YEAR_DAY_SCHEDULE,
       DoorLock::SetYearDayScheduleRequest.new(1_u8, 2_u16, 100_u32, 200_u32)))
     expect_success(invoke(first, DoorLock::CMD_SET_HOLIDAY_SCHEDULE,
-      DoorLock::SetHolidayScheduleRequest.new(1_u8, 100_u32, 200_u32, DoorLock::OperatingMode::Vacation)))
+      DoorLock::SetHolidayScheduleRequest.new(1_u8, 100_u32, 200_u32, DoorLock::OperatingMode::NoRemoteLockUnlock)))
 
     path = File.join(Dir.tempdir, "matter-door-lock-#{Random::Secure.hex(6)}.yml")
     persistence = Matter::Device::Persistence.new(Matter::Storage::YamlFile.new(path))

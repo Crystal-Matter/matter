@@ -80,6 +80,19 @@ module Matter
       DEFAULT_EXPIRING_USER_TIMEOUT     = 10_u16
       DEFAULT_LANGUAGE                  = "en"
       DEFAULT_PIN_CODE                  = "1234"
+      LAST_HOUR_OF_DAY                  = 23_u8
+      LAST_MINUTE_OF_HOUR               = 59_u8
+      MINUTES_PER_HOUR                  =    60
+      LAST_MINUTE_OF_DAY                = LAST_HOUR_OF_DAY.to_i32 * MINUTES_PER_HOUR + LAST_MINUTE_OF_HOUR.to_i32
+      WEEK_DAY_MASK                     = 0x7F_u8
+
+      private enum PinAuthorization
+        Allowed
+        Invalid
+        Restricted
+      end
+
+      private record LocalScheduleTime, epoch_seconds : Int64, day_mask : UInt8, minute_of_day : Int32
 
       attribute 0x0000, :lock_state, LockState, nullable: true, default: LockState::Locked
       attribute 0x0001, :lock_type, LockType, default: LockType::Deadbolt
@@ -287,9 +300,13 @@ module Matter
         @require_pin_for_remote_operation : Bool = false,
         @expiring_user_timeout : UInt16 = DEFAULT_EXPIRING_USER_TIMEOUT,
         @default_pin_code : String = DEFAULT_PIN_CODE,
+        @local_time_provider : Proc(Time?) = -> : Time? { Time.local },
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
+        if @feature_map.aliro_provisioning? || @feature_map.aliro_bleuwb?
+          raise ArgumentError.new("Aliro features require reader configuration attributes and commands that are not implemented")
+        end
         raise ArgumentError.new("credentialOverTheAirAccess requires pinCredential") if @feature_map.credential_over_the_air_access? && !@feature_map.pin_credential?
         credential_feature = @feature_map.pin_credential? || @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials? || @feature_map.aliro_provisioning?
         raise ArgumentError.new("credential features require user") if credential_feature && !@feature_map.user?
@@ -381,7 +398,8 @@ module Matter
         week_days = {} of Tuple(UInt16, UInt8) => WeekDaySchedule
         database.week_day_schedules.each do |entry|
           key = {entry.user_index, entry.week_day_index}
-          if !users.has_key?(entry.user_index) || !valid_week_day_schedule_index?(entry.week_day_index) || week_days.has_key?(key)
+          if !users.has_key?(entry.user_index) || !valid_week_day_schedule_index?(entry.week_day_index) || week_days.has_key?(key) ||
+             !valid_week_day_schedule?(entry.schedule)
             raise StorageError.new("Invalid persisted Door Lock week day schedule")
           end
           week_days[key] = entry.schedule
@@ -400,7 +418,7 @@ module Matter
         holidays = {} of UInt8 => HolidaySchedule
         database.holiday_schedules.each do |entry|
           if !valid_holiday_schedule_index?(entry.holiday_index) || holidays.has_key?(entry.holiday_index) ||
-             entry.schedule.local_start_time >= entry.schedule.local_end_time
+             entry.schedule.local_start_time >= entry.schedule.local_end_time || !operating_mode_supported?(entry.schedule.operating_mode)
             raise StorageError.new("Invalid persisted Door Lock holiday schedule")
           end
           holidays[entry.holiday_index] = entry.schedule
@@ -544,13 +562,10 @@ module Matter
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless valid_week_day_schedule_index?(request.week_day_index)
         return InteractionModel::Status.cluster_failure(StatusCode::NotFound) unless @users.has_key?(request.user_index)
 
-        @week_day_schedules[{request.user_index, request.week_day_index}] = WeekDaySchedule.new(
-          request.week_day,
-          request.start_hour,
-          request.start_minute,
-          request.end_hour,
-          request.end_minute
-        )
+        schedule = WeekDaySchedule.new(request.week_day, request.start_hour, request.start_minute, request.end_hour, request.end_minute)
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless valid_week_day_schedule?(schedule)
+
+        @week_day_schedules[{request.user_index, request.week_day_index}] = schedule
         increment_version
         InteractionModel::Status.success
       end
@@ -632,6 +647,7 @@ module Matter
       def handle_set_holiday_schedule(request : SetHolidayScheduleRequest) : InteractionModel::Status
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless valid_holiday_schedule_index?(request.holiday_index)
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) if request.local_start_time >= request.local_end_time
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless operating_mode_supported?(request.operating_mode)
 
         @holiday_schedules[request.holiday_index] = HolidaySchedule.new(
           request.local_start_time,
@@ -986,10 +1002,88 @@ module Matter
 
       private def remote_control_allowed? : Bool
         return false unless @actuator_enabled
-        return false if @operating_mode.no_remote_lock_unlock? || @operating_mode.privacy?
+        mode = effective_operating_mode
+        return false if mode.no_remote_lock_unlock? || mode.privacy?
         return false if lockout_active
 
         true
+      end
+
+      private def effective_operating_mode : OperatingMode
+        return @operating_mode unless now = local_schedule_time
+
+        # Holiday schedules are lock-wide. A lower index wins if intervals overlap.
+        @holiday_schedules.keys.sort!.each do |index|
+          schedule = @holiday_schedules[index]
+          if now.epoch_seconds >= schedule.local_start_time && now.epoch_seconds <= schedule.local_end_time
+            return schedule.operating_mode
+          end
+        end
+        @operating_mode
+      end
+
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        return tlv(effective_operating_mode.value) if attribute_id == ATTR_OPERATING_MODE
+        super
+      end
+
+      private def local_schedule_time : LocalScheduleTime?
+        time = @local_time_provider.call
+        return unless time
+
+        # Matter's local schedule timestamps encode wall-clock fields as Unix
+        # seconds after applying the local timezone and DST offset.
+        epoch = Time.utc(time.year, time.month, time.day, time.hour, time.minute, time.second).to_unix
+        LocalScheduleTime.new(epoch, (1_u8 << time.day_of_week.value).to_u8, time.hour * MINUTES_PER_HOUR + time.minute)
+      end
+
+      private def valid_week_day_schedule?(schedule : WeekDaySchedule) : Bool
+        return false unless (schedule.week_day & ~WEEK_DAY_MASK).zero?
+        return false if schedule.start_hour > LAST_HOUR_OF_DAY || schedule.end_hour > LAST_HOUR_OF_DAY
+        return false if schedule.start_minute > LAST_MINUTE_OF_HOUR || schedule.end_minute > LAST_MINUTE_OF_HOUR
+        return false if schedule.end_hour < schedule.start_hour
+        return false if schedule.end_hour == schedule.start_hour && schedule.end_minute <= schedule.start_minute
+
+        true
+      end
+
+      private def week_day_schedule_matches?(schedule : WeekDaySchedule, now : LocalScheduleTime) : Bool
+        return false if (schedule.week_day & now.day_mask).zero?
+
+        start_minute = schedule.start_hour.to_i32 * MINUTES_PER_HOUR + schedule.start_minute
+        end_minute = schedule.end_hour.to_i32 * MINUTES_PER_HOUR + schedule.end_minute
+        now.minute_of_day >= start_minute && (now.minute_of_day < end_minute || end_minute == LAST_MINUTE_OF_DAY)
+      end
+
+      private def year_day_schedule_matches?(schedule : YearDaySchedule, now : LocalScheduleTime) : Bool
+        now.epoch_seconds >= schedule.local_start_time && now.epoch_seconds <= schedule.local_end_time
+      end
+
+      private def schedule_allows_user?(user : UserRecord) : Bool
+        case user.user_type
+        when UserType::WeekDayScheduleUser, UserType::YearDayScheduleUser, UserType::ScheduleRestrictedUser
+          now = local_schedule_time
+          return false unless now
+
+          week_days = @week_day_schedules.select { |(user_index, _), _| user_index == user.user_index }.values
+          year_days = @year_day_schedules.select { |(user_index, _), _| user_index == user.user_index }.values
+          week_day_match = week_days.any? { |schedule| week_day_schedule_matches?(schedule, now) }
+          year_day_match = year_days.any? { |schedule| year_day_schedule_matches?(schedule, now) }
+
+          case user.user_type
+          when UserType::WeekDayScheduleUser
+            week_day_match
+          when UserType::YearDayScheduleUser
+            year_day_match
+          else
+            return false if week_days.empty? && year_days.empty?
+            return week_day_match if year_days.empty?
+            return year_day_match if week_days.empty?
+            week_day_match && year_day_match
+          end
+        else
+          true
+        end
       end
 
       private def lockout_active : Bool
@@ -1008,18 +1102,24 @@ module Matter
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless pin_value
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) if pin_value.empty?
 
-          unless valid_pin?(pin_value)
+          case pin_authorization(pin_value)
+          when PinAuthorization::Invalid
             record_failed_pin_attempt
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
+          when PinAuthorization::Restricted
+            return InteractionModel::Status.cluster_failure(StatusCode::Failure)
           end
           clear_failed_pin_state
           return
         end
 
         if pin && !pin.empty? && @feature_map.pin_credential?
-          unless valid_pin?(pin)
+          case pin_authorization(pin)
+          when PinAuthorization::Invalid
             record_failed_pin_attempt
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
+          when PinAuthorization::Restricted
+            return InteractionModel::Status.cluster_failure(StatusCode::Failure)
           end
           clear_failed_pin_state
         end
@@ -1027,17 +1127,20 @@ module Matter
         nil
       end
 
-      private def valid_pin?(pin : String) : Bool
-        pin_matches_credential = @credentials.values.any? do |credential|
-          next false unless credential.credential.credential_type.pin? && String.new(credential.credential_data) == pin
-          user_index = credential.user_index
-          next false unless user_index
-          user = @users[user_index]?
-          user && user.user_status == UserStatus::OccupiedEnabled && user.user_type != UserType::NonAccessUser
-        end
+      private def pin_authorization(pin : String) : PinAuthorization
+        return PinAuthorization::Allowed if pin == @default_pin_code
 
-        return true if pin_matches_credential
-        pin == @default_pin_code
+        recognized = false
+        @credentials.values.each do |credential|
+          next unless credential.credential.credential_type.pin? && String.new(credential.credential_data) == pin
+          recognized = true
+          user_index = credential.user_index
+          next unless user_index
+          user = @users[user_index]?
+          next unless user && user.user_status == UserStatus::OccupiedEnabled && user.user_type != UserType::NonAccessUser
+          return PinAuthorization::Allowed if schedule_allows_user?(user)
+        end
+        recognized ? PinAuthorization::Restricted : PinAuthorization::Invalid
       end
 
       private def record_failed_pin_attempt : Nil

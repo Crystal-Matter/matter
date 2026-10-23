@@ -27,6 +27,14 @@ module MatterDoorLock
 
     endpoint 1, device_type: Matter::DeviceType::DOOR_LOCK do
       cluster Matter::Cluster::DoorLock,
+        feature_map: Matter::Cluster::DoorLock::Feature::DoorPositionSensor |
+                     Matter::Cluster::DoorLock::Feature::PinCredential |
+                     Matter::Cluster::DoorLock::Feature::CredentialOverTheAirAccess |
+                     Matter::Cluster::DoorLock::Feature::User |
+                     Matter::Cluster::DoorLock::Feature::Unbolting |
+                     Matter::Cluster::DoorLock::Feature::WeekDayAccessSchedules |
+                     Matter::Cluster::DoorLock::Feature::YearDayAccessSchedules |
+                     Matter::Cluster::DoorLock::Feature::HolidaySchedules,
         auto_relock_time: AUTO_RELOCK_TIME,
         require_pin_for_remote_operation: true,
         default_pin_code: DEFAULT_PIN_CODE,

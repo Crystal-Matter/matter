@@ -23,11 +23,24 @@ example's chip-tool test creates a user and PIN credential, restarts the
 device, reads them back, and unlocks with the restored PIN.
 
 The backend contains credential bytes and other device secrets, so deployments
-must protect its files or database with appropriate access controls. The lock
-does not yet enforce time-of-day or year-day access schedules, and its
-ExpiringUser and DisposableUser policies remain incomplete. The optional
-AliroProvisioning feature flag also lacks reader-configuration attributes
-`0x0080`–`0x0083` and `0x0087`–`0x0088`, and commands `0x28`/`0x29`;
-AliroBLEUWB additionally requires attributes `0x0084`–`0x0086`. These gaps
-keep the advertised revision at 9;
-the tests do not establish complete Matter 1.6 revision 10 conformance.
+must protect its files or database with appropriate access controls.
+
+WeekDayScheduleUser and YearDayScheduleUser require a matching schedule;
+ScheduleRestrictedUser requires a match from each configured schedule kind.
+Unknown local time denies these users. A host can supply a `local_time_provider`
+returning `Time?`; the default reads the system's local clock. Schedule denial
+does not count as an incorrect PIN. Weekday schedule fields are checked before
+storage. Holiday schedules select an effective operating mode during their
+local-time interval, which controls remote operation and the wire read of
+`OperatingMode`. The synthetic lock advertises these schedule features; its
+official chip-tool test checks a scheduled PIN across restart.
+
+A holiday boundary does not yet generate a data-version change or subscription
+report without another interaction. ExpiringUser, DisposableUser, and other
+advanced user policies remain incomplete. The AliroProvisioning and
+AliroBLEUWB feature bits are rejected at initialization until their required
+reader-configuration attributes and commands are implemented. The missing
+AliroProvisioning attributes are `0x0080`–`0x0083` and `0x0087`–`0x0088`, with
+commands `0x28`/`0x29`; AliroBLEUWB also requires `0x0084`–`0x0086`. These
+gaps keep the advertised cluster revision at 9; the tests do not establish
+complete Matter 1.6 revision 10 conformance.
