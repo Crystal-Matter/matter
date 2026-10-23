@@ -11,9 +11,10 @@ module Matter
     class Thermostat < Base
       cluster 0x0201, revision: 9
 
-      feature :heating, bit: 0  # HEAT - Heating capability
-      feature :cooling, bit: 1  # COOL - Cooling capability
-      feature :automode, bit: 5 # AUTO - Automatic setpoint management
+      feature :heating, bit: 0                       # HEAT - Heating capability
+      feature :cooling, bit: 1                       # COOL - Cooling capability
+      feature :automode, bit: 5                      # AUTO - Automatic setpoint management
+      feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
 
       # System mode values
       enum SystemMode : UInt8
@@ -143,7 +144,7 @@ module Matter
         property transitions : Array(ThermostatScheduleTransition)
       end
 
-      attribute 0x0000, :local_temperature, Int16, nullable: true
+      attribute 0x0000, :local_temperature, Int16, nullable: true, validate: :validate_local_temperature, on_change: :local_temperature_changed
       attribute 0x0003, :abs_min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0004, :abs_max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0005, :abs_min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, fixed: true, optional: true, requires: :cooling
@@ -179,6 +180,9 @@ module Matter
                      @system_mode : SystemMode = SystemMode::Off,
                      @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+
+        @measured_temperature = @local_temperature
+        @local_temperature = nil if @feature_map.local_temperature_not_exposed?
 
         if @feature_map.heating?
           raise ArgumentError.new("min_heat_setpoint_limit must be >= abs minimum") if @min_heat_setpoint_limit < @abs_min_heat_setpoint_limit
@@ -276,8 +280,12 @@ module Matter
 
       # Update local temperature (typically called from a paired temperature sensor)
       def update_local_temperature(value : Int16?) : Nil
-        self.local_temperature = value
-        update_running_mode
+        if @feature_map.local_temperature_not_exposed?
+          @measured_temperature = value
+          update_running_mode
+        else
+          self.local_temperature = value
+        end
       end
 
       # Programmatic setpoint updates; ignored outside the configured limits
@@ -409,7 +417,7 @@ module Matter
 
       # In Auto the running mode follows the local temperature against the setpoints
       private def auto_running_mode : ThermostatRunningMode
-        temperature = @local_temperature
+        temperature = @measured_temperature
         return ThermostatRunningMode::Off unless temperature
 
         if temperature > @occupied_cooling_setpoint
@@ -432,6 +440,17 @@ module Matter
         in .auto?
           @feature_map.automode?
         end
+      end
+
+      private def validate_local_temperature(value : Int16?) : Nil
+        if @feature_map.local_temperature_not_exposed? && !value.nil?
+          raise ArgumentError.new("LocalTemperature must remain null when LTNE is enabled")
+        end
+      end
+
+      private def local_temperature_changed(value : Int16?) : Nil
+        @measured_temperature = value
+        update_running_mode
       end
     end
   end

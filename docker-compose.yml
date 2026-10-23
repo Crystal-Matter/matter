@@ -228,6 +228,11 @@ services:
     environment:
       E2E_DEVICE: matter_thermostat_ui
 
+  thermostat-ltne:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_thermostat_ltne
+
   low-power:
     <<: *device
     environment:
