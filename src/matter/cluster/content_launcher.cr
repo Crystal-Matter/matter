@@ -271,14 +271,7 @@ module Matter
         unless @feature_map.content_search? || @feature_map.url_playback?
           raise ArgumentError.new("Content Launcher requires ContentSearch or URLPlayback")
         end
-        if !@feature_map.url_playback? && (!@accept_header.empty? || @supported_streaming_protocols != 0_u32)
-          raise ArgumentError.new("URL attributes require URLPlayback")
-        end
-        if @accept_header.size > MAX_ACCEPT_HEADERS ||
-           @accept_header.any? { |header| header.bytesize > MAX_ACCEPT_HEADER_BYTES } ||
-           (@supported_streaming_protocols & ~SUPPORTED_PROTOCOLS_MASK) != 0_u32
-          raise ArgumentError.new("URL playback configuration exceeds Matter 1.6 limits")
-        end
+        validate_url_configuration!(@accept_header, @supported_streaming_protocols)
         @accept_header = @accept_header.dup
         @configured_accept_header = @accept_header.dup
         @configured_supported_streaming_protocols = @supported_streaming_protocols
@@ -286,6 +279,29 @@ module Matter
 
       def accept_header : Array(String)
         @accept_header.dup
+      end
+
+      def accept_header=(value : Array(String)) : Nil
+        validate_url_configuration!(value, @supported_streaming_protocols)
+        previous_def(value)
+        @configured_accept_header = @accept_header.dup
+      end
+
+      def supported_streaming_protocols=(value : UInt32) : Nil
+        validate_url_configuration!(@accept_header, value)
+        previous_def(value)
+        @configured_supported_streaming_protocols = @supported_streaming_protocols
+      end
+
+      private def validate_url_configuration!(headers : Array(String), protocols : UInt32) : Nil
+        if !@feature_map.url_playback? && (!headers.empty? || protocols != 0_u32)
+          raise ArgumentError.new("URL attributes require URLPlayback")
+        end
+        if headers.size > MAX_ACCEPT_HEADERS ||
+           headers.any? { |header| header.bytesize > MAX_ACCEPT_HEADER_BYTES } ||
+           (protocols & ~SUPPORTED_PROTOCOLS_MASK) != 0_u32
+          raise ArgumentError.new("URL playback configuration exceeds Matter 1.6 limits")
+        end
       end
 
       private def after_restore_state : Nil

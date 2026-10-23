@@ -57,6 +57,39 @@ describe ContentLauncher do
     cluster.data_version.should eq(assigned_version)
   end
 
+  it "validates host assignments to fixed URL capabilities" do
+    cluster = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: ["video/mp4"], supported_streaming_protocols: 1_u32)
+    version = cluster.data_version
+
+    expect_raises(ArgumentError) { cluster.accept_header = Array.new(101, "video/mp4") }
+    expect_raises(ArgumentError) { cluster.accept_header = ["x" * 1025] }
+    expect_raises(ArgumentError) { cluster.supported_streaming_protocols = 4_u32 }
+
+    cluster.accept_header.should eq(["video/mp4"])
+    cluster.supported_streaming_protocols.should eq(1_u32)
+    cluster.data_version.should eq(version)
+
+    search_only = build(ContentLauncher, feature_map: ContentLauncher::Feature::ContentSearch)
+    expect_raises(ArgumentError) { search_only.accept_header = ["video/mp4"] }
+    expect_raises(ArgumentError) { search_only.supported_streaming_protocols = 1_u32 }
+  end
+
+  it "uses updated host URL capabilities when restoring saved state" do
+    source = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: ["video/mp4"], supported_streaming_protocols: 1_u32)
+    saved = source.save_state.as(Matter::Storage::Document)
+    restored = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
+      accept_header: ["video/mp4"], supported_streaming_protocols: 1_u32)
+    restored.accept_header = ["video/webm"]
+    restored.supported_streaming_protocols = 2_u32
+
+    restored.restore_state(saved)
+
+    restored.accept_header.should eq(["video/webm"])
+    restored.supported_streaming_protocols.should eq(2_u32)
+  end
+
   it "restores host-configured fixed URL capabilities after restart" do
     source = build(ContentLauncher, feature_map: ContentLauncher::Feature::UrlPlayback,
       accept_header: ["video/mp4"], supported_streaming_protocols: 1_u32)
