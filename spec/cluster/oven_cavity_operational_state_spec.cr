@@ -69,4 +69,24 @@ describe OvenState do
     read(cluster, OvenState::ATTR_COUNTDOWN_TIME).should eq(30_u32)
     accepted_command_ids(cluster).should be_empty
   end
+
+  it "keeps reported phase and state lists isolated from callers" do
+    phases = ["preheat", "cook"]
+    states = [
+      BaseState::StateDescription.new(BaseState::STOPPED),
+      BaseState::StateDescription.new(BaseState::RUNNING),
+      BaseState::StateDescription.new(BaseState::ERROR),
+    ]
+    cluster = build(OvenState, phase_list: phases, current_phase: 1_u8, states: states)
+    phases.clear
+    states.clear
+    cluster.phase_list.not_nil!.clear
+    cluster.operational_state_list.clear
+    cluster.phase_list.should eq(["preheat", "cook"])
+    cluster.operational_state_list.map(&.operational_state_id).should eq([
+      BaseState::STOPPED, BaseState::RUNNING, BaseState::ERROR,
+    ])
+    cluster.report_state(BaseState::RUNNING)
+    cluster.operational_state.should eq(BaseState::RUNNING)
+  end
 end

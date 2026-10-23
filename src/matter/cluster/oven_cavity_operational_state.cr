@@ -68,6 +68,14 @@ module Matter
         @on_command = block
       end
 
+      def phase_list : Array(String)?
+        @phase_list.try(&.dup)
+      end
+
+      def operational_state_list : Array(StateDescription)
+        @operational_state_list.dup
+      end
+
       def update_phases(phases : Array(String)?, current : UInt8?) : Nil
         validate_phases!(phases, current)
         self.phase_list = phases.try(&.dup)
