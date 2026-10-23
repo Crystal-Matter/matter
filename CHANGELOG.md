@@ -76,6 +76,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   protocol metadata; the PowerThreshold feature exposes the standard TLV
   structure with optional power values and a nullable source. A synthetic
   utility meter is exercised by the official chip-tool across restart.
+### Refrigerator mode
+
+- Add Matter 1.6 Refrigerator and Temperature Controlled Cabinet Mode revision
+  3 with RapidCool/RapidFreeze tags, fixed catalogue validation, host-controlled
+  transitions and persisted mode reconciliation. Extend the refrigerator
+  fixture and official chip-tool test to exercise the mode across restart.
 
 ### Robotic vacuum cleaner clusters
 
