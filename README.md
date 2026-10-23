@@ -267,6 +267,15 @@ and masking. Register `on_set_thresholds` to accept threshold changes from a
 controller before the cluster commits them. See
 `examples/matter_temperature_alarm_device.cr` for a synthetic sensor.
 
+`Cluster::DishwasherAlarm` exposes the Matter 1.6 Alarm Base attributes,
+Notify event, optional Reset feature, and optional ModifyEnabledAlarms command.
+Configure at least one of the six appliance alarm bits in `supported`, and call
+`report_alarms` when physical conditions change. The latest report is kept
+in memory so enabling an alarm updates State immediately; Reset can be vetoed
+when physical or manual intervention is still required. `Latch` and `Supported`
+are fixed capabilities. See `examples/matter_dishwasher_alarm_device.cr` for a
+synthetic device.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the

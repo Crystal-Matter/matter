@@ -23,6 +23,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   HTTPS test DCL Root/ICA chain. Wrong VID, root, and removed records deny;
   active records accept. The signer and DCL records are synthetic, and this
   device test does not exercise JFA consent or production ledger freshness.
+### Dishwasher Alarm
+
+- Add the Matter 1.6 revision 1 Dishwasher Alarm server with six configurable
+  alarm bits, inherited Alarm Base attributes and Notify event, optional Reset
+  latching, and optional ModifyEnabledAlarms. Host reports physical conditions
+  and can veto controller commands. Enabling an alarm recomputes State from
+  the latest physical report. A synthetic device exercises the wire behavior
+  with official chip-tool.
 
 ### Durable fail-safe credential recovery
 
