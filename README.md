@@ -399,6 +399,14 @@ Resume plus optional GoHome. Host callbacks decide whether physical actions
 are safe, and the host reports charging, docking, errors, and completion.
 See `examples/matter_rvc_device.cr` for a synthetic endpoint.
 
+`ServiceArea` revision 2 adds the RVC's area catalogue and the `SelectAreas`
+command. The host supplies meaningful area descriptions and decides whether a
+requested route is physically reachable through `on_select`; duplicate area
+IDs in a request are collapsed in order. Selection persists and is reconciled
+when the host catalogue changes at runtime or after restart. MAPS and PROG
+are opt-in. Mobile devices may expose `CurrentArea`; `SkipArea` is opt-in and
+requires an `on_skip` callback to stop operation in the physical area.
+
 Water Heater Mode and Water Heater Management expose Matter 1.6 appliance
 control on a Thermostat endpoint. Configure Mode with at least an Off and a
 Manual option; mode labels and tag sets must be distinct, and manufacturer

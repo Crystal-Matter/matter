@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Service Area
+
+- Add the Matter 1.6 revision 2 Service Area server with typed area and map
+  catalogues, SelectAreas command validation and host route callback, opt-in
+  MAPS/PROG/CurrentArea/SkipArea behavior, and persisted selection reconciled
+  against the current host catalogue. Extend the synthetic RVC and official
+  chip-tool coverage with area selection and restart.
+
 ### Audio Output
 
 - Add the Matter 1.6 revision 1 Audio Output server with a typed output

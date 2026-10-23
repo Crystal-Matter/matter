@@ -8,6 +8,7 @@ module MatterRvc
   alias RunMode = Matter::Cluster::RvcRunMode
   alias CleanMode = Matter::Cluster::RvcCleanMode
   alias RvcState = Matter::Cluster::RvcOperationalState
+  alias ServiceArea = Matter::Cluster::ServiceArea
 
   RUN_MODES = [
     ModeBase::Option.new("Idle", 0_u8, [ModeBase::Tag.new(RunMode::ModeTag::Idle.value)]),
@@ -17,6 +18,10 @@ module MatterRvc
   CLEAN_MODES = [
     ModeBase::Option.new("Vacuum", 0_u8, [ModeBase::Tag.new(CleanMode::ModeTag::Vacuum.value)]),
     ModeBase::Option.new("Mop", 1_u8, [ModeBase::Tag.new(CleanMode::ModeTag::Mop.value)]),
+  ]
+  AREAS = [
+    ServiceArea::Area.new(1_u32, nil, ServiceArea::AreaInfo.new(ServiceArea::LocationInfo.new("Kitchen"))),
+    ServiceArea::Area.new(2_u32, nil, ServiceArea::AreaInfo.new(ServiceArea::LocationInfo.new("Hall"))),
   ]
 
   class Device < Matter::Device
@@ -37,12 +42,15 @@ module MatterRvc
       cluster RvcState, run_mode: run_mode,
         supported_commands: [RvcState::Command::Pause, RvcState::Command::Resume],
         go_home: true, as: :rvc_state
+      cluster ServiceArea, areas: AREAS, reports_current_area: true, current_area: 1_u32,
+        skip_enabled: true, as: :service_area
     end
 
     protected def before_start : Nil
       run = node.endpoint!(1_u16).get_cluster!(RunMode)
       clean = node.endpoint!(1_u16).get_cluster!(CleanMode)
       state = node.endpoint!(1_u16).get_cluster!(RvcState)
+      areas = node.endpoint!(1_u16).get_cluster!(ServiceArea)
       run.on_change_to_mode = ->(_previous : UInt8, selected : UInt8) do
         state.report_state(selected == run.idle_mode ? RvcState::STOPPED : RvcState::RUNNING)
         ModeBase::ChangeToModeResponse.new(ModeBase::ModeChangeStatus::Success)
@@ -52,6 +60,11 @@ module MatterRvc
       end
       state.on_command { |_command| RvcState::ErrorState.new(RvcState::NO_ERROR) }
       state.on_go_home { RvcState::ErrorState.new(RvcState::NO_ERROR) }
+      areas.on_operating { state.operational_state != RvcState::STOPPED }
+      areas.on_skip do |_area_id|
+        state.report_state(RvcState::STOPPED)
+        ServiceArea::SkipAreaResponse.new(ServiceArea::SkipAreaStatus::Success)
+      end
       super
     end
   end
