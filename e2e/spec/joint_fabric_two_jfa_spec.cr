@@ -231,6 +231,7 @@ describe "three provisioned Joint Fabric Administrators" do
       joiner_bootstrap.fabric.root_cert)
 
     dcl_fixture = JfaVvsDclFixture.new(E2E::LOG_DIR)
+    previous_ssl_cert_file = ENV["SSL_CERT_FILE"]?
     ENV["SSL_CERT_FILE"] = dcl_fixture.cert_path
     mirror_log = File.open(File.join(E2E::LOG_DIR, "jfa-dcl-mirror.log"), "w")
     mirror = Process.new("python3", ["e2e/interop/jfa_vvs_dcl_mirror.py",
@@ -949,6 +950,11 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     repeated.status.should eq("ok"), repeated.error.to_s
   ensure
+    if previous_ssl_cert_file
+      ENV["SSL_CERT_FILE"] = previous_ssl_cert_file
+    else
+      ENV.delete("SSL_CERT_FILE")
+    end
     mirror.try(&.terminate)
     mirror.try(&.wait)
     mirror_log.try(&.close)
