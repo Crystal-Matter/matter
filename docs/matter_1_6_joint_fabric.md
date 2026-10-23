@@ -351,7 +351,22 @@ Matter 1.6.1 model and supplies an ordinary device here, rather than an
 independent Joint Fabric Administrator. Its own VVS verifier still does not
 validate the DCL certificate path. This test proves independent device wire
 and signature interoperability with Crystal's verifier; production DCL
-freshness and a VVS-bearing JFA consent/JCM exchange remain to be verified.
+freshness and an independently implemented VVS-signed JFA consent/JCM
+exchange remain to be verified.
+An Administrator's original fabric uses an ICAC for Joint Commissioning.
+Matter 1.6 permits a VVS on that fabric only without a VVSC: NOCStruct's ICAC
+and VVSC fields are mutually exclusive. A VID signer trusted through DCL can
+sign the VVS while the original NOC keeps its ICAC.
+
+`e2e/spec/joint_fabric_two_jfa_spec.cr` installs a signed VVS without VVSC on
+the joining Crystal Administrator's original ICAC fabric, reads back the VVS
+and unchanged NOC, rejects a wrong signer over live CASE, and verifies the
+trusted signer during Anchor-to-joiner JCM. The test then clears its synthetic
+VVS before the existing three-Administrator Anchor transfer, whose other
+participants are configured with static root trust. This exercises the live
+VVS-bearing JCM wire path with explicit out-of-band signer trust; independent
+Administrator implementations, deployed DCL signer records, and production
+consent policies remain to be tested together.
 
 ## Work required for interoperable Joint Commissioning
 
@@ -365,9 +380,11 @@ freshness and a VVS-bearing JFA consent/JCM exchange remain to be verified.
    a VVS signature through a signer-specific leaf and a Root/ICA CA chain. The
    official SDK v1.6 implements the root lookup path but marks its VVS path
    unsupported. The matter.js device test above covers VVS-bearing wire
-   verification with a synthetic signer and DCL fixture; a VVS-bearing
-   joining Administrator and independently deployed trust/consent policies
-   remain unverified.
+   verification with a synthetic signer and DCL fixture. The Crystal JCM test
+   above covers a joining Administrator with an ICAC and VVS but no VVSC,
+   using an explicitly trusted synthetic signer. An independently implemented
+   Administrator and independently deployed trust/consent policies remain
+   unverified together.
    Deployment must authenticate and freshen its DCL gateway. The optional
    Matter-TLV VVSC is checked for its signed signer profile and issuer path.
    The Appendix F.5 fixed-vector spec checks fabric-binding and VVS-bearing
