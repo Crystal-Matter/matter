@@ -59,6 +59,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enforce StartTime before host presentation, persist the receipt time for
   messages that start now, and remove messages and emit MessageComplete when
   Duration elapses, including after a device restart.
+- Present messages with no StartTime or Duration using one captured clock
+  reading, so a millisecond tick cannot make an immediate message appear early.
 
 ### Commodity Price
 
