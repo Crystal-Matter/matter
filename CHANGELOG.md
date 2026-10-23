@@ -42,6 +42,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   test commissions a Sender and Listener on one fabric and verifies multicast
   On delivery before and after the Sender restarts.
 
+### Application Basic revision 1
+
+- Add the Matter 1.6 Application Basic server for Content App endpoints, with
+  fixed application identity and allowed vendor list, optional vendor and
+  product identity, administrator-only access to the allowed vendor list, and
+  a host-reported running status that starts stopped after a process restart.
+  The Content App example is commissioned and read with official chip-tool.
+
 ### Thermostat User Interface Configuration
 
 - Add the Matter 1.6 revision 2 Thermostat User Interface Configuration
