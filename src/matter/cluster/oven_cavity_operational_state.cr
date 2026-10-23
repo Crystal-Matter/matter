@@ -24,11 +24,12 @@ module Matter
       COMMAND_INVALID_IN_STATE         = OperationalState::COMMAND_INVALID_IN_STATE
       CMD_OPERATIONAL_COMMAND_RESPONSE = 0x04_u32
 
-      attribute 0x0000, :phase_list, Array(String), nullable: true
+      attribute 0x0000, :phase_list, Array(String), nullable: true, copy_on_assign: true
       attribute 0x0001, :current_phase, UInt8, nullable: true
       attribute 0x0002, :countdown_time, UInt32, nullable: true, optional: true,
         present_if: :countdown_supported?, max: OperationalState::MAX_COUNTDOWN
-      attribute 0x0003, :operational_state_list, Array(StateDescription), default: [] of StateDescription
+      attribute 0x0003, :operational_state_list, Array(StateDescription), default: [] of StateDescription,
+        copy_on_assign: true
       attribute 0x0004, :operational_state, UInt8, default: STOPPED
       attribute 0x0005, :operational_error, ErrorState, default: ErrorState.new(NO_ERROR)
 

@@ -168,4 +168,10 @@ module DslSpec
 
     attribute 0x0000, :knob, UInt8, default: 0_u8, writable: true
   end
+
+  class CopiedList < Matter::Cluster::Base
+    cluster 0xFFF1_FC13, revision: 1
+
+    attribute 0x0000, :items, Array(UInt8), default: [] of UInt8, copy_on_assign: true
+  end
 end

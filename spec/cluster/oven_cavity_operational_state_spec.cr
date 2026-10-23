@@ -80,8 +80,30 @@ describe OvenState do
     cluster = build(OvenState, phase_list: phases, current_phase: 1_u8, states: states)
     phases.clear
     states.clear
-    cluster.phase_list.not_nil!.clear
+    cluster.phase_list.try(&.clear)
     cluster.operational_state_list.clear
+    cluster.phase_list.should eq(["preheat", "cook"])
+    cluster.operational_state_list.map(&.operational_state_id).should eq([
+      BaseState::STOPPED, BaseState::RUNNING, BaseState::ERROR,
+    ])
+    cluster.report_state(BaseState::RUNNING)
+    cluster.operational_state.should eq(BaseState::RUNNING)
+  end
+
+  it "copies phase and state lists assigned after construction" do
+    cluster = build(OvenState)
+    phases = ["preheat", "cook"]
+    states = [
+      BaseState::StateDescription.new(BaseState::STOPPED),
+      BaseState::StateDescription.new(BaseState::RUNNING),
+      BaseState::StateDescription.new(BaseState::ERROR),
+    ]
+
+    cluster.phase_list = phases
+    cluster.operational_state_list = states
+    phases.clear
+    states.clear
+
     cluster.phase_list.should eq(["preheat", "cook"])
     cluster.operational_state_list.map(&.operational_state_id).should eq([
       BaseState::STOPPED, BaseState::RUNNING, BaseState::ERROR,

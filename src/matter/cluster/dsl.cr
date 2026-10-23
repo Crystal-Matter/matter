@@ -66,6 +66,8 @@ module Matter
     #   `validate: :method` calls a cluster-owned validator before a host
     #   assignment; it may raise to reject an invalid value without changing
     #   the attribute or its DataVersion.
+    #   `copy_on_assign: true` copies an Array before storing a host-assigned
+    #   value, so later caller mutation cannot change the attribute silently.
     #   `writable: true` implies `persist: true` unless `persist: false`.
     # * `attribute id, :name, Type, computed: true` — no ivar, accessors or
     #   persistence: a read calls the reader method `name` (`name?` for `Bool`)
@@ -142,6 +144,7 @@ module Matter
         :default, :writable, :persist, :persist_default, :nullable, :fixed, :optional, :requires,
         :read_access, :write_access, :min, :max, :max_length, :scene,
         :omit_changes, :timed, :fabric_scoped, :callback, :on_change, :validate, :computed, :present_if,
+        :copy_on_assign,
       ]
       COMMAND_OPTIONS  = [:request, :response, :response_id, :requires, :present_if, :timed, :access, :optional, :handler]
       PRIVILEGES       = [:view, :proxy_view, :operate, :manage, :administer]
@@ -204,6 +207,13 @@ module Matter
         {% requires = options[:requires] %}
         {% requires = requires.resolve if requires.is_a?(Path) %}
         {% present_if = options[:present_if] %}
+        {% copy_on_assign = options[:copy_on_assign] %}
+        {% if copy_on_assign && copy_on_assign != true %}
+          {% raise "#{@type}: attribute :#{name.id} copy_on_assign: must be true" %}
+        {% end %}
+        {% if copy_on_assign && !type.stringify.starts_with?("Array(") %}
+          {% raise "#{@type}: attribute :#{name.id} copy_on_assign: requires an Array type" %}
+        {% end %}
         {% if computed %}
           {% raise "#{@type}: attribute :#{name.id} is computed: and takes no default:" unless options[:default].nil? %}
           {% raise "#{@type}: attribute :#{name.id} is computed: and cannot be persisted" unless options[:persist].nil? %}
@@ -269,6 +279,9 @@ module Matter
           # Assigns the attribute, bumping the data version, notifying
           # subscribers and running the change callback when the value differs.
           def {{ name.id }}=(value : {{ value_type }}) : Nil
+            {% if copy_on_assign %}
+              value = {% if nullable %}value.try(&.dup){% else %}value.dup{% end %}
+            {% end %}
             return if @{{ name.id }} == value
             {% if validate %}
               {{ validate.id }}(value)
