@@ -125,8 +125,8 @@ module Matter
       end
 
       private def validate_spin_labels!(speeds : Array(String)) : Nil
-        if speeds.empty? || speeds.size > MAX_SPIN_SPEEDS || speeds.any? { |speed| speed.bytesize > MAX_SPIN_LABEL_SIZE }
-          raise ArgumentError.new("SpinSpeeds needs one to sixteen labels of at most 64 bytes")
+        if speeds.size > MAX_SPIN_SPEEDS || speeds.any? { |speed| speed.bytesize > MAX_SPIN_LABEL_SIZE }
+          raise ArgumentError.new("SpinSpeeds allows at most sixteen labels of at most 64 bytes")
         end
       end
 

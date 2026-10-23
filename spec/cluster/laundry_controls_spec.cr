@@ -93,7 +93,9 @@ describe "Matter 1.6 Laundry Washer Controls" do
   end
 
   it "enforces spin list and current index constraints" do
-    expect_raises(ArgumentError) { build(Washer, feature_map: Washer::Feature::Spin, spin_speeds: [] of String) }
+    no_spin = build(Washer, feature_map: Washer::Feature::Spin, spin_speeds: [] of String)
+    no_spin.spin_speeds.should be_empty
+    no_spin.spin_speed_current.should be_nil
     expect_raises(ArgumentError) do
       build(Washer, feature_map: Washer::Feature::Spin, spin_speeds: ["x" * 65])
     end
@@ -107,6 +109,8 @@ describe "Matter 1.6 Laundry Washer Controls" do
     cluster.on_select_spin_speed { |_index| LaundryStatus.success }
     write(cluster, Washer::ATTR_SPIN_SPEED_CURRENT, nil).status.should eq(LaundryCode::Success)
     read(cluster, Washer::ATTR_SPIN_SPEED_CURRENT).should be_nil
+    cluster.configure_spin_mode([] of String, nil)
+    cluster.spin_speeds.should be_empty
   end
 
   it "enforces distinct supported rinses and host state for writes" do

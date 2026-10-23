@@ -211,7 +211,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add Matter 1.6 Laundry Dryer Controls (0x004A, revision 1) and Laundry Washer
   Controls (0x0053, revision 2). Mode-dependent supported options, nullable
   dryer and spin selections, Spin/Rinse feature gates, Operate-level writes,
-  host acceptance, and restart reconciliation follow the appliance rules.
+  host acceptance, and restart reconciliation follow the appliance rules. A
+  mode may expose an empty SpinSpeeds list with no selected speed.
   A synthetic washer-dryer combo exercises both clusters with official
   chip-tool.
 
