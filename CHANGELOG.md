@@ -18,6 +18,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fabric credentials and pending Datastore node journal, roll back a failed
   state change, then resume RefreshNode without replaying AddPendingNode.
 
+### Protocol coverage audit
+
+- Count the existing Matter 1.6 HEPA, activated-carbon, and water-tank Resource
+  Monitoring clusters in both canonical coverage reports. The declaration
+  scanners now expand simple local cluster macros with literal arguments, so
+  the reports no longer mislabel these implemented clusters as absent.
+
 ### Joint Fabric VVS interoperability
 
 - Add a pinned matter.js 0.18.0 live device test for Crystal VID verification.
