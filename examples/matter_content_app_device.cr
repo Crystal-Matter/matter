@@ -4,6 +4,24 @@ require "./support/main"
 module MatterContentApp
   alias ApplicationBasic = Matter::Cluster::ApplicationBasic
   alias Messages = Matter::Cluster::Messages
+  alias AccountLogin = Matter::Cluster::AccountLogin
+
+  class AccountHost < AccountLogin::Host
+    TEMP_ACCOUNT_IDENTIFIER = "crystal-radio-user"
+    SETUP_PIN               = "12345678"
+
+    def setup_pin(identifier : String, fabric_index : UInt8) : String?
+      SETUP_PIN if identifier == TEMP_ACCOUNT_IDENTIFIER
+    end
+
+    def login(identifier : String, pin : String, node : UInt64?, fabric_index : UInt8) : Bool
+      identifier == TEMP_ACCOUNT_IDENTIFIER && pin == SETUP_PIN
+    end
+
+    def logout(node : UInt64?, fabric_index : UInt8) : Bool
+      true
+    end
+  end
 
   class Device < Matter::Device
     include Examples::Console
@@ -21,6 +39,7 @@ module MatterContentApp
     storage yaml: "matter_content_app_storage.yml"
 
     endpoint 1, device_type: Matter::DeviceType::CONTENT_APP do
+      cluster AccountLogin, host: AccountHost.new, as: :account_login
       cluster ApplicationBasic,
         application_name: "Crystal Radio",
         application: ApplicationBasic::Application.new(CATALOG_VENDOR_ID, APPLICATION_ID),
