@@ -380,6 +380,14 @@ readings and emit the Matter 1.6 measurement events. Power Topology exposes a
 fixed set of available endpoints; `update_active_endpoints` changes its
 nonvolatile active subset when DynamicPowerFlow is enabled.
 
+Thermostats and other energy-aware devices can add `EnergyPreference` revision
+1 with EnergyBalance, LowPowerModeSensitivity, or both. Supply each enabled
+feature's ordered `Balance` scale; EnergyBalance also needs two distinct
+`EnergyPriority` values and scales from 0 to 100. Controllers write the current
+index with Operate privilege. Selections persist across restart and follow
+the closest configured step if the manufacturer changes the scale. The
+thermostat UI example demonstrates both features.
+
 Electrical utility meters can advertise `MeterIdentification` on a `0x0511`
 endpoint. Pass nullable meter type, point-of-delivery and serial metadata at
 construction; `protocol_version` is optional. Enable `PowerThreshold` only

@@ -20,6 +20,22 @@ module MatterThermostatUI
       cluster Matter::Cluster::Groups
       cluster Matter::Cluster::Thermostat
       cluster Matter::Cluster::ThermostatUserInterfaceConfiguration
+      cluster Matter::Cluster::EnergyPreference,
+        feature_map: Matter::Cluster::EnergyPreference::Feature::EnergyBalance |
+                     Matter::Cluster::EnergyPreference::Feature::LowPowerModeSensitivity,
+        energy_balances: [
+          Matter::Cluster::EnergyPreference::Balance.new(0_u8, "Comfort"),
+          Matter::Cluster::EnergyPreference::Balance.new(50_u8, "Balanced"),
+          Matter::Cluster::EnergyPreference::Balance.new(100_u8, "Efficient"),
+        ],
+        energy_priorities: [
+          Matter::Cluster::EnergyPreference::EnergyPriority::Comfort,
+          Matter::Cluster::EnergyPreference::EnergyPriority::Efficiency,
+        ],
+        low_power_mode_sensitivities: [
+          Matter::Cluster::EnergyPreference::Balance.new(0_u8, "Conservative"),
+          Matter::Cluster::EnergyPreference::Balance.new(100_u8, "Aggressive"),
+        ]
     end
   end
 end
