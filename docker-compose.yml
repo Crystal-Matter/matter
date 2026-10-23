@@ -389,6 +389,11 @@ services:
     environment:
       E2E_DEVICE: matter_content_launcher
 
+  application-launcher:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_application_launcher
+
   target-navigator:
     <<: *device
     environment:
