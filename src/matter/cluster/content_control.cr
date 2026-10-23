@@ -328,7 +328,7 @@ module Matter
       end
 
       def add_block_channels(request : ChannelsRequest) : InteractionModel::Status
-        return InteractionModel::Status.constraint_error if request.channels.empty?
+        return InteractionModel::Status.success if request.channels.empty?
         validator = @validate_channel
         return InteractionModel::Status.invalid_in_state unless validator
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidChannel) unless request.channels.all? { |channel| validator.call(channel) }
@@ -346,14 +346,14 @@ module Matter
       end
 
       def remove_block_channels(request : ChannelIndexesRequest) : InteractionModel::Status
-        return InteractionModel::Status.constraint_error if request.channel_indexes.empty?
+        return InteractionModel::Status.success if request.channel_indexes.empty?
         return InteractionModel::Status.cluster_failure(StatusCode::ChannelNotExist) unless request.channel_indexes.all? { |index| @block_channel_list.any?(&.block_channel_index.==(index)) }
         self.block_channel_list = @block_channel_list.reject { |channel| request.channel_indexes.includes?(channel.block_channel_index) }
         InteractionModel::Status.success
       end
 
       def add_block_applications(request : ApplicationsRequest) : InteractionModel::Status
-        return InteractionModel::Status.constraint_error if request.applications.empty?
+        return InteractionModel::Status.success if request.applications.empty?
         if identifier = @identify_application
           return InteractionModel::Status.cluster_failure(StatusCode::UnidentifiableApplication) unless request.applications.all? { |app| identifier.call(app) }
         end
@@ -364,7 +364,7 @@ module Matter
       end
 
       def remove_block_applications(request : ApplicationsRequest) : InteractionModel::Status
-        return InteractionModel::Status.constraint_error if request.applications.empty?
+        return InteractionModel::Status.success if request.applications.empty?
         return InteractionModel::Status.cluster_failure(StatusCode::ApplicationNotExist) unless request.applications.all? { |app| @block_application_list.any? { |existing| same_app?(existing, app) } }
         self.block_application_list = @block_application_list.reject { |existing| request.applications.any? { |app| same_app?(existing, app) } }
         InteractionModel::Status.success

@@ -68,6 +68,10 @@ describe Control do
       Control::ApplicationsRequest.new([app])), IMCode::Failure).cluster_status.should eq(0x08_u8)
     expect_status(invoke(cluster, Control::CMD_REMOVE_BLOCK_APPLICATIONS,
       Control::ApplicationsRequest.new([app, absent])), IMCode::Failure).cluster_status.should eq(0x09_u8)
+    expect_success(invoke(cluster, Control::CMD_ADD_BLOCK_APPLICATIONS,
+      Control::ApplicationsRequest.new([] of Control::AppInfo)))
+    expect_success(invoke(cluster, Control::CMD_REMOVE_BLOCK_APPLICATIONS,
+      Control::ApplicationsRequest.new([] of Control::AppInfo)))
     read_tlv(cluster, Control::ATTR_BLOCK_APPLICATION_LIST).as_list.size.should eq(1)
     expect_success(invoke(cluster, Control::CMD_REMOVE_BLOCK_APPLICATIONS,
       Control::ApplicationsRequest.new([app])))
@@ -85,10 +89,31 @@ describe Control do
     channels.map(&.block_channel_index).should eq([0_u16, 1_u16])
     expect_status(invoke(cluster, Control::CMD_REMOVE_BLOCK_CHANNELS,
       Control::ChannelIndexesRequest.new([0_u16, 9_u16])), IMCode::Failure).cluster_status.should eq(0x06_u8)
+    expect_success(invoke(cluster, Control::CMD_ADD_BLOCK_CHANNELS,
+      Control::ChannelsRequest.new([] of Control::BlockChannel)))
+    expect_success(invoke(cluster, Control::CMD_REMOVE_BLOCK_CHANNELS,
+      Control::ChannelIndexesRequest.new([] of UInt16)))
     read_tlv(cluster, Control::ATTR_BLOCK_CHANNEL_LIST).as_list.size.should eq(2)
     expect_success(invoke(cluster, Control::CMD_REMOVE_BLOCK_CHANNELS,
       Control::ChannelIndexesRequest.new([0_u16])))
     read_tlv(cluster, Control::ATTR_BLOCK_CHANNEL_LIST).as_list.size.should eq(1)
+    expect_success(invoke(cluster, Control::CMD_ENABLE))
+    cluster.playback_allowed?(rating: "G", channel: second).should be_false
+    cluster.playback_allowed?(rating: "G", channel: first).should be_true
+  end
+
+  it "keeps scheduled rating decisions separate from on-demand ratings" do
+    ratings = [Control::RatingName.new("U"), Control::RatingName.new("12"), Control::RatingName.new("18")]
+    cluster = build(Control, feature_map: Control::Feature::ScheduledContentRating,
+      scheduled_content_ratings: ratings, scheduled_content_rating_threshold: "18")
+    expect_status(invoke(cluster, Control::CMD_SET_SCHEDULED_CONTENT_RATING_THRESHOLD,
+      Control::SetRatingRequest.new("X")), IMCode::Failure).cluster_status.should eq(0x03_u8)
+    expect_success(invoke(cluster, Control::CMD_SET_SCHEDULED_CONTENT_RATING_THRESHOLD,
+      Control::SetRatingRequest.new("12")))
+    expect_success(invoke(cluster, Control::CMD_ENABLE))
+    cluster.playback_allowed?(rating: "U", scheduled: true).should be_true
+    cluster.playback_allowed?(rating: "12", scheduled: true).should be_false
+    cluster.playback_allowed?(rating: "12", scheduled: false).should be_true
   end
 
   it "lets the host enforce the configured playback policy" do

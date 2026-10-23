@@ -339,6 +339,7 @@ module Matter
           0x0503_u32, # Wake On LAN
           0x0504_u32, # Channel
           0x0505_u32, # Target Navigator
+          0x0507_u32, # Media Input when PhysicalInputs applies
           0x0508_u32, # Low Power
           0x050B_u32, # Audio Output
           0x050F_u32, # Content Control
