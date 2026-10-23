@@ -14,6 +14,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dependency of Matter. The driver-neutral SQL layer uses a tagged JSON document
   codec, supports nested atomic transactions, and versions its physical schema
   for future migrations and a PostgreSQL adapter.
+
 ### Joint Fabric VVS interoperability
 
 - Add a pinned matter.js 0.18.0 live device test for Crystal VID verification.

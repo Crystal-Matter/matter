@@ -1049,6 +1049,9 @@ SQL operations use transactions, including savepoints for nested transactions;
 an exception rolls back its transaction. Its common SQL layer is designed for
 a future PostgreSQL adapter. The adapter opens the file
 with SQLite WAL mode, full sync, and a five-second busy timeout.
+On Windows, the native SQLite import library and DLL must also be installed;
+for example, `vcpkg install sqlite3:x64-windows`, with the installed `lib`
+directory in `CRYSTAL_LIBRARY_PATH` and `bin` directory in `PATH`.
 
 A store is a set of *collections* (`fabrics`, `sessions`, `subscriptions`, `device`,
 `clusters`, `app`, `meta`), each holding *documents* keyed by id, so a file looks like
