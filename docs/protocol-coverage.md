@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 112
-- Matching known revisions: 110
+- Crystal declarations for those IDs: 113
+- Matching known revisions: 111
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -90,7 +90,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0091 | Electrical Energy Measurement Cluster | 2 | 2 | — |
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | Host controls thermostat, heat source, and boost acceptance |
 | 0x0095 | Commodity Price Cluster | 4 | — | cluster absent |
-| 0x0097 | Messages Cluster | 3 | — | cluster absent |
+| 0x0097 | Messages Cluster | 3 | 3 | Fabric-scoped queue and host-triggered events; optional user-interaction features and Duration expiry remain absent |
 | 0x0098 | Device Energy Management Cluster | 4 | — | cluster absent |
 | 0x0099 | Energy EVSE Cluster | 4 | — | cluster absent |
 | 0x009B | Energy Preference Cluster | 1 | 1 | BALA/LPMS feature choice; validated scales, persisted selections and restart migration |

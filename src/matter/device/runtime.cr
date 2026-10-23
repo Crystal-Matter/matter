@@ -300,6 +300,13 @@ module Matter
               raise StorageError.new("Could not persist erased Ecosystem Information for fabric #{fabric_index}")
             end
           end
+          if messages = cluster.as?(Cluster::Messages)
+            messages.remove_fabric(fabric_index)
+            unless @persistence.save_cluster(messages)
+              @persistence.mark_dirty(messages)
+              raise StorageError.new("Could not persist erased Messages for fabric #{fabric_index}")
+            end
+          end
           cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))

@@ -3,6 +3,7 @@ require "./support/main"
 
 module MatterContentApp
   alias ApplicationBasic = Matter::Cluster::ApplicationBasic
+  alias Messages = Matter::Cluster::Messages
 
   class Device < Matter::Device
     include Examples::Console
@@ -28,6 +29,8 @@ module MatterContentApp
         vendor_name: "Spider-Gazelle",
         vendor_id: CATALOG_VENDOR_ID,
         as: :application_basic
+
+      cluster Messages, as: :messages
     end
 
     protected def before_start : Nil
