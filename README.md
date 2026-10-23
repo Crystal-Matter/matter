@@ -300,6 +300,13 @@ SupportedModes is copied at construction and on read. If persisted CurrentMode
 is no longer in the host's configured catalogue, the configured initial mode
 is restored.
 
+`Cluster::RefrigeratorAndTemperatureControlledCabinetMode` provides the Matter
+1.6 revision 3 refrigerator mode server. It adds RapidCool and RapidFreeze
+tags to Mode Base, disallows OnOff, StartUpMode, and OnMode, and preserves a
+valid CurrentMode across restart. The appliance can accept or refuse changes
+through `on_change_to_mode`. The synthetic refrigerator fixture exposes it
+alongside `RefrigeratorAlarm`.
+
 `Cluster::RefrigeratorAlarm` reports the Matter 1.6 DoorOpen alarm after the
 appliance's chosen open duration. Its `Mask`, `State`, and fixed `Supported`
 attributes and `Notify` event follow Alarm Base. The derived cluster does not

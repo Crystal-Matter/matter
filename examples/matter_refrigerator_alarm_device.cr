@@ -5,6 +5,13 @@ require "./support/main"
 # after its vendor-defined open duration has elapsed.
 module MatterRefrigeratorAlarm
   alias Alarm = Matter::Cluster::RefrigeratorAlarm
+  alias Mode = Matter::Cluster::RefrigeratorAndTemperatureControlledCabinetMode
+  alias ModeBase = Matter::Cluster::ModeBase
+
+  MODES = [
+    ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(0_u16)]),
+    ModeBase::Option.new("Rapid Cool", 1_u8, [ModeBase::Tag.new(Mode::ModeTag::RapidCool.value)]),
+  ]
 
   class Device < Matter::Device
     include Examples::Console
@@ -20,6 +27,7 @@ module MatterRefrigeratorAlarm
 
     endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Alarm
+      cluster Mode, supported_modes: MODES, current_mode: 0_u8
     end
 
     protected def before_start : Nil
