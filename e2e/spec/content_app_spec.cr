@@ -3,6 +3,7 @@ require "./e2e_helper"
 module ContentAppE2E
   CATALOG_VENDOR_ID = 0xFFF1_i64
   MESSAGE_ID        = "00112233445546778899aabbccddeeff"
+  TIMED_MESSAGE_ID  = "102132435465768798a9bacbdcedfe0f"
 end
 
 describe "matter_content_app example" do
@@ -37,5 +38,16 @@ describe "matter_content_app example" do
     expect_success(device.read("messages", "messages")).output.downcase.should contain(id)
     expect_success(device.invoke("messages", "cancel-messages-request", ["[\"hex:#{id}\"]"]))
     expect_success(device.read("messages", "messages")).output.should contain("Messages: 0 entries")
+  end
+
+  it "expires a duration-limited message and reports completion through official chip-tool" do
+    device.commission!
+    id = ContentAppE2E::TIMED_MESSAGE_ID
+    expect_success(device.invoke("messages", "present-messages-request",
+      ["hex:#{id}", "1", "0", "null", "3000", "Expiring notice"]))
+    sleep 4.seconds
+    expect_success(device.read("messages", "messages")).output.should contain("Messages: 0 entries")
+    complete = expect_success(device.chip("messages", "read-event", "message-complete", device.node, "1"))
+    complete.output.downcase.should contain(id)
   end
 end

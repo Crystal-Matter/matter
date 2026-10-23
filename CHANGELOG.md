@@ -38,8 +38,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   IDs, durable queue state, and cleanup on fabric removal. The Content App exercises
   present, restart, and cancel through official chip-tool. Optional confirmation,
   response, reply, and protected-message features remain unavailable until a
-  host can provide their required user interactions; automatic Duration expiry
-  remains to be implemented.
+  host can provide their required user interactions.
+- Enforce StartTime before host presentation, persist the receipt time for
+  messages that start now, and remove messages and emit MessageComplete when
+  Duration elapses, including after a device restart.
 
 ### Electrical Grid Conditions
 

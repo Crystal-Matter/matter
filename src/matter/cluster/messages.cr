@@ -7,6 +7,11 @@ module Matter
     class Messages < Base
       cluster 0x0097, revision: 3, persist_state: false
 
+      alias ExpiryTimer = Proc(Time::Span, Proc(Nil), Nil)
+
+      MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
+      MAX_TIMER_DELAY           =      60_000_u64
+
       feature :received_confirmation, bit: 0
       feature :confirmation_response, bit: 1
       feature :confirmation_reply, bit: 2
@@ -176,8 +181,10 @@ module Matter
         getter data_version : UInt32
         getter messages : Array(Message)
         getter active_message_ids : Array(Bytes)
+        getter accepted_at_ms : Hash(String, Int64) = {} of String => Int64
 
-        def initialize(@data_version : UInt32, @messages : Array(Message), @active_message_ids : Array(Bytes))
+        def initialize(@data_version : UInt32, @messages : Array(Message), @active_message_ids : Array(Bytes),
+                       @accepted_at_ms : Hash(String, Int64) = {} of String => Int64)
         end
       end
 
@@ -193,9 +200,20 @@ module Matter
 
       @messages = [] of Message
       @active_message_ids = [] of Bytes
+      @accepted_at_ms = {} of String => Int64
+      @expiry_generation = 0_u64
 
       def initialize(endpoint_id : DataType::EndpointNumber,
-                     @feature_map : Feature = Feature::None)
+                     @feature_map : Feature = Feature::None,
+                     @clock : Proc(Time) = -> { Time.utc },
+                     expiry_timer : ExpiryTimer? = nil)
+        @expiry_timer = expiry_timer || ->(delay : Time::Span, callback : Proc(Nil)) do
+          spawn do
+            sleep delay
+            callback.call
+          end
+          nil
+        end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("optional Messages features require a host implementation") if (@feature_map.value & ~SUPPORTED_FEATURES) != 0
       end
@@ -217,8 +235,10 @@ module Matter
         return InteractionModel::Status.constraint_error if @messages.any? { |entry| entry.message_id == request.message_id }
         return InteractionModel::Status.resource_exhausted if @messages.size >= MAX_MESSAGES
         @messages << Message.new(request, fabric_index)
+        @accepted_at_ms[request.message_id.hexstring] = @clock.call.to_unix_ms if request.start_time.nil? && request.duration
         increment_version_and_notify(ATTR_MESSAGES)
         emit_message_queued(MessageIdEvent.new(request.message_id.dup), fabric_index)
+        schedule_expiry
         InteractionModel::Status.success
       end
 
@@ -231,14 +251,22 @@ module Matter
         return InteractionModel::Status.success if owned.empty?
         @messages.reject! { |entry| owned.any? { |other| other.message_id == entry.message_id } }
         @active_message_ids.reject! { |id| owned.any? { |entry| entry.message_id == id } }
+        owned.each { |entry| @accepted_at_ms.delete(entry.message_id.hexstring) }
         increment_version_and_notify(ATTR_MESSAGES)
         notify_changed(ATTR_ACTIVE_MESSAGE_IDS)
+        schedule_expiry
         InteractionModel::Status.success
       end
 
       def present(message_id : Bytes, fabric_index : UInt8) : Nil
         message = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         raise ArgumentError.new("unknown message") unless message
+        now_ms = @clock.call.to_unix_ms.to_u128
+        raise ArgumentError.new("message is not yet available") if now_ms < start_ms(message)
+        if (deadline = deadline_ms(message)) && now_ms >= deadline
+          process_due_messages
+          raise ArgumentError.new("message has expired")
+        end
         return if @active_message_ids.includes?(message_id)
         @active_message_ids << message_id.dup
         increment_version_and_notify(ATTR_ACTIVE_MESSAGE_IDS)
@@ -253,9 +281,20 @@ module Matter
         raise ArgumentError.new("unknown message") unless message
         @active_message_ids.reject!(&.==(message_id))
         @messages.reject! { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
+        @accepted_at_ms.delete(message_id.hexstring)
         increment_version_and_notify(ATTR_MESSAGES)
         notify_changed(ATTR_ACTIVE_MESSAGE_IDS)
         emit_message_complete(MessageCompleteEvent.new(message_id.dup, response_id, reply, future_preference), fabric_index)
+        schedule_expiry
+      end
+
+      # Processes elapsed message durations; also useful for hosts with a
+      # deterministic clock or their own event loop.
+      def process_due_messages : Nil
+        now_ms = @clock.call.to_unix_ms.to_u128
+        expired = @messages.select { |message| (deadline = deadline_ms(message)) && deadline <= now_ms }
+        expired.each { |message| complete(message.message_id, message.fabric_index) }
+        schedule_expiry if expired.empty?
       end
 
       def remove_fabric(fabric_index : UInt8) : Nil
@@ -263,12 +302,14 @@ module Matter
         return if ids.empty?
         @messages.reject!(&.fabric_index.==(fabric_index))
         @active_message_ids.reject! { |id| ids.includes?(id) }
+        ids.each { |id| @accepted_at_ms.delete(id.hexstring) }
         increment_version_and_notify(ATTR_MESSAGES)
         notify_changed(ATTR_ACTIVE_MESSAGE_IDS)
+        schedule_expiry
       end
 
       def save_state : Storage::Document?
-        PersistedState.new(@data_version, @messages, @active_message_ids).to_document
+        PersistedState.new(@data_version, @messages, @active_message_ids, @accepted_at_ms).to_document
       end
 
       def restore_state(document : Storage::Document) : Nil
@@ -282,6 +323,41 @@ module Matter
         @data_version = state.data_version
         @messages = state.messages
         @active_message_ids = state.active_message_ids
+        @accepted_at_ms = state.accepted_at_ms
+        now_ms = @clock.call.to_unix_ms
+        @messages.each do |message|
+          if message.start_time.nil? && message.duration
+            @accepted_at_ms[message.message_id.hexstring] ||= now_ms
+          end
+        end
+        process_due_messages
+      end
+
+      private def start_ms(message : Message) : UInt128
+        if start = message.start_time
+          (start.to_u128 + MATTER_EPOCH_UNIX_SECONDS.to_u128) * 1000_u128
+        else
+          (@accepted_at_ms[message.message_id.hexstring]? || @clock.call.to_unix_ms).to_u128
+        end
+      end
+
+      private def deadline_ms(message : Message) : UInt128?
+        message.duration.try { |duration| start_ms(message) + duration.to_u128 }
+      end
+
+      private def schedule_expiry : Nil
+        @expiry_generation &+= 1
+        generation = @expiry_generation
+        deadline = @messages.compact_map { |message| deadline_ms(message) }.min?
+        return unless deadline
+        now_ms = @clock.call.to_unix_ms.to_u128
+        remaining = deadline > now_ms ? deadline - now_ms : 0_u128
+        delay = {remaining, MAX_TIMER_DELAY.to_u128}.min.to_i64.milliseconds
+        @expiry_timer.call(delay, -> { expire_if_current(generation) })
+      end
+
+      private def expire_if_current(generation : UInt64) : Nil
+        process_due_messages if generation == @expiry_generation
       end
 
       private def command_fabric_index : UInt8?
