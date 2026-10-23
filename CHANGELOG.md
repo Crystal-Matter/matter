@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool interoperability example. Reset and ModifyEnabledAlarms remain
   absent as required by the derived cluster.
 
+### Door Lock Aliro management groundwork
+
+- Add durable local reader configuration and P-256 public-key credential
+  management with issuer and shared endpoint capacity checks. Keep Aliro
+  feature bits disabled until reader transport and mandatory Matter attributes
+  and commands are implemented.
+
 ### Door Lock schedule authorization
 
 - Enforce weekday and year-day access windows for scheduled users, including
