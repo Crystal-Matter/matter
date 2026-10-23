@@ -8,7 +8,7 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 112
+- Implemented standard cluster IDs compared: 113
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 135
@@ -67,6 +67,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x005B | Air Quality Cluster | 1 | 1 | — | — |
 | 0x005D | Dishwasher Alarm Cluster | 1 | 1 | — | — |
 | 0x005E | Microwave Oven Mode Cluster | 2 | 2 | — | — |
+| 0x005F | Microwave Oven Control Cluster | 1 | 1 | — | — |
 | 0x0060 | Operational State Cluster | 3 | 3 | — | — |
 | 0x0061 | RVC Operational State Cluster | 3 | 3 | — | — |
 | 0x0062 | Scenes Management Cluster | 1 | 1 | — | — |
