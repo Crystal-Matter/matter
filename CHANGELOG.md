@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mandatory lookup commands. The synthetic Aggregator fixture is covered by
   official chip-tool E2E. Other tariff feature families remain disabled.
 
+### Joint Fabric DCL signer trust
+
+- Compose explicit root and DCL signer trust for Administrators. The live
+  three-Administrator scenario keeps B's ICAC and signed VVS through Joint
+  Commissioning, restart, and Anchor transfer, using a test HTTPS DCL mirror
+  with removal and mismatch denial checks.
+
 ### Smoke and CO Alarm device type
 
 - Add the Matter 1.6 Smoke CO Alarm device type (0x0076, revision 2) and its

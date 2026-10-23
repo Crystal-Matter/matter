@@ -64,6 +64,25 @@ module Matter
         end
       end
 
+      # Compose an explicitly provisioned root policy with a separate VVS
+      # signer policy. VidVerification invokes only one path for each fabric:
+      # a present VVS never falls back to trusted_root? after signer rejection.
+      class CompositeOperationalTrustAnchors < OperationalTrustAnchors
+        def initialize(@root_trust : OperationalTrustAnchors,
+                       @statement_trust : OperationalTrustAnchors)
+        end
+
+        def trusted_root?(vendor_id : UInt16, root_certificate : Bytes) : Bool
+          @root_trust.trusted_root?(vendor_id, root_certificate)
+        end
+
+        def verify_statement?(vendor_id : UInt16, signer_skid : Bytes,
+                              statement_tbs : Bytes, signature : Bytes,
+                              vvsc : Bytes?) : Bool
+          @statement_trust.verify_statement?(vendor_id, signer_skid, statement_tbs, signature, vvsc)
+        end
+      end
+
       def verify(
         im : ImClient,
         session : Session::SecureContext,

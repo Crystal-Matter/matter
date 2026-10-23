@@ -61,7 +61,7 @@ ENV CHIP_TOOL=/usr/bin/chip-tool
 # the packages crystal needs to link binaries. The image already ships chip-tool,
 # avahi and dbus (both daemons must be running for chip-tool, see run.sh).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl ca-certificates git gcc make pkg-config \
+      curl ca-certificates git gcc make pkg-config python3 \
       libpcre2-dev libevent-dev libgc-dev libssl-dev libyaml-dev libxml2-dev libgmp-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /opt \
