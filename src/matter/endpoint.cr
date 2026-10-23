@@ -164,8 +164,8 @@ module Matter
       end
     end
 
-    # The mandatory server clusters this endpoint's device types are missing,
-    # one message each; empty when the endpoint conforms.
+    # Mandatory server clusters and device-type-specific attributes this
+    # endpoint is missing, one message each; empty when it conforms.
     def validate : Array(String)
       errors = [] of String
 
@@ -175,12 +175,20 @@ module Matter
             errors << "Missing required cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
           end
         end
+        device_type.required_server_attributes.each do |cluster_id, attribute_ids|
+          next unless cluster = get_cluster(cluster_id)
+          attribute_ids.each do |attribute_id|
+            unless cluster.attributes.any? { |attribute| attribute.id.id == attribute_id }
+              errors << "Missing required attribute #{Hex.u16(attribute_id)} in cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
+            end
+          end
+        end
       end
 
       errors
     end
 
-    # Check if this endpoint is valid (has all required clusters)
+    # Check if this endpoint has its device types' required elements.
     def valid? : Bool
       validate.empty?
     end

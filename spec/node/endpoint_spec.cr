@@ -6,6 +6,8 @@ require "../../src/matter/cluster/level_control"
 require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
 require "../../src/matter/cluster/scenes_management"
+require "../../src/matter/cluster/microwave_oven_control"
+require "../../src/matter/cluster/operational_state"
 
 private ENDPOINT_ID = endpoint(1)
 
@@ -201,6 +203,27 @@ describe Matter::Endpoint do
   end
 
   describe "validation" do
+    it "requires CountdownTime on a Matter 1.6 Microwave Oven endpoint" do
+      endpoint = Matter::Endpoint.new(ENDPOINT_ID, Matter::DeviceType.microwave_oven)
+      modes = [
+        Matter::Cluster::ModeBase::Option.new("Normal", 0_u8,
+          [Matter::Cluster::ModeBase::Tag.new(Matter::Cluster::MicrowaveOvenMode::ModeTag::Normal.value)]),
+        Matter::Cluster::ModeBase::Option.new("Defrost", 1_u8,
+          [Matter::Cluster::ModeBase::Tag.new(Matter::Cluster::MicrowaveOvenMode::ModeTag::Defrost.value)]),
+      ]
+      mode = Matter::Cluster::MicrowaveOvenMode.new(ENDPOINT_ID, modes, 0_u8)
+      state = Matter::Cluster::OperationalState.new(ENDPOINT_ID)
+      endpoint.add_cluster(Matter::Cluster::Descriptor.new(ENDPOINT_ID))
+      endpoint.add_cluster(mode)
+      endpoint.add_cluster(Matter::Cluster::MicrowaveOvenControl.new(ENDPOINT_ID, mode, 3600_u32))
+      endpoint.add_cluster(state)
+
+      endpoint.validate.should eq(["Missing required attribute 0x0002 in cluster 0x0060 for device type Microwave Oven"])
+      state.update_countdown(0_u32)
+      state.events.map(&.id.id).should contain(Matter::Cluster::OperationalState::EVENT_OPERATION_COMPLETION)
+      endpoint.validate.should be_empty
+    end
+
     it "validates complete on/off light endpoint" do
       endpoint = Matter::Endpoint.new(ENDPOINT_ID, Matter::DeviceType.on_off_light)
       endpoint.add_cluster(Matter::Cluster::Descriptor.new(ENDPOINT_ID))

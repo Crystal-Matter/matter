@@ -4,7 +4,8 @@ require "./hex"
 
 module Matter
   # Device type definitions from the Matter specification
-  # Each device type defines required and optional clusters
+  # Each device type defines required and optional clusters and may require
+  # specific attributes in one of its server clusters.
   class DeviceType
     # Common Matter Device Types (Spec Chapter 7)
 
@@ -47,6 +48,9 @@ module Matter
     SOIL_SENSOR              = 0x0045_u32 # Soil Sensor
     ELECTRICAL_UTILITY_METER = 0x0511_u32 # Electrical Utility Meter
 
+    # Appliance Device Types
+    MICROWAVE_OVEN = 0x0079_u32 # Microwave Oven
+
     # Closure Device Types
     DOOR_LOCK                  = 0x000A_u32 # Door Lock
     DOOR_LOCK_CONTROLLER       = 0x000B_u32 # Door Lock Controller
@@ -71,6 +75,7 @@ module Matter
     getter revision : UInt16
     getter required_server_clusters : Array(UInt32)
     getter optional_server_clusters : Array(UInt32)
+    getter required_server_attributes : Hash(UInt32, Array(UInt32))
 
     def initialize(
       @device_type_id : DataType::DeviceTypeId,
@@ -78,6 +83,7 @@ module Matter
       @revision : UInt16,
       @required_server_clusters : Array(UInt32) = [] of UInt32,
       @optional_server_clusters : Array(UInt32) = [] of UInt32,
+      @required_server_attributes : Hash(UInt32, Array(UInt32)) = {} of UInt32 => Array(UInt32),
     )
     end
 
@@ -245,6 +251,17 @@ module Matter
       )
     end
 
+    def self.microwave_oven : DeviceType
+      new(
+        DataType::DeviceTypeId.new(MICROWAVE_OVEN),
+        "Microwave Oven",
+        2_u16,
+        required_server_clusters: [0x001D_u32, 0x0060_u32, 0x005E_u32, 0x005F_u32],
+        optional_server_clusters: [0x0003_u32, 0x0202_u32],
+        required_server_attributes: {0x0060_u32 => [0x0002_u32]}
+      )
+    end
+
     def self.electrical_utility_meter : DeviceType
       new(
         DataType::DeviceTypeId.new(ELECTRICAL_UTILITY_METER),
@@ -327,6 +344,7 @@ module Matter
       when AIR_QUALITY_SENSOR         then air_quality_sensor
       when SOIL_SENSOR                then soil_sensor
       when ELECTRICAL_UTILITY_METER   then electrical_utility_meter
+      when MICROWAVE_OVEN             then microwave_oven
       when DOOR_LOCK                  then door_lock
       when THERMOSTAT                 then thermostat
       when FAN                        then fan
@@ -371,6 +389,7 @@ module Matter
       when AIR_QUALITY_SENSOR         then "Air Quality Sensor"
       when SOIL_SENSOR                then "Soil Sensor"
       when ELECTRICAL_UTILITY_METER   then "Electrical Utility Meter"
+      when MICROWAVE_OVEN             then "Microwave Oven"
       when DOOR_LOCK                  then "Door Lock"
       when DOOR_LOCK_CONTROLLER       then "Door Lock Controller"
       when WINDOW_COVERING            then "Window Covering"
