@@ -8,6 +8,8 @@ module MatterApplianceModes
   alias DishwasherMode = Matter::Cluster::DishwasherMode
   alias LaundryWasherMode = Matter::Cluster::LaundryWasherMode
   alias MicrowaveOvenMode = Matter::Cluster::MicrowaveOvenMode
+  alias MicrowaveOvenControl = Matter::Cluster::MicrowaveOvenControl
+  alias Status = Matter::InteractionModel::Status
 
   DISHWASHER_MODES = [
     ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(DishwasherMode::ModeTag::Normal.value)]),
@@ -39,7 +41,20 @@ module MatterApplianceModes
     endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
       cluster DishwasherMode, supported_modes: DISHWASHER_MODES, current_mode: 0_u8
       cluster LaundryWasherMode, supported_modes: LAUNDRY_MODES, current_mode: 0_u8
-      cluster MicrowaveOvenMode, supported_modes: MICROWAVE_MODES, current_mode: 0_u8
+      cluster MicrowaveOvenMode, supported_modes: MICROWAVE_MODES, current_mode: 0_u8, as: :microwave_mode
+      cluster MicrowaveOvenControl, mode_cluster: microwave_mode, max_cook_time: 3600_u32,
+        add_more_time: true, as: :microwave_control
+    end
+
+    protected def before_start : Nil
+      control = node.get_cluster!(1_u16, MicrowaveOvenControl)
+      control.on_set_cooking_parameters do |_mode, _seconds, _power, _start|
+        Status.success
+      end
+      control.on_add_more_time do |_seconds|
+        Status.success
+      end
+      super
     end
   end
 end

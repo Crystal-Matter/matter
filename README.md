@@ -334,6 +334,16 @@ catalogue with Normal and Defrost tags. The host selects a supported
 StartUpMode, and OnMode. The synthetic appliance modes example exposes its
 fixed catalogue alongside the dishwasher and laundry mode clusters.
 
+`Cluster::MicrowaveOvenControl` couples a Matter 1.6 microwave mode to cooking
+time and numeric power. It advertises PowerAsNumber, with optional power limits
+and AddMoreTime. `SetCookingParameters` validates all fields before asking the
+host to apply them; a refused operation leaves Mode, CookTime, and PowerSetting
+unchanged. A missing CookMode selects the advertised Normal mode; omitted time
+and power use 30 seconds and maximum power. The host can opt into AddMoreTime
+and must provide callbacks for physical changes. PowerInWatts remains
+provisional and is not advertised. The synthetic appliance example exercises
+these commands through official chip-tool.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the
