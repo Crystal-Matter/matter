@@ -105,8 +105,11 @@ item below as covered only to the extent of its cited tests.
   for cross-signing and removal of the old fabric. Administrator removal has a
   consent gate, persisted journal, Datastore update, and Administrator CAT/NOC
   rotation. The Docker three-administrator test jointly commissions B and C,
-  transfers the Anchor from A to B, and removes A. It restarts B after a lost
-  RemoveFabric acknowledgement, verifies the persisted journal blocks replay,
+  transfers the Anchor from A to B, and removes A. It interrupts B after
+  TransferAnchorComplete, restarts it with a persisted FollowingUp journal,
+  and verifies participant follow-up without changing B's NOC or the
+  Administrator CAT version again. It also restarts B after a lost RemoveFabric
+  acknowledgement, verifies the persisted journal blocks replay,
   and reconciles the result. It also restarts B after a lost RemoveAdmin
   acknowledgement, checks the removal in B's persisted AdminList over CASE,
   and resumes CAT/NOC rotation only after checked reconciliation. B and C
@@ -374,8 +377,9 @@ freshness and a VVS-bearing JFA consent/JCM exchange remain to be verified.
    the separate matter.js device test covers the live VVS certificate path.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
-   A-to-B transfer, A removal, B restart after a lost RemoveFabric
-   acknowledgement, persisted RemoveAdmin with a lost acknowledgement, and
+   A-to-B transfer with B restart before participant follow-up, A removal,
+   B restart after a lost RemoveFabric acknowledgement, persisted RemoveAdmin
+   with a lost acknowledgement, and
    B/C registration; local specs cover interrupted second credential rotation.
    Other network interruption points remain.
 3. Deploy production PAA/CD signers and a trusted CRL distribution source

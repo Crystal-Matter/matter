@@ -87,6 +87,18 @@ describe MatterJointFabricAdministrator::Device do
     File.delete?(path) if path
   end
 
+  it "round-trips the transfer follow-up interruption flag and defaults old commands to false" do
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+      interrupt_before_transfer_follow_up: true)
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(request.to_document)
+      .interrupt_before_transfer_follow_up?.should be_true
+
+    old_document = request.to_document
+    old_document.delete("interrupt_before_transfer_follow_up")
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
+      .interrupt_before_transfer_follow_up?.should be_false
+  end
+
   it "retains the link-local interface scope in an Anchor ICAC exchange handoff" do
     peer = Socket::IPAddress.new("fe80::1234%1", 5540)
     request = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.new(

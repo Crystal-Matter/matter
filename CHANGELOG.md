@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric transfer recovery
+
+- Extend the three-Administrator live scenario with a restart after
+  TransferAnchorComplete and before participant follow-up. Verify that the
+  persisted transfer journal resumes follow-up without another CAT rotation.
+  Skip the candidate's promoted Node ID when selecting follow-up participants
+  after restart.
+
 ### Chime
 
 - Add the Matter 1.6 revision 2 Chime server with validated installed sound

@@ -134,8 +134,9 @@ module MatterJointFabricAdministrator
       getter root_public_key : Bytes?
       getter nonce : String?
       getter? interrupt_after_remove_fabric : Bool
-      # Older command-channel YAML files predate this test-only fault hook.
+      # Older command-channel YAML files predate these test-only fault hooks.
       getter? interrupt_after_remove_admin : Bool = false
+      getter? interrupt_before_transfer_follow_up : Bool = false
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
@@ -150,7 +151,8 @@ module MatterJointFabricAdministrator
                      @peer_admin_jfa_endpoint_id : UInt16? = nil,
                      @anchor_node_id : UInt64? = nil, @peer_address : String? = nil,
                      @peer_port : Int32? = nil,
-                     @interrupt_after_remove_admin : Bool = false)
+                     @interrupt_after_remove_admin : Bool = false,
+                     @interrupt_before_transfer_follow_up : Bool = false)
       end
     end
 
@@ -1172,7 +1174,8 @@ module MatterJointFabricAdministrator
     # An explicit console command is the candidate's user consent. Resolve
     # all peers and obtain a consistent committed Datastore before asking the
     # old Anchor to freeze; network operations after that point are journaled.
-    private def transfer_anchor_from(old_anchor_node_id : UInt64) : Nil
+    private def transfer_anchor_from(old_anchor_node_id : UInt64,
+                                     interrupt_before_follow_up : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
@@ -1278,6 +1281,9 @@ module MatterJointFabricAdministrator
           candidate_old_node_id: old_fabric.node_id,
           candidate_administrator: candidate_administrator,
           finalize_administrators: -> {
+            if interrupt_before_follow_up
+              raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
+            end
             follow_up_administrators(preflight, old_fabric, scanner, own_client, own_im)
             nil
           })
@@ -1327,7 +1333,9 @@ module MatterJointFabricAdministrator
       identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
       scanner.query_operational
       source.admin_list.each do |admin|
-        next if admin.node_id == old_fabric.node_id
+        # The frozen source lists our old Joint Fabric Node ID; a restored
+        # promoted Datastore instead lists our new Anchor Node ID.
+        next if admin.node_id == old_fabric.node_id || admin.node_id == own_fabric.node_id
         document_name = "#{APP_FOLLOW_UP_PREFIX}#{admin.node_id.to_s(16)}"
         journal = if document = persistence.app_document(document_name)
                     Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.from_document(document)
@@ -1686,7 +1694,7 @@ module MatterJointFabricAdministrator
         result = begin
           case request.operation
           when "transfer-anchor"
-            transfer_anchor_from(request.node_id)
+            transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
