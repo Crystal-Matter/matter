@@ -218,7 +218,7 @@ def load_crystal_members(crystal_root: Path) -> dict[int, CrystalCluster]:
                     end = next_end
                 declaration = declaration_source[match.start():end]
                 requires = REQUIRES.search(declaration)
-                destination[member_id] = requires.group(1) if requires else "—"
+                destination[member_id] = re.sub(r"\s+", " ", requires.group(1)) if requires else "—"
             clusters[cluster_id] = CrystalCluster(cluster_id, int(revision), commands, events)
     return clusters
 
