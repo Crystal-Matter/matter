@@ -249,7 +249,7 @@ module Matter
       end
 
       attribute 0x0000, :accept_header, Array(String),
-        default: [] of String, persist: true, fixed: true, requires: :url_playback
+        default: [] of String, persist: true, fixed: true, requires: :url_playback, copy_on_assign: true
       attribute 0x0001, :supported_streaming_protocols, UInt32,
         default: 0_u32, persist: true, fixed: true, requires: :url_playback
 
@@ -280,6 +280,17 @@ module Matter
           raise ArgumentError.new("URL playback configuration exceeds Matter 1.6 limits")
         end
         @accept_header = @accept_header.dup
+        @configured_accept_header = @accept_header.dup
+        @configured_supported_streaming_protocols = @supported_streaming_protocols
+      end
+
+      def accept_header : Array(String)
+        @accept_header.dup
+      end
+
+      private def after_restore_state : Nil
+        @accept_header = @configured_accept_header.dup
+        @supported_streaming_protocols = @configured_supported_streaming_protocols
       end
 
       def on_launch_content(&block : LaunchContentRequest -> LauncherResponse) : Nil

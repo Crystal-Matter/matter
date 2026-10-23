@@ -62,6 +62,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Branding colors accept only the canonical hex forms with six or eight digits.
   A synthetic Aggregator fixture exercises metadata and typed URL responses
   with official chip-tool; the host application owns the actual media player.
+- Copy AcceptHeader on host assignment and return isolated reader copies. On
+  restart, reconcile persisted fixed URL capabilities with the host's current
+  AcceptHeader and SupportedStreamingProtocols configuration.
 
 ### Joint Fabric transfer recovery
 
