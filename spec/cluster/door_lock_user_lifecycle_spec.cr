@@ -205,7 +205,7 @@ describe "Door Lock user lifecycle" do
     error.source_node.should eq(0xA123_u64)
   end
 
-  it "uses an enabled user when another matching PIN belongs to a disabled user" do
+  it "does not bypass a disabled user by assigning its PIN to a second user" do
     lock = lifecycle_lock
     provision_lifecycle_pin(lock, LifecycleDoorLock::UserType::DisposableUser)
     lock.unlock(pin: "5757").success?.should be_true
@@ -218,10 +218,11 @@ describe "Door Lock user lifecycle" do
     credential = LifecycleDoorLock::Credential.new(LifecycleDoorLock::CredentialType::Pin, 2_u16)
     response = lock.handle_set_credential(LifecycleDoorLock::SetCredentialRequest.new(
       LifecycleDoorLock::DataOperationType::Add, credential, "5757".to_slice, user_index: 3_u16))
-    response.status_code.should eq(LifecycleDoorLock::StatusCode::Success)
+    response.status_code.should eq(LifecycleDoorLock::StatusCode::Duplicate)
 
-    lock.unlock(pin: "5757").success?.should be_true
+    lock.unlock(pin: "5757").success?.should be_false
     lifecycle_user_status(lock).should eq(LifecycleDoorLock::UserStatus::OccupiedDisabled)
+    lock.get_user(LifecycleDoorLock::GetUserRequest.new(3_u16)).credentials.should be_nil
   end
 
   it "defaults SendPINOverTheAir to the Matter false value" do
