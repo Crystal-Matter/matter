@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 104
-- Matching known revisions: 102
+- Crystal declarations for those IDs: 105
+- Matching known revisions: 103
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -137,7 +137,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0507 | Media Input Cluster | 1 | 1 | host-owned source switching and status display |
 | 0x0508 | Low Power Cluster | 1 | 1 | host-owned physical sleep after InvokeResponse |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — |
-| 0x050A | Content Launcher Cluster | 2 | — | cluster absent |
+| 0x050A | Content Launcher Cluster | 2 | 2 | — |
 | 0x050B | Audio Output Cluster | 1 | 1 | — |
 | 0x050C | Application Launcher Cluster | 2 | — | cluster absent |
 | 0x050D | Application Basic Cluster | 1 | 1 | Fixed identity, administrator-only AllowedVendorList, volatile host status; Content App chip-tool E2E |
