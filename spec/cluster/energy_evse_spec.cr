@@ -78,6 +78,48 @@ describe Evse do
     restored.maximum_charge_current.should eq(16_000_i64)
   end
 
+  it "disables the physical relay when EnableCharging has an expired deadline" do
+    cluster = evse
+    enable_calls = 0
+    disable_calls = 0
+    cluster.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) do
+      enable_calls += 1
+      Matter::InteractionModel::Status.success
+    end
+    cluster.on_disable = -> do
+      disable_calls += 1
+      Matter::InteractionModel::Status.success
+    end
+    expect_success(invoke(cluster, Evse::CMD_ENABLE_CHARGING,
+      Evse::EnableChargingRequest.new(nil, 6_000_i64, 16_000_i64)))
+    expect_success(invoke(cluster, Evse::CMD_ENABLE_CHARGING,
+      Evse::EnableChargingRequest.new(0_u32, 6_000_i64, 16_000_i64)))
+    enable_calls.should eq(1)
+    disable_calls.should eq(1)
+    cluster.supply_state.should eq(Evse::SupplyState::Disabled)
+    cluster.charging_enabled_until.should eq(0_u32)
+  end
+
+  it "keeps charging enabled when the expired-deadline disable callback fails" do
+    cluster = evse
+    expect_success(invoke(cluster, Evse::CMD_ENABLE_CHARGING,
+      Evse::EnableChargingRequest.new(nil, 6_000_i64, 16_000_i64)))
+    cluster.on_disable = -> { Matter::InteractionModel::Status.failure }
+    expect_status(invoke(cluster, Evse::CMD_ENABLE_CHARGING,
+      Evse::EnableChargingRequest.new(0_u32, 6_000_i64, 16_000_i64)), EvseStatus::Failure)
+    cluster.supply_state.should eq(Evse::SupplyState::ChargingEnabled)
+    cluster.charging_enabled_until.should be_nil
+  end
+
+  it "accepts an expired deadline while faulted without clearing the fault" do
+    cluster = evse
+    cluster.report_fault(Evse::FaultState::Other)
+    expect_success(invoke(cluster, Evse::CMD_ENABLE_CHARGING,
+      Evse::EnableChargingRequest.new(0_u32, 6_000_i64, 16_000_i64)))
+    cluster.supply_state.should eq(Evse::SupplyState::DisabledError)
+    cluster.fault_state.should eq(Evse::FaultState::Other)
+  end
+
   it "rejects unsafe charge ranges without changing attributes" do
     cluster = evse
     expect_status(invoke(cluster, Evse::CMD_ENABLE_CHARGING,

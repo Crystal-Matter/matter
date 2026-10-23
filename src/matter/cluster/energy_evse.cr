@@ -361,15 +361,26 @@ module Matter
         minimum = request.minimum_charge_current
         maximum = request.maximum_charge_current
         return InteractionModel::Status.constraint_error if minimum < 0 || maximum < minimum || minimum > @circuit_capacity
-        return InteractionModel::Status.failure unless @fault_state.no_error?
         effective_maximum = {maximum, @circuit_capacity}.min
-        callback = @on_enable_charging || return InteractionModel::Status.invalid_in_state
-        status = callback.call(request.charging_enabled_until, minimum, effective_maximum)
-        return status unless status.success?
+        should_enable = enabled_now?(request.charging_enabled_until)
+        if should_enable
+          return InteractionModel::Status.failure unless @fault_state.no_error?
+          callback = @on_enable_charging || return InteractionModel::Status.invalid_in_state
+          status = callback.call(request.charging_enabled_until, minimum, effective_maximum)
+          return status unless status.success?
+        elsif @supply_state.charging_enabled?
+          callback = @on_disable || return InteractionModel::Status.invalid_in_state
+          status = callback.call
+          return status unless status.success?
+        end
         self.minimum_charge_current = minimum
         self.maximum_charge_current = effective_maximum
         self.charging_enabled_until = request.charging_enabled_until
-        self.supply_state = enabled_now?(request.charging_enabled_until) ? SupplyState::ChargingEnabled : SupplyState::Disabled
+        self.supply_state = if @fault_state.no_error?
+                              should_enable ? SupplyState::ChargingEnabled : SupplyState::Disabled
+                            else
+                              SupplyState::DisabledError
+                            end
         schedule_expiry
         InteractionModel::Status.success
       end
