@@ -7,6 +7,7 @@ module MatterApplianceModes
   alias ModeBase = Matter::Cluster::ModeBase
   alias DishwasherMode = Matter::Cluster::DishwasherMode
   alias LaundryWasherMode = Matter::Cluster::LaundryWasherMode
+  alias MicrowaveOvenMode = Matter::Cluster::MicrowaveOvenMode
 
   DISHWASHER_MODES = [
     ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(DishwasherMode::ModeTag::Normal.value)]),
@@ -16,6 +17,11 @@ module MatterApplianceModes
   LAUNDRY_MODES = [
     ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(LaundryWasherMode::ModeTag::Normal.value)]),
     ModeBase::Option.new("Delicate", 1_u8, [ModeBase::Tag.new(LaundryWasherMode::ModeTag::Delicate.value)]),
+  ]
+
+  MICROWAVE_MODES = [
+    ModeBase::Option.new("Normal", 0_u8, [ModeBase::Tag.new(MicrowaveOvenMode::ModeTag::Normal.value)]),
+    ModeBase::Option.new("Defrost", 1_u8, [ModeBase::Tag.new(MicrowaveOvenMode::ModeTag::Defrost.value)]),
   ]
 
   class Device < Matter::Device
@@ -33,6 +39,7 @@ module MatterApplianceModes
     endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
       cluster DishwasherMode, supported_modes: DISHWASHER_MODES, current_mode: 0_u8
       cluster LaundryWasherMode, supported_modes: LAUNDRY_MODES, current_mode: 0_u8
+      cluster MicrowaveOvenMode, supported_modes: MICROWAVE_MODES, current_mode: 0_u8
     end
   end
 end

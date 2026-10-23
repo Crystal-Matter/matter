@@ -86,6 +86,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   protocol metadata; the PowerThreshold feature exposes the standard TLV
   structure with optional power values and a nullable source. A synthetic
   utility meter is exercised by the official chip-tool across restart.
+### Microwave Oven Mode
+
+- Add the Matter 1.6 revision 2 Microwave Oven Mode server with validated,
+  fixed Normal/Defrost mode catalogue and persisted host-selected mode.
+  Omit the disallowed ChangeToMode command, OnOff feature, StartUpMode, and
+  OnMode. Extend the synthetic appliance mode chip-tool scenario.
+
 ### Refrigerator mode
 
 - Add Matter 1.6 Refrigerator and Temperature Controlled Cabinet Mode revision
