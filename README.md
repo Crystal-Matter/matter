@@ -276,6 +276,15 @@ when physical or manual intervention is still required. `Latch` and `Supported`
 are fixed capabilities. See `examples/matter_dishwasher_alarm_device.cr` for a
 synthetic device.
 
+`Cluster::DishwasherMode` and `Cluster::LaundryWasherMode` implement the Matter
+1.6 revision 3 Mode Base derivations. Provide 2–255 fixed mode options with
+distinct values, labels, and tag sets; each option has 1–8 tags including a
+standard tag. Manufacturer tags use values 0x8000–0xBFFF. The host
+can use `on_change_to_mode` to perform or refuse a physical transition; a
+refusal returns a ChangeToModeResponse with a failure status and text. These
+clusters expose neither the OnOff feature nor StartUpMode/OnMode. The synthetic
+`examples/matter_appliance_modes_device.cr` exercises both with chip-tool.
+
 Thread device declarations expose Thread Network Diagnostics at endpoint 0.
 Applications populate the cluster from their platform Thread stack; absent
 link values read as null, and packet/error/MLE/MAC counters require the

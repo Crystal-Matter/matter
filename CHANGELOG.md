@@ -23,6 +23,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic thermostat and official chip-tool check. Thermostat remains at
   revision 9 pending its other Matter 1.6 revision 11 behaviors.
 
+### Appliance modes
+
+- Add Matter 1.6 revision 3 Dishwasher Mode and Laundry Washer Mode servers
+  with shared Mode Base request/response types and validation of unique mode
+  values, labels, and tag sets. Supported
+  transitions update CurrentMode; unsupported values return the required
+  ChangeToModeResponse status, and host callbacks can refuse a transition
+  with failure text. Include a synthetic fixture and chip-tool coverage.
+
 ### Optional SQLite storage
 
 - Add `Matter::Storage::Sqlite` as an explicitly required durable backend.
