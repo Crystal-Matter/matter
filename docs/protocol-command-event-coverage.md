@@ -8,11 +8,11 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 99
+- Implemented standard cluster IDs compared: 100
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 128
-- Feature or complex conditional IDs absent from Crystal: 22
+- Conditional command/event declarations for review: 129
+- Feature or complex conditional IDs absent from Crystal: 20
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -108,6 +108,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0507 | Media Input Cluster | 1 | 1 | — | — |
 | 0x0508 | Low Power Cluster | 1 | 1 | — | — |
 | 0x0509 | Keypad Input Cluster | 1 | 1 | — | — |
+| 0x050B | Audio Output Cluster | 1 | 1 | — | — |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
@@ -204,8 +205,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0101 | command | 0x0024 | feature(USR) | declared; requires `:user` |
 | 0x0101 | command | 0x0026 | feature(USR) | declared; requires `:user` |
 | 0x0101 | command | 0x0027 | feature(UBOLT) | declared; requires `:unbolting` |
-| 0x0101 | command | 0x0028 | feature(ALIRO) | absent |
-| 0x0101 | command | 0x0029 | feature(ALIRO) | absent |
+| 0x0101 | command | 0x0028 | feature(ALIRO) | declared; requires `:aliro_provisioning` |
+| 0x0101 | command | 0x0029 | feature(ALIRO) | declared; requires `:aliro_provisioning` |
 | 0x0101 | event | 0x0001 | feature(DPS) | declared; requires `:door_position_sensor` |
 | 0x0101 | event | 0x0004 | feature(USR) | declared; requires `:user` |
 | 0x0102 | command | 0x0005 | (feature(LF) and feature(PA_LF)) | declared; requires `{lift: true, position_aware_lift: true}` |
@@ -253,6 +254,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0506 | command | 0x000D | feature(TT) | declared; requires `:text_tracks` |
 | 0x0506 | command | 0x000E | feature(TT) | declared; requires `:text_tracks` |
 | 0x0507 | command | 0x0003 | feature(NU) | declared; requires `:name_updates` |
+| 0x050B | command | 0x0001 | feature(NU) | declared; requires `:name_updates` |
 | 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:
