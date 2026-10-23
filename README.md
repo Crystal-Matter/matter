@@ -390,6 +390,15 @@ upward degradation, and sets ChangeIndication to OK. Optional
 LastChangedTime is controller-writable and retained across restarts; an
 application may set it when it knows when the resource changed.
 
+Robotic vacuums can pair `RvcRunMode` (revision 4), `RvcCleanMode` (revision 5),
+and `RvcOperationalState` (revision 3). Run modes include distinct Idle and
+Cleaning options; clean modes include Vacuum or Mop. Both mode clusters offer
+the optional DirectModeChange feature, with a non-Idle run mode otherwise
+blocking direct changes. The operational cluster can expose paired Pause and
+Resume plus optional GoHome. Host callbacks decide whether physical actions
+are safe, and the host reports charging, docking, errors, and completion.
+See `examples/matter_rvc_device.cr` for a synthetic endpoint.
+
 Water Heater Mode and Water Heater Management expose Matter 1.6 appliance
 control on a Thermostat endpoint. Configure Mode with at least an Off and a
 Manual option; mode labels and tag sets must be distinct, and manufacturer
