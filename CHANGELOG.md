@@ -16,6 +16,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic video player exercises both platform and endpoint app paths with
   official chip-tool.
 
+### Content App Observer
+
+- Add the Matter 1.6 revision 1 Content App Observer server for Casting Video
+  Clients. Its typed ContentAppMessage response is supplied by a host callback
+  with authenticated fabric and peer node identity. Enforce request and
+  response string limits, and exercise success and unrecognized data with
+  official chip-tool.
+
 ### Optional PostgreSQL storage
 
 - Add an opt-in PostgreSQL backend using the existing versioned SQL schema,
