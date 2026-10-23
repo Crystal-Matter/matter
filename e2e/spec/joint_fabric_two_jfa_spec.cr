@@ -2,6 +2,30 @@ require "./e2e_helper"
 require "../../src/matter/controller"
 require "../../examples/support/joint_fabric_administrator_device"
 
+# The joining Administrator's original fabric has an ICAC, so its VVS signer
+# must be provisioned out of band rather than carried as a VVSC in NOCStruct.
+private class JointFabricVvsTrust < Matter::Controller::VidVerification::OperationalTrustAnchors
+  getter statement_checks = 0
+
+  def initialize(@vendor_id : UInt16, @signer_skid : Bytes, @signer_public_key : Bytes)
+  end
+
+  def trusted_root?(vendor_id : UInt16, root_certificate : Bytes) : Bool
+    false
+  end
+
+  def verify_statement?(vendor_id : UInt16, signer_skid : Bytes,
+                        statement_tbs : Bytes, signature : Bytes,
+                        vvsc : Bytes?) : Bool
+    return false unless vendor_id == @vendor_id && signer_skid == @signer_skid && vvsc.nil?
+    signer = Matter::Crypto::Key.new(Matter::Crypto::KeyType::EC, Matter::Crypto::CurveType::P256)
+    signer.public_bits = @signer_public_key
+    Matter::Crypto::StandardCrypto.new.verify_ecdsa(signer, statement_tbs, signature)
+    @statement_checks += 1
+    true
+  end
+end
+
 private def jfa_command(device_name : String,
                         request : MatterJointFabricAdministrator::Device::CommandRequest,
                         timeout : Time::Span = 300.seconds) : MatterJointFabricAdministrator::Device::CommandResult
@@ -300,8 +324,71 @@ describe "three provisioned Joint Fabric Administrators" do
       fields: open_request.to_slice)
     Matter::Controller::JointCommissioning.assert_status_success(open_response)
 
-    trust = Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
-      {joiner_bootstrap.fabric.admin_vendor_id => [joiner_bootstrap.fabric.root_cert]})
+    original_fabrics_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    original_fabrics_data = original_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    descriptor = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+      .from_tlv(original_fabrics_data.to_slice)
+      .find { |entry| entry.fabric_id == joiner_bootstrap.fabric.fabric_id && entry.node_id == 0xB102_u64 }
+      .as(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+    signer_crypto = Matter::Crypto::StandardCrypto.new
+    signer_key = signer_crypto.create_key_pair
+    signer_skid = signer_crypto.compute_sha1(signer_key.public_key)
+    statement_tbs = IO::Memory.new
+    statement_tbs.write_byte Matter::Controller::VidVerification::STATEMENT_VERSION
+    statement_tbs.write Matter::Controller::VidVerification.binding_message(descriptor)
+    statement_tbs.write signer_skid
+    statement = IO::Memory.new
+    statement.write_byte Matter::Controller::VidVerification::STATEMENT_VERSION
+    statement.write signer_skid
+    statement.write signer_crypto.sign_ecdsa(signer_key, statement_tbs.to_slice)
+    signed_statement = statement.to_slice.dup
+    signed_statement.size.should eq(Matter::Controller::VidVerification::STATEMENT_SIZE)
+    install_vvs = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      command_id: Matter::Cluster::OperationalCredentials::CMD_SET_VID_VERIFICATION_STATEMENT,
+      fields: Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
+        joiner_bootstrap.fabric.admin_vendor_id, signed_statement).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(install_vvs)
+
+    installed_fabrics_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    installed_fabrics_data = installed_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    installed_descriptor = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+      .from_tlv(installed_fabrics_data.to_slice)
+      .find(&.fabric_index.==(descriptor.fabric_index))
+      .as(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+    installed_descriptor.vid_verification_statement.should eq(signed_statement)
+    original_nocs_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_NOCS,
+      fabric_filtered: false)
+    original_nocs_data = original_nocs_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    original_noc = Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
+      .from_tlv(original_nocs_data.to_slice).find(&.fabric_index.==(descriptor.fabric_index))
+      .as(Matter::Cluster::OperationalCredentials::Tlv::NOC)
+    original_noc.icac.should eq(joiner_bootstrap.fabric.intermediate_cert)
+    original_noc.vvsc.should be_nil
+
+    trust = JointFabricVvsTrust.new(joiner_bootstrap.fabric.admin_vendor_id,
+      signer_skid, signer_key.public_key)
+    rejected_trust = JointFabricVvsTrust.new(joiner_bootstrap.fabric.admin_vendor_id,
+      signer_crypto.compute_sha1(signer_crypto.create_key_pair.public_key), signer_key.public_key)
+    expect_raises(Matter::AuthenticationError, /trusted signer/) do
+      Matter::Controller::VidVerification.verify(joiner_im, joiner_session, joiner_peer,
+        descriptor.fabric_index, rejected_trust)
+    end
     registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
       anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -391,7 +478,31 @@ describe "three provisioned Joint Fabric Administrators" do
     workflow.commission(0xA103_u64,
       Matter::SetupPayload.generate_manual_code(discriminator, passcode), joiner_peer,
       defer_completion: true)
+    trust.statement_checks.should be > 0
     cross_signed_icac = workflow.stored_icac(0xA103_u64).as(Bytes)
+
+    # This fixture's other Administrators use static root trust. Restore B's
+    # original fabric after proving the VVS-bearing JCM exchange so the later
+    # Anchor transfer exercises their existing root-trust configuration.
+    joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    clear_vvs = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      command_id: Matter::Cluster::OperationalCredentials::CMD_SET_VID_VERIFICATION_STATEMENT,
+      fields: Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
+        vid_verification_statement: Bytes.empty).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(clear_vvs)
+    cleared_fabrics_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    cleared_fabrics_data = cleared_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+      .from_tlv(cleared_fabrics_data.to_slice).find!(&.fabric_index.==(descriptor.fabric_index))
+      .vid_verification_statement.should be_nil
 
     anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client, anchor_peer,
       anchor_bootstrap.fabric, peer_node_id: 0xA102_u64, timeout: E2E::COMMAND_TIMEOUT)
