@@ -83,6 +83,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to the host, and feature-gated RenameInput updates the catalog. A
   synthetic Aggregator fixture exercises the cluster through official
   chip-tool, without claiming a complete media device type.
+- On restart, reconcile saved selection and user-renamed names against the
+  host's current input catalogue. Removed inputs and changed input types no
+  longer replace the host's physical inputs; a removed selection falls back
+  to the host's configured input.
 
 ### Keypad Input
 

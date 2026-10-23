@@ -101,4 +101,39 @@ describe MediaInput do
     restored.current_input.should eq(2_u8)
     restored.input_list.last.name.should eq("Media Box")
   end
+
+  it "reconciles a saved selection and edited names with the host's current input catalogue" do
+    previous = build(MediaInput, feature_map: MediaInput::Feature::NameUpdates,
+      input_list: [hdmi_input, hdmi_input(2_u8, "HDMI 2")], current_input: 2_u8)
+    expect_status(invoke(previous, MediaInput::CMD_RENAME_INPUT,
+      MediaInput::RenameInputRequest.new(1_u8, "Game Console")), IMCode::Success)
+    expect_status(invoke(previous, MediaInput::CMD_RENAME_INPUT,
+      MediaInput::RenameInputRequest.new(2_u8, "Media Box")), IMCode::Success)
+    saved = previous.save_state.as(Matter::Storage::Document)
+
+    replacement = MediaInput::InputInfo.new(2_u8, MediaInput::InputType::Usb, "USB", "New physical port")
+    added = MediaInput::InputInfo.new(3_u8, MediaInput::InputType::Hdmi, "HDMI 3", "New video source")
+    restored = build(MediaInput, feature_map: MediaInput::Feature::NameUpdates,
+      input_list: [hdmi_input(1_u8, "Default HDMI"), replacement, added], current_input: 3_u8)
+    restored.restore_state(saved)
+
+    restored.input_list.map(&.index).should eq([1_u8, 2_u8, 3_u8])
+    restored.input_list.map(&.name).should eq(["Game Console", "USB", "HDMI 3"])
+    restored.input_list[1].input_type.should eq(MediaInput::InputType::Usb)
+    restored.input_list[1].description.should eq("New physical port")
+    restored.current_input.should eq(2_u8)
+  end
+
+  it "falls back to the host selection when the restored input was removed" do
+    previous = build(MediaInput, input_list: [hdmi_input, hdmi_input(2_u8)], current_input: 1_u8)
+    saved = previous.save_state.as(Matter::Storage::Document)
+    restored = build(MediaInput, input_list: [hdmi_input(2_u8, "Host HDMI 2"), hdmi_input(3_u8)], current_input: 3_u8)
+
+    restored.restore_state(saved)
+
+    restored.input_list.map(&.index).should eq([2_u8, 3_u8])
+    restored.input_list.first.name.should eq("Host HDMI 2")
+    restored.current_input.should eq(3_u8)
+    expect_status(invoke(restored, MediaInput::CMD_SELECT_INPUT, MediaInput::SelectInputRequest.new(1_u8)), IMCode::NotFound)
+  end
 end

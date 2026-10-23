@@ -93,6 +93,8 @@ module Matter
         @current_input = current_input || input_list.first.index
         raise ArgumentError.new("CurrentInput must name an input") unless input_list.any? { |input| input.index == @current_input }
         @input_list = input_list.dup
+        @configured_inputs = input_list.dup
+        @configured_current_input = @current_input
       end
 
       def on_select_input(&block : UInt8 -> InteractionModel::Status) : Nil
@@ -136,6 +138,18 @@ module Matter
 
       private def validate_current_input!(index : UInt8) : Nil
         raise ArgumentError.new("CurrentInput must name an input") unless @input_list.any? { |input| input.index == index }
+      end
+
+      private def after_restore_state : Nil
+        # The host's catalogue represents the physical inputs. Keep an edited
+        # name only when its index and type still identify the same input.
+        saved_inputs = @input_list
+        @input_list = @configured_inputs.map do |configured|
+          saved = saved_inputs.find { |input| input.index == configured.index && input.input_type == configured.input_type }
+          name = @feature_map.name_updates? && saved ? saved.name : configured.name
+          InputInfo.new(configured.index, configured.input_type, name, configured.description)
+        end
+        @current_input = @configured_current_input unless @input_list.any? { |input| input.index == @current_input }
       end
     end
   end
