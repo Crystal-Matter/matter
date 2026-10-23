@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Refrigerator Alarm
+
+- Add the Matter 1.6 Refrigerator Alarm server with the DoorOpen alarm,
+  inherited Alarm Base read attributes and Notify event, plus a synthetic
+  chip-tool interoperability example. Reset and ModifyEnabledAlarms remain
+  absent as required by the derived cluster.
+
 ### Door Lock schedule authorization
 
 - Enforce weekday and year-day access windows for scheduled users, including
