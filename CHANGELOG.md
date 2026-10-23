@@ -206,6 +206,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - End an accepted boost and emit BoostEnded at its duration even if the host's
   cancellation callback rejects or raises. Log host failures so the physical
   heater can be diagnosed without leaving the protocol state Active.
+### Laundry Dryer and Washer Controls
+
+- Add Matter 1.6 Laundry Dryer Controls (0x004A, revision 1) and Laundry Washer
+  Controls (0x0053, revision 2). Mode-dependent supported options, nullable
+  dryer and spin selections, Spin/Rinse feature gates, Operate-level writes,
+  host acceptance, and restart reconciliation follow the appliance rules.
+  A synthetic washer-dryer combo exercises both clusters with official
+  chip-tool.
 
 ### Joint Fabric VVS interoperability
 

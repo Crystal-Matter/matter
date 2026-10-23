@@ -241,6 +241,11 @@ services:
     environment:
       E2E_DEVICE: matter_temperature_control
 
+  laundry-combo:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_laundry_combo
+
   temperature-alarm:
     <<: *device
     environment:
@@ -449,6 +454,7 @@ services:
       temperature-sensor: { condition: service_healthy }
       pressure-sensor: { condition: service_healthy }
       temperature-control: { condition: service_healthy }
+      laundry-combo: { condition: service_healthy }
       humidity-sensor: { condition: service_healthy }
       soil-sensor: { condition: service_healthy }
       content-app: { condition: service_healthy }
