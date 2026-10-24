@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Camera AV Stream Management snapshot
+
+- Add opt-in Matter 1.6 revision 2 SNP capability and explicit-ID snapshot
+  allocation, reference-counted release and bounded capture through host
+  callbacks. The synthetic Aggregator fixture exercises the wire commands;
+  nullable auto-selection, optional overlay controls and real media remain open.
+
 ### Camera AV Stream Management video
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation

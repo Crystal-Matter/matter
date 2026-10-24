@@ -31,8 +31,9 @@ and `on_privacy_changed` to pause or resume media delivery. Check `stream_delive
 depend on microphone mute. Soft privacy settings
 are exposed only when the Privacy feature is enabled. Hard privacy is a
 read-only physical state set by the host. Microphone settings, privacy modes,
-stream priorities, and the next audio/video IDs survive restart; active streams
-are released at restart because host media resources must be reopened explicitly.
+stream priorities, and the next audio/video IDs survive restart; active ADO/VDO
+streams are released at restart because host media resources must be reopened
+explicitly. SNP allocations are retained and require host callback rebinding.
 
 The [synthetic audio example](../examples/matter_camera_audio_device.cr) and
 [synthetic video example](../examples/matter_camera_video_device.cr) use
@@ -45,3 +46,24 @@ across stream usages remain separate gaps requiring independent peer tests.
 
 SQLite and PostgreSQL storage remain optional. Applications include and
 explicitly require an adapter as described in [README storage](../README.md#storage).
+
+## Snapshot slice
+
+SNP exposes fixed snapshot codec/resolution/frame-rate capabilities, an allocated
+stream list, and typed allocation, deallocation and explicit-ID capture commands.
+The host admits and releases snapshot streams and supplies image bytes through
+`on_snapshot_capture`; Crystal does not manufacture camera images. Identical
+allocations share an ID and reference count. Snapshot streams share the encoded
+pixel-rate and hardware-encoder budgets with video. The response is bounded by
+`MaxContentBufferSize` and 65,000 bytes, and capture is denied while hard or
+soft livestream privacy is active. Allocations and the next ID persist; hosts
+must rebind callbacks after restart before capture or release can proceed.
+
+The synthetic [snapshot example](../examples/matter_camera_snapshot_device.cr)
+uses an Aggregator endpoint and a four-byte JPEG marker solely for Matter wire
+checks. Its payload is not a useful image or a claim of media delivery. The
+mandatory nullable `CaptureSnapshot.SnapshotStreamID` auto-selection form is
+not yet encoded by this library's pinned TLV release; explicit stream IDs work.
+The optional WMARK/OSD modify command and Camera device type topology remain
+unimplemented. Applications should not present this slice as complete Camera
+conformance.
