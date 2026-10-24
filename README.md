@@ -47,6 +47,17 @@ Two more modules stay out of the default tree and are required explicitly:
 `matter/storage/legacy` (the 0.1 storage importer) and `matter/storage/cli` (the `matter-storage`
 binary). [docs/architecture.md](docs/architecture.md) follows a datagram through the whole stack.
 
+An endpoint can declare outbound client clusters with `client_cluster 0x0554_u32`
+inside its device DSL `endpoint` or `endpoint_template` block. This adds the ID to Descriptor
+`ClientList`; it does not create a server. `DeviceType` definitions can set
+`required_client_clusters:` to validate client roles at boot. The optional
+`Matter::Controller::WebrtcRequestorClient` sends Matter 1.6 WebRTC Requestor
+Offer, Answer, ICECandidates, and End commands over authenticated CASE and
+checks the response path and status. The application owns SDP, ICE, media, and
+the remote Requestor endpoint. This library does not yet advertise the Camera
+device type: its required AV features, Provider server, and root-node conditions
+still need integrated device validation and interoperability tests.
+
 `Matter::Transport::BtpMessageTransport` carries PASE and encrypted Interaction
 Model packets over BTP. On Linux with BlueZ and the GIO development library
 installed (for example, `bluez` and `libglib2.0-dev` on Ubuntu), the experimental
