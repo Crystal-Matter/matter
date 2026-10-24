@@ -360,13 +360,14 @@ sign the VVS while the original NOC keeps its ICAC.
 
 `e2e/spec/joint_fabric_two_jfa_spec.cr` installs a signed VVS without VVSC on
 the joining Crystal Administrator's original ICAC fabric, reads back the VVS
-and unchanged NOC, rejects a wrong signer over live CASE, and verifies the
-trusted signer during Anchor-to-joiner JCM. The test then clears its synthetic
-VVS before the existing three-Administrator Anchor transfer, whose other
-participants are configured with static root trust. This exercises the live
-VVS-bearing JCM wire path with explicit out-of-band signer trust; independent
-Administrator implementations, deployed DCL signer records, and production
-consent policies remain to be tested together.
+and unchanged NOC, rejects removed and mismatched DCL signer records over live
+CASE, and verifies the active DCL signer during Anchor-to-joiner JCM. The VVS,
+ICAC, and absent VVSC remain unchanged across B's restart and the
+three-Administrator Anchor transfer. The test-only HTTPS mirror supplies
+Root/ICA/VIDSignerPKI records. Static root trust covers the fixture's no-VVS
+fabrics; VVS verification has no root fallback. Independent Administrator
+implementations, deployed DCL signer records, and production consent policies
+remain to be tested together.
 
 ## Work required for interoperable Joint Commissioning
 
@@ -382,7 +383,7 @@ consent policies remain to be tested together.
    unsupported. The matter.js device test above covers VVS-bearing wire
    verification with a synthetic signer and DCL fixture. The Crystal JCM test
    above covers a joining Administrator with an ICAC and VVS but no VVSC,
-   using an explicitly trusted synthetic signer. An independently implemented
+   using a fixture HTTPS DCL signer through Anchor transfer. An independently implemented
    Administrator and independently deployed trust/consent policies remain
    unverified together.
    Deployment must authenticate and freshen its DCL gateway. The optional
@@ -519,6 +520,12 @@ an explicit user consent decision for each ecosystem joining a fabric.
 For DCL-backed operational VID checks, construct
 `VidVerification::DclOperationalTrustAnchors.new(VidVerification::HttpDclSource.new("https://<trusted-dcl-gateway>"))`
 and pass it to the JCM verifier. The gateway URL is an explicit HTTPS origin.
+For a mixed deployment with explicitly provisioned roots on no-VVS fabrics,
+wrap that DCL trust as the signer policy in
+`VidVerification::CompositeOperationalTrustAnchors.new(root_trust, dcl_trust)`.
+The verifier asks `root_trust` only for fabrics without a VVS; it asks
+`dcl_trust` for every VVS and never falls back to a trusted root after signer
+failure.
 The adapter reads the DCL's active, VID-scoped NOC root, ICA, and signer indexes.
 It verifies the operational RCAC ID, public key, and SKID against an approved
 OperationalPKI root. Without a supplied VVSC, it validates a VVS signature

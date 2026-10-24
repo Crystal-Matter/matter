@@ -6,6 +6,14 @@ and each retains its own bootstrap Anchor service alongside the service joined
 to A. The scenario verifies both cross-signed ICAC registrations and the
 Administrator CAT ACL granted on C's joined fabric.
 
+B's original ICAC fabric carries a signed VVS without a VVSC. The test serves
+VID-scoped Root, ICA, and VID signer records from a fixture HTTPS DCL mirror.
+Live CASE verification rejects removed records, the wrong VID, root, or signer,
+then accepts the active signer for Joint Commissioning. The VVS and original
+ICAC stay installed through B's restart and Anchor transfer. Administrators
+use explicitly provisioned roots for no-VVS fabrics and the DCL signer for a
+VVS; rejection of a VVS never falls back to root trust.
+
 B then transfers the Anchor role from A. The fixture interrupts after
 TransferAnchorComplete, restarts B from its persisted FollowingUp journal,
 and resumes only the participant follow-up. C still has A's fabric before

@@ -153,6 +153,24 @@ describe Matter::Controller::VidVerification do
     trust.trusted_root?(0x1234_u16, other).should be_false
   end
 
+  it "separates explicit root trust from statement signer trust" do
+    root_trust = VidTestTrust.new
+    signer_trust = VidTestTrust.new
+    signer_trust.allow_root = false
+    signer_trust.allow_statement = true
+    trust = Matter::Controller::VidVerification::CompositeOperationalTrustAnchors.new(root_trust, signer_trust)
+
+    trust.trusted_root?(0x1234_u16, Bytes[0x01]).should be_true
+    trust.verify_statement?(0x1234_u16, Bytes.empty, Bytes.empty, Bytes.empty, nil).should be_true
+
+    root_trust.allow_root = false
+    root_trust.allow_statement = true
+    signer_trust.allow_root = true
+    signer_trust.allow_statement = false
+    trust.trusted_root?(0x1234_u16, Bytes[0x01]).should be_false
+    trust.verify_statement?(0x1234_u16, Bytes.empty, Bytes.empty, Bytes.empty, nil).should be_false
+  end
+
   it "checks challenge, NOC chain and an externally trusted VID binding" do
     crypto = Matter::Crypto::StandardCrypto.new
     root_key = crypto.create_key_pair

@@ -1,30 +1,10 @@
 require "./e2e_helper"
 require "../../src/matter/controller"
 require "../../examples/support/joint_fabric_administrator_device"
+require "../interop/jfa_vvs_dcl_fixture"
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
-private class JointFabricVvsTrust < Matter::Controller::VidVerification::OperationalTrustAnchors
-  getter statement_checks = 0
-
-  def initialize(@vendor_id : UInt16, @signer_skid : Bytes, @signer_public_key : Bytes)
-  end
-
-  def trusted_root?(vendor_id : UInt16, root_certificate : Bytes) : Bool
-    false
-  end
-
-  def verify_statement?(vendor_id : UInt16, signer_skid : Bytes,
-                        statement_tbs : Bytes, signature : Bytes,
-                        vvsc : Bytes?) : Bool
-    return false unless vendor_id == @vendor_id && signer_skid == @signer_skid && vvsc.nil?
-    signer = Matter::Crypto::Key.new(Matter::Crypto::KeyType::EC, Matter::Crypto::CurveType::P256)
-    signer.public_bits = @signer_public_key
-    Matter::Crypto::StandardCrypto.new.verify_ecdsa(signer, statement_tbs, signature)
-    @statement_checks += 1
-    true
-  end
-end
 
 private def jfa_command(device_name : String,
                         request : MatterJointFabricAdministrator::Device::CommandRequest,
@@ -75,6 +55,22 @@ private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
     raise Matter::TimeoutError.new("B controller ACL did not commit for migrated A node") if Time.instant >= deadline
     sleep 1.second
   end
+end
+
+private def assert_joiner_vvs(client : Matter::Controller::Client,
+                              peer : Socket::IPAddress,
+                              fabric : Matter::Controller::FabricInfo,
+                              signed_statement : Bytes,
+                              expected_icac : Bytes) : Nil
+  session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, fabric,
+    peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+  im = Matter::Controller::ImClient.new(client, E2E::COMMAND_TIMEOUT)
+  verified = Matter::Controller::VidVerification.verify(im, session, peer, 1_u8,
+    Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
+      Matter::Controller::VidVerification::HttpDclSource.new("https://tests")))
+  verified.descriptor.vid_verification_statement.should eq(signed_statement)
+  verified.noc.icac.should eq(expected_icac)
+  verified.noc.vvsc.should be_nil
 end
 
 private def commission_third_administrator(anchor_store : Matter::Controller::StateStore,
@@ -234,6 +230,24 @@ describe "three provisioned Joint Fabric Administrators" do
     File.write(File.join(E2E::LOG_DIR, "matter_joint_fabric_third.new-anchor-root.tlv"),
       joiner_bootstrap.fabric.root_cert)
 
+    dcl_fixture = JfaVvsDclFixture.new(E2E::LOG_DIR)
+    previous_ssl_cert_file = ENV["SSL_CERT_FILE"]?
+    ENV["SSL_CERT_FILE"] = dcl_fixture.cert_path
+    mirror_log = File.open(File.join(E2E::LOG_DIR, "jfa-dcl-mirror.log"), "w")
+    mirror = Process.new("python3", ["e2e/interop/jfa_vvs_dcl_mirror.py",
+                                     "--state", dcl_fixture.state_path, "--cert", dcl_fixture.server_cert_path,
+                                     "--key", dcl_fixture.key_path], output: mirror_log, error: mirror_log)
+    mirror_deadline = Time.instant + 10.seconds
+    loop do
+      begin
+        source = Matter::Controller::VidVerification::HttpDclSource.new("https://tests")
+        break if source.roots_for(joiner_bootstrap.fabric.admin_vendor_id).size == 1
+      rescue Matter::AuthenticationError | IO::Error | Socket::Error | OpenSSL::Error
+      end
+      raise Matter::TimeoutError.new("Test HTTPS DCL mirror did not start") if Time.instant >= mirror_deadline || mirror.terminated?
+      sleep 100.milliseconds
+    end
+
     anchor_client = Matter::Controller::Client.new(
       unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
     joiner_client = Matter::Controller::Client.new(
@@ -336,8 +350,8 @@ describe "three provisioned Joint Fabric Administrators" do
       .find { |entry| entry.fabric_id == joiner_bootstrap.fabric.fabric_id && entry.node_id == 0xB102_u64 }
       .as(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
     signer_crypto = Matter::Crypto::StandardCrypto.new
-    signer_key = signer_crypto.create_key_pair
-    signer_skid = signer_crypto.compute_sha1(signer_key.public_key)
+    signer_key = dcl_fixture.signer_key
+    signer_skid = dcl_fixture.signer_skid
     statement_tbs = IO::Memory.new
     statement_tbs.write_byte Matter::Controller::VidVerification::STATEMENT_VERSION
     statement_tbs.write Matter::Controller::VidVerification.binding_message(descriptor)
@@ -381,14 +395,18 @@ describe "three provisioned Joint Fabric Administrators" do
     original_noc.icac.should eq(joiner_bootstrap.fabric.intermediate_cert)
     original_noc.vvsc.should be_nil
 
-    trust = JointFabricVvsTrust.new(joiner_bootstrap.fabric.admin_vendor_id,
-      signer_skid, signer_key.public_key)
-    rejected_trust = JointFabricVvsTrust.new(joiner_bootstrap.fabric.admin_vendor_id,
-      signer_crypto.compute_sha1(signer_crypto.create_key_pair.public_key), signer_key.public_key)
-    expect_raises(Matter::AuthenticationError, /trusted signer/) do
-      Matter::Controller::VidVerification.verify(joiner_im, joiner_session, joiner_peer,
-        descriptor.fabric_index, rejected_trust)
+    trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
+      Matter::Controller::VidVerification::HttpDclSource.new("https://tests"))
+    {"removed", "wrong-root", "wrong-vid", "wrong-signer"}.each do |mode|
+      dcl_fixture.write_mode(mode)
+      expect_raises(Matter::AuthenticationError, /trusted signer/) do
+        Matter::Controller::VidVerification.verify(joiner_im, joiner_session, joiner_peer,
+          descriptor.fabric_index, trust)
+      end
     end
+    dcl_fixture.write_mode("active")
+    Matter::Controller::VidVerification.verify(joiner_im, joiner_session, joiner_peer,
+      descriptor.fabric_index, trust)
     registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
       anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -478,31 +496,10 @@ describe "three provisioned Joint Fabric Administrators" do
     workflow.commission(0xA103_u64,
       Matter::SetupPayload.generate_manual_code(discriminator, passcode), joiner_peer,
       defer_completion: true)
-    trust.statement_checks.should be > 0
     cross_signed_icac = workflow.stored_icac(0xA103_u64).as(Bytes)
-
-    # This fixture's other Administrators use static root trust. Restore B's
-    # original fabric after proving the VVS-bearing JCM exchange so the later
-    # Anchor transfer exercises their existing root-trust configuration.
+    # The workflow's CASE exchange can supersede the earlier inspection session.
     joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
-    clear_vvs = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
-      endpoint_id: 0_u16,
-      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
-      command_id: Matter::Cluster::OperationalCredentials::CMD_SET_VID_VERIFICATION_STATEMENT,
-      fields: Matter::Cluster::OperationalCredentials::Tlv::SetVIDVerificationStatementRequest.new(
-        vid_verification_statement: Bytes.empty).to_slice)
-    Matter::Controller::JointCommissioning.assert_status_success(clear_vvs)
-    cleared_fabrics_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
-      endpoint_id: 0_u16,
-      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
-      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
-      fabric_filtered: false)
-    cleared_fabrics_data = cleared_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
-    Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
-      .from_tlv(cleared_fabrics_data.to_slice).find!(&.fabric_index.==(descriptor.fabric_index))
-      .vid_verification_statement.should be_nil
 
     anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client, anchor_peer,
       anchor_bootstrap.fabric, peer_node_id: 0xA102_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -744,6 +741,8 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
       unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    assert_joiner_vvs(joiner_client, joiner_peer, joiner_bootstrap.fabric,
+      signed_statement, joiner_bootstrap.fabric.intermediate_cert.as(Bytes))
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
     promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
@@ -767,6 +766,8 @@ describe "three provisioned Joint Fabric Administrators" do
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
+    assert_joiner_vvs(joiner_client, joiner_peer, joiner_bootstrap.fabric,
+      signed_statement, joiner_bootstrap.fabric.intermediate_cert.as(Bytes))
     watch_deadline = Time.instant + 90.seconds
     loop do
       observed = jfa_command("matter_joint_fabric_anchor",
@@ -949,6 +950,14 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     repeated.status.should eq("ok"), repeated.error.to_s
   ensure
+    if previous_ssl_cert_file
+      ENV["SSL_CERT_FILE"] = previous_ssl_cert_file
+    else
+      ENV.delete("SSL_CERT_FILE")
+    end
+    mirror.try(&.terminate)
+    mirror.try(&.wait)
+    mirror_log.try(&.close)
     b_controller_client.try(&.close)
     anchor_client.try(&.close)
     joiner_client.try(&.close)

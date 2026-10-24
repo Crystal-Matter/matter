@@ -2140,20 +2140,25 @@ module MatterJointFabricAdministrator
     end
 
     # Only the opt-in interoperability fixture may use this local test mirror.
-    # Selecting it never falls back to a static root after a DCL rejection.
+    # A VVS requires its DCL signer even when a static root is also configured
+    # for the fixture's other, no-VVS fabrics.
     private def anchor_trust(vendor_id : UInt16, root_path : String?,
                              test_dcl_url : String?) : Matter::Controller::VidVerification::OperationalTrustAnchors
+      root_trust = if path = root_path
+                     trusted_roots = path.split(',').map { |entry| File.read(entry.strip).to_slice.dup }
+                     Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
+                       {vendor_id => trusted_roots})
+                   end
       if url = test_dcl_url
         source = Matter::Controller::VidVerification::HttpDclSource.new(url)
-        unless URI.parse(url).host == "127.0.0.1"
-          raise Matter::ConfigurationError.new("Test DCL mirror must use IPv4 loopback")
+        unless URI.parse(url).host.in?("127.0.0.1", "tests")
+          raise Matter::ConfigurationError.new("Test DCL mirror must use loopback or the Compose tests service")
         end
-        return Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(source)
+        signer_trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(source)
+        return root_trust ? Matter::Controller::VidVerification::CompositeOperationalTrustAnchors.new(
+          root_trust, signer_trust) : signer_trust
       end
-      path = root_path || raise Matter::ConfigurationError.new("No operational Vendor ID trust source configured")
-      trusted_roots = path.split(',').map { |entry| File.read(entry.strip).to_slice.dup }
-      Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
-        {vendor_id => trusted_roots})
+      root_trust || raise Matter::ConfigurationError.new("No operational Vendor ID trust source configured")
     end
 
     private def anchor_verification_client(node_id : UInt64) : Matter::Controller::Client
