@@ -11,10 +11,16 @@ module Matter
     class Thermostat < Base
       cluster 0x0201, revision: 9
 
+      @last_running_state : RelayState
+
       feature :heating, bit: 0                       # HEAT - Heating capability
       feature :cooling, bit: 1                       # COOL - Cooling capability
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
+      feature :events, bit: 9                        # TEVT - Thermostat change events
+
+      TEMPERATURE_EVENT_INTERVAL     = 60.seconds
+      SIGNIFICANT_TEMPERATURE_CHANGE = 50_i16 # 0.5°C
 
       # System mode values
       enum SystemMode : UInt8
@@ -34,6 +40,65 @@ module Matter
         Off  = 0
         Cool = 3
         Heat = 4
+      end
+
+      @[Flags]
+      enum RelayState : UInt16
+        Heat = 1
+        Cool = 2
+      end
+
+      struct SystemModeChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1)]
+        getter current_system_mode : SystemMode
+
+        def initialize(@current_system_mode : SystemMode)
+        end
+      end
+
+      struct LocalTemperatureChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter current_local_temperature : Int16?
+
+        def initialize(@current_local_temperature : Int16?)
+        end
+      end
+
+      struct SetpointChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter system_mode : SystemMode
+
+        @[TLV::Field(tag: 3)]
+        getter current_setpoint : Int16
+
+        def initialize(@system_mode : SystemMode, @current_setpoint : Int16)
+        end
+      end
+
+      struct RunningStateChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1)]
+        getter current_running_state : RelayState
+
+        def initialize(@current_running_state : RelayState)
+        end
+      end
+
+      struct RunningModeChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 1)]
+        getter current_running_mode : ThermostatRunningMode
+
+        def initialize(@current_running_mode : ThermostatRunningMode)
+        end
       end
 
       # Control sequence of operation
@@ -149,16 +214,25 @@ module Matter
       attribute 0x0004, :abs_max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0005, :abs_min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, fixed: true, optional: true, requires: :cooling
       attribute 0x0006, :abs_max_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_COOL, fixed: true, optional: true, requires: :cooling
-      attribute 0x0011, :occupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, requires: :cooling
-      attribute 0x0012, :occupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, requires: :heating
+      attribute 0x0011, :occupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, requires: :cooling, on_change: :cooling_setpoint_changed
+      attribute 0x0012, :occupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, requires: :heating, on_change: :heating_setpoint_changed
       attribute 0x0015, :min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, writable: true, write_access: :manage, optional: true, requires: :heating
       attribute 0x0016, :max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, writable: true, write_access: :manage, optional: true, requires: :heating
       attribute 0x0017, :min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, writable: true, write_access: :manage, optional: true, requires: :cooling
       attribute 0x0018, :max_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_COOL, writable: true, write_access: :manage, optional: true, requires: :cooling
       attribute 0x0019, :min_setpoint_dead_band, Int8, default: DEFAULT_DEAD_BAND, writable: true, write_access: :manage, min: MIN_DEAD_BAND, max: MAX_DEAD_BAND, requires: :automode
       attribute 0x001B, :control_sequence_of_operation, ControlSequenceOfOperation, default: ControlSequenceOfOperation::CoolingAndHeating, writable: true, write_access: :manage
-      attribute 0x001C, :system_mode, SystemMode, default: SystemMode::Off, writable: true, write_access: :manage
-      attribute 0x001E, :thermostat_running_mode, ThermostatRunningMode, default: ThermostatRunningMode::Off, optional: true, requires: :automode
+      attribute 0x001C, :system_mode, SystemMode, default: SystemMode::Off, writable: true, write_access: :manage, on_change: :system_mode_changed
+      attribute 0x001E, :thermostat_running_mode, ThermostatRunningMode, default: ThermostatRunningMode::Off, optional: true, requires: :automode, on_change: :running_mode_changed
+      attribute 0x0029, :thermostat_running_state, RelayState, computed: true, optional: true, requires: :events
+
+      event 0x00, :system_mode_change, priority: :info, requires: :events, payload: SystemModeChangeEvent
+      event 0x01, :local_temperature_change, priority: :info,
+        requires: {events: true, local_temperature_not_exposed: false}, payload: LocalTemperatureChangeEvent
+      event 0x03, :setpoint_change, priority: :info, requires: :events, payload: SetpointChangeEvent
+      event 0x04, :running_state_change, priority: :info, requires: :events, payload: RunningStateChangeEvent
+      event 0x05, :running_mode_change, priority: :info,
+        requires: {events: true, automode: true}, payload: RunningModeChangeEvent
 
       command 0x00, :setpoint_raise_lower, request: SetpointRaiseLowerRequest
 
@@ -183,6 +257,9 @@ module Matter
 
         @measured_temperature = @local_temperature
         @local_temperature = nil if @feature_map.local_temperature_not_exposed?
+        @last_reported_temperature = @local_temperature
+        @last_temperature_event_at = nil.as(Time::Instant?)
+        @last_running_state = thermostat_running_state
 
         if @feature_map.heating?
           raise ArgumentError.new("min_heat_setpoint_limit must be >= abs minimum") if @min_heat_setpoint_limit < @abs_min_heat_setpoint_limit
@@ -199,6 +276,14 @@ module Matter
         end
       end
 
+      def thermostat_running_state : RelayState
+        case @thermostat_running_mode
+        when ThermostatRunningMode::Heat then RelayState::Heat
+        when ThermostatRunningMode::Cool then RelayState::Cool
+        else                                  RelayState::None
+        end
+      end
+
       # ------------------------------------------------------------------------
       # Write hooks
       # ------------------------------------------------------------------------
@@ -211,14 +296,6 @@ module Matter
       before_write :occupied_heating_setpoint do |setpoint|
         return InteractionModel::Status.constraint_error unless setpoint.in?(@min_heat_setpoint_limit..@max_heat_setpoint_limit)
         keep_cooling_above(setpoint)
-      end
-
-      after_write :occupied_cooling_setpoint do
-        update_running_mode
-      end
-
-      after_write :occupied_heating_setpoint do
-        update_running_mode
       end
 
       before_write :min_heat_setpoint_limit do |limit|
@@ -239,10 +316,6 @@ module Matter
 
       before_write :system_mode do |mode|
         InteractionModel::Status.constraint_error unless mode_allowed?(mode)
-      end
-
-      after_write :system_mode do
-        update_running_mode
       end
 
       # ------------------------------------------------------------------------
@@ -451,6 +524,46 @@ module Matter
       private def local_temperature_changed(value : Int16?) : Nil
         @measured_temperature = value
         update_running_mode
+        return if !@feature_map.events? || @feature_map.local_temperature_not_exposed?
+
+        previous = @last_reported_temperature
+        significant = previous.nil? != value.nil? ||
+                      (!previous.nil? && !value.nil? && (value.to_i32 - previous.to_i32).abs >= SIGNIFICANT_TEMPERATURE_CHANGE)
+        return unless significant
+
+        now = Time.instant
+        last = @last_temperature_event_at
+        return if last && now - last < TEMPERATURE_EVENT_INTERVAL
+
+        emit_local_temperature_change(LocalTemperatureChangeEvent.new(value))
+        @last_temperature_event_at = now
+        @last_reported_temperature = value
+      end
+
+      private def cooling_setpoint_changed(value : Int16) : Nil
+        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value)) if @feature_map.events?
+        update_running_mode
+      end
+
+      private def heating_setpoint_changed(value : Int16) : Nil
+        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value)) if @feature_map.events?
+        update_running_mode
+      end
+
+      private def system_mode_changed(value : SystemMode) : Nil
+        emit_system_mode_change(SystemModeChangeEvent.new(value)) if @feature_map.events?
+        update_running_mode
+      end
+
+      private def running_mode_changed(value : ThermostatRunningMode) : Nil
+        return unless @feature_map.events?
+
+        state = thermostat_running_state
+        if state != @last_running_state
+          emit_running_state_change(RunningStateChangeEvent.new(state))
+          @last_running_state = state
+        end
+        emit_running_mode_change(RunningModeChangeEvent.new(value)) if @feature_map.automode?
       end
     end
   end

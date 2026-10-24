@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 160
-- Feature or complex conditional IDs absent from Crystal: 29
+- Feature or complex conditional IDs absent from Crystal: 24
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -246,12 +246,12 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0201 | command | 0x0006 | feature(PRES) | absent |
 | 0x0201 | command | 0x0007 | feature(TSUGGEST) | absent |
 | 0x0201 | command | 0x0008 | feature(TSUGGEST) | absent |
-| 0x0201 | event | 0x0000 | feature(TEVT) | absent |
-| 0x0201 | event | 0x0001 | (feature(TEVT) and not(feature(LTNE))) | absent |
+| 0x0201 | event | 0x0000 | feature(TEVT) | declared; requires `:events` |
+| 0x0201 | event | 0x0001 | (feature(TEVT) and not(feature(LTNE))) | declared; requires `{events: true, local_temperature_not_exposed: false}` |
 | 0x0201 | event | 0x0002 | (feature(TEVT) and feature(OCC)) | absent |
-| 0x0201 | event | 0x0003 | feature(TEVT) | absent |
-| 0x0201 | event | 0x0004 | feature(TEVT) | absent |
-| 0x0201 | event | 0x0005 | (feature(TEVT) and feature(AUTO)) | absent |
+| 0x0201 | event | 0x0003 | feature(TEVT) | declared; requires `:events` |
+| 0x0201 | event | 0x0004 | feature(TEVT) | declared; requires `:events` |
+| 0x0201 | event | 0x0005 | (feature(TEVT) and feature(AUTO)) | declared; requires `{events: true, automode: true}` |
 | 0x0201 | event | 0x0006 | (feature(TEVT) and feature(MSCH)) | absent |
 | 0x0201 | event | 0x0007 | (feature(TEVT) and feature(PRES)) | absent |
 | 0x0202 | command | 0x0000 | feature(STEP) | declared; requires `:step` |
