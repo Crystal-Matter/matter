@@ -30,10 +30,12 @@ module Matter
     # decisions; this parser does not make an untrusted observer authoritative.
     class HttpDclRevocationSource < DclRevocationSource
       MAX_RESPONSE_SIZE = 1_048_576
-      alias Fetch = Proc(String, Bytes)
+      record Response, status : Int32, age : String?, body : Bytes
+      alias Fetch = Proc(String, Response)
+      alias LegacyFetch = Proc(String, Bytes)
 
       def initialize(@gateway_url : String,
-                     @fetch : Fetch = ->(url : String) { DclAttestationRevocation.fetch_https(url) })
+                     @fetch : Fetch = ->(url : String) { DclAttestationRevocation.fetch_https_response(url) })
         uri = URI.parse(@gateway_url)
         unless uri.scheme == "https" && uri.host && uri.user.nil? && uri.password.nil? &&
                uri.query.nil? && uri.fragment.nil? && uri.path.in?("", "/")
@@ -42,9 +44,15 @@ module Matter
         @gateway_url = @gateway_url.rstrip('/')
       end
 
+      # An injected body-only source owns its own transport freshness policy.
+      def initialize(gateway_url : String, fetch : LegacyFetch)
+        initialize(gateway_url, ->(url : String) { Response.new(200, nil, fetch.call(url)) })
+      end
+
       def points_for(issuer_skid : Bytes) : Array(DclRevocationPoint)
         raise Matter::AuthenticationError.new("Invalid issuer SKID") unless issuer_skid.size == 20
-        body = @fetch.call("#{@gateway_url}/dcl/pki/revocation-points/#{issuer_skid.hexstring.upcase}")
+        response = @fetch.call("#{@gateway_url}/dcl/pki/revocation-points/#{issuer_skid.hexstring.upcase}")
+        body = DclAttestationRevocation.require_fresh_https(response)
         raise Matter::AuthenticationError.new("DCL response is too large") if body.size > MAX_RESPONSE_SIZE
         items = JSON.parse(String.new(body)).as_h["pkiRevocationDistributionPointsByIssuerSubjectKeyID"].as_h["points"].as_a
         items.map do |item|
@@ -111,12 +119,39 @@ module Matter
         end
       end
 
-      # HTTPS only; reads at most MAX_CRL_SIZE bytes before returning. An HTTP
-      # redirect is rejected as a non-200 response and never followed.
+      # HTTPS only; reads at most MAX_RESPONSE_SIZE bytes before returning. An
+      # HTTP redirect is rejected as a non-200 response and never followed.
       def self.fetch_https(url : String) : Bytes
+        require_fresh_https(fetch_https_response(url))
+      end
+
+      def self.require_fresh_https(response : HttpDclRevocationSource::Response) : Bytes
+        raise Matter::AuthenticationError.new("DCL HTTP response was not 200") unless response.status == 200
+        if age = response.age
+          raise Matter::AuthenticationError.new("DCL HTTP response came from a cache") unless age == "0"
+        end
+        response.body
+      end
+
+      def self.fetch_https_response(url : String) : HttpDclRevocationSource::Response
         uri = URI.parse(url)
-        raise Matter::AuthenticationError.new("CRL URL must use HTTPS") unless uri.scheme == "https"
-        fetch_crl(url)
+        raise Matter::AuthenticationError.new("DCL URL must use HTTPS") unless uri.scheme == "https"
+        HTTP::Client.new(uri) do |client|
+          client.connect_timeout = FETCH_TIMEOUT
+          client.read_timeout = FETCH_TIMEOUT
+          headers = HTTP::Headers{"Cache-Control" => "no-cache, no-store, max-age=0", "Pragma" => "no-cache"}
+          client.exec("GET", uri.request_target, headers) do |reply|
+            output = IO::Memory.new
+            buffer = Bytes.new(8192)
+            while (read = reply.body_io.read(buffer)) > 0
+              if output.size + read > HttpDclRevocationSource::MAX_RESPONSE_SIZE
+                raise Matter::AuthenticationError.new("DCL response is too large")
+              end
+              output.write(buffer[0, read])
+            end
+            HttpDclRevocationSource::Response.new(reply.status_code, reply.headers["Age"]?, output.to_slice)
+          end
+        end
       end
 
       # This helper may receive HTTP only after the caller has checked its

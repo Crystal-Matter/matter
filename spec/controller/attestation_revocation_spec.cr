@@ -93,6 +93,26 @@ private def dcl_point(cert_der : Bytes, crl : Bytes, is_paa : Bool,
 end
 
 describe Matter::Controller::DclAttestationRevocation do
+  it "rejects aged DCL revocation indexes before accepting certificate status" do
+    payload = {"pkiRevocationDistributionPointsByIssuerSubjectKeyID" => {"points" => [] of String}}.to_json.to_slice
+    skid = Bytes.new(20, 1_u8)
+    {"5", "invalid"}.each do |age|
+      stale = Matter::Controller::HttpDclRevocationSource.new("https://dcl.example", ->(_url : String) {
+        Matter::Controller::HttpDclRevocationSource::Response.new(200, age, payload)
+      })
+      expect_raises(Matter::AuthenticationError) { stale.points_for(skid) }
+    end
+
+    fresh = Matter::Controller::HttpDclRevocationSource.new("https://dcl.example", ->(_url : String) {
+      Matter::Controller::HttpDclRevocationSource::Response.new(200, "0", payload)
+    })
+    fresh.points_for(skid).should be_empty
+    unavailable = Matter::Controller::HttpDclRevocationSource.new("https://dcl.example", ->(_url : String) {
+      Matter::Controller::HttpDclRevocationSource::Response.new(503, nil, payload)
+    })
+    expect_raises(Matter::AuthenticationError) { unavailable.points_for(skid) }
+  end
+
   it "parses the DCL issuer index from an explicit HTTPS gateway" do
     manager = Matter::Certificate::AttestationCertificateManager.new(0xFFF1_u16)
     paa = manager.paa_cert
