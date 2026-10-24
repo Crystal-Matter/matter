@@ -60,6 +60,8 @@ module Matter
       property tls_endpoint_exists : Proc(UInt8, UInt16, Bool)?
       property video_stream_exists : Proc(UInt16, Bool)?
       property audio_stream_exists : Proc(UInt16, Bool)?
+      property select_video_stream : Proc(UInt8, StreamUsage, UInt16)?
+      property select_audio_stream : Proc(UInt8, StreamUsage, UInt16)?
       property zone_exists : Proc(UInt16, Bool)?
       property pre_roll_valid : Proc(UInt16, Bool)?
       property time_valid : Proc(Bool)?
@@ -102,17 +104,19 @@ module Matter
         expire_due
         fabric = accessing_fabric
         return fabric if fabric.is_a?(InteractionModel::Status)
-        validation = validate_options(request.transport_options, fabric)
+        options = resolve_streams(request.transport_options, fabric)
+        return options if options.is_a?(InteractionModel::Status)
+        validation = validate_options(options, fabric)
         return validation unless validation.success?
         id = next_id
         return InteractionModel::Status.resource_exhausted unless id
-        if @on_reference_change.try(&.call(fabric, request.transport_options.tls_endpoint_id, 1_i8)) == false
+        if @on_reference_change.try(&.call(fabric, options.tls_endpoint_id, 1_i8)) == false
           return InteractionModel::Status.invalid_in_state
         end
         entry = Tlv::TransportConfiguration.new(id, TransportStatus::Inactive,
-          clone_options(request.transport_options), fabric)
+          clone_options(options), fabric)
         @connections << entry
-        if ttl = request.transport_options.expiry_time
+        if ttl = options.expiry_time
           @expiry_deadlines[id] = @clock.call + ttl.seconds
         end
         changed
@@ -147,24 +151,26 @@ module Matter
         return InteractionModel::Status.constraint_error if request.connection_id > MAX_CONNECTION_ID
         entry = find_owned(fabric, request.connection_id)
         return InteractionModel::Status.not_found unless entry
-        validation = validate_options(request.transport_options, fabric)
+        options = resolve_streams(request.transport_options, fabric)
+        return options if options.is_a?(InteractionModel::Status)
+        validation = validate_options(options, fabric)
         return validation unless validation.success?
         if entry.transport_status.active?
-          return InteractionModel::Status.invalid_in_state unless @on_modify_active.try(&.call(fabric, entry.connection_id, request.transport_options))
+          return InteractionModel::Status.invalid_in_state unless @on_modify_active.try(&.call(fabric, entry.connection_id, options))
         end
         old_options = entry.transport_options || return InteractionModel::Status.invalid_in_state
-        if old_options.tls_endpoint_id != request.transport_options.tls_endpoint_id
-          if @on_reference_change.try(&.call(fabric, request.transport_options.tls_endpoint_id, 1_i8)) == false
+        if old_options.tls_endpoint_id != options.tls_endpoint_id
+          if @on_reference_change.try(&.call(fabric, options.tls_endpoint_id, 1_i8)) == false
             return InteractionModel::Status.invalid_in_state
           end
           if @on_reference_change.try(&.call(fabric, old_options.tls_endpoint_id, -1_i8)) == false
-            @on_reference_change.try(&.call(fabric, request.transport_options.tls_endpoint_id, -1_i8))
+            @on_reference_change.try(&.call(fabric, options.tls_endpoint_id, -1_i8))
             return InteractionModel::Status.invalid_in_state
           end
         end
         replace(entry, Tlv::TransportConfiguration.new(entry.connection_id, entry.transport_status,
-          clone_options(request.transport_options), fabric))
-        if ttl = request.transport_options.expiry_time
+          clone_options(options), fabric))
+        if ttl = options.expiry_time
           @expiry_deadlines[entry.connection_id] = @clock.call + ttl.seconds
         else
           @expiry_deadlines.delete(entry.connection_id)
@@ -344,12 +350,37 @@ module Matter
 
       private def clone_options(options : Tlv::TransportOptions) : Tlv::TransportOptions
         copy = Tlv::TransportOptions.from_document(options.to_document)
-        video_id = copy.video_streams.try(&.first?.try(&.id)) || copy.video_stream_id
-        audio_id = copy.audio_streams.try(&.first?.try(&.id)) || copy.audio_stream_id
+        video_id = copy.video_streams.try(&.first?.try(&.id)) || copy.video_stream_id_state
+        audio_id = copy.audio_streams.try(&.first?.try(&.id)) || copy.audio_stream_id_state
         Tlv::TransportOptions.new(copy.stream_usage, copy.tls_endpoint_id, copy.url,
           copy.trigger_options, copy.ingest_method, copy.container_options,
           video_stream_id: video_id, audio_stream_id: audio_id, expiry_time: copy.expiry_time,
           video_streams: copy.video_streams, audio_streams: copy.audio_streams)
+      end
+
+      private def resolve_streams(options : Tlv::TransportOptions, fabric : UInt8) : Tlv::TransportOptions | InteractionModel::Status
+        videos = options.video_streams.try(&.dup) || [] of Tlv::VideoStream
+        audios = options.audio_streams.try(&.dup) || [] of Tlv::AudioStream
+        video_id = options.video_stream_id_state
+        audio_id = options.audio_stream_id_state
+        if video_id.null?
+          selector = @select_video_stream || return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream)
+          video_id = ::TLV::FieldState(UInt16).value(selector.call(fabric, options.stream_usage))
+        end
+        if audio_id.null?
+          selector = @select_audio_stream || return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream)
+          audio_id = ::TLV::FieldState(UInt16).value(selector.call(fabric, options.stream_usage))
+        end
+        if video_id.value? && videos.none?(&.id.==(video_id.value!))
+          videos << Tlv::VideoStream.new("video", video_id.value!)
+        end
+        if audio_id.value? && audios.none?(&.id.==(audio_id.value!))
+          audios << Tlv::AudioStream.new("audio", audio_id.value!)
+        end
+        Tlv::TransportOptions.new(options.stream_usage, options.tls_endpoint_id, options.url,
+          options.trigger_options, options.ingest_method, options.container_options,
+          video_stream_id: video_id, audio_stream_id: audio_id, expiry_time: options.expiry_time,
+          video_streams: videos.empty? ? nil : videos, audio_streams: audios.empty? ? nil : audios)
       end
 
       private def clone_configuration(entry : Tlv::TransportConfiguration) : Tlv::TransportConfiguration
@@ -418,18 +449,20 @@ module Matter
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidStream) if videos.empty? && audios.empty? && options.video_stream_id.nil? && options.audio_stream_id.nil?
         trigger = options.trigger_options
         if trigger.trigger_type.motion?
+          return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_zones_state.absent?
           time_control = trigger.motion_time_control
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless time_control && valid_time_control?(time_control)
           motion_zones = trigger.motion_zones || [] of Tlv::ZoneOptions
           if feature_map.per_zone_sensitivity?
-            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_sensitivity
+            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) unless trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.try(&.in?(MIN_SENSITIVITY..MAX_SENSITIVITY)) }
           else
+            return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_sensitivity_state.absent?
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if trigger.motion_sensitivity.try { |value| !value.in?(MIN_SENSITIVITY..MAX_SENSITIVITY) }
             return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if motion_zones.any? { |zone| !zone.sensitivity.nil? }
           end
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidZone) if motion_zones.any? { |zone| zone.zone.try { |id| !@zone_exists.try(&.call(id)) } }
-        elsif trigger.motion_zones || trigger.motion_sensitivity || trigger.motion_time_control
+        elsif !trigger.motion_zones_state.absent? || !trigger.motion_sensitivity_state.absent? || trigger.motion_time_control
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions)
         end
         if trigger.trigger_type.continuous?

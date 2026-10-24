@@ -31,8 +31,18 @@ connections on the caller's fabric. Active status and manual triggering require
 host callbacks, so the configuration-only example cannot claim successful
 media transmission. Revision 1 explicit stream ID fields are accepted
 alongside revision 2 multi-stream lists, and responses populate the deprecated
-IDs from the first list entry. Revision 1 null stream IDs that request automatic
-assignment still need a real camera stream allocator. An optional
+IDs from the first list entry. Revision 1 stream ID fields preserve absent,
+explicit Null, and concrete values separately. An explicit Null asks the host
+to choose an existing stream through `select_video_stream` or
+`select_audio_stream`. The callback receives the fabric index and stream usage;
+its selected ID is checked by the corresponding `*_stream_exists` callback,
+added to the revision 2 list under the legacy name `video` or `audio`, and
+returned as a concrete ID. A missing selector returns InvalidStream without
+creating a connection. The cluster does not create or release camera streams
+on behalf of the host. Nullable MotionZones and MotionSensitivity are also
+preserved on wire and in storage. MotionZones is required for Motion triggers;
+MotionSensitivity is required without PerZoneSensitivity, and explicit Null is
+valid for both. An optional
 `ExpiryTime` is treated as a relative TTL in seconds; the host must attest to
 clock validity with `time_valid` before accepting it. The deadline is saved and
 expired connections are removed after restart. Nonzero pre-roll needs a
@@ -46,7 +56,3 @@ TLV tags, command lifecycle, fabric isolation, persistence, validation, and
 host event gating. A camera backend, actual media transport, nonempty
 chip-tool allocation, and certification suite are still needed before claiming
 full Push AV transport interoperability.
-Motion trigger encoding with an explicit nullable `MotionZones` or
-`MotionSensitivity` value also needs conditional TLV presence support; the
-current serializer omits nil option fields. Motion deployments should use
-concrete values and verify their controller's expectations.

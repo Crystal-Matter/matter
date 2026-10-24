@@ -24,6 +24,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tracking, and host-controlled transport activation. A chip-tool fixture
   checks the advertised empty catalog; actual CMAF media upload requires a
   host implementation.
+- Preserve absent, Null, and concrete revision 1 stream IDs and conditional
+  Motion fields across TLV and durable storage. Host selectors can resolve
+  automatic stream requests to existing camera stream IDs.
 
 ### Commodity Tariff
 
