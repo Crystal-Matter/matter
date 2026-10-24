@@ -24,7 +24,7 @@ module MatterLaundryCombo
     endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Energy, esa_type: Energy::ESAType::WashingMachine,
         can_generate: false, abs_min_power: 0_i64, abs_max_power: 4_000_i64,
-        feature_map: Energy::Feature::PowerForecastReporting
+        feature_map: Energy::Feature::PowerForecastReporting | Energy::Feature::StartTimeAdjustment
       cluster Dryer,
         supported_dryness_levels: [Dryer::DrynessLevel::Low, Dryer::DrynessLevel::Normal, Dryer::DrynessLevel::Extra],
         selected_dryness_level: Dryer::DrynessLevel::Normal
@@ -40,7 +40,8 @@ module MatterLaundryCombo
       energy = node.get_cluster!(1_u16, Energy)
       # The host's planned heat and spin stages are an indicative forecast;
       # physical timing and power estimates remain application-owned.
-      start_time = (Time.utc.to_unix - 946_684_800_i64).to_u32
+      now = (Time.utc.to_unix - 946_684_800_i64).to_u32
+      start_time = now + 3_600_u32
       energy.report_forecast(Energy::Forecast.new(1_u32, nil,
         start_time, start_time + 300_u32, false, [
         Energy::Slot.new(120_u32, 240_u32, 180_u32, 0_u32, 180_u32,
@@ -49,7 +50,12 @@ module MatterLaundryCombo
         Energy::Slot.new(60_u32, 180_u32, 120_u32, 0_u32, 120_u32,
           nominal_power: 800_i64, min_power: 400_i64,
           max_power: 1_000_i64, nominal_energy: 27_i64),
-      ], Energy::ForecastUpdateReason::InternalOptimization))
+      ], Energy::ForecastUpdateReason::InternalOptimization,
+        earliest_start_time: nil, latest_end_time: now + 7_200_u32))
+      # This synthetic host accepts schedule changes. A production host would
+      # update its appliance timer and reject requests it cannot honor.
+      energy.on_start_time_adjust { |_request, _fabric| Status.success }
+      energy.on_cancel_forecast_adjustment { |_fabric| Status.success }
       dryer = node.get_cluster!(1_u16, Dryer)
       # This load cannot use low dryness because the fabric is too heavy.
       dryer.on_select_dryness { |level| level == Dryer::DrynessLevel::Low ? Status.invalid_in_state : Status.success }

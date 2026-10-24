@@ -559,7 +559,12 @@ and energy estimates, while SFR slots include a stable manufacturer state.
 Forecasts are copied on assignment and read, require advancing IDs, and are
 volatile across restarts. The host can refresh elapsed and remaining slot time
 without flooding subscriptions. The synthetic washer-dryer shows PFR reporting.
-STA, PAU, FA, and CON remain unavailable; the server rejects those feature bits.
+The PFR+STA profile also accepts a host-approved request to shift a future
+forecast within its earliest-start and latest-end window. EarliestStartTime may
+be null for immediate availability. CancelRequest restores the host schedule,
+and a conflicting opt-out cancels the adjustment. The synthetic washer-dryer
+exercises this flow. PAU, FA, and CON remain unavailable; the server rejects
+those feature bits.
 
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer
