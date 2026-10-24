@@ -263,6 +263,11 @@ services:
     environment:
       E2E_DEVICE: matter_adjustable_heater
 
+  constrained-heater:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_constrained_heater
+
   pausable-washer:
     <<: *device
     environment:
@@ -507,6 +512,7 @@ services:
       temperature-control: { condition: service_healthy }
       laundry-combo: { condition: service_healthy }
       adjustable-heater: { condition: service_healthy }
+      constrained-heater: { condition: service_healthy }
       pausable-washer: { condition: service_healthy }
       humidity-sensor: { condition: service_healthy }
       soil-sensor: { condition: service_healthy }
