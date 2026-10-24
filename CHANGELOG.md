@@ -57,6 +57,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool test exercise commissioning, state reads, self-test, and restart.
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
+### Device Energy Management Power Adjustment
+
+- Add a Matter 1.6 revision 4 Device Energy Management server with the PA
+  feature, typed nameplate and capability data, opt-out handling, host-approved
+  power adjustment and cancellation, timed completion, events, and restart
+  reset. The synthetic water heater exercises reads and commands with official
+  chip-tool. PFR, SFR, STA, PAU, FA, and CON remain unadvertised for follow-up
+  implementations.
 
 ### Energy EVSE
 
