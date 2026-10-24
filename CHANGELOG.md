@@ -27,6 +27,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   required Power Source device type topology. The example now advertises a
   detector endpoint with Identify and a separate Power Source endpoint, and
   chip-tool checks both Descriptor device type lists and power mapping.
+### Zone Management
+
+- Add the Matter 1.6 revision 1 Zone Management server for user-defined
+  Cartesian zones, durable trigger configuration, managed geometry commands,
+  and ZoneTriggered/ZoneStopped timing with blind intervals. The synthetic
+  Aggregator fixture exercises the wire surface with chip-tool. Per-zone
+  sensitivity and focus zones remain unsupported.
+
+### Pump Configuration and Control
+
+- Add the Matter 1.6 revision 5 ConstantSpeed pump server with feature-gated
+  attributes, managed mode requests, durable settings, host telemetry, and a
+  synthetic Pump device for official chip-tool interoperability. Other
+  regulation features and optional fault events remain unsupported.
 
 ### Content Control
 
@@ -45,6 +59,51 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool test exercise commissioning, state reads, self-test, and restart.
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
+
+### Device Energy Management constraint based forecasts
+
+- Add a Matter 1.6 PFR+CON profile with typed future power/energy constraints,
+  ordered non-overlapping interval validation, host-approved forecast
+  recomputation, CancelRequest, and opt-out restoration. A synthetic heater
+  exercises request, cancellation, and restart with official chip-tool.
+
+### Device Energy Management forecast adjustment
+
+- Add a Matter 1.6 PFR+FA profile with mandatory per-slot adjustment limits,
+  typed ModifyForecastRequest, host-approved replacement forecasts,
+  CancelRequest and opt-out restoration. A synthetic adjustable heater
+  exercises bounds checks, update, cancel, and restart with official chip-tool.
+
+### Device Energy Management pausable operation
+
+- Add the Matter 1.6 PFR+PAU profile with per-slot pause bounds, host-approved
+  PauseRequest/ResumeRequest, Paused/Resumed events, duration expiry, and
+  opt-out/host-state cancellation. An official chip-tool scenario exercises a
+  synthetic washer's pause, resume, expiry, and restart behavior.
+
+### Device Energy Management start time adjustment
+
+- Add the Matter 1.6 PFR+STA profile with nullable earliest start, bounded
+  latest end, host-approved rescheduling, CancelRequest, opt-out
+  cancellation, and immediate command-driven Forecast reports. The synthetic
+  washer-dryer exercises shift, cancel, and restart with official chip-tool.
+
+### Device Energy Management forecast reporting
+
+- Add typed Matter 1.6 PFR and SFR reporting profiles for the Device Energy
+  Management server. Hosts publish nullable, bounded forecasts; slot schemas
+  match the selected feature, ForecastID advances on updates, progress fields
+  remain live without subscription churn, and forecasts reset on restart.
+  The synthetic washer reports a two-stage PFR forecast to official chip-tool.
+  The reporting-only profiles advertise no adjustment feature bits.
+
+### Device Energy Management Power Adjustment
+
+- Add a Matter 1.6 revision 4 Device Energy Management server with the PA
+  feature, typed nameplate and capability data, opt-out handling, host-approved
+  power adjustment and cancellation, timed completion, events, and restart
+  reset. The synthetic water heater exercises reads and commands with official
+  chip-tool. The PA-only profile advertises no other feature bits.
 
 ### Energy EVSE
 

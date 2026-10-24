@@ -4,13 +4,14 @@ This compares canonical Matter XML IDs with Crystal cluster DSL declarations
 for implemented standard clusters. A declared ID does not prove a working handler,
 correct payload, event emission, feature gating, or interoperability. This is not a completeness claim.
 Feature and complex conditions are displayed for manual review, not evaluated.
+OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 125
+- Implemented standard cluster IDs compared: 128
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 157
+- Conditional command/event declarations for review: 172
 - Feature or complex conditional IDs absent from Crystal: 29
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -83,6 +84,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | — | — |
 | 0x0095 | Commodity Price Cluster | 4 | 4 | — | — |
 | 0x0097 | Messages Cluster | 3 | 3 | — | — |
+| 0x0098 | Device Energy Management Cluster | 4 | 4 | — | — |
 | 0x0099 | Energy EVSE Cluster | 4 | 4 | — | — |
 | 0x009B | Energy Preference Cluster | 1 | 1 | — | — |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |
@@ -93,6 +95,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0101 | Door Lock Cluster | 10 | 9 | — | — |
 | 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
 | 0x0150 | Service Area Cluster | 2 | 2 | — | — |
+| 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | — | — |
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
 | 0x0202 | Fan Control Cluster | 6 | 6 | — | — |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — | — |
@@ -102,7 +105,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0403 | Pressure Measurement Cluster | 5 | 5 | — | — |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 5 | — | — |
-| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | — |
+| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | OccupancyChanged when OccupancyEvent is selected |
 | 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — | — |
 | 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — | — |
 | 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — | — |
@@ -132,6 +135,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050E | Account Login Cluster | 2 | 2 | — | — |
 | 0x050F | Content Control Cluster | 1 | 1 | — | — |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | — |
+| 0x0550 | Zone Management Cluster | 1 | 1 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | — |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
@@ -215,6 +219,18 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0090 | event | 0x0000 | attribute() | declared; requires `—` |
 | 0x0091 | event | 0x0000 | feature(CUME) | declared; requires `:cumulative_energy` |
 | 0x0091 | event | 0x0001 | feature(PERE) | declared; requires `:periodic_energy` |
+| 0x0098 | command | 0x0000 | feature(PA) | declared; requires `:power_adjustment` |
+| 0x0098 | command | 0x0001 | feature(PA) | declared; requires `:power_adjustment` |
+| 0x0098 | command | 0x0002 | feature(STA) | declared; requires `:start_time_adjustment` |
+| 0x0098 | command | 0x0003 | feature(PAU) | declared; requires `:pausable` |
+| 0x0098 | command | 0x0004 | feature(PAU) | declared; requires `:pausable` |
+| 0x0098 | command | 0x0005 | feature(FA) | declared; requires `:forecast_adjustment` |
+| 0x0098 | command | 0x0006 | feature(CON) | declared; requires `:constraint_based_adjustment` |
+| 0x0098 | command | 0x0007 | (feature(STA) or feature(FA) or feature(CON)) | declared; requires `[:start_time_adjustment, :forecast_adjustment, :constraint_based_adjustment]` |
+| 0x0098 | event | 0x0000 | feature(PA) | declared; requires `:power_adjustment` |
+| 0x0098 | event | 0x0001 | feature(PA) | declared; requires `:power_adjustment` |
+| 0x0098 | event | 0x0002 | feature(PAU) | declared; requires `:pausable` |
+| 0x0098 | event | 0x0003 | feature(PAU) | declared; requires `:pausable` |
 | 0x0099 | command | 0x0003 | feature(V2X) | absent |
 | 0x0099 | command | 0x0005 | feature(PREF) | declared; requires `:charging_preferences` |
 | 0x0099 | command | 0x0006 | feature(PREF) | declared; requires `:charging_preferences` |
@@ -307,6 +323,9 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050F | command | 0x0010 | feature(BTW) | absent |
 | 0x050F | event | 0x0000 | feature(ST) | absent |
 | 0x050F | event | 0x0001 | feature(BTW) | absent |
+| 0x0550 | command | 0x0000 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
+| 0x0550 | command | 0x0002 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
+| 0x0550 | command | 0x0003 | feature(USERDEFINED) | declared; requires `:user_defined` |
 | 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:

@@ -2,8 +2,9 @@ require "./support/console"
 require "./support/main"
 
 # Synthetic water heater: the host callbacks stand in for physical heater and
-# mode controls. Both Matter clusters share the endpoint with Thermostat.
+# mode and power controls. The energy manager shares the heater endpoint.
 module MatterWaterHeater
+  alias Energy = Matter::Cluster::DeviceEnergyManagement
   alias Mode = Matter::Cluster::WaterHeaterMode
   alias Management = Matter::Cluster::WaterHeaterManagement
   alias Thermostat = Matter::Cluster::Thermostat
@@ -38,11 +39,17 @@ module MatterWaterHeater
         heater_types: Management::HeatSource::ImmersionElement1 | Management::HeatSource::HeatPump,
         tank_volume: 100_u16, estimated_heat_required: 4_000_000_i64,
         tank_percentage: 40_u8
+      cluster Energy, esa_type: Energy::ESAType::WaterHeating, can_generate: false,
+        abs_min_power: 0_i64, abs_max_power: 5_000_000_i64,
+        power_adjustment_capability: Energy::PowerAdjustCapability.new([
+          Energy::PowerAdjust.new(0_i64, 4_000_000_i64, 1_u32, 3_600_u32),
+        ], Energy::PowerAdjustReason::NoAdjustment)
     end
 
     protected def before_start : Nil
       mode = node.get_cluster!(1_u16, Mode)
       heater = node.get_cluster!(1_u16, Management)
+      energy = node.get_cluster!(1_u16, Energy)
       thermostat = node.get_cluster!(1_u16, Thermostat)
 
       mode.on_change_to_mode do |_requested|
@@ -58,6 +65,14 @@ module MatterWaterHeater
         end
       end
       heater.on_cancel_boost do
+        heater.report_heat_demand(Management::HeatSource::None)
+        Status.success
+      end
+      energy.on_power_adjust do |request, _fabric_index|
+        heater.report_heat_demand(request.power.zero? ? Management::HeatSource::None : Management::HeatSource::ImmersionElement1)
+        Status.success
+      end
+      energy.on_cancel_power_adjust do |_fabric_index|
         heater.report_heat_demand(Management::HeatSource::None)
         Status.success
       end

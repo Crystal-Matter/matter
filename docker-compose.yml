@@ -258,6 +258,21 @@ services:
     environment:
       E2E_DEVICE: matter_laundry_combo
 
+  adjustable-heater:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_adjustable_heater
+
+  constrained-heater:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_constrained_heater
+
+  pausable-washer:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_pausable_washer
+
   temperature-alarm:
     <<: *device
     environment:
@@ -343,6 +358,14 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_commodity_tariff
+  zone-management:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_zone_management
+  pump:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_pump
 
   contact-sensor:
     <<: *device
@@ -492,6 +515,9 @@ services:
       pressure-sensor: { condition: service_healthy }
       temperature-control: { condition: service_healthy }
       laundry-combo: { condition: service_healthy }
+      adjustable-heater: { condition: service_healthy }
+      constrained-heater: { condition: service_healthy }
+      pausable-washer: { condition: service_healthy }
       humidity-sensor: { condition: service_healthy }
       soil-sensor: { condition: service_healthy }
       content-app: { condition: service_healthy }

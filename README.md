@@ -400,11 +400,20 @@ and application features retain policy across restart; the host calls
 `playback_allowed?` and reacts to `on_policy_changed` to stop disallowed
 playback. See [the Content Control guide](docs/content-control.md) and
 `examples/matter_content_control_device.cr`.
+Pump endpoints can add the Matter 1.6 revision 5
+`Cluster::PumpConfigurationControl` ConstantSpeed profile. The host validates
+remote mode requests and reports observed operation and telemetry. See
+[the Pump Configuration guide](docs/pump-configuration-control.md) and
+`examples/matter_pump_device.cr`.
 
 Commodity Tariff endpoints can add revision 1 `Cluster::CommodityTariff` for
 durable Pricing calendars and current/next price projections. See
 [the Commodity Tariff guide](docs/commodity-tariff.md) and
 `examples/matter_commodity_tariff_device.cr`.
+Zone Management endpoints can add revision 1 `Cluster::ZoneManagement` with
+user-defined Cartesian regions and persisted motion triggers. See
+[the Zone Management guide](docs/zone-management.md) and
+`examples/matter_zone_management_device.cr`.
 
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
@@ -537,6 +546,42 @@ BoostInfo fields for one-shot, temporary setpoint, emergency heating and
 percentage targets are forwarded to `on_boost`; the host applies those physical
 policies and calls `finish_boost` when a target is reached. The server enforces
 the duration timeout and basic field constraints.
+
+`Cluster::DeviceEnergyManagement` implements the Matter 1.6 revision 4
+PowerAdjustment profile (0x0098) on the synthetic water heater. The host
+supplies the ESA type, generation flag, absolute power limits, and current
+capability ranges. It registers `on_power_adjust` and
+`on_cancel_power_adjust` to approve physical changes; both callbacks receive
+the requesting fabric index for host policy. The server validates requested
+power and duration, opt-out and online state, reports active state, emits
+PowerAdjustStart/End, and ends a session on cancellation, timeout, fault,
+offline state, or a new opt-out. A restart begins online without replaying an
+old power adjustment. This PA profile never advertises unrelated feature bits.
+
+The same server supports standalone PFR or SFR reporting profiles. A host
+reports a nullable `Forecast` with 1–10 bounded slots; PFR slots include power
+and energy estimates, while SFR slots include a stable manufacturer state.
+Forecasts are copied on assignment and read, require advancing IDs, and are
+volatile across restarts. The host can refresh elapsed and remaining slot time
+without flooding subscriptions. The synthetic washer-dryer shows PFR reporting.
+The PFR+STA profile also accepts a host-approved request to shift a future
+forecast within its earliest-start and latest-end window. EarliestStartTime may
+be null for immediate availability. CancelRequest restores the host schedule,
+and a conflicting opt-out cancels the adjustment. The synthetic washer-dryer
+exercises this flow. The separate PFR+PAU profile accepts host-approved pauses
+of its active, pausable forecast slot within its advertised duration bounds;
+ResumeRequest, expiry, host state changes and conflicting opt-out end the pause
+with a Resumed event. The synthetic pausable washer exercises this profile.
+The PFR+FA profile accepts a host-approved ModifyForecastRequest within each
+slot's advertised power and duration adjustment bounds. It publishes the
+replacement Forecast immediately with an advancing ID; CancelRequest or a
+conflicting opt-out restores the prior host forecast. A synthetic adjustable
+heater exercises the command, cancellation, and restart with official
+chip-tool. The separate PFR+CON profile accepts chronological, non-overlapping
+future power and energy constraints. The host computes the replacement
+forecast; CancelRequest and opt-out restore the earlier forecast. The
+synthetic constrained heater exercises request, cancellation, and restart.
+
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer
 feature (`Spin` or `Rinse`) and register host selection callbacks before
