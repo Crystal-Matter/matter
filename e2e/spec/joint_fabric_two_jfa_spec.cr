@@ -724,6 +724,42 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8)))
     before_transfer.subscription_committed.should be_false
 
+    # A freezes its Datastore before B receives the TransferAnchorRequest
+    # acknowledgement. Restart B with a persisted Requesting journal and
+    # require it to recognize the frozen Datastore without sending the request
+    # again. A second interruption later exercises participant follow-up.
+    lost_request = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_transfer_request: true))
+    lost_request.status.should eq("error")
+    lost_request.error.to_s.should contain("Injected lost TransferAnchorRequest acknowledgement")
+    anchor_frozen = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_STATUS)
+    frozen_data = anchor_frozen.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.from_slice(frozen_data.to_slice)
+      .state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending)
+    joiner.restart!
+    unsafe_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_retry.status.should eq("error")
+    unsafe_retry.error.to_s.should contain("needs authenticated requester reconciliation")
+    request_nonce = Random::Secure.hex(16)
+    witness = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-requester", 0xA103_u64,
+        nonce: request_nonce))
+    witness.status.should eq("ok"), witness.error.to_s
+    witness.inspected_transfer_requester_node_id.should eq(0xA103_u64)
+    rejected_witness = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-requested", 0xA104_u64,
+        nonce: request_nonce))
+    rejected_witness.status.should eq("error")
+    accepted_witness = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-requested", 0xA102_u64,
+        nonce: request_nonce))
+    accepted_witness.status.should eq("ok"), accepted_witness.error.to_s
+
     # B becomes the new Anchor, but the command channel loses the result after
     # TransferAnchorComplete and before participant follow-up. Restart B with
     # its persisted FollowingUp journal while A and C still use A's fabric.

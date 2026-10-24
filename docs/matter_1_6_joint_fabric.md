@@ -131,6 +131,18 @@ item below as covered only to the extent of its cited tests.
   must inspect that Administrator's NOC/CAT and reconcile the rotation before
   resuming; completed rotations are skipped. A three-Administrator spec covers
   interruption during the second rotation.
+  A candidate restart after a lost TransferAnchorRequest acknowledgement reads
+  the old Anchor's Datastore over CASE. A still-Committed snapshot permits a
+  retry. A frozen DeletePending snapshot alone cannot identify which
+  Administrator initiated the transfer, so recovery stops until a trusted
+  host supplies a nonce-bound witness matching the old fabric, root, Anchor
+  Node ID, and candidate Node ID. The Crystal Docker fixture obtains that
+  witness from the old Anchor's persisted requester through its private
+  command channel, then resumes the Requested stage without sending the
+  request again. An independent Anchor needs an equivalent trusted host
+  witness; the Matter 1.6 JFA cluster has no requester read attribute.
+  The three-Administrator Docker scenario injects the lost acknowledgement,
+  restarts B, checks the fail-closed path, and continues after reconciliation.
 - The Datastore accepts CASE reads and commands only while this device is the
   Anchor. During transfer it remains readable for the candidate's frozen
   snapshot; after TransferAnchorComplete, the former Anchor rejects Datastore
@@ -399,7 +411,8 @@ remain to be tested together.
    B restart after a lost RemoveFabric acknowledgement, persisted RemoveAdmin
    with a lost acknowledgement, and
    B/C registration; local specs cover interrupted second credential rotation.
-   Other network interruption points remain.
+   Other network interruption points remain, including live recovery of an
+   uncertain Administrator credential rotation.
 3. Deploy production PAA/CD signers and a trusted CRL distribution source
    through the JFA example's explicit injection point. The bundled
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain

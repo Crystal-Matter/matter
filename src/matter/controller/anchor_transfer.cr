@@ -56,13 +56,16 @@ module Matter
         # session. Every read is fabric filtered to the Joint Fabric.
         def read_remote(im : ImClient, session : Session::SecureContext,
                         peer : Socket::IPAddress, endpoint_id : UInt16,
-                        require_frozen : Bool = true) : Datastore
+                        require_frozen : Bool? = true) : Datastore
           source = Datastore.new(DataType::EndpointNumber.new(endpoint_id))
           source.status = Datastore::DatastoreStatusEntryStruct.from_slice(read(im, session, peer,
             endpoint_id, Datastore::ATTR_STATUS))
-          expected_state = require_frozen ? Datastore::DatastoreStateEnum::DeletePending : Datastore::DatastoreStateEnum::Committed
-          unless source.status.state == expected_state
-            raise Matter::CommissioningError.new("Old Anchor Datastore is not #{require_frozen ? "frozen" : "committed"} for transfer")
+          expected_state = case require_frozen
+                           when true  then Datastore::DatastoreStateEnum::DeletePending
+                           when false then Datastore::DatastoreStateEnum::Committed
+                           end
+          unless expected_state ? source.status.state == expected_state : source.status.state.in?(Datastore::DatastoreStateEnum::Committed, Datastore::DatastoreStateEnum::DeletePending)
+            raise Matter::CommissioningError.new("Old Anchor Datastore has an invalid state for transfer")
           end
           source.anchor_root_ca = Bytes.from_tlv(read(im, session, peer, endpoint_id, Datastore::ATTR_ANCHOR_ROOT_CA))
           source.anchor_node_id = UInt64.from_tlv(read(im, session, peer, endpoint_id, Datastore::ATTR_ANCHOR_NODE_ID))
@@ -88,7 +91,7 @@ module Matter
             endpoint_id, Datastore::ATTR_NODE_ENDPOINT_LIST))
           final_status = Datastore::DatastoreStatusEntryStruct.from_slice(read(im, session, peer,
             endpoint_id, Datastore::ATTR_STATUS))
-          unless final_status.state == expected_state &&
+          unless final_status.state == source.status.state &&
                  final_status.update_timestamp == source.status.update_timestamp
             raise Matter::CommissioningError.new("Old Anchor Datastore changed during transfer read")
           end
@@ -887,6 +890,40 @@ module Matter
             raise Matter::ConfigurationError.new("Invalid Anchor transfer reconciliation")
           end
           advance(stable_stage)
+        end
+
+        # A lost TransferAnchorRequest response is resolved from a fresh CASE
+        # read of the old Anchor's Datastore. A frozen store also requires a
+        # trusted witness naming the requester: another Administrator could
+        # have frozen it concurrently. Never resend to a frozen store.
+        def reconcile_request!(remote_state : Datastore::DatastoreStateEnum,
+                               witnessed_requester_node_id : UInt64? = nil) : Nil
+          @journal = self.class.reconcile_request_journal!(@journal, remote_state, @save,
+            witnessed_requester_node_id)
+        end
+
+        # Use this variant when the old CASE session and migration objects no
+        # longer exist, after the application verifies an external witness.
+        def self.reconcile_request_journal!(journal : Journal,
+                                            remote_state : Datastore::DatastoreStateEnum,
+                                            save : SaveJournal,
+                                            witnessed_requester_node_id : UInt64? = nil) : Journal
+          unless journal.stage.requesting?
+            raise Matter::ConfigurationError.new("Anchor transfer is not awaiting request reconciliation")
+          end
+          stable_stage = case remote_state
+                         when Datastore::DatastoreStateEnum::DeletePending
+                           unless witnessed_requester_node_id == journal.candidate_node_id
+                             raise Matter::AuthenticationError.new("Frozen Anchor Datastore lacks a matching transfer requester witness")
+                           end
+                           Stage::Requested
+                         when Datastore::DatastoreStateEnum::Committed then Stage::Ready
+                         else
+                           raise Matter::CommissioningError.new("Old Anchor Datastore cannot reconcile TransferAnchorRequest")
+                         end
+          journal.stage = stable_stage
+          save.call(journal)
+          journal
         end
 
         # Resolve a credential rotation only after inspecting the peer's NOC

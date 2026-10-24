@@ -257,6 +257,66 @@ private def committed_anchor_store : Matter::Cluster::JointFabricDatastore
 end
 
 describe Matter::Controller::AnchorTransfer::Workflow do
+  it "resumes a persisted TransferAnchorRequest after the old Anchor freezes without replaying it" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    source.status.state.should eq(TransferDatastore::DatastoreStateEnum::DeletePending)
+    reader = FakeAnchorReadImClient.new(source)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    frozen = Matter::Controller::AnchorTransfer::Snapshot.read_remote(reader, session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, require_frozen: nil)
+    frozen.status.state.should eq(TransferDatastore::DatastoreStateEnum::DeletePending)
+
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Requesting)
+    port = FakeAnchorPort.new
+    migration = FakeAnchorMigration.new
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(frozen, port, migration,
+      -> { true }, ->(_state : Matter::Controller::AnchorTransfer::Journal) { nil }, journal)
+    expect_raises(Matter::AuthenticationError, /requester witness/) do
+      workflow.reconcile_request!(frozen.status.state)
+    end
+    expect_raises(Matter::AuthenticationError, /requester witness/) do
+      workflow.reconcile_request!(frozen.status.state, 0x300_u64)
+    end
+    journal.stage.should eq(TransferStage::Requesting)
+    workflow.reconcile_request!(frozen.status.state, 0x200_u64)
+    workflow.run
+
+    port.calls.should eq(["complete"])
+    migration.calls.should eq(["copy", "rotate", "promote", "follow-up"])
+    journal.stage.should eq(TransferStage::Completed)
+  ensure
+    reader.try(&.close)
+  end
+
+  it "retries a persisted TransferAnchorRequest only when the old Anchor is still committed" do
+    source = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Requesting)
+    port = FakeAnchorPort.new
+    migration = FakeAnchorMigration.new
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(source, port, migration,
+      -> { true }, ->(_state : Matter::Controller::AnchorTransfer::Journal) { nil }, journal)
+
+    workflow.reconcile_request!(source.status.state)
+    workflow.run
+
+    port.calls.should eq(["request", "complete"])
+    journal.stage.should eq(TransferStage::Completed)
+  end
+
+  it "rejects request reconciliation from a Datastore state that proves neither outcome" do
+    source = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Requesting)
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(source, FakeAnchorPort.new,
+      FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) { nil }, journal)
+    expect_raises(Matter::CommissioningError, /cannot reconcile/) do
+      workflow.reconcile_request!(TransferDatastore::DatastoreStateEnum::Pending)
+    end
+    journal.stage.should eq(TransferStage::Requesting)
+  end
   it "reads a frozen old Anchor snapshot over authenticated IM" do
     source = committed_anchor_store
     source.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(

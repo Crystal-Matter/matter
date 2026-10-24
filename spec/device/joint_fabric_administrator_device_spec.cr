@@ -99,6 +99,18 @@ describe MatterJointFabricAdministrator::Device do
       .interrupt_before_transfer_follow_up?.should be_false
   end
 
+  it "round-trips the transfer request interruption flag and defaults old commands to false" do
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+      interrupt_after_transfer_request: true)
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(request.to_document)
+      .interrupt_after_transfer_request?.should be_true
+
+    old_document = request.to_document
+    old_document.delete("interrupt_after_transfer_request")
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
+      .interrupt_after_transfer_request?.should be_false
+  end
+
   it "retains the link-local interface scope in an Anchor ICAC exchange handoff" do
     peer = Socket::IPAddress.new("fe80::1234%1", 5540)
     request = MatterJointFabricAdministrator::Device::AnchorExchangeRequest.new(
