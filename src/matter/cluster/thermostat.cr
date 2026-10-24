@@ -298,14 +298,6 @@ module Matter
         keep_cooling_above(setpoint)
       end
 
-      after_write :occupied_cooling_setpoint do
-        update_running_mode
-      end
-
-      after_write :occupied_heating_setpoint do
-        update_running_mode
-      end
-
       before_write :min_heat_setpoint_limit do |limit|
         InteractionModel::Status.constraint_error unless limit.in?(@abs_min_heat_setpoint_limit..@max_heat_setpoint_limit)
       end
@@ -324,10 +316,6 @@ module Matter
 
       before_write :system_mode do |mode|
         InteractionModel::Status.constraint_error unless mode_allowed?(mode)
-      end
-
-      after_write :system_mode do
-        update_running_mode
       end
 
       # ------------------------------------------------------------------------
@@ -554,14 +542,17 @@ module Matter
 
       private def cooling_setpoint_changed(value : Int16) : Nil
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value)) if @feature_map.events?
+        update_running_mode
       end
 
       private def heating_setpoint_changed(value : Int16) : Nil
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value)) if @feature_map.events?
+        update_running_mode
       end
 
       private def system_mode_changed(value : SystemMode) : Nil
         emit_system_mode_change(SystemModeChangeEvent.new(value)) if @feature_map.events?
+        update_running_mode
       end
 
       private def running_mode_changed(value : ThermostatRunningMode) : Nil

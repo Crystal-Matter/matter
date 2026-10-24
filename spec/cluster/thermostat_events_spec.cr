@@ -78,6 +78,27 @@ describe "Thermostat Events feature" do
     cluster.thermostat_running_state.should eq(Thermostat::RelayState::Heat)
   end
 
+  it "keeps running state and events in sync for direct attribute setters" do
+    features = Thermostat::Feature::Heating | Thermostat::Feature::Cooling |
+               Thermostat::Feature::Automode | Thermostat::Feature::Events
+    cluster = build(Thermostat, feature_map: features)
+    events = capture_thermostat_events(cluster)
+
+    cluster.system_mode = Thermostat::SystemMode::Heat
+    cluster.thermostat_running_state.should eq(Thermostat::RelayState::Heat)
+    events.map(&.[0]).should eq([
+      Thermostat::EVENT_SYSTEM_MODE_CHANGE,
+      Thermostat::EVENT_RUNNING_STATE_CHANGE,
+      Thermostat::EVENT_RUNNING_MODE_CHANGE,
+    ])
+
+    cluster.system_mode = Thermostat::SystemMode::Auto
+    cluster.local_temperature = 2400_i16
+    cluster.occupied_cooling_setpoint = 2300_i16
+    cluster.thermostat_running_state.should eq(Thermostat::RelayState::Cool)
+    events.last[0].should eq(Thermostat::EVENT_RUNNING_MODE_CHANGE)
+  end
+
   it "rate-limits significant temperature changes while retaining the latest attribute value" do
     cluster = build(Thermostat, feature_map: Thermostat::Feature::Heating | Thermostat::Feature::Events)
     events = capture_thermostat_events(cluster)
