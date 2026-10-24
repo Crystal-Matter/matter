@@ -18,6 +18,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erase and persist a removed fabric's TrustedTimeSource before its local index
   can be reused. A failed write keeps the fabric available for a retry.
 
+### Camera AV Stream Management video
+
+- Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
+  support with typed payloads, encoder/pixel-rate limits, shared audio/video
+  bandwidth accounting, privacy gates, and host callbacks. A synthetic
+  Aggregator endpoint exercises the wire protocol with chip-tool. Camera
+  topology and actual media transport remain separate gaps.
+
 ### Fabric table durability
 
 - Keep a fabric's local index reserved if deleting its stored fabric document fails, so another fabric cannot reuse that index while the old document remains.
