@@ -8,10 +8,10 @@ OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 128
+- Implemented standard cluster IDs compared: 130
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 172
+- Conditional command/event declarations for review: 177
 - Feature or complex conditional IDs absent from Crystal: 29
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
@@ -94,6 +94,8 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x00A0 | Electrical Grid Conditions Cluster | 1 | 1 | — | — |
 | 0x0101 | Door Lock Cluster | 10 | 9 | — | — |
 | 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
+| 0x0104 | Closure Control Cluster | 1 | 1 | — | — |
+| 0x0105 | Closure Dimension Cluster | 1 | 1 | — | — |
 | 0x0150 | Service Area Cluster | 2 | 2 | — | — |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | — | — |
 | 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
@@ -257,6 +259,11 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0101 | event | 0x0004 | feature(USR) | declared; requires `:user` |
 | 0x0102 | command | 0x0005 | (feature(LF) and feature(PA_LF)) | declared; requires `{lift: true, position_aware_lift: true}` |
 | 0x0102 | command | 0x0008 | (feature(TL) and feature(PA_TL)) | declared; requires `{tilt: true, position_aware_tilt: true}` |
+| 0x0104 | command | 0x0000 | not(feature(IS)) | declared; requires `{instantaneous: false}` |
+| 0x0104 | command | 0x0002 | feature(CL) | declared; requires `:calibration` |
+| 0x0104 | event | 0x0001 | not(feature(IS)) | declared; requires `{instantaneous: false}` |
+| 0x0104 | event | 0x0002 | feature(MO) | declared; requires `:manually_operable` |
+| 0x0105 | command | 0x0001 | feature(PS) | declared; requires `:positioning` |
 | 0x0201 | command | 0x0005 | feature(MSCH) | absent |
 | 0x0201 | command | 0x0006 | feature(PRES) | absent |
 | 0x0201 | command | 0x0007 | feature(TSUGGEST) | absent |

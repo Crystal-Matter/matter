@@ -342,6 +342,11 @@ attributes and `Notify` event follow Alarm Base. The derived cluster does not
 advertise Reset or ModifyEnabledAlarms. Call `report_alarms` as the physical
 condition changes; see `examples/matter_refrigerator_alarm_device.cr`.
 
+`Cluster::ClosureControl` and `Cluster::ClosureDimension` implement the Matter
+1.6 closure command and state model, including timed target and step commands.
+See [the closure guide](docs/closure-control-dimension.md) for host callbacks,
+units, and the current composite endpoint limitation.
+
 `Cluster::Chime` exposes Matter 1.6 revision 2 sound selection and playback.
 Configure one or more uniquely named sounds and register `on_play` to start
 physical playback. Controllers can write `SelectedChime` and `Enabled`; both
