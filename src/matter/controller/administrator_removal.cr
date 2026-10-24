@@ -1,6 +1,8 @@
 require "../cluster/joint_fabric_datastore"
+require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
 require "./im_client"
+require "./vid_verification"
 
 module Matter
   module Controller
@@ -30,11 +32,17 @@ module Matter
         property active_node_id : UInt64?
         property rotated_nodes : Array(UInt64)
         property administrator_cat_version : UInt16?
+        property fabric_id : UInt64?
+        property root_public_key : Bytes?
+        property anchor_node_id : UInt64?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
                        @rotated_nodes : Array(UInt64) = [] of UInt64,
-                       @administrator_cat_version : UInt16? = nil)
+                       @administrator_cat_version : UInt16? = nil,
+                       @fabric_id : UInt64? = nil,
+                       @root_public_key : Bytes? = nil,
+                       @anchor_node_id : UInt64? = nil)
         end
       end
 
@@ -243,6 +251,157 @@ module Matter
         private def advance(stage : Stage) : Nil
           @journal.stage = stage
           @save.call(@journal)
+        end
+      end
+
+      # Resolve a lost rotation acknowledgement only after the target proves
+      # possession of the newly installed NOC on a fresh CASE session. The
+      # caller supplies a unique 32-byte challenge and a locally trusted root.
+      # A matching NOC can still be provisional: CommissioningComplete must
+      # either durably commit it or report that no fail-safe remains armed.
+      # An old NOC is inconclusive while a fail-safe may still be armed.
+      module RotationInspection
+        extend self
+
+        ADMINISTRATOR_CAT_PREFIX = 0xFFFF_FFFD_FFFF_0000_u64
+        ANCHOR_CAT_PREFIX        = 0xFFFF_FFFD_FFFE_0000_u64
+
+        def verify_completed!(im : ImClient, session : Session::SecureContext,
+                              peer : Socket::IPAddress, root_certificate : Bytes,
+                              fabric_id : UInt64, root_public_key : Bytes,
+                              node_id : UInt64, administrator_cat_version : UInt16,
+                              challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
+          verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, administrator_cat_version, challenge, anchor_cat_version)
+          result = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+            cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
+            command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
+          command = result.invoke_responses.find do |entry|
+            entry.command_data.try(&.command_path.command) ==
+              Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE
+          end.try(&.command_data)
+          fields = command.try(&.command_fields).try(&.to_slice) ||
+                   raise Matter::ProtocolError.new("Rotation CommissioningComplete response missing")
+          completion = Cluster::GeneralCommissioning::CommissioningCompleteResponse.from_slice(fields)
+          unless completion.error_code.ok? || completion.error_code == ::Matter::Commissioning::ErrorCode::NoFailSafe
+            raise Matter::CommissioningError.new("Rotation CommissioningComplete failed: #{completion.error_code}")
+          end
+          # Confirm the same NOC/CAT is still installed after completion. A
+          # fresh challenge prevents a cached pre-commit response from being
+          # accepted as post-commit proof.
+          final_challenge = Crypto::StandardCrypto.new.random_bytes(VidVerification::CHALLENGE_SIZE)
+          verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version)
+        end
+
+        private def verify_current_noc!(im : ImClient, session : Session::SecureContext,
+                                        peer : Socket::IPAddress, root_certificate : Bytes,
+                                        fabric_id : UInt64, root_public_key : Bytes,
+                                        node_id : UInt64, administrator_cat_version : UInt16,
+                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
+          unless session.case_session? && session.peer_node_id.try(&.id) == node_id
+            raise Matter::AuthenticationError.new("Rotation CASE peer differs from journaled Node ID")
+          end
+          unless administrator_cat_version > 0_u16 && challenge.size == VidVerification::CHALLENGE_SIZE
+            raise Matter::ConfigurationError.new("Rotation proof requires CAT version and 32-byte challenge")
+          end
+
+          # Find the fabric by its full identity before invoking the signed
+          # proof. Never use a fabric index supplied by an untrusted peer.
+          report = im.read_attribute(session, peer, 0_u16,
+            Cluster::OperationalCredentials::CLUSTER_ID,
+            Cluster::OperationalCredentials::ATTR_FABRICS, fabric_filtered: false)
+          data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
+          raise Matter::ProtocolError.new("Rotation Fabrics read omitted data") unless data
+          descriptors = Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(data.to_slice)
+          matches = descriptors.select do |item|
+            item.fabric_id == fabric_id && item.root_public_key == root_public_key && item.node_id == node_id
+          end
+          unless matches.size == 1
+            raise Matter::AuthenticationError.new("Rotation target has no unique journaled fabric identity")
+          end
+          descriptor = matches.first
+          nocs = read_list(Cluster::OperationalCredentials::Tlv::NOC, im, session, peer,
+            Cluster::OperationalCredentials::ATTR_NOCS)
+          roots = read_list(Bytes, im, session, peer,
+            Cluster::OperationalCredentials::ATTR_TRUSTED_ROOT_CERTIFICATES)
+          matching_nocs = nocs.select(&.fabric_index.==(descriptor.fabric_index))
+          unless matching_nocs.size == 1 && roots.includes?(root_certificate)
+            raise Matter::AuthenticationError.new("Rotation target has no unique NOC or trusted root")
+          end
+          noc = matching_nocs.first
+          if noc.icac && noc.vvsc
+            raise Matter::AuthenticationError.new("Rotation NOC entry contains both ICAC and VVSC")
+          end
+          unless Crypto::MatterCertificate.public_key_from_tlv(root_certificate) == root_public_key
+            raise Matter::AuthenticationError.new("Rotation root certificate differs from journaled root key")
+          end
+          Crypto::MatterCertificate::Validation.verify_signature(root_certificate, root_public_key)
+          Crypto::MatterCertificate::Validation.verify_chain(noc.noc, noc.icac, root_public_key, root_certificate)
+          certificate = Crypto::MatterCertificate.from_slice(noc.noc)
+          unless certificate.fabric_id == fabric_id && certificate.node_id == node_id
+            raise Matter::AuthenticationError.new("Rotation NOC differs from journaled fabric identity")
+          end
+          request = Cluster::OperationalCredentials::Tlv::SignVIDVerificationRequest.new(
+            descriptor.fabric_index, challenge)
+          response_message = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+            cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
+            command_id: Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
+            fields: request.to_slice)
+          command = response_message.invoke_responses.find do |entry|
+            entry.command_data.try(&.command_path.command) ==
+              Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST_RESPONSE
+          end.try(&.command_data)
+          fields = command.try(&.command_fields).try(&.to_slice) ||
+                   raise Matter::ProtocolError.new("Rotation signature response missing")
+          response = Cluster::OperationalCredentials::Tlv::SignVIDVerificationResponse.from_slice(fields)
+          unless response.fabric_index == descriptor.fabric_index &&
+                 response.fabric_binding_version == VidVerification::VERSION
+            raise Matter::AuthenticationError.new("Rotation signature identifies another fabric or version")
+          end
+          signed = IO::Memory.new
+          signed.write_byte VidVerification::VERSION
+          signed.write challenge
+          attestation_challenge = session.attestation_challenge ||
+                                  raise Matter::AuthenticationError.new("Rotation CASE attestation challenge is absent")
+          signed.write attestation_challenge
+          signed.write_byte descriptor.fabric_index
+          signed.write VidVerification.binding_message(descriptor)
+          if statement = descriptor.vid_verification_statement
+            signed.write statement
+          end
+          noc_key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
+          noc_key.public_bits = certificate.ec_public_key
+          Crypto::StandardCrypto.new.verify_ecdsa(noc_key, signed.to_slice, response.signature)
+
+          subjects = Crypto::MatterCertificate.subject_ids_from_tlv(noc.noc)
+          versions = subjects.compact_map do |subject|
+            if subject & 0xFFFF_FFFF_FFFF_0000_u64 == ADMINISTRATOR_CAT_PREFIX
+              (subject & 0xFFFF_u64).to_u16
+            end
+          end
+          unless versions == [administrator_cat_version]
+            raise Matter::AuthenticationError.new("Rotation NOC does not carry the journaled Administrator CAT version")
+          end
+          if anchor_cat_version
+            anchor_versions = subjects.compact_map do |subject|
+              if subject & 0xFFFF_FFFF_FFFF_0000_u64 == ANCHOR_CAT_PREFIX
+                (subject & 0xFFFF_u64).to_u16
+              end
+            end
+            unless anchor_versions == [anchor_cat_version]
+              raise Matter::AuthenticationError.new("Rotation NOC does not carry the selected Anchor CAT version")
+            end
+          end
+        end
+
+        private def read_list(type : T.class, im : ImClient, session : Session::SecureContext,
+                              peer : Socket::IPAddress, attribute_id : UInt32) : Array(T) forall T
+          report = im.read_attribute(session, peer, 0_u16,
+            Cluster::OperationalCredentials::CLUSTER_ID, attribute_id, fabric_filtered: false)
+          data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
+          raise Matter::ProtocolError.new("Rotation attribute #{attribute_id} omitted data") unless data
+          Array(T).from_tlv(data.to_slice)
         end
       end
     end

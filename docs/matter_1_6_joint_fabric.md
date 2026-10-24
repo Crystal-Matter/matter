@@ -113,7 +113,18 @@ item below as covered only to the extent of its cited tests.
   and reconciles the result. It also restarts B after a lost RemoveAdmin
   acknowledgement, checks the removal in B's persisted AdminList over CASE,
   and resumes CAT/NOC rotation only after checked reconciliation. B and C
-  remain registered. Before A's authorized removal, B rejects an unconsented
+  remain registered while B is also restarted after lost Anchor and participant rotation
+  acknowledgements. Recovery uses fresh CASE and a host-supplied 32-byte
+  nonce in SignVIDVerificationRequest to prove possession of the target's
+  current NOC. It checks the complete NOC chain against the local root,
+  exact fabric and Node ID, and the journaled Administrator CAT version;
+  Anchor recovery also checks the selected Anchor CAT version. Recovery sends
+  CommissioningComplete over that CASE session: success commits a provisional
+  NOC, while NoFailSafe confirms no pending fail-safe. It then proves the NOC
+  again with a fresh challenge before advancing the journal. A target still
+  showing the old CAT remains blocked because an armed fail-safe could commit
+  the rotation later.
+  Before A's authorized removal, B rejects an unconsented
   request to remove C and the test checks that C's fabric, B's AdminList, and
   the Administrator CAT version are unchanged. The former
   Anchor subscribes to the new Anchor's authenticated Datastore and suspends
@@ -408,11 +419,10 @@ remain to be tested together.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer with B restart before participant follow-up, A removal,
-   B restart after a lost RemoveFabric acknowledgement, persisted RemoveAdmin
-   with a lost acknowledgement, and
-   B/C registration; local specs cover interrupted second credential rotation.
-   Other network interruption points remain, including live recovery of an
-   uncertain Administrator credential rotation.
+   B restart after lost RemoveFabric, RemoveAdmin, Anchor rotation, and
+   participant rotation acknowledgements, and B/C registration. Recovery of
+   an old-CAT observation remains deliberately blocked until the fail-safe
+   outcome can be established by the host.
 3. Deploy production PAA/CD signers and a trusted CRL distribution source
    through the JFA example's explicit injection point. The bundled
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
