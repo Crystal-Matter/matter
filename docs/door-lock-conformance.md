@@ -22,6 +22,15 @@ disabled and non-access users cannot operate the lock with that PIN. The
 example's chip-tool test creates a user and PIN credential, restarts the
 device, reads them back, and unlocks with the restored PIN.
 
+Failed remote PIN attempts and an active temporary lockout deadline are also
+saved in the cluster document. A normal persistence flush and restart retain
+both the partial retry count and the remaining lockout interval; successful
+PIN authorization clears them. Older documents without these fields restore
+with a fresh retry count. The lockout deadline uses the host's UTC wall clock,
+so deployed locks need a trustworthy clock and durable storage. The official
+chip-tool scenario restarts during a lockout and confirms the correct PIN
+remains blocked.
+
 SetCredential rejects duplicate PIN or RFID bytes in another slot of the
 same credential type with the Door Lock `Duplicate` status. Add and Modify
 check this before changing users or credentials; the official chip-tool

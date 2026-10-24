@@ -153,4 +153,14 @@ describe "matter_door_lock example" do
     result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Duplicate.value.to_i64), result.output
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "8888"]))
   end
+
+  it "retains a wrong-PIN temporary lockout after a device restart" do
+    expect_success(device.write("doorlock", "wrong-code-entry-limit", 1, options: timed))
+    expect_success(device.write("doorlock", "user-code-temporary-disable-time", 120, options: timed))
+    expect_failure(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "0000"]), "FAILURE")
+
+    device.restart!
+    device.operational?.should be_true
+    expect_failure(device.invoke("doorlock", "unlock-door", options: timed + pin), "FAILURE")
+  end
 end
