@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   durable Pricing calendar, active day and price projections, and both
   mandatory lookup commands. The synthetic Aggregator fixture is covered by
   official chip-tool E2E. Other tariff feature families remain disabled.
+### Camera AV Settings User Level Management
+
+- Add the Matter 1.6 revision 1 MechanicalPan server with typed pan position
+  and commands, validated host limits, an actuator callback, movement reporting,
+  durable measured position, a synthetic fixture, and official chip-tool E2E.
+  Digital PTZ, tilt, zoom, and presets remain unavailable.
+  The fixture is an Aggregator and does not implement a complete Camera device.
 
 ### Joint Fabric DCL signer trust
 
