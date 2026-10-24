@@ -4,15 +4,14 @@ This compares canonical Matter XML IDs with Crystal cluster DSL declarations
 for implemented standard clusters. A declared ID does not prove a working handler,
 correct payload, event emission, feature gating, or interoperability. This is not a completeness claim.
 Feature and complex conditions are displayed for manual review, not evaluated.
-OccupancyChanged is emitted when the OccupancyEvent feature is selected.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 124
+- Implemented standard cluster IDs compared: 125
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
-- Conditional command/event declarations for review: 153
-- Feature or complex conditional IDs absent from Crystal: 28
+- Conditional command/event declarations for review: 157
+- Feature or complex conditional IDs absent from Crystal: 29
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -84,6 +83,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0094 | Water Heater Management Cluster | 2 | 2 | — | — |
 | 0x0095 | Commodity Price Cluster | 4 | 4 | — | — |
 | 0x0097 | Messages Cluster | 3 | 3 | — | — |
+| 0x0099 | Energy EVSE Cluster | 4 | 4 | — | — |
 | 0x009B | Energy Preference Cluster | 1 | 1 | — | — |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |
 | 0x009D | Energy EVSE Mode Cluster | 2 | 2 | — | — |
@@ -102,7 +102,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0403 | Pressure Measurement Cluster | 5 | 5 | — | — |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 5 | — | — |
-| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | OccupancyChanged when OccupancyEvent is selected |
+| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | — |
 | 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — | — |
 | 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — | — |
 | 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — | — |
@@ -215,6 +215,10 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0090 | event | 0x0000 | attribute() | declared; requires `—` |
 | 0x0091 | event | 0x0000 | feature(CUME) | declared; requires `:cumulative_energy` |
 | 0x0091 | event | 0x0001 | feature(PERE) | declared; requires `:periodic_energy` |
+| 0x0099 | command | 0x0003 | feature(V2X) | absent |
+| 0x0099 | command | 0x0005 | feature(PREF) | declared; requires `:charging_preferences` |
+| 0x0099 | command | 0x0006 | feature(PREF) | declared; requires `:charging_preferences` |
+| 0x0099 | command | 0x0007 | feature(PREF) | declared; requires `:charging_preferences` |
 | 0x0101 | command | 0x000B | feature(WDSCH) | declared; requires `:week_day_access_schedules` |
 | 0x0101 | command | 0x000C | feature(WDSCH) | declared; requires `:week_day_access_schedules` |
 | 0x0101 | command | 0x000D | feature(WDSCH) | declared; requires `:week_day_access_schedules` |

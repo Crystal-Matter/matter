@@ -322,6 +322,20 @@ Charging. CurrentMode persists across restart, while the host callback can
 accept or refuse a requested transition. The synthetic appliance-mode fixture
 exercises it with chip-tool.
 
+`Cluster::EnergyEvse` provides the Matter 1.6 revision 4 charging interface.
+Charging Preferences is mandatory: timed controller commands set, retrieve,
+and clear validated daily targets, which persist across restart. Timed
+EnableCharging and Disable commands control the retained charging permission
+and current limits. Register `on_enable_charging` and `on_disable` so the
+physical charger can accept or refuse a change; report pilot, meter, and fault
+observations through the cluster's `report_*` methods to publish attributes
+and events. `on_targets_changed` can reject targets that the host cannot
+schedule; `next_charge_*` attributes let it publish the resulting forecast.
+Call `report_next_charge` with the host's next start, target time, required
+energy, and target SoC estimate; pass `nil` values when an estimate is unknown.
+The appliance-mode example uses a synthetic Aggregator endpoint
+for chip-tool coverage. SoC, Plug and Charge, RFID, and V2X are not advertised.
+
 `Cluster::RefrigeratorAlarm` reports the Matter 1.6 DoorOpen alarm after the
 appliance's chosen open duration. Its `Mask`, `State`, and fixed `Supported`
 attributes and `Notify` event follow Alarm Base. The derived cluster does not
