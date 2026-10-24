@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Camera AV Stream Management video
+
+- Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
+  support with typed payloads, encoder/pixel-rate limits, shared audio/video
+  bandwidth accounting, privacy gates, and host callbacks. A synthetic
+  Aggregator endpoint exercises the wire protocol with chip-tool. Camera
+  topology and actual media transport remain separate gaps.
+
 ### Commodity Tariff
 
 - Add the Matter 1.6 revision 1 Commodity Tariff server with a validated,
