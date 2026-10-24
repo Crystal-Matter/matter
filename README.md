@@ -360,8 +360,14 @@ with measured movement and completion. The measured position persists across
 restart. Digital PTZ, tilt, zoom, and presets are not exposed. A synthetic
 camera fixture is in `examples/matter_camera_pan_device.cr`.
 The fixture uses an Aggregator endpoint for interoperability testing; it is
-not a conformant Camera device. Camera AV Stream Management and the required
-Camera endpoint topology are still absent.
+not a conformant Camera device. The required Camera endpoint topology remains absent.
+
+`Cluster::CameraAvStreamManagement` supports the Matter 1.6 revision 2 Audio
+feature with typed stream allocation, reference counts, microphone settings,
+privacy modes, and durable priorities. Hosts provide the microphone and media
+callbacks. The synthetic example and official chip-tool test use an Aggregator
+endpoint; [the camera audio guide](docs/camera-av-stream-management.md) lists
+the remaining camera device and transport work.
 
 `Cluster::OvenMode` adds the Matter 1.6 revision 2 oven tags (Bake through
 Frozen Food) to the same Mode Base transition contract. It has no OnOff,

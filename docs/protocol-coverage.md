@@ -11,19 +11,14 @@ Time Synchronization revision 2 now has an opt-in TimeZone feature with its
 conditional attributes, commands, and events. The base server still advertises
 no optional features by default; NTPC, NTPS, and TSC remain unavailable.
 
-Camera AV Settings User Level Management exposes only MechanicalPan (MPAN).
-Digital PTZ, mechanical tilt and zoom, and presets remain unavailable.
-This does not provide a conformant Camera device: Camera AV Stream Management
-and the required endpoint topology remain absent.
-
 See [server command and event declaration audit](protocol-command-event-coverage.md)
 for a separate comparison of literal command and event IDs.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 131
-- Matching known revisions: 129
+- Crystal declarations for those IDs: 132
+- Matching known revisions: 130
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -150,7 +145,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | Core and BU/OCR/SCR/BC/BA policy; ST/PM/BTW unavailable |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
-| 0x0551 | Camera AV Stream Management Cluster | 2 | — | cluster absent |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | ADO audio allocation and privacy slice; VDO/SNP, media transport and Camera topology remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | MPAN only |
 | 0x0553 | WebRTC Transport Provider Cluster | 2 | — | cluster absent |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | — | cluster absent |

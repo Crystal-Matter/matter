@@ -308,6 +308,11 @@ services:
     environment:
       E2E_DEVICE: matter_chime
 
+  camera-audio:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_camera_audio
+
   camera-pan:
     <<: *device
     environment:
