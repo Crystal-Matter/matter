@@ -3,6 +3,10 @@ require "../../src/matter/controller/administrator_removal"
 
 private class RotationProofIm < Matter::Controller::ImClient
   getter challenges = [] of Bytes
+  getter completion_calls = 0
+  property completion_error = Matter::Commissioning::ErrorCode::NoFailSafe
+  property rollback_noc : Matter::Cluster::OperationalCredentials::Tlv::NOC?
+  property noc : Matter::Cluster::OperationalCredentials::Tlv::NOC
   property? tamper_signature = false
   property? omit_statement = false
   property replay_challenge : Bytes?
@@ -33,6 +37,19 @@ private class RotationProofIm < Matter::Controller::ImClient
   def invoke(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
              endpoint_id : UInt16, cluster_id : UInt32, command_id : UInt32,
              fields : Bytes = Bytes.empty) : Matter::InteractionModel::InvokeResponseMessage
+    if cluster_id == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
+       command_id == Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE
+      @completion_calls += 1
+      if rollback = @rollback_noc
+        @noc = rollback
+      end
+      completion = Matter::Cluster::GeneralCommissioning::CommissioningCompleteResponse.new(@completion_error)
+      path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id,
+        command: Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE)
+      data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.from_slice(completion.to_slice))
+      return Matter::InteractionModel::InvokeResponseMessage.new(
+        invoke_responses: [Matter::InteractionModel::InvokeResponseIB.new(command_data: data)])
+    end
     request = Matter::Cluster::OperationalCredentials::Tlv::SignVIDVerificationRequest.from_slice(fields)
     @challenges << request.client_challenge.dup
     io = IO::Memory.new
@@ -86,6 +103,7 @@ describe Matter::Controller::AdministratorRemoval::RotationInspection do
       proof.verify_completed!(old_im, session, peer, root, 0x1111_u64, root_key.public_key,
         0x2222_u64, 2_u16, nonce)
     end
+    old_im.completion_calls.should eq(0)
 
     new_noc = Matter::Crypto::MatterCertificate::Builder.node(node_key.public_key,
       0x1111_u64, 0x2222_u64, icac_key, 1_u64, Bytes[4], crypto,
@@ -94,7 +112,26 @@ describe Matter::Controller::AdministratorRemoval::RotationInspection do
       Matter::Cluster::OperationalCredentials::Tlv::NOC.new(new_noc, icac, 1_u8), root, node_key)
     proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
       0x2222_u64, 2_u16, nonce, anchor_cat_version: 1_u16)
-    im.challenges.should eq([nonce])
+    im.challenges.first.should eq(nonce)
+    im.challenges.size.should eq(2)
+    im.completion_calls.should eq(1)
+    im.completion_error = Matter::Commissioning::ErrorCode::OK
+    proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
+      0x2222_u64, 2_u16, nonce, anchor_cat_version: 1_u16)
+    im.completion_calls.should eq(2)
+    im.rollback_noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(old_noc, icac, 1_u8)
+    expect_raises(Matter::AuthenticationError, /journaled Administrator CAT/) do
+      proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
+        0x2222_u64, 2_u16, nonce)
+    end
+    im.rollback_noc = nil
+    im.noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(new_noc, icac, 1_u8)
+    im.completion_error = Matter::Commissioning::ErrorCode::BusyWithOtherAdmin
+    expect_raises(Matter::CommissioningError, /BusyWithOtherAdmin/) do
+      proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
+        0x2222_u64, 2_u16, nonce, anchor_cat_version: 1_u16)
+    end
+    im.completion_error = Matter::Commissioning::ErrorCode::NoFailSafe
     expect_raises(Matter::AuthenticationError, /Anchor CAT/) do
       proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
         0x2222_u64, 2_u16, nonce, anchor_cat_version: 2_u16)
