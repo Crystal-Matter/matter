@@ -405,7 +405,7 @@ module Matter
       time_zones = [] of Cluster::TimeSynchronization
       @message_handler.clusters.each_value do |cluster|
         if time_zone = cluster.as?(Cluster::TimeSynchronization)
-          time_zones << time_zone if time_zone.feature_map.time_zone?
+          time_zones << time_zone if time_zone.feature_map.time_zone? || time_zone.feature_map.ntp_client?
         end
       end
       return if time_zones.empty?

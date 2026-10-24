@@ -74,8 +74,11 @@ and device runtimes continue to use UDP.
 The optional `Cluster::TimeSynchronization` server accepts administrator UTC
 time with nonzero granularity and advances it with a monotonic clock. It starts
 unsynchronized after each restart. Applications add it explicitly to a root
-endpoint; TZ, NTP, and trusted-time-source features are not advertised until
-platform services for them are available.
+endpoint. The `TimeZone` feature stores offsets and reports transitions. The
+`NtpClient` feature accepts a persistent IPv6 fallback through `SetDefaultNTP`
+and queries SNTPv4 on UDP port 123 once an hour; DNS resolution is currently
+disabled. The running UTC clock is never persisted. TSC trusted peer time and
+the NTPS server role remain unavailable.
 
 `Cluster::FanControl` implements Matter 1.6 revision 6. Select optional
 MultiSpeed, Auto, Rocking, Wind, Step, and AirflowDirection features in the
