@@ -118,7 +118,10 @@ item below as covered only to the extent of its cited tests.
   nonce in SignVIDVerificationRequest to prove possession of the target's
   current NOC. It checks the complete NOC chain against the local root,
   exact fabric and Node ID, and the journaled Administrator CAT version;
-  Anchor recovery also checks the selected Anchor CAT version. A target still
+  Anchor recovery also checks the selected Anchor CAT version. Recovery sends
+  CommissioningComplete over that CASE session: success commits a provisional
+  NOC, while NoFailSafe confirms no pending fail-safe. It then proves the NOC
+  again with a fresh challenge before advancing the journal. A target still
   showing the old CAT remains blocked because an armed fail-safe could commit
   the rotation later.
   Before A's authorized removal, B rejects an unconsented

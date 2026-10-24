@@ -1,4 +1,5 @@
 require "../cluster/joint_fabric_datastore"
+require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
 require "./im_client"
 require "./vid_verification"
@@ -256,6 +257,8 @@ module Matter
       # Resolve a lost rotation acknowledgement only after the target proves
       # possession of the newly installed NOC on a fresh CASE session. The
       # caller supplies a unique 32-byte challenge and a locally trusted root.
+      # A matching NOC can still be provisional: CommissioningComplete must
+      # either durably commit it or report that no fail-safe remains armed.
       # An old NOC is inconclusive while a fail-safe may still be armed.
       module RotationInspection
         extend self
@@ -268,6 +271,34 @@ module Matter
                               fabric_id : UInt64, root_public_key : Bytes,
                               node_id : UInt64, administrator_cat_version : UInt16,
                               challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
+          verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, administrator_cat_version, challenge, anchor_cat_version)
+          result = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+            cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
+            command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
+          command = result.invoke_responses.find do |entry|
+            entry.command_data.try(&.command_path.command) ==
+              Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE
+          end.try(&.command_data)
+          fields = command.try(&.command_fields).try(&.to_slice) ||
+                   raise Matter::ProtocolError.new("Rotation CommissioningComplete response missing")
+          completion = Cluster::GeneralCommissioning::CommissioningCompleteResponse.from_slice(fields)
+          unless completion.error_code.ok? || completion.error_code == ::Matter::Commissioning::ErrorCode::NoFailSafe
+            raise Matter::CommissioningError.new("Rotation CommissioningComplete failed: #{completion.error_code}")
+          end
+          # Confirm the same NOC/CAT is still installed after completion. A
+          # fresh challenge prevents a cached pre-commit response from being
+          # accepted as post-commit proof.
+          final_challenge = Crypto::StandardCrypto.new.random_bytes(VidVerification::CHALLENGE_SIZE)
+          verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version)
+        end
+
+        private def verify_current_noc!(im : ImClient, session : Session::SecureContext,
+                                        peer : Socket::IPAddress, root_certificate : Bytes,
+                                        fabric_id : UInt64, root_public_key : Bytes,
+                                        node_id : UInt64, administrator_cat_version : UInt16,
+                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
           unless session.case_session? && session.peer_node_id.try(&.id) == node_id
             raise Matter::AuthenticationError.new("Rotation CASE peer differs from journaled Node ID")
           end
