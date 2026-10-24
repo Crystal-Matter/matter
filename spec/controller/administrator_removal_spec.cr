@@ -47,6 +47,19 @@ private class FakeAdministratorRemovalPort < Matter::Controller::AdministratorRe
 end
 
 describe Matter::Controller::AdministratorRemoval::Workflow do
+  it "persists the Anchor fabric binding with an uncertain rotation journal" do
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
+      administrator_cat_version: 2_u16, fabric_id: 0x1111_u64,
+      root_public_key: Bytes[1, 2, 3], anchor_node_id: 0x100_u64)
+    restored = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
+    restored.fabric_id.should eq(0x1111_u64)
+    restored.root_public_key.should eq(Bytes[1, 2, 3])
+    restored.anchor_node_id.should eq(0x100_u64)
+    restored.active_node_id.should eq(0x200_u64)
+    restored.stage.should eq(RemovalStage::RotatingParticipant)
+  end
+
   it "requires both consents and applies the Matter 1.6 removal order" do
     datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     datastore.anchor_node_id = 0x100_u64
