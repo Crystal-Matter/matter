@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock PIN lockout recovery
+
+- Persist partial wrong-PIN attempts and the temporary lockout deadline so a
+  restart cannot clear the lock's credential retry policy. Previous stored
+  Door Lock documents remain readable. The cluster still advertises revision 9
+  pending the remaining Matter 1.6 revision 10 feature audit.
+
 ### Commodity Tariff
 
 - Add the Matter 1.6 revision 1 Commodity Tariff server with a validated,
