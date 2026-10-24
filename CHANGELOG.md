@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### WebRTC Requestor client infrastructure
+
+- Add typed Matter 1.6 WebRTC Transport Requestor outbound signaling commands
+  with CASE fabric and peer binding, response validation, and ICE bounds.
+- Model client clusters on static and dynamic endpoints, populate Descriptor
+  ClientList, and validate mandatory client roles in device type definitions.
+  Camera device type 0x0142 remains unadvertised pending full composition.
+
 ### Commodity Tariff
 
 - Add the Matter 1.6 revision 1 Commodity Tariff server with a validated,

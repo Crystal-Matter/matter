@@ -36,6 +36,7 @@ class DslSpecDevice < Matter::Device
   network :wifi
 
   endpoint LIGHT_ENDPOINT, device_type: Matter::DeviceType::ON_OFF_LIGHT do
+    client_cluster 0x0554_u32
     cluster Matter::Cluster::OnOff, feature_map: :lighting, as: :switch
     cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example DSL")]
     cluster Matter::Cluster::Identify, identify_type: :visible_light
@@ -66,6 +67,7 @@ class DslSpecBridge < Matter::Device
   endpoint_template :bridged_light,
     device_type: [Matter::DeviceType::ON_OFF_LIGHT, Matter::DeviceType::BRIDGED_NODE],
     parameters: {name: String, unique_id: String} do
+    client_cluster 0x0554_u32
     cluster Matter::Cluster::OnOff
     cluster Matter::Cluster::BridgedDeviceBasicInformation, node_label: name, unique_id: unique_id
     cluster Matter::Cluster::Identify
@@ -121,6 +123,27 @@ module DslSpec
 end
 
 describe Matter::Device::DSL do
+  it "places declared client clusters in Descriptor.ClientList" do
+    device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT)
+    descriptor = device.node.endpoint!(DslSpecDevice::LIGHT_ENDPOINT.to_u16).descriptor
+    descriptor.client_list.should eq([0x0554_u32])
+    descriptor.server_list.should_not contain(0x0554_u32)
+    DslSpec.stop(device)
+  end
+
+  it "retains template client clusters when restoring a dynamic endpoint" do
+    DslSpec.with_temp_file do |path|
+      bridge = DslSpec.bridge(path)
+      endpoint = bridge.add_endpoint(:bridged_light, name: "Light", unique_id: "light-1")
+      endpoint.descriptor.client_list.should eq([0x0554_u32])
+      DslSpec.stop(bridge)
+
+      restored = DslSpec.bridge(path)
+      restored.node.endpoint!(endpoint.number).descriptor.client_list.should eq([0x0554_u32])
+      DslSpec.stop(restored)
+    end
+  end
+
   describe "identity" do
     it "answers every identity method from the declaration" do
       device = DslSpecDevice.new(port: DslSpec::EPHEMERAL_PORT)
