@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 127
-- Matching known revisions: 125
+- Crystal declarations for those IDs: 128
+- Matching known revisions: 126
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -104,7 +104,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0104 | Closure Control Cluster | 1 | — | cluster absent |
 | 0x0105 | Closure Dimension Cluster | 1 | — | cluster absent |
 | 0x0150 | Service Area Cluster | 2 | 2 | SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned |
-| 0x0200 | Pump Configuration and Control Cluster | 5 | — | cluster absent |
+| 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | ConstantSpeed profile only; host owns physical mode change and telemetry |
 | 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower feature, shared-limit, and Auto deadband behavior covered; other revision 11 gaps remain |
 | 0x0202 | Fan Control Cluster | 6 | 6 | feature-gated attributes and Step; only FanMode nonvolatile |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — |

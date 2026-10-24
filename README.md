@@ -400,6 +400,11 @@ and application features retain policy across restart; the host calls
 `playback_allowed?` and reacts to `on_policy_changed` to stop disallowed
 playback. See [the Content Control guide](docs/content-control.md) and
 `examples/matter_content_control_device.cr`.
+Pump endpoints can add the Matter 1.6 revision 5
+`Cluster::PumpConfigurationControl` ConstantSpeed profile. The host validates
+remote mode requests and reports observed operation and telemetry. See
+[the Pump Configuration guide](docs/pump-configuration-control.md) and
+`examples/matter_pump_device.cr`.
 
 Commodity Tariff endpoints can add revision 1 `Cluster::CommodityTariff` for
 durable Pricing calendars and current/next price projections. See

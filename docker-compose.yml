@@ -362,6 +362,10 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_zone_management
+  pump:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_pump
 
   contact-sensor:
     <<: *device
