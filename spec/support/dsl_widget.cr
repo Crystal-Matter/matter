@@ -172,6 +172,9 @@ module DslSpec
   class CopiedList < Matter::Cluster::Base
     cluster 0xFFF1_FC13, revision: 1
 
-    attribute 0x0000, :items, Array(UInt8), default: [] of UInt8, copy_on_assign: true
+    attribute 0x0000, :items, Array(UInt8), default: [] of UInt8,
+      copy_on_assign: true, copy_on_read: true
+    attribute 0x0001, :optional_items, Array(UInt8), nullable: true,
+      copy_on_assign: true, copy_on_read: true
   end
 end

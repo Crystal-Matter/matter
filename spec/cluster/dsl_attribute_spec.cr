@@ -92,7 +92,7 @@ describe Matter::Cluster::DSL do
     end
 
     describe "setter" do
-      it "copies opted-in arrays before storing and still notifies on changed values" do
+      it "copies opted-in arrays on assignment and read while preserving notifications" do
         cluster = build(DslSpec::CopiedList)
         input = [1_u8]
 
@@ -103,9 +103,26 @@ describe Matter::Cluster::DSL do
 
         input.clear
         cluster.items.should eq([1_u8])
+        exposed = cluster.items
+        exposed << 9_u8
+        cluster.items.should eq([1_u8])
+        read(cluster, DslSpec::CopiedList::ATTR_ITEMS).as(Array(TLV::Any)).map(&.value).should eq([1_u8])
         version_delta(cluster) { cluster.items = [1_u8] }.should eq(0)
         version_delta(cluster) { cluster.items = [2_u8] }.should eq(1)
         cluster.items.should eq([2_u8])
+      end
+
+      it "copies nullable arrays on assignment and read" do
+        cluster = build(DslSpec::CopiedList)
+        cluster.optional_items.should be_nil
+        input = [4_u8]
+        cluster.optional_items = input
+        input.clear
+        exposed = cluster.optional_items.as(Array(UInt8))
+        exposed.clear
+        cluster.optional_items.should eq([4_u8])
+        cluster.optional_items = nil
+        cluster.optional_items.should be_nil
       end
 
       it "ignores an equal value" do

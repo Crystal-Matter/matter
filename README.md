@@ -387,6 +387,11 @@ and application features retain policy across restart; the host calls
 playback. See [the Content Control guide](docs/content-control.md) and
 `examples/matter_content_control_device.cr`.
 
+Commodity Tariff endpoints can add revision 1 `Cluster::CommodityTariff` for
+durable Pricing calendars and current/next price projections. See
+[the Commodity Tariff guide](docs/commodity-tariff.md) and
+`examples/matter_commodity_tariff_device.cr`.
+
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.
 Temperature Measurement reports Matter 1.6 revision 6. Its fixed minimum and
