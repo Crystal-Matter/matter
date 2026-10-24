@@ -227,6 +227,7 @@ module Matter
         wire_ecosystem_information(cluster)
         wire_tls_certificate_management(cluster)
         wire_tls_client_management(cluster)
+        wire_push_av_stream_transport(cluster)
         validate_thread_network_directory(cluster)
       end
       @message_handler.setup_cluster_notifications
@@ -292,6 +293,9 @@ module Matter
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
+        @message_handler.clusters.values.each do |cluster|
+          cluster.as?(Cluster::PushAvStreamTransport).try(&.remove_fabric(fabric_index))
+        end
         @message_handler.clusters.values.each do |cluster|
           if ecosystem_information = cluster.as?(Cluster::EcosystemInformation)
             ecosystem_information.remove_fabric(fabric_index)
@@ -984,6 +988,7 @@ module Matter
         wire_ecosystem_information(cluster)
         wire_tls_certificate_management(cluster)
         wire_tls_client_management(cluster)
+        wire_push_av_stream_transport(cluster)
         validate_thread_network_directory(cluster)
         endpoint.add_cluster(cluster)
       end
@@ -1029,6 +1034,20 @@ module Matter
         tls.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
         tls.on_persist = -> do
           raise StorageError.new("Could not persist TLS endpoints") unless @persistence.save_cluster(tls)
+          nil
+        end
+      end
+    end
+
+    private def wire_push_av_stream_transport(cluster : Cluster::Base) : Nil
+      if push = cluster.as?(Cluster::PushAvStreamTransport)
+        tls = @node.get_cluster(Cluster::TlsClientManagement)
+        raise ConfigurationError.new("Push AV Stream Transport requires TLS Client Management") unless tls
+        push.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
+        push.tls_endpoint_exists = ->(fabric : UInt8, id : UInt16) { tls.has_endpoint?(fabric, id) }
+        push.on_reference_change = ->(fabric : UInt8, id : UInt16, delta : Int8) { tls.change_reference_count(fabric, id, delta) }
+        push.on_persist = -> do
+          raise StorageError.new("Could not persist Push AV transport") unless @persistence.save_cluster(push)
           nil
         end
       end

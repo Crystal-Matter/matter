@@ -206,6 +206,12 @@ certificate verification for those connections; this cluster is the Matter
 configuration interface. See
 `examples/matter_tls_client_management_device.cr` for the chip-tool fixture.
 
+Push AV Stream Transport (0x0555, revision 2) stores per-fabric transport
+configuration and exposes the mandatory Matter commands and events. Hosts
+provide stream validation and media lifecycle callbacks; see the
+[Push AV Stream Transport guide](docs/push-av-stream-transport.md) for setup
+and verification scope.
+
 Every device includes the OTA Software Update Requestor cluster on endpoint 0.
 An administrator can write one DefaultOTAProviders entry on each fabric. The
 device keeps those entries separate, saves them with its cluster state, and
