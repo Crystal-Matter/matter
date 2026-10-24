@@ -41,8 +41,9 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
     anchor_verification_client(node_id)
   end
 
-  def anchor_trust_for_spec(vendor_id : UInt16, root_path : String?, test_dcl_url : String?) : Matter::Controller::VidVerification::OperationalTrustAnchors
-    anchor_trust(vendor_id, root_path, test_dcl_url)
+  def anchor_trust_for_spec(vendor_id : UInt16, root_path : String?, test_dcl_url : String?,
+                            dcl_url : String? = nil) : Matter::Controller::VidVerification::OperationalTrustAnchors
+    anchor_trust(vendor_id, root_path, test_dcl_url, dcl_url)
   end
 end
 
@@ -59,6 +60,18 @@ describe MatterJointFabricAdministrator::Device do
     end
     expect_raises(Matter::ConfigurationError) do
       device.anchor_trust_for_spec(0xFFF1_u16, nil, nil)
+    end
+  end
+
+  it "selects a configured HTTPS DCL gateway for production JFA VID trust" do
+    device = InspectableJointFabricAdministratorDevice.new
+    trust = device.anchor_trust_for_spec(0x1234_u16, nil, nil, "https://dcl.example")
+    trust.should be_a(Matter::Controller::VidVerification::DclOperationalTrustAnchors)
+    expect_raises(Matter::ConfigurationError) do
+      device.anchor_trust_for_spec(0x1234_u16, nil, nil, "http://dcl.example")
+    end
+    expect_raises(Matter::ConfigurationError) do
+      device.anchor_trust_for_spec(0x1234_u16, nil, "https://127.0.0.1", "https://dcl.example")
     end
   end
 

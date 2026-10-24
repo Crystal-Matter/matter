@@ -128,7 +128,7 @@ services:
       MATTER_JFA_PROVISIONED_ANCHOR: "1"
       MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_anchor.bootstrap.yml
       MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_anchor.trust-root.tlv,/e2e/logs/matter_joint_fabric_anchor.third-trust-root.tlv
-      MATTER_JFA_TEST_DCL_GATEWAY_URL: https://tests
+      MATTER_JFA_DCL_GATEWAY_URL: https://tests
       SSL_CERT_FILE: /e2e/logs/jfa-dcl-tls.crt
       MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
       MATTER_JFA_JCM_REQUEST_PATH: /e2e/logs/matter_joint_fabric_anchor.jcm-rpc.yml
@@ -145,7 +145,7 @@ services:
       MATTER_JFA_PROVISIONED_ANCHOR: "1"
       MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_joiner.bootstrap.yml
       MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_joiner.trust-root.tlv
-      MATTER_JFA_TEST_DCL_GATEWAY_URL: https://tests
+      MATTER_JFA_DCL_GATEWAY_URL: https://tests
       SSL_CERT_FILE: /e2e/logs/jfa-dcl-tls.crt
       MATTER_JFA_ALLOW_JCM: "1"
       MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
@@ -166,7 +166,7 @@ services:
       MATTER_JFA_PROVISIONED_ANCHOR: "1"
       MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_third.bootstrap.yml
       MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_third.trust-root.tlv,/e2e/logs/matter_joint_fabric_third.new-anchor-root.tlv
-      MATTER_JFA_TEST_DCL_GATEWAY_URL: https://tests
+      MATTER_JFA_DCL_GATEWAY_URL: https://tests
       SSL_CERT_FILE: /e2e/logs/jfa-dcl-tls.crt
       MATTER_JFA_ALLOW_JCM: "1"
       MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
