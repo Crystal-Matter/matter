@@ -6,8 +6,10 @@ describe "official SDK Push AV Stream Transport" do
   it "commissions and reads the revision-2 fabric-scoped configuration surface" do
     device.commission!
     read_int(device, "pushavstreamtransport", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
-    expect_success(device.read("pushavstreamtransport", "supported-formats", 0)).output
-      .should contain("CMAF")
+    formats = expect_success(device.read("pushavstreamtransport", "supported-formats", 0))
+    formats.output.should contain("SupportedFormats: 1 entries")
+    formats.int("ContainerFormat").should eq(0_i64)
+    formats.int("IngestMethod").should eq(0_i64)
     expect_success(device.read("pushavstreamtransport", "current-connections", 0)).output
       .should contain("CurrentConnections: 0 entries")
     expect_success(device.read("pushavstreamtransport", "accepted-command-list", 0))
