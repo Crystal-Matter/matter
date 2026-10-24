@@ -55,10 +55,11 @@ module Matter
     macro inherited
       # DSL declarations accumulate here (see `dsl.cr`); `dsl_generate`
       # turns them into code once the class body is complete.
-      IDENTITY_DECLS = [] of Nil
-      ENDPOINT_DECLS = [] of Nil
-      CLUSTER_DECLS  = [] of Nil
-      CALLBACK_DECLS = [] of Nil
+      IDENTITY_DECLS       = [] of Nil
+      ENDPOINT_DECLS       = [] of Nil
+      CLUSTER_DECLS        = [] of Nil
+      CLIENT_CLUSTER_DECLS = [] of Nil
+      CALLBACK_DECLS       = [] of Nil
 
       macro finished
         dsl_generate
@@ -493,6 +494,10 @@ module Matter
       {1_u16 => primary_device_type_id} of UInt16 => UInt32
     end
 
+    protected def endpoint_client_clusters : Hash(UInt16, Array(UInt32))
+      {} of UInt16 => Array(UInt32)
+    end
+
     # ------------------------------------------------------------------------
     # Networking / diagnostics defaults
     # ------------------------------------------------------------------------
@@ -818,6 +823,7 @@ module Matter
       root.add_cluster(wifi_diagnostics.as(Cluster::WiFiNetworkDiagnostics)) if wifi_diagnostics
       root.add_cluster(thread_diagnostics.as(Cluster::ThreadNetworkDiagnostics)) if thread_diagnostics
       device_endpoints.delete(Node::ROOT_ENDPOINT_ID).try(&.each { |cluster| root.add_cluster(cluster) })
+      (endpoint_client_clusters[Node::ROOT_ENDPOINT_ID]? || [] of UInt32).each { |id| root.add_client_cluster(id) }
       @node.add_endpoint(root)
 
       device_endpoints.each do |endpoint_id, clusters|
@@ -826,6 +832,7 @@ module Matter
           device_types_for(endpoint_id, declared_types)
         )
         clusters.each { |cluster| endpoint.add_cluster(cluster) }
+        (endpoint_client_clusters[endpoint_id]? || [] of UInt32).each { |id| endpoint.add_client_cluster(id) }
         @node.add_endpoint(endpoint)
       end
 
@@ -920,9 +927,10 @@ module Matter
     ) : Endpoint
       name = template.to_s
       number = endpoint_id || next_endpoint_id
-      clusters, device_types = template_endpoint(name, number, parameters)
+      clusters, device_types, clients = template_endpoint(name, number, parameters)
 
-      unless add_endpoint(number, device_types, clusters, notify_subscribers: notify_subscribers)
+      unless add_endpoint(number, device_types, clusters, notify_subscribers: notify_subscribers,
+               client_clusters: clients)
         raise ConfigurationError.new("Endpoint #{number} already exists")
       end
 
@@ -950,12 +958,14 @@ module Matter
       clusters : Array(Cluster::Base),
       device_type_revision : UInt16? = nil,
       notify_subscribers : Bool = true,
+      client_clusters : Array(UInt32) = [] of UInt32,
     ) : Bool
       install_endpoint(
         endpoint_id,
         [dynamic_device_type(device_type, device_type_revision)],
         clusters,
-        notify_subscribers
+        notify_subscribers,
+        client_clusters
       )
     end
 
@@ -965,8 +975,10 @@ module Matter
       device_types : Array(UInt32),
       clusters : Array(Cluster::Base),
       notify_subscribers : Bool = true,
+      client_clusters : Array(UInt32) = [] of UInt32,
     ) : Bool
-      install_endpoint(endpoint_id, device_types.map { |id| DeviceType.for(id) }, clusters, notify_subscribers)
+      install_endpoint(endpoint_id, device_types.map { |id| DeviceType.for(id) }, clusters,
+        notify_subscribers, client_clusters)
     end
 
     private def install_endpoint(
@@ -974,6 +986,7 @@ module Matter
       device_types : Array(DeviceType),
       clusters : Array(Cluster::Base),
       notify_subscribers : Bool,
+      client_clusters : Array(UInt32),
     ) : Bool
       # Don't allow adding endpoint 0 (root node)
       return false if endpoint_id == Node::ROOT_ENDPOINT_ID
@@ -987,6 +1000,7 @@ module Matter
         validate_thread_network_directory(cluster)
         endpoint.add_cluster(cluster)
       end
+      client_clusters.each { |id| endpoint.add_client_cluster(id) }
       @node.add_endpoint(endpoint)
       basic_info.increase_configuration_version if @started
 
@@ -1105,7 +1119,7 @@ module Matter
       template : String,
       endpoint_id : UInt16,
       parameters : Storage::Document,
-    ) : Tuple(Array(Cluster::Base), Array(UInt32))
+    ) : Tuple(Array(Cluster::Base), Array(UInt32), Array(UInt32))
       raise ArgumentError.new("#{self.class} declares no endpoint template #{template.inspect}")
     end
 
@@ -1190,7 +1204,8 @@ module Matter
         definition.required_server_clusters,
         definition.optional_server_clusters,
         definition.required_server_attributes,
-        definition.required_node_device_types
+        definition.required_node_device_types,
+        definition.required_client_clusters
       )
     end
   end

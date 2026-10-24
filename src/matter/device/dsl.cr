@@ -43,6 +43,8 @@ module Matter
     #   enclosing endpoint, built as `Klass.new(endpoint_number, *args,
     #   **options)`. `as:` adds a typed accessor for it (`switch : OnOff`),
     #   which is what `on` and the application read.
+    # * `client_cluster id` — an outbound cluster ID in Descriptor.ClientList;
+    #   it does not build or advertise a local server.
     # * `endpoint_template :name, device_type:, parameters: {key: Type} do ... end` —
     #   the shape of an endpoint added at runtime with
     #   `add_endpoint(:name, key: value)`. The parameters are named locals in
@@ -292,6 +294,14 @@ module Matter
         {% @type.constant("CLUSTER_DECLS") << {scope: scope, klass: klass, args: args, options: options, as: options[:as]} %}
       end
 
+      # Advertise an outbound client cluster on the enclosing endpoint.
+      # The ID is placed in Descriptor.ClientList; it does not create a server.
+      macro client_cluster(id)
+        {% scope = @type.constant("ENDPOINT_DECLS").size - 1 %}
+        {% raise "#{@type}: client_cluster must be declared inside an endpoint block" if scope < 0 %}
+        {% @type.constant("CLIENT_CLUSTER_DECLS") << {scope: scope, id: id} %}
+      end
+
       # Installs *block* as the `on_<event>` callback of the cluster declared
       # `as: :accessor`.
       macro on(accessor, event, &block)
@@ -304,6 +314,7 @@ module Matter
       macro dsl_generate
         {% endpoints = @type.constant("ENDPOINT_DECLS") %}
         {% cluster_decls = @type.constant("CLUSTER_DECLS") %}
+        {% client_cluster_decls = @type.constant("CLIENT_CLUSTER_DECLS") %}
         {% callbacks = @type.constant("CALLBACK_DECLS") %}
         {% statics = endpoints.select { |decl| decl[:kind] == :endpoint } %}
         {% templates = endpoints.select { |decl| decl[:kind] == :template } %}
@@ -353,6 +364,20 @@ module Matter
         {% end %}
 
         {% unless statics.empty? %}
+          protected def endpoint_client_clusters : Hash(UInt16, Array(UInt32))
+            clients = {} of UInt16 => Array(UInt32)
+            {% for decl, index in endpoints %}
+              {% if decl[:kind] == :endpoint %}
+                clients[({{ decl[:number] }}).to_u16] = [
+                  {% for client in client_cluster_decls.select { |entry| entry[:scope] == index } %}
+                    ({{ client[:id] }}).to_u32,
+                  {% end %}
+                ] of UInt32
+              {% end %}
+            {% end %}
+            clients
+          end
+
           {% if @type.methods.any? { |method| method.name == "endpoint_device_types" } %}
             {% raise "#{@type}: endpoint_device_types is generated from the endpoint declarations; remove one of the two" %}
           {% end %}
@@ -369,6 +394,14 @@ module Matter
         {% unless templates.empty? %}
           {% for decl, index in endpoints %}
             {% if decl[:kind] == :template %}
+              private def dsl_template_clients_{{ decl[:name].id }} : Array(UInt32)
+                [
+                  {% for client in client_cluster_decls.select { |entry| entry[:scope] == index } %}
+                    ({{ client[:id] }}).to_u32,
+                  {% end %}
+                ] of UInt32
+              end
+
               private def dsl_template_{{ decl[:name].id }}(
                 endpoint_id : UInt16,
                 parameters : ::Matter::Storage::Document,
@@ -392,7 +425,7 @@ module Matter
             template : String,
             endpoint_id : UInt16,
             parameters : ::Matter::Storage::Document,
-          ) : Tuple(Array(::Matter::Cluster::Base), Array(UInt32))
+          ) : Tuple(Array(::Matter::Cluster::Base), Array(UInt32), Array(UInt32))
             case template
             {% for decl in templates %}
               when {{ decl[:name].id.stringify }}
@@ -403,6 +436,7 @@ module Matter
                   {% else %}
                     [({{ decl[:device_type] }}).to_u32] of UInt32,
                   {% end %}
+                  dsl_template_clients_{{ decl[:name].id }},
                 }
             {% end %}
             else
