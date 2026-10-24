@@ -397,7 +397,7 @@ describe "three provisioned Joint Fabric Administrators" do
 
     trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
       Matter::Controller::VidVerification::HttpDclSource.new("https://tests"))
-    {"removed", "wrong-root", "wrong-vid", "wrong-signer"}.each do |mode|
+    {"removed", "wrong-root", "wrong-vid", "wrong-signer", "stale"}.each do |mode|
       dcl_fixture.write_mode(mode)
       expect_raises(Matter::AuthenticationError, /trusted signer/) do
         Matter::Controller::VidVerification.verify(joiner_im, joiner_session, joiner_peer,

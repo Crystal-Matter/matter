@@ -33,6 +33,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric DCL signer trust
 
+- Request uncached DCL operational trust records and reject responses with an
+  aged cache header. The three-Administrator VVS test mirror includes a stale
+  signer denial case.
 - Let the JFA example select an explicit production HTTPS DCL gateway for
   operational VID checks. The official SDK JCM and three-Administrator VVS
   fixtures exercise that setting with a test CA; simultaneous test and

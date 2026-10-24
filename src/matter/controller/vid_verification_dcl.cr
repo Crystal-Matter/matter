@@ -1,7 +1,6 @@
 require "http/client"
 require "json"
 require "base64"
-require "./dcl_attestation_revocation"
 require "./vid_verification"
 require "./device_attestation_verifier"
 
@@ -42,13 +41,16 @@ module Matter
       # chooses a trusted HTTPS DCL gateway; no test-net endpoint is implicit.
       class HttpDclSource < DclSource
         MAX_RESPONSE_SIZE = 1_048_576
+        FETCH_TIMEOUT     = 5.seconds
         ROOT_PATH         = "/dcl/pki/noc-vid-root-certificates"
         ICA_PATH          = "/dcl/pki/noc-vid-ica-certificates"
         SIGNER_PATH       = "/dcl/pki/noc-vid-certificates"
 
-        alias Fetch = Proc(String, String)
+        record Response, status : Int32, age : String?, body : String
+        alias Fetch = Proc(String, Response)
+        alias LegacyFetch = Proc(String, String)
 
-        def initialize(@base_url : String, @fetch : Fetch = ->(url : String) { String.new(DclAttestationRevocation.fetch_https(url)) })
+        def initialize(@base_url : String, @fetch : Fetch = ->(url : String) { HttpDclSource.fetch_fresh_https(url) })
           uri = begin
             URI.parse(@base_url)
           rescue ex : URI::Error
@@ -61,6 +63,12 @@ module Matter
             raise Matter::ConfigurationError.new("DCL gateway must be an HTTPS origin")
           end
           @base_url = uri.to_s.rstrip('/')
+        end
+
+        # Existing injected sources return only a body and own their transport
+        # freshness policy. The built-in HTTPS transport inspects HTTP Age.
+        def initialize(base_url : String, fetch : LegacyFetch)
+          initialize(base_url, ->(url : String) { Response.new(200, nil, fetch.call(url)) })
         end
 
         def roots_for(vendor_id : UInt16) : Array(DclCertificate)
@@ -77,7 +85,12 @@ module Matter
         end
 
         private def read(path : String, wrapper : String) : Array(DclCertificate)
-          body = @fetch.call("#{@base_url}#{path}")
+          response = @fetch.call("#{@base_url}#{path}")
+          raise Matter::AuthenticationError.new("DCL HTTP response was not 200") unless response.status == 200
+          if age = response.age
+            raise Matter::AuthenticationError.new("DCL HTTP response came from a cache") unless age == "0"
+          end
+          body = response.body
           raise Matter::AuthenticationError.new("DCL response is too large") if body.bytesize > MAX_RESPONSE_SIZE
           data = JSON.parse(body).as_h[wrapper].as_h["certs"].as_a
           data.map do |item|
@@ -97,6 +110,25 @@ module Matter
           raise ex
         rescue ex
           raise Matter::AuthenticationError.new("Invalid DCL certificate response: #{ex.message}", cause: ex)
+        end
+
+        def self.fetch_fresh_https(url : String) : Response
+          uri = URI.parse(url)
+          raise Matter::AuthenticationError.new("DCL URL must use HTTPS") unless uri.scheme == "https"
+          HTTP::Client.new(uri) do |client|
+            client.connect_timeout = FETCH_TIMEOUT
+            client.read_timeout = FETCH_TIMEOUT
+            headers = HTTP::Headers{"Cache-Control" => "no-cache, no-store, max-age=0", "Pragma" => "no-cache"}
+            client.exec("GET", uri.request_target, headers) do |reply|
+              output = IO::Memory.new
+              buffer = Bytes.new(8192)
+              while (read = reply.body_io.read(buffer)) > 0
+                raise Matter::AuthenticationError.new("DCL response is too large") if output.size + read > MAX_RESPONSE_SIZE
+                output.write(buffer[0, read])
+              end
+              Response.new(reply.status_code, reply.headers["Age"]?, String.new(output.to_slice))
+            end
+          end
         end
       end
 

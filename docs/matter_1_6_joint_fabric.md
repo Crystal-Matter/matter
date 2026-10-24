@@ -399,11 +399,17 @@ the host TLS trust store. `MATTER_JFA_TEST_DCL_GATEWAY_URL` remains limited to
 loopback or the Compose `tests` service; the two settings cannot be combined.
 The three-JFA Compose scenario uses the production setting with a test CA and
 HTTPS mirror, including the live VVS-bearing joiner and transferred Anchor.
+The built-in DCL client requests cache revalidation on every Root, ICA, and
+VID signer query. It refuses HTTP responses with a nonzero or malformed `Age`
+header, including when a cached signer would otherwise verify. The live
+three-JFA mirror tests that refusal with a stale signer response.
 `MATTER_JFA_VID_TRUST_ROOT_PATH` can additionally name provisioned roots for
 fabrics without a VVS; a present VVS always requires a DCL signer and cannot
 fall back to those roots. Operators must select an authenticated DCL gateway
-with an appropriate freshness policy; TLS verifies the gateway, not the
-ledger state served by it.
+with an appropriate ledger freshness policy; HTTP cache checks and TLS cannot
+prove the ledger state served by that gateway is current. The DCL's own
+multi-value queries require a trusted node because they do not include state
+proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-compliance-ledger#clients)).
 
 ## Work required for interoperable Joint Commissioning
 

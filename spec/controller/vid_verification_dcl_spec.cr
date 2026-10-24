@@ -384,6 +384,27 @@ describe VidTrust::DclOperationalTrustAnchors do
 end
 
 describe VidTrust::HttpDclSource do
+  it "rejects an explicitly aged gateway response before trusting its signer records" do
+    payload = {"nocCertificatesByVidAndSkid" => {"certs" => [] of String}}.to_json
+    stale = VidTrust::HttpDclSource.new("https://dcl.example", ->(_url : String) {
+      VidTrust::HttpDclSource::Response.new(200, "7", payload)
+    })
+    expect_raises(Matter::AuthenticationError) do
+      stale.signers_for(0x1234_u16, Bytes.new(20, 1_u8))
+    end
+
+    fresh = VidTrust::HttpDclSource.new("https://dcl.example", ->(_url : String) {
+      VidTrust::HttpDclSource::Response.new(200, "0", payload)
+    })
+    fresh.signers_for(0x1234_u16, Bytes.new(20, 1_u8)).should be_empty
+    unavailable = VidTrust::HttpDclSource.new("https://dcl.example", ->(_url : String) {
+      VidTrust::HttpDclSource::Response.new(503, nil, payload)
+    })
+    expect_raises(Matter::AuthenticationError) do
+      unavailable.signers_for(0x1234_u16, Bytes.new(20, 1_u8))
+    end
+  end
+
   it "reads active DCL certificate records and uses the VID/SKID query" do
     crypto = Matter::Crypto::StandardCrypto.new
     key = crypto.create_key_pair
