@@ -29,6 +29,10 @@ describe "Matter 1.6 Camera AV Stream Management snapshot interoperability" do
     snapshot_read(device, 0x0011_u32).output.should contain("80")
     expect_success(snapshot_command(device, 0x0C_u32,
       %({"0":"u:0","1":{"0":"u:320","1":"u:240"}})))
+    expect_success(snapshot_command(device, 0x0C_u32,
+      %({"0":null,"1":{"0":"u:320","1":"u:240"}})))
+    expect_failure(snapshot_command(device, 0x0C_u32,
+      %({"1":{"0":"u:320","1":"u:240"}})), "INVALID_COMMAND")
     expect_success(device.write("cameraavstreammanagement", "soft-livestream-privacy-mode-enabled", "true", 1))
     expect_failure(snapshot_command(device, 0x0C_u32,
       %({"0":"u:0","1":{"0":"u:320","1":"u:240"}})), "INVALID_IN_STATE")

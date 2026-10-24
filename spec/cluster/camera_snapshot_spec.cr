@@ -169,3 +169,74 @@ describe "Camera AV Stream Management SNP" do
     expect_status(invoke(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT, capture), SnpCode::InvalidInState)
   end
 end
+
+describe "Camera SNP nullable stream selection" do
+  it "distinguishes mandatory TLV Null from missing and explicit stream IDs" do
+    resolution = CameraSnp::VideoResolution.new(320_u16, 240_u16)
+    null_request = CameraSnp::CaptureSnapshotRequest.new(TLV::FieldState(UInt16).null, resolution)
+    null_request.to_tlv.as_structure[0_u8].as_nil.should be_nil
+    CameraSnp::CaptureSnapshotRequest.from_tlv(null_request.to_tlv).snapshot_stream_id.null?.should be_true
+    explicit = CameraSnp::CaptureSnapshotRequest.new(7_u16, resolution)
+    CameraSnp::CaptureSnapshotRequest.from_tlv(explicit.to_tlv).snapshot_stream_id.value!.should eq(7_u16)
+    missing = TLV::Structure.new
+    missing[1_u8] = resolution.to_tlv(1_u8)
+    expect_raises(TLV::DeserializationError) do
+      CameraSnp::CaptureSnapshotRequest.from_tlv(TLV::Any.new(missing))
+    end
+    expect_raises(TLV::SerializationError) do
+      CameraSnp::CaptureSnapshotRequest.new(TLV::FieldState(UInt16).absent, resolution).to_tlv
+    end
+  end
+
+  it "chooses a compatible allocated stream for Null and preserves explicit ID behavior" do
+    camera = snapshot_camera
+    camera.on_snapshot_allocate { |_request, _id| SnpStatus.success }
+    camera.on_snapshot_capture do |stream, resolution|
+      CameraSnp::SnapshotImage.new(Bytes[0xFF, 0xD8, 0xFF, 0xD9], stream.image_codec, resolution)
+    end
+    resolution = CameraSnp::VideoResolution.new(320_u16, 240_u16)
+    auto = CameraSnp::CaptureSnapshotRequest.new(TLV::FieldState(UInt16).null, resolution)
+    expect_status(invoke(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT, auto), SnpCode::NotFound)
+    id = invoke_response(camera, CameraSnp::CMD_SNAPSHOT_STREAM_ALLOCATE,
+      snapshot_request, CameraSnp::SnapshotStreamAllocateResponse).snapshot_stream_id
+    response = invoke_response(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT, auto,
+      CameraSnp::CaptureSnapshotResponse)
+    response.image_codec.should eq(CameraSnp::ImageCodec::Jpeg)
+    response.resolution.should eq(resolution)
+    expect_status(invoke(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT,
+      CameraSnp::CaptureSnapshotRequest.new(TLV::FieldState(UInt16).null,
+        CameraSnp::VideoResolution.new(800_u16, 600_u16))), SnpCode::NotFound)
+    explicit = CameraSnp::CaptureSnapshotRequest.new(id, resolution)
+    invoke_response(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT, explicit,
+      CameraSnp::CaptureSnapshotResponse).data.should eq(response.data)
+    expect_status(invoke(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT,
+      CameraSnp::CaptureSnapshotRequest.new(100_u16, resolution)), SnpCode::NotFound)
+  end
+  it "prefers JPEG among matching allocated streams for automatic selection" do
+    camera = build(CameraSnp,
+      supported_stream_usages: [CameraSnp::StreamUsage::LiveView],
+      max_content_buffer_size: 1024_u32, max_network_bandwidth: 100_000_u32,
+      max_concurrent_encoders: 2_u8, max_encoded_pixel_rate: 4_000_000_u32,
+      snapshot_capabilities: [
+        CameraSnp::SnapshotCapability.new(CameraSnp::VideoResolution.new(640_u16, 480_u16),
+          5_u16, CameraSnp::ImageCodec::Heic, true, true),
+        CameraSnp::SnapshotCapability.new(CameraSnp::VideoResolution.new(640_u16, 480_u16),
+          5_u16, CameraSnp::ImageCodec::Jpeg, true, true),
+      ], feature_map: CameraSnp::Feature::Snapshot)
+    camera.on_snapshot_allocate { |_request, _id| SnpStatus.success }
+    camera.on_snapshot_capture do |stream, resolution|
+      CameraSnp::SnapshotImage.new(Bytes[0xFF], stream.image_codec, resolution)
+    end
+    resolution = CameraSnp::VideoResolution.new(320_u16, 240_u16)
+    max_resolution = CameraSnp::VideoResolution.new(640_u16, 480_u16)
+    CameraSnp::ImageCodec.values.reverse_each do |codec|
+      invoke_response(camera, CameraSnp::CMD_SNAPSHOT_STREAM_ALLOCATE,
+        CameraSnp::SnapshotStreamAllocateRequest.new(codec, 5_u16, resolution,
+          max_resolution, 80_u8), CameraSnp::SnapshotStreamAllocateResponse)
+    end
+    response = invoke_response(camera, CameraSnp::CMD_CAPTURE_SNAPSHOT,
+      CameraSnp::CaptureSnapshotRequest.new(TLV::FieldState(UInt16).null, resolution),
+      CameraSnp::CaptureSnapshotResponse)
+    response.image_codec.should eq(CameraSnp::ImageCodec::Jpeg)
+  end
+end

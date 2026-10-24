@@ -520,14 +520,18 @@ module Matter
       struct CaptureSnapshotRequest
         include TLV::Serializable
 
-        # The nullable auto-selection form awaits tlv FieldState support.
-        @[TLV::Field(tag: 0)]
-        getter snapshot_stream_id : UInt16
+        @[TLV::Field(tag: 0, optional: false)]
+        getter snapshot_stream_id : TLV::FieldState(UInt16)
 
         @[TLV::Field(tag: 1)]
         getter requested_resolution : VideoResolution
 
-        def initialize(@snapshot_stream_id : UInt16, @requested_resolution : VideoResolution)
+        def initialize(@snapshot_stream_id : TLV::FieldState(UInt16),
+                       @requested_resolution : VideoResolution)
+        end
+
+        def initialize(snapshot_stream_id : UInt16, @requested_resolution : VideoResolution)
+          @snapshot_stream_id = TLV::FieldState(UInt16).value(snapshot_stream_id)
         end
       end
 
@@ -971,13 +975,20 @@ module Matter
       end
 
       def capture_snapshot(request : CaptureSnapshotRequest) : InteractionModel::Status | CaptureSnapshotResponse
-        stream = @allocated_snapshot_streams.find(&.snapshot_stream_id.==(request.snapshot_stream_id))
-        return InteractionModel::Status.not_found unless stream
+        field = request.snapshot_stream_id
+        return InteractionModel::Status.invalid_command if field.absent?
         resolution = request.requested_resolution
-        return InteractionModel::Status.constraint_error if resolution.width < stream.min_resolution.width ||
-                                                            resolution.height < stream.min_resolution.height ||
-                                                            resolution.width > stream.max_resolution.width ||
-                                                            resolution.height > stream.max_resolution.height
+        return InteractionModel::Status.constraint_error if resolution.width.zero? || resolution.height.zero?
+        stream = if field.null?
+                   # JPEG is mandatory for SNP, so prefer it for automatic
+                   # selection when more than one allocated stream fits.
+                   @allocated_snapshot_streams.select { |candidate| resolution_in_snapshot_stream?(candidate, resolution) }
+                     .min_by? { |candidate| {candidate.image_codec == ImageCodec::Jpeg ? 0 : 1, candidate.snapshot_stream_id} }
+                 else
+                   @allocated_snapshot_streams.find(&.snapshot_stream_id.==(field.value!))
+                 end
+        return InteractionModel::Status.not_found unless stream
+        return InteractionModel::Status.constraint_error unless resolution_in_snapshot_stream?(stream, resolution)
         return InteractionModel::Status.invalid_in_state unless video_delivery_allowed?(StreamUsage::LiveView)
         callback = @snapshot_capture_callback || return InteractionModel::Status.invalid_in_state
         image = callback.call(stream, resolution)
@@ -998,6 +1009,11 @@ module Matter
         @stream_usage_priorities = priorities.dup
         increment_version_and_notify(ATTR_STREAM_USAGE_PRIORITIES)
         InteractionModel::Status.success
+      end
+
+      private def resolution_in_snapshot_stream?(stream : SnapshotStream, resolution : VideoResolution) : Bool
+        resolution.width >= stream.min_resolution.width && resolution.height >= stream.min_resolution.height &&
+          resolution.width <= stream.max_resolution.width && resolution.height <= stream.max_resolution.height
       end
 
       private def matching_snapshot_capability(request : SnapshotStreamAllocateRequest) : SnapshotCapability?
