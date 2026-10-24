@@ -405,6 +405,10 @@ Commodity Tariff endpoints can add revision 1 `Cluster::CommodityTariff` for
 durable Pricing calendars and current/next price projections. See
 [the Commodity Tariff guide](docs/commodity-tariff.md) and
 `examples/matter_commodity_tariff_device.cr`.
+Zone Management endpoints can add revision 1 `Cluster::ZoneManagement` with
+user-defined Cartesian regions and persisted motion triggers. See
+[the Zone Management guide](docs/zone-management.md) and
+`examples/matter_zone_management_device.cr`.
 
 Locale and temperature unit writes are checked against the supported values;
 sensor and power source values are updated by the application.

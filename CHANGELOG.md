@@ -27,6 +27,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   required Power Source device type topology. The example now advertises a
   detector endpoint with Identify and a separate Power Source endpoint, and
   chip-tool checks both Descriptor device type lists and power mapping.
+### Zone Management
+
+- Add the Matter 1.6 revision 1 Zone Management server for user-defined
+  Cartesian zones, durable trigger configuration, managed geometry commands,
+  and ZoneTriggered/ZoneStopped timing with blind intervals. The synthetic
+  Aggregator fixture exercises the wire surface with chip-tool. Per-zone
+  sensitivity and focus zones remain unsupported.
 
 ### Content Control
 
