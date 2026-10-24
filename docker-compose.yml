@@ -349,6 +349,11 @@ services:
     environment:
       E2E_DEVICE: matter_content_app_observer
 
+  closure:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_closure
+
   content-control:
     <<: *device
     environment:

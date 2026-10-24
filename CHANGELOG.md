@@ -42,6 +42,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic Pump device for official chip-tool interoperability. Other
   regulation features and optional fault events remain unsupported.
 
+### Closure Control and Closure Dimension
+
+- Add Matter 1.6 revision 1 Closure Control and Closure Dimension servers with
+  typed state, feature-gated commands, timed access, host motion admission,
+  target/step handling, and a synthetic two-endpoint chip-tool fixture. Add
+  Closure and Closure Panel device-type declarations. Composite parent/TagList
+  support remains a follow-up.
+
 ### Content Control
 
 - Add the provisional Matter 1.6 revision 1 Content Control server. Enable,
