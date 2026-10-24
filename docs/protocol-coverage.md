@@ -145,7 +145,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | Core and BU/OCR/SCR/BC/BA policy; ST/PM/BTW unavailable |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
-| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | ADO/VDO allocation slices; SNP, media delivery and Camera topology remain |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | ADO/VDO allocation and explicit-ID SNP capture slices; nullable auto-selection, media delivery and Camera topology remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | MPAN only |
 | 0x0553 | WebRTC Transport Provider Cluster | 2 | — | cluster absent |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | — | cluster absent |

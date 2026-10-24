@@ -323,6 +323,11 @@ services:
     environment:
       E2E_DEVICE: matter_camera_video
 
+  camera-snapshot:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_camera_snapshot
+
   oven:
     <<: *device
     environment:
