@@ -353,6 +353,16 @@ physical playback. Controllers can write `SelectedChime` and `Enabled`; both
 survive restart. A successful playback request emits `ChimeStartedPlaying`.
 See `examples/matter_chime_device.cr` for a synthetic doorbell.
 
+`Cluster::CameraAvSettingsUserLevelManagement` implements the Matter 1.6
+MechanicalPan (MPAN) feature. Configure pan limits, register
+`on_pan_move` to start the physical actuator, and call `report_pan_position`
+with measured movement and completion. The measured position persists across
+restart. Digital PTZ, tilt, zoom, and presets are not exposed. A synthetic
+camera fixture is in `examples/matter_camera_pan_device.cr`.
+The fixture uses an Aggregator endpoint for interoperability testing; it is
+not a conformant Camera device. Camera AV Stream Management and the required
+Camera endpoint topology are still absent.
+
 `Cluster::OvenMode` adds the Matter 1.6 revision 2 oven tags (Bake through
 Frozen Food) to the same Mode Base transition contract. It has no OnOff,
 StartUpMode, or OnMode surface. `Cluster::OvenCavityOperationalState` is a
