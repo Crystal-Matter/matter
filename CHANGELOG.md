@@ -206,6 +206,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Door Lock documents remain readable. The cluster still advertises revision 9
   pending the remaining Matter 1.6 revision 10 feature audit.
 
+### Door Lock Aliro BLE/UWB host boundary
+
+- Add the conditional ALBU attributes and a typed radio-capable Aliro reader
+  delegate. Feature selection requires radio readiness and valid fixed
+  protocol data; provisioning requires a 16-byte group resolving key, and
+  transactions fail closed when the radio is unavailable. Hardware transport
+  and Aliro transcript verification remain the host delegate's responsibility.
+  Door Lock continues to advertise cluster revision 9.
+
 ### Door Lock verified local credentials
 
 - Require an application supplied, ready local verifier before advertising RFID,

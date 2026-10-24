@@ -55,7 +55,8 @@ error events. A direct call to `unlock(source: Rfid)` or
 The synthetic RFID fixture uses a test hook to exercise this boundary with
 official chip-tool credential management, restart, state and event reads;
 it is not a production RFID reader. Applications must supply their own trusted
-reader implementation. Aliro BLE/UWB remains gated separately.
+reader implementation. Aliro BLE/UWB requires a separate radio capable
+delegate.
 
 The backend contains credential bytes and other device secrets, so deployments
 must protect its files or database with appropriate access controls.
@@ -137,8 +138,18 @@ tables survive normal persistence flushes and restart. A reader that rejects
 restored configuration causes the cluster to stop advertising Aliro rather
 than accepting unauthenticated access. The signing key is secret material,
 so the chosen storage backend must protect it accordingly. `AliroBLEUWB`
-remains rejected until a real BLE/UWB radio adapter supplies attributes
-`0x0084`–`0x0086` and the corresponding transport behavior.
+requires an `AliroBleUwbReaderDelegate` that reports a ready physical radio,
+supplies 1–16 two-byte BLE/UWB protocol versions and a fixed BLE advertising
+version, and applies configuration and clear operations to both the radio and
+reader as one host operation. The cluster then exposes administrator-only
+attributes `0x0084`–`0x0086`. `0x0084` is NULL before configuration and the
+16-byte group resolving key afterward. SetAliroReaderConfig requires that key
+when ALBU is selected and rejects it when ALBU is absent. Access fails closed
+if the radio later becomes unavailable; an unavailable radio on restoration
+stops both ALIRO and ALBU advertisement. The delegate must implement the
+actual Bluetooth LE/UWB transport and Aliro cryptographic verification; the
+unit-test delegate is only a fixture. No hardware radio interoperability is
+claimed by these software tests.
 Configure `number_of_aliro_credential_issuer_keys_supported` and
 `number_of_aliro_endpoint_keys_supported` when constructing the lock; both
 default to zero. `configure_aliro_reader` accepts an `AliroReaderConfig` with

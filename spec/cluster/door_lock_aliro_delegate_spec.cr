@@ -41,6 +41,143 @@ private class TestAliroReader < AliroLock::AliroReaderDelegate
   end
 end
 
+private class TestAliroBleUwbReader < AliroLock::AliroBleUwbReaderDelegate
+  property? ready : Bool = true
+  property? radio_ready : Bool = true
+  property versions : Array(Bytes) = [Bytes[0x01, 0x00]]
+  property? authenticated_called = false
+  property authenticated : AliroLock::AliroAuthenticatedAccess? = nil
+  property on_authenticate : Proc(Nil)? = nil
+  getter configured : AliroLock::AliroReaderConfig? = nil
+
+  def supported_protocol_versions : Array(Bytes)
+    [Bytes[0x01, 0x00]]
+  end
+
+  def group_sub_identifier : Bytes
+    Bytes.new(16, 0xAA_u8)
+  end
+
+  def supported_bleuwb_protocol_versions : Array(Bytes)
+    @versions
+  end
+
+  def ble_advertising_version : UInt8
+    1_u8
+  end
+
+  def configure(config : AliroLock::AliroReaderConfig) : Bool
+    @configured = config
+    true
+  end
+
+  def clear_with_user_permission : Bool
+    @configured = nil
+    true
+  end
+
+  def authenticate(transaction : Bytes, required_step_up_data_element : String) : AliroLock::AliroAuthenticatedAccess?
+    @authenticated_called = true
+    @on_authenticate.try(&.call)
+    @authenticated
+  end
+end
+
+private def aliro_bleuwb_lock(reader : TestAliroBleUwbReader) : AliroLock
+  build(AliroLock,
+    feature_map: AliroLock::Feature::User | AliroLock::Feature::AliroProvisioning | AliroLock::Feature::AliroBleuwb,
+    aliro_reader_delegate: reader,
+    number_of_aliro_credential_issuer_keys_supported: 2_u16,
+    number_of_aliro_endpoint_keys_supported: 2_u16)
+end
+
+describe "Door Lock Aliro BLE/UWB delegate boundary" do
+  it "gates ALBU on a ready physical radio with valid fixed protocol data" do
+    reader = TestAliroBleUwbReader.new
+    reader.radio_ready = false
+    expect_raises(ArgumentError, /radio/) { aliro_bleuwb_lock(reader) }
+    reader.radio_ready = true
+    reader.versions = [Bytes[0x01]]
+    expect_raises(ArgumentError, /protocol/) { aliro_bleuwb_lock(reader) }
+    reader.versions = [Bytes[0x01, 0x00]]
+    lock = aliro_bleuwb_lock(reader)
+    lock.feature_map.aliro_bleuwb?.should be_true
+    read_tlv(lock, AliroLock::ATTR_ALIRO_SUPPORTED_BLEUWB_PROTOCOL_VERSIONS).as_list.map(&.value).should eq(reader.versions)
+    read(lock, AliroLock::ATTR_ALIRO_BLE_ADVERTISING_VERSION).should eq(1_u8)
+    read(lock, AliroLock::ATTR_ALIRO_GROUP_RESOLVING_KEY).should be_nil
+    [AliroLock::ATTR_ALIRO_GROUP_RESOLVING_KEY,
+     AliroLock::ATTR_ALIRO_SUPPORTED_BLEUWB_PROTOCOL_VERSIONS,
+     AliroLock::ATTR_ALIRO_BLE_ADVERTISING_VERSION].each do |id|
+      metadata = lock.get_attribute_metadata(id) || raise "Missing Aliro BLE/UWB attribute #{id}"
+      metadata.access.should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+    end
+    versions = lock.get_attribute_metadata(AliroLock::ATTR_ALIRO_SUPPORTED_BLEUWB_PROTOCOL_VERSIONS) || raise "Missing Aliro protocol versions"
+    versions.fixed?.should be_true
+    advertising = lock.get_attribute_metadata(AliroLock::ATTR_ALIRO_BLE_ADVERTISING_VERSION) || raise "Missing Aliro advertising version"
+    advertising.fixed?.should be_true
+  end
+
+  it "requires the 16-byte resolving key for ALBU and restores it after restart" do
+    reader = TestAliroBleUwbReader.new
+    lock = aliro_bleuwb_lock(reader)
+    key = Matter::Crypto::Key.generate_key_pair
+    without_resolving_key = AliroLock::SetAliroReaderConfigRequest.new(key.private_key, key.public_key, Bytes.new(16))
+    lock.handle_set_aliro_reader_config(without_resolving_key).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    reader.configured.should be_nil
+
+    resolving_key = Bytes.new(16, 0xAB_u8)
+    request = AliroLock::SetAliroReaderConfigRequest.new(key.private_key, key.public_key, Bytes.new(16), resolving_key)
+    lock.handle_set_aliro_reader_config(request).success?.should be_true
+    read(lock, AliroLock::ATTR_ALIRO_GROUP_RESOLVING_KEY).should eq(resolving_key)
+
+    restored_reader = TestAliroBleUwbReader.new
+    restored = aliro_bleuwb_lock(restored_reader)
+    restored.restore_state(lock.save_state.as(Matter::Storage::Document))
+    restored_reader.configured.try(&.group_resolving_key).should eq(resolving_key)
+    read(restored, AliroLock::ATTR_ALIRO_GROUP_RESOLVING_KEY).should eq(resolving_key)
+    restored.handle_clear_aliro_reader_config.success?.should be_true
+    read(restored, AliroLock::ATTR_ALIRO_GROUP_RESOLVING_KEY).should be_nil
+  end
+
+  it "refuses transactions and restored configuration when the radio becomes unavailable" do
+    reader = TestAliroBleUwbReader.new
+    lock = aliro_bleuwb_lock(reader)
+    key = Matter::Crypto::Key.generate_key_pair
+    resolving_key = Bytes.new(16, 0xAB_u8)
+    config = AliroLock::AliroReaderConfig.new(key.private_key, key.public_key, Bytes.new(16), resolving_key)
+    lock.configure_aliro_reader(config).success?.should be_true
+    document = lock.save_state.as(Matter::Storage::Document)
+
+    reader.radio_ready = false
+    lock.perform_aliro_transaction(Bytes[0x01]).success?.should be_false
+    reader.authenticated_called?.should be_false
+
+    restored_reader = TestAliroBleUwbReader.new
+    restored = aliro_bleuwb_lock(restored_reader)
+    restored_reader.radio_ready = false
+    restored.restore_state(document)
+    restored.feature_map.aliro_provisioning?.should be_false
+    restored.feature_map.aliro_bleuwb?.should be_false
+  end
+
+  it "rejects a transaction if the radio drops during authentication" do
+    reader = TestAliroBleUwbReader.new
+    lock = aliro_bleuwb_lock(reader)
+    signing = Matter::Crypto::Key.generate_key_pair
+    endpoint = Matter::Crypto::Key.generate_key_pair
+    config = AliroLock::AliroReaderConfig.new(signing.private_key, signing.public_key,
+      Bytes.new(16), Bytes.new(16, 0xAB_u8))
+    lock.configure_aliro_reader(config).success?.should be_true
+    lock.provision_aliro_key(AliroLock::CredentialType::AliroNonEvictableEndpointKey,
+      1_u16, 1_u16, endpoint.public_key).should eq(AliroLock::StatusCode::Success)
+    reader.authenticated = AliroLock::AliroAuthenticatedAccess.new(endpoint.public_key)
+    reader.on_authenticate = -> { reader.radio_ready = false; nil }
+
+    lock.perform_aliro_transaction(Bytes[0x01]).success?.should be_false
+    lock.locked?.should be_true
+  end
+end
+
 private def aliro_delegate_lock(reader : TestAliroReader? = TestAliroReader.new, endpoint_limit : UInt16 = 2_u16) : AliroLock
   build(AliroLock,
     feature_map: AliroLock::Feature::User | AliroLock::Feature::AliroProvisioning,

@@ -151,6 +151,9 @@ module Matter
       attribute 0x0081, :aliro_reader_group_identifier, Bytes, nullable: true, computed: true, read_access: :administer, requires: :aliro_provisioning
       attribute 0x0082, :aliro_reader_group_sub_identifier, Bytes, computed: true, fixed: true, read_access: :administer, requires: :aliro_provisioning
       attribute 0x0083, :aliro_expedited_transaction_supported_protocol_versions, Array(Bytes), computed: true, fixed: true, read_access: :administer, requires: :aliro_provisioning
+      attribute 0x0084, :aliro_group_resolving_key, Bytes, nullable: true, computed: true, read_access: :administer, requires: :aliro_bleuwb
+      attribute 0x0085, :aliro_supported_bleuwb_protocol_versions, Array(Bytes), computed: true, fixed: true, read_access: :administer, requires: :aliro_bleuwb
+      attribute 0x0086, :aliro_ble_advertising_version, UInt8, computed: true, fixed: true, read_access: :administer, requires: :aliro_bleuwb
       attribute 0x0087, :number_of_aliro_credential_issuer_keys_supported, UInt16, default: 0_u16, fixed: true, requires: :aliro_provisioning
       attribute 0x0088, :number_of_aliro_endpoint_keys_supported, UInt16, default: 0_u16, fixed: true, requires: :aliro_provisioning
 
@@ -282,6 +285,15 @@ module Matter
         abstract def authenticate(transaction : Bytes, required_step_up_data_element : String) : AliroAuthenticatedAccess?
       end
 
+      # A host implementation owns the real BLE/UWB reader, advertising and
+      # cryptographic transcript verification. Its configure/clear callbacks
+      # must update radio state and Aliro reader state together.
+      abstract class AliroBleUwbReaderDelegate < AliroReaderDelegate
+        abstract def radio_ready? : Bool
+        abstract def supported_bleuwb_protocol_versions : Array(Bytes)
+        abstract def ble_advertising_version : UInt8
+      end
+
       # An application-owned reader verifies a physical RFID or biometric
       # transaction before naming a stored credential and its enrolled data. The reader must check
       # freshness and prevent replay; the Door Lock never treats a caller's
@@ -351,10 +363,13 @@ module Matter
       @holiday_schedules = {} of UInt8 => HolidaySchedule
       @aliro_reader_config : AliroReaderConfig? = nil
       @aliro_reader_delegate : AliroReaderDelegate? = nil
+      @aliro_bleuwb_reader_delegate : AliroBleUwbReaderDelegate? = nil
       @local_credential_verifier : LocalCredentialVerifier? = nil
       @aliro_config_generation : UInt64 = 0_u64
       @aliro_group_sub_identifier : Bytes = Bytes.new(0)
       @aliro_protocol_versions : Array(Bytes) = [] of Bytes
+      @aliro_bleuwb_protocol_versions : Array(Bytes) = [] of Bytes
+      @aliro_ble_advertising_version : UInt8 = 0_u8
 
       @failed_remote_pin_attempts : UInt8 = 0_u8
       @lockout_until : Time? = nil
@@ -408,7 +423,17 @@ module Matter
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
-        raise ArgumentError.new("Aliro BLE/UWB requires a radio adapter") if @feature_map.aliro_bleuwb?
+        if @feature_map.aliro_bleuwb?
+          raise ArgumentError.new("Aliro BLE/UWB requires Aliro provisioning") unless @feature_map.aliro_provisioning?
+          reader = @aliro_reader_delegate.as?(AliroBleUwbReaderDelegate) ||
+                   raise ArgumentError.new("Aliro BLE/UWB requires a trusted radio delegate")
+          raise ArgumentError.new("Aliro BLE/UWB radio is not ready") unless reader.radio_ready?
+          versions = reader.supported_bleuwb_protocol_versions
+          raise ArgumentError.new("Aliro BLE/UWB protocol versions must contain 1 to 16 two-byte entries") unless versions.size.in?(1..16) && versions.all? { |entry| entry.size == 2 }
+          @aliro_bleuwb_reader_delegate = reader
+          @aliro_bleuwb_protocol_versions = versions.map(&.dup)
+          @aliro_ble_advertising_version = reader.ble_advertising_version
+        end
         if @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials?
           verifier = @local_credential_verifier || raise ArgumentError.new("RFID and biometric features require a trusted local credential verifier")
           required_types = [] of CredentialType
@@ -442,7 +467,6 @@ module Matter
         raise ArgumentError.new("credentialOverTheAirAccess requires pinCredential") if @feature_map.credential_over_the_air_access? && !@feature_map.pin_credential?
         credential_feature = @feature_map.pin_credential? || @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials? || @feature_map.aliro_provisioning?
         raise ArgumentError.new("credential features require user") if credential_feature && !@feature_map.user?
-        raise ArgumentError.new("aliroBLEUWB requires aliroProvisioning") if @feature_map.aliro_bleuwb? && !@feature_map.aliro_provisioning?
         raise ArgumentError.new("user schedules require user feature") if (@feature_map.week_day_access_schedules? || @feature_map.year_day_access_schedules? || @feature_map.holiday_schedules?) && !@feature_map.user?
         raise ArgumentError.new("supportedOperatingModes reserved bits must be set") if (@supported_operating_modes & SUPPORTED_OPERATING_MODES_RESERVED) != SUPPORTED_OPERATING_MODES_RESERVED
         raise ArgumentError.new("Normal operating mode is mandatory") unless (@supported_operating_modes & NORMAL_OPERATING_MODE_BIT).zero?
@@ -608,13 +632,13 @@ module Matter
         if @feature_map.aliro_provisioning? && (config = aliro_reader)
           reader = @aliro_reader_delegate || raise StorageError.new("Aliro reader delegate unavailable")
           applied = begin
-            reader.configure(config)
+            aliro_radio_ready? && reader.configure(config)
           rescue ex
             Log.error(exception: ex) { "Aliro reader rejected restored configuration" }
             false
           end
           unless applied
-            @feature_map = @feature_map & ~Feature::AliroProvisioning
+            @feature_map = @feature_map & ~(Feature::AliroProvisioning | Feature::AliroBleuwb)
             raise StorageError.new("Door Lock Aliro reader rejected restored configuration")
           end
         end
@@ -659,6 +683,7 @@ module Matter
       def configure_aliro_reader(config : AliroReaderConfig) : InteractionModel::Status
         return InteractionModel::Status.invalid_in_state if @aliro_reader_config
         return InteractionModel::Status.constraint_error unless valid_aliro_reader_config?(config)
+        return InteractionModel::Status.failure unless aliro_radio_ready?
         if @feature_map.aliro_provisioning?
           reader = @aliro_reader_delegate || return InteractionModel::Status.failure
           applied = begin
@@ -676,6 +701,7 @@ module Matter
         increment_version
         notify_changed(0x0080_u32)
         notify_changed(0x0081_u32)
+        notify_changed(ATTR_ALIRO_GROUP_RESOLVING_KEY) if @feature_map.aliro_bleuwb?
         InteractionModel::Status.success
       end
 
@@ -695,6 +721,7 @@ module Matter
         increment_version
         notify_changed(0x0080_u32)
         notify_changed(0x0081_u32)
+        notify_changed(ATTR_ALIRO_GROUP_RESOLVING_KEY) if @feature_map.aliro_bleuwb?
         InteractionModel::Status.success
       end
 
@@ -714,11 +741,34 @@ module Matter
         @aliro_protocol_versions.map(&.dup)
       end
 
+      def aliro_group_resolving_key : Bytes?
+        @aliro_reader_config.try(&.group_resolving_key.try(&.dup))
+      end
+
+      def aliro_supported_bleuwb_protocol_versions : Array(Bytes)
+        @aliro_bleuwb_protocol_versions.map(&.dup)
+      end
+
+      def aliro_ble_advertising_version : UInt8
+        @aliro_ble_advertising_version
+      end
+
+      private def aliro_radio_ready? : Bool
+        return true unless @feature_map.aliro_bleuwb?
+        reader = @aliro_bleuwb_reader_delegate
+        return false unless reader
+        reader.radio_ready?
+      rescue ex
+        Log.error(exception: ex) { "Aliro BLE/UWB radio readiness check failed" }
+        false
+      end
+
       # Called by the host transport with an opaque Aliro transaction. Only the
       # trusted delegate may turn it into an authenticated key identity. The
       # delegate is responsible for the Aliro cryptography and replay checks.
       def perform_aliro_transaction(transaction : Bytes) : InteractionModel::Status
         return InteractionModel::Status.unsupported_command unless @feature_map.aliro_provisioning?
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless aliro_radio_ready?
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless @aliro_reader_config
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
 
@@ -730,7 +780,7 @@ module Matter
           Log.error(exception: ex) { "Aliro reader authentication failed" }
           nil
         end
-        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless generation == @aliro_config_generation && @aliro_reader_config
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless generation == @aliro_config_generation && @aliro_reader_config && aliro_radio_ready?
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless access
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless valid_aliro_public_key?(access.credential_public_key)
 
@@ -945,8 +995,10 @@ module Matter
 
       def handle_set_aliro_reader_config(request : SetAliroReaderConfigRequest) : InteractionModel::Status
         return InteractionModel::Status.unsupported_command unless @feature_map.aliro_provisioning?
-        return InteractionModel::Status.constraint_error if request.group_resolving_key
-        configure_aliro_reader(AliroReaderConfig.new(request.signing_key, request.verification_key, request.group_identifier))
+        return InteractionModel::Status.constraint_error if @feature_map.aliro_bleuwb? && !request.group_resolving_key
+        return InteractionModel::Status.constraint_error if !@feature_map.aliro_bleuwb? && request.group_resolving_key
+        configure_aliro_reader(AliroReaderConfig.new(request.signing_key, request.verification_key,
+          request.group_identifier, request.group_resolving_key))
       end
 
       def handle_clear_aliro_reader_config : InteractionModel::Status
@@ -999,6 +1051,7 @@ module Matter
         return false unless config.signing_key.size == ALIRO_SIGNING_KEY_LENGTH
         return false unless valid_aliro_public_key?(config.verification_key)
         return false unless config.group_identifier.size == ALIRO_GROUP_IDENTIFIER_LENGTH
+        return false if @feature_map.aliro_bleuwb? && !config.group_resolving_key
         if resolving_key = config.group_resolving_key
           return false unless resolving_key.size == ALIRO_GROUP_IDENTIFIER_LENGTH
         end
