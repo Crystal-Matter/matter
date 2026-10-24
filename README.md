@@ -660,6 +660,10 @@ setpoints; a later manual setpoint change clears its active handle. The list and
 active handle persist with cluster state. This API is preparatory: the PRES bit,
 Preset attributes, and SetActivePreset wire command remain unavailable until
 Matter's atomic-write transaction for the Presets list is implemented.
+The preparatory transaction model includes typed `AtomicRequest` and
+`AtomicResponse` payloads, secure-peer ownership, timeout, rollback and commit.
+It is host-only for now; controllers cannot invoke AtomicRequest or write
+Presets until the complete PRES wire surface is enabled.
 
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
 Register `configure_host(accept, sleep)` to accept or refuse requests and to
