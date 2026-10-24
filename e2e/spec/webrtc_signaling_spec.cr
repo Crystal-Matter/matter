@@ -29,14 +29,14 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       device.node, WEBRTC_ENDPOINT)
     expect_success(allocated)
 
-    offer = %({"0":null,"1":"s:v=0","2":"u:3","3":"u:22","11":["u:0"]})
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","11":["u:0"]})
     expect_success(webrtc_command(device, 0x02_u32, offer))
     sessions = expect_success(webrtc_read(device, 0x0000_u32)).output
     sessions.should contain("PeerEndpointId")
     sessions.should contain("AudioStreams")
 
-    expect_success(webrtc_command(device, 0x04_u32, %({"0":"u:0","1":"s:v=0"})))
-    candidates = %({"0":"u:0","1":[{"0":"s:candidate:1 1 UDP 1 127.0.0.1 1234 typ host","1":"s:0","2":"u:0"}]})
+    expect_success(webrtc_command(device, 0x04_u32, %({"0":"u:0","1":"v=0"})))
+    candidates = %({"0":"u:0","1":[{"0":"candidate:1 1 UDP 1 127.0.0.1 1234 typ host","1":"0","2":"u:0"}]})
     expect_success(webrtc_command(device, 0x05_u32, candidates))
 
     window = expect_success(device.chip(["pairing", "open-commissioning-window",
