@@ -34,6 +34,7 @@ module Matter
       SECONDS_PER_MINUTE    =          60_u32
       MATTER_EPOCH_UNIX     = 946_684_800_i64
       ALL_WEEKDAYS          =         0x7F_u8
+      ROTATION_START_KEY    = "immediate_rotation_start_date"
 
       enum BlockMode : UInt8
         NoBlock    = 0
@@ -338,6 +339,8 @@ module Matter
       attribute 0x0010, :next_tariff_components, Array(TariffComponent), nullable: true,
         copy_on_assign: true, copy_on_read: true
 
+      @immediate_rotation_start_date : UInt32? = nil
+
       command 0x00, :get_tariff_component, request: GetTariffComponentRequest,
         response: GetTariffComponentResponse, response_id: 0x00, access: :operate
       command 0x01, :get_day_entry, request: GetDayEntryRequest,
@@ -360,6 +363,7 @@ module Matter
 
       def publish(publication : Publication, at : UInt32 = matter_now) : Nil
         validate_publication!(publication)
+        @immediate_rotation_start_date = publication.start_date.nil? ? at - at % SECONDS_PER_DAY : nil
         self.tariff_info = publication.info
         self.tariff_unit = publication.unit
         self.start_date = publication.start_date
@@ -373,6 +377,7 @@ module Matter
       end
 
       def clear_tariff : Nil
+        @immediate_rotation_start_date = nil
         self.tariff_info = nil
         self.tariff_unit = nil
         self.start_date = nil
@@ -467,10 +472,23 @@ module Matter
           return overlay
         end
         weekday = Time.unix(MATTER_EPOCH_UNIX + date.to_i64).day_of_week.value % 7
-        pattern = @day_patterns.as(Array(DayPattern)).find do |item|
-          period.day_pattern_ids.includes?(item.day_pattern_id) &&
-            (item.days_of_week & (1_u8 << weekday)) != 0
-        end
+        patterns = @day_patterns.as(Array(DayPattern))
+        first_pattern = patterns.find { |item| item.day_pattern_id == period.day_pattern_ids.first }
+        return unless first_pattern
+        pattern = if first_pattern.days_of_week.zero?
+                    anchor = period.start_date || @immediate_rotation_start_date
+                    return unless anchor
+                    anchor_date = anchor - anchor % SECONDS_PER_DAY
+                    return if date < anchor_date
+                    day_number = (date.to_u64 - anchor_date.to_u64) // SECONDS_PER_DAY
+                    id = period.day_pattern_ids[(day_number % period.day_pattern_ids.size).to_i]
+                    patterns.find { |item| item.day_pattern_id == id }
+                  else
+                    patterns.find do |item|
+                      period.day_pattern_ids.includes?(item.day_pattern_id) &&
+                        (item.days_of_week & (1_u8 << weekday)) != 0
+                    end
+                  end
         pattern.try { |item| Day.new(date, DayType::Standard, item.day_entry_ids) }
       end
 
@@ -502,7 +520,6 @@ module Matter
           end
         end
         publication.day_patterns.each do |pattern|
-          raise ArgumentError.new("rotating day patterns are not supported") if pattern.days_of_week == 0
           raise ArgumentError.new("invalid days of week") if pattern.days_of_week & ~ALL_WEEKDAYS != 0
           validate_entry_ids!(pattern.day_entry_ids, entry_ids, publication.day_entries)
         end
@@ -517,6 +534,10 @@ module Matter
           check_size!("period patterns", period.day_pattern_ids.size, 1, MAX_DAYS_PER_PERIOD)
           raise ArgumentError.new("missing day pattern") unless period.day_pattern_ids.all? { |id| pattern_ids.includes?(id) }
           patterns = publication.day_patterns.select { |item| period.day_pattern_ids.includes?(item.day_pattern_id) }
+          if patterns.any?(&.days_of_week.zero?)
+            raise ArgumentError.new("rotating and weekday patterns cannot mix") unless patterns.all?(&.days_of_week.zero?)
+            next
+          end
           mask = 0_u8
           patterns.each do |pattern|
             raise ArgumentError.new("overlapping weekdays") if mask & pattern.days_of_week != 0
@@ -587,6 +608,21 @@ module Matter
       private def matter_now : UInt32
         seconds = Time.utc.to_unix - MATTER_EPOCH_UNIX
         seconds.clamp(0_i64, UInt32::MAX.to_i64).to_u32
+      end
+
+      private def extend_persisted_state(document : Storage::Document) : Nil
+        if anchor = @immediate_rotation_start_date
+          document[ROTATION_START_KEY] = anchor.to_i64
+        end
+      end
+
+      private def restore_persisted_extension(document : Storage::Document) : Nil
+        @immediate_rotation_start_date = nil
+        if value = document[ROTATION_START_KEY]?
+          anchor = value.as?(Int64)
+          raise StorageError.new("invalid tariff rotation start date") unless anchor && (0_i64..UInt32::MAX.to_i64).includes?(anchor)
+          @immediate_rotation_start_date = anchor.to_u32
+        end
       end
 
       private def after_restore_state : Nil

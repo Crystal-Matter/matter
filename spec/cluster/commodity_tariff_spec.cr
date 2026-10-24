@@ -60,6 +60,85 @@ describe Tariff do
     restored.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(11_u32)
   end
 
+  it "advances rotating day patterns in calendar order" do
+    cluster = tariff_fixture
+    valid = tariff_publication
+    patterns = [
+      Tariff::DayPattern.new(20_u32, 0_u8, [10_u32]),
+      Tariff::DayPattern.new(21_u32, 0_u8, [12_u32]),
+    ]
+    periods = [Tariff::CalendarPeriod.new(0_u32, [20_u32, 21_u32])]
+    rotating = Tariff::Publication.new(valid.info, valid.unit, 0_u32,
+      valid.day_entries + [Tariff::DayEntry.new(12_u32, 0_u16)],
+      patterns, periods, valid.individual_days,
+      valid.components, valid.tariff_periods + [Tariff::TariffPeriod.new("Rotating", [12_u32], [30_u32])])
+    cluster.publish(rotating, at: 100_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(10_u32)
+    cluster.next_day.as(Tariff::Day).day_entry_ids.should eq([12_u32])
+    cluster.refresh_at(86_500_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(12_u32)
+    cluster.refresh_at(172_900_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(10_u32)
+  end
+
+  it "persists the start of an immediate rotating calendar" do
+    cluster = tariff_fixture
+    valid = tariff_publication
+    patterns = [
+      Tariff::DayPattern.new(20_u32, 0_u8, [10_u32]),
+      Tariff::DayPattern.new(21_u32, 0_u8, [12_u32]),
+    ]
+    periods = [Tariff::CalendarPeriod.new(nil, [20_u32, 21_u32])]
+    rotating = Tariff::Publication.new(valid.info, valid.unit, nil,
+      valid.day_entries + [Tariff::DayEntry.new(12_u32, 0_u16)],
+      patterns, periods, valid.individual_days,
+      valid.components, valid.tariff_periods + [Tariff::TariffPeriod.new("Rotating", [12_u32], [30_u32])])
+    cluster.publish(rotating, at: 172_900_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(10_u32)
+    restored = tariff_fixture
+    restored.restore_state(cluster.save_state)
+    restored.refresh_at(259_300_u32)
+    restored.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(12_u32)
+  end
+
+  it "restarts rotation when a new calendar period begins" do
+    cluster = tariff_fixture
+    valid = tariff_publication
+    patterns = [
+      Tariff::DayPattern.new(20_u32, 0_u8, [10_u32]),
+      Tariff::DayPattern.new(21_u32, 0_u8, [12_u32]),
+    ]
+    periods = [
+      Tariff::CalendarPeriod.new(0_u32, [20_u32, 21_u32]),
+      Tariff::CalendarPeriod.new(172_800_u32, [21_u32, 20_u32]),
+    ]
+    publication = Tariff::Publication.new(valid.info, valid.unit, 0_u32,
+      valid.day_entries + [Tariff::DayEntry.new(12_u32, 0_u16)],
+      patterns, periods, valid.individual_days,
+      valid.components, valid.tariff_periods + [Tariff::TariffPeriod.new("Rotating", [12_u32], [30_u32])])
+    cluster.publish(publication, at: 100_u32)
+    cluster.refresh_at(172_900_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(12_u32)
+    cluster.refresh_at(259_300_u32)
+    cluster.current_day_entry.as(Tariff::DayEntry).day_entry_id.should eq(10_u32)
+  end
+
+  it "rejects a calendar period mixing rotating and weekday patterns" do
+    cluster = tariff_fixture
+    valid = tariff_publication
+    patterns = [
+      Tariff::DayPattern.new(20_u32, 0_u8, [10_u32]),
+      Tariff::DayPattern.new(21_u32, 0x7F_u8, [10_u32]),
+    ]
+    publication = Tariff::Publication.new(valid.info, valid.unit,
+      valid.start_date, valid.day_entries, patterns,
+      [Tariff::CalendarPeriod.new(0_u32, [20_u32, 21_u32])],
+      valid.individual_days, valid.components, valid.tariff_periods)
+    expect_raises(ArgumentError, /rotating and weekday patterns cannot mix/) do
+      cluster.publish(publication, at: 100_u32)
+    end
+  end
+
   it "returns the canonical component and day entry responses" do
     cluster = tariff_fixture
     cluster.publish(tariff_publication, at: 100_u32)

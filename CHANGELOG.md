@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Commodity Tariff rotating calendars
+
+- Support rotating day patterns in calendar period order, including a durable
+  start day for immediately active calendars and reset at each new period.
+
 ### Commodity Tariff
 
 - Add the Matter 1.6 revision 1 Commodity Tariff server with a validated,

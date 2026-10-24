@@ -12,13 +12,16 @@ The calendar accepts day entries, weekday patterns, dated calendar periods,
 individual day overlays, price components, and tariff periods. Publication
 checks size limits, unique IDs, references, weekday coverage, sorted dates,
 entry order, price values, and label lengths before changing visible state.
-An absent tariff exposes null metadata and empty component and period lists. Call
+Rotating day patterns are selected in `DayPatternIDs` order, starting at each
+calendar period's first UTC day. When the first period starts immediately,
+the publication day anchors its rotation and persists across restart. An absent
+tariff exposes null metadata and empty component and period lists. Call
 `clear_tariff` when the provider withdraws a publication.
 
 The schedule projection uses UTC dates. Providers whose tariff follows a local
 time zone must convert their timetable before publishing or supply a host
-scheduler that refreshes at the appropriate transitions. Rotating day
-patterns and randomized day entries are not supported. Friendly Credit,
+scheduler that refreshes at the appropriate transitions. Randomized day
+entries are not supported. Friendly Credit,
 Auxiliary Load, Peak Period, Power Threshold, and Randomization feature bits
 are not advertised. Price components must carry a price or price level.
 The lookup commands retain only the current published tariff, so historical
