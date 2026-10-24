@@ -2,7 +2,7 @@ require "./cluster"
 
 module Matter
   module Cluster
-    # Matter 1.6 Camera AV Stream Management revision 2, Audio and Video features.
+    # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video and Snapshot features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -10,6 +10,7 @@ module Matter
 
       feature :audio, bit: 0
       feature :video, bit: 1
+      feature :snapshot, bit: 2
       feature :privacy, bit: 3
 
       MAX_STREAM_ID          = 65_534_u16
@@ -18,6 +19,8 @@ module Matter
       MAX_CHANNEL_COUNT      =       8_u8
       MAX_VOLUME_LEVEL       =     254_u8
       MAX_KEY_FRAME_INTERVAL = 65_500_u16
+      MAX_SNAPSHOT_QUALITY   =     100_u8
+      MAX_SNAPSHOT_DATA_SIZE =     65_000
       SUPPORTED_BIT_DEPTHS   = [8_u8, 16_u8, 24_u8, 32_u8]
 
       enum StreamUsage : UInt8
@@ -32,6 +35,11 @@ module Matter
         AacLc = 1
       end
 
+      enum ImageCodec : UInt8
+        Jpeg = 0
+        Heic = 1
+      end
+
       enum VideoCodec : UInt8
         H264 = 0
         Hevc = 1
@@ -41,6 +49,7 @@ module Matter
 
       struct VideoResolution
         include TLV::Serializable
+        include Storage::Record
 
         @[TLV::Field(tag: 0)]
         getter width : UInt16
@@ -376,6 +385,179 @@ module Matter
         end
       end
 
+      struct SnapshotCapability
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter resolution : VideoResolution
+
+        @[TLV::Field(tag: 1)]
+        getter max_frame_rate : UInt16
+
+        @[TLV::Field(tag: 2)]
+        getter image_codec : ImageCodec
+
+        @[TLV::Field(tag: 3)]
+        getter? requires_encoded_pixels : Bool
+
+        @[TLV::Field(tag: 4)]
+        getter requires_hardware_encoder : Bool?
+
+        def initialize(@resolution : VideoResolution, @max_frame_rate : UInt16,
+                       @image_codec : ImageCodec, @requires_encoded_pixels : Bool,
+                       @requires_hardware_encoder : Bool? = nil)
+          raise ArgumentError.new("snapshot frame rate must be positive") if @max_frame_rate.zero?
+          raise ArgumentError.new("unsupported snapshot codec") unless @image_codec.in?(ImageCodec::Jpeg, ImageCodec::Heic)
+          if @requires_encoded_pixels && @requires_hardware_encoder.nil?
+            raise ArgumentError.new("encoded snapshot capability requires hardware encoder declaration")
+          end
+          if !@requires_encoded_pixels && !@requires_hardware_encoder.nil?
+            raise ArgumentError.new("unencoded snapshot capability must omit hardware encoder declaration")
+          end
+        end
+      end
+
+      struct SnapshotStreamAllocateRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter image_codec : ImageCodec
+
+        @[TLV::Field(tag: 1)]
+        getter max_frame_rate : UInt16
+
+        @[TLV::Field(tag: 2)]
+        getter min_resolution : VideoResolution
+
+        @[TLV::Field(tag: 3)]
+        getter max_resolution : VideoResolution
+
+        @[TLV::Field(tag: 4)]
+        getter quality : UInt8
+
+        @[TLV::Field(tag: 5)]
+        getter watermark_enabled : Bool?
+
+        @[TLV::Field(tag: 6)]
+        getter osd_enabled : Bool?
+
+        def initialize(@image_codec : ImageCodec, @max_frame_rate : UInt16,
+                       @min_resolution : VideoResolution, @max_resolution : VideoResolution,
+                       @quality : UInt8, @watermark_enabled : Bool? = nil, @osd_enabled : Bool? = nil)
+        end
+      end
+
+      struct SnapshotStream
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0)]
+        getter snapshot_stream_id : UInt16
+
+        @[TLV::Field(tag: 1)]
+        getter image_codec : ImageCodec
+
+        @[TLV::Field(tag: 2)]
+        getter frame_rate : UInt16
+
+        @[TLV::Field(tag: 3)]
+        getter min_resolution : VideoResolution
+
+        @[TLV::Field(tag: 4)]
+        getter max_resolution : VideoResolution
+
+        @[TLV::Field(tag: 5)]
+        getter quality : UInt8
+
+        @[TLV::Field(tag: 6)]
+        getter reference_count : UInt8
+
+        @[TLV::Field(tag: 7)]
+        getter? encoded_pixels : Bool
+
+        @[TLV::Field(tag: 8)]
+        getter? hardware_encoder : Bool
+
+        def initialize(@snapshot_stream_id : UInt16, @image_codec : ImageCodec,
+                       @frame_rate : UInt16, @min_resolution : VideoResolution,
+                       @max_resolution : VideoResolution, @quality : UInt8,
+                       @reference_count : UInt8, @encoded_pixels : Bool,
+                       @hardware_encoder : Bool)
+        end
+
+        def matches?(request : SnapshotStreamAllocateRequest) : Bool
+          @image_codec == request.image_codec && @frame_rate == request.max_frame_rate &&
+            @min_resolution == request.min_resolution && @max_resolution == request.max_resolution &&
+            @quality == request.quality
+        end
+
+        def with_reference_count(count : UInt8) : SnapshotStream
+          SnapshotStream.new(@snapshot_stream_id, @image_codec, @frame_rate, @min_resolution,
+            @max_resolution, @quality, count, @encoded_pixels, @hardware_encoder)
+        end
+      end
+
+      struct SnapshotStreamAllocateResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter snapshot_stream_id : UInt16
+
+        def initialize(@snapshot_stream_id : UInt16)
+        end
+      end
+
+      struct SnapshotStreamDeallocateRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter snapshot_stream_id : UInt16
+
+        def initialize(@snapshot_stream_id : UInt16)
+        end
+      end
+
+      struct CaptureSnapshotRequest
+        include TLV::Serializable
+
+        # The nullable auto-selection form awaits tlv FieldState support.
+        @[TLV::Field(tag: 0)]
+        getter snapshot_stream_id : UInt16
+
+        @[TLV::Field(tag: 1)]
+        getter requested_resolution : VideoResolution
+
+        def initialize(@snapshot_stream_id : UInt16, @requested_resolution : VideoResolution)
+        end
+      end
+
+      struct SnapshotImage
+        getter data : Bytes
+        getter image_codec : ImageCodec
+        getter resolution : VideoResolution
+
+        def initialize(data : Bytes, @image_codec : ImageCodec, @resolution : VideoResolution)
+          @data = data.dup
+        end
+      end
+
+      struct CaptureSnapshotResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter data : Bytes
+
+        @[TLV::Field(tag: 1)]
+        getter image_codec : ImageCodec
+
+        @[TLV::Field(tag: 2)]
+        getter resolution : VideoResolution
+
+        def initialize(data : Bytes, @image_codec : ImageCodec, @resolution : VideoResolution)
+          @data = data.dup
+        end
+      end
+
       struct SetStreamPrioritiesRequest
         include TLV::Serializable
 
@@ -386,18 +568,20 @@ module Matter
         end
       end
 
-      attribute 0x0000, :max_concurrent_encoders, UInt8, default: 0_u8, fixed: true, requires: :video
-      attribute 0x0001, :max_encoded_pixel_rate, UInt32, default: 0_u32, fixed: true, requires: :video
+      attribute 0x0000, :max_concurrent_encoders, UInt8, default: 0_u8, fixed: true, present_if: :video_or_snapshot?
+      attribute 0x0001, :max_encoded_pixel_rate, UInt32, default: 0_u32, fixed: true, present_if: :video_or_snapshot?
       attribute 0x0002, :video_sensor_params, VideoSensorParams, computed: true, fixed: true, requires: :video
       attribute 0x0004, :min_viewport_resolution, VideoResolution, computed: true, fixed: true, requires: :video
       attribute 0x0005, :rate_distortion_trade_off_points, Array(RateDistortionPoint), computed: true, fixed: true, requires: :video
       attribute 0x0006, :max_content_buffer_size, UInt32, default: 0_u32, fixed: true
       attribute 0x0007, :microphone_capabilities, AudioCapabilities, computed: true, fixed: true, requires: :audio
+      attribute 0x000A, :snapshot_capabilities, Array(SnapshotCapability), computed: true, fixed: true, requires: :snapshot
       attribute 0x000B, :max_network_bandwidth, UInt32, default: 0_u32, fixed: true
       attribute 0x000C, :current_frame_rate, UInt16, default: 0_u16, requires: :video
       attribute 0x000E, :supported_stream_usages, Array(StreamUsage), computed: true, fixed: true
       attribute 0x000F, :allocated_video_streams, Array(VideoStream), computed: true, requires: :video
       attribute 0x0010, :allocated_audio_streams, Array(AudioStream), computed: true, requires: :audio
+      attribute 0x0011, :allocated_snapshot_streams, Array(SnapshotStream), computed: true, requires: :snapshot
       attribute 0x0012, :stream_usage_priorities, Array(StreamUsage), computed: true
       attribute 0x0013, :soft_recording_privacy_mode_enabled, Bool, default: false,
         writable: true, write_access: :operate, persist: true, requires: :privacy, on_change: :notify_privacy
@@ -431,6 +615,12 @@ module Matter
         response: VideoStreamAllocateResponse, response_id: 0x04, access: :manage, requires: :video
       command 0x06, :video_stream_deallocate, request: VideoStreamDeallocateRequest,
         access: :manage, requires: :video
+      command 0x07, :snapshot_stream_allocate, request: SnapshotStreamAllocateRequest,
+        response: SnapshotStreamAllocateResponse, response_id: 0x08, access: :manage, requires: :snapshot
+      command 0x0A, :snapshot_stream_deallocate, request: SnapshotStreamDeallocateRequest,
+        access: :manage, requires: :snapshot
+      command 0x0C, :capture_snapshot, request: CaptureSnapshotRequest,
+        response: CaptureSnapshotResponse, response_id: 0x0D, access: :operate, requires: :snapshot
       command 0x0B, :set_stream_priorities, request: SetStreamPrioritiesRequest,
         access: :administer, handler: :apply_stream_priorities
 
@@ -438,6 +628,12 @@ module Matter
       @audio_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
       @video_allocate_callback : Proc(VideoStreamAllocateRequest, UInt16, InteractionModel::Status)?
       @video_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
+      @snapshot_allocate_callback : Proc(SnapshotStreamAllocateRequest, UInt16, InteractionModel::Status)?
+      @snapshot_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
+      @snapshot_capture_callback : Proc(SnapshotStream, VideoResolution, SnapshotImage | InteractionModel::Status)?
+      @next_snapshot_stream_id : UInt16 = 0_u16
+      @snapshot_capabilities : Array(SnapshotCapability)
+      @allocated_snapshot_streams : Array(SnapshotStream)
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @delivery_observers = [] of Proc(Nil)
@@ -463,6 +659,7 @@ module Matter
                      @video_sensor_params : VideoSensorParams? = nil,
                      @min_viewport_resolution : VideoResolution? = nil,
                      rate_distortion_trade_off_points : Array(RateDistortionPoint) = [] of RateDistortionPoint,
+                     snapshot_capabilities : Array(SnapshotCapability) = [] of SnapshotCapability,
                      @max_concurrent_encoders : UInt8 = 0_u8,
                      @max_encoded_pixel_rate : UInt32 = 0_u32,
                      @microphone_min_level : UInt8 = 0_u8,
@@ -470,11 +667,17 @@ module Matter
                      @microphone_volume_level : UInt8 = 50_u8,
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        raise ArgumentError.new("Audio or Video feature is required") unless @feature_map.audio? || @feature_map.video?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Privacy).value) == 0
+        raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
         end
         raise ArgumentError.new("Audio feature requires microphone capabilities") if @feature_map.audio? && !@microphone_capabilities
+        if @feature_map.snapshot?
+          raise ArgumentError.new("Snapshot feature requires capabilities") if snapshot_capabilities.empty?
+          raise ArgumentError.new("duplicate snapshot capability") unless snapshot_capabilities.uniq.size == snapshot_capabilities.size
+          raise ArgumentError.new("Snapshot feature requires encoders and pixel rate") if @max_concurrent_encoders.zero? || @max_encoded_pixel_rate.zero?
+        end
+        @snapshot_capabilities = snapshot_capabilities.dup
         if @feature_map.video?
           sensor = @video_sensor_params || raise ArgumentError.new("Video feature requires sensor parameters")
           viewport = @min_viewport_resolution || raise ArgumentError.new("Video feature requires viewport resolution")
@@ -509,6 +712,7 @@ module Matter
         @stream_usage_priorities = usages.dup
         @allocated_audio_streams = [] of AudioStream
         @allocated_video_streams = [] of VideoStream
+        @allocated_snapshot_streams = [] of SnapshotStream
       end
 
       def microphone_capabilities : AudioCapabilities
@@ -525,6 +729,30 @@ module Matter
 
       def rate_distortion_trade_off_points : Array(RateDistortionPoint)
         @rate_distortion_trade_off_points.dup
+      end
+
+      def video_or_snapshot? : Bool
+        @feature_map.video? || @feature_map.snapshot?
+      end
+
+      def snapshot_capabilities : Array(SnapshotCapability)
+        @snapshot_capabilities.dup
+      end
+
+      def allocated_snapshot_streams : Array(SnapshotStream)
+        @allocated_snapshot_streams.dup
+      end
+
+      def on_snapshot_allocate(&block : SnapshotStreamAllocateRequest, UInt16 -> InteractionModel::Status) : Nil
+        @snapshot_allocate_callback = block
+      end
+
+      def on_snapshot_deallocate(&block : UInt16 -> InteractionModel::Status) : Nil
+        @snapshot_deallocate_callback = block
+      end
+
+      def on_snapshot_capture(&block : SnapshotStream, VideoResolution -> SnapshotImage | InteractionModel::Status) : Nil
+        @snapshot_capture_callback = block
       end
 
       def allocated_video_streams : Array(VideoStream)
@@ -628,7 +856,7 @@ module Matter
         end
 
         pixel_rate = request.max_resolution.width.to_u64 * request.max_resolution.height * request.max_frame_rate
-        return InteractionModel::Status.resource_exhausted if @allocated_video_streams.size >= @max_concurrent_encoders
+        return InteractionModel::Status.resource_exhausted if used_encoders >= @max_concurrent_encoders
         return InteractionModel::Status.resource_exhausted if used_pixel_rate + pixel_rate > @max_encoded_pixel_rate
         return InteractionModel::Status.resource_exhausted if used_bandwidth + request.max_bit_rate.to_u64 > @max_network_bandwidth
         callback = @video_allocate_callback || return InteractionModel::Status.invalid_in_state
@@ -700,8 +928,69 @@ module Matter
         InteractionModel::Status.success
       end
 
+      def snapshot_stream_allocate(request : SnapshotStreamAllocateRequest) : InteractionModel::Status | SnapshotStreamAllocateResponse
+        return InteractionModel::Status.invalid_command unless request.watermark_enabled.nil? && request.osd_enabled.nil?
+        capability = matching_snapshot_capability(request) || return InteractionModel::Status.constraint_error
+        if index = @allocated_snapshot_streams.index(&.matches?(request))
+          stream = @allocated_snapshot_streams[index]
+          return InteractionModel::Status.resource_exhausted if stream.reference_count == MAX_REFERENCE_COUNT
+          @allocated_snapshot_streams[index] = stream.with_reference_count(stream.reference_count + 1_u8)
+          increment_version_and_notify(ATTR_ALLOCATED_SNAPSHOT_STREAMS)
+          return SnapshotStreamAllocateResponse.new(stream.snapshot_stream_id)
+        end
+        encoded_pixels = capability.requires_encoded_pixels?
+        hardware_encoder = capability.requires_hardware_encoder || false
+        pixel_rate = request.max_resolution.width.to_u64 * request.max_resolution.height * request.max_frame_rate
+        return InteractionModel::Status.resource_exhausted if hardware_encoder && used_encoders >= @max_concurrent_encoders
+        return InteractionModel::Status.resource_exhausted if encoded_pixels && used_pixel_rate + pixel_rate > @max_encoded_pixel_rate
+        callback = @snapshot_allocate_callback || return InteractionModel::Status.invalid_in_state
+        id = next_available_snapshot_id || return InteractionModel::Status.resource_exhausted
+        status = callback.call(request, id)
+        return status unless status.success?
+        @allocated_snapshot_streams << SnapshotStream.new(id, request.image_codec, request.max_frame_rate,
+          request.min_resolution, request.max_resolution, request.quality, 1_u8, encoded_pixels, hardware_encoder)
+        @next_snapshot_stream_id = advance_audio_id(id)
+        increment_version_and_notify(ATTR_ALLOCATED_SNAPSHOT_STREAMS)
+        SnapshotStreamAllocateResponse.new(id)
+      end
+
+      def snapshot_stream_deallocate(request : SnapshotStreamDeallocateRequest) : InteractionModel::Status
+        index = @allocated_snapshot_streams.index { |stream| stream.snapshot_stream_id == request.snapshot_stream_id }
+        return InteractionModel::Status.not_found unless index
+        stream = @allocated_snapshot_streams[index]
+        if stream.reference_count > 1_u8
+          @allocated_snapshot_streams[index] = stream.with_reference_count(stream.reference_count - 1_u8)
+        else
+          callback = @snapshot_deallocate_callback || return InteractionModel::Status.invalid_in_state
+          status = callback.call(stream.snapshot_stream_id)
+          return status unless status.success?
+          @allocated_snapshot_streams.delete_at(index)
+        end
+        increment_version_and_notify(ATTR_ALLOCATED_SNAPSHOT_STREAMS)
+        InteractionModel::Status.success
+      end
+
+      def capture_snapshot(request : CaptureSnapshotRequest) : InteractionModel::Status | CaptureSnapshotResponse
+        stream = @allocated_snapshot_streams.find(&.snapshot_stream_id.==(request.snapshot_stream_id))
+        return InteractionModel::Status.not_found unless stream
+        resolution = request.requested_resolution
+        return InteractionModel::Status.constraint_error if resolution.width < stream.min_resolution.width ||
+                                                            resolution.height < stream.min_resolution.height ||
+                                                            resolution.width > stream.max_resolution.width ||
+                                                            resolution.height > stream.max_resolution.height
+        return InteractionModel::Status.invalid_in_state unless video_delivery_allowed?(StreamUsage::LiveView)
+        callback = @snapshot_capture_callback || return InteractionModel::Status.invalid_in_state
+        image = callback.call(stream, resolution)
+        return image if image.is_a?(InteractionModel::Status)
+        return InteractionModel::Status.constraint_error unless image.image_codec == stream.image_codec &&
+                                                                image.resolution == resolution
+        return InteractionModel::Status.resource_exhausted if image.data.size > MAX_SNAPSHOT_DATA_SIZE ||
+                                                              image.data.size > @max_content_buffer_size
+        CaptureSnapshotResponse.new(image.data, image.image_codec, image.resolution)
+      end
+
       def apply_stream_priorities(request : SetStreamPrioritiesRequest) : InteractionModel::Status
-        return InteractionModel::Status.invalid_in_state unless @allocated_audio_streams.empty? && @allocated_video_streams.empty?
+        return InteractionModel::Status.invalid_in_state unless @allocated_audio_streams.empty? && @allocated_video_streams.empty? && @allocated_snapshot_streams.empty?
         priorities = request.stream_priorities
         return InteractionModel::Status.constraint_error if priorities.empty? || priorities.uniq.size != priorities.size
         return InteractionModel::Status.constraint_error unless priorities.all? { |usage| @supported_stream_usages.includes?(usage) }
@@ -709,6 +998,21 @@ module Matter
         @stream_usage_priorities = priorities.dup
         increment_version_and_notify(ATTR_STREAM_USAGE_PRIORITIES)
         InteractionModel::Status.success
+      end
+
+      private def matching_snapshot_capability(request : SnapshotStreamAllocateRequest) : SnapshotCapability?
+        return if request.max_frame_rate.zero? || request.quality.zero? || request.quality > MAX_SNAPSHOT_QUALITY
+        return if request.min_resolution.width.zero? || request.min_resolution.height.zero? ||
+                  request.max_resolution.width.zero? || request.max_resolution.height.zero?
+        return if request.min_resolution.width > request.max_resolution.width ||
+                  request.min_resolution.height > request.max_resolution.height
+        @snapshot_capabilities.find do |capability|
+          capability.image_codec == request.image_codec && capability.max_frame_rate >= request.max_frame_rate &&
+            capability.resolution.width >= request.min_resolution.width &&
+            capability.resolution.height >= request.min_resolution.height &&
+            capability.resolution.width <= request.max_resolution.width &&
+            capability.resolution.height <= request.max_resolution.height
+        end
       end
 
       private def valid_audio_request?(request : AudioStreamAllocateRequest) : Bool
@@ -757,7 +1061,13 @@ module Matter
       private def used_pixel_rate : UInt64
         @allocated_video_streams.sum(0_u64) do |stream|
           stream.max_resolution.width.to_u64 * stream.max_resolution.height * stream.max_frame_rate
+        end + @allocated_snapshot_streams.sum(0_u64) do |stream|
+          stream.encoded_pixels? ? stream.max_resolution.width.to_u64 * stream.max_resolution.height * stream.frame_rate : 0_u64
         end
+      end
+
+      private def used_encoders : Int32
+        @allocated_video_streams.size + @allocated_snapshot_streams.count(&.hardware_encoder?)
       end
 
       private def advance_audio_id(id : UInt16) : UInt16
@@ -779,6 +1089,15 @@ module Matter
           return candidate unless @allocated_video_streams.any?(&.video_stream_id.==(candidate))
           candidate = advance_audio_id(candidate)
           return if candidate == @next_video_stream_id
+        end
+      end
+
+      private def next_available_snapshot_id : UInt16?
+        candidate = @next_snapshot_stream_id
+        loop do
+          return candidate unless @allocated_snapshot_streams.any?(&.snapshot_stream_id.==(candidate))
+          candidate = advance_audio_id(candidate)
+          return if candidate == @next_snapshot_stream_id
         end
       end
 
@@ -805,6 +1124,8 @@ module Matter
         document["stream_usage_priorities"] = Storage::Record.encode(@stream_usage_priorities)
         document["next_audio_stream_id"] = @next_audio_stream_id.to_i64
         document["next_video_stream_id"] = @next_video_stream_id.to_i64
+        document["next_snapshot_stream_id"] = @next_snapshot_stream_id.to_i64
+        document["allocated_snapshot_streams"] = Storage::Record.encode(@allocated_snapshot_streams) if @feature_map.snapshot?
         document["viewport"] = Storage::Record.encode(@viewport) if @feature_map.video?
       end
 
@@ -824,10 +1145,30 @@ module Matter
           id = Storage::Record.decode(encoded_id, UInt16, "next_video_stream_id")
           @next_video_stream_id = id if id <= MAX_STREAM_ID
         end
+        if @feature_map.snapshot?
+          if encoded_id = document["next_snapshot_stream_id"]?
+            id = Storage::Record.decode(encoded_id, UInt16, "next_snapshot_stream_id")
+            @next_snapshot_stream_id = id if id <= MAX_STREAM_ID
+          end
+          if encoded_streams = document["allocated_snapshot_streams"]?
+            streams = Storage::Record.decode(encoded_streams, Array(SnapshotStream), "allocated_snapshot_streams")
+            @allocated_snapshot_streams = streams if streams.all? { |stream| valid_restored_snapshot?(stream) } &&
+                                                     streams.map(&.snapshot_stream_id).to_set.size == streams.size
+          end
+        end
         if @feature_map.video? && (encoded_viewport = document["viewport"]?)
           value = Storage::Record.decode(encoded_viewport, Viewport, "viewport")
           @viewport = value if valid_viewport?(value)
         end
+      end
+
+      private def valid_restored_snapshot?(stream : SnapshotStream) : Bool
+        return false if stream.snapshot_stream_id > MAX_STREAM_ID || stream.reference_count.zero?
+        request = SnapshotStreamAllocateRequest.new(stream.image_codec, stream.frame_rate,
+          stream.min_resolution, stream.max_resolution, stream.quality)
+        capability = matching_snapshot_capability(request) || return false
+        stream.encoded_pixels? == capability.requires_encoded_pixels? &&
+          stream.hardware_encoder? == (capability.requires_hardware_encoder || false)
       end
 
       private def after_restore_state : Nil
