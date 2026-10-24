@@ -654,6 +654,13 @@ used by Auto mode while LocalTemperature always reads as TLV null. A direct
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
 The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, occupied-setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. The `examples/matter_thermostat_events_device.cr` fixture exercises event reads with official chip-tool. The Thermostat cluster still advertises revision 9; the Matter 1.6 revision 11 preset, schedule, occupancy, and suggestion features remain unavailable.
 
+For host-side preset preparation, `Thermostat#configure_presets` accepts typed
+`PresetType` and `Preset` values. `activate_preset` applies a configured preset's
+setpoints; a later manual setpoint change clears its active handle. The list and
+active handle persist with cluster state. This API is preparatory: the PRES bit,
+Preset attributes, and SetActivePreset wire command remain unavailable until
+Matter's atomic-write transaction for the Presets list is implemented.
+
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
 Register `configure_host(accept, sleep)` to accept or refuse requests and to
 enter low power. The admission callback returns a status synchronously and must
