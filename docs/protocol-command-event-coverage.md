@@ -4,7 +4,6 @@ This compares canonical Matter XML IDs with Crystal cluster DSL declarations
 for implemented standard clusters. A declared ID does not prove a working handler,
 correct payload, event emission, feature gating, or interoperability. This is not a completeness claim.
 Feature and complex conditions are displayed for manual review, not evaluated.
-Thermostat TEVT covers the base and AUTO events; OCC, MSCH and PRES remain unavailable.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
