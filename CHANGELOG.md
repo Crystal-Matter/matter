@@ -58,6 +58,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
 
+### Device Energy Management start time adjustment
+
+- Add the Matter 1.6 PFR+STA profile with nullable earliest start, bounded
+  latest end, host-approved rescheduling, CancelRequest, opt-out
+  cancellation, and immediate command-driven Forecast reports. The synthetic
+  washer-dryer exercises shift, cancel, and restart with official chip-tool.
+
 ### Device Energy Management forecast reporting
 
 - Add typed Matter 1.6 PFR and SFR reporting profiles for the Device Energy
@@ -65,7 +72,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   match the selected feature, ForecastID advances on updates, progress fields
   remain live without subscription churn, and forecasts reset on restart.
   The synthetic washer reports a two-stage PFR forecast to official chip-tool.
-  STA, PAU, FA, and CON remain unadvertised for later implementation.
+  PAU, FA, and CON remain unadvertised for later implementation.
 
 ### Device Energy Management Power Adjustment
 
