@@ -959,9 +959,46 @@ describe "three provisioned Joint Fabric Administrators" do
     reconciled_datastore = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-datastore-removed", 0xA102_u64))
     reconciled_datastore.status.should eq("ok"), reconciled_datastore.error.to_s
-    removed = jfa_command("matter_joint_fabric_joiner",
+    interrupted_anchor_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
-        interrupt_after_remove_admin: true))
+        interrupt_after_anchor_rotation: true))
+    interrupted_anchor_rotation.status.should eq("error")
+    interrupted_anchor_rotation.error.to_s.should contain("Injected lost Anchor rotation acknowledgement")
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    anchor_rotation_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    anchor_rotation_retry.status.should eq("error")
+    anchor_rotation_retry.error.to_s.should contain("needs reconciliation")
+    anchor_rotation_nonce = Random::Secure.hex(32)
+    reconciled_anchor_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-anchor-rotated", 0xA102_u64,
+        nonce: anchor_rotation_nonce))
+    reconciled_anchor_rotation.status.should eq("ok"), reconciled_anchor_rotation.error.to_s
+
+    interrupted_participant_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+        interrupt_after_participant_rotation: true))
+    interrupted_participant_rotation.status.should eq("error")
+    interrupted_participant_rotation.error.to_s.should contain("Injected lost participant rotation acknowledgement")
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    participant_rotation_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    participant_rotation_retry.status.should eq("error")
+    participant_rotation_retry.error.to_s.should contain("needs reconciliation")
+    participant_rotation_nonce = Random::Secure.hex(32)
+    reconciled_participant_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotated", 0xA102_u64,
+        nonce: participant_rotation_nonce))
+    reconciled_participant_rotation.status.should eq("ok"), reconciled_participant_rotation.error.to_s
+    removed = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     removed.status.should eq("ok"), removed.error.to_s
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)

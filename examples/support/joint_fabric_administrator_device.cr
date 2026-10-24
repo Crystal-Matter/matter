@@ -138,6 +138,8 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_remove_admin : Bool = false
       getter? interrupt_before_transfer_follow_up : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
+      getter? interrupt_after_anchor_rotation : Bool = false
+      getter? interrupt_after_participant_rotation : Bool = false
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
@@ -154,7 +156,9 @@ module MatterJointFabricAdministrator
                      @peer_port : Int32? = nil,
                      @interrupt_after_remove_admin : Bool = false,
                      @interrupt_before_transfer_follow_up : Bool = false,
-                     @interrupt_after_transfer_request : Bool = false)
+                     @interrupt_after_transfer_request : Bool = false,
+                     @interrupt_after_anchor_rotation : Bool = false,
+                     @interrupt_after_participant_rotation : Bool = false)
       end
     end
 
@@ -196,7 +200,9 @@ module MatterJointFabricAdministrator
     class InterruptedRemovalPort < Matter::Controller::AdministratorRemoval::Port
       def initialize(@delegate : Matter::Controller::AdministratorRemoval::Port,
                      @interrupt_after_remove_fabric : Bool = false,
-                     @interrupt_after_remove_admin : Bool = false)
+                     @interrupt_after_remove_admin : Bool = false,
+                     @interrupt_after_anchor_rotation : Bool = false,
+                     @interrupt_after_participant_rotation : Bool = false)
       end
 
       def remove_outgoing_fabric! : Nil
@@ -215,10 +221,16 @@ module MatterJointFabricAdministrator
 
       def rotate_anchor! : Nil
         @delegate.rotate_anchor!
+        if @interrupt_after_anchor_rotation
+          raise Matter::TransportError.new("Injected lost Anchor rotation acknowledgement")
+        end
       end
 
       def rotate_participant!(node_id : UInt64) : Nil
         @delegate.rotate_participant!(node_id)
+        if @interrupt_after_participant_rotation
+          raise Matter::TransportError.new("Injected lost participant rotation acknowledgement")
+        end
       end
     end
 
@@ -1422,7 +1434,9 @@ module MatterJointFabricAdministrator
     # approved removal. The list contains comma-separated hexadecimal Node IDs.
     private def remove_administrator(outgoing_node_id : UInt64,
                                      interrupt_after_remove_fabric : Bool = false,
-                                     interrupt_after_remove_admin : Bool = false) : Nil
+                                     interrupt_after_remove_admin : Bool = false,
+                                     interrupt_after_anchor_rotation : Bool = false,
+                                     interrupt_after_participant_rotation : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Another Joint Fabric operation is running") if @removal_in_progress || @transfer_in_progress
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -1444,6 +1458,19 @@ module MatterJointFabricAdministrator
                   Matter::Controller::AdministratorRemoval::Journal.new(outgoing_node_id)
                 end
       return if journal.stage.completed?
+      if journal.stage.ready? && journal.fabric_id.nil? &&
+         journal.root_public_key.nil? && journal.anchor_node_id.nil?
+        journal.fabric_id = own_fabric.fabric_id
+        journal.root_public_key = own_fabric.root_public_key
+        journal.anchor_node_id = own_fabric.node_id
+        persistence.write_app_document(document_name, journal.to_document)
+        persistence.flush
+      end
+      unless journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
+      end
       if journal.administrator_cat_version.nil?
         unless journal.stage.ready?
           raise Matter::CommissioningError.new("Interrupted removal lacks its CAT version; reconcile before retry")
@@ -1534,9 +1561,11 @@ module MatterJointFabricAdministrator
             tighten_administrator_acl(im, refreshed_session, peer, admin_version)
             nil
           })
-        effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin
+        effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin ||
+                            interrupt_after_anchor_rotation || interrupt_after_participant_rotation
                            InterruptedRemovalPort.new(port, interrupt_after_remove_fabric,
-                             interrupt_after_remove_admin)
+                             interrupt_after_remove_admin, interrupt_after_anchor_rotation,
+                             interrupt_after_participant_rotation)
                          else
                            port
                          end
@@ -1579,6 +1608,11 @@ module MatterJointFabricAdministrator
       document = persistence.app_document(document_name) ||
                  raise Matter::ConfigurationError.new("Administrator removal journal is absent")
       journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      unless journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
+      end
       unless journal.stage.removing_fabric? && journal.outgoing_node_id == outgoing_node_id
         raise Matter::ConfigurationError.new("Administrator removal is not awaiting fabric-removal reconciliation")
       end
@@ -1669,12 +1703,90 @@ module MatterJointFabricAdministrator
       document = persistence.app_document(document_name) ||
                  raise Matter::ConfigurationError.new("Administrator removal journal is absent")
       journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      unless journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
+      end
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(journal, datastore,
         ->(state : Matter::Controller::AdministratorRemoval::Journal) {
           persistence.write_app_document(document_name, state.to_document)
           persistence.flush
           nil
         })
+    end
+
+    # The nonce is supplied by the host performing recovery. A fresh CASE
+    # session and signed OperationalCredentials response bind the observed NOC
+    # to that nonce, the target Node ID, and this journal's fabric and CAT.
+    private def reconcile_removal_rotation(outgoing_node_id : UInt64, nonce : String?,
+                                           anchor : Bool) : Nil
+      raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
+      unless nonce && nonce.size == 64 && nonce.matches?(/\A[0-9a-fA-F]{64}\z/)
+        raise Matter::ConfigurationError.new("A 32-byte hexadecimal rotation nonce is required")
+      end
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+      root_certificate = own_fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
+      datastore = joint_fabric_datastore
+      unless datastore.status.state.committed? && datastore.anchor_node_id == own_fabric.node_id &&
+             datastore.admin_list.none?(&.node_id.==(outgoing_node_id))
+        raise Matter::AuthenticationError.new("Removal Datastore does not match pending rotation")
+      end
+      document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+      document = persistence.app_document(document_name) ||
+                 raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+      journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      unless journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
+      end
+      stage = anchor ? Matter::Controller::AdministratorRemoval::Stage::RotatingAnchor : Matter::Controller::AdministratorRemoval::Stage::RotatingParticipant
+      unless journal.stage == stage && journal.outgoing_node_id == outgoing_node_id
+        raise Matter::ConfigurationError.new("Removal journal is not awaiting this rotation")
+      end
+      version = journal.administrator_cat_version ||
+                raise Matter::ConfigurationError.new("Removal journal has no CAT version")
+      anchor_version = if anchor
+                         datastore.group_list.find(&.group_cat.==(0xFFFE_u16)).try(&.group_cat_version) ||
+                           raise Matter::ConfigurationError.new("Removal Datastore has no Anchor CAT version")
+                       end
+      target_node_id = if anchor
+                         raise Matter::ConfigurationError.new("Anchor rotation has an active participant") if journal.active_node_id
+                         own_fabric.node_id
+                       else
+                         journal.active_node_id || raise Matter::ConfigurationError.new("Participant rotation has no active Node ID")
+                       end
+      if target_node_id == outgoing_node_id || journal.rotated_nodes.includes?(target_node_id) ||
+         (!anchor && datastore.admin_list.none?(&.node_id.==(target_node_id)))
+        raise Matter::AuthenticationError.new("Rotation target differs from pending Administrator")
+      end
+      scanner = Matter::Controller::Scanner.new
+      controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
+      identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
+      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      begin
+        scanner.start
+        scanner.query_operational
+        peer = anchor ? Socket::IPAddress.new("127.0.0.1", port) : resolve_transfer_peer(scanner, identity.compressed_fabric_id, target_node_id)
+        session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, identity,
+          peer_node_id: target_node_id)
+        im = Matter::Controller::ImClient.new(client)
+        Matter::Controller::AdministratorRemoval::RotationInspection.verify_completed!(im, session,
+          peer, root_certificate, own_fabric.fabric_id, own_fabric.root_public_key,
+          target_node_id, version, nonce.hexbytes, anchor_cat_version: anchor_version)
+        Matter::Controller::AdministratorRemoval::Workflow.reconcile_journal!(journal,
+          Matter::Controller::AdministratorRemoval::Stage::AnchorRotated,
+          ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+            persistence.write_app_document(document_name, state.to_document)
+            persistence.flush
+            nil
+          }, rotated_node_id: anchor ? nil : target_node_id,
+          participant_completed: anchor ? nil : true)
+      ensure
+        client.close
+        scanner.close
+      end
     end
 
     private def update_datastore_administrator_acl_version(datastore : Datastore,
@@ -1806,7 +1918,8 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
-              request.interrupt_after_remove_admin?)
+              request.interrupt_after_remove_admin?, request.interrupt_after_anchor_rotation?,
+              request.interrupt_after_participant_rotation?)
             CommandResult.new("ok")
           when "inspect-fabric"
             fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Fabric ID is required")
@@ -1840,6 +1953,12 @@ module MatterJointFabricAdministrator
           when "reconcile-datastore-removed"
             reconcile_datastore_removed(request.node_id)
             CommandResult.new("ok")
+          when "reconcile-anchor-rotated"
+            reconcile_removal_rotation(request.node_id, request.nonce, true)
+            CommandResult.new("ok", nonce: request.nonce)
+          when "reconcile-participant-rotated"
+            reconcile_removal_rotation(request.node_id, request.nonce, false)
+            CommandResult.new("ok", nonce: request.nonce)
           when "finalize-commissioning"
             certificate = finalize_commissioning(request)
             CommandResult.new("ok", nonce: request.nonce, certificate: certificate)
