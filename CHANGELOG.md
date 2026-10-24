@@ -28,6 +28,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Commissioning, restart, and Anchor transfer, using a test HTTPS DCL mirror
   with removal and mismatch denial checks.
 
+### WebRTC Transport Provider signaling
+
+- Add an opt-in Matter 1.6 revision 2 WebRTC Transport Provider signaling
+  server with typed commands, fabric and peer scoped session lifecycle,
+  automatic privacy and stream-release teardown, and a host WebRTC peer
+  interface. A synthetic chip-tool fixture checks wire behavior but does not
+  establish a WebRTC media connection; independent SDP/ICE media proof remains.
+
 ### Camera AV Stream Management audio
 
 - Add the Matter 1.6 revision 2 Audio feature with typed stream allocation and
