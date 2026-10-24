@@ -53,6 +53,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
 
+### Device Energy Management constraint based forecasts
+
+- Add a Matter 1.6 PFR+CON profile with typed future power/energy constraints,
+  ordered non-overlapping interval validation, host-approved forecast
+  recomputation, CancelRequest, and opt-out restoration. A synthetic heater
+  exercises request, cancellation, and restart with official chip-tool.
+
 ### Device Energy Management forecast adjustment
 
 - Add a Matter 1.6 PFR+FA profile with mandatory per-slot adjustment limits,

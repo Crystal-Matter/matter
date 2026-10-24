@@ -572,7 +572,10 @@ slot's advertised power and duration adjustment bounds. It publishes the
 replacement Forecast immediately with an advancing ID; CancelRequest or a
 conflicting opt-out restores the prior host forecast. A synthetic adjustable
 heater exercises the command, cancellation, and restart with official
-chip-tool. CON remains unavailable; the server rejects that feature bit.
+chip-tool. The separate PFR+CON profile accepts chronological, non-overlapping
+future power and energy constraints. The host computes the replacement
+forecast; CancelRequest and opt-out restore the earlier forecast. The
+synthetic constrained heater exercises request, cancellation, and restart.
 
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer

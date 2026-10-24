@@ -18,9 +18,11 @@ module Matter
       feature :forecast_adjustment, bit: 5
       feature :constraint_based_adjustment, bit: 6
 
-      MAX_POWER_RANGES           =  8
-      MAX_FORECAST_SLOTS         = 10
-      MAX_SLOT_COSTS             =  5
+      MAX_POWER_RANGES           =          8
+      MAX_FORECAST_SLOTS         =         10
+      MAX_SLOT_COSTS             =          5
+      MAX_CONSTRAINTS            =         10
+      MAX_CONSTRAINT_DURATION    = 86_400_u32
       CAPABILITY_REPORT_INTERVAL = 10.seconds
       FORECAST_REPORT_INTERVAL   = 10.seconds
       MATTER_EPOCH_UNIX_SECONDS  = 946_684_800_i64
@@ -329,7 +331,47 @@ module Matter
         end
       end
 
-      # Host decision and replacement schedule for a successful FA request.
+      # A PFR constraint spans an absolute Matter epoch interval. SFR's
+      # LoadControl member is not present in the supported PFR+CON profile.
+      struct Constraint
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter start_time : UInt32
+
+        @[TLV::Field(tag: 1)]
+        getter duration : UInt32
+
+        @[TLV::Field(tag: 2)]
+        getter nominal_power : Int64
+
+        @[TLV::Field(tag: 3)]
+        getter maximum_energy : Int64
+
+        def initialize(@start_time : UInt32, @duration : UInt32,
+                       @nominal_power : Int64, @maximum_energy : Int64)
+        end
+      end
+
+      struct RequestConstraintBasedForecast
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        @constraints : Array(Constraint)
+
+        @[TLV::Field(tag: 1)]
+        getter cause : AdjustmentCause
+
+        def initialize(constraints : Array(Constraint), @cause : AdjustmentCause)
+          @constraints = constraints.dup
+        end
+
+        def constraints : Array(Constraint)
+          @constraints.dup
+        end
+      end
+
+      # Host decision and replacement schedule for FA or CON requests.
       # The server assigns the next ForecastID and command-derived reason.
       struct ForecastDecision
         getter status : InteractionModel::Status
@@ -479,8 +521,11 @@ module Matter
         access: :operate, requires: :pausable
       command 0x05, :modify_forecast_request, request: ModifyForecastRequest,
         access: :operate, requires: :forecast_adjustment
+      command 0x06, :request_constraint_based_forecast, request: RequestConstraintBasedForecast,
+        access: :operate, requires: :constraint_based_adjustment
       command 0x07, :cancel_request,
-        access: :operate, requires: [:start_time_adjustment, :forecast_adjustment]
+        access: :operate, requires: [:start_time_adjustment, :forecast_adjustment,
+                                     :constraint_based_adjustment]
 
       event 0x00, :power_adjust_start, priority: :info,
         payload: PowerAdjustStartEvent, requires: :power_adjustment
@@ -512,6 +557,7 @@ module Matter
       @cancel_callback : Proc(UInt8?, InteractionModel::Status)?
       @start_time_adjust_callback : Proc(StartTimeAdjustRequest, UInt8?, InteractionModel::Status)?
       @modify_forecast_callback : Proc(ModifyForecastRequest, UInt8?, ForecastDecision)?
+      @constraint_forecast_callback : Proc(RequestConstraintBasedForecast, UInt8?, ForecastDecision)?
       @cancel_forecast_callback : Proc(UInt8?, InteractionModel::Status)?
       @pause_callback : Proc(PauseRequest, UInt8?, InteractionModel::Status)?
       @resume_callback : Proc(UInt8?, InteractionModel::Status)?
@@ -529,8 +575,9 @@ module Matter
                  Feature::StateForecastReporting,
                  Feature::PowerForecastReporting | Feature::StartTimeAdjustment,
                  Feature::PowerForecastReporting | Feature::Pausable,
-                 Feature::PowerForecastReporting | Feature::ForecastAdjustment)
-          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, PFR+STA, PFR+PAU, or PFR+FA")
+                 Feature::PowerForecastReporting | Feature::ForecastAdjustment,
+                 Feature::PowerForecastReporting | Feature::ConstraintBasedAdjustment)
+          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, PFR+STA, PFR+PAU, PFR+FA, or PFR+CON")
         end
         if !@feature_map.power_adjustment? && power_adjustment_capability
           raise ArgumentError.new("power capability requires PA")
@@ -624,6 +671,10 @@ module Matter
 
       def on_modify_forecast(&block : ModifyForecastRequest, UInt8? -> ForecastDecision) : Nil
         @modify_forecast_callback = block
+      end
+
+      def on_constraint_based_forecast(&block : RequestConstraintBasedForecast, UInt8? -> ForecastDecision) : Nil
+        @constraint_forecast_callback = block
       end
 
       def on_cancel_forecast_adjustment(&block : UInt8? -> InteractionModel::Status) : Nil
@@ -785,8 +836,51 @@ module Matter
         InteractionModel::Status.constraint_error
       end
 
+      def request_constraint_based_forecast(request : RequestConstraintBasedForecast) : InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state unless @esa_state.online?
+        return InteractionModel::Status.invalid_in_state if opted_out?(@opt_out_state, request.cause)
+        constraints = request.constraints
+        return InteractionModel::Status.constraint_error if constraints.size > MAX_CONSTRAINTS
+        now = Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS
+        previous_end = 0_u64
+        constraints.each do |constraint|
+          start_time = constraint.start_time.to_u64
+          duration = constraint.duration
+          unless start_time.to_i64 > now && duration <= MAX_CONSTRAINT_DURATION &&
+                 (@abs_min_power..@abs_max_power).includes?(constraint.nominal_power) &&
+                 start_time >= previous_end
+            return InteractionModel::Status.constraint_error
+          end
+          previous_end = start_time + duration.to_u64
+        end
+        callback = @constraint_forecast_callback
+        return InteractionModel::Status.invalid_in_state unless callback && @cancel_forecast_callback
+        fabric_index = request_fabric_index
+        decision = callback.call(request, fabric_index)
+        return decision.status unless decision.status.success?
+        candidate = decision.forecast
+        return InteractionModel::Status.invalid_in_state unless candidate
+        reason = request.cause.local_optimization? ? ForecastUpdateReason::LocalOptimization : ForecastUpdateReason::GridOptimization
+        next_id = if previous_id = @last_forecast_id
+                    previous_id &+ 1_u32
+                  else
+                    1_u32
+                  end
+        replacement = candidate.with_shift(candidate.start_time, candidate.end_time, next_id, reason)
+        validate_forecast!(replacement)
+        original = @active_forecast_cause ? @original_forecast : @forecast
+        report_forecast(replacement, force_report: true)
+        @original_forecast = original.try(&.duplicate)
+        @active_forecast_cause = request.cause
+        @active_forecast_fabric_index = fabric_index
+        decision.status
+      rescue ex : ArgumentError
+        Log.warn(exception: ex) { "host supplied invalid constrained forecast" }
+        InteractionModel::Status.constraint_error
+      end
+
       def cancel_request : InteractionModel::Status
-        return InteractionModel::Status.success unless @original_forecast
+        return InteractionModel::Status.success unless @active_forecast_cause
         callback = @cancel_forecast_callback
         return InteractionModel::Status.invalid_in_state unless callback
         status = callback.call(request_fabric_index)
@@ -961,12 +1055,15 @@ module Matter
 
       private def restore_original_forecast : Nil
         original = @original_forecast
-        return unless original
-        current = @forecast
-        id = current ? current.forecast_id &+ 1_u32 : original.forecast_id &+ 1_u32
-        restored = original.with_shift(original.start_time, original.end_time,
-          id, ForecastUpdateReason::InternalOptimization)
-        report_forecast(restored, force_report: true)
+        if original
+          current = @forecast
+          id = current ? current.forecast_id &+ 1_u32 : original.forecast_id &+ 1_u32
+          restored = original.with_shift(original.start_time, original.end_time,
+            id, ForecastUpdateReason::InternalOptimization)
+          report_forecast(restored, force_report: true)
+        else
+          report_forecast(nil, force_report: true)
+        end
       end
 
       private def cancel_forecast_for_host_change : Nil
