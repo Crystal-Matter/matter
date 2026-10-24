@@ -567,7 +567,12 @@ exercises this flow. The separate PFR+PAU profile accepts host-approved pauses
 of its active, pausable forecast slot within its advertised duration bounds;
 ResumeRequest, expiry, host state changes and conflicting opt-out end the pause
 with a Resumed event. The synthetic pausable washer exercises this profile.
-FA and CON remain unavailable; the server rejects those feature bits.
+The PFR+FA profile accepts a host-approved ModifyForecastRequest within each
+slot's advertised power and duration adjustment bounds. It publishes the
+replacement Forecast immediately with an advancing ID; CancelRequest or a
+conflicting opt-out restores the prior host forecast. A synthetic adjustable
+heater exercises the command, cancellation, and restart with official
+chip-tool. CON remains unavailable; the server rejects that feature bit.
 
 Laundry Dryer Controls and Laundry Washer Controls expose mode-dependent
 dryness levels, spin speeds, and rinse counts. Configure at least one washer

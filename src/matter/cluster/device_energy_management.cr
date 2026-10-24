@@ -3,9 +3,8 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Device Energy Management (0x0098), revision 4.
-    # This server supports one of the PowerAdjustment, PowerForecastReporting,
-    # or StateForecastReporting profiles. The host owns physical operation and
-    # supplies forecasts. Adjustment features remain unavailable.
+    # The host owns physical operation and supplies forecasts. Advertised
+    # adjustment profiles validate requests before asking the host to act.
     class DeviceEnergyManagement < Base
       Log = ::Log.for("matter.cluster.device_energy_management")
 
@@ -143,6 +142,14 @@ module Matter
         getter nominal_energy : Int64?
         @[TLV::Field(tag: 13, optional: true)]
         @costs : Array(Cost)?
+        @[TLV::Field(tag: 14, optional: true)]
+        getter min_power_adjustment : Int64?
+        @[TLV::Field(tag: 15, optional: true)]
+        getter max_power_adjustment : Int64?
+        @[TLV::Field(tag: 16, optional: true)]
+        getter min_duration_adjustment : UInt32?
+        @[TLV::Field(tag: 17, optional: true)]
+        getter max_duration_adjustment : UInt32?
 
         def initialize(@min_duration : UInt32, @max_duration : UInt32,
                        @default_duration : UInt32, @elapsed_slot_time : UInt32,
@@ -153,7 +160,11 @@ module Matter
                        costs : Array(Cost)? = nil,
                        @slot_is_pausable : Bool? = nil,
                        @min_pause_duration : UInt32? = nil,
-                       @max_pause_duration : UInt32? = nil)
+                       @max_pause_duration : UInt32? = nil,
+                       @min_power_adjustment : Int64? = nil,
+                       @max_power_adjustment : Int64? = nil,
+                       @min_duration_adjustment : UInt32? = nil,
+                       @max_duration_adjustment : UInt32? = nil)
           unless @min_duration <= @default_duration && @default_duration <= @max_duration
             raise ArgumentError.new("slot duration is outside minimum and maximum")
           end
@@ -165,6 +176,20 @@ module Matter
           elsif @max_pause_duration
             raise ArgumentError.new("pause duration bounds are incomplete")
           end
+          if minimum = @min_power_adjustment
+            maximum = @max_power_adjustment
+            raise ArgumentError.new("power adjustment bounds are incomplete") unless maximum
+            raise ArgumentError.new("MinPowerAdjustment exceeds MaxPowerAdjustment") if minimum > maximum
+          elsif @max_power_adjustment
+            raise ArgumentError.new("power adjustment bounds are incomplete")
+          end
+          if minimum = @min_duration_adjustment
+            maximum = @max_duration_adjustment
+            raise ArgumentError.new("duration adjustment bounds are incomplete") unless maximum
+            raise ArgumentError.new("MinDurationAdjustment exceeds MaxDurationAdjustment") if minimum > maximum
+          elsif @max_duration_adjustment
+            raise ArgumentError.new("duration adjustment bounds are incomplete")
+          end
           @costs = costs.try(&.dup)
         end
 
@@ -172,7 +197,9 @@ module Matter
           Slot.new(@min_duration, @max_duration, @default_duration,
             @elapsed_slot_time, @remaining_slot_time, @manufacturer_esa_state,
             @nominal_power, @min_power, @max_power, @nominal_energy, @costs,
-            @slot_is_pausable, @min_pause_duration, @max_pause_duration)
+            @slot_is_pausable, @min_pause_duration, @max_pause_duration,
+            @min_power_adjustment, @max_power_adjustment,
+            @min_duration_adjustment, @max_duration_adjustment)
         end
 
         def costs : Array(Cost)?
@@ -183,7 +210,9 @@ module Matter
           Slot.new(@min_duration, @max_duration, @default_duration,
             elapsed, remaining, @manufacturer_esa_state,
             @nominal_power, @min_power, @max_power, @nominal_energy, @costs,
-            @slot_is_pausable, @min_pause_duration, @max_pause_duration)
+            @slot_is_pausable, @min_pause_duration, @max_pause_duration,
+            @min_power_adjustment, @max_power_adjustment,
+            @min_duration_adjustment, @max_duration_adjustment)
         end
       end
 
@@ -258,6 +287,60 @@ module Matter
         getter cause : AdjustmentCause
 
         def initialize(@requested_start_time : UInt32, @cause : AdjustmentCause)
+        end
+      end
+
+      struct SlotAdjustment
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter slot_index : UInt8
+
+        @[TLV::Field(tag: 1)]
+        getter nominal_power : Int64
+
+        @[TLV::Field(tag: 2)]
+        getter duration : UInt32
+
+        def initialize(@slot_index : UInt8, @nominal_power : Int64,
+                       @duration : UInt32)
+        end
+      end
+
+      struct ModifyForecastRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter forecast_id : UInt32
+
+        @[TLV::Field(tag: 1)]
+        @slot_adjustments : Array(SlotAdjustment)
+
+        @[TLV::Field(tag: 2)]
+        getter cause : AdjustmentCause
+
+        def initialize(@forecast_id : UInt32, slot_adjustments : Array(SlotAdjustment),
+                       @cause : AdjustmentCause)
+          @slot_adjustments = slot_adjustments.dup
+        end
+
+        def slot_adjustments : Array(SlotAdjustment)
+          @slot_adjustments.dup
+        end
+      end
+
+      # Host decision and replacement schedule for a successful FA request.
+      # The server assigns the next ForecastID and command-derived reason.
+      struct ForecastDecision
+        getter status : InteractionModel::Status
+        @forecast : Forecast?
+
+        def initialize(@status : InteractionModel::Status, forecast : Forecast? = nil)
+          @forecast = forecast.try(&.duplicate)
+        end
+
+        def forecast : Forecast?
+          @forecast.try(&.duplicate)
         end
       end
 
@@ -394,8 +477,10 @@ module Matter
         access: :operate, requires: :pausable
       command 0x04, :resume_request,
         access: :operate, requires: :pausable
+      command 0x05, :modify_forecast_request, request: ModifyForecastRequest,
+        access: :operate, requires: :forecast_adjustment
       command 0x07, :cancel_request,
-        access: :operate, requires: :start_time_adjustment
+        access: :operate, requires: [:start_time_adjustment, :forecast_adjustment]
 
       event 0x00, :power_adjust_start, priority: :info,
         payload: PowerAdjustStartEvent, requires: :power_adjustment
@@ -426,6 +511,7 @@ module Matter
       @power_adjust_callback : Proc(PowerAdjustRequest, UInt8?, InteractionModel::Status)?
       @cancel_callback : Proc(UInt8?, InteractionModel::Status)?
       @start_time_adjust_callback : Proc(StartTimeAdjustRequest, UInt8?, InteractionModel::Status)?
+      @modify_forecast_callback : Proc(ModifyForecastRequest, UInt8?, ForecastDecision)?
       @cancel_forecast_callback : Proc(UInt8?, InteractionModel::Status)?
       @pause_callback : Proc(PauseRequest, UInt8?, InteractionModel::Status)?
       @resume_callback : Proc(UInt8?, InteractionModel::Status)?
@@ -442,8 +528,9 @@ module Matter
                  Feature::PowerForecastReporting,
                  Feature::StateForecastReporting,
                  Feature::PowerForecastReporting | Feature::StartTimeAdjustment,
-                 Feature::PowerForecastReporting | Feature::Pausable)
-          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, PFR+STA, or PFR+PAU")
+                 Feature::PowerForecastReporting | Feature::Pausable,
+                 Feature::PowerForecastReporting | Feature::ForecastAdjustment)
+          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, PFR+STA, PFR+PAU, or PFR+FA")
         end
         if !@feature_map.power_adjustment? && power_adjustment_capability
           raise ArgumentError.new("power capability requires PA")
@@ -533,6 +620,10 @@ module Matter
 
       def on_start_time_adjust(&block : StartTimeAdjustRequest, UInt8? -> InteractionModel::Status) : Nil
         @start_time_adjust_callback = block
+      end
+
+      def on_modify_forecast(&block : ModifyForecastRequest, UInt8? -> ForecastDecision) : Nil
+        @modify_forecast_callback = block
       end
 
       def on_cancel_forecast_adjustment(&block : UInt8? -> InteractionModel::Status) : Nil
@@ -648,6 +739,50 @@ module Matter
         @active_forecast_cause = request.cause
         @active_forecast_fabric_index = fabric_index
         status
+      end
+
+      def modify_forecast_request(request : ModifyForecastRequest) : InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state unless @esa_state.online?
+        return InteractionModel::Status.invalid_in_state if opted_out?(@opt_out_state, request.cause)
+        forecast = @forecast
+        return InteractionModel::Status.invalid_in_state unless forecast
+        return InteractionModel::Status.invalid_in_state unless request.forecast_id == forecast.forecast_id
+        adjustments = request.slot_adjustments
+        return InteractionModel::Status.constraint_error if adjustments.size > MAX_FORECAST_SLOTS
+        adjustments.each do |adjustment|
+          slot = forecast.slots[adjustment.slot_index]?
+          return InteractionModel::Status.constraint_error unless slot
+          min_power = slot.min_power_adjustment
+          max_power = slot.max_power_adjustment
+          min_duration = slot.min_duration_adjustment
+          max_duration = slot.max_duration_adjustment
+          return InteractionModel::Status.invalid_in_state unless min_power && max_power && min_duration && max_duration
+          unless (min_power..max_power).includes?(adjustment.nominal_power) &&
+                 (@abs_min_power..@abs_max_power).includes?(adjustment.nominal_power) &&
+                 (min_duration..max_duration).includes?(adjustment.duration)
+            return InteractionModel::Status.constraint_error
+          end
+        end
+        callback = @modify_forecast_callback
+        return InteractionModel::Status.invalid_in_state unless callback && @cancel_forecast_callback
+        fabric_index = request_fabric_index
+        decision = callback.call(request, fabric_index)
+        return decision.status unless decision.status.success?
+        candidate = decision.forecast
+        return InteractionModel::Status.invalid_in_state unless candidate
+        reason = request.cause.local_optimization? ? ForecastUpdateReason::LocalOptimization : ForecastUpdateReason::GridOptimization
+        replacement = candidate.with_shift(candidate.start_time, candidate.end_time,
+          forecast.forecast_id &+ 1_u32, reason)
+        validate_forecast!(replacement)
+        original = @original_forecast || forecast
+        report_forecast(replacement, force_report: true)
+        @original_forecast = original.duplicate
+        @active_forecast_cause = request.cause
+        @active_forecast_fabric_index = fabric_index
+        decision.status
+      rescue ex : ArgumentError
+        Log.warn(exception: ex) { "host supplied invalid adjusted forecast" }
+        InteractionModel::Status.constraint_error
       end
 
       def cancel_request : InteractionModel::Status
@@ -775,6 +910,21 @@ module Matter
             end
           elsif !slot.slot_is_pausable?.nil? || slot.min_pause_duration || slot.max_pause_duration
             raise ArgumentError.new("slot pause fields require PAU")
+          end
+          if @feature_map.forecast_adjustment?
+            min_power = slot.min_power_adjustment
+            max_power = slot.max_power_adjustment
+            min_duration = slot.min_duration_adjustment
+            max_duration = slot.max_duration_adjustment
+            unless min_power && max_power && min_duration && max_duration
+              raise ArgumentError.new("FA slot requires power and duration adjustment bounds")
+            end
+            unless minimum_limit <= min_power && max_power <= maximum_limit
+              raise ArgumentError.new("FA slot power adjustment exceeds nameplate")
+            end
+          elsif slot.min_power_adjustment || slot.max_power_adjustment ||
+                slot.min_duration_adjustment || slot.max_duration_adjustment
+            raise ArgumentError.new("slot adjustment fields require FA")
           end
           if @feature_map.power_forecast_reporting?
             minimum = slot.min_power
