@@ -301,8 +301,8 @@ then accept it when the active VID `0xFFF1` record is restored. A separate
 attempt with the trusted root and explicit `consent=false` must stop before
 credential issuance and Datastore registration. The fixture then reopens the
 window and completes JCM with consent. The JFA example selects this mirror
-only when `MATTER_JFA_TEST_DCL_GATEWAY_URL=https://127.0.0.1` is set; its
-normal configured root source remains available for other test deployments.
+through `MATTER_JFA_DCL_GATEWAY_URL=https://127.0.0.1`; its configured root
+source remains available for other no-VVS fabrics.
 The HTTPS certificate is generated per run and trusted only by fixture
 processes. This verifies the SDK's independently issued operational root and
 Crystal's trust and consent gates; it does not verify production DCL ledger
@@ -380,6 +380,19 @@ Root/ICA/VIDSignerPKI records. Static root trust covers the fixture's no-VVS
 fabrics; VVS verification has no root fallback. Independent Administrator
 implementations, deployed DCL signer records, and production consent policies
 remain to be tested together.
+
+The JFA example accepts `MATTER_JFA_DCL_GATEWAY_URL` as an explicit HTTPS
+origin for operational VID verification of an Anchor during JCM and subsequent
+Anchor transfer. The configured endpoint must present a certificate trusted by
+the host TLS trust store. `MATTER_JFA_TEST_DCL_GATEWAY_URL` remains limited to
+loopback or the Compose `tests` service; the two settings cannot be combined.
+The three-JFA Compose scenario uses the production setting with a test CA and
+HTTPS mirror, including the live VVS-bearing joiner and transferred Anchor.
+`MATTER_JFA_VID_TRUST_ROOT_PATH` can additionally name provisioned roots for
+fabrics without a VVS; a present VVS always requires a DCL signer and cannot
+fall back to those roots. Operators must select an authenticated DCL gateway
+with an appropriate freshness policy; TLS verifies the gateway, not the
+ledger state served by it.
 
 ## Work required for interoperable Joint Commissioning
 

@@ -198,7 +198,7 @@ def run(args):
                      MATTER_JFA_BOOTSTRAP_STATE_PATH=str(bootstrap),
                      MATTER_JFA_COMMAND_PATH=str(a_command),
                      MATTER_JFA_JCM_REQUEST_PATH=str(a_exchange),
-                     MATTER_JFA_TEST_DCL_GATEWAY_URL="https://127.0.0.1",
+                     MATTER_JFA_DCL_GATEWAY_URL="https://127.0.0.1",
                      SSL_CERT_FILE=str(dcl_cert),
                      MATTER_JFA_ANCHOR_OPERATIONAL_PORT="5541",
                      MATTER_JFA_TRANSFER_PEERS="a103=127.0.0.1")

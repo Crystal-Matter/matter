@@ -2219,7 +2219,7 @@ module MatterJointFabricAdministrator
       fabric = fabric_table.get_fabric(fabric_index)
       return false unless fabric
       trust = anchor_trust(fabric.vendor_id, ENV["MATTER_JFA_VID_TRUST_ROOT_PATH"]?,
-        ENV["MATTER_JFA_TEST_DCL_GATEWAY_URL"]?)
+        ENV["MATTER_JFA_TEST_DCL_GATEWAY_URL"]?, ENV["MATTER_JFA_DCL_GATEWAY_URL"]?)
       scanner = Matter::Controller::Scanner.new
       begin
         scanner.start
@@ -2256,15 +2256,18 @@ module MatterJointFabricAdministrator
     # A VVS requires its DCL signer even when a static root is also configured
     # for the fixture's other, no-VVS fabrics.
     private def anchor_trust(vendor_id : UInt16, root_path : String?,
-                             test_dcl_url : String?) : Matter::Controller::VidVerification::OperationalTrustAnchors
+                             test_dcl_url : String?, dcl_url : String? = nil) : Matter::Controller::VidVerification::OperationalTrustAnchors
+      if test_dcl_url && dcl_url
+        raise Matter::ConfigurationError.new("Configure one Joint Fabric DCL gateway")
+      end
       root_trust = if path = root_path
                      trusted_roots = path.split(',').map { |entry| File.read(entry.strip).to_slice.dup }
                      Matter::Controller::VidVerification::StaticOperationalTrustAnchors.new(
                        {vendor_id => trusted_roots})
                    end
-      if url = test_dcl_url
+      if url = test_dcl_url || dcl_url
         source = Matter::Controller::VidVerification::HttpDclSource.new(url)
-        unless URI.parse(url).host.in?("127.0.0.1", "tests")
+        if test_dcl_url && !URI.parse(url).host.in?("127.0.0.1", "tests")
           raise Matter::ConfigurationError.new("Test DCL mirror must use loopback or the Compose tests service")
         end
         signer_trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(source)

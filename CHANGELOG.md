@@ -16,6 +16,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric DCL signer trust
 
+- Let the JFA example select an explicit production HTTPS DCL gateway for
+  operational VID checks. The official SDK JCM and three-Administrator VVS
+  fixtures exercise that setting with a test CA; simultaneous test and
+  production gateway settings fail closed.
 - Compose explicit root and DCL signer trust for Administrators. The live
   three-Administrator scenario keeps B's ICAC and signed VVS through Joint
   Commissioning, restart, and Anchor transfer, using a test HTTPS DCL mirror
