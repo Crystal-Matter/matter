@@ -105,7 +105,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0105 | Closure Dimension Cluster | 1 | 1 | — |
 | 0x0150 | Service Area Cluster | 2 | 2 | SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | ConstantSpeed profile only; host owns physical mode change and telemetry |
-| 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower limits and Auto deadband; opt-in TEVT base/AUTO events; host-only preset and atomic transaction preparation; OCC, MSCH, PRES and TSUGGEST remain unavailable on the wire |
+| 0x0201 | Thermostat Cluster | 11 | 9 | SetpointRaiseLower limits and Auto deadband; opt-in TEVT base/AUTO events; Preset metadata and pending-list behavior behind a production gate; OCC, MSCH, PRES and TSUGGEST remain unavailable on the wire |
 | 0x0202 | Fan Control Cluster | 6 | 6 | feature-gated attributes and Step; only FanMode nonvolatile |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — |

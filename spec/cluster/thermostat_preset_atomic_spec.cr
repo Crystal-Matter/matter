@@ -22,12 +22,21 @@ private def atomic_write(cluster : Thermostat, presets : Array(Thermostat::Prese
   endpoint = cluster.endpoint_id.number
   path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint,
     cluster: Thermostat::CLUSTER_ID, attribute: 0x50_u32)
-  data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Serializable.serialize_value(presets, nil))
+  existing = presets.reject { |preset| preset.preset_handle.nil? }
+  data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Serializable.serialize_value(existing, nil))
   statuses = Matter::Protocol::IMHandler.write_attributes([data],
     { {endpoint, Thermostat::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
     session_id: wire_session, is_case_session: true,
     fabric_index: fabric, peer_subject_ids: [subject])
-  IMCode.new(statuses.first.status.status)
+  result = IMCode.new(statuses.first.status.status)
+  return result unless result == IMCode::Success
+
+  presets.each do |preset|
+    next unless preset.preset_handle.nil?
+    result = cluster.append_preset(TLV::Serializable.serialize_value(preset, nil)).status
+    return result unless result == IMCode::Success
+  end
+  result
 end
 
 describe "Thermostat preset atomic-write foundation" do
@@ -135,6 +144,7 @@ describe "Thermostat preset atomic-write foundation" do
     busy = atomic_request(cluster, AtomicType::BeginWrite, 100_u16).as(Thermostat::AtomicResponse)
     busy.status_code.should eq(IMCode::Failure)
     busy.attribute_status.first.status_code.should eq(IMCode::Busy)
+    busy.timeout.should eq(100_u16)
     atomic_actor(cluster)
     proposed = [Thermostat::Preset.new(nil, Thermostat::PresetScenario::Sleep,
       nil, 2700_i16, 1800_i16, nil)]
@@ -172,8 +182,9 @@ describe "Thermostat preset atomic-write foundation" do
     built_in = Thermostat::Preset.new(Bytes[1_u8], Thermostat::PresetScenario::Sleep,
       nil, 2700_i16, 1800_i16, true)
     active = Thermostat::Preset.new(Bytes[2_u8], Thermostat::PresetScenario::Sleep,
-      nil, 2600_i16, 1900_i16, false)
-    cluster.configure_presets([Thermostat::PresetType.new(Thermostat::PresetScenario::Sleep, 2_u8)],
+      "Active", 2600_i16, 1900_i16, false)
+    cluster.configure_presets([Thermostat::PresetType.new(Thermostat::PresetScenario::Sleep, 2_u8,
+      Thermostat::PresetTypeFeatures::SupportsNames)],
       [built_in, active])
     cluster.activate_preset(Thermostat::SetActivePresetRequest.new(Bytes[2_u8])).should eq(Matter::InteractionModel::Status.success)
     atomic_actor(cluster)

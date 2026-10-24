@@ -669,11 +669,13 @@ For host-side preset preparation, `Thermostat#configure_presets` accepts typed
 setpoints; a later manual setpoint change clears its active handle. The list and
 active handle persist with cluster state. This API is preparatory: the PRES bit,
 Preset attributes, and SetActivePreset wire command remain unavailable until
-Matter's atomic-write transaction for the Presets list is implemented.
+the full PRES wire flow passes conformance tests.
 The preparatory transaction model includes typed `AtomicRequest` and
 `AtomicResponse` payloads, secure-peer ownership, timeout, rollback and commit.
-It is host-only for now; controllers cannot invoke AtomicRequest or write
-Presets until the complete PRES wire surface is enabled.
+The required Preset attribute and command declarations are present behind a
+feature gate, and pending list writes and reads use the writer's private state.
+Production Thermostat instances reject the PRES feature until its remaining
+atomic write and official chip-tool checks are complete.
 
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
 Register `configure_host(accept, sleep)` to accept or refuse requests and to

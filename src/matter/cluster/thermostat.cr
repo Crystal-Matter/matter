@@ -17,6 +17,7 @@ module Matter
       feature :cooling, bit: 1                       # COOL - Cooling capability
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
+      feature :presets, bit: 8                       # PRES - gated until wire conformance is complete
       feature :events, bit: 9                        # TEVT - Thermostat change events
 
       TEMPERATURE_EVENT_INTERVAL     = 60.seconds
@@ -25,13 +26,11 @@ module Matter
       MAX_PRESET_HANDLE_LENGTH       =     16
       MAX_PRESET_NAME_LENGTH         =     64
       PRESET_STATE_KEY               = "preset_state"
-      ATTR_PRESETS                   = 0x0050_u32
-      CMD_ATOMIC_REQUEST             = 0x00FE_u32
       CMD_ATOMIC_RESPONSE            = 0x00FD_u32
       MAX_PRESET_ATOMIC_TIMEOUT      =  3_000_u16 # milliseconds
 
-      # The PRES wire feature is deliberately withheld until atomic list writes
-      # are implemented. These types and the host API provide its state model.
+      # PRES is declared for conformance tests, but production instances refuse
+      # the feature until the remaining atomic-write wire checks are complete.
       enum PresetScenario : UInt8
         Occupied     =   1
         Unoccupied   =   2
@@ -149,6 +148,7 @@ module Matter
         getter subject : UInt64
         getter expires_at : Time::Instant
         property presets : Array(Preset)?
+        getter write_data_versions = [] of UInt32
 
         def initialize(@fabric : UInt8, @subject : UInt64, @expires_at : Time::Instant)
         end
@@ -240,6 +240,19 @@ module Matter
         getter current_running_mode : ThermostatRunningMode
 
         def initialize(@current_running_mode : ThermostatRunningMode)
+        end
+      end
+
+      struct ActivePresetChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter previous_preset_handle : Bytes?
+
+        @[TLV::Field(tag: 1, optional: false)]
+        getter current_preset_handle : Bytes?
+
+        def initialize(@previous_preset_handle : Bytes?, @current_preset_handle : Bytes?)
         end
       end
 
@@ -367,6 +380,14 @@ module Matter
       attribute 0x001C, :system_mode, SystemMode, default: SystemMode::Off, writable: true, write_access: :manage, on_change: :system_mode_changed
       attribute 0x001E, :thermostat_running_mode, ThermostatRunningMode, default: ThermostatRunningMode::Off, optional: true, requires: :automode, on_change: :running_mode_changed
       attribute 0x0029, :thermostat_running_state, RelayState, computed: true, optional: true, requires: :events
+      attribute 0x0048, :preset_types, Array(PresetType), computed: true, optional: true,
+        requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x004A, :number_of_presets, UInt8, computed: true, optional: true,
+        requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x004E, :active_preset_handle, Bytes, computed: true, nullable: true, optional: true,
+        requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x0050, :presets, Array(Preset), computed: true, writable: true, write_access: :manage,
+        optional: true, requires: :presets, present_if: :preset_wire_ready?
 
       event 0x00, :system_mode_change, priority: :info, requires: :events, payload: SystemModeChangeEvent
       event 0x01, :local_temperature_change, priority: :info,
@@ -375,8 +396,14 @@ module Matter
       event 0x04, :running_state_change, priority: :info, requires: :events, payload: RunningStateChangeEvent
       event 0x05, :running_mode_change, priority: :info,
         requires: {events: true, automode: true}, payload: RunningModeChangeEvent
+      event 0x07, :active_preset_change, priority: :info,
+        requires: {events: true, presets: true}, payload: ActivePresetChangeEvent
 
       command 0x00, :setpoint_raise_lower, request: SetpointRaiseLowerRequest
+      command 0x06, :set_active_preset, request: SetActivePresetRequest, handler: :activate_preset,
+        requires: :presets, present_if: :preset_wire_ready?
+      command 0xFE, :atomic_request, request: AtomicRequest, response: AtomicResponse,
+        response_id: 0xFD, access: :manage, requires: :presets, present_if: :preset_wire_ready?
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::Cooling | Feature::Heating,
@@ -394,7 +421,9 @@ module Matter
                      @min_setpoint_dead_band : Int8 = DEFAULT_DEAD_BAND,
                      @control_sequence_of_operation : ControlSequenceOfOperation = ControlSequenceOfOperation::CoolingAndHeating,
                      @system_mode : SystemMode = SystemMode::Off,
-                     @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off)
+                     @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off,
+                     preset_types : Array(PresetType)? = nil,
+                     presets : Array(Preset) = [] of Preset)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         @measured_temperature = @local_temperature
@@ -408,6 +437,8 @@ module Matter
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
 
+        raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
+
         if @feature_map.heating?
           raise ArgumentError.new("min_heat_setpoint_limit must be >= abs minimum") if @min_heat_setpoint_limit < @abs_min_heat_setpoint_limit
           raise ArgumentError.new("max_heat_setpoint_limit must be <= abs maximum") if @max_heat_setpoint_limit > @abs_max_heat_setpoint_limit
@@ -420,6 +451,12 @@ module Matter
 
         unless mode_allowed?(@system_mode)
           raise ArgumentError.new("SystemMode #{@system_mode} not supported with current features")
+        end
+
+        if types = preset_types
+          configure_presets(types, presets)
+        elsif !presets.empty?
+          raise ArgumentError.new("preset_types are required when presets are configured")
         end
       end
 
@@ -438,6 +475,10 @@ module Matter
       before_write :occupied_cooling_setpoint do |setpoint|
         return InteractionModel::Status.constraint_error unless setpoint.in?(@min_cool_setpoint_limit..@max_cool_setpoint_limit)
         keep_heating_below(setpoint)
+      end
+
+      before_write :presets do |values|
+        stage_presets(values)
       end
 
       before_write :occupied_heating_setpoint do |setpoint|
@@ -498,34 +539,59 @@ module Matter
       # Public Interface
       # ------------------------------------------------------------------------
 
-      # Configure a host-owned preset list. PRES remains absent from FeatureMap:
-      # controller writes to Presets require Interaction Model atomic writes.
+      # Configure a host-owned preset list. Production instances still reject
+      # PRES; controller writes to Presets require an atomic transaction.
       def configure_presets(types : Array(PresetType), presets : Array(Preset)) : Nil
         validate_presets!(types, presets)
         @pending_preset_write = nil
+        types_changed = @preset_types != types
+        capacity_changed = @preset_types.sum(&.number_of_presets.to_i) != types.sum(&.number_of_presets.to_i)
+        presets_changed = @presets != presets
         @preset_types = types.dup
         @presets = copy_presets(presets)
-        @active_preset_handle = nil
+        update_active_preset_handle(nil)
+        if @feature_map.presets? && preset_wire_ready?
+          increment_version_and_notify(ATTR_PRESET_TYPES) if types_changed
+          increment_version_and_notify(ATTR_NUMBER_OF_PRESETS) if capacity_changed
+          increment_version_and_notify(ATTR_PRESETS) if presets_changed
+        end
       end
 
       def preset_types : Array(PresetType)
         @preset_types.dup
       end
 
+      def number_of_presets : UInt8
+        @preset_types.sum(&.number_of_presets.to_i).to_u8
+      end
+
       def presets : Array(Preset)
         copy_presets(@presets)
+      end
+
+      # IM writes are handled by the pending atomic transaction. This setter
+      # exists for the computed writable attribute's DSL contract only.
+      protected def presets=(values : Array(Preset)) : Nil
+        raise ArgumentError.new("Presets require an atomic transaction")
+      end
+
+      protected def preset_wire_ready? : Bool
+        false
+      end
+
+      protected def preset_wire_ready?(command_id : UInt32) : Bool
+        preset_wire_ready?
       end
 
       def active_preset_handle : Bytes?
         @active_preset_handle.try(&.dup)
       end
 
-      # Command payload and behavior are ready for command 0x06, but dispatch
-      # stays unavailable until the whole PRES feature can be advertised.
+      # Command 0x06 is declared behind the production PRES gate.
       def activate_preset(request : SetActivePresetRequest) : InteractionModel::Status
         handle = request.preset_handle
         if handle.nil?
-          @active_preset_handle = nil
+          update_active_preset_handle(nil)
           return InteractionModel::Status.success
         end
         return InteractionModel::Status.constraint_error if handle.size > MAX_PRESET_HANDLE_LENGTH
@@ -541,7 +607,7 @@ module Matter
           if @feature_map.heating? && (heating = preset.heating_setpoint)
             self.occupied_heating_setpoint = heating
           end
-          @active_preset_handle = handle.dup
+          update_active_preset_handle(handle)
         ensure
           @applying_preset = false
         end
@@ -572,16 +638,48 @@ module Matter
       end
 
       # A whole-list replacement is staged only while its authenticated peer
-      # owns the matching atomic transaction. The wire attribute remains hidden.
+      # owns the matching atomic transaction.
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        if attribute_id == ATTR_PRESETS && dsl_attribute_presets_supported?
+          expire_preset_write
+          if (pending = @pending_preset_write) && atomic_owner?(pending)
+            return tlv(copy_presets(pending.presets || @presets))
+          end
+        end
+        super
+      end
+
       protected def handle_write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
         return super unless attribute_id == ATTR_PRESETS && @pending_preset_write
 
         stage_presets(decode(value, Array(Preset)))
       end
 
+      # ListIndex=null is the only wire path that may create a preset with a
+      # null handle. IMHandler calls this after validating the append sequence
+      # and Manage access.
+      def append_preset(value : TLV::Any) : InteractionModel::Status
+        entry = decode?(value, Preset) || return InteractionModel::Status.invalid_data_type
+        expire_preset_write
+        pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending)
+
+        stage_presets((pending.presets || @presets) + [entry], allow_new: true)
+      end
+
+      # IM records each successful conditional list write. The version must
+      # still match when the pending list is published at commit.
+      def record_preset_write_data_version(version : UInt32?) : Nil
+        return unless version
+        pending = @pending_preset_write || return
+        return unless atomic_owner?(pending)
+        pending.write_data_versions << version unless pending.write_data_versions.includes?(version)
+      end
+
       private def atomic_begin(request : AtomicRequest) : AtomicResponse | InteractionModel::Status
         timeout = request.timeout || return InteractionModel::Status.invalid_command
         return InteractionModel::Status.invalid_command if timeout == 0_u16
+        actual_timeout = {timeout, MAX_PRESET_ATOMIC_TIMEOUT}.min
         if current = @pending_preset_write
           return InteractionModel::Status.invalid_in_state if atomic_owner?(current)
         end
@@ -589,14 +687,13 @@ module Matter
         ids = request.attribute_requests
         if @preset_types.empty?
           return atomic_response(InteractionModel::StatusCode::Failure,
-            ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::InvalidCommand) })
+            ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::InvalidCommand) }, actual_timeout)
         end
         if @pending_preset_write
           return atomic_response(InteractionModel::StatusCode::Failure,
-            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Busy)])
+            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Busy)], actual_timeout)
         end
 
-        actual_timeout = {timeout, MAX_PRESET_ATOMIC_TIMEOUT}.min
         fabric = request_fabric_index || return InteractionModel::Status.invalid_command
         subject = request_peer_node_id || return InteractionModel::Status.invalid_command
         @pending_preset_write = PendingPresetWrite.new(
@@ -610,6 +707,10 @@ module Matter
         return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending) && ids == [ATTR_PRESETS]
         @pending_preset_write = nil
         if commit && (values = pending.presets)
+          if pending.write_data_versions.any? { |version| version != data_version }
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::DataVersionMismatch)])
+          end
           if @presets.any? { |entry| entry.built_in && !values.any? { |candidate| candidate.preset_handle == entry.preset_handle } }
             return atomic_response(InteractionModel::StatusCode::Failure,
               [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
@@ -633,7 +734,7 @@ module Matter
           commit ? [] of AtomicAttributeStatus : [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Success)])
       end
 
-      private def stage_presets(values : Array(Preset)) : InteractionModel::Status
+      private def stage_presets(values : Array(Preset), *, allow_new : Bool = false) : InteractionModel::Status
         expire_preset_write
         pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
         return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending)
@@ -644,8 +745,12 @@ module Matter
         values.each do |entry|
           handle = entry.preset_handle
           return InteractionModel::Status.constraint_error if handle && handle.size > MAX_PRESET_HANDLE_LENGTH
-          existing = handle ? @presets.find { |current| current.preset_handle == handle } : nil
+          existing = if handle
+                       pending.presets.try(&.find { |current| current.preset_handle == handle }) ||
+                         @presets.find { |current| current.preset_handle == handle }
+                     end
           return InteractionModel::Status.not_found if handle && !existing
+          return InteractionModel::Status.constraint_error if handle.nil? && !allow_new
           return InteractionModel::Status.constraint_error if handle.nil? && entry.built_in == true
           return InteractionModel::Status.constraint_error if existing && !entry.built_in.nil? && entry.built_in != existing.built_in
           handle ||= new_preset_handle(normalized)
@@ -872,14 +977,29 @@ module Matter
         end
       end
 
+      private def update_active_preset_handle(handle : Bytes?) : Nil
+        return if @active_preset_handle == handle
+
+        previous = @active_preset_handle.try(&.dup)
+        @active_preset_handle = handle.try(&.dup)
+        if @feature_map.presets? && preset_wire_ready?
+          increment_version_and_notify(ATTR_ACTIVE_PRESET_HANDLE)
+          if @feature_map.events?
+            emit_active_preset_change(ActivePresetChangeEvent.new(previous, @active_preset_handle.try(&.dup)))
+          end
+        end
+      end
+
       private def validate_presets!(types : Array(PresetType), values : Array(Preset)) : Nil
         raise ArgumentError.new("preset types must contain 1 to 7 scenarios") unless (1..MAX_PRESET_TYPES).includes?(types.size)
         raise ArgumentError.new("duplicate preset scenario") unless types.map(&.preset_scenario).uniq!.size == types.size
+        raise ArgumentError.new("automatic preset transitions are not supported") if types.any?(&.preset_type_features.automatic?)
         capacity = types.sum(&.number_of_presets.to_i)
-        raise ArgumentError.new("preset capacity must be positive") if capacity == 0
+        raise ArgumentError.new("preset capacity must be within 1..255") unless (1..255).includes?(capacity)
         raise ArgumentError.new("too many presets") if values.size > capacity
 
         handles = [] of Bytes
+        names = Set(Tuple(PresetScenario, String?)).new
         values.each do |entry|
           handle = entry.preset_handle || raise ArgumentError.new("configured preset needs a handle")
           unless (0..MAX_PRESET_HANDLE_LENGTH).includes?(handle.size)
@@ -899,6 +1019,7 @@ module Matter
           elsif entry.preset_scenario.user_defined?
             raise ArgumentError.new("user-defined preset requires a name")
           end
+          raise ArgumentError.new("duplicate preset name") unless names.add?({entry.preset_scenario, entry.name})
           raise ArgumentError.new("configured preset needs BuiltIn") if entry.built_in.nil?
           raise ArgumentError.new("preset setpoints are invalid") unless valid_preset_setpoints?(entry)
         end
@@ -971,13 +1092,13 @@ module Matter
       end
 
       private def cooling_setpoint_changed(value : Int16) : Nil
-        @active_preset_handle = nil unless @applying_preset
+        update_active_preset_handle(nil) unless @applying_preset
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value)) if @feature_map.events?
         update_running_mode
       end
 
       private def heating_setpoint_changed(value : Int16) : Nil
-        @active_preset_handle = nil unless @applying_preset
+        update_active_preset_handle(nil) unless @applying_preset
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value)) if @feature_map.events?
         update_running_mode
       end
