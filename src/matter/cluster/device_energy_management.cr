@@ -125,6 +125,12 @@ module Matter
         getter elapsed_slot_time : UInt32
         @[TLV::Field(tag: 4)]
         getter remaining_slot_time : UInt32
+        @[TLV::Field(tag: 5, optional: true)]
+        getter? slot_is_pausable : Bool?
+        @[TLV::Field(tag: 6, optional: true)]
+        getter min_pause_duration : UInt32?
+        @[TLV::Field(tag: 7, optional: true)]
+        getter max_pause_duration : UInt32?
         @[TLV::Field(tag: 8, optional: true)]
         getter manufacturer_esa_state : UInt16?
         @[TLV::Field(tag: 9, optional: true)]
@@ -144,18 +150,29 @@ module Matter
                        @manufacturer_esa_state : UInt16? = nil,
                        @nominal_power : Int64? = nil, @min_power : Int64? = nil,
                        @max_power : Int64? = nil, @nominal_energy : Int64? = nil,
-                       costs : Array(Cost)? = nil)
+                       costs : Array(Cost)? = nil,
+                       @slot_is_pausable : Bool? = nil,
+                       @min_pause_duration : UInt32? = nil,
+                       @max_pause_duration : UInt32? = nil)
           unless @min_duration <= @default_duration && @default_duration <= @max_duration
             raise ArgumentError.new("slot duration is outside minimum and maximum")
           end
           raise ArgumentError.new("too many slot costs") if costs && costs.size > MAX_SLOT_COSTS
+          if minimum = @min_pause_duration
+            maximum = @max_pause_duration
+            raise ArgumentError.new("pause duration bounds are incomplete") unless maximum
+            raise ArgumentError.new("MinPauseDuration exceeds MaxPauseDuration") if minimum > maximum
+          elsif @max_pause_duration
+            raise ArgumentError.new("pause duration bounds are incomplete")
+          end
           @costs = costs.try(&.dup)
         end
 
         def duplicate : Slot
           Slot.new(@min_duration, @max_duration, @default_duration,
             @elapsed_slot_time, @remaining_slot_time, @manufacturer_esa_state,
-            @nominal_power, @min_power, @max_power, @nominal_energy, @costs)
+            @nominal_power, @min_power, @max_power, @nominal_energy, @costs,
+            @slot_is_pausable, @min_pause_duration, @max_pause_duration)
         end
 
         def costs : Array(Cost)?
@@ -165,7 +182,8 @@ module Matter
         def with_progress(elapsed : UInt32, remaining : UInt32) : Slot
           Slot.new(@min_duration, @max_duration, @default_duration,
             elapsed, remaining, @manufacturer_esa_state,
-            @nominal_power, @min_power, @max_power, @nominal_energy, @costs)
+            @nominal_power, @min_power, @max_power, @nominal_energy, @costs,
+            @slot_is_pausable, @min_pause_duration, @max_pause_duration)
         end
       end
 
@@ -240,6 +258,19 @@ module Matter
         getter cause : AdjustmentCause
 
         def initialize(@requested_start_time : UInt32, @cause : AdjustmentCause)
+        end
+      end
+
+      struct PauseRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter duration : UInt32
+
+        @[TLV::Field(tag: 1)]
+        getter cause : AdjustmentCause
+
+        def initialize(@duration : UInt32, @cause : AdjustmentCause)
         end
       end
 
@@ -323,6 +354,23 @@ module Matter
         end
       end
 
+      struct PausedEvent
+        include TLV::Serializable
+
+        def initialize
+        end
+      end
+
+      struct ResumedEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter cause : EndCause
+
+        def initialize(@cause : EndCause)
+        end
+      end
+
       attribute 0x0000, :esa_type, ESAType, fixed: true, computed: true
       attribute 0x0001, :esa_can_generate, Bool, fixed: true, computed: true
       attribute 0x0002, :esa_state, ESAState, computed: true
@@ -342,6 +390,10 @@ module Matter
         access: :operate, requires: :power_adjustment
       command 0x02, :start_time_adjust_request, request: StartTimeAdjustRequest,
         access: :operate, requires: :start_time_adjustment
+      command 0x03, :pause_request, request: PauseRequest,
+        access: :operate, requires: :pausable
+      command 0x04, :resume_request,
+        access: :operate, requires: :pausable
       command 0x07, :cancel_request,
         access: :operate, requires: :start_time_adjustment
 
@@ -349,6 +401,10 @@ module Matter
         payload: PowerAdjustStartEvent, requires: :power_adjustment
       event 0x01, :power_adjust_end, priority: :info,
         payload: PowerAdjustEndEvent, requires: :power_adjustment
+      event 0x02, :paused, priority: :info,
+        payload: PausedEvent, requires: :pausable
+      event 0x03, :resumed, priority: :info,
+        payload: ResumedEvent, requires: :pausable
 
       @esa_state : ESAState = ESAState::Online
       @opt_out_state : OptOutState = OptOutState::NoOptOut
@@ -359,6 +415,9 @@ module Matter
       @original_forecast : Forecast?
       @active_forecast_cause : AdjustmentCause?
       @active_forecast_fabric_index : UInt8?
+      @active_pause : PauseRequest?
+      @active_pause_fabric_index : UInt8?
+      @pause_generation : UInt64 = 0_u64
       @active_adjustment : PowerAdjustRequest?
       @active_started : Time::Instant?
       @active_fabric_index : UInt8?
@@ -368,6 +427,8 @@ module Matter
       @cancel_callback : Proc(UInt8?, InteractionModel::Status)?
       @start_time_adjust_callback : Proc(StartTimeAdjustRequest, UInt8?, InteractionModel::Status)?
       @cancel_forecast_callback : Proc(UInt8?, InteractionModel::Status)?
+      @pause_callback : Proc(PauseRequest, UInt8?, InteractionModel::Status)?
+      @resume_callback : Proc(UInt8?, InteractionModel::Status)?
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @esa_type : ESAType,
@@ -380,8 +441,9 @@ module Matter
         unless @feature_map.in?(Feature::PowerAdjustment,
                  Feature::PowerForecastReporting,
                  Feature::StateForecastReporting,
-                 Feature::PowerForecastReporting | Feature::StartTimeAdjustment)
-          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, or PFR+STA")
+                 Feature::PowerForecastReporting | Feature::StartTimeAdjustment,
+                 Feature::PowerForecastReporting | Feature::Pausable)
+          raise ArgumentError.new("select a supported DEM profile: PA, PFR, SFR, PFR+STA, or PFR+PAU")
         end
         if !@feature_map.power_adjustment? && power_adjustment_capability
           raise ArgumentError.new("power capability requires PA")
@@ -442,6 +504,7 @@ module Matter
         end
         was_null = @forecast.nil?
         return if value.nil? && was_null
+        resume_for_host_change(EndCause::NormalCompletion) if @active_pause
         @forecast = value.try(&.duplicate)
         @last_forecast_id = value.forecast_id if value
         @original_forecast = nil
@@ -474,6 +537,14 @@ module Matter
 
       def on_cancel_forecast_adjustment(&block : UInt8? -> InteractionModel::Status) : Nil
         @cancel_forecast_callback = block
+      end
+
+      def on_pause(&block : PauseRequest, UInt8? -> InteractionModel::Status) : Nil
+        @pause_callback = block
+      end
+
+      def on_resume(&block : UInt8? -> InteractionModel::Status) : Nil
+        @resume_callback = block
       end
 
       # The host can update its nameplate limits only while all advertised PA
@@ -522,6 +593,14 @@ module Matter
                   end
           finish_adjustment(cause)
         end
+        if @active_pause
+          cause = case state
+                  when ESAState::Offline then EndCause::Offline
+                  when ESAState::Fault   then EndCause::Fault
+                  else                        EndCause::NormalCompletion
+                  end
+          finish_pause(cause)
+        end
         change_esa_state(state)
       end
 
@@ -532,6 +611,9 @@ module Matter
         end
         if (cause = @active_forecast_cause) && opted_out?(state, cause)
           cancel_forecast_for_host_change
+        end
+        if (pause = @active_pause) && opted_out?(state, pause.cause)
+          resume_for_host_change(EndCause::UserOptOut)
         end
         @opt_out_state = state
         increment_version_and_notify(ATTR_OPT_OUT_STATE)
@@ -574,6 +656,42 @@ module Matter
         return InteractionModel::Status.invalid_in_state unless callback
         status = callback.call(request_fabric_index)
         restore_original_forecast if status.success?
+        status
+      end
+
+      def pause_request(request : PauseRequest) : InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state unless @esa_state.online?
+        return InteractionModel::Status.invalid_in_state if opted_out?(@opt_out_state, request.cause)
+        forecast = @forecast
+        return InteractionModel::Status.invalid_in_state unless forecast && forecast.is_pausable?
+        active_slot = forecast.active_slot_number
+        return InteractionModel::Status.invalid_in_state unless active_slot
+        slot = forecast.slots[active_slot]
+        return InteractionModel::Status.invalid_in_state unless slot.slot_is_pausable?
+        minimum = slot.min_pause_duration
+        maximum = slot.max_pause_duration
+        return InteractionModel::Status.invalid_in_state unless minimum && maximum
+        return InteractionModel::Status.constraint_error unless (minimum..maximum).includes?(request.duration)
+        callback = @pause_callback
+        return InteractionModel::Status.invalid_in_state unless callback && @resume_callback
+        fabric_index = request_fabric_index
+        status = callback.call(request, fabric_index)
+        return status unless status.success?
+        @active_pause = request
+        @active_pause_fabric_index = fabric_index
+        @pause_generation &+= 1_u64
+        change_esa_state(ESAState::Paused)
+        emit_paused(PausedEvent.new)
+        schedule_pause_expiration(request.duration, @pause_generation)
+        status
+      end
+
+      def resume_request : InteractionModel::Status
+        return InteractionModel::Status.success unless @active_pause
+        callback = @resume_callback
+        return InteractionModel::Status.invalid_in_state unless callback
+        status = callback.call(request_fabric_index)
+        finish_pause(EndCause::Cancelled) if status.success?
         status
       end
 
@@ -640,7 +758,7 @@ module Matter
       private def validate_forecast!(value : Forecast,
                                      minimum_limit : Int64 = @abs_min_power,
                                      maximum_limit : Int64 = @abs_max_power) : Nil
-        raise ArgumentError.new("Pausable forecast requires PAU") if value.is_pausable?
+        raise ArgumentError.new("Pausable forecast requires PAU") if value.is_pausable? && !@feature_map.pausable?
         if @feature_map.start_time_adjustment?
           earliest = value.earliest_start_time
           latest = value.latest_end_time
@@ -651,6 +769,13 @@ module Matter
           raise ArgumentError.new("forecast window requires STA")
         end
         value.slots.each do |slot|
+          if @feature_map.pausable?
+            if slot.slot_is_pausable?.nil? || slot.min_pause_duration.nil? || slot.max_pause_duration.nil?
+              raise ArgumentError.new("PAU slot requires pausable flag and pause duration bounds")
+            end
+          elsif !slot.slot_is_pausable?.nil? || slot.min_pause_duration || slot.max_pause_duration
+            raise ArgumentError.new("slot pause fields require PAU")
+          end
           if @feature_map.power_forecast_reporting?
             minimum = slot.min_power
             maximum = slot.max_power
@@ -669,6 +794,9 @@ module Matter
               raise ArgumentError.new("SFR slot cannot contain PFR power fields")
             end
           end
+        end
+        if @feature_map.pausable? && value.is_pausable? != value.slots.any?(&.slot_is_pausable?)
+          raise ArgumentError.new("IsPausable must match pausable slots")
         end
       end
 
@@ -698,6 +826,31 @@ module Matter
         Log.warn(exception: ex) { "host failed to cancel forecast adjustment" }
       ensure
         restore_original_forecast
+      end
+
+      private def finish_pause(cause : EndCause) : Nil
+        return unless @active_pause
+        @active_pause = nil
+        @active_pause_fabric_index = nil
+        @pause_generation &+= 1_u64
+        change_esa_state(ESAState::Online)
+        emit_resumed(ResumedEvent.new(cause))
+      end
+
+      private def resume_for_host_change(cause : EndCause) : Nil
+        status = @resume_callback.try(&.call(@active_pause_fabric_index))
+        Log.warn { "host rejected pause cancellation: #{status}" } unless status && status.success?
+      rescue ex
+        Log.warn(exception: ex) { "host failed to resume paused operation" }
+      ensure
+        finish_pause(cause)
+      end
+
+      private def schedule_pause_expiration(duration : UInt32, generation : UInt64) : Nil
+        spawn do
+          sleep duration.seconds
+          resume_for_host_change(EndCause::NormalCompletion) if @pause_generation == generation
+        end
       end
 
       private def change_esa_state(state : ESAState) : Nil
