@@ -52,7 +52,7 @@ describe DEM do
     expect_raises(ArgumentError) do
       build(DEM, esa_type: DEM::ESAType::WaterHeating, can_generate: false,
         abs_min_power: 0_i64, abs_max_power: 5_000_i64,
-        feature_map: DEM::Feature::PowerForecastReporting)
+        feature_map: DEM::Feature::StartTimeAdjustment)
     end
     expect_raises(ArgumentError) do
       build(DEM, esa_type: DEM::ESAType::WaterHeating, can_generate: false,

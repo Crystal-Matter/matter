@@ -52,14 +52,23 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool test exercise commissioning, state reads, self-test, and restart.
   Hosts remain responsible for sensor detection, manufacturer-certified
   expression priority, audible/visual output, and Power Source consistency.
+
+### Device Energy Management forecast reporting
+
+- Add typed Matter 1.6 PFR and SFR reporting profiles for the Device Energy
+  Management server. Hosts publish nullable, bounded forecasts; slot schemas
+  match the selected feature, ForecastID advances on updates, progress fields
+  remain live without subscription churn, and forecasts reset on restart.
+  The synthetic washer reports a two-stage PFR forecast to official chip-tool.
+  STA, PAU, FA, and CON remain unadvertised for later implementation.
+
 ### Device Energy Management Power Adjustment
 
 - Add a Matter 1.6 revision 4 Device Energy Management server with the PA
   feature, typed nameplate and capability data, opt-out handling, host-approved
   power adjustment and cancellation, timed completion, events, and restart
   reset. The synthetic water heater exercises reads and commands with official
-  chip-tool. PFR, SFR, STA, PAU, FA, and CON remain unadvertised for follow-up
-  implementations.
+  chip-tool. The PA-only profile advertises no other feature bits.
 
 ### Energy EVSE
 
