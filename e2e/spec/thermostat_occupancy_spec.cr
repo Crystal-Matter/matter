@@ -11,6 +11,13 @@ describe "Matter Thermostat Occupancy guarded fixture" do
     read_int(device, "thermostat", "unoccupied-heating-setpoint", "UnoccupiedHeatingSetpoint", 1).should eq(2000_i64)
   end
 
+  it "accepts but ignores a legacy ControlSequenceOfOperation write" do
+    original = read_int(device, "thermostat", "control-sequence-of-operation", "ControlSequenceOfOperation", 1)
+    changed = original == 0_i64 ? 2 : 0
+    expect_success(device.write("thermostat", "control-sequence-of-operation", changed, 1))
+    read_int(device, "thermostat", "control-sequence-of-operation", "ControlSequenceOfOperation", 1).should eq(original)
+  end
+
   it "writes and adjusts only the unoccupied heating setpoint" do
     expect_success(device.write("thermostat", "unoccupied-heating-setpoint", 2100, 1))
     expect_success(device.invoke("thermostat", "setpoint-raise-lower", ["0", "10"], endpoint: 1))
