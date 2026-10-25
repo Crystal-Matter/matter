@@ -56,6 +56,7 @@ end
 
 private class FailCredentialYamlFile < Matter::Storage::YamlFile
   property? fail_next_cluster_write : Bool = false
+  property fail_next_cluster_id : String?
   property? fail_next_journal_delete : Bool = false
   property? fail_next_fabric_write : Bool = false
   property? fail_next_flush : Bool = false
@@ -69,6 +70,10 @@ private class FailCredentialYamlFile < Matter::Storage::YamlFile
   end
 
   def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::CLUSTERS && id == @fail_next_cluster_id
+      @fail_next_cluster_id = nil
+      raise Matter::StorageError.new("Injected targeted cluster write failure")
+    end
     if @fail_next_fabric_write && collection == Matter::Storage::Collections::FABRICS
       @fail_next_fabric_write = false
       raise Matter::StorageError.new("Injected fabric write failure")
@@ -377,6 +382,101 @@ describe "durable fail-safe credential recovery" do
       restarted = CredentialRecoveryDevice.new(path)
       restarted.fabric_table.get_fabric(index).should be_nil
       restarted.access_control.acl(index).should be_empty
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "does not restore removed group credentials or names after an ACL write failure and restart" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      key_management = first.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      groups = first.message_handler.node.get_cluster!(1_u16, Matter::Cluster::Groups)
+      key_set_id = 5_u16
+      group_id = 0x1234_u16
+      key_management.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(key_set_id,
+          epoch_key0: Bytes.new(16, 0xAA_u8), epoch_start_time0: 1_u64)), index)
+      key_management.add_group_key_map(group_id, key_set_id, index)
+      groups.with_request_context do
+        groups.request_fabric_index = index
+        groups.add_group(Matter::Cluster::Groups::AddGroupRequest.new(
+          Matter::DataType::GroupId.new(group_id), "Old fabric"))
+      end
+      first.persistence.save_cluster(key_management).should be_true
+      first.persistence.save_cluster(groups).should be_true
+
+      backend.fail_next_cluster_id = first.access_control.persistence_key
+      expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
+        first.operational_credentials.credentials.remove_fabric(index)
+      end
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should be_nil
+      restored_keys = restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      restored_groups = restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::Groups)
+      restored_keys.get_key_set(key_set_id, index).should be_nil
+      restored_keys.group_key_map(index).should be_empty
+      restored_groups.with_request_context do
+        restored_groups.request_fabric_index = index
+        restored_groups.member_of?(group_id).should be_false
+      end
+      replacement_index = add_recovery_fabric(restarted, fabric_id: 0x4444_u64)
+      replacement_index.should eq(index)
+      restored_keys.get_key_set(key_set_id, replacement_index).should be_nil
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "keeps the fabric reserved until removed group credentials and names are durable" do
+    path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      device = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(device)
+      device.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      key_management = device.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      groups = device.message_handler.node.get_cluster!(1_u16, Matter::Cluster::Groups)
+      key_set_id = 5_u16
+      group_id = 0x1234_u16
+      key_management.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(key_set_id,
+          epoch_key0: Bytes.new(16, 0xBB_u8), epoch_start_time0: 1_u64)), index)
+      key_management.add_group_key_map(group_id, key_set_id, index)
+      groups.with_request_context do
+        groups.request_fabric_index = index
+        groups.add_group(Matter::Cluster::Groups::AddGroupRequest.new(
+          Matter::DataType::GroupId.new(group_id), "Old fabric"))
+      end
+      device.persistence.save_cluster(key_management).should be_true
+      device.persistence.save_cluster(groups).should be_true
+
+      backend.fail_next_cluster_id = key_management.persistence_key
+      expect_raises(Matter::StorageError) do
+        device.operational_credentials.credentials.remove_fabric(index)
+      end
+      device.fabric_table.get_fabric(index).should_not be_nil
+      device.operational_credentials.credentials.remove_fabric(index).ok?.should be_true
+      device.fabric_table.get_fabric(index).should be_nil
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restored_keys = restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      restored_groups = restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::Groups)
+      restored_keys.get_key_set(key_set_id, index).should be_nil
+      restored_keys.group_key_map(index).should be_empty
+      restored_groups.with_request_context do
+        restored_groups.request_fabric_index = index
+        restored_groups.member_of?(group_id).should be_false
+      end
       restarted.shutdown!
     ensure
       File.delete?(path)
