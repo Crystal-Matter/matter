@@ -103,6 +103,9 @@ Overlapping schedules with the same effective mode do not produce duplicate
 reports. A host that corrects its local clock, changes time zone, or crosses
 a daylight-saving transition should call `refresh_holiday_operating_mode` so
 the cluster can reschedule the next boundary against the new local wall time.
+Writing a configured OperatingMode while a holiday masks it still advances the
+cluster data version for persistence, but does not send an unchanged attribute
+report; the restored configured mode is reported when the holiday ends.
 DisposableUser becomes disabled after its
 first successful open; a lock operation does not consume it. ExpiringUser starts
 an absolute deadline on first successful credential use. The deadline is stored
