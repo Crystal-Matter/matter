@@ -14,6 +14,10 @@ When a legacy `VideoStreamID` or `AudioStreamID` field is present in
 `SolicitOffer` or `ProvideOffer`, the matching response includes that field.
 The provider preserves an explicit TLV Null separately from an omitted field;
 the multi-stream lists remain the preferred revision 2 form.
+An explicit Null legacy stream ID selects an already allocated stream with the
+requested usage and returns its ID; an omitted ID excludes that media type.
+Automatic selection returns `ResourceExhausted` if no matching allocated stream
+exists. New stream creation is not supported.
 
 The constructor requires the same-endpoint camera stream cluster and a `Peer`
 implementation. A host supplies RFC 9429 SDP negotiation, ICE gathering,
@@ -25,7 +29,7 @@ non-success Interaction Model status if a media action fails. The cluster will
 not invent an SDP answer or candidates. `SolicitOffer` reports a deferred
 offer; the host must send the actual Offer within 30 seconds.
 
-This slice accepts already allocated audio streams and checks stream usage,
+This slice accepts already allocated audio and video streams and checks stream usage,
 same-endpoint allocation, hard/soft privacy, and microphone mute before
 admitting or advancing a session. Privacy or final audio release ends affected
 sessions immediately, and fabric removal ends its sessions. All active
@@ -38,7 +42,7 @@ chip-tool E2E exercise only Matter command and TLV exchange. Its `RecordingPeer`
 does **not** establish a WebRTC connection, validate SDP, gather ICE candidates,
 or carry audio. Applications must bind a real WebRTC engine before advertising
 this cluster as a media capability. This Provider slice does not yet implement
-automatic stream assignment, metadata, or secure STUN/TURN CA lookup. The
+automatic stream creation, metadata, or secure STUN/TURN CA lookup. The
 Requestor and Push AV clusters are separate components. TCP can carry
 large SDP through the opt-in `TcpEnabledTransport`; UDP retains its small
 Interaction Model payload budget.

@@ -91,6 +91,67 @@ private def invoke_provider(provider : Provider, command : UInt32, request : TLV
 end
 
 describe Provider do
+  it "assigns an allocated audio stream for a legacy null SolicitOffer ID" do
+    provider, _camera, peer, audio_id = web_rtc_fixture
+    request = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    decoded = Provider::SolicitOfferRequest.from_slice(request.to_slice)
+    decoded.audio_stream_id_state.null?.should be_true
+    decoded.video_stream_id_state.absent?.should be_true
+
+    response = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, decoded)
+      .as(Matter::Cluster::CommandResponse)
+    parsed = Provider::SolicitOfferResponse.from_tlv(response.response.as(TLV::Any))
+    parsed.audio_stream_id.should eq(audio_id)
+    parsed.video_stream_id_state.absent?.should be_true
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.audio_streams.should eq([audio_id])
+    peer.solicitations.should eq([parsed.web_rtc_session_id])
+  end
+
+  it "assigns an allocated video stream for a legacy null ProvideOffer ID" do
+    provider, _camera, peer, video_id, _request = video_web_rtc_fixture
+    request = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: TLV::FieldState(UInt16).null)
+    decoded = Provider::ProvideOfferRequest.from_slice(request.to_slice)
+    decoded.video_stream_id_state.null?.should be_true
+    decoded.audio_stream_id_state.absent?.should be_true
+
+    response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, decoded)
+      .as(Matter::Cluster::CommandResponse)
+    parsed = Provider::ProvideOfferResponse.from_tlv(response.response.as(TLV::Any))
+    parsed.video_stream_id.should eq(video_id)
+    parsed.audio_stream_id_state.absent?.should be_true
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.video_streams.should eq([video_id])
+    peer.offers.should eq(["v=0"])
+  end
+
+  it "fails automatic assignment before creating a session when no stream is allocated" do
+    provider, camera, peer, audio_id = web_rtc_fixture
+    camera.audio_stream_deallocate(CameraAv::AudioStreamDeallocateRequest.new(audio_id))
+      .success?.should be_true
+    request = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: TLV::FieldState(UInt16).null)
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, request)
+      .as(Status).status.should eq(StatusCode::ResourceExhausted)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    peer.offers.should be_empty
+  end
+
+  it "rejects a legacy null stream change on an existing session" do
+    provider, _camera, peer, audio_id = web_rtc_fixture
+    initial = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [audio_id])
+    response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, initial)
+      .as(Matter::Cluster::CommandResponse)
+    session_id = Provider::ProvideOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
+    revision = Provider::ProvideOfferRequest.new(session_id, "v=1",
+      audio_stream_id: TLV::FieldState(UInt16).null)
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, revision)
+      .as(Status).status.should eq(StatusCode::ConstraintError)
+    peer.offers.should eq(["v=0"])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+  end
+
   it "returns the requested legacy video ID in SolicitOfferResponse" do
     provider, _camera, _peer, video_id, _request = video_web_rtc_fixture
     solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
@@ -143,7 +204,7 @@ describe Provider do
     response.keys.should_not contain(2_u8)
   end
 
-  it "echoes explicit Null legacy video IDs but omits absent audio IDs" do
+  it "reports the automatically selected legacy video ID but omits absent audio IDs" do
     provider, _camera, _peer, video_id, _request = video_web_rtc_fixture
     solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
       22_u16, video_stream_id: TLV::FieldState(UInt16).null, video_streams: [video_id])
@@ -153,7 +214,7 @@ describe Provider do
     solicited = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
       .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
     solicited.keys.should contain(2_u8)
-    solicited[2_u8].value.should be_nil
+    solicited[2_u8].value.should eq(video_id)
     solicited.keys.should_not contain(3_u8)
 
     offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
@@ -164,7 +225,7 @@ describe Provider do
     provided = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
       .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
     provided.keys.should contain(1_u8)
-    provided[1_u8].value.should be_nil
+    provided[1_u8].value.should eq(video_id)
     provided.keys.should_not contain(2_u8)
   end
 
