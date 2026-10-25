@@ -1363,6 +1363,7 @@ module Matter
         return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
         binding = request.binding
         return InteractionModel::Status.constraint_error if binding.node.nil? == binding.group.nil?
+        return InteractionModel::Status.constraint_error if binding.node && binding.endpoint.nil?
         return InteractionModel::Status.constraint_error if binding.group == 0_u16 || (binding.group && binding.endpoint)
         return InteractionModel::Status.resource_exhausted if @endpoint_binding_list.size >= MAX_NODE_ENTRIES
         id = next_list_id(all_list_ids)

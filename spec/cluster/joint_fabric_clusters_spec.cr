@@ -234,19 +234,29 @@ describe Matter::Cluster::JointFabricDatastore do
       .status.should eq(Matter::InteractionModel::StatusCode::NotFound)
   end
 
-  it "rejects malformed group binding targets before staging delivery" do
+  it "rejects malformed binding targets before staging delivery" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
     cluster.record_endpoint(42_u64, 1_u16, "Endpoint")
+    before = cluster.save_state
+    version = cluster.data_version
     constraint = Matter::InteractionModel::StatusCode::ConstraintError
     [
       Datastore::DatastoreBindingTargetStruct.new(group: 0_u16),
       Datastore::DatastoreBindingTargetStruct.new(group: 1_u16, endpoint: 2_u16),
+      Datastore::DatastoreBindingTargetStruct.new(node: 43_u64),
     ].each do |binding|
       cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, binding))
         .status.should eq(constraint)
     end
     cluster.endpoint_binding_list.should be_empty
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+
+    group_binding = Datastore::DatastoreBindingTargetStruct.new(group: 1_u16)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, group_binding))
+      .success?.should be_true
+    cluster.endpoint_binding_list.first.binding.should eq(group_binding)
   end
 
   it "uses target snapshots to prune stale committed records while preserving pending work" do
