@@ -72,6 +72,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SetTrustedTimeSource, MissingTrustedTimeSource events, and hourly CASE reads
   of the configured peer's UTC time. The root Descriptor advertises the
   Time Synchronization client role when TSC is enabled. NTPS remains unavailable.
+- Erase and persist a removed fabric's TrustedTimeSource before its local index
+  can be reused. A failed write keeps the fabric available for a retry.
 
 ### Time Synchronization NTP client
 

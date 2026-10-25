@@ -105,7 +105,7 @@ describe "TrustedTimeSource fabric removal durability" do
       time_sync = set_trusted_time_source(device, 1_u8)
 
       storage.fail_next_cluster_id = time_sync.persistence_key
-      expect_raises(Matter::StorageError, "Injected cluster write failure") do
+      expect_raises(Matter::StorageError, "Could not persist erased TrustedTimeSource") do
         device.operational_credentials.credentials.remove_fabric(1_u8)
       end
       device.fabric_table.get_fabric(1_u8).should_not be_nil

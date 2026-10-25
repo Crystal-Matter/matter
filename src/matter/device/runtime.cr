@@ -390,6 +390,18 @@ module Matter
             raise StorageError.new("Could not persist erased Binding for fabric #{fabric_index}")
           end
         end
+
+        @message_handler.clusters.values.each do |cluster|
+          next unless time_sync = cluster.as?(Cluster::TimeSynchronization)
+          next unless time_sync.feature_map.trusted_time_client?
+          time_sync.remove_fabric(fabric_index)
+          # A failed write may already have cleared RAM. Rewrite on every
+          # removal attempt before the old fabric index becomes reusable.
+          unless @persistence.save_cluster(time_sync)
+            @persistence.mark_dirty(time_sync)
+            raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
+          end
+        end
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
@@ -416,12 +428,6 @@ module Matter
           cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
-          if time_sync = cluster.as?(Cluster::TimeSynchronization)
-            time_sync.remove_fabric(fabric_index)
-            if time_sync.feature_map.trusted_time_client? && !@persistence.save_cluster(time_sync)
-              raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
-            end
-          end
         end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
