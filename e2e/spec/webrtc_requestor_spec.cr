@@ -20,16 +20,16 @@ describe "Matter 1.6 WebRTC Requestor signaling interoperability" do
   end
 
   it "binds all signaling commands to an existing CASE session and delegates without media" do
-    expect_failure(requestor_command(device, "0x0", %({"0":"u:99","1":"s:v=0"})), "NOT_FOUND")
-    expect_failure(requestor_command(device, "0x1", %({"0":"u:99","1":"s:v=0"})), "NOT_FOUND")
-    expect_failure(requestor_command(device, "0x2", %({"0":"u:99","1":[{"0":"s:candidate","1":"s:0","2":"u:0"}]})), "NOT_FOUND")
+    expect_failure(requestor_command(device, "0x0", %({"0":"u:99","1":"v=0"})), "NOT_FOUND")
+    expect_failure(requestor_command(device, "0x1", %({"0":"u:99","1":"v=0"})), "NOT_FOUND")
+    expect_failure(requestor_command(device, "0x2", %({"0":"u:99","1":[{"0":"candidate","1":"0","2":"u:0"}]})), "NOT_FOUND")
     expect_failure(requestor_command(device, "0x3", %({"0":"u:99","1":"u:2"})), "NOT_FOUND")
 
-    expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"s:"})), "CONSTRAINT_ERROR")
-    expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"s:v=0"})), "INVALID_IN_STATE")
-    expect_failure(requestor_command(device, "0x1", %({"0":"u:7","1":"s:v=0"})), "INVALID_IN_STATE")
-    expect_failure(requestor_command(device, "0x2", %({"0":"u:7","1":[{"0":"s:candidate","1":"s:0","2":"u:0"}]})), "INVALID_IN_STATE")
+    expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":""})), "CONSTRAINT_ERROR")
+    expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"v=0"})), "INVALID_IN_STATE")
+    expect_failure(requestor_command(device, "0x1", %({"0":"u:7","1":"v=0"})), "INVALID_IN_STATE")
+    expect_failure(requestor_command(device, "0x2", %({"0":"u:7","1":[{"0":"candidate","1":"0","2":"u:0"}]})), "INVALID_IN_STATE")
     expect_failure(requestor_command(device, "0x3", %({"0":"u:7","1":"u:2"})), "INVALID_IN_STATE")
-    expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"s:v=0"})), "NOT_FOUND")
+    expect_failure(requestor_command(device, "0x0", %({"0":"u:7","1":"v=0"})), "NOT_FOUND")
   end
 end
