@@ -122,6 +122,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Roll back a provisional AdministratorFabricIndex restored after AddICAC when
   commissioning was interrupted before completion. The rollback value shares
   the cluster document with the provisional attribute.
+- Commit the JFA example's cross-signed ICAC and AdministratorFabricIndex in
+  one storage transaction, so a restart after the durable commit restores the
+  new pair even before the in-memory fail-safe marker is cleared.
+- Roll back failed memory, YAML, and JSON storage transactions, including
+  failed nested writes, so an interrupted JFA commit cannot flush one half of
+  the credential pair.
 
 ### WebRTC Requestor client infrastructure
 

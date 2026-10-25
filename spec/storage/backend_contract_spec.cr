@@ -46,6 +46,18 @@ module BackendContract
     include FlushCounter
   end
 
+  class FailingYamlFile < Matter::Storage::YamlFile
+    property? fail_next_flush = false
+
+    protected def flush : Nil
+      if @fail_next_flush
+        @fail_next_flush = false
+        raise Matter::StorageError.new("Interrupted before file rename")
+      end
+      super
+    end
+  end
+
   def self.sample_document : Document
     Document{
       "nil"            => nil,
@@ -391,7 +403,7 @@ module BackendContract
         end
       end
 
-      it "flushes writes made before an exception inside a transaction" do
+      it "rolls back writes made before an exception inside a transaction" do
         with_temp_path(extension) do |path|
           backend = factory.call(path).tap(&.open)
           expect_raises(ArgumentError) do
@@ -400,11 +412,35 @@ module BackendContract
               raise ArgumentError.new("boom")
             end
           end
+          backend.as(FlushCounter).flushes.should eq(0)
+          backend.read(COLLECTION, ID).should be_nil
+          backend.close
+
+          reopened = factory.call(path).tap(&.open)
+          reopened.read(COLLECTION, ID).should be_nil
+          reopened.destroy!
+        end
+      end
+
+      it "rolls back only a failed nested transaction" do
+        with_temp_path(extension) do |path|
+          backend = factory.call(path).tap(&.open)
+          backend.transaction do
+            backend.write(COLLECTION, ID, Document{"n" => 1_i64})
+            expect_raises(ArgumentError) do
+              backend.transaction do
+                backend.write(COLLECTION, OTHER_ID, Document{"n" => 2_i64})
+                raise ArgumentError.new("nested rollback")
+              end
+            end
+            backend.read(COLLECTION, OTHER_ID).should be_nil
+            backend.write(COLLECTION, THIRD_ID, Document{"n" => 3_i64})
+          end
           backend.as(FlushCounter).flushes.should eq(1)
           backend.close
 
           reopened = factory.call(path).tap(&.open)
-          reopened.read(COLLECTION, ID).should eq(Document{"n" => 1_i64})
+          reopened.ids(COLLECTION).should eq([ID, THIRD_ID])
           reopened.destroy!
         end
       end
@@ -491,6 +527,27 @@ describe Matter::Storage::Backend do
 
   BackendContract.run_file("YamlFile", ".yml") { |path| BackendContract::CountingYamlFile.new(path) }
   BackendContract.run_file("JsonFile", ".json") { |path| BackendContract::CountingJsonFile.new(path) }
+
+  it "retains the previous file and in-memory tree when a transaction flush fails before rename" do
+    BackendContract.with_temp_path(".yml") do |path|
+      backend = BackendContract::FailingYamlFile.new(path).tap(&.open)
+      old_document = Matter::Storage::Document{"n" => 1_i64}
+      backend.write(BackendContract::COLLECTION, BackendContract::ID, old_document)
+      backend.fail_next_flush = true
+      expect_raises(Matter::StorageError, "Interrupted before file rename") do
+        backend.transaction do
+          backend.write(BackendContract::COLLECTION, BackendContract::ID,
+            Matter::Storage::Document{"n" => 2_i64})
+        end
+      end
+      backend.read(BackendContract::COLLECTION, BackendContract::ID).should eq(old_document)
+      backend.close
+
+      reopened = Matter::Storage::YamlFile.new(path).tap(&.open)
+      reopened.read(BackendContract::COLLECTION, BackendContract::ID).should eq(old_document)
+      reopened.destroy!
+    end
+  end
 end
 
 describe Matter::Storage::Sqlite do

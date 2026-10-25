@@ -609,7 +609,7 @@ module MatterJointFabricAdministrator
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: persisted_icac,
-        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate) },
+        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_ICAC_DOCUMENT, administrator) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -686,7 +686,7 @@ module MatterJointFabricAdministrator
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore,
           APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT),
         initial_icac: persisted_icac(APP_BOOTSTRAP_ICAC_DOCUMENT),
-        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_BOOTSTRAP_ICAC_DOCUMENT) },
+        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_BOOTSTRAP_ICAC_DOCUMENT, administrator) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -784,7 +784,7 @@ module MatterJointFabricAdministrator
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: certificate,
-        persist_icac: ->(value : Bytes?) { persist_icac(value) },
+        persist_icac: ->(value : Bytes?) { persist_icac(value, APP_ICAC_DOCUMENT, administrator) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -971,11 +971,24 @@ module MatterJointFabricAdministrator
       document ? IcacCertificateState.from_document(document).certificate : nil
     end
 
-    private def persist_icac(certificate : Bytes?, document_name : String = APP_ICAC_DOCUMENT) : Nil
-      if certificate
-        persistence.write_app_document(document_name, IcacCertificateState.new(certificate).to_document)
-      else
-        persistence.delete_app_document(document_name)
+    private def persist_icac(certificate : Bytes?, document_name : String,
+                             administrator : Admin) : Nil
+      # The service exposes the post-commit cluster document while this
+      # callback runs. Both documents must reach the backend together: a
+      # restart after this transaction must restore the committed index.
+      cluster_document = administrator.save_state ||
+                         raise Matter::StorageError.new("JFA cluster has no persistent state")
+      backend = persistence.backend
+      app_collection = Matter::Storage::Collections::APP
+      cluster_collection = Matter::Storage::Collections::CLUSTERS
+      cluster_key = administrator.persistence_key
+      backend.transaction do
+        if certificate
+          backend.write(app_collection, document_name, IcacCertificateState.new(certificate).to_document)
+        else
+          backend.delete(app_collection, document_name)
+        end
+        backend.write(cluster_collection, cluster_key, cluster_document)
       end
     end
 

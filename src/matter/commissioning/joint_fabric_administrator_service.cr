@@ -120,9 +120,13 @@ module Matter
       def on_commissioning_complete : Nil
         if @icac_pending_commit
           certificate = @cross_signed_icac
-          @persist_icac.try(&.call(certificate))
-          @committed_icac = certificate.try(&.dup)
-          @administrator_cluster.try(&.commit_provisional_administrator_fabric_index)
+          cluster = @administrator_cluster ||
+                    raise Matter::ConfigurationError.new("Pending ICAC has no Administrator cluster")
+          cluster.with_pending_provisional_commit do
+            @persist_icac.try(&.call(certificate))
+            @committed_icac = certificate.try(&.dup)
+            cluster.commit_provisional_administrator_fabric_index
+          end
           @icac_pending_commit = false
           @administrator_cluster = nil
         end

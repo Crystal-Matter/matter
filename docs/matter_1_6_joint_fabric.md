@@ -99,12 +99,16 @@ item below as covered only to the extent of its cited tests.
   in one cluster document. A restart before CommissioningComplete restores the
   previous index before the cluster serves reads. The service treats the
   cross-signed ICAC as uncommitted until its persistence callback returns. A
-  host must reselect its committed fabric after restoring clusters. The
-  committed ICAC and cluster document use separate writes, so a crash after
-  the ICAC write but before clearing the provisional marker can restore the
-  prior index.
-  The worked JFA example does this in `before_start` when it reattaches its
-  validated fabric, before operational advertisement.
+  host must persist the ICAC and cluster's post-commit document in one backend
+  transaction inside that callback. The worked JFA example does so for YAML,
+  SQLite, and PostgreSQL backends. Failed file transactions roll back their
+  in-memory tree, including when an inner transaction raises. A crash before
+  the transaction restores the previous index and ICAC; a crash after it
+  restores the new pair, even if the service had not yet cleared its in-memory
+  marker. Hosts with a callback
+  that stores only the ICAC must still reconcile the validated committed fabric
+  during startup, before serving reads or advertising operationally. A service
+  configured without a persistence callback provides no durable ICAC commit.
 - The Docker two-administrator test bootstraps separate fabrics, performs the
   JCM credential exchange between the Crystal implementations, and checks the
   stored cross-signed ICAC. CommissioningComplete is deferred to the Anchor

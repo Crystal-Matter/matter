@@ -11,7 +11,8 @@ module Matter
     # Every public method holds a reentrant mutex so a store can be shared
     # between fibers. Mutations call `persist`, which subclasses use to write
     # the tree out; inside a `transaction` the tree is marked dirty instead and
-    # persisted once when the outermost transaction ends.
+    # persisted once when the outermost transaction ends. Each transaction
+    # retains a snapshot so a raised block also rolls back only its own writes.
     abstract class TreeBackend < Backend
       @tree = Tree.new
       @mutex = Mutex.new(:reentrant)
@@ -105,15 +106,21 @@ module Matter
       def transaction(& : -> Nil) : Nil
         @mutex.synchronize do
           ensure_open
+          previous_tree = snapshot_tree
+          previous_dirty = @dirty
           @transaction_depth += 1
           begin
             yield
+            if @transaction_depth == 1 && @dirty
+              persist
+              @dirty = false
+            end
+          rescue ex
+            @tree = previous_tree
+            @dirty = previous_dirty
+            raise ex
           ensure
             @transaction_depth -= 1
-            if @transaction_depth.zero? && @dirty
-              @dirty = false
-              persist
-            end
           end
         end
       end
@@ -140,6 +147,16 @@ module Matter
         else
           @dirty = true
         end
+      end
+
+      private def snapshot_tree : Tree
+        snapshot = Tree.new
+        @tree.each do |collection, documents|
+          copied = Hash(String, Document).new
+          documents.each { |id, document| copied[id] = Storage.deep_copy(document) }
+          snapshot[collection] = copied
+        end
+        snapshot
       end
     end
   end

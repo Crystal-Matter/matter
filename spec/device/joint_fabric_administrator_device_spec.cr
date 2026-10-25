@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../examples/support/joint_fabric_administrator_device"
+require "../../src/matter/storage/sqlite"
 
 class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator::Device
   def prepare_for_start : Nil
@@ -45,9 +46,149 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
                             dcl_url : String? = nil) : Matter::Controller::VidVerification::OperationalTrustAnchors
     anchor_trust(vendor_id, root_path, test_dcl_url, dcl_url)
   end
+
+  def persist_icac_commit_for_spec(certificate : Bytes) : Nil
+    persist_icac(certificate, APP_ICAC_DOCUMENT, joint_fabric_administrator)
+  end
+end
+
+class InterruptedJfaCommitYaml < Matter::Storage::YamlFile
+  property? fail_next_cluster_write = false
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if @fail_next_cluster_write && collection == Matter::Storage::Collections::CLUSTERS
+      @fail_next_cluster_write = false
+      raise Matter::StorageError.new("Interrupted cluster write")
+    end
+    super
+  end
+end
+
+class InterruptedJfaCommitSqlite < Matter::Storage::Sqlite
+  property? fail_next_cluster_write = false
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if @fail_next_cluster_write && collection == Matter::Storage::Collections::CLUSTERS
+      @fail_next_cluster_write = false
+      raise Matter::StorageError.new("Interrupted cluster write")
+    end
+    super
+  end
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "rolls a partial ICAC commit back on SQLite and restores a durable pair after a crash" do
+    path = File.join(Dir.tempdir, "matter-jfa-atomic-commit-#{Random::Secure.hex(6)}.sqlite3")
+    backend = InterruptedJfaCommitSqlite.new(path)
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    administrator = device.joint_fabric_administrator
+    administrator.administrator_fabric_index = 1_u8
+    old_icac = Bytes[1_u8]
+    new_icac = Bytes[2_u8]
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(old_icac).to_document)
+    device.persistence.save_cluster(administrator).should be_true
+    administrator.begin_provisional_administrator_fabric_index(2_u8)
+    device.persistence.save_cluster(administrator).should be_true
+
+    backend.fail_next_cluster_write = true
+    administrator.with_pending_provisional_commit do
+      expect_raises(Matter::StorageError, "Interrupted cluster write") do
+        device.persist_icac_commit_for_spec(new_icac)
+      end
+    end
+    before_commit = Matter::Storage::Sqlite.new(path)
+    before_commit.open
+    stored_old_icac = before_commit.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).as(Matter::Storage::Document)
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(stored_old_icac)
+      .certificate.should eq(old_icac)
+    restored_old = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored_old.restore_state(before_commit.read(Matter::Storage::Collections::CLUSTERS,
+      administrator.persistence_key).as(Matter::Storage::Document))
+    restored_old.administrator_fabric_index.should eq(1_u8)
+    before_commit.close
+
+    expect_raises(Matter::StorageError, "Interrupted after commit") do
+      administrator.with_pending_provisional_commit do
+        device.persist_icac_commit_for_spec(new_icac)
+        raise Matter::StorageError.new("Interrupted after commit")
+      end
+    end
+    after_commit = Matter::Storage::Sqlite.new(path)
+    after_commit.open
+    stored_new_icac = after_commit.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).as(Matter::Storage::Document)
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(stored_new_icac)
+      .certificate.should eq(new_icac)
+    restored_new = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored_new.restore_state(after_commit.read(Matter::Storage::Collections::CLUSTERS,
+      administrator.persistence_key).as(Matter::Storage::Document))
+    restored_new.administrator_fabric_index.should eq(2_u8)
+  ensure
+    after_commit.try(&.close) if after_commit.try(&.open?)
+    before_commit.try(&.close) if before_commit.try(&.open?)
+    device.try(&.shutdown!)
+    backend.try(&.destroy!) if backend
+  end
+
+  it "commits the ICAC and AdministratorFabricIndex together across interrupted file writes" do
+    path = File.join(Dir.tempdir, "matter-jfa-atomic-commit-#{Random::Secure.hex(6)}.yml")
+    backend = InterruptedJfaCommitYaml.new(path)
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    administrator = device.joint_fabric_administrator
+    administrator.administrator_fabric_index = 1_u8
+    old_icac = Bytes[1_u8]
+    new_icac = Bytes[2_u8]
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(old_icac).to_document)
+    device.persistence.save_cluster(administrator).should be_true
+    administrator.begin_provisional_administrator_fabric_index(2_u8)
+    device.persistence.save_cluster(administrator).should be_true
+
+    backend.fail_next_cluster_write = true
+    administrator.with_pending_provisional_commit do
+      expect_raises(Matter::StorageError, "Interrupted cluster write") do
+        device.persist_icac_commit_for_spec(new_icac)
+      end
+    end
+    before_commit = Matter::Storage::YamlFile.new(path)
+    before_commit.open
+    stored_old_icac = before_commit.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).as(Matter::Storage::Document)
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(stored_old_icac)
+      .certificate.should eq(old_icac)
+    restored_old = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored_old.restore_state(before_commit.read(Matter::Storage::Collections::CLUSTERS,
+      administrator.persistence_key).as(Matter::Storage::Document))
+    restored_old.administrator_fabric_index.should eq(1_u8)
+    before_commit.close
+
+    expect_raises(Matter::StorageError, "Interrupted after commit") do
+      administrator.with_pending_provisional_commit do
+        device.persist_icac_commit_for_spec(new_icac)
+        raise Matter::StorageError.new("Interrupted after commit")
+      end
+    end
+    after_commit = Matter::Storage::YamlFile.new(path)
+    after_commit.open
+    stored_new_icac = after_commit.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).as(Matter::Storage::Document)
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(stored_new_icac)
+      .certificate.should eq(new_icac)
+    restored_new = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored_new.restore_state(after_commit.read(Matter::Storage::Collections::CLUSTERS,
+      administrator.persistence_key).as(Matter::Storage::Document))
+    restored_new.administrator_fabric_index.should eq(2_u8)
+  ensure
+    after_commit.try(&.close) if after_commit.try(&.open?)
+    before_commit.try(&.close) if before_commit.try(&.open?)
+    device.try(&.shutdown!)
+    File.delete?(path) if path
+  end
+
   it "selects an explicit test DCL trust source without falling back to a static root" do
     device = InspectableJointFabricAdministratorDevice.new
     trust = device.anchor_trust_for_spec(0xFFF1_u16, nil, "https://127.0.0.1")
