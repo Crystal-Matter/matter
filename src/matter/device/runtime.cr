@@ -224,6 +224,11 @@ module Matter
       @node.on_version_changed = ->(cluster : Cluster::Base) { @persistence.mark_dirty(cluster) }
 
       build_and_wire_clusters
+      @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
+        if time_sync.feature_map.trusted_time_client?
+          @node.get_cluster!(Node::ROOT_ENDPOINT_ID, Cluster::Descriptor).add_client(Cluster::TimeSynchronization)
+        end
+      end
       @message_handler.clusters.values.each do |cluster|
         wire_ecosystem_information(cluster)
         wire_tls_certificate_management(cluster)
@@ -235,6 +240,11 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
+      @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
+        if time_sync.feature_map.trusted_time_client? && time_sync.retain_fabrics(@fabric_table.all_fabrics.map(&.fabric_index))
+          raise StorageError.new("Could not persist erased TrustedTimeSource") unless @persistence.save_cluster(time_sync)
+        end
+      end
       # Remove ACLs whose fabric document is absent. This also repairs an
       # interrupted ordinary RemoveFabric, where the fabric delete succeeded
       # but the ACL write did not. Do this before CASE can use a recycled index.
@@ -316,6 +326,12 @@ module Matter
           cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
+          if time_sync = cluster.as?(Cluster::TimeSynchronization)
+            time_sync.remove_fabric(fabric_index)
+            if time_sync.feature_map.trusted_time_client? && !@persistence.save_cluster(time_sync)
+              raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
+            end
+          end
         end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
@@ -347,6 +363,11 @@ module Matter
         cluster.as?(Cluster::ColorControl).try(&.apply_startup_color_temperature(ota_restart: ota_restart))
       end
       before_start
+      @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
+        if time_sync.feature_map.trusted_time_client? && time_sync.on_trusted_time_query.nil?
+          raise ConfigurationError.new("Trusted Time Client needs an outbound peer query callback")
+        end
+      end
       @lifecycle.sync_advertisements
       @fabric_table.empty? ? started_commissioning_mode : started_operational_mode
       # Start the TCP listener before publishing T=4 in operational mDNS.
@@ -411,7 +432,7 @@ module Matter
       time_zones = [] of Cluster::TimeSynchronization
       @message_handler.clusters.each_value do |cluster|
         if time_zone = cluster.as?(Cluster::TimeSynchronization)
-          time_zones << time_zone if time_zone.feature_map.time_zone? || time_zone.feature_map.ntp_client?
+          time_zones << time_zone if time_zone.feature_map.time_zone? || time_zone.feature_map.ntp_client? || time_zone.feature_map.trusted_time_client?
         end
       end
       return if time_zones.empty?

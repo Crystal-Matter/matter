@@ -7,8 +7,8 @@ module Matter
     # Matter 1.6 Time Synchronization (0x0038). This base server accepts an
     # administrator's UTC time and advances it using a monotonic clock. It
     # starts unsynchronized on every boot. Hosts may opt into the TimeZone
-    # feature without a time-zone database. The NTP client is opt-in; TSC
-    # remains unavailable until peer synchronization is implemented.
+    # feature without a time-zone database. The NTP and Trusted Time clients
+    # are opt-in; trusted peer access is supplied by the device host.
     class TimeSynchronization < Base
       Log = ::Log.for("matter.cluster.time_synchronization")
 
@@ -16,18 +16,21 @@ module Matter
 
       feature :time_zone, bit: 0
       feature :ntp_client, bit: 1
+      feature :trusted_time_client, bit: 3
 
-      TIME_NOT_ACCEPTED            = 0x02_u8
-      TIME_FAILURE_MIN_INTERVAL    = 1.hour
-      DST_TABLE_EMPTY_MIN_INTERVAL = 1.hour
-      TIME_ZONE_OFFSET_MIN         = -43_200
-      TIME_ZONE_OFFSET_MAX         =  50_400
-      TIME_ZONE_NAME_MAX_BYTES     =      64
-      TIME_ZONE_LIST_MAX_SIZE      =    2_u8
-      DST_OFFSET_LIST_MAX_SIZE     =    4_u8
-      DEFAULT_NTP_MAX_BYTES        =     128
-      NTP_REFRESH_INTERVAL         = 1.hour
-      MICROSECONDS_PER_SECOND      = 1_000_000_i128
+      TIME_NOT_ACCEPTED                 = 0x02_u8
+      TIME_FAILURE_MIN_INTERVAL         = 1.hour
+      DST_TABLE_EMPTY_MIN_INTERVAL      = 1.hour
+      TIME_ZONE_OFFSET_MIN              = -43_200
+      TIME_ZONE_OFFSET_MAX              =  50_400
+      TIME_ZONE_NAME_MAX_BYTES          =      64
+      TIME_ZONE_LIST_MAX_SIZE           =    2_u8
+      DST_OFFSET_LIST_MAX_SIZE          =    4_u8
+      DEFAULT_NTP_MAX_BYTES             =     128
+      NTP_REFRESH_INTERVAL              = 1.hour
+      TRUSTED_TIME_REFRESH_INTERVAL     = 1.hour
+      MISSING_TRUSTED_TIME_MIN_INTERVAL = 1.hour
+      MICROSECONDS_PER_SECOND           = 1_000_000_i128
 
       enum TimeZoneDatabase : UInt8
         Full    = 0
@@ -89,6 +92,52 @@ module Matter
         def initialize(@default_ntp : String?)
         end
       end
+
+      struct FabricScopedTrustedTimeSourceStruct
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter node_id : UInt64
+        @[TLV::Field(tag: 1)]
+        getter endpoint : UInt16
+
+        def initialize(@node_id : UInt64, @endpoint : UInt16)
+        end
+      end
+
+      struct TrustedTimeSourceStruct
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0)]
+        getter fabric_index : UInt8
+        @[TLV::Field(tag: 1)]
+        getter node_id : UInt64
+        @[TLV::Field(tag: 2)]
+        getter endpoint : UInt16
+
+        def initialize(@fabric_index : UInt8, @node_id : UInt64, @endpoint : UInt16)
+        end
+      end
+
+      struct SetTrustedTimeSourceRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter trusted_time_source : FabricScopedTrustedTimeSourceStruct?
+
+        def initialize(@trusted_time_source : FabricScopedTrustedTimeSourceStruct?)
+        end
+      end
+
+      struct MissingTrustedTimeSourceEvent
+        include TLV::Serializable
+
+        def initialize
+        end
+      end
+
+      record TrustedTimeSample, utc_time : UInt64, granularity : Granularity
 
       struct TimeFailureEvent
         include TLV::Serializable
@@ -194,14 +243,18 @@ module Matter
         getter time_zone : Array(TimeZoneStruct)
         getter dst_offset : Array(DstOffsetStruct)
         getter default_ntp : String?
+        getter trusted_time_source : TrustedTimeSourceStruct?
 
-        def initialize(@data_version, @features, @time_zone, @dst_offset, @default_ntp)
+        def initialize(@data_version, @features, @time_zone, @dst_offset, @default_ntp,
+                       @trusted_time_source)
         end
       end
 
       attribute 0x0000, :utc_time, UInt64, computed: true, nullable: true, omit_changes: true
       attribute 0x0001, :granularity, Granularity, default: Granularity::NoTime
       attribute 0x0002, :time_source, TimeSource, default: TimeSource::None
+      attribute 0x0003, :trusted_time_source, TrustedTimeSourceStruct,
+        computed: true, nullable: true, requires: :trusted_time_client
       attribute 0x0004, :default_ntp, String, computed: true, nullable: true, requires: :ntp_client
       attribute 0x0005, :time_zone, Array(TimeZoneStruct), computed: true, requires: :time_zone
       attribute 0x0006, :dst_offset, Array(DstOffsetStruct), computed: true, requires: :time_zone
@@ -220,7 +273,11 @@ module Matter
       event 0x0001, :dst_status, priority: :info, requires: :time_zone
       event 0x0002, :time_zone_status, priority: :info, requires: :time_zone
       event 0x0003, :time_failure, priority: :info
+      event 0x0004, :missing_trusted_time_source, priority: :info,
+        requires: :trusted_time_client
       command 0x0000, :set_utc_time, request: SetUtcTimeRequest, access: :administer, handler: :apply_utc_time
+      command 0x0001, :set_trusted_time_source, request: SetTrustedTimeSourceRequest,
+        access: :administer, requires: :trusted_time_client, handler: :apply_trusted_time_source
       command 0x0002, :set_time_zone, request: SetTimeZoneRequest,
         response: SetTimeZoneResponse, response_id: 0x0003, access: :manage,
         requires: :time_zone, handler: :apply_time_zone
@@ -240,7 +297,11 @@ module Matter
       @last_dst_entry_present : Bool
       @default_ntp : String?
       @last_ntp_attempt : Time::Instant?
+      @trusted_time_source : TrustedTimeSourceStruct?
+      @last_trusted_time_attempt : Time::Instant?
+      @last_missing_trusted_time_source : Time::Instant?
       property on_ntp_query : Proc(String, UInt64?)?
+      property on_trusted_time_query : Proc(UInt8, UInt64, UInt16, TrustedTimeSample?)?
 
       def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
                      @feature_map : Feature = Feature::None)
@@ -258,6 +319,10 @@ module Matter
         @default_ntp = nil
         @last_ntp_attempt = nil
         @on_ntp_query = nil
+        @trusted_time_source = nil
+        @last_trusted_time_attempt = nil
+        @last_missing_trusted_time_source = nil
+        @on_trusted_time_query = nil
       end
 
       def utc_time : UInt64?
@@ -283,6 +348,78 @@ module Matter
 
       def default_ntp : String?
         @default_ntp
+      end
+
+      def trusted_time_source : TrustedTimeSourceStruct?
+        @trusted_time_source
+      end
+
+      def apply_trusted_time_source(request : SetTrustedTimeSourceRequest) : InteractionModel::Status
+        return InteractionModel::Status.unsupported_access unless request_is_case_session? && (fabric_index = request_fabric_index)
+        return InteractionModel::Status.unsupported_access unless (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(fabric_index)
+        candidate = request.trusted_time_source
+        if candidate && !(DataType::NodeId::OPERATIONAL_MINIMUM..DataType::NodeId::OPERATIONAL_MAXIMUM).includes?(candidate.node_id)
+          return InteractionModel::Status.constraint_error
+        end
+        @trusted_time_source = candidate.try do |source|
+          TrustedTimeSourceStruct.new(fabric_index, source.node_id, source.endpoint)
+        end
+        @last_trusted_time_attempt = nil
+        increment_version_and_notify(ATTR_TRUSTED_TIME_SOURCE)
+        emit_missing_trusted_time_source(force: true) unless candidate
+        InteractionModel::Status.success
+      end
+
+      def remove_fabric(fabric_index : UInt8) : Nil
+        return unless @trusted_time_source.try(&.fabric_index) == fabric_index
+        @trusted_time_source = nil
+        @last_trusted_time_attempt = nil
+        increment_version_and_notify(ATTR_TRUSTED_TIME_SOURCE)
+        emit_missing_trusted_time_source(force: true)
+      end
+
+      # Repairs an interrupted fabric removal before the device accepts CASE.
+      def retain_fabrics(indices : Array(UInt8)) : Bool
+        source = @trusted_time_source
+        return false unless source
+        return false if indices.includes?(source.fabric_index)
+        remove_fabric(source.fabric_index)
+        true
+      end
+
+      def refresh_from_trusted_time_source(now : Time::Instant = Time.instant) : Bool
+        return false unless @feature_map.trusted_time_client?
+        if last = @last_trusted_time_attempt
+          return false if now - last < TRUSTED_TIME_REFRESH_INTERVAL
+        end
+        @last_trusted_time_attempt = now
+        source = @trusted_time_source
+        sample = begin
+          if source && (query = @on_trusted_time_query)
+            query.call(source.fabric_index, source.node_id, source.endpoint)
+          end
+        rescue error
+          Log.warn(exception: error) { "Trusted time peer query failed" }
+          nil
+        end
+        return false unless @trusted_time_source == source
+        unless sample && sample.granularity != Granularity::NoTime
+          emit_missing_trusted_time_source(now: now)
+          report_time_failure if utc_time.nil? && (!@feature_map.ntp_client? || @default_ntp.nil? || @default_ntp.try(&.empty?))
+          return false
+        end
+        status = apply_utc_time(SetUtcTimeRequest.new(sample.utc_time, sample.granularity))
+        return false unless status.status == InteractionModel::StatusCode::Success
+        self.time_source = TimeSource::NodeTimeCluster
+        true
+      end
+
+      private def emit_missing_trusted_time_source(now : Time::Instant = Time.instant, force : Bool = false) : Nil
+        if !force && (last = @last_missing_trusted_time_source)
+          return if now - last < MISSING_TRUSTED_TIME_MIN_INTERVAL
+        end
+        @last_missing_trusted_time_source = now
+        emit_event(EVENT_MISSING_TRUSTED_TIME_SOURCE, MissingTrustedTimeSourceEvent.new)
       end
 
       def supports_dns_resolve? : Bool
@@ -355,7 +492,8 @@ module Matter
       # separate clock scheduler may call it too; comparisons suppress
       # duplicate status events when a read and a tick observe the same state.
       def advance_time_state(now : Time::Instant = Time.instant) : Nil
-        refresh_from_default_ntp(now) if @feature_map.ntp_client?
+        trusted = refresh_from_trusted_time_source(now) if @feature_map.trusted_time_client?
+        refresh_from_default_ntp(now) if @feature_map.ntp_client? && !trusted
         return unless @feature_map.time_zone?
         if utc = utc_time_at(now)
           refresh_time_state(utc)
@@ -406,12 +544,13 @@ module Matter
       end
 
       def save_state : Storage::Document?
-        return unless @feature_map.time_zone? || @feature_map.ntp_client?
-        PersistedState.new(@data_version, @feature_map.value, @time_zone, @dst_offset, @default_ntp).to_document
+        return unless @feature_map.time_zone? || @feature_map.ntp_client? || @feature_map.trusted_time_client?
+        PersistedState.new(@data_version, @feature_map.value, @time_zone, @dst_offset,
+          @default_ntp, @trusted_time_source).to_document
       end
 
       def restore_state(document : Storage::Document) : Nil
-        return unless @feature_map.time_zone? || @feature_map.ntp_client?
+        return unless @feature_map.time_zone? || @feature_map.ntp_client? || @feature_map.trusted_time_client?
         state = PersistedState.from_document(document)
         return if state.features != @feature_map.value
         if address = state.default_ntp
@@ -419,9 +558,16 @@ module Matter
         end
         raise StorageError.new("Invalid persisted TimeZone") unless valid_time_zones?(state.time_zone)
         raise StorageError.new("Invalid persisted DSTOffset") unless valid_dst_offsets?(state.dst_offset)
+        if source = state.trusted_time_source
+          unless (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(source.fabric_index) &&
+                 (DataType::NodeId::OPERATIONAL_MINIMUM..DataType::NodeId::OPERATIONAL_MAXIMUM).includes?(source.node_id)
+            raise StorageError.new("Invalid persisted TrustedTimeSource")
+          end
+        end
         @time_zone = state.time_zone.dup
         @dst_offset = state.dst_offset.dup
         @default_ntp = state.default_ntp
+        @trusted_time_source = state.trusted_time_source
         @data_version = state.data_version
         @last_zone_status = @time_zone.first
         @last_dst_active = false

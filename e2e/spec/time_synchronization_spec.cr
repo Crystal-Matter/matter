@@ -10,7 +10,8 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
   it "commissions a root TimeZone server and updates local time and durable offsets" do
     device.commission!
     read_int(device, "timesynchronization", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
-    read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(3_i64)
+    read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(11_i64)
+    expect_success(device.read("descriptor", "client-list", 0)).output.should contain("56")
     read_int(device, "timesynchronization", "time-zone-list-max-size", "TimeZoneListMaxSize", 0).should eq(2_i64)
     read_int(device, "timesynchronization", "dstoffset-list-max-size", "DSTOffsetListMaxSize", 0).should eq(4_i64)
 
@@ -48,5 +49,40 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
     expect_success(device.read("timesynchronization", "default-ntp", 0)).output.should contain("2001:db8::123")
     device.restart!
     expect_success(device.read("timesynchronization", "default-ntp", 0)).output.should contain("2001:db8::123")
+  end
+
+  it "stores a fabric-scoped trusted peer and clears it with the official command" do
+    device.commission!
+    expect_success(device.read("timesynchronization", "trusted-time-source", 0)).output.downcase.should contain("null")
+    peer = %({"nodeID":2,"endpoint":0})
+    expect_success(device.invoke("timesynchronization", "set-trusted-time-source", [peer], endpoint: 0))
+    trusted = expect_success(device.read("timesynchronization", "trusted-time-source", 0)).output
+    trusted.should contain("NodeID: 2")
+    trusted.should contain("Endpoint: 0")
+    device.restart!
+    expect_success(device.read("timesynchronization", "trusted-time-source", 0)).output.should contain("NodeID: 2")
+    expect_success(device.invoke("timesynchronization", "set-trusted-time-source", ["null"], endpoint: 0))
+    expect_success(device.read("timesynchronization", "trusted-time-source", 0)).output.downcase.should contain("null")
+  end
+
+  it "takes UTC from a second node on the same fabric over CASE" do
+    device.commission!
+    peer = E2E::Device["matter_time_zone_peer"]
+    commissioned = E2E.run(["pairing", "code", "2", peer.pairing_code], device.storage_dir)
+    expect_success(commissioned)
+    allow_acl = %([{"fabricIndex":1,"privilege":5,"authMode":2,"subjects":[],"targets":[]}])
+    expect_success(E2E.run(["accesscontrol", "write", "acl", allow_acl, "2", "0"], device.storage_dir))
+    expect_success(E2E.run(["timesynchronization", "set-utctime", "2000000000", "4", "2", "0"], device.storage_dir))
+
+    source = %({"nodeID":2,"endpoint":0})
+    expect_success(device.invoke("timesynchronization", "set-trusted-time-source", [source], endpoint: 0))
+    deadline = Time.instant + 45.seconds
+    loop do
+      observed = read_int(device, "timesynchronization", "time-source", "TimeSource", 0)
+      break if observed == Matter::Cluster::TimeSynchronization::TimeSource::NodeTimeCluster.value
+      raise "trusted CASE time was not accepted; #{device.log_tail}" if Time.instant >= deadline
+      sleep 1.second
+    end
+    read_int(device, "timesynchronization", "utctime", "UTCTime", 0).should be >= 2_000_000_000_i64
   end
 end

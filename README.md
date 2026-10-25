@@ -88,8 +88,12 @@ unsynchronized after each restart. Applications add it explicitly to a root
 endpoint. The `TimeZone` feature stores offsets and reports transitions. The
 `NtpClient` feature accepts a persistent IPv6 fallback through `SetDefaultNTP`
 and queries SNTPv4 on UDP port 123 once an hour; DNS resolution is currently
-disabled. The running UTC clock is never persisted. TSC trusted peer time and
-the NTPS server role remain unavailable.
+disabled. The opt-in `TrustedTimeClient` feature stores a fabric-scoped peer,
+reads its UTC time over authenticated CASE through
+`Controller::TrustedTimeClient`, and retries hourly. A device host supplies
+`TimeSynchronization#on_trusted_time_query` to bridge its fabric table to that
+client. The running UTC clock is never persisted. The NTPS server role remains
+unavailable.
 
 `Cluster::FanControl` implements Matter 1.6 revision 6. Select optional
 MultiSpeed, Auto, Rocking, Wind, Step, and AirflowDirection features in the
