@@ -39,8 +39,9 @@ private class PushAvPrivacyDevice < Matter::Device
     [
       Matter::Cluster::TlsCertificateManagement.new,
       Matter::Cluster::TlsClientManagement.new,
-      PushAvCamera.new(endpoint, capabilities, [PushAvCamera::StreamUsage::Recording, PushAvCamera::StreamUsage::LiveView],
-        65_536_u32, 128_000_u32, feature_map: PushAvCamera::Feature::Audio | PushAvCamera::Feature::Privacy),
+      PushAvCamera.new(endpoint, [PushAvCamera::StreamUsage::Recording, PushAvCamera::StreamUsage::LiveView],
+        65_536_u32, 128_000_u32, microphone_capabilities: capabilities,
+        feature_map: PushAvCamera::Feature::Audio | PushAvCamera::Feature::Privacy),
       Matter::Cluster::PushAvStreamTransport.new(endpoint),
     ] of Matter::Cluster::Base
   end
