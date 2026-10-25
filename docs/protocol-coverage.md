@@ -141,7 +141,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050C | Application Launcher Cluster | 2 | 2 | — | host callbacks own app lifecycle and foreground focus; platform and endpoint app chip-tool E2E |
 | 0x050D | Application Basic Cluster | 1 | 1 | — | Fixed identity, administrator-only AllowedVendorList, volatile host status; Content App chip-tool E2E |
 | 0x050E | Account Login Cluster | 2 | 2 | — | Host-owned account credentials; timed, fabric-scoped commands and LoggedOut event; Content App chip-tool E2E |
-| 0x050F | Content Control Cluster | 1 | 1 | — | Core and PM/BU/OCR/SCR/BC/BA policy; ST/BTW unavailable |
+| 0x050F | Content Control Cluster | 1 | 1 | — | Core and PM/BU/OCR/SCR/BC/BA/BTW policy; ST unavailable |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
 | 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices and host JPEG capture; synthetic chip-tool SNP E2E, media delivery and Camera topology remain |

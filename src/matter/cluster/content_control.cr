@@ -21,12 +21,17 @@ module Matter
       MAX_RATING_DESCRIPTION_BYTES = 64
       PIN_LENGTH                   =  6
       PIN_RANGE                    = 0...1_000_000
-      PIN_SALT_BYTES               =     16
-      PIN_VERIFIER_BYTES           =     32
-      PIN_DERIVATION_ITERATIONS    = 65_536
+      PIN_SALT_BYTES               =      16
+      PIN_VERIFIER_BYTES           =      32
+      PIN_DERIVATION_ITERATIONS    =  65_536
+      MAX_TIME_WINDOWS             =       7
+      MAX_HOUR                     =   23_u8
+      MAX_MINUTE                   =   59_u8
+      DAY_OF_WEEK_MASK             = 0x7F_u8
+      MINUTES_PER_HOUR             =      60
       PERSISTED_PIN_SALT_KEY       = "pin_salt"
       PERSISTED_PIN_VERIFIER_KEY   = "pin_verifier"
-      SUPPORTED_FEATURES           = 0x7E_u32
+      SUPPORTED_FEATURES           = 0xFE_u32
 
       enum StatusCode : UInt8
         InvalidPINCode            = 0x02
@@ -87,6 +92,70 @@ module Matter
 
         def initialize(@block_channel_index : UInt16?, @major_number : UInt16,
                        @minor_number : UInt16, @identifier : String? = nil)
+        end
+      end
+
+      struct TimePeriod
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0)]
+        getter start_hour : UInt8
+        @[TLV::Field(tag: 1)]
+        getter start_minute : UInt8
+        @[TLV::Field(tag: 2)]
+        getter end_hour : UInt8
+        @[TLV::Field(tag: 3)]
+        getter end_minute : UInt8
+
+        def initialize(@start_hour : UInt8, @start_minute : UInt8, @end_hour : UInt8, @end_minute : UInt8)
+        end
+      end
+
+      struct TimeWindow
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter time_window_index : UInt16?
+        @[TLV::Field(tag: 1)]
+        getter day_of_week : UInt8
+        @[TLV::Field(tag: 2)]
+        getter time_period : Array(TimePeriod)
+
+        def initialize(@time_window_index : UInt16?, @day_of_week : UInt8, periods : Array(TimePeriod))
+          @time_period = periods.dup
+        end
+
+        def time_period : Array(TimePeriod)
+          @time_period.dup
+        end
+      end
+
+      struct SetTimeWindowRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter time_window : TimeWindow
+
+        def initialize(@time_window : TimeWindow)
+        end
+      end
+
+      struct RemoveTimeWindowsRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter time_window_indexes : Array(UInt16)
+
+        def initialize(@time_window_indexes : Array(UInt16))
+        end
+      end
+
+      struct EmptyEvent
+        include TLV::Serializable
+
+        def initialize
         end
       end
 
@@ -175,6 +244,9 @@ module Matter
       attribute 0x0009, :block_application_list, Array(AppInfo),
         default: [] of AppInfo, persist: true, requires: :block_applications,
         copy_on_assign: true, on_change: :policy_changed
+      attribute 0x000A, :block_content_time_window, Array(TimeWindow),
+        default: [] of TimeWindow, persist: true, requires: :block_content_time_window,
+        copy_on_assign: true, on_change: :policy_changed
 
       command 0x00, :update_pin, request: UpdatePinRequest,
         access: :manage, timed: true, requires: :pin_management
@@ -199,6 +271,13 @@ module Matter
         access: :manage, requires: :block_applications
       command 0x0E, :remove_block_applications, request: ApplicationsRequest,
         access: :manage, requires: :block_applications
+      command 0x0F, :set_block_content_time_window, request: SetTimeWindowRequest,
+        access: :manage, requires: :block_content_time_window
+      command 0x10, :remove_block_content_time_window, request: RemoveTimeWindowsRequest,
+        access: :manage, requires: :block_content_time_window
+
+      event 0x01, :entering_block_content_time_window, priority: :info,
+        requires: :block_content_time_window, payload: EmptyEvent
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::None,
@@ -209,7 +288,8 @@ module Matter
                      @scheduled_content_rating_threshold : String = "",
                      @block_unrated : Bool = false,
                      @block_channel_list : Array(BlockChannel) = [] of BlockChannel,
-                     @block_application_list : Array(AppInfo) = [] of AppInfo)
+                     @block_application_list : Array(AppInfo) = [] of AppInfo,
+                     @block_content_time_window : Array(TimeWindow) = [] of TimeWindow)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("unsupported Content Control feature bits") if (@feature_map.value & ~SUPPORTED_FEATURES) != 0
         if @feature_map.on_demand_content_rating? && (@on_demand_ratings.empty? || @on_demand_rating_threshold.empty?)
@@ -227,15 +307,18 @@ module Matter
         raise ArgumentError.new("BlockUnrated feature is required") if @block_unrated && !@feature_map.block_unrated?
         raise ArgumentError.new("BlockChannels feature is required") if !@block_channel_list.empty? && !@feature_map.block_channels?
         raise ArgumentError.new("BlockApplications feature is required") if !@block_application_list.empty? && !@feature_map.block_applications?
+        raise ArgumentError.new("BlockContentTimeWindow feature is required") if !@block_content_time_window.empty? && !@feature_map.block_content_time_window?
         set_pin(generate_pin) if @feature_map.pin_management?
         validate_ratings!(@on_demand_ratings, @on_demand_rating_threshold)
         validate_ratings!(@scheduled_content_ratings, @scheduled_content_rating_threshold)
         validate_channels!(@block_channel_list)
         validate_applications!(@block_application_list)
+        validate_time_windows!(@block_content_time_window)
         @on_demand_ratings = @on_demand_ratings.dup
         @scheduled_content_ratings = @scheduled_content_ratings.dup
         @block_channel_list = @block_channel_list.dup
         @block_application_list = @block_application_list.dup
+        @block_content_time_window = @block_content_time_window.dup
       end
 
       @validate_channel : Proc(BlockChannel, Bool)?
@@ -243,6 +326,11 @@ module Matter
       @on_policy_changed : Proc(Nil)?
       @pin_salt : Bytes?
       @pin_verifier : Bytes?
+      @local_time_provider : Proc(Time?) = -> : Time? { Time.local }
+      @last_active_time_period : Tuple(Int32, Int32, Int32, UInt16, Int32)?
+
+      def local_time_provider=(@local_time_provider : Proc(Time?)) : Nil
+      end
 
       def on_validate_channel(&block : BlockChannel -> Bool) : Nil
         @validate_channel = block
@@ -262,6 +350,7 @@ module Matter
       def playback_allowed?(rating : String? = nil, scheduled : Bool = false,
                             channel : BlockChannel? = nil, application : AppInfo? = nil) : Bool
         return true unless enabled?
+        return false if @feature_map.block_content_time_window? && time_window_blocked?(@local_time_provider.call)
         if application && @feature_map.block_applications?
           return false if @block_application_list.any? { |blocked| same_app?(blocked, application) }
         end
@@ -328,6 +417,28 @@ module Matter
       def block_channel_list=(value : Array(BlockChannel)) : Nil
         validate_channels!(value)
         previous_def(value)
+      end
+
+      def block_content_time_window : Array(TimeWindow)
+        @block_content_time_window.dup
+      end
+
+      def block_content_time_window=(value : Array(TimeWindow)) : Nil
+        validate_time_windows!(value)
+        previous_def(value)
+      end
+
+      # Call periodically while the media host is running. The host callback
+      # rechecks active playback when the clock enters a configured period.
+      def tick_block_content_time_window(local_time : Time? = @local_time_provider.call) : Nil
+        return unless @feature_map.block_content_time_window?
+        return unless local_time
+        active_period = enabled? ? active_time_period(local_time) : nil
+        if active_period && active_period != @last_active_time_period
+          emit_entering_block_content_time_window(EmptyEvent.new)
+          @on_policy_changed.try(&.call)
+        end
+        @last_active_time_period = active_period
       end
 
       def enable : InteractionModel::Status
@@ -427,6 +538,38 @@ module Matter
         InteractionModel::Status.success
       end
 
+      # ameba:disable Naming/AccessorMethodName
+      def set_block_content_time_window(request : SetTimeWindowRequest) : InteractionModel::Status
+        window = request.time_window
+        return InteractionModel::Status.constraint_error unless valid_time_window?(window)
+        if index = window.time_window_index
+          position = @block_content_time_window.index(&.time_window_index.==(index))
+          return InteractionModel::Status.cluster_failure(StatusCode::TimeWindowNotExist) unless position
+          next_list = @block_content_time_window.dup
+          next_list[position] = window
+        else
+          if @block_content_time_window.any? { |existing| existing.day_of_week == window.day_of_week && existing.time_period == window.time_period }
+            return InteractionModel::Status.cluster_failure(StatusCode::TimeWindowAlreadyExist)
+          end
+          return InteractionModel::Status.resource_exhausted if @block_content_time_window.size >= MAX_TIME_WINDOWS
+          index = next_time_window_index
+          return InteractionModel::Status.resource_exhausted unless index
+          next_list = @block_content_time_window + [TimeWindow.new(index, window.day_of_week, window.time_period)]
+        end
+        return InteractionModel::Status.constraint_error unless valid_time_windows?(next_list)
+        self.block_content_time_window = next_list
+        InteractionModel::Status.success
+      end
+
+      def remove_block_content_time_window(request : RemoveTimeWindowsRequest) : InteractionModel::Status
+        return InteractionModel::Status.success if request.time_window_indexes.empty?
+        unless request.time_window_indexes.all? { |index| @block_content_time_window.any?(&.time_window_index.==(index)) }
+          return InteractionModel::Status.cluster_failure(StatusCode::TimeWindowNotExist)
+        end
+        self.block_content_time_window = @block_content_time_window.reject { |window| request.time_window_indexes.includes?(window.time_window_index) }
+        InteractionModel::Status.success
+      end
+
       private def same_app?(first : AppInfo, second : AppInfo) : Bool
         first.catalog_vendor_id == second.catalog_vendor_id && first.application_id == second.application_id
       end
@@ -496,6 +639,69 @@ module Matter
         (0..UInt16::MAX).each do |number|
           candidate = number.to_u16
           return candidate unless channels.any?(&.block_channel_index.==(candidate))
+        end
+        nil
+      end
+
+      private def next_time_window_index : UInt16?
+        (0..UInt16::MAX).each do |number|
+          candidate = number.to_u16
+          return candidate unless @block_content_time_window.any?(&.time_window_index.==(candidate))
+        end
+        nil
+      end
+
+      private def valid_time_window?(window : TimeWindow) : Bool
+        return false if window.day_of_week.zero? || (window.day_of_week & ~DAY_OF_WEEK_MASK) != 0
+        periods = window.time_period
+        return false if periods.empty?
+        periods.each do |period|
+          return false if period.start_hour > MAX_HOUR || period.end_hour > MAX_HOUR || period.start_minute > MAX_MINUTE || period.end_minute > MAX_MINUTE
+          return false if period.end_hour < period.start_hour || (period.end_hour == period.start_hour && period.end_minute <= period.start_minute)
+        end
+        last_end = -1
+        periods.sort_by { |period| period.start_hour.to_i * MINUTES_PER_HOUR + period.start_minute }.each do |period|
+          start_minute = period.start_hour.to_i * MINUTES_PER_HOUR + period.start_minute
+          return false if start_minute <= last_end
+          last_end = period.end_hour.to_i * MINUTES_PER_HOUR + period.end_minute
+        end
+        true
+      end
+
+      private def valid_time_windows?(windows : Array(TimeWindow)) : Bool
+        return false if windows.size > MAX_TIME_WINDOWS
+        days = 0_u8
+        indexes = Set(UInt16).new
+        windows.each do |window|
+          index = window.time_window_index
+          return false unless index && indexes.add?(index) && valid_time_window?(window)
+          return false unless (days & window.day_of_week).zero?
+          days |= window.day_of_week
+        end
+        true
+      end
+
+      private def validate_time_windows!(windows : Array(TimeWindow)) : Nil
+        raise ArgumentError.new("invalid Content Control time window") unless valid_time_windows?(windows)
+      end
+
+      private def time_window_blocked?(local_time : Time?) : Bool
+        return false if @block_content_time_window.empty?
+        return true unless local_time
+        !active_time_period(local_time).nil?
+      end
+
+      private def active_time_period(local_time : Time) : Tuple(Int32, Int32, Int32, UInt16, Int32)?
+        day_bit = (1 << (local_time.day_of_week.value % 7)).to_u8
+        minute = local_time.hour * MINUTES_PER_HOUR + local_time.minute
+        @block_content_time_window.each do |window|
+          next if (window.day_of_week & day_bit).zero?
+          window.time_period.each_with_index do |period, index|
+            if minute >= period.start_hour.to_i * MINUTES_PER_HOUR + period.start_minute &&
+               minute <= period.end_hour.to_i * MINUTES_PER_HOUR + period.end_minute
+              return {local_time.year, local_time.month, local_time.day, window.time_window_index.not_nil!, index}
+            end
+          end
         end
         nil
       end
