@@ -6,12 +6,18 @@ import unittest
 from pathlib import Path
 
 from sdk_jfc_switch_smoke import ManagedProcess, SETUP_PIN_PATTERN, JFC_PROMPT_PATTERN
+from sdk_jf_cert_matrix import SETUP_PIN_PATTERN as CERT_MATRIX_PIN_PATTERN
 
 
 class ManagedProcessTest(unittest.TestCase):
     def test_setup_pin_can_have_fewer_than_eight_decimal_digits(self):
         match = re.search(SETUP_PIN_PATTERN, "  Setup PIN: 2204847\n")
         self.assertEqual(match.group(1), "2204847")
+
+    def test_cert_matrix_accepts_shorter_setup_pin(self):
+        match = re.search(CERT_MATRIX_PIN_PATTERN, "  Setup PIN: 202491\n")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "202491")
 
     def test_background_drain_keeps_noninteractive_device_running(self):
         with tempfile.TemporaryDirectory() as directory:
