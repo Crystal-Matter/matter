@@ -231,7 +231,7 @@ describe Matter::Controller::DatastoreSynchronizer do
                               Matter::Cluster::AccessControl::CLUSTER_ID]
     im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
     im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(5_u16)]
-    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64)]
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64, endpoint: 1_u16)]
     im.key_set_ids = [0_u16, 7_u16]
     im.acl_entries = [Matter::Cluster::AccessControl::AccessControlEntry.new(
       Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View,
@@ -483,7 +483,7 @@ describe Matter::Cluster::Binding do
   it "isolates and persists bindings by fabric" do
     binding = Matter::Cluster::Binding.new(Matter::DataType::EndpointNumber.new(1_u16))
     binding.request_fabric_index = 1_u8
-    binding.binding = [Matter::Cluster::Binding::Target.new(node: 0x100_u64)]
+    binding.binding = [Matter::Cluster::Binding::Target.new(node: 0x100_u64, endpoint: 1_u16)]
     binding.request_fabric_index = 2_u8
     binding.binding = [Matter::Cluster::Binding::Target.new(group: 2_u16)]
 

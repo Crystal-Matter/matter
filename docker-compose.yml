@@ -252,6 +252,11 @@ services:
       E2E_DEVICE: matter_door_lock_verified
       MATTER_VERIFIED_RFID_HOOK_PATH: /e2e/logs/matter_door_lock_verified.trigger
 
+  binding-validation:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_binding_validation
+
   temperature-sensor:
     <<: *device
     environment:
@@ -551,6 +556,7 @@ services:
       scenes-fabric: { condition: service_healthy }
       door-lock: { condition: service_healthy }
       door-lock-aliro: { condition: service_healthy }
+      binding-validation: { condition: service_healthy }
       utility-meter: { condition: service_healthy }
       temperature-sensor: { condition: service_healthy }
       pressure-sensor: { condition: service_healthy }

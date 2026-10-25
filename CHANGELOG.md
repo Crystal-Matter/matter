@@ -21,6 +21,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its local index is reused. Keep other fabrics' windows and preserve replay
   protection during epoch-key rotation on an installed fabric.
 
+### Binding target validation
+
+- Reject malformed Matter 1.6 Binding targets: unicast entries need both Node
+  and Endpoint, while multicast entries need a nonzero Group and no Node or
+  Endpoint. Rejected writes preserve the existing fabric-scoped table. An
+  isolated chip-tool fixture covers write, read, and restart behavior; outbound
+  command delivery through bindings remains application-owned.
+
 ### Door Lock
 
 - Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted

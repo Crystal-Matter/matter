@@ -51,7 +51,7 @@ module Matter
       before_write :binding do |entries|
         if request_fabric_index.nil?
           InteractionModel::Status.unsupported_access
-        elsif entries.any? { |entry| (entry.node.nil? == entry.group.nil?) || (entry.group && entry.endpoint) }
+        elsif entries.any? { |entry| !valid_target?(entry) }
           InteractionModel::Status.constraint_error
         end
       end
@@ -67,6 +67,9 @@ module Matter
       end
 
       def binding=(entries : Array(Target)) : Nil
+        if entries.any? { |entry| !valid_target?(entry) }
+          raise Matter::ClusterError.new("Invalid binding target", InteractionModel::StatusCode::ConstraintError)
+        end
         if fabric_index = request_fabric_index
           @binding.reject! { |entry| entry.fabric_index == fabric_index }
           @binding.concat(entries.map do |entry|
@@ -77,6 +80,13 @@ module Matter
           @binding = entries
         end
         increment_version_and_notify(ATTR_BINDING)
+      end
+
+      private def valid_target?(entry : Target) : Bool
+        unicast = !entry.node.nil? && !entry.endpoint.nil? && entry.group.nil?
+        group = entry.group
+        multicast = entry.node.nil? && entry.endpoint.nil? && !group.nil? && group > 0_u16
+        unicast || multicast
       end
 
       def save_state : Storage::Document?
