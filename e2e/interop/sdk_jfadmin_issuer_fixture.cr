@@ -31,7 +31,19 @@ module SdkJfadminIssuerFixture
     root_public, root_private = key_pair(record, "root_keypair")
     icac_public, icac_private = key_pair(record, "icac_keypair")
     root = decode(record, "root_certificate")
-    icac = decode(record, "icac_certificate")
+    icac = if record["icac_certificate"]?
+             decode(record, "icac_certificate")
+           else
+             root_key = Matter::Crypto::Key.new(Matter::Crypto::KeyType::EC, Matter::Crypto::CurveType::P256)
+             root_key.private_bits = root_private
+             root_id = Matter::Crypto::MatterCertificate.from_slice(root).subject.rcac_id ||
+                       raise Matter::ConfigurationError.new("SDK issuer root has no RCAC ID")
+             crypto = Matter::Crypto::StandardCrypto.new
+             Matter::Crypto::MatterCertificate::Builder.intermediate(
+               icac_public, nil, 3_u64, root_key, root_id,
+               crypto.random_bytes(16), crypto,
+               anchor: true, issuer_certificate: root)
+           end
     unless Matter::Crypto::MatterCertificate.public_key_from_tlv(root) == root_public &&
            Matter::Crypto::MatterCertificate.public_key_from_tlv(icac) == icac_public
       raise Matter::ConfigurationError.new("SDK issuer certificates do not match private keys")

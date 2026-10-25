@@ -169,9 +169,8 @@ def write_sdk_issuer_fixture(sdk, storage_dir, commissioner_name, private, fixtu
     if not config.read(path):
         raise RuntimeError("SDK issuer store is missing")
     keys = {"root_keypair": "ExampleOpCredsCAKey0",
-            "icac_keypair": "ExampleOpCredsICAKey0",
-            "root_certificate": "ExampleCARootCert0",
-            "icac_certificate": "ExampleCAIntermediateCert0"}
+            "icac_keypair": "ExampleOpCredsAnchorICAKey0",
+            "root_certificate": "ExampleCARootCert0"}
     record = {}
     for label, key in keys.items():
         encoded = config.get("Default", key)
@@ -180,6 +179,16 @@ def write_sdk_issuer_fixture(sdk, storage_dir, commissioner_name, private, fixtu
             encoded = base64.b64encode(
                 sdk_cert_to_chip(sdk, base64.b64decode(encoded, validate=True), private)).decode()
         record[label] = encoded
+    # The preflight JFC initializes both issuer keys and its root certificate.
+    # It creates the Anchor ICAC only after the official test commissions the
+    # JFA, so derive a matching test-only Anchor ICAC from that persisted key.
+    # The official JFC remains free to issue its own certificate for the same
+    # key during commissioning.
+    anchor_cert_key = "ExampleCAAnchorIntermediateCert0"
+    if config.has_option("Default", anchor_cert_key):
+        encoded = base64.b64decode(config.get("Default", anchor_cert_key), validate=True)
+        record["icac_certificate"] = base64.b64encode(
+            sdk_cert_to_chip(sdk, encoded, private)).decode()
     source = private / "sdk-a-issuer.json"
     source.write_text(json.dumps(record))
     source.chmod(0o600)
