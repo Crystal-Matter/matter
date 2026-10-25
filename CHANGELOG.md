@@ -13,6 +13,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before opening a Joint Commissioning window or starting an Anchor transfer.
   An Administrator CAT on another installed fabric cannot control that endpoint.
 
+### Thermostat Occupancy preparation
+
+- Add a guarded OCC wire surface with Occupancy and unoccupied heating/cooling setpoints, persistence, TEVT occupancy and setpoint event payloads, and occupancy-aware SetpointRaiseLower and preset activation. The unoccupied setpoints retain the configured limits and Auto deadband checks. An official chip-tool fixture exercises unoccupied writes and command routing. Production Thermostat continues to reject OCC and retains cluster revision 9 until the remaining conformance checks pass.
+
 ### Durable Scenes fabric removal
 
 - Save erased Scenes and per-fabric scene information before releasing a fabric

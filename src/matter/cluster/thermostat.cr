@@ -15,6 +15,7 @@ module Matter
 
       feature :heating, bit: 0                       # HEAT - Heating capability
       feature :cooling, bit: 1                       # COOL - Cooling capability
+      feature :occupancy, bit: 2                     # OCC - gated until wire conformance is complete
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
       feature :presets, bit: 8                       # PRES - gated until wire conformance is complete
@@ -222,10 +223,26 @@ module Matter
         @[TLV::Field(tag: 0)]
         getter system_mode : SystemMode
 
+        @[TLV::Field(tag: 1, optional: true)]
+        getter occupancy : UInt8?
+
         @[TLV::Field(tag: 3)]
         getter current_setpoint : Int16
 
-        def initialize(@system_mode : SystemMode, @current_setpoint : Int16)
+        def initialize(@system_mode : SystemMode, @current_setpoint : Int16, @occupancy : UInt8? = nil)
+        end
+      end
+
+      struct OccupancyChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter previous_occupancy : UInt8?
+
+        @[TLV::Field(tag: 1)]
+        getter current_occupancy : UInt8
+
+        def initialize(@previous_occupancy : UInt8?, @current_occupancy : UInt8)
         end
       end
 
@@ -371,12 +388,18 @@ module Matter
       end
 
       attribute 0x0000, :local_temperature, Int16, nullable: true, validate: :validate_local_temperature, on_change: :local_temperature_changed
+      attribute 0x0002, :occupancy, UInt8, default: 1_u8, max: 1_u8, persist: true,
+        requires: :occupancy, present_if: :occupancy_wire_ready?, validate: :validate_occupancy, on_change: :occupancy_changed
       attribute 0x0003, :abs_min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0004, :abs_max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0005, :abs_min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, fixed: true, optional: true, requires: :cooling
       attribute 0x0006, :abs_max_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_COOL, fixed: true, optional: true, requires: :cooling
       attribute 0x0011, :occupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, requires: :cooling, on_change: :cooling_setpoint_changed
       attribute 0x0012, :occupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, requires: :heating, on_change: :heating_setpoint_changed
+      attribute 0x0013, :unoccupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true,
+        requires: {cooling: true, occupancy: true}, present_if: :occupancy_wire_ready?, on_change: :unoccupied_cooling_setpoint_changed
+      attribute 0x0014, :unoccupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true,
+        requires: {heating: true, occupancy: true}, present_if: :occupancy_wire_ready?, on_change: :unoccupied_heating_setpoint_changed
       attribute 0x0015, :min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, writable: true, write_access: :manage, optional: true, requires: :heating
       attribute 0x0016, :max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, writable: true, write_access: :manage, optional: true, requires: :heating
       attribute 0x0017, :min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, writable: true, write_access: :manage, optional: true, requires: :cooling
@@ -398,6 +421,8 @@ module Matter
       event 0x00, :system_mode_change, priority: :info, requires: :events, payload: SystemModeChangeEvent
       event 0x01, :local_temperature_change, priority: :info,
         requires: {events: true, local_temperature_not_exposed: false}, payload: LocalTemperatureChangeEvent
+      event 0x02, :occupancy_change, priority: :info,
+        requires: {events: true, occupancy: true}, payload: OccupancyChangeEvent
       event 0x03, :setpoint_change, priority: :info, requires: :events, payload: SetpointChangeEvent
       event 0x04, :running_state_change, priority: :info, requires: :events, payload: RunningStateChangeEvent
       event 0x05, :running_mode_change, priority: :info,
@@ -416,6 +441,9 @@ module Matter
                      @local_temperature : Int16? = nil,
                      @occupied_cooling_setpoint : Int16 = DEFAULT_COOLING_SETPOINT,
                      @occupied_heating_setpoint : Int16 = DEFAULT_HEATING_SETPOINT,
+                     @occupancy : UInt8 = 1_u8,
+                     @unoccupied_cooling_setpoint : Int16 = DEFAULT_COOLING_SETPOINT,
+                     @unoccupied_heating_setpoint : Int16 = DEFAULT_HEATING_SETPOINT,
                      @abs_min_heat_setpoint_limit : Int16 = DEFAULT_ABS_MIN_HEAT,
                      @abs_max_heat_setpoint_limit : Int16 = DEFAULT_ABS_MAX_HEAT,
                      @abs_min_cool_setpoint_limit : Int16 = DEFAULT_ABS_MIN_COOL,
@@ -435,6 +463,7 @@ module Matter
         @measured_temperature = @local_temperature
         @local_temperature = nil if @feature_map.local_temperature_not_exposed?
         @last_reported_temperature = @local_temperature
+        @last_occupancy = @occupancy
         @last_temperature_event_at = nil.as(Time::Instant?)
         @last_running_state = thermostat_running_state
         @preset_types = [] of PresetType
@@ -445,6 +474,8 @@ module Matter
         @pending_preset_write = nil.as(PendingPresetWrite?)
 
         raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
+        raise ArgumentError.new("OCC wire conformance is not yet enabled") if @feature_map.occupancy? && !occupancy_wire_ready?
+        validate_occupancy(@occupancy)
 
         if @feature_map.heating?
           raise ArgumentError.new("min_heat_setpoint_limit must be >= abs minimum") if @min_heat_setpoint_limit < @abs_min_heat_setpoint_limit
@@ -493,6 +524,16 @@ module Matter
         keep_cooling_above(setpoint)
       end
 
+      before_write :unoccupied_cooling_setpoint do |setpoint|
+        return InteractionModel::Status.constraint_error unless setpoint.in?(@min_cool_setpoint_limit..@max_cool_setpoint_limit)
+        keep_unoccupied_heating_below(setpoint)
+      end
+
+      before_write :unoccupied_heating_setpoint do |setpoint|
+        return InteractionModel::Status.constraint_error unless setpoint.in?(@min_heat_setpoint_limit..@max_heat_setpoint_limit)
+        keep_unoccupied_cooling_above(setpoint)
+      end
+
       before_write :min_heat_setpoint_limit do |limit|
         InteractionModel::Status.constraint_error unless limit.in?(@abs_min_heat_setpoint_limit..@max_heat_setpoint_limit)
       end
@@ -519,6 +560,10 @@ module Matter
 
       def setpoint_raise_lower(request : SetpointRaiseLowerRequest) : InteractionModel::Status
         delta = request.amount.to_i32 * DECI_TO_CENTI_DEGREES
+
+        if @feature_map.occupancy? && @occupancy == 0_u8
+          return raise_lower_unoccupied(request.mode, delta)
+        end
 
         case request.mode
         when SetpointAdjustMode::Heat
@@ -591,6 +636,10 @@ module Matter
         preset_wire_ready?
       end
 
+      protected def occupancy_wire_ready? : Bool
+        false
+      end
+
       def active_preset_handle : Bytes?
         @active_preset_handle.try(&.dup)
       end
@@ -610,10 +659,18 @@ module Matter
         @applying_preset = true
         begin
           if @feature_map.cooling? && (cooling = preset.cooling_setpoint)
-            self.occupied_cooling_setpoint = cooling
+            if @feature_map.occupancy? && @occupancy == 0_u8
+              self.unoccupied_cooling_setpoint = cooling
+            else
+              self.occupied_cooling_setpoint = cooling
+            end
           end
           if @feature_map.heating? && (heating = preset.heating_setpoint)
-            self.occupied_heating_setpoint = heating
+            if @feature_map.occupancy? && @occupancy == 0_u8
+              self.unoccupied_heating_setpoint = heating
+            else
+              self.occupied_heating_setpoint = heating
+            end
           end
           update_active_preset_handle(handle)
         ensure
@@ -923,6 +980,54 @@ module Matter
         InteractionModel::Status.success
       end
 
+      private def raise_lower_unoccupied(mode : SetpointAdjustMode, delta : Int32) : InteractionModel::Status
+        case mode
+        when SetpointAdjustMode::Heat
+          return InteractionModel::Status.invalid_command unless @feature_map.heating?
+          heating = (@unoccupied_heating_setpoint.to_i32 + delta).clamp(@min_heat_setpoint_limit.to_i32, @max_heat_setpoint_limit.to_i32)
+          if @feature_map.automode? && @feature_map.cooling?
+            cooling = heating + deadband
+            return InteractionModel::Status.invalid_command if cooling > @max_cool_setpoint_limit
+            self.unoccupied_cooling_setpoint = cooling.to_i16 if @unoccupied_cooling_setpoint < cooling
+          end
+          self.unoccupied_heating_setpoint = heating.to_i16
+        when SetpointAdjustMode::Cool
+          return InteractionModel::Status.invalid_command unless @feature_map.cooling?
+          cooling = (@unoccupied_cooling_setpoint.to_i32 + delta).clamp(@min_cool_setpoint_limit.to_i32, @max_cool_setpoint_limit.to_i32)
+          if @feature_map.automode? && @feature_map.heating?
+            heating = cooling - deadband
+            return InteractionModel::Status.invalid_command if heating < @min_heat_setpoint_limit
+            self.unoccupied_heating_setpoint = heating.to_i16 if @unoccupied_heating_setpoint > heating
+          end
+          self.unoccupied_cooling_setpoint = cooling.to_i16
+        when SetpointAdjustMode::Both
+          return raise_lower_unoccupied_both(delta) if @feature_map.heating? && @feature_map.cooling?
+          return raise_lower_unoccupied(SetpointAdjustMode::Heat, delta) if @feature_map.heating?
+          return raise_lower_unoccupied(SetpointAdjustMode::Cool, delta) if @feature_map.cooling?
+          return InteractionModel::Status.invalid_command
+        else
+          return InteractionModel::Status.invalid_command
+        end
+        update_running_mode
+        InteractionModel::Status.success
+      end
+
+      private def raise_lower_unoccupied_both(delta : Int32) : InteractionModel::Status
+        minimum_shift = {@min_heat_setpoint_limit.to_i32 - @unoccupied_heating_setpoint,
+                         @min_cool_setpoint_limit.to_i32 - @unoccupied_cooling_setpoint}.max
+        maximum_shift = {@max_heat_setpoint_limit.to_i32 - @unoccupied_heating_setpoint,
+                         @max_cool_setpoint_limit.to_i32 - @unoccupied_cooling_setpoint}.min
+        return InteractionModel::Status.invalid_command if minimum_shift > maximum_shift
+        return InteractionModel::Status.invalid_command if @feature_map.automode? &&
+                                                           @unoccupied_cooling_setpoint - @unoccupied_heating_setpoint < deadband
+
+        shift = delta.clamp(minimum_shift, maximum_shift)
+        self.unoccupied_heating_setpoint = (@unoccupied_heating_setpoint + shift).to_i16
+        self.unoccupied_cooling_setpoint = (@unoccupied_cooling_setpoint + shift).to_i16
+        update_running_mode
+        InteractionModel::Status.success
+      end
+
       # The deadband the setpoints keep between them; only enforced with Automode
       private def deadband : Int16
         @feature_map.automode? ? @min_setpoint_dead_band.to_i16 * DECI_TO_CENTI_DEGREES : 0_i16
@@ -952,6 +1057,26 @@ module Matter
         nil
       end
 
+      private def keep_unoccupied_cooling_above(heating : Int16) : InteractionModel::Status?
+        return unless @feature_map.automode? && @feature_map.cooling?
+        lowest_cooling = heating + deadband
+        return if @unoccupied_cooling_setpoint >= lowest_cooling
+        return InteractionModel::Status.constraint_error if lowest_cooling > @max_cool_setpoint_limit
+
+        self.unoccupied_cooling_setpoint = lowest_cooling
+        nil
+      end
+
+      private def keep_unoccupied_heating_below(cooling : Int16) : InteractionModel::Status?
+        return unless @feature_map.automode? && @feature_map.heating?
+        highest_heating = cooling - deadband
+        return if @unoccupied_heating_setpoint <= highest_heating
+        return InteractionModel::Status.constraint_error if highest_heating < @min_heat_setpoint_limit
+
+        self.unoccupied_heating_setpoint = highest_heating
+        nil
+      end
+
       private def update_running_mode : Nil
         self.thermostat_running_mode = case @system_mode
                                        in .cool?, .precooling?
@@ -970,9 +1095,11 @@ module Matter
         temperature = @measured_temperature
         return ThermostatRunningMode::Off unless temperature
 
-        if temperature > @occupied_cooling_setpoint
+        cooling = @feature_map.occupancy? && @occupancy == 0_u8 ? @unoccupied_cooling_setpoint : @occupied_cooling_setpoint
+        heating = @feature_map.occupancy? && @occupancy == 0_u8 ? @unoccupied_heating_setpoint : @occupied_heating_setpoint
+        if temperature > cooling
           ThermostatRunningMode::Cool
-        elsif temperature < @occupied_heating_setpoint
+        elsif temperature < heating
           ThermostatRunningMode::Heat
         else
           ThermostatRunningMode::Off
@@ -996,6 +1123,15 @@ module Matter
         if @feature_map.local_temperature_not_exposed? && !value.nil?
           raise ArgumentError.new("LocalTemperature must remain null when LTNE is enabled")
         end
+      end
+
+      private def validate_occupancy(value : UInt8) : Nil
+        raise ArgumentError.new("Occupancy must be 0 or 1") unless value <= 1_u8
+      end
+
+      private def after_restore_state : Nil
+        @last_occupancy = @occupancy
+        update_running_mode
       end
 
       private def copy_presets(values : Array(Preset)) : Array(Preset)
@@ -1126,14 +1262,35 @@ module Matter
       end
 
       private def cooling_setpoint_changed(value : Int16) : Nil
-        update_active_preset_handle(nil) unless @applying_preset
-        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value)) if @feature_map.events?
+        update_active_preset_handle(nil) unless @applying_preset || (@feature_map.occupancy? && @occupancy == 0_u8)
+        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value,
+          @feature_map.occupancy? ? 1_u8 : nil)) if @feature_map.events?
         update_running_mode
       end
 
       private def heating_setpoint_changed(value : Int16) : Nil
-        update_active_preset_handle(nil) unless @applying_preset
-        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value)) if @feature_map.events?
+        update_active_preset_handle(nil) unless @applying_preset || (@feature_map.occupancy? && @occupancy == 0_u8)
+        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value,
+          @feature_map.occupancy? ? 1_u8 : nil)) if @feature_map.events?
+        update_running_mode
+      end
+
+      private def unoccupied_cooling_setpoint_changed(value : Int16) : Nil
+        update_active_preset_handle(nil) unless @applying_preset || @occupancy == 1_u8
+        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value, 0_u8)) if @feature_map.events? && @feature_map.occupancy?
+        update_running_mode if @occupancy == 0_u8
+      end
+
+      private def unoccupied_heating_setpoint_changed(value : Int16) : Nil
+        update_active_preset_handle(nil) unless @applying_preset || @occupancy == 1_u8
+        emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value, 0_u8)) if @feature_map.events? && @feature_map.occupancy?
+        update_running_mode if @occupancy == 0_u8
+      end
+
+      private def occupancy_changed(value : UInt8) : Nil
+        previous = @last_occupancy
+        @last_occupancy = value
+        emit_occupancy_change(OccupancyChangeEvent.new(previous, value)) if @feature_map.events? && @feature_map.occupancy?
         update_running_mode
       end
 
