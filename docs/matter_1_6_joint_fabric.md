@@ -64,7 +64,22 @@ item below as covered only to the extent of its cited tests.
   ICAC exchange; the returned certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
-  persist across restart.
+  persist across restart. For AddICAC or a deferred handoff interrupted before
+  CommissioningComplete, the pending record also retains the observed
+  cumulative fail-safe deadline and the joiner's original fabric identity.
+  `JointCommissioning::Workflow#recover_abandoned_pending` can clear that
+  record after the deadline only when CASE to the original fabric reads an
+  unfiltered Fabrics list showing the original identity and no Anchor fabric
+  identity for the joining node. The caller must supply original-fabric
+  controller credentials and the peer address; the default network port
+  performs the CASE exchange and read. A custom `RecoveryPort` must provide
+  equivalent authentication. Deferred recovery additionally requires the
+  matching saved handoff and removes it with the registration in one storage
+  transaction. Acknowledged completion still resumes through the existing
+  registration path. The three-Administrator E2E fixture interrupts a deferred
+  handoff before Anchor finalization and checks the provisional fabric, real
+  rollback, and authenticated controller recovery. Legacy records without the
+  saved deadline remain blocked.
 - The device implements SignVIDVerificationRequest and
   SetVIDVerificationStatement, including signed challenge binding, fabric
   filtering, persistence, and fail-safe rollback. The controller verifier
@@ -99,12 +114,16 @@ item below as covered only to the extent of its cited tests.
   in one cluster document. A restart before CommissioningComplete restores the
   previous index before the cluster serves reads. The service treats the
   cross-signed ICAC as uncommitted until its persistence callback returns. A
-  host must reselect its committed fabric after restoring clusters. The
-  committed ICAC and cluster document use separate writes, so a crash after
-  the ICAC write but before clearing the provisional marker can restore the
-  prior index.
-  The worked JFA example does this in `before_start` when it reattaches its
-  validated fabric, before operational advertisement.
+  host must persist the ICAC and cluster's post-commit document in one backend
+  transaction inside that callback. The worked JFA example does so for YAML,
+  SQLite, and PostgreSQL backends. Failed file transactions roll back their
+  in-memory tree, including when an inner transaction raises. A crash before
+  the transaction restores the previous index and ICAC; a crash after it
+  restores the new pair, even if the service had not yet cleared its in-memory
+  marker. Hosts with a callback
+  that stores only the ICAC must still reconcile the validated committed fabric
+  during startup, before serving reads or advertising operationally. A service
+  configured without a persistence callback provides no durable ICAC commit.
 - The Docker two-administrator test bootstraps separate fabrics, performs the
   JCM credential exchange between the Crystal implementations, and checks the
   stored cross-signed ICAC. CommissioningComplete is deferred to the Anchor
@@ -572,6 +591,11 @@ CAT check. The controller's `OperationalTrustAnchors` implementation must
 validate the source of an operational root or VID Verification Statement. An
 absent trust decision fails the JCM verification step. Applications must make
 an explicit user consent decision for each ecosystem joining a fabric.
+Concrete single-attribute controller reads reject ReportData entries carrying
+another concrete AttributePath, including a mismatched status beside valid
+data. This guards VID verification, JCM attribute reads, and authenticated
+recovery's Fabrics read from consuming an unrelated response payload. Wildcard
+reads still return all reported paths.
 
 For DCL-backed operational VID checks, construct
 `VidVerification::DclOperationalTrustAnchors.new(VidVerification::HttpDclSource.new("https://<trusted-dcl-gateway>"))`

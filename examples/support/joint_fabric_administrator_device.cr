@@ -140,6 +140,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_transfer_request : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
       getter? interrupt_after_participant_rotation : Bool = false
+      getter fail_safe_max_seconds : UInt16? = nil
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
@@ -158,7 +159,8 @@ module MatterJointFabricAdministrator
                      @interrupt_before_transfer_follow_up : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
-                     @interrupt_after_participant_rotation : Bool = false)
+                     @interrupt_after_participant_rotation : Bool = false,
+                     @fail_safe_max_seconds : UInt16? = nil)
       end
     end
 
@@ -609,7 +611,7 @@ module MatterJointFabricAdministrator
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: persisted_icac,
-        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate) },
+        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_ICAC_DOCUMENT, administrator) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -686,7 +688,7 @@ module MatterJointFabricAdministrator
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore,
           APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT),
         initial_icac: persisted_icac(APP_BOOTSTRAP_ICAC_DOCUMENT),
-        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_BOOTSTRAP_ICAC_DOCUMENT) },
+        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_BOOTSTRAP_ICAC_DOCUMENT, administrator) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -784,7 +786,7 @@ module MatterJointFabricAdministrator
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: certificate,
-        persist_icac: ->(value : Bytes?) { persist_icac(value) },
+        persist_icac: ->(value : Bytes?) { persist_icac(value, APP_ICAC_DOCUMENT, administrator) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -971,11 +973,24 @@ module MatterJointFabricAdministrator
       document ? IcacCertificateState.from_document(document).certificate : nil
     end
 
-    private def persist_icac(certificate : Bytes?, document_name : String = APP_ICAC_DOCUMENT) : Nil
-      if certificate
-        persistence.write_app_document(document_name, IcacCertificateState.new(certificate).to_document)
-      else
-        persistence.delete_app_document(document_name)
+    private def persist_icac(certificate : Bytes?, document_name : String,
+                             administrator : Admin) : Nil
+      # The service exposes the post-commit cluster document while this
+      # callback runs. Both documents must reach the backend together: a
+      # restart after this transaction must restore the committed index.
+      cluster_document = administrator.save_state ||
+                         raise Matter::StorageError.new("JFA cluster has no persistent state")
+      backend = persistence.backend
+      app_collection = Matter::Storage::Collections::APP
+      cluster_collection = Matter::Storage::Collections::CLUSTERS
+      cluster_key = administrator.persistence_key
+      backend.transaction do
+        if certificate
+          backend.write(app_collection, document_name, IcacCertificateState.new(certificate).to_document)
+        else
+          backend.delete(app_collection, document_name)
+        end
+        backend.write(cluster_collection, cluster_key, cluster_document)
       end
     end
 
@@ -1942,6 +1957,16 @@ module MatterJointFabricAdministrator
           when "inspect-new-anchor"
             CommandResult.new("ok", nonce: request.nonce,
               subscription_committed: @participant_view_current)
+          when "set-test-fail-safe-max"
+            seconds = request.fail_safe_max_seconds ||
+                      raise Matter::ConfigurationError.new("Test fail-safe maximum is required")
+            if seconds == 0_u16 ||
+               seconds > Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS ||
+               general_commissioning.failsafe_armed?
+              raise Matter::ConfigurationError.new("Invalid test fail-safe maximum or active fail-safe")
+            end
+            general_commissioning.max_cumulative_failsafe_seconds = seconds
+            CommandResult.new("ok")
           when "inspect-transfer-requester"
             inspect_transfer_requester(request.node_id, request.nonce)
           when "reconcile-transfer-requested"

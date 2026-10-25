@@ -437,6 +437,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     anchor_root = Matter::Crypto::MatterCertificate::Builder.root(anchor_key, 1_u64, Bytes[0x03], crypto)
     anchor_fabric_id = 0x5678_u64
     saved_icac = anchor_icac
+    interrupt_before_icac_write = false
     interrupt_after_icac_write = false
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
@@ -480,6 +481,11 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     restarted = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
     restarted.restore_state(cluster.save_state.as(Matter::Storage::Document))
     restarted.administrator_fabric_index.should eq(1_u8)
+    path = File.join(Dir.tempdir, "matter-jfa-icac-commit-#{Random::Secure.hex(6)}.yml")
+    backend = Matter::Storage::YamlFile.new(path)
+    backend.open
+    backend.write(Matter::Storage::Collections::APP, "icac",
+      Matter::Storage::Document{"certificate" => anchor_icac})
     restarted_service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
       -> { true }, ->(_index : UInt8) { true },
@@ -491,7 +497,14 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       },
       initial_icac: saved_icac,
       persist_icac: ->(value : Bytes?) {
+        raise Matter::StorageError.new("Interrupted before ICAC write") if interrupt_before_icac_write
         saved_icac = value.as(Bytes)
+        backend.transaction do
+          backend.write(Matter::Storage::Collections::APP, "icac",
+            Matter::Storage::Document{"certificate" => saved_icac.as(Bytes)})
+          backend.write(Matter::Storage::Collections::CLUSTERS, restarted.persistence_key,
+            restarted.save_state.as(Matter::Storage::Document))
+        end
         raise Matter::StorageError.new("Interrupted after ICAC write") if interrupt_after_icac_write
         nil
       },
@@ -524,16 +537,33 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     committed = restarted_service.add_icac(restarted, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(cross_signed))
     committed.as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
+    # An interruption before the atomic write keeps both previous documents.
+    backend.write(Matter::Storage::Collections::CLUSTERS, restarted.persistence_key,
+      restarted.save_state.as(Matter::Storage::Document))
+    interrupt_before_icac_write = true
+    expect_raises(Matter::StorageError, "Interrupted before ICAC write") { restarted_service.on_commissioning_complete }
+    backend.read(Matter::Storage::Collections::APP, "icac")
+      .as(Matter::Storage::Document)["certificate"].should eq(anchor_icac)
+    before_commit = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    before_commit.restore_state(backend.read(Matter::Storage::Collections::CLUSTERS,
+      restarted.persistence_key).as(Matter::Storage::Document))
+    before_commit.administrator_fabric_index.should eq(1_u8)
+    restarted.administrator_fabric_index.should eq(2_u8)
+    interrupt_before_icac_write = false
     interrupt_after_icac_write = true
     expect_raises(Matter::StorageError, "Interrupted after ICAC write") { restarted_service.on_commissioning_complete }
     saved_icac.should eq(cross_signed)
+    # A process loss here leaves the callback's transaction on disk while the
+    # service has not cleared its in-memory provisional marker.
+    reopened = Matter::Storage::YamlFile.new(path)
+    reopened.open
+    reopened.read(Matter::Storage::Collections::APP, "icac")
+      .as(Matter::Storage::Document)["certificate"].should eq(cross_signed)
     interrupted_commit = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
-    interrupted_commit.restore_state(restarted.save_state.as(Matter::Storage::Document))
-    interrupted_commit.administrator_fabric_index.should eq(1_u8)
-    # A host loading the committed ICAC after this split-store interruption
-    # reselects its committed fabric before serving the cluster.
-    interrupted_commit.administrator_fabric_index = 2_u8
+    interrupted_commit.restore_state(reopened.read(Matter::Storage::Collections::CLUSTERS,
+      restarted.persistence_key).as(Matter::Storage::Document))
     interrupted_commit.administrator_fabric_index.should eq(2_u8)
+    reopened.close
     interrupt_after_icac_write = false
     restarted_service.on_commissioning_complete
     saved_icac.should eq(cross_signed)
@@ -543,5 +573,8 @@ describe Matter::Commissioning::JointFabricAdministratorService do
 
     service.on_failsafe_expired
     cluster.administrator_fabric_index.should eq(1_u8)
+  ensure
+    backend.try(&.close) if backend.try(&.open?)
+    File.delete?(path) if path
   end
 end

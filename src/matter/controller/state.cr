@@ -331,6 +331,15 @@ module Matter
           node_id, nonce, require_fresh: false)
       end
 
+      # Called only after an authenticated device read proves that the
+      # provisional fabric rolled back. Match the complete saved handoff so a
+      # concurrent replacement cannot be discarded by an older recovery.
+      def abandon_pending_handoff(expected : PendingCommissioningHandoff) : Nil
+        index = @pending_handoffs.index { |entry| entry.to_document == expected.to_document }
+        raise Matter::CommissioningError.new("Deferred handoff changed during recovery") unless index
+        @pending_handoffs.delete_at(index)
+      end
+
       private def consume_pending_handoff(fabric_id : UInt64, root_public_key : Bytes,
                                           controller_node_id : UInt64, node_id : UInt64,
                                           nonce : String, require_fresh : Bool) : NodeInfo

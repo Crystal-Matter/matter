@@ -23,6 +23,7 @@ module Matter
 
       @provisional_fabric_index_active = false
       @previous_administrator_fabric_index : UInt8? = nil
+      @provisional_commit_pending = false
 
       enum ICACCSRResponseStatusCodeEnum : UInt8
         OK                              = 0
@@ -184,6 +185,21 @@ module Matter
         increment_version
       end
 
+      # A host that persists the ICAC and this cluster in one backend
+      # transaction must save the post-commit cluster document before the
+      # service drops its in-memory fail-safe state. A failed callback leaves
+      # the ordinary provisional snapshot in force for retries or rollback.
+      def with_pending_provisional_commit(& : -> Nil) : Nil
+        raise Matter::ConfigurationError.new("AdministratorFabricIndex is not provisional") unless @provisional_fabric_index_active
+        raise Matter::ConfigurationError.new("AdministratorFabricIndex commit is already pending") if @provisional_commit_pending
+        @provisional_commit_pending = true
+        begin
+          yield
+        ensure
+          @provisional_commit_pending = false
+        end
+      end
+
       def rollback_provisional_administrator_fabric_index : Nil
         return unless @provisional_fabric_index_active
 
@@ -195,7 +211,7 @@ module Matter
       end
 
       private def extend_persisted_state(document : Storage::Document) : Nil
-        if @provisional_fabric_index_active
+        if @provisional_fabric_index_active && !@provisional_commit_pending
           document[PROVISIONAL_FABRIC_INDEX_KEY] = ProvisionalFabricIndex.new(@previous_administrator_fabric_index).to_document
         end
       end

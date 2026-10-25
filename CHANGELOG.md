@@ -119,9 +119,32 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric fail-safe recovery
 
+- Bind concrete single-attribute controller read responses to their requested
+  path before VID verification, JCM credential reads, or abandoned-registration
+  recovery can consume them. Omitted response IDs require valid tag-compression
+  context from an earlier full path. Wildcard reads retain their multi-attribute form.
+- Exercise interrupted AddICAC, controller Workflow restart, real fail-safe
+  expiry, authenticated rollback proof, and a clean retry in the three-JFA
+  Docker E2E fixture.
+- Let the Anchor controller explicitly retry an interrupted direct Joint
+  Commissioning registration after the saved cumulative fail-safe deadline
+  and an authenticated original-fabric CASE read proves the Anchor fabric is
+  absent. Acknowledged completions retain their existing recovery path.
+- Recover an expired deferred Joint Commissioning handoff under the same
+  authenticated rollback proof, clearing the matching handoff and pending
+  registration atomically. The three-Administrator E2E fixture interrupts
+  deferred finalization, observes the provisional fabric, then verifies the
+  real fail-safe rollback and controller retry. Legacy records without a
+  durable deadline remain blocked.
 - Roll back a provisional AdministratorFabricIndex restored after AddICAC when
   commissioning was interrupted before completion. The rollback value shares
   the cluster document with the provisional attribute.
+- Commit the JFA example's cross-signed ICAC and AdministratorFabricIndex in
+  one storage transaction, so a restart after the durable commit restores the
+  new pair even before the in-memory fail-safe marker is cleared.
+- Roll back failed memory, YAML, and JSON storage transactions, including
+  failed nested writes, so an interrupted JFA commit cannot flush one half of
+  the credential pair.
 
 ### WebRTC Requestor client infrastructure
 

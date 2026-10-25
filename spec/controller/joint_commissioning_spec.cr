@@ -12,6 +12,19 @@ private class JointTestTrust < Matter::Controller::VidVerification::OperationalT
   end
 end
 
+private class JointRecoveryPort < Matter::Controller::JointCommissioning::RecoveryPort
+  property observed : Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+
+  def initialize(@observed, @on_read : Proc(Nil)? = nil)
+  end
+
+  def fabrics(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
+              peer : Socket::IPAddress) : Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+    @on_read.try(&.call)
+    @observed
+  end
+end
+
 private class JointDescriptorIm < Matter::Controller::ImClient
   def initialize(client : Matter::Controller::Client)
     super(client)
@@ -554,5 +567,176 @@ describe Matter::Controller::JointCommissioning do
     datastore.admin_list.first.icac.should eq(icac)
   ensure
     workflow.try(&.close)
+  end
+
+  it "retries an interrupted AddICAC only after authenticated original-fabric absence proof" do
+    joint = Matter::Controller::JointCommissioning
+    anchor = joint.bootstrap_anchor_fabric(0x4581_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
+    original = joint.bootstrap_anchor_fabric(0x4582_u64, 6_u64, 0xFFF2_u16, crypto: crypto).fabric
+    path = File.join(Dir.tempdir, "matter-jcm-recovery-#{Random::Secure.hex(6)}.yaml")
+    backend = Matter::Storage::YamlFile.new(path)
+    store = Matter::Controller::StateStore.new(backend)
+    state = store.load
+    state.install_fabric(anchor)
+    store.save(state)
+    make_pending = ->(deadline : Int64?) {
+      Matter::Controller::JointCommissioning::PendingRegistration.new(anchor.fabric_id, anchor.controller_node_id,
+        anchor.root_public_key, 9_u64, 0xFFF2_u16, "Joining Administrator", Bytes[1, 2, 3],
+        "127.0.0.1", 5540, fail_safe_deadline_unix: deadline,
+        fail_safe_max_seconds: 900_u16,
+        original_fabric_id: original.fabric_id, original_root_public_key: original.root_public_key,
+        original_node_id: 17_u64)
+    }
+    key = "#{anchor.fabric_id.to_s(16)}-#{anchor.root_public_key.hexstring}-#{anchor.controller_node_id.to_s(16)}"
+    backend.write("joint_commissioning", "pending-#{key}", make_pending.call(Time.utc.to_unix + 60).to_document)
+    backend.close
+
+    reopened = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
+    build_workflow = ->(source : Matter::Controller::StateStore) {
+      Matter::Controller::JointCommissioning::Workflow.new(source, anchor.fabric_id, anchor.root_public_key,
+        anchor.controller_node_id, 1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16,
+        2_u64, JointTestTrust.new,
+        ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
+        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+    }
+    workflow = build_workflow.call(reopened)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    descriptor = Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor
+    original_entry = descriptor.new(original.root_public_key, 0xFFF2_u16,
+      original.fabric_id, 17_u64, "original", 1_u8)
+    anchor_entry = descriptor.new(anchor.root_public_key, 0xFFF1_u16,
+      anchor.fabric_id, 9_u64, "anchor", 2_u8)
+    expect_raises(Matter::CommissioningError, /still pending/) { workflow.commission(9_u64, "invalid manual code") }
+    expect_raises(Matter::CommissioningError, /deadline has not passed/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry]))
+    end
+    workflow.close
+    reopened.backend.write("joint_commissioning", "pending-#{key}", make_pending.call(nil).to_document)
+    workflow = build_workflow.call(reopened)
+    expect_raises(Matter::CommissioningError, /lacks a durable fail-safe deadline/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry]))
+    end
+    workflow.close
+    original_pending = make_pending.call(Time.utc.to_unix - 1)
+    reopened.backend.write("joint_commissioning", "pending-#{key}", original_pending.to_document)
+    workflow = build_workflow.call(reopened)
+    expect_raises(Matter::AuthenticationError, /differs/) do
+      workflow.recover_abandoned_pending(original, 18_u64, peer, JointRecoveryPort.new([original_entry]))
+    end
+    expect_raises(Matter::AuthenticationError, /Original fabric is absent/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer,
+        JointRecoveryPort.new([] of Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor))
+    end
+    expect_raises(Matter::CommissioningError, /still present/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry, anchor_entry]))
+    end
+    replacement = make_pending.call(Time.utc.to_unix - 1)
+    replacement.icac = Bytes[8, 9, 10]
+    replacing_port = JointRecoveryPort.new([original_entry], -> {
+      reopened.backend.write("joint_commissioning", "pending-#{key}", replacement.to_document)
+      nil
+    })
+    expect_raises(Matter::CommissioningError, /changed during recovery/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, replacing_port)
+    end
+    reopened.backend.read("joint_commissioning", "pending-#{key}").should eq(replacement.to_document)
+    reopened.backend.write("joint_commissioning", "pending-#{key}", original_pending.to_document)
+    workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry])).should be_true
+    reopened.backend.read("joint_commissioning", "pending-#{key}").should be_nil
+    expect_raises(ArgumentError, /11 digits/) { workflow.commission(9_u64, "invalid manual code") }
+  ensure
+    workflow.try(&.close)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "abandons an expired deferred JCM handoff only with authenticated absence proof" do
+    joint = Matter::Controller::JointCommissioning
+    anchor = joint.bootstrap_anchor_fabric(0x4583_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
+    original = joint.bootstrap_anchor_fabric(0x4584_u64, 6_u64, 0xFFF2_u16, crypto: crypto).fabric
+    path = File.join(Dir.tempdir, "matter-deferred-jcm-recovery-#{Random::Secure.hex(6)}.yaml")
+    store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
+    nonce = "abandoned-handoff"
+    state = store.load
+    state.install_fabric(anchor)
+    state.add_pending_handoff(Matter::Controller::PendingCommissioningHandoff.new(
+      anchor.fabric_id, anchor.root_public_key, anchor.controller_node_id,
+      9_u64, "127.0.0.1", 5540, Time.utc.to_unix - 1, nonce))
+    store.save(state)
+    key = "#{anchor.fabric_id.to_s(16)}-#{anchor.root_public_key.hexstring}-#{anchor.controller_node_id.to_s(16)}"
+    make_pending = ->(deadline : Int64?) {
+      Matter::Controller::JointCommissioning::PendingRegistration.new(anchor.fabric_id, anchor.controller_node_id,
+        anchor.root_public_key, 9_u64, 0xFFF2_u16, "Joining Administrator", Bytes.empty,
+        "127.0.0.1", 5540, handoff_nonce: nonce,
+        fail_safe_deadline_unix: deadline, fail_safe_max_seconds: 900_u16,
+        original_fabric_id: original.fabric_id, original_root_public_key: original.root_public_key,
+        original_node_id: 17_u64)
+    }
+    store.backend.write("joint_commissioning", "pending-#{key}", make_pending.call(Time.utc.to_unix - 1).to_document)
+    store.backend.close
+
+    reopened = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
+    build_workflow = -> {
+      Matter::Controller::JointCommissioning::Workflow.new(reopened, anchor.fabric_id, anchor.root_public_key,
+        anchor.controller_node_id, 1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16,
+        2_u64, JointTestTrust.new,
+        ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
+        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+    }
+    workflow = build_workflow.call
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    descriptor = Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor
+    original_entry = descriptor.new(original.root_public_key, 0xFFF2_u16,
+      original.fabric_id, 17_u64, "original", 1_u8)
+    anchor_entry = descriptor.new(anchor.root_public_key, 0xFFF1_u16,
+      anchor.fabric_id, 9_u64, "anchor", 2_u8)
+    expect_raises(Matter::CommissioningError, /still present/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry, anchor_entry]))
+    end
+    reopened.load.pending_handoffs.size.should eq(1)
+    expect_raises(Matter::AuthenticationError, /differs/) do
+      workflow.recover_abandoned_pending(original, 18_u64, peer, JointRecoveryPort.new([original_entry]))
+    end
+    replacing_port = JointRecoveryPort.new([original_entry], -> {
+      changed = reopened.load
+      changed.pending_handoffs[0] = Matter::Controller::PendingCommissioningHandoff.new(
+        anchor.fabric_id, anchor.root_public_key, anchor.controller_node_id,
+        9_u64, "127.0.0.1", 5540, Time.utc.to_unix - 1, "other-handoff")
+      reopened.save(changed)
+      nil
+    })
+    expect_raises(Matter::CommissioningError, /handoff changed during recovery/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, replacing_port)
+    end
+    reopened.backend.read("joint_commissioning", "pending-#{key}").should_not be_nil
+    restored = reopened.load
+    restored.pending_handoffs[0] = Matter::Controller::PendingCommissioningHandoff.new(
+      anchor.fabric_id, anchor.root_public_key, anchor.controller_node_id,
+      9_u64, "127.0.0.1", 5540, Time.utc.to_unix - 1, nonce)
+    reopened.save(restored)
+    workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry])).should be_true
+    reopened.load.pending_handoffs.should be_empty
+    reopened.backend.read("joint_commissioning", "pending-#{key}").should be_nil
+    workflow.close
+
+    state = reopened.load
+    state.add_pending_handoff(Matter::Controller::PendingCommissioningHandoff.new(
+      anchor.fabric_id, anchor.root_public_key, anchor.controller_node_id,
+      9_u64, "127.0.0.1", 5540, Time.utc.to_unix - 1, nonce))
+    reopened.save(state)
+    legacy = make_pending.call(nil)
+    reopened.backend.write("joint_commissioning", "pending-#{key}", legacy.to_document)
+    workflow = build_workflow.call
+    expect_raises(Matter::CommissioningError, /lacks a durable fail-safe deadline/) do
+      workflow.recover_abandoned_pending(original, 17_u64, peer, JointRecoveryPort.new([original_entry]))
+    end
+    reopened.load.pending_handoffs.size.should eq(1)
+    reopened.backend.read("joint_commissioning", "pending-#{key}").should eq(legacy.to_document)
+  ensure
+    workflow.try(&.close)
+    File.delete(path) if path && File.exists?(path)
   end
 end
