@@ -55,6 +55,7 @@ module Matter
       @next_connection_id = 0_u16
       @expiry_deadlines = {} of UInt16 => Time
       @expiry_generation = 0_u64
+      @active_sessions = {} of UInt16 => UInt64
 
       property fabric_installed : Proc(UInt8, Bool)?
       property tls_endpoint_exists : Proc(UInt8, UInt16, Bool)?
@@ -139,6 +140,7 @@ module Matter
         if options = entry.transport_options
           return InteractionModel::Status.invalid_in_state if @on_reference_change.try(&.call(fabric, options.tls_endpoint_id, -1_i8)) == false
         end
+        close_session(entry)
         @connections.delete(entry)
         @expiry_deadlines.delete(entry.connection_id)
         changed
@@ -204,6 +206,7 @@ module Matter
         end
         owned.each do |entry|
           next if entry.transport_status == request.transport_status
+          close_session(entry) if request.transport_status.inactive?
           replace(entry, Tlv::TransportConfiguration.new(entry.connection_id, request.transport_status,
             entry.transport_options, fabric))
         end
@@ -222,6 +225,7 @@ module Matter
         return InteractionModel::Status.not_found unless entry
         options = entry.transport_options || return InteractionModel::Status.invalid_in_state
         return InteractionModel::Status.invalid_in_state if @privacy_allows.try { |check| !check.call(options.stream_usage) }
+        return InteractionModel::Status.busy if @active_sessions.has_key?(entry.connection_id)
         return InteractionModel::Status.busy if @transport_busy.try(&.call(fabric, entry.connection_id))
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTransportStatus) unless entry.transport_status.active?
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTriggerType) if options.trigger_options.trigger_type.continuous?
@@ -248,6 +252,7 @@ module Matter
           return InteractionModel::Status.constraint_error if id > MAX_CONNECTION_ID
         end
         entries = @connections.select { |entry| entry.fabric_index == fabric && (request.connection_id.nil? || entry.connection_id == request.connection_id) }
+        return InteractionModel::Status.not_found if entries.empty?
         Tlv::FindResponse.new(entries.map { |entry| clone_configuration(entry) })
       end
 
@@ -255,13 +260,27 @@ module Matter
       def report_transport_begin(fabric : UInt8, id : UInt16, reason : ActivationReason?, session : UInt64) : Bool
         expire_due
         entry = find_owned(fabric, id)
+        return false unless entry
+        options = entry.transport_options || return false
+        trigger = reason ? TriggerType::Command : options.trigger_options.trigger_type
+        report_transport_begin(fabric, id, trigger, reason, session)
+      end
+
+      # The actual trigger can be Command for a manually started Motion transport.
+      def report_transport_begin(fabric : UInt8, id : UInt16, trigger : TriggerType,
+                                 reason : ActivationReason?, session : UInt64) : Bool
+        expire_due
+        entry = find_owned(fabric, id)
         return false unless entry && entry.transport_status.active?
         options = entry.transport_options || return false
-        trigger = options.trigger_options.trigger_type
+        configured = options.trigger_options.trigger_type
+        return false unless trigger == configured || (trigger.command? && configured.motion?)
         return false if trigger.command? && reason.nil?
-        return false unless trigger.command? || reason.nil?
+        return false if !trigger.command? && reason
+        return false if @active_sessions.has_key?(id)
         emit_event(EVENT_PUSH_TRANSPORT_BEGIN, Tlv::BeginEvent.new(id, trigger, reason,
           ContainerFormat::Cmaf, session), fabric)
+        @active_sessions[id] = session
         true
       end
 
@@ -269,7 +288,8 @@ module Matter
         expire_due
         entry = find_owned(fabric, id)
         return false unless entry
-        emit_event(EVENT_PUSH_TRANSPORT_END, Tlv::EndEvent.new(id, ContainerFormat::Cmaf, session), fabric)
+        return false unless @active_sessions[id]? == session
+        close_session(entry)
         true
       end
 
@@ -277,11 +297,14 @@ module Matter
         size = @connections.size
         @connections.each do |entry|
           next unless entry.fabric_index == fabric
+          # Fabric removal must erase ownership even if the host cannot confirm a stop.
+          @on_status_change.try(&.call(fabric, entry.connection_id, TransportStatus::Inactive)) if entry.transport_status.active?
           if options = entry.transport_options
             @on_reference_change.try(&.call(fabric, options.tls_endpoint_id, -1_i8))
           end
         end
         @connections.reject!(&.fabric_index.==(fabric))
+        @active_sessions.reject! { |id, _| !@connections.any?(&.connection_id.==(id)) }
         @expiry_deadlines.reject! { |id, _| !@connections.any?(&.connection_id.==(id)) }
         changed if size != @connections.size
         schedule_expiry
@@ -311,6 +334,7 @@ module Matter
             entry
           end
         end
+        @active_sessions.clear
         @next_connection_id = state.next_connection_id
         @expiry_deadlines = state.expiry_deadlines.select { |id, _| @connections.any?(&.connection_id.==(id)) }
         @data_version = state.data_version
@@ -354,6 +378,13 @@ module Matter
       private def replace(old : Tlv::TransportConfiguration, new_entry : Tlv::TransportConfiguration) : Nil
         index = @connections.index(old) || raise StorageError.new("Push AV connection replacement target missing")
         @connections[index] = new_entry
+      end
+
+      private def close_session(entry : Tlv::TransportConfiguration) : Nil
+        if session = @active_sessions.delete(entry.connection_id)
+          emit_event(EVENT_PUSH_TRANSPORT_END,
+            Tlv::EndEvent.new(entry.connection_id, ContainerFormat::Cmaf, session), entry.fabric_index)
+        end
       end
 
       private def clone_options(options : Tlv::TransportOptions) : Tlv::TransportOptions
@@ -411,6 +442,7 @@ module Matter
           if options = entry.transport_options
             next if @on_reference_change.try(&.call(entry.fabric_index, options.tls_endpoint_id, -1_i8)) == false
           end
+          close_session(entry)
           @connections.delete(entry)
           @expiry_deadlines.delete(id)
           changed

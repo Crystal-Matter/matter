@@ -140,6 +140,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enforce manual Command TimeControl, use configured Motion time control when
   omitted, and let camera privacy state or host busy checks reject manual
   capture before invoking the media hook.
+- Track one ephemeral CMAF session per connection, pair Begin/End events with
+  the actual trigger and session number, close sessions after accepted host stops, and
+  return NotFound for an empty FindTransport result.
 
 ### Commodity Tariff
 
