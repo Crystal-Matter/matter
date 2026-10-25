@@ -82,6 +82,17 @@ module Matter
         increment_version_and_notify(ATTR_BINDING)
       end
 
+      # Drop only the removed fabric's targets before its local index is reused.
+      # Return whether state changed so callers can persist the new document.
+      def remove_fabric(fabric_index : UInt8) : Bool
+        previous_size = @binding.size
+        @binding.reject! { |entry| entry.fabric_index == fabric_index }
+        return false if @binding.size == previous_size
+
+        increment_version_and_notify(ATTR_BINDING)
+        true
+      end
+
       private def valid_target?(entry : Target) : Bool
         unicast = !entry.node.nil? && !entry.endpoint.nil? && entry.group.nil?
         group = entry.group
