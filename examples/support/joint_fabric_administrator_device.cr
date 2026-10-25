@@ -396,6 +396,15 @@ module MatterJointFabricAdministrator
       attach_unprovisioned_administrator(fabric)
     end
 
+    protected def fabric_removal_snapshot_clusters : Array(Matter::Cluster::Base)
+      super + [joint_fabric_administrator, joint_fabric_datastore,
+               bootstrap_joint_fabric_administrator, bootstrap_joint_fabric_datastore]
+    end
+
+    protected def fabric_removal_app_snapshot_keys : Array(String)
+      [APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_BINDING_DOCUMENT]
+    end
+
     protected def before_fabric_removed(fabric_index : UInt8) : Nil
       # Fence cluster access before the index becomes reusable, while keeping
       # the Datastore contents, binding, and credentials until the fabric

@@ -49,9 +49,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   administrator and Datastore records. The joint-fabric E2E
   suite now removes an Anchor fabric, restarts, and verifies a replacement
   Anchor's fabric index and Datastore isolation over CASE.
-- If fabric-document deletion fails, retain the installed Anchor's full
-  Datastore and credentials for restart recovery. JFA and Datastore access
-  stays fenced in the current process until restart.
+- If fabric-document deletion fails, restore the installed Anchor's JFA and
+  Datastore documents and fabric bindings from the undo journal on restart.
+  Its Datastore and credentials remain available for recovery, while the
+  failed removal's fabric is quarantined in the current process.
 
 ### Fabric table durability
 

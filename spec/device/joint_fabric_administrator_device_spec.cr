@@ -312,28 +312,43 @@ describe MatterJointFabricAdministrator::Device do
     retained_admin_id = 0xA103_u64
     retained_node_id = 0xA104_u64
     datastore = first.joint_fabric_datastore
+    datastore.joint_fabric_index = 1_u8
     datastore.admin_list = datastore.admin_list + [Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
       retained_admin_id, "Second Administrator", 0xFFF1_u16,
       fabric.intermediate_cert || raise Matter::ConfigurationError.new("Anchor ICAC missing"))]
     datastore.node_list = datastore.node_list + [Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct.new(
       retained_node_id, "Second Node", Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
       Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8))]
+    first.persistence.save_cluster(datastore).should be_true
 
     backend.fail_next_fabric_delete = true
     expect_raises(Matter::StorageError, "Injected fabric document deletion failure") do
       first.operational_credentials.credentials.remove_fabric(1_u8)
     end
     first.fabric_table.get_fabric(1_u8).should eq(fabric)
-    first.joint_fabric_administrator.administrator_fabric_index.should be_nil
+    saved_before = Matter::Commissioning::FabricRemovalJournal.previous(backend,
+      Matter::Storage::Collections::CLUSTERS, first.joint_fabric_administrator.persistence_key)
+    saved_before.should_not be_nil
+    prior_admin = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    prior_admin.restore_state(saved_before.as(Matter::Storage::Document))
+    prior_admin.administrator_fabric_index.should eq(1_u8)
+    first.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
     first.joint_fabric_datastore.joint_fabric_index.should be_nil
-    first.joint_fabric_datastore.access_mode.should eq(Matter::Cluster::JointFabricDatastore::AccessMode::Inactive)
     first.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should_not be_nil
     first.joint_fabric_datastore.admin_list.map(&.node_id).should contain(retained_admin_id)
     first.joint_fabric_datastore.node_list.map(&.node_id).should contain(retained_node_id)
-
     restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     restored.prepare_for_start
+    stored_admin = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    stored_admin.restore_state(backend.read(Matter::Storage::Collections::CLUSTERS,
+      first.joint_fabric_administrator.persistence_key).as(Matter::Storage::Document))
+    stored_admin.administrator_fabric_index.should eq(1_u8)
+    stored_datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    stored_datastore.restore_state(backend.read(Matter::Storage::Collections::CLUSTERS,
+      first.joint_fabric_datastore.persistence_key).as(Matter::Storage::Document))
+    stored_datastore.admin_list.map(&.node_id).should contain(retained_admin_id)
+    stored_datastore.node_list.map(&.node_id).should contain(retained_node_id)
     restored.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
     restored.joint_fabric_datastore.joint_fabric_index.should eq(1_u8)
     restored.joint_fabric_datastore.admin_list.map(&.node_id).should contain(retained_admin_id)
