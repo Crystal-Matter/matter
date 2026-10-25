@@ -44,8 +44,13 @@ def response(state, path):
 def handler_for(state_path):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            if (self.headers.get("Cache-Control") != "no-cache, no-store, max-age=0"
+                    or self.headers.get("Pragma") != "no-cache"):
+                self.send_error(412, "DCL query must bypass HTTP caches")
+                return
             try:
-                payload = response(json.loads(state_path.read_text()), self.path)
+                state = json.loads(state_path.read_text())
+                payload = response(state, self.path)
             except (KeyError, ValueError) as error:
                 self.send_error(500, str(error))
                 return
@@ -56,6 +61,8 @@ def handler_for(state_path):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Age", "7" if state["mode"] == "stale" else "0")
             self.end_headers()
             self.wfile.write(body)
 
