@@ -7,6 +7,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   getter commands = [] of UInt32
   getter command_paths = [] of Tuple(UInt32, UInt32)
   getter writes = [] of Tuple(UInt32, UInt32, Bytes)
+  getter write_response_codes = [] of Matter::InteractionModel::StatusCode
   property? success = true
   property response_code : Matter::InteractionModel::StatusCode? = nil
   property acl_entries = [] of Matter::Cluster::AccessControl::AccessControlEntry
@@ -128,7 +129,10 @@ private class DatastoreImClient < Matter::Controller::ImClient
       @groupcast_adopted = Array(Matter::Cluster::GroupKeyManagement::GroupcastAdoptionStruct).from_tlv(value).any?(&.groupcast_adopted?)
     end
     path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id)
-    code = @response_code || ((@success && !(@reject_groupcast_adoption && adoption_write)) ? Matter::InteractionModel::StatusCode::Success : Matter::InteractionModel::StatusCode::Failure)
+    code = @write_response_codes.shift? || @response_code || ((@success && !(@reject_groupcast_adoption && adoption_write)) ? Matter::InteractionModel::StatusCode::Success : Matter::InteractionModel::StatusCode::Failure)
+    if cluster_id == Matter::Cluster::AccessControl::CLUSTER_ID && code == Matter::InteractionModel::StatusCode::Success
+      @acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(value)
+    end
     status = Matter::InteractionModel::StatusIB.new(code.value)
     Matter::InteractionModel::WriteResponseMessage.new([Matter::InteractionModel::AttributeStatusIB.new(path, status)])
   end
@@ -292,6 +296,137 @@ describe Matter::Controller::DatastoreSynchronizer do
     written.first.privilege.should eq(Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View)
     restored.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
     restored.node_acl_list.first.prior_acl_entry.should be_nil
+  ensure
+    client.try(&.close)
+  end
+
+  it "retains an ACL while another datastore ListID still requires it" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.add_pending_node(Datastore::AddPendingNodeRequest.new(0x100_u64, "Node"))
+    store.complete_node(0x100_u64)
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [0x200_u64], nil)
+    request = Datastore::AddACLToNodeRequest.new(0x100_u64, acl)
+    store.add_acl_to_node(request).success?.should be_true
+    store.add_acl_to_node(request).success?.should be_true
+    list_ids = store.node_acl_list.map(&.list_id)
+    list_ids.uniq.size.should eq(2)
+    synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    store.node_acl_list.all?(&.status_entry.state.committed?).should be_true
+
+    im.acl_entries = [Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Operate,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE, [0x200_u64], nil)]
+    store.remove_acl_from_node(Datastore::RemoveACLFromNodeRequest.new(list_ids[0], 0x100_u64)).success?.should be_true
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(im.writes.last[2]).size.should eq(1)
+    store.node_acl_list.map(&.list_id).should eq([list_ids[1]])
+
+    store.remove_acl_from_node(Datastore::RemoveACLFromNodeRequest.new(list_ids[1], 0x100_u64)).success?.should be_true
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(im.writes.last[2]).should be_empty
+    store.node_acl_list.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "keeps another active ACL when replacing a matching prior ACL" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    old_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, nil, nil)
+    new_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, nil, nil)
+    im.acl_entries = [Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE, [] of UInt64, nil)]
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    rotating = Datastore::DatastoreACLEntryStruct.new(0x100_u64, 0_u16, new_acl, pending)
+    rotating.prior_acl_entry = old_acl
+    # The synchronizer normalizes nullable and empty subject lists to the same target ACL.
+    retained_acl = Datastore::DatastoreAccessControlEntryStruct.new(old_acl.privilege, old_acl.auth_mode,
+      [] of UInt64, nil)
+    retained = Datastore::DatastoreACLEntryStruct.new(0x100_u64, 1_u16, retained_acl, committed)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.node_acl_list = [rotating, retained]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    written = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(im.writes.last[2])
+    written.map(&.privilege).sort!.should eq([
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View,
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+    ])
+    store.node_acl_list.map(&.status_entry.state).should eq([
+      Datastore::DatastoreStateEnum::Committed,
+      Datastore::DatastoreStateEnum::Committed,
+    ])
+  ensure
+    client.try(&.close)
+  end
+
+  it "does not retain a prior ACL for an entry whose target write failed" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    old_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [0x200_u64], nil)
+    new_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [0x200_u64], nil)
+    im.acl_entries = [Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE, [0x200_u64], nil)]
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    failed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::CommitFailed, 0_u32,
+      Matter::InteractionModel::StatusCode::ResourceExhausted.value)
+    rotating = Datastore::DatastoreACLEntryStruct.new(0x100_u64, 0_u16, new_acl, pending)
+    rotating.prior_acl_entry = old_acl
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.node_acl_list = [rotating, Datastore::DatastoreACLEntryStruct.new(0x100_u64, 1_u16, old_acl, failed)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    written = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(im.writes.last[2])
+    written.map(&.privilege).should eq([Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View])
+  ensure
+    client.try(&.close)
+  end
+
+  it "removes an ACL before a pending duplicate that later fails its write" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [0x200_u64], nil)
+    im.acl_entries = [Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE, [0x200_u64], nil)]
+    im.write_response_codes.concat([
+      Matter::InteractionModel::StatusCode::Success,
+      Matter::InteractionModel::StatusCode::ResourceExhausted,
+    ])
+    deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.node_acl_list = [
+      Datastore::DatastoreACLEntryStruct.new(0x100_u64, 0_u16, acl, deleting),
+      Datastore::DatastoreACLEntryStruct.new(0x100_u64, 1_u16, acl, pending),
+    ]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.acl_entries.should be_empty
+    store.node_acl_list.map(&.list_id).should eq([1_u16])
+    store.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
   ensure
     client.try(&.close)
   end

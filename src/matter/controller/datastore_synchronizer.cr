@@ -58,7 +58,7 @@ module Matter
 
         store.node_acl_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }.each do |entry|
           status = apply do
-            sync_acl(entry, session, peer)
+            sync_acl(store, entry, session, peer)
           end
           store.complete_acl(node_id, entry.list_id, status)
         end
@@ -279,20 +279,37 @@ module Matter
         write_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP, mappings.to_tlv)
       end
 
-      private def sync_acl(entry : Store::DatastoreACLEntryStruct,
+      private def sync_acl(store : Store, entry : Store::DatastoreACLEntryStruct,
                            session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         current = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, 0_u16, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL)
         wanted = target_acl(entry.acl_entry)
         if prior = entry.prior_acl_entry
           old = target_acl(prior)
-          current.reject! { |item| same_acl?(item, old) }
+          if acl_required_by_other_entry?(store, entry, old)
+            current << old unless current.any? { |item| same_acl?(item, old) }
+          else
+            current.reject! { |item| same_acl?(item, old) }
+          end
         end
         if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
-          current.reject! { |item| same_acl?(item, wanted) }
+          if acl_required_by_other_entry?(store, entry, wanted)
+            current << wanted unless current.any? { |item| same_acl?(item, wanted) }
+          else
+            current.reject! { |item| same_acl?(item, wanted) }
+          end
         elsif !current.any? { |item| same_acl?(item, wanted) }
           current << wanted
         end
         write_ok!(session, peer, 0_u16, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL, current.to_tlv)
+      end
+
+      private def acl_required_by_other_entry?(store : Store, entry : Store::DatastoreACLEntryStruct,
+                                               wanted : Cluster::AccessControl::AccessControlEntry) : Bool
+        store.node_acl_list.any? do |other|
+          other.node_id == entry.node_id && other.list_id != entry.list_id &&
+            other.status_entry.state == Store::DatastoreStateEnum::Committed &&
+            same_acl?(target_acl(other.acl_entry), wanted)
+        end
       end
 
       private def target_acl(source : Store::DatastoreAccessControlEntryStruct) : Cluster::AccessControl::AccessControlEntry
