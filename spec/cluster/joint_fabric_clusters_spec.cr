@@ -512,6 +512,28 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.endpoint_group_id_list.should be_empty
   end
 
+  it "preserves pending group removal when the group's friendly name changes" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
+    cluster.record_endpoint(42_u64, 1_u16, "Removing")
+    cluster.record_endpoint(42_u64, 2_u16, "Retained")
+    cluster.add_group(Datastore::AddGroupRequest.new(1_u16, "Old", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 2_u16, 1_u16))
+    cluster.complete_group_membership(42_u64, 1_u16, 1_u16)
+    cluster.complete_group_membership(42_u64, 2_u16, 1_u16)
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16))
+      .success?.should be_true
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(1_u16, "New", nil, nil, nil, nil))
+      .success?.should be_true
+    cluster.endpoint_group_id_list.find!(&.endpoint_id.==(1_u16)).status_entry.state
+      .should eq(Datastore::DatastoreStateEnum::DeletePending)
+    cluster.endpoint_group_id_list.find!(&.endpoint_id.==(2_u16)).status_entry.state
+      .should eq(Datastore::DatastoreStateEnum::Pending)
+  end
+
   it "rearms failed deletions when the node is refreshed" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen"))
