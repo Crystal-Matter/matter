@@ -46,7 +46,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0036 | Wi-Fi Network Diagnostics Cluster | 1 | 1 | — |
 | 0x0037 | Ethernet Network Diagnostics Cluster | 1 | 1 | — |
 | 0x0038 | Time Synchronization Cluster | 2 | 2 | — |
-| 0x0039 | Bridged Device Basic Information Cluster | 6 | 6 | — |
+| 0x0039 | Bridged Device Basic Information Cluster | 6 | 6 | Opt-in BIS requires a bridge host ICD adapter; ordinary bridge devices do not advertise it |
 | 0x003B | Switch Cluster | 2 | 2 | — |
 | 0x003C | Administrator Commissioning Cluster | 1 | 1 | — |
 | 0x003E | Operational Credentials Cluster | 2 | 2 | — |

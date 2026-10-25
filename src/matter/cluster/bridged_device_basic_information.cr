@@ -14,8 +14,12 @@ module Matter
     class BridgedDeviceBasicInformation < Base
       cluster 0x0039, revision: 6
 
-      NODE_LABEL_MAX_LENGTH = 32
-      UNIQUE_ID_MAX_LENGTH  = 32
+      feature :bridged_icd_support, bit: 20
+
+      NODE_LABEL_MAX_LENGTH      =            32
+      UNIQUE_ID_MAX_LENGTH       =            32
+      MIN_KEEP_ACTIVE_TIMEOUT_MS =    30_000_u32
+      MAX_KEEP_ACTIVE_TIMEOUT_MS = 3_600_000_u32
 
       # Reuse enums and structs from BasicInformation
       alias ProductFinish = BasicInformation::ProductFinish
@@ -60,6 +64,29 @@ module Matter
         end
       end
 
+      struct KeepActiveRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter stay_active_duration : UInt32
+
+        @[TLV::Field(tag: 1)]
+        getter timeout_ms : UInt32
+
+        def initialize(@stay_active_duration : UInt32, @timeout_ms : UInt32)
+        end
+      end
+
+      struct ActiveChangedEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter promised_active_duration : UInt32
+
+        def initialize(@promised_active_duration : UInt32)
+        end
+      end
+
       # Optional attributes are present exactly when the bridge supplied a
       # value. UniqueID is required from revision 4 onward and identifies the
       # same bridged device across bridge restarts.
@@ -83,10 +110,15 @@ module Matter
       attribute 0x0018, :configuration_version, UInt32, nullable: true, optional: true,
         present_if: :configuration_version, persist: true, min: 1_u32
 
+      command 0x80, :keep_active, request: KeepActiveRequest, access: :operate,
+        requires: :bridged_icd_support
+
       event 0x00, :start_up, priority: :critical
       event 0x01, :shut_down, priority: :critical
       event 0x02, :leave, priority: :info
       event 0x03, :reachable_changed, priority: :info
+      event 0x80, :active_changed, priority: :info, requires: :bridged_icd_support,
+        payload: ActiveChangedEvent
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
@@ -108,6 +140,8 @@ module Matter
         @unique_id : String = "",
         @product_appearance : ProductAppearanceStruct? = nil,
         @configuration_version : UInt32? = nil,
+        @keep_active_adapter : Proc(UInt32, UInt32?)? = nil,
+        @monotonic_clock : Proc(Time::Instant) = -> { Time.instant },
       )
         unless (1..UNIQUE_ID_MAX_LENGTH).includes?(@unique_id.bytesize)
           raise ArgumentError.new("unique_id must be 1..#{UNIQUE_ID_MAX_LENGTH} bytes")
@@ -115,8 +149,73 @@ module Matter
         if @configuration_version == 0_u32
           raise Matter::ConfigurationError.new("ConfigurationVersion must be positive")
         end
+        @feature_map = @keep_active_adapter ? Feature::BridgedIcdSupport : Feature::None
+        @pending_stay_active_duration = nil.as(UInt32?)
+        @pending_active_deadline = nil.as(Time::Instant?)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @node_label = node_label || ""
+      end
+
+      # The BIS feature must reflect a real bridge host implementation.
+      protected def validate_feature_map_change(value : Feature) : Nil
+        expected = @keep_active_adapter ? Feature::BridgedIcdSupport : Feature::None
+        unless value == expected
+          raise ConfigurationError.new("BridgedICDSupport requires a keep-active adapter")
+        end
+      end
+
+      # Records a pending request. TimeoutMs is the time to wait for the next
+      # activation, not the amount of time the external device stays awake.
+      def keep_active(request : KeepActiveRequest) : InteractionModel::Status
+        return InteractionModel::Status.unsupported_command unless @keep_active_adapter
+        unless request.timeout_ms.in?(MIN_KEEP_ACTIVE_TIMEOUT_MS..MAX_KEEP_ACTIVE_TIMEOUT_MS)
+          return InteractionModel::Status.constraint_error
+        end
+
+        now = @monotonic_clock.call
+        deadline = now + request.timeout_ms.milliseconds
+        if prior_deadline = @pending_active_deadline
+          if prior_deadline > now
+            deadline = prior_deadline if prior_deadline > deadline
+            prior_duration = @pending_stay_active_duration
+            if prior_duration && prior_duration > request.stay_active_duration
+              @pending_stay_active_duration = prior_duration
+            else
+              @pending_stay_active_duration = request.stay_active_duration
+            end
+          else
+            @pending_stay_active_duration = request.stay_active_duration
+          end
+        else
+          @pending_stay_active_duration = request.stay_active_duration
+        end
+        @pending_active_deadline = deadline
+        InteractionModel::Status.success
+      end
+
+      # The bridge host calls this only after observing a real external device
+      # activation (for Matter ICDs, on its check-in or subscription report).
+      # The adapter sends StayActiveRequest or equivalent and returns the
+      # confirmed promised duration, or nil when it cannot confirm a promise.
+      # An event is never emitted for a failed or expired request.
+      def bridged_device_became_active : UInt32?
+        adapter = @keep_active_adapter
+        duration = @pending_stay_active_duration
+        deadline = @pending_active_deadline
+        return unless adapter && duration && deadline
+        if @monotonic_clock.call >= deadline
+          @pending_stay_active_duration = nil
+          @pending_active_deadline = nil
+          return
+        end
+
+        promised = adapter.call(duration)
+        return unless promised
+
+        @pending_stay_active_duration = nil
+        @pending_active_deadline = nil
+        emit_event(EVENT_ACTIVE_CHANGED, ActiveChangedEvent.new(promised))
+        promised
       end
 
       def configuration_version=(value : UInt32?) : Nil

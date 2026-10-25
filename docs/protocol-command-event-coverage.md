@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 27
+- Feature or complex conditional IDs absent from Crystal: 25
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -192,8 +192,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0038 | event | 0x0001 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0002 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0004 | feature(TSC) | declared; requires `:trusted_time_client` |
-| 0x0039 | command | 0x0080 | feature(BIS) | absent |
-| 0x0039 | event | 0x0080 | feature(BIS) | absent |
+| 0x0039 | command | 0x0080 | feature(BIS) | declared; requires `:bridged_icd_support` |
+| 0x0039 | event | 0x0080 | feature(BIS) | declared; requires `:bridged_icd_support` |
 | 0x003B | event | 0x0000 | feature(LS) | declared; requires `:latching_switch` |
 | 0x003B | event | 0x0001 | feature(MS) | declared; requires `:momentary_switch` |
 | 0x003B | event | 0x0002 | feature(MSL) | declared; requires `:momentary_switch_long_press` |

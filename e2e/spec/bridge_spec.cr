@@ -26,6 +26,16 @@ describe "matter_bridge example" do
     read_bool(device, "bridgeddevicebasicinformation", "reachable", "Reachable", endpoint).should be_true
   end
 
+  it "does not claim BridgedICDSupport for non-ICD lights" do
+    endpoint = bridged_endpoints.call.first
+    feature_map = read_int(device, "bridgeddevicebasicinformation", "feature-map", "FeatureMap", endpoint)
+    (feature_map & (1_i64 << 20)).should eq(0_i64)
+    commands = expect_success(device.read("bridgeddevicebasicinformation", "accepted-command-list", endpoint)).int_list("AcceptedCommandList")
+    commands.should_not contain(0x80_i64)
+    expect_failure(device.chip("any", "command-by-id", "0x39", "0x80",
+      %({"0": "u:1000", "1": "u:30000"}), device.node, endpoint.to_s), "UNSUPPORTED_COMMAND")
+  end
+
   it "toggles every bridged light" do
     bridged_endpoints.call.each do |endpoint|
       before = read_bool(device, "onoff", "on-off", "OnOff", endpoint)
