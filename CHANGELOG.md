@@ -7,6 +7,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat events
+
+- Add opt-in Matter 1.6 Thermostat Events (TEVT) with typed mode, temperature, setpoint, relay-state, and running-mode events. Significant temperature events are rate-limited to one per minute, LTNE suppresses the sensor event, and controller writes remain persistent. The cluster retains revision 9 while the remaining revision 11 features are implemented separately.
+
 ### Door Lock
 
 - Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted
