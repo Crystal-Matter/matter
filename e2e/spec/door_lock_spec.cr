@@ -187,6 +187,15 @@ describe "matter_door_lock example" do
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "8888"]))
   end
 
+  it "rejects Available as the SetCredential user status without creating a user" do
+    credential = %({"credentialType":1,"credentialIndex":7})
+    result = expect_success(device.invoke("doorlock", "set-credential",
+      ["0", credential, "9090", "9", "0", "0"], options: timed))
+    result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::InvalidField.value.to_i64), result.output
+    expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_false
+    expect_success(device.invoke("doorlock", "get-user", ["9"])).int("userStatus").should eq(0_i64)
+  end
+
   it "retains a wrong-PIN temporary lockout after a device restart" do
     expect_success(device.write("doorlock", "wrong-code-entry-limit", 1, options: timed))
     expect_success(device.write("doorlock", "user-code-temporary-disable-time", 120, options: timed))

@@ -1633,6 +1633,10 @@ module Matter
           return set_credential_response(request, StatusCode::InvalidField)
         end
 
+        if (user_status = request.user_status) && !user_status.occupied_enabled? && !user_status.occupied_disabled?
+          return set_credential_response(request, StatusCode::InvalidField)
+        end
+
         if (user_index = request.user_index) && !valid_user_index?(user_index)
           return set_credential_response(request, StatusCode::InvalidField)
         end
