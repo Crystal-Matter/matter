@@ -44,6 +44,7 @@ module Matter
       STATUS_REPORT_SUCCESS = 0_u16
       STATUS_REPORT_FAILURE = 1_u16
       PASE_INVALID_PARAM    = 2_u16
+      CASE_NO_SHARED_ROOT   = 1_u16
 
       # An in-flight handshake, remembered against the exchange it runs on.
       private abstract class Handshake
@@ -436,6 +437,7 @@ module Matter
         unless fabric
           Log.error { "No fabric found matching destination_id: #{sigma1.destination_id.hexstring}" }
           Log.error { "Device may not be commissioned or destination_id computation differs" }
+          send_status_report(msg, peer, STATUS_REPORT_FAILURE, CASE_NO_SHARED_ROOT)
           return
         end
 

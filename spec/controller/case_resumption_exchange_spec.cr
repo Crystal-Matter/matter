@@ -92,6 +92,44 @@ private class ResumeExchangeClient < Matter::Controller::Client
 end
 
 describe "controller and device CASE resumption exchange" do
+  it "reports a peer rejection during Sigma1 instead of timing out" do
+    require_udp_sockets!
+    crypto = Matter::Crypto::StandardCrypto.new
+    authority = TestCertificateAuthority.new
+    fabric_id = 0x1234_u64
+    device_node = 0x4321_u64
+    controller_node = 0x2222_u64
+    device_key = crypto.create_key_pair
+    controller_key = crypto.create_key_pair
+    root_cert = authority.root_certificate
+    device_fabric = Matter::Fabric.new(fabric_id, 1_u8, device_node,
+      authority.root_public_key, authority.issue(fabric_id, device_node, device_key.public_key),
+      device_key, Bytes.new(16, 0x44_u8), root_cert: root_cert)
+    controller_fabric = Matter::Controller::FabricInfo.new(fabric_id, controller_node,
+      Bytes.new(16, 0x45_u8), root_cert, authority.root_public_key,
+      authority.issue(fabric_id, controller_node, controller_key.public_key),
+      controller_key.private_key)
+    table = Matter::FabricTable.new(Matter::Storage::Memory.new)
+    table.add_fabric(device_fabric).should be_true
+    capture = Matter::Spec::CaptureTransport.new_for_spec
+    cache = Matter::Protocol::MrpCache.new(capture)
+    registry = Matter::Protocol::SessionRegistry.new(mrp_cache: cache)
+    channel = Matter::Protocol::SecureChannel.new(table, registry,
+      Matter::Protocol::ResponseSender.new(capture, cache), 20202021_u32,
+      1000_u32, Bytes.new(32, 0x01_u8))
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    client = ResumeExchangeClient.new(channel, capture, peer)
+    client.response_peer = Socket::IPAddress.new("::ffff:127.0.0.1", 5540)
+
+    expect_raises(Matter::ProtocolError, /general_status=1 protocol_status=1/) do
+      Matter::Controller::Pairing::CasePairing.new(crypto).pair(client, peer,
+        controller_fabric, device_node)
+    end
+    client.sent_types.should eq([0x30_u8])
+  ensure
+    client.try(&.close)
+  end
+
   it "reconnects through real Sigma1/Sigma2Resume/Success wire messages and rotates both stores" do
     require_udp_sockets!
     crypto = Matter::Crypto::StandardCrypto.new
