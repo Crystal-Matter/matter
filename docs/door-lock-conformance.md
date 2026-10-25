@@ -24,10 +24,12 @@ Failures after bolt retraction produce an `Unlatch` error and an `Unlock`
 event while retaining the last confirmed physical state. The host callback
 owns the physical timing; the cluster does not invent a latch hold interval.
 
-The server now uses the specified `SoundVolume` values (`High = 2`,
-`Medium = 3`) and an inverse `SupportedOperatingModes` bitmap. Its default
-supports the mandatory Normal and NoRemoteLockUnlock modes, marks optional
-modes unsupported, and sets reserved bits 5–15. Writes selecting an
+The server now uses the specified `SoundVolume` values (`Silent = 0`,
+`High = 2`, `Medium = 3`) and defaults to Silent. Previously saved SoundVolume
+settings retain their stored value. The default inverse
+`SupportedOperatingModes` bitmap supports the mandatory Normal and
+NoRemoteLockUnlock modes, marks optional modes unsupported, and sets reserved
+bits 5–15. Writes selecting an
 unsupported mode return `ConstraintError`. A credential feature requires the
 User feature in the advertised feature map.
 When Privacy is explicitly enabled, it can be selected only while locked.

@@ -45,10 +45,13 @@ describe Matter::Cluster::DoorLock do
       cluster.commands.map(&.id.id).includes?(Matter::Cluster::DoorLock::CMD_UNBOLT_DOOR).should be_false
     end
 
-    it "uses Matter 1.6 SoundVolume wire values" do
+    it "uses Matter 1.6 SoundVolume wire values and Silent default" do
+      Def::SoundVolume::Silent.value.should eq(0_u8)
       Def::SoundVolume::High.value.should eq(2_u8)
       Def::SoundVolume::Medium.value.should eq(3_u8)
-      read(build(Def), Def::ATTR_SOUND_VOLUME).should eq(3_u8)
+      cluster = build(Def)
+      cluster.sound_volume.should eq(Def::SoundVolume::Silent)
+      read(cluster, Def::ATTR_SOUND_VOLUME).should eq(0_u8)
     end
 
     it "sets reserved bits and supports both mandatory operating modes" do

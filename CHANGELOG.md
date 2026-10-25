@@ -98,6 +98,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Door Lock
 
+- Default SoundVolume to the Matter 1.6 Silent value (0); explicit and persisted
+  configured volumes keep their existing values.
 - Keep a changed configured OperatingMode durable while an active holiday masks
   it, without sending an unchanged OperatingMode subscription report.
 - Report changes to the effective OperatingMode at holiday schedule boundaries
