@@ -18,5 +18,9 @@ describe "Matter Thermostat Occupancy guarded fixture" do
     read_int(device, "thermostat", "occupied-heating-setpoint", "OccupiedHeatingSetpoint", 1).should eq(2000_i64)
     expect_success(device.chip("thermostat", "read-event", "setpoint-change", device.node, "1"))
       .output.should contain("Occupancy")
+
+    expect_success(device.write("thermostat", "min-heat-setpoint-limit", 2300, 1))
+    read_int(device, "thermostat", "occupied-heating-setpoint", "OccupiedHeatingSetpoint", 1).should eq(2300_i64)
+    read_int(device, "thermostat", "unoccupied-heating-setpoint", "UnoccupiedHeatingSetpoint", 1).should eq(2300_i64)
   end
 end
