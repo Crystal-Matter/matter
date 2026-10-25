@@ -32,6 +32,9 @@ NoRemoteLockUnlock modes, marks optional modes unsupported, and sets reserved
 bits 5–15. Writes selecting an
 unsupported mode return `ConstraintError`. A credential feature requires the
 User feature in the advertised feature map.
+The optional `Language` attribute accepts at most three UTF-8 bytes through
+construction, direct assignment, or a Matter write. Valid stored language
+values still restore from the cluster document.
 When Privacy is explicitly enabled, it can be selected only while locked.
 A manual unlock changes Privacy back to Normal while remote lock commands
 and exterior credential readers remain blocked in Privacy.

@@ -84,6 +84,7 @@ module Matter
       DEFAULT_TEMPORARY_DISABLE_SECONDS =  30_u8
       DEFAULT_EXPIRING_USER_TIMEOUT     = 10_u16
       DEFAULT_LANGUAGE                  = "en"
+      MAX_LANGUAGE_BYTES                = 3
       DEFAULT_PIN_CODE                  = "1234"
       LAST_HOUR_OF_DAY                  = 23_u8
       LAST_MINUTE_OF_HOUR               = 59_u8
@@ -163,7 +164,8 @@ module Matter
       attribute 0x001A, :min_rfid_code_length, UInt8, default: DEFAULT_MIN_RFID_CODE_LENGTH, fixed: true, requires: :rfid_credential
       attribute 0x001B, :credential_rules_support, UInt8, default: CREDENTIAL_RULE_SINGLE, fixed: true, requires: :user
       attribute 0x001C, :number_of_credentials_supported_per_user, UInt8, default: DEFAULT_CREDENTIALS_PER_USER, fixed: true, requires: :user
-      attribute 0x0021, :language, String, default: DEFAULT_LANGUAGE, writable: true, write_access: :manage, optional: true
+      attribute 0x0021, :language, String, default: DEFAULT_LANGUAGE, writable: true, write_access: :manage,
+        optional: true, max_length: MAX_LANGUAGE_BYTES, validate: :validate_language!
       attribute 0x0022, :led_settings, LedSettings, default: LedSettings::NoLedSignal, writable: true, write_access: :manage, optional: true
       attribute 0x0023, :auto_relock_time, UInt32, default: 0_u32, writable: true, write_access: :manage, optional: true
       attribute 0x0024, :sound_volume, SoundVolume, default: SoundVolume::Silent, writable: true, write_access: :manage, optional: true
@@ -517,6 +519,7 @@ module Matter
         credential_feature = @feature_map.pin_credential? || @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials? || @feature_map.aliro_provisioning?
         raise ArgumentError.new("credential features require user") if credential_feature && !@feature_map.user?
         raise ArgumentError.new("user schedules require user feature") if (@feature_map.week_day_access_schedules? || @feature_map.year_day_access_schedules? || @feature_map.holiday_schedules?) && !@feature_map.user?
+        validate_language!(@language)
         validate_schedule_capacity!(@number_of_week_day_schedules_supported_per_user)
         validate_schedule_capacity!(@number_of_year_day_schedules_supported_per_user)
         validate_schedule_capacity!(@number_of_holiday_schedules_supported)
@@ -1300,6 +1303,10 @@ module Matter
 
       private def validate_schedule_capacity!(capacity : UInt8) : Nil
         raise ArgumentError.new("schedule capacity must be <= #{MAX_SCHEDULES_SUPPORTED}") if capacity > MAX_SCHEDULES_SUPPORTED
+      end
+
+      private def validate_language!(language : String) : Nil
+        raise ArgumentError.new("language must be at most #{MAX_LANGUAGE_BYTES} bytes") if language.bytesize > MAX_LANGUAGE_BYTES
       end
 
       # Records a door position change and counts the open / close events; the
