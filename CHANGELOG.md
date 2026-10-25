@@ -24,6 +24,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Support rotating day patterns in calendar period order, including a durable
   start day for immediately active calendars and reset at each new period.
 
+### Push AV Stream Transport
+
+- Add a Matter 1.6 revision 2 Push AV configuration server with typed TLV
+  commands and events, durable per-fabric connections, TLS endpoint reference
+  tracking, and host-controlled transport activation. A chip-tool fixture
+  checks the advertised empty catalog; actual CMAF media upload requires a
+  host implementation.
+- Preserve absent, Null, and concrete revision 1 stream IDs and conditional
+  Motion fields across TLV and durable storage. Host selectors can resolve
+  automatic stream requests to existing camera stream IDs.
+
 ### Commodity Tariff
 
 - Add the Matter 1.6 revision 1 Commodity Tariff server with a validated,

@@ -145,6 +145,10 @@ module Matter
         @endpoints.any? { |entry| entry.fabric_index == fabric && entry.caid == caid }
       end
 
+      def has_endpoint?(fabric : UInt8, id : UInt16) : Bool
+        !endpoint(fabric, id).nil?
+      end
+
       def client_in_use?(fabric : UInt8, ccdid : UInt16) : Bool
         @endpoints.any? { |entry| entry.fabric_index == fabric && entry.ccdid == ccdid }
       end

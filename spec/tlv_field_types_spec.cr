@@ -11,7 +11,8 @@ require "./spec_helper"
 #
 # So walk the declarations instead of the traffic: every includer of
 # `TLV::Serializable`, every instance variable carrying a `TLV::Field`
-# annotation, flattened through nilable unions, `Array(...)` and tuples, and
+# annotation, flattened through nilable unions, `TLV::FieldState(...)`,
+# `Array(...)` and tuples, and
 # assert that nothing is left over.
 #
 # Both directions are checked, because they are answered by different overload
@@ -51,8 +52,9 @@ module TLVFieldTypes
             {% leaves = [] of Nil %}
             {% members = ivar.type.union? ? ivar.type.union_types : [ivar.type] %}
             {% for member in members %}
-              {% if member.name.starts_with?("Array(") || member.name.starts_with?("Tuple(") %}
-                {% for element in member.type_vars %}
+              {% field_type = member.name.starts_with?("TLV::FieldState(") || member.name.starts_with?("::TLV::FieldState(") ? member.type_vars.first : member %}
+              {% if field_type.name.starts_with?("Array(") || field_type.name.starts_with?("Tuple(") %}
+                {% for element in field_type.type_vars %}
                   {% if element.union? %}
                     {% for inner in element.union_types %}{% leaves << inner %}{% end %}
                   {% elsif element.name.starts_with?("Array(") || element.name.starts_with?("Tuple(") %}
@@ -62,7 +64,7 @@ module TLVFieldTypes
                   {% end %}
                 {% end %}
               {% else %}
-                {% leaves << member %}
+                {% leaves << field_type %}
               {% end %}
             {% end %}
 

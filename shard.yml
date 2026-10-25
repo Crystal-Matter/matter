@@ -13,6 +13,7 @@ dependencies:
 
   tlv:
     github: Crystal-Matter/tlv
+    version: ~> 2.1
 
   dns:
     github: spider-gazelle/dns

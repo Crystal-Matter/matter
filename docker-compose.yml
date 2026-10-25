@@ -117,6 +117,11 @@ services:
     environment:
       E2E_DEVICE: matter_tls_client_management
 
+  push-av-stream-transport:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_push_av_stream_transport
+
   joint-fabric-administrator:
     <<: *device
     environment:
