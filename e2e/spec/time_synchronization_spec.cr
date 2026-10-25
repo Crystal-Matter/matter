@@ -11,7 +11,8 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
     device.commission!
     read_int(device, "timesynchronization", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
     read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(15_i64)
-    expect_success(device.read("timesynchronization", "ntpserver-available", 0)).bool("NTPServerAvailable").should be_false
+    # The commissioner may set UTC during commissioning, so availability is
+    # asserted after our explicit SetUTCTime below.
     expect_success(device.read("descriptor", "client-list", 0)).output.should contain("56")
     read_int(device, "timesynchronization", "time-zone-list-max-size", "TimeZoneListMaxSize", 0).should eq(2_i64)
     read_int(device, "timesynchronization", "dstoffset-list-max-size", "DSTOffsetListMaxSize", 0).should eq(4_i64)
