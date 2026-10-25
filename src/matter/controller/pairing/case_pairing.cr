@@ -152,10 +152,15 @@ module Matter
           )
 
           sigma2 = client.wait_for_any(exchange_id, Client::PROTOCOL_SECURE_CHANNEL,
-            [MSG_CASE_SIGMA2, MSG_CASE_SIGMA2_RESUME], timeout)
+            [MSG_CASE_SIGMA2, MSG_CASE_SIGMA2_RESUME, MSG_STATUS_REPORT], timeout)
           raise Matter::TimeoutError.new("CASE: timeout waiting for Sigma2") unless sigma2
           unless same_peer?(sigma2.peer, peer)
             raise Matter::AuthenticationError.new("CASE: response came from another peer")
+          end
+          if sigma2.message.payload_header.message_type == MSG_STATUS_REPORT
+            report = Session::Pase::Definitions::StatusReport.from_bytes(sigma2.message.payload.to_slice)
+            raise Matter::ProtocolError.new(
+              "CASE: status report before Sigma2 (general_status=#{report.general_status} protocol_status=#{report.protocol_status})")
           end
 
           if sigma2.message.payload_header.message_type == MSG_CASE_SIGMA2_RESUME
