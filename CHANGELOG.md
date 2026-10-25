@@ -7,6 +7,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat Matter schedules preparation
+
+- Add typed Matter 1.6 ScheduleType, Schedule, and ScheduleTransition TLV models with validated host configuration and durable schedule handle history. Validation covers mode and per-type capacity, transition day/time overlap, per-day limits, preset references, setpoint limits, names, and built-in schedule removal. The MSCH feature remains unavailable to controllers at revision 9 until atomic Schedules writes, activation, and official wire E2E are complete.
+
 ### Thermostat setpoint limit reconciliation
 
 - Validate user heat and cool limit writes against manufacturer bounds, opposing limits, and the Auto deadband before changing state. Accepted writes clamp both occupied and guarded unoccupied setpoints by the minimum required amount; rejected writes leave the limits, setpoints, and DataVersion untouched. The guarded chip-tool OCC fixture checks that a Manage limit write adjusts both pairs.
