@@ -111,6 +111,28 @@ private class JointSparseDescriptorIm < JointDescriptorIm
   end
 end
 
+# A removed Administrator can remain in Descriptor PartsList with a null
+# AdministratorFabricIndex while another Administrator is still active.
+private class JointStaleDescriptorIm < JointDescriptorIm
+  def read_attribute(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+                     endpoint_id : UInt16, cluster_id : UInt32, attribute_id : UInt32,
+                     fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
+    value = if cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID &&
+               endpoint_id == 0_u16 && attribute_id == Matter::Cluster::Descriptor::ATTR_PARTS_LIST
+              [1_u16, 2_u16].to_tlv
+            elsif cluster_id == Matter::Cluster::JointFabricAdministrator::CLUSTER_ID && endpoint_id == 1_u16
+              nil.to_tlv
+            end
+    if value
+      path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id)
+      data = Matter::InteractionModel::AttributeDataIB.new(path: path, data: TLV::Any.from_slice(value))
+      return Matter::InteractionModel::ReportDataMessage.new(
+        attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)])
+    end
+    super
+  end
+end
+
 private alias JointAsn1 = Matter::Crypto::MatterCertificate::Asn1
 
 private def joint_root_with_extra_subject(root : Bytes, key : Matter::Crypto::Key,
@@ -251,6 +273,23 @@ describe Matter::Controller::JointCommissioning do
     endpoint.should eq(1_u16)
     Matter::Controller::JointCommissioning.read_administrator_fabric_index(im, session, peer, endpoint).should eq(2_u8)
     Matter::Controller::JointCommissioning.read_joint_cat_versions(im, session, peer, endpoint).should eq({1_u16, 1_u16})
+    client.close
+  end
+
+  it "skips a stale Descriptor Administrator with a null fabric index" do
+    client = Matter::Controller::Client.new
+    im = JointStaleDescriptorIm.new(client)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer).should eq(2_u16)
+    expect_raises(Matter::AuthenticationError, /AdministratorFabricIndex is invalid/) do
+      Matter::Controller::JointCommissioning.read_administrator_fabric_index(im, session, peer, 1_u16)
+    end
+    Matter::Controller::JointCommissioning.read_administrator_fabric_index(im, session, peer, 2_u16).should eq(2_u8)
     client.close
   end
 

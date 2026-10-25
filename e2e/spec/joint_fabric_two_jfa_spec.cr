@@ -579,10 +579,11 @@ describe "three provisioned Joint Fabric Administrators" do
     Matter::Controller::JointCommissioning.assert_status_success(recovery_window)
     deferred_client = Matter::Controller::Client.new(
       unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+    # Endpoint 1 belonged to the rolled-back A fabric; B's live JFA is on 2.
     deferred = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
-      1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
+      1_u8, 2_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
       ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
@@ -629,7 +630,7 @@ describe "three provisioned Joint Fabric Administrators" do
     deferred_restarted = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
-      1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
+      1_u8, 2_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
       ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
@@ -704,7 +705,7 @@ describe "three provisioned Joint Fabric Administrators" do
     workflow = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
-      1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
+      1_u8, 2_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
       ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       registrar.callback,
@@ -1005,10 +1006,11 @@ describe "three provisioned Joint Fabric Administrators" do
     promoted_groups_before_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
-    promoted_groups_before_resume_data = promoted_groups_before_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    promoted_groups_before_resume_report = promoted_groups_before_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first
+    promoted_groups_before_resume_data = promoted_groups_before_resume_report.attribute_data ||
+                                         raise "Promoted Anchor GroupList read failed with IM status #{promoted_groups_before_resume_report.attribute_status.try(&.status.status)}"
     transfer_admin_cat_version = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
-      .from_tlv(promoted_groups_before_resume_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
+      .from_tlv(promoted_groups_before_resume_data.data.as(TLV::Any).to_slice).find!(&.group_cat.==(0xFFFF_u16))
       .group_cat_version
     noc_before_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,

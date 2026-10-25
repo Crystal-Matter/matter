@@ -349,24 +349,16 @@ module Matter
       )
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
-      fabric_removal_clusters = -> do
-        @message_handler.clusters.values.select do |cluster|
-          cluster.is_a?(Cluster::GroupKeyManagement) ||
-            cluster.is_a?(Cluster::Groups) ||
-            cluster.is_a?(Cluster::ScenesManagement) ||
-            cluster.is_a?(Cluster::Binding) ||
-            cluster.is_a?(Cluster::TimeSynchronization)
-        end
-      end
       operational_credentials.on_fabric_removal_snapshot = -> do
         snapshot = Storage::Document.new
-        fabric_removal_clusters.call.each do |cluster|
+        fabric_removal_snapshot_clusters.each do |cluster|
           if document = cluster.save_state
             snapshot[cluster.persistence_key] = document
           end
         end
         snapshot
       end
+      operational_credentials.on_fabric_removal_app_snapshot_keys = -> { fabric_removal_app_snapshot_keys }
       operational_credentials.on_fabric_removal_quarantine = ->(fabric_index : UInt8) do
         @message_handler.registry.sessions
           .select { |_, session| session.fabric_index == fabric_index }
@@ -374,7 +366,7 @@ module Matter
         @message_handler.refresh_group_memberships
       end
       operational_credentials.on_fabric_removal_rollback = ->(_fabric_index : UInt8) do
-        fabric_removal_clusters.call.each do |cluster|
+        fabric_removal_snapshot_clusters.each do |cluster|
           next unless previous = Commissioning::FabricRemovalJournal.previous(
                         @persistence.backend, Storage::Collections::CLUSTERS, cluster.persistence_key)
           cluster.restore_state(previous)
@@ -425,7 +417,6 @@ module Matter
             raise StorageError.new("Could not persist erased Binding for fabric #{fabric_index}")
           end
         end
-
         @message_handler.clusters.values.each do |cluster|
           next unless time_sync = cluster.as?(Cluster::TimeSynchronization)
           next unless time_sync.feature_map.trusted_time_client?
@@ -437,13 +428,13 @@ module Matter
             raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
           end
         end
-
         # WebRTC sessions are volatile, but a later ACL write can fail after
         # the fabric document is gone. End them before that index is reusable.
         @message_handler.clusters.values.each do |cluster|
           cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::WebRtcTransportRequestor).try(&.remove_fabric(fabric_index))
         end
+        before_fabric_removed(fabric_index)
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
@@ -703,6 +694,28 @@ module Matter
     end
 
     protected def fabric_added(fabric : Fabric) : Nil
+    end
+
+    # Applications that persist fabric state during before_fabric_removed can
+    # extend both snapshots. The removal journal restores these documents if
+    # deleting the fabric itself fails.
+    protected def fabric_removal_snapshot_clusters : Array(Cluster::Base)
+      @message_handler.clusters.values.select do |cluster|
+        cluster.is_a?(Cluster::GroupKeyManagement) ||
+          cluster.is_a?(Cluster::Groups) ||
+          cluster.is_a?(Cluster::ScenesManagement) ||
+          cluster.is_a?(Cluster::Binding) ||
+          cluster.is_a?(Cluster::TimeSynchronization)
+      end
+    end
+
+    protected def fabric_removal_app_snapshot_keys : Array(String)
+      [] of String
+    end
+
+    # Persist application-owned fabric state before the fabric document is
+    # deleted and its local index becomes available for reuse.
+    protected def before_fabric_removed(fabric_index : UInt8) : Nil
     end
 
     protected def fabric_removed(fabric_index : UInt8) : Nil
