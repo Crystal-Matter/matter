@@ -331,6 +331,11 @@ module Matter
         current_groups.size
       end
 
+      # Indexes with stored group names, including any orphaned after a crash.
+      def fabric_indices : Array(UInt8)
+        @fabric_groups.keys
+      end
+
       # Fabric indexes can be reused after RemoveFabric. Discard the removed
       # fabric's group names before another commissioner receives that index.
       def remove_fabric(fabric_index : UInt8) : Nil

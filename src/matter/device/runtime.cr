@@ -262,6 +262,28 @@ module Matter
           end
         end
       end
+      # Repair group records left by an interrupted removal from an older
+      # build. Commit the purge before a new fabric can receive that index.
+      group_keys = @node.get_cluster(Cluster::GroupKeyManagement).as(Cluster::GroupKeyManagement)
+      orphan_indices = group_keys.fabric_indices.reject { |index| @fabric_table.get_fabric(index) }
+      unless orphan_indices.empty?
+        orphan_indices.each { |index| group_keys.remove_fabric(index) }
+        unless @persistence.save_cluster(group_keys)
+          raise StorageError.new("Could not persist recovered Group Key Management cleanup")
+        end
+      end
+
+      @message_handler.clusters.values.each do |cluster|
+        next unless groups = cluster.as?(Cluster::Groups)
+        orphan_indices = groups.fabric_indices.reject { |index| @fabric_table.get_fabric(index) }
+        unless orphan_indices.empty?
+          orphan_indices.each { |index| groups.remove_fabric(index) }
+          unless @persistence.save_cluster(groups)
+            raise StorageError.new("Could not persist recovered Groups cleanup")
+          end
+        end
+      end
+
       @message_handler.refresh_group_memberships
       if @groupcast_sender_enabled
         groupcast = @node.get_cluster(Cluster::Groupcast).as(Cluster::Groupcast)
@@ -304,6 +326,23 @@ module Matter
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
       operational_credentials.on_before_fabric_removed = ->(fabric_index : UInt8) do
+        group_keys = @message_handler.node.get_cluster(Cluster::GroupKeyManagement).as(Cluster::GroupKeyManagement)
+        group_keys.remove_fabric(fabric_index)
+        unless @persistence.save_cluster(group_keys)
+          @persistence.mark_dirty(group_keys)
+          raise StorageError.new("Could not persist erased Group Key Management for fabric #{fabric_index}")
+        end
+
+        @message_handler.clusters.values.each do |cluster|
+          next unless groups = cluster.as?(Cluster::Groups)
+          groups.remove_fabric(fabric_index)
+          # A prior attempt may have cleared RAM but failed to save the file.
+          unless @persistence.save_cluster(groups)
+            @persistence.mark_dirty(groups)
+            raise StorageError.new("Could not persist erased Groups for fabric #{fabric_index}")
+          end
+        end
+
         @message_handler.clusters.values.each do |cluster|
           next unless binding = cluster.as?(Cluster::Binding)
           binding.remove_fabric(fabric_index)

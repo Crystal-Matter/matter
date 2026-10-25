@@ -373,7 +373,7 @@ describe "durable fail-safe credential recovery" do
       first = CredentialRecoveryDevice.new(backend)
       index = add_recovery_fabric(first)
       first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
-      backend.fail_next_cluster_write = true
+      backend.fail_next_cluster_id = first.access_control.persistence_key
       expect_raises(Matter::StorageError) do
         first.operational_credentials.credentials.remove_fabric(index)
       end
@@ -411,6 +411,9 @@ describe "durable fail-safe credential recovery" do
       first.persistence.save_cluster(key_management).should be_true
       first.persistence.save_cluster(groups).should be_true
 
+      # Model a removal started by an older build before the durable gate
+      # existed; restart must repair its orphaned group documents.
+      first.operational_credentials.on_before_fabric_removed = nil
       backend.fail_next_cluster_id = first.access_control.persistence_key
       expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
         first.operational_credentials.credentials.remove_fabric(index)
