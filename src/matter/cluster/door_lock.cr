@@ -1628,6 +1628,10 @@ module Matter
       # ------------------------------------------------------------------------
 
       def handle_set_credential(request : SetCredentialRequest) : SetCredentialResponse
+        unless request.operation_type.add? || request.operation_type.modify?
+          return set_credential_response(request, StatusCode::InvalidField)
+        end
+
         if (user_index = request.user_index) && !valid_user_index?(user_index)
           return set_credential_response(request, StatusCode::InvalidField)
         end
@@ -1729,14 +1733,6 @@ module Matter
             existing.last_modified_fabric_index = @request_fabric_index
             @credentials[credential_key] = existing
             add_credential_to_user(existing)
-            status = StatusCode::Success
-          else
-            status = StatusCode::NotFound
-          end
-        when DataOperationType::Clear
-          if existing = @credentials.delete(credential_key)
-            affected_user_index = existing.user_index
-            remove_credential_from_user(existing)
             status = StatusCode::Success
           else
             status = StatusCode::NotFound
