@@ -92,8 +92,13 @@ disabled. The opt-in `TrustedTimeClient` feature stores a fabric-scoped peer,
 reads its UTC time over authenticated CASE through
 `Controller::TrustedTimeClient`, and retries hourly. A device host supplies
 `TimeSynchronization#on_trusted_time_query` to bridge its fabric table to that
-client. The running UTC clock is never persisted. The NTPS server role remains
-unavailable.
+client. The opt-in `NtpServer` feature exposes `NTPServerAvailable` and can
+serve accepted UTC over SNTPv4 using `TimeSynchronization::SntpServer` on a
+host-selected IPv6 address and UDP port (normally 123). Availability is false
+until the socket is bound and UTC has at least seconds granularity. The running
+UTC clock is never persisted; applications start and stop the responder with
+their device lifecycle. The synthetic TimeZone example demonstrates that
+setup.
 
 `Cluster::FanControl` implements Matter 1.6 revision 6. Select optional
 MultiSpeed, Auto, Rocking, Wind, Step, and AirflowDirection features in the
