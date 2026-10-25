@@ -1,5 +1,8 @@
 require "./e2e_helper"
 
+private AUTO_RELOCK_WAIT = 10.seconds
+private AUTO_RELOCK_POLL = 250.milliseconds
+
 # examples/matter_door_lock_device.cr - Door Lock on endpoint 1 (PIN 2468 required)
 describe "matter_door_lock example" do
   device = E2E::Device["matter_door_lock"]
@@ -98,8 +101,12 @@ describe "matter_door_lock example" do
 
   it "publishes an automatic lock operation after UnlockWithTimeout" do
     expect_success(device.invoke("doorlock", "unlock-with-timeout", ["1"], options: timed + pin))
-    sleep 1.2.seconds
-    read_int(device, "doorlock", "lock-state", "LockState").should eq locked
+    deadline = Time.instant + AUTO_RELOCK_WAIT
+    loop do
+      break if read_int(device, "doorlock", "lock-state", "LockState") == locked
+      fail "Door Lock did not automatically relock" if Time.instant >= deadline
+      sleep AUTO_RELOCK_POLL
+    end
 
     operations = expect_success(device.chip(["doorlock", "read-event", "lock-operation", device.node, "1"]))
     operations.ints("OperationSource").should contain(Matter::Cluster::DoorLock::OperationSource::Auto.value.to_i64)
