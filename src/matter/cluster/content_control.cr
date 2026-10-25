@@ -696,10 +696,12 @@ module Matter
         minute = local_time.hour * MINUTES_PER_HOUR + local_time.minute
         @block_content_time_window.each do |window|
           next if (window.day_of_week & day_bit).zero?
+          window_index = window.time_window_index
+          next unless window_index
           window.time_period.each_with_index do |period, index|
             if minute >= period.start_hour.to_i * MINUTES_PER_HOUR + period.start_minute &&
                minute <= period.end_hour.to_i * MINUTES_PER_HOUR + period.end_minute
-              return {local_time.year, local_time.month, local_time.day, window.time_window_index.not_nil!, index}
+              return {local_time.year, local_time.month, local_time.day, window_index, index}
             end
           end
         end
