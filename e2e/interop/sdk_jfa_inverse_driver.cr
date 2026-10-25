@@ -17,6 +17,26 @@ module SdkJfaInverseDriver
   SDK_PASSCODE      = 11022033_u32
   JFA_ENDPOINT      =        1_u16
   TIMEOUT           = 90.seconds
+  SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
+  SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+
+  private def sdk_attestation_trust(sdk_root : String) : Matter::Controller::AttestationTrustStore
+    trust = Matter::Controller::AttestationTrustStore.matter_test_fixture
+    trust.paa_certificates << File.read(File.join(sdk_root, SDK_PAA_CERT)).to_slice.dup
+    signer_paths = Dir.glob(File.join(sdk_root, SDK_CD_CERT_GLOB))
+    raise Matter::ConfigurationError.new("No SDK development CD signers found") if signer_paths.empty?
+    signer_paths.each do |path|
+      signer = OpenSSL::X509::Certificate.from_der(File.read(path).to_slice)
+      extension = signer.extensions.find { |entry| entry.oid == "subjectKeyIdentifier" } ||
+                  raise Matter::ConfigurationError.new("SDK CD signer has no subject key identifier")
+      ski = extension.value.gsub(/[^0-9A-Fa-f]/, "").upcase
+      unless ski.matches?(/\A[0-9A-F]{40}\z/)
+        raise Matter::ConfigurationError.new("SDK CD signer has invalid subject key identifier")
+      end
+      trust.cd_signers[ski] = signer.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+    end
+    trust
+  end
 
   private def store(path : String) : Matter::Controller::StateStore
     Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
@@ -33,7 +53,7 @@ module SdkJfaInverseDriver
     data.data || raise Matter::ProtocolError.new("SDK JFA attribute read omitted data")
   end
 
-  def run(path : String, address : String) : Nil
+  def run(path : String, address : String, sdk_root : String) : Nil
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       FABRIC_ID, CONTROLLER_ID, TEST_VENDOR_ID)
     state_store = store(path)
@@ -52,7 +72,7 @@ module SdkJfaInverseDriver
       Matter::Controller::Commissioning::Commissioner.new(state_store, client,
         timeout: TIMEOUT, certificate_issuer: issuer,
         attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-          Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
+          sdk_attestation_trust(sdk_root))).pairing_code(
         SDK_JFA_ID, code, peer)
       puts "Crystal commissioned official SDK JFA as Anchor"
 
@@ -94,8 +114,8 @@ module SdkJfaInverseDriver
   end
 end
 
-unless ARGV.size == 2
-  STDERR.puts "Usage: sdk_jfa_inverse_driver <private-controller-state.yml> <sdk-jfa-ipv6-address>"
+unless ARGV.size == 3
+  STDERR.puts "Usage: sdk_jfa_inverse_driver <private-controller-state.yml> <sdk-jfa-ipv6-address> <sdk-root>"
   exit 2
 end
-SdkJfaInverseDriver.run(ARGV[0], ARGV[1])
+SdkJfaInverseDriver.run(ARGV[0], ARGV[1], ARGV[2])

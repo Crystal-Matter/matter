@@ -52,7 +52,7 @@ def run(args):
             with driver_log.open("wb") as output:
                 try:
                     result = subprocess.run(
-                        [str(driver), str(private_state), args.ipv6_address],
+                        [str(driver), str(private_state), args.ipv6_address, str(sdk)],
                         cwd=state, stdout=output, stderr=subprocess.STDOUT,
                         timeout=300, check=False,
                     )
