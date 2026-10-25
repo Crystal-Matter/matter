@@ -192,6 +192,7 @@ describe "Matter 1.6 Joint Fabric certification parity" do
     service.open_joint_commissioning_window(administrator, valid).should eq(
       IMStatus.cluster_failure(JFA::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex))
     administrator.administrator_fabric_index = 1_u8
+    administrator.request_fabric_index = 1_u8
     administrator.request_peer_subject_ids = [0x1234_u64]
     service.open_joint_commissioning_window(administrator, valid).should eq(IMStatus.unsupported_access)
     administrator.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]

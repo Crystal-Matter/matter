@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric control isolation
+
+- Require the CASE fabric to match the JFA endpoint's AdministratorFabricIndex
+  before opening a Joint Commissioning window or starting an Anchor transfer.
+  An Administrator CAT on another installed fabric cannot control that endpoint.
+
 ### Durable Scenes fabric removal
 
 - Save erased Scenes and per-fabric scene information before releasing a fabric

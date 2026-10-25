@@ -219,7 +219,7 @@ module Matter
       def open_joint_commissioning_window(cluster : Admin, request : WindowRequest) : InteractionModel::Status
         return InteractionModel::Status.invalid_command unless cluster.request_is_case_session?
         return InteractionModel::Status.cluster_failure(Admin::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex) unless cluster.administrator_fabric_index
-        return InteractionModel::Status.unsupported_access unless administrator_principal?(cluster)
+        return InteractionModel::Status.unsupported_access unless administrator_control_principal?(cluster)
         return InteractionModel::Status.invalid_command unless valid_window_parameters?(request)
         result = @open_window.call(request)
         if result.status == InteractionModel::StatusCode::Busy
@@ -237,7 +237,7 @@ module Matter
         node_id = cluster.request_peer_node_id
         fabric_index = cluster.request_fabric_index
         return InteractionModel::Status.unsupported_access unless node_id && fabric_index
-        return InteractionModel::Status.unsupported_access unless administrator_principal?(cluster)
+        return InteractionModel::Status.unsupported_access unless administrator_control_principal?(cluster)
         unless @transfer_authorized.call(node_id)
           return Admin::TransferAnchorResponse.new(Admin::TransferAnchorResponseStatusEnum::TransferAnchorStatusNoUserConsent)
         end
@@ -331,6 +331,14 @@ module Matter
       private def administrator_principal?(cluster : Admin) : Bool
         cat_subject?(cluster.request_peer_subject_ids, ADMINISTRATOR_CAT_SUBJECT_PREFIX,
           @administrator_cat_version)
+      end
+
+      # A JFA may remain commissioned on its bootstrap fabric after joining a
+      # different Joint Fabric. An Administrator CAT on that other fabric must
+      # not control this JFA endpoint's commissioning window or Anchor role.
+      private def administrator_control_principal?(cluster : Admin) : Bool
+        index = cluster.administrator_fabric_index
+        !!index && cluster.request_fabric_index == index && administrator_principal?(cluster)
       end
 
       private def anchor_principal?(cluster : Admin) : Bool

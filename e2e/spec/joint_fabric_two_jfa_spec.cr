@@ -569,8 +569,10 @@ describe "three provisioned Joint Fabric Administrators" do
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
     recovery_open_request = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
       deferred_max, verifier, discriminator, iterations.to_u32, salt)
+    # The rolled-back A fabric no longer owns JFA endpoint 1. Reopen through
+    # the surviving B bootstrap Administrator on endpoint 2.
     recovery_window = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
-      endpoint_id: 1_u16,
+      endpoint_id: 2_u16,
       cluster_id: Matter::Cluster::JointFabricAdministrator::CLUSTER_ID,
       command_id: Matter::Cluster::JointFabricAdministrator::CMD_OPEN_JOINT_COMMISSIONING_WINDOW,
       fields: recovery_open_request.to_slice)
@@ -659,7 +661,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
     reopened_window = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
-      endpoint_id: 1_u16,
+      endpoint_id: 2_u16,
       cluster_id: Matter::Cluster::JointFabricAdministrator::CLUSTER_ID,
       command_id: Matter::Cluster::JointFabricAdministrator::CMD_OPEN_JOINT_COMMISSIONING_WINDOW,
       fields: open_request.to_slice)
