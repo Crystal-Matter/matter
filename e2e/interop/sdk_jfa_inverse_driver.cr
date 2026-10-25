@@ -19,6 +19,9 @@ module SdkJfaInverseDriver
   TIMEOUT           = 90.seconds
   SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
   SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+  # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
+  # test-only IPK when its commissioned JFA enters commissioner mode.
+  SDK_EXAMPLE_IPK = "temporary ipk 01".to_slice
 
   private def sdk_attestation_trust(sdk_root : String) : Matter::Controller::AttestationTrustStore
     trust = Matter::Controller::AttestationTrustStore.matter_test_fixture
@@ -55,7 +58,7 @@ module SdkJfaInverseDriver
 
   def run(path : String, address : String, sdk_root : String) : Nil
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
-      FABRIC_ID, CONTROLLER_ID, TEST_VENDOR_ID)
+      FABRIC_ID, CONTROLLER_ID, TEST_VENDOR_ID, ipk_value: SDK_EXAMPLE_IPK)
     state_store = store(path)
     state_store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
       commissioner_node_id: CONTROLLER_ID))
