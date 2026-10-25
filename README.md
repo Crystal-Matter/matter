@@ -1409,6 +1409,7 @@ device) runs inside docker compose, so the only requirement is Docker with compo
 ./test --e2e-only      # skip the unit specs
 ./test --unit-only     # only the unit specs
 ./test -- e2e/spec/switch_spec.cr   # a single e2e spec file
+MATTER_E2E_BUILD_JOBS=1 ./test --e2e-only  # limit Crystal image builds on memory-constrained hosts
 ```
 
 * `docker-compose.yml` starts one container per `examples/matter_*_device.cr` and a
