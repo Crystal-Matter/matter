@@ -106,6 +106,13 @@ the cluster can reschedule the next boundary against the new local wall time.
 Writing a configured OperatingMode while a holiday masks it still advances the
 cluster data version for persistence, but does not send an unchanged attribute
 report; the restored configured mode is reported when the holiday ends.
+
+With the Door Position Sensor feature enabled, `OpenPeriod` reads the completed
+minutes since the most recent opening transition. It retains the final duration
+after closing and resets on the next opening. A controller write becomes the
+new elapsed-minute baseline while the door is open; the host can inject a
+monotonic clock for deterministic testing.
+
 DisposableUser becomes disabled after its
 first successful open; a lock operation does not consume it. ExpiringUser starts
 an absolute deadline on first successful credential use. The deadline is stored
