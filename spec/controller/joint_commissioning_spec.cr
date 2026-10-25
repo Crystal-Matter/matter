@@ -353,6 +353,19 @@ describe Matter::Controller::JointCommissioning do
     end
   end
 
+  it "accepts an explicitly provisioned IPK without retaining the caller's buffer" do
+    ipk = "temporary ipk 01".to_slice.dup
+    fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 5_u64, 0xFFF1_u16, crypto: crypto, ipk_value: ipk).fabric
+    fabric.ipk_value.should eq(ipk)
+    ipk[0] = 0_u8
+    fabric.ipk_value[0].should eq('t'.ord.to_u8)
+    expect_raises(Matter::ConfigurationError, /IPK must be 16 bytes/) do
+      Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+        0x1234_u64, 5_u64, 0xFFF1_u16, crypto: crypto, ipk_value: Bytes[1])
+    end
+  end
+
   it "wires persistent registration and an Administrator CAT NOC through the high-level workflow" do
     joint = Matter::Controller::JointCommissioning
     bootstrap = joint.bootstrap_anchor_fabric(0x4567_u64, 5_u64, 0xFFF1_u16, crypto: crypto)

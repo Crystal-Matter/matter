@@ -69,10 +69,15 @@ if [[ "${MATTER_INTEROP_SCENARIO:-switch}" == jcm ]]; then
     --sdk "${sdk_root}" --jfa "${jfa_bin}" --driver "${driver_bin}" --log-dir "${log_dir}"
 else
   switch_bin="${MATTER_INTEROP_SWITCH_BIN:-${log_dir}/matter_switch}"
+  inverse_driver_bin="${MATTER_INTEROP_INVERSE_DRIVER_BIN:-${log_dir}/sdk_jfa_inverse_driver}"
   if [[ "${MATTER_INTEROP_SKIP_BUILD:-0}" != 1 ]]; then
     (cd "${repo_root}" && crystal build examples/matter_switch_device.cr -o "${switch_bin}") \
       2>&1 | tee "${log_dir}/switch-build.log"
+    (cd "${repo_root}" && crystal build e2e/interop/sdk_jfa_inverse_driver.cr -o "${inverse_driver_bin}") \
+      2>&1 | tee "${log_dir}/inverse-driver-build.log"
   fi
   python3 "${repo_root}/e2e/interop/sdk_jfc_switch_smoke.py" \
     --sdk "${sdk_root}" --switch "${switch_bin}" --log-dir "${log_dir}"
+  python3 "${repo_root}/e2e/interop/sdk_jfa_inverse_live.py" \
+    --sdk "${sdk_root}" --driver "${inverse_driver_bin}" --log-dir "${log_dir}"
 fi

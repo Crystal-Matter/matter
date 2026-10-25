@@ -234,6 +234,16 @@ Then start a Crystal ordinary device in commissioning mode and enter
 command over CASE. This isolates SDK controller interoperability before
 attempting Crystal JFA ownership exchange.
 
+`sdk_jfc_switch_smoke.sh` now runs the inverse direction in the same SDK build:
+after that JFC-to-Crystal switch scenario ends, it starts a fresh official
+`jfa-app`. `sdk_jfa_inverse_driver.cr` bootstraps a Crystal-owned Anchor fabric,
+commissions the SDK JFA with Administrator and Anchor CATs, establishes CASE,
+then reads its AdministratorFabricIndex, Datastore AnchorRootCA/AnchorNodeID,
+and AdminList. The inverse scenario uses a separate JFA store and Crystal
+controller state. It verifies Anchor activation and authenticated datastore
+reads, while Joint Commissioning with a VVS-bearing independent JFA remains a
+separate interoperability gate.
+
 Wire contract: Matter SDK v1.6.0.0
 [`joint_fabric_service.proto`](https://github.com/project-chip/connectedhomeip/blob/v1.6.0.0/examples/common/pigweed/protos/joint_fabric_service.proto)
 and Pigweed `pw_rpc/internal/packet.proto` / `pw_hdlc` UI framing.

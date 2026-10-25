@@ -79,10 +79,14 @@ module Matter
                                   vendor_id : UInt16,
                                   administrator_cat_version : UInt16 = 1_u16,
                                   anchor_cat_version : UInt16 = 1_u16,
-                                  crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : AnchorBootstrap
+                                  crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                                  ipk_value : Bytes? = nil) : AnchorBootstrap
         if fabric_id == 0_u64 || !DataType::NodeId.valid_joint_fabric?(controller_node_id) ||
            administrator_cat_version == 0_u16 || anchor_cat_version == 0_u16
           raise Matter::ConfigurationError.new("Invalid Anchor fabric identity or CAT version")
+        end
+        if ipk_value && ipk_value.size != Fabric::IPK_SIZE
+          raise Matter::ConfigurationError.new("Anchor fabric IPK must be #{Fabric::IPK_SIZE} bytes")
         end
         root_key = crypto.create_key_pair
         root = Crypto::MatterCertificate::Builder.root(root_key, BOOTSTRAP_RCAC_ID,
@@ -94,7 +98,7 @@ module Matter
           anchor: true, issuer_certificate: root)
         controller_key = crypto.create_key_pair
         temporary = FabricInfo.new(fabric_id: fabric_id,
-          controller_node_id: controller_node_id, ipk_value: crypto.random_bytes(Fabric::IPK_SIZE),
+          controller_node_id: controller_node_id, ipk_value: ipk_value.try(&.dup) || crypto.random_bytes(Fabric::IPK_SIZE),
           root_cert: root, root_public_key: root_key.public_key,
           controller_noc: Bytes.empty, controller_private_key: controller_key.private_key,
           root_private_key: root_key.private_key, admin_vendor_id: vendor_id,
