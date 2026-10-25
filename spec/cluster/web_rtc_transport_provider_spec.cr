@@ -91,6 +91,83 @@ private def invoke_provider(provider : Provider, command : UInt32, request : TLV
 end
 
 describe Provider do
+  it "returns the requested legacy video ID in SolicitOfferResponse" do
+    provider, _camera, _peer, video_id, _request = video_web_rtc_fixture
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: video_id)
+    response = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    response[2_u8].value.should eq(video_id)
+    response.keys.should_not contain(3_u8)
+  end
+
+  it "returns the requested legacy video ID in ProvideOfferResponse" do
+    provider, _camera, _peer, video_id, _request = video_web_rtc_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: video_id)
+    response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    response[1_u8].value.should eq(video_id)
+    response.keys.should_not contain(2_u8)
+  end
+
+  it "retains conditional legacy audio response fields" do
+    provider, _camera, _peer, audio_id = web_rtc_fixture
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: audio_id)
+    solicited = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    solicited[3_u8].value.should eq(audio_id)
+    solicited.keys.should_not contain(2_u8)
+
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: audio_id)
+    provided = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    provided[2_u8].value.should eq(audio_id)
+    provided.keys.should_not contain(1_u8)
+  end
+
+  it "omits legacy response fields when a later offer does not carry them" do
+    provider, _camera, _peer, audio_id = web_rtc_fixture
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, audio_stream_id: audio_id)
+    solicited = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Matter::Cluster::CommandResponse)
+    id = Provider::SolicitOfferResponse.from_tlv(solicited.response.as(TLV::Any)).web_rtc_session_id
+
+    later_offer = Provider::ProvideOfferRequest.new(id, "v=0")
+    response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, later_offer)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    response.keys.should_not contain(1_u8)
+    response.keys.should_not contain(2_u8)
+  end
+
+  it "echoes explicit Null legacy video IDs but omits absent audio IDs" do
+    provider, _camera, _peer, video_id, _request = video_web_rtc_fixture
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: TLV::FieldState(UInt16).null, video_streams: [video_id])
+    decoded_solicitation = Provider::SolicitOfferRequest.from_slice(solicitation.to_slice)
+    decoded_solicitation.video_stream_id_state.null?.should be_true
+    decoded_solicitation.audio_stream_id_state.absent?.should be_true
+    solicited = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    solicited.keys.should contain(2_u8)
+    solicited[2_u8].value.should be_nil
+    solicited.keys.should_not contain(3_u8)
+
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: TLV::FieldState(UInt16).null, video_streams: [video_id])
+    decoded_offer = Provider::ProvideOfferRequest.from_slice(offer.to_slice)
+    decoded_offer.video_stream_id_state.null?.should be_true
+    decoded_offer.audio_stream_id_state.absent?.should be_true
+    provided = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse).response.as(TLV::Any).as_structure
+    provided.keys.should contain(1_u8)
+    provided[1_u8].value.should be_nil
+    provided.keys.should_not contain(2_u8)
+  end
+
   it "binds a peer offer, answer, ICE candidates and end to the authenticated fabric and node" do
     provider, _camera, peer, stream_id = web_rtc_fixture
     offer = Provider::ProvideOfferRequest.new(nil, "v=0\r\n", CameraAv::StreamUsage::LiveView,

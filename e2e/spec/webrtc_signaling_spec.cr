@@ -69,8 +69,8 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
       device.node, WEBRTC_ENDPOINT)
     expect_success(allocated)
 
-    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","10":["u:0"]})
-    expect_success(webrtc_command(device, 0x02_u32, offer))
+    offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","4":"u:0"})
+    expect_success(webrtc_command(device, 0x02_u32, offer)).int("videoStreamID").should eq(0_i64)
     sessions = expect_success(webrtc_read(device, 0x0000_u32)).output
     sessions.should contain("VideoStreams: 1 entries")
     sessions.should contain("VideoStreamID: 0")
