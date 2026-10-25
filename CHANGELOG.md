@@ -268,6 +268,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RFID data before changing live lock state; affected hosts must remove the
   duplicate records before restoring that saved database.
 
+### Fabric event isolation
+
+- Erase retained fabric-sensitive events when RemoveFabric completes, before
+  the local fabric index can be reused. Events for other fabrics and node-wide
+  events remain available, and event numbers continue increasing.
+
 ### Messages
 
 - Add the Matter 1.6 revision 3 Messages server with typed message payloads,

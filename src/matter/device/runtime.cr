@@ -292,6 +292,7 @@ module Matter
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
+        @node.event_journal.remove_fabric(fabric_index)
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
         @message_handler.clusters.values.each do |cluster|

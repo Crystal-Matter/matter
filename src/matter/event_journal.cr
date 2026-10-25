@@ -199,6 +199,15 @@ module Matter
       @mutex.synchronize { @buffers.each_value.sum(&.size) }
     end
 
+    # A removed fabric's numeric index may be assigned to a different fabric.
+    # Erase its retained events before that happens, without resetting the
+    # node-wide event number or removing events visible to other fabrics.
+    def remove_fabric(fabric_index : UInt8) : Nil
+      @mutex.synchronize do
+        @buffers.each_value(&.reject! { |record| record.fabric_index == fabric_index })
+      end
+    end
+
     # Drops every retained record. The event number keeps counting up, so a
     # controller can never be handed a number it has already seen.
     def clear : Nil
