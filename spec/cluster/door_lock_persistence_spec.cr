@@ -3,16 +3,62 @@ require "../../src/matter/device/persistence"
 
 private alias DoorLock = Matter::Cluster::DoorLock
 
-private def persistent_lock : DoorLock
+private def persistent_lock(local_time_provider : Proc(Time?) = -> : Time? { Time.local }) : DoorLock
   build(DoorLock,
     feature_map: DoorLock::Feature::PinCredential | DoorLock::Feature::CredentialOverTheAirAccess |
                  DoorLock::Feature::User | DoorLock::Feature::WeekDayAccessSchedules |
                  DoorLock::Feature::YearDayAccessSchedules | DoorLock::Feature::HolidaySchedules,
     require_pin_for_remote_operation: true,
-    default_pin_code: "9999")
+    default_pin_code: "9999",
+    local_time_provider: local_time_provider)
 end
 
 describe Matter::Cluster::DoorLock do
+  it "authorizes a Sunday weekly schedule PIN after a persisted restart" do
+    clock = -> : Time? { Time.utc(2026, 10, 25, 12, 0, 0) }
+    original = persistent_lock(clock)
+    original.request_fabric_index = 1_u8
+    expect_success(invoke(original, DoorLock::CMD_SET_USER, DoorLock::SetUserRequest.new(
+      operation_type: DoorLock::DataOperationType::Add,
+      user_index: 3_u16,
+      user_name: "Cleaner",
+      user_unique_id: 333_u32,
+      user_status: DoorLock::UserStatus::OccupiedEnabled,
+      user_type: DoorLock::UserType::WeekDayScheduleUser,
+      credential_rule: DoorLock::CredentialRule::Single
+    ), fabric_index: 1_u8))
+    credential = DoorLock::Credential.new(DoorLock::CredentialType::Pin, 2_u16)
+    result = invoke(original, DoorLock::CMD_SET_CREDENTIAL, DoorLock::SetCredentialRequest.new(
+      DoorLock::DataOperationType::Add, credential, "8642".to_slice,
+      user_index: 3_u16), fabric_index: 1_u8)
+    DoorLock::SetCredentialResponse.from_tlv(result.as(Matter::Cluster::CommandResponse).response.as(TLV::Any)).status_code.should eq(DoorLock::StatusCode::Success)
+
+    expect_status(invoke(original, DoorLock::CMD_UNLOCK_DOOR,
+      DoorLock::UnlockDoorRequest.new("8642".to_slice)), Matter::InteractionModel::StatusCode::Failure)
+    expect_success(invoke(original, DoorLock::CMD_SET_WEEK_DAY_SCHEDULE,
+      DoorLock::SetWeekDayScheduleRequest.new(1_u8, 3_u16, 1_u8, 0_u8, 0_u8, 23_u8, 59_u8)))
+    original.get_user(DoorLock::GetUserRequest.new(3_u16)).user_type.should eq(DoorLock::UserType::WeekDayScheduleUser)
+    original.get_week_day_schedule(DoorLock::GetWeekDayScheduleRequest.new(1_u8, 3_u16)).status_code.should eq(DoorLock::StatusCode::Success)
+    expect_success(invoke(original, DoorLock::CMD_UNLOCK_DOOR,
+      DoorLock::UnlockDoorRequest.new("8642".to_slice)))
+
+    path = File.join(Dir.tempdir, "matter-door-lock-#{Random::Secure.hex(6)}.yml")
+    persistence = Matter::Device::Persistence.new(Matter::Storage::YamlFile.new(path))
+    persistence.track(original)
+    persistence.save_cluster(original).should be_true
+    persistence.close
+
+    restored = persistent_lock(clock)
+    reopened = Matter::Device::Persistence.new(Matter::Storage::YamlFile.new(path))
+    reopened.restore_clusters([restored] of Matter::Cluster::Base).should eq(1)
+    restored.get_week_day_schedule(DoorLock::GetWeekDayScheduleRequest.new(1_u8, 3_u16)).status_code.should eq(DoorLock::StatusCode::Success)
+    expect_success(invoke(restored, DoorLock::CMD_UNLOCK_DOOR,
+      DoorLock::UnlockDoorRequest.new("8642".to_slice)))
+    reopened.close
+  ensure
+    File.delete?(path) if path
+  end
+
   it "restores a user, credential, schedules, fabric attribution, and PIN authorization" do
     first = persistent_lock
     first.request_fabric_index = 1_u8

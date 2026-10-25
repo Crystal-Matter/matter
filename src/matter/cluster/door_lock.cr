@@ -1718,7 +1718,9 @@ module Matter
         # Matter's local schedule timestamps encode wall-clock fields as Unix
         # seconds after applying the local timezone and DST offset.
         epoch = Time.utc(time.year, time.month, time.day, time.hour, time.minute, time.second).to_unix
-        LocalScheduleTime.new(epoch, (1_u8 << time.day_of_week.value).to_u8, time.hour * MINUTES_PER_HOUR + time.minute)
+        # Crystal numbers Sunday as 7; Matter's WeekDay bitmap uses bit 0.
+        day_bit = time.day_of_week.value % 7
+        LocalScheduleTime.new(epoch, (1_u8 << day_bit).to_u8, time.hour * MINUTES_PER_HOUR + time.minute)
       end
 
       private def valid_week_day_schedule?(schedule : WeekDaySchedule) : Bool

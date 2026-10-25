@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock
+
+- Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted
+  week-day access schedules.
+
 ### Commodity Tariff rotating calendars
 
 - Support rotating day patterns in calendar period order, including a durable
