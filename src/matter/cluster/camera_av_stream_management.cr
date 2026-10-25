@@ -442,6 +442,7 @@ module Matter
       @microphone_callback : Proc(Bool, UInt8, Nil)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
+      @video_release_observers = [] of Proc(UInt16, Nil)
       @next_audio_stream_id : UInt16 = 0_u16
       @next_video_stream_id : UInt16 = 0_u16
       @microphone_capabilities : AudioCapabilities?
@@ -595,6 +596,10 @@ module Matter
         @audio_release_observers << block
       end
 
+      def on_video_released(&block : UInt16 -> Nil) : Nil
+        @video_release_observers << block
+      end
+
       def stream_delivery_allowed?(usage : StreamUsage) : Bool
         return false if @hard_privacy_mode_on || @microphone_muted
         privacy_allows?(usage)
@@ -648,6 +653,7 @@ module Matter
           status = callback.call(stream.video_stream_id)
           return status unless status.success?
           @allocated_video_streams.delete_at(index)
+          @video_release_observers.each(&.call(stream.video_stream_id))
         end
         increment_version_and_notify(ATTR_ALLOCATED_VIDEO_STREAMS)
         InteractionModel::Status.success

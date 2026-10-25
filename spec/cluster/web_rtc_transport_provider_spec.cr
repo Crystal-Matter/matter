@@ -60,6 +60,29 @@ private def web_rtc_fixture
   {provider, camera, peer, stream.audio_stream_id}
 end
 
+private def video_web_rtc_fixture
+  camera = build(CameraAv,
+    supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+    max_content_buffer_size: 65_536_u32, max_network_bandwidth: 2_000_000_u32,
+    video_sensor_params: CameraAv::VideoSensorParams.new(1920_u16, 1080_u16, 30_u16),
+    min_viewport_resolution: CameraAv::VideoResolution.new(160_u16, 90_u16),
+    rate_distortion_trade_off_points: [CameraAv::RateDistortionPoint.new(CameraAv::VideoCodec::H264,
+      CameraAv::VideoResolution.new(640_u16, 360_u16), 200_000_u32)],
+    max_concurrent_encoders: 1_u8, max_encoded_pixel_rate: 62_208_000_u32,
+    feature_map: CameraAv::Feature::Video | CameraAv::Feature::Privacy)
+  camera.on_video_allocate { |_request, _id| Status.success }
+  camera.on_video_deallocate { |_id| Status.success }
+  request = CameraAv::VideoStreamAllocateRequest.new(CameraAv::StreamUsage::LiveView,
+    CameraAv::VideoCodec::H264, 15_u16, 30_u16,
+    CameraAv::VideoResolution.new(320_u16, 180_u16),
+    CameraAv::VideoResolution.new(1280_u16, 720_u16),
+    200_000_u32, 1_000_000_u32, 30_u16)
+  stream = camera.video_stream_allocate(request).as(CameraAv::VideoStreamAllocateResponse)
+  peer = TestWebRtcPeer.new
+  provider = TestWebRtcProvider.new(camera.endpoint_id, camera, peer)
+  {provider, camera, peer, stream.video_stream_id, request}
+end
+
 private def invoke_provider(provider : Provider, command : UInt32, request : TLV::Serializable,
                             fabric : UInt8 = 1_u8, node : UInt64 = 100_u64,
                             case_session : Bool = true)
@@ -188,5 +211,104 @@ describe Provider do
       .success?.should be_true
     peer.endings.should eq([Provider::EndReason::OutOfResources])
     provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+  end
+
+  it "negotiates a CASE-owned H.264 video-only session and ends it for video privacy" do
+    provider, camera, peer, video_id, _request = video_web_rtc_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0\r\n", CameraAv::StreamUsage::LiveView,
+      22_u16, video_streams: [video_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer, case_session: false)
+      .as(Status).status.should eq(StatusCode::UnsupportedAccess)
+    response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse)
+    id = Provider::ProvideOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
+    session = provider.current_sessions(1_u8).as(Array(Provider::Session)).first
+    session.video_streams.should eq([video_id])
+    session.video_stream_id.should eq(video_id)
+    session.audio_streams.should be_nil
+    session.audio_stream_id.should be_nil
+    wire = Provider::Session.from_tlv(read_tlv(provider, Provider::ATTR_CURRENT_SESSIONS, 1_u8).as_list.first)
+    wire.video_streams.should eq([video_id])
+    wire.video_stream_id.should eq(video_id)
+    wire.audio_streams.should be_nil
+
+    answer = Provider::ProvideAnswerRequest.new(id, "v=0\r\n")
+    invoke_provider(provider, Provider::CMD_PROVIDE_ANSWER, answer, node: 101_u64)
+      .as(Status).status.should eq(StatusCode::NotFound)
+    invoke_provider(provider, Provider::CMD_PROVIDE_ANSWER, answer, fabric: 2_u8)
+      .as(Status).status.should eq(StatusCode::NotFound)
+    invoke_provider(provider, Provider::CMD_PROVIDE_ANSWER, answer).as(Status).success?.should be_true
+    candidate = Provider::IceCandidate.new("candidate:1 1 UDP 1 127.0.0.1 1234 typ host", "0", 0_u16)
+    invoke_provider(provider, Provider::CMD_PROVIDE_ICE_CANDIDATES,
+      Provider::ProvideIceCandidatesRequest.new(id, [candidate]), node: 101_u64)
+      .as(Status).status.should eq(StatusCode::NotFound)
+    invoke_provider(provider, Provider::CMD_PROVIDE_ICE_CANDIDATES,
+      Provider::ProvideIceCandidatesRequest.new(id, [candidate])).as(Status).success?.should be_true
+    peer.answers.should eq(["v=0\r\n"])
+    peer.candidates.should eq([candidate])
+
+    camera.microphone_muted = true
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+    camera.soft_livestream_privacy_mode_enabled = true
+    peer.endings.should eq([Provider::EndReason::PrivacyMode])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+  end
+
+  it "rejects invalid video stream selections and ends sessions on final video release" do
+    provider, camera, peer, video_id, request = video_web_rtc_fixture
+    invalid = [
+      Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+        22_u16, video_streams: [video_id, video_id]),
+      Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+        22_u16, video_streams: [] of UInt16),
+      Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+        22_u16, video_streams: [99_u16]),
+      Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::Recording,
+        22_u16, video_streams: [video_id]),
+    ]
+    invalid.each do |offer|
+      invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+        .as(Status).status.should eq(StatusCode::ConstraintError)
+    end
+    peer.offers.should be_empty
+
+    camera.video_stream_allocate(request).as(CameraAv::VideoStreamAllocateResponse).video_stream_id.should eq(video_id)
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, video_stream_id: video_id)
+    response = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse)
+    id = Provider::ProvideOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.video_streams.should eq([video_id])
+    camera.video_stream_deallocate(CameraAv::VideoStreamDeallocateRequest.new(video_id))
+      .success?.should be_true
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+    camera.video_stream_deallocate(CameraAv::VideoStreamDeallocateRequest.new(video_id))
+      .success?.should be_true
+    peer.endings.should eq([Provider::EndReason::OutOfResources])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    invoke_provider(provider, Provider::CMD_PROVIDE_ANSWER,
+      Provider::ProvideAnswerRequest.new(id, "v=0")).as(Status).status.should eq(StatusCode::NotFound)
+  end
+
+  it "solicits a deferred H.264 video-only offer and validates candidates" do
+    provider, _camera, peer, video_id, _request = video_web_rtc_fixture
+    solicitation = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,
+      22_u16, video_streams: [video_id])
+    response = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, solicitation)
+      .as(Matter::Cluster::CommandResponse)
+    id = Provider::SolicitOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
+    peer.solicitations.should eq([id])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).first.video_streams.should eq([video_id])
+    invoke_provider(provider, Provider::CMD_PROVIDE_ICE_CANDIDATES,
+      Provider::ProvideIceCandidatesRequest.new(id, [] of Provider::IceCandidate))
+      .as(Status).status.should eq(StatusCode::ConstraintError)
+    invoke_provider(provider, Provider::CMD_PROVIDE_ICE_CANDIDATES,
+      Provider::ProvideIceCandidatesRequest.new(id, [Provider::IceCandidate.new("candidate", "", nil)]))
+      .as(Status).status.should eq(StatusCode::ConstraintError)
+    peer.candidates.should be_empty
+    deferred_offer = Provider::ProvideOfferRequest.new(id, "v=0")
+    invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, deferred_offer)
+      .should be_a(Matter::Cluster::CommandResponse)
+    peer.offers.should eq(["v=0"])
   end
 end

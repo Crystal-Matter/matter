@@ -146,7 +146,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0550 | Zone Management Cluster | 1 | 1 | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
 | 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | ADO/VDO allocation slices; SNP, media delivery and Camera topology remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | MPAN only |
-| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | signaling and host Peer interface; no independently verified SDP/ICE media transport |
+| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | ADO and VDO-only signaling, host Peer interface, and synthetic chip-tool E2E; no decoded video or independently verified SDP/ICE media transport |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | — | cluster absent |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — |
