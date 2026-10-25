@@ -218,6 +218,13 @@ services:
     environment:
       E2E_DEVICE: matter_level_control
 
+  diagnostics-dmtest:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_diagnostics_dmtest
+      E2E_BINARY: matter_level_control
+      MATTER_DIAGNOSTICS_TEST_ENABLE_KEY: "0102030405060708090a0b0c0d0e0f10"
+
   scenes-fabric:
     <<: *device
     environment:

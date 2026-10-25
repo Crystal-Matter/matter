@@ -14,6 +14,11 @@ module Matter
 
       cluster 0x0033, revision: 3
 
+      feature :data_model_test, bit: 0
+
+      ENABLE_KEY_LENGTH =   16
+      MAX_TEST_PAYLOAD  = 2048
+
       enum InterfaceType : UInt8
         # Indicates an interface of an unspecified type.
         Unspecified = 0
@@ -285,6 +290,32 @@ module Matter
         end
       end
 
+      struct PayloadTestRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter enable_key : Bytes
+
+        @[TLV::Field(tag: 1)]
+        getter value : UInt8
+
+        @[TLV::Field(tag: 2)]
+        getter count : UInt16
+
+        def initialize(@enable_key : Bytes, @value : UInt8, @count : UInt16)
+        end
+      end
+
+      struct PayloadTestResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter payload : Bytes
+
+        def initialize(@payload : Bytes)
+        end
+      end
+
       # Matter 1.6 TimeSnapshotResponse (0x02). POSIX time is null until an
       # application supplies a synchronized time source.
       struct TimeSnapshotResponse
@@ -343,11 +374,15 @@ module Matter
 
       command 0x00, :test_event_trigger, request: TestEventTriggerRequest, access: :manage
       command 0x01, :time_snapshot, response: TimeSnapshotResponse, response_id: 0x02, access: :operate
+      command 0x03, :payload_test_request, request: PayloadTestRequest,
+        response: PayloadTestResponse, response_id: 0x04, access: :manage, requires: :data_model_test
 
       event 0x03, :boot_reason, priority: :critical, payload: Events::BootReasonEvent
 
       @start_time : Time
       @start_instant : Time::Instant
+
+      @test_enable_key : Bytes?
 
       # Return synchronized POSIX milliseconds, or nil when unavailable.
       property on_posix_time_ms : Proc(UInt64?)?
@@ -355,16 +390,28 @@ module Matter
       # Supplied by the device runtime, which owns the protocol counters.
       property on_device_load_status : Proc(UInt8?, DeviceLoadStruct)?
 
+      # Only a test fixture or manufacturer's internal test application should
+      # supply this callback. Production nodes leave the enable key unset.
+      property on_test_event_trigger : Proc(UInt64, Bool)?
+
       def initialize(
         endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
         @reboot_count : UInt16 = 0_u16,
         @boot_reason : BootReason = BootReason::Unspecified,
+        test_enable_key : Bytes? = nil,
       )
+        if key = test_enable_key
+          raise ArgumentError.new("test enable key must be #{ENABLE_KEY_LENGTH} bytes and nonzero") unless key.size == ENABLE_KEY_LENGTH && key.any? { |byte| byte != 0_u8 }
+        end
+        @test_enable_key = test_enable_key.try(&.dup)
+        @feature_map = @test_enable_key ? Feature::DataModelTest : Feature::None
+        @test_event_triggers_enabled = !@test_enable_key.nil?
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @start_time = Time.utc
         @start_instant = Time.instant
         @on_posix_time_ms = nil
         @on_device_load_status = nil
+        @on_test_event_trigger = nil
       end
 
       def device_load_status(fabric_index : UInt8?) : DeviceLoadStruct | InteractionModel::Status
@@ -394,10 +441,24 @@ module Matter
         Time.utc - @start_time
       end
 
-      # Test event triggers are never enabled on a production device, so no
-      # enable key matches.
       def test_event_trigger(request : TestEventTriggerRequest) : InteractionModel::Status
-        InteractionModel::Status.constraint_error
+        return InteractionModel::Status.constraint_error unless test_key_matches?(request.enable_key)
+        return InteractionModel::Status.constraint_error unless @on_test_event_trigger.try(&.call(request.event_trigger))
+        InteractionModel::Status.success
+      end
+
+      def payload_test_request(request : PayloadTestRequest) : PayloadTestResponse | InteractionModel::Status
+        return InteractionModel::Status.constraint_error if request.count > MAX_TEST_PAYLOAD
+        return InteractionModel::Status.constraint_error unless test_key_matches?(request.enable_key)
+        PayloadTestResponse.new(Bytes.new(request.count, request.value))
+      end
+
+      private def test_key_matches?(candidate : Bytes) : Bool
+        key = @test_enable_key
+        return false unless key && candidate.size == ENABLE_KEY_LENGTH
+        mismatch = 0_u8
+        ENABLE_KEY_LENGTH.times { |index| mismatch |= key[index] ^ candidate[index] }
+        mismatch.zero?
       end
 
       # Add a network interface
