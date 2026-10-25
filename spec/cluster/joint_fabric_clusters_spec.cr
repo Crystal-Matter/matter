@@ -7,6 +7,14 @@ private def jf_cat_subject(cat : UInt16, version : UInt16) : UInt64
     Matter::DataType::CaseAuthenticatedTag.create(cat, version)).id
 end
 
+private def full_node_key_set_list : Array(Datastore::DatastoreNodeKeySetEntryStruct)
+  committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+  Array.new(Datastore::MAX_NODE_ENTRIES) do |index|
+    Datastore::DatastoreNodeKeySetEntryStruct.new(1000_u64 + (index // 254).to_u64,
+      ((index % 254) + 1).to_u16, committed)
+  end
+end
+
 describe Matter::Cluster::JointFabricDatastore do
   it "publishes the Anchor fabric IPK in GroupKeySetID zero for JCM device migration" do
     cluster = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
@@ -495,6 +503,67 @@ describe Matter::Cluster::JointFabricDatastore do
     new_key = cluster.node_key_set_list.find(&.group_key_set_id.==(11_u16)).as(Datastore::DatastoreNodeKeySetEntryStruct)
     old_key.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
     new_key.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+  end
+
+  it "rejects a group membership when its key set would exceed NodeKeySetList capacity" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Light"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", 10_u16, nil, nil, privilege))
+    cluster.node_key_set_list = full_node_key_set_list
+    before = cluster.save_state
+    version = cluster.data_version
+    notifications = 0
+    cluster.on_version_changed = -> { notifications += 1; nil }
+
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 10_u16))
+      .status.should eq(Matter::InteractionModel::StatusCode::ResourceExhausted)
+    cluster.endpoint_group_id_list.should be_empty
+    cluster.node_key_set_list.size.should eq(Datastore::MAX_NODE_ENTRIES)
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+    notifications.should eq(0)
+  end
+
+  it "rejects a group key-set update before changing GroupList when NodeKeySetList is full" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Light"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, nil, nil, privilege))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 10_u16))
+    cluster.node_key_set_list = full_node_key_set_list
+    before = cluster.save_state
+    version = cluster.data_version
+    notifications = 0
+    cluster.on_version_changed = -> { notifications += 1; nil }
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, "Changed", 10_u16, nil, nil, nil))
+      .status.should eq(Matter::InteractionModel::StatusCode::ResourceExhausted)
+    cluster.group_list.first.friendly_name.should eq("Group")
+    cluster.group_list.first.group_key_set_id.should be_nil
+    cluster.node_key_set_list.size.should eq(Datastore::MAX_NODE_ENTRIES)
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+    notifications.should eq(0)
+  end
+
+  it "counts distinct nodes once when a group key-set update fills the final slot" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Light"))
+    cluster.record_endpoint(42_u64, 1_u16, "First")
+    cluster.record_endpoint(42_u64, 2_u16, "Second")
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, nil, nil, privilege))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 10_u16))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 2_u16, 10_u16))
+    cluster.node_key_set_list = full_node_key_set_list.first(Datastore::MAX_NODE_ENTRIES - 1)
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, 10_u16, nil, nil, nil))
+      .success?.should be_true
+    cluster.node_key_set_list.size.should eq(Datastore::MAX_NODE_ENTRIES)
+    cluster.node_key_set_list.count { |entry| entry.node_id == 42_u64 && entry.group_key_set_id == 10_u16 }.should eq(1)
   end
 
   it "retains group membership until device removal is confirmed" do

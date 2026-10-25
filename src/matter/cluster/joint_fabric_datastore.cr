@@ -1038,6 +1038,9 @@ module Matter
                          (!request.group_cat_version.nil? && request.group_cat_version != entry.group_cat_version) ||
                          (!request.group_permission.nil? && request.group_permission != entry.group_permission)
         key_changed = !request.group_key_set_id.nil? && request.group_key_set_id != entry.group_key_set_id
+        if key_changed && !node_key_set_capacity_for_group?(request.group_id, request.group_key_set_id)
+          return InteractionModel::Status.resource_exhausted
+        end
         entry.friendly_name = name if name
         entry.group_key_set_id = request.group_key_set_id if request.group_key_set_id
         entry.group_cat = request.group_cat if request.group_cat
@@ -1335,9 +1338,13 @@ module Matter
                                                                 @group_list.any?(&.group_id.==(request.group_id.to_u64))
         return InteractionModel::Status.constraint_error if @endpoint_group_id_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
         return InteractionModel::Status.resource_exhausted if @endpoint_group_id_list.size >= MAX_NODE_ENTRIES
+        if (group = @group_list.find { |item| item.group_id == request.group_id.to_u64 }) && (key_id = group.group_key_set_id)
+          adding_key_set = !@node_key_set_list.any? { |item| item.node_id == request.node_id && item.group_key_set_id == key_id }
+          return InteractionModel::Status.resource_exhausted if adding_key_set && @node_key_set_list.size >= MAX_NODE_ENTRIES
+        end
         entry = DatastoreEndpointGroupIDEntryStruct.new(request.node_id, request.endpoint_id, request.group_id, status_entry(DatastoreStateEnum::Pending))
         self.endpoint_group_id_list = @endpoint_group_id_list + [entry]
-        if (group = @group_list.find { |item| item.group_id == request.group_id.to_u64 }) && (key_id = group.group_key_set_id)
+        if group && (key_id = group.group_key_set_id)
           unless @node_key_set_list.any? { |item| item.node_id == request.node_id && item.group_key_set_id == key_id }
             key_entry = DatastoreNodeKeySetEntryStruct.new(request.node_id, key_id, status_entry(DatastoreStateEnum::Pending))
             self.node_key_set_list = @node_key_set_list + [key_entry]
@@ -1714,6 +1721,18 @@ module Matter
           end
         end
         self.node_key_set_list = entries
+      end
+
+      private def node_key_set_capacity_for_group?(group_id : UInt16, key_set_id : UInt16?) : Bool
+        return true unless key_set_id
+        node_ids = @endpoint_group_id_list.select do |entry|
+          entry.group_id == group_id && entry.status_entry.state != DatastoreStateEnum::DeletePending
+        end.map(&.node_id)
+        node_ids.uniq!
+        missing = node_ids.count do |node_id|
+          !@node_key_set_list.any? { |entry| entry.node_id == node_id && entry.group_key_set_id == key_set_id }
+        end
+        @node_key_set_list.size + missing <= MAX_NODE_ENTRIES
       end
 
       private def mark_unused_key_sets_for_node(node_id : UInt64) : Nil
