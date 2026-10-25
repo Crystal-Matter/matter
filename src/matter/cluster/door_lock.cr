@@ -53,8 +53,9 @@ module Matter
       NO_REMOTE_OPERATING_MODE_BIT      = 1_u16 << OperatingMode::NoRemoteLockUnlock.value
 
       # Wildcard indexes clearing every user / schedule / credential
-      ALL_USERS     = 0xFFFE_u16
-      ALL_SCHEDULES =    0xFE_u8
+      ALL_USERS               = 0xFFFE_u16
+      ALL_SCHEDULES           =    0xFE_u8
+      MAX_SCHEDULES_SUPPORTED = ALL_SCHEDULES - 1_u8
 
       # The programming PIN occupies credential index zero
       PROGRAMMING_PIN_INDEX = 0_u16
@@ -149,9 +150,9 @@ module Matter
       attribute 0x0011, :number_of_total_users_supported, UInt16, default: DEFAULT_USERS_SUPPORTED, fixed: true, requires: :user
       attribute 0x0012, :number_of_pin_users_supported, UInt16, default: DEFAULT_USERS_SUPPORTED, fixed: true, requires: :pin_credential
       attribute 0x0013, :number_of_rfid_users_supported, UInt16, default: DEFAULT_USERS_SUPPORTED, fixed: true, requires: :rfid_credential
-      attribute 0x0014, :number_of_week_day_schedules_supported_per_user, UInt8, default: DEFAULT_SCHEDULES_SUPPORTED, fixed: true, requires: :week_day_access_schedules
-      attribute 0x0015, :number_of_year_day_schedules_supported_per_user, UInt8, default: DEFAULT_SCHEDULES_SUPPORTED, fixed: true, requires: :year_day_access_schedules
-      attribute 0x0016, :number_of_holiday_schedules_supported, UInt8, default: DEFAULT_SCHEDULES_SUPPORTED, fixed: true, requires: :holiday_schedules
+      attribute 0x0014, :number_of_week_day_schedules_supported_per_user, UInt8, default: DEFAULT_SCHEDULES_SUPPORTED, fixed: true, requires: :week_day_access_schedules, validate: :validate_schedule_capacity!
+      attribute 0x0015, :number_of_year_day_schedules_supported_per_user, UInt8, default: DEFAULT_SCHEDULES_SUPPORTED, fixed: true, requires: :year_day_access_schedules, validate: :validate_schedule_capacity!
+      attribute 0x0016, :number_of_holiday_schedules_supported, UInt8, default: DEFAULT_SCHEDULES_SUPPORTED, fixed: true, requires: :holiday_schedules, validate: :validate_schedule_capacity!
       attribute 0x0017, :max_pin_code_length, UInt8, default: DEFAULT_MAX_PIN_CODE_LENGTH, fixed: true, requires: :pin_credential
       attribute 0x0018, :min_pin_code_length, UInt8, default: DEFAULT_MIN_PIN_CODE_LENGTH, fixed: true, requires: :pin_credential
       attribute 0x0019, :max_rfid_code_length, UInt8, default: DEFAULT_MAX_RFID_CODE_LENGTH, fixed: true, requires: :rfid_credential
@@ -509,6 +510,9 @@ module Matter
         credential_feature = @feature_map.pin_credential? || @feature_map.rfid_credential? || @feature_map.finger_credentials? || @feature_map.face_credentials? || @feature_map.aliro_provisioning?
         raise ArgumentError.new("credential features require user") if credential_feature && !@feature_map.user?
         raise ArgumentError.new("user schedules require user feature") if (@feature_map.week_day_access_schedules? || @feature_map.year_day_access_schedules? || @feature_map.holiday_schedules?) && !@feature_map.user?
+        validate_schedule_capacity!(@number_of_week_day_schedules_supported_per_user)
+        validate_schedule_capacity!(@number_of_year_day_schedules_supported_per_user)
+        validate_schedule_capacity!(@number_of_holiday_schedules_supported)
         raise ArgumentError.new("supportedOperatingModes reserved bits must be set") if (@supported_operating_modes & SUPPORTED_OPERATING_MODES_RESERVED) != SUPPORTED_OPERATING_MODES_RESERVED
         raise ArgumentError.new("Normal operating mode is mandatory") unless (@supported_operating_modes & NORMAL_OPERATING_MODE_BIT).zero?
         raise ArgumentError.new("NoRemoteLockUnlock operating mode is mandatory") unless (@supported_operating_modes & NO_REMOTE_OPERATING_MODE_BIT).zero?
@@ -1285,6 +1289,10 @@ module Matter
 
       private def operating_mode_supported?(mode : OperatingMode) : Bool
         (@supported_operating_modes & (1_u16 << mode.value)).zero?
+      end
+
+      private def validate_schedule_capacity!(capacity : UInt8) : Nil
+        raise ArgumentError.new("schedule capacity must be <= #{MAX_SCHEDULES_SUPPORTED}") if capacity > MAX_SCHEDULES_SUPPORTED
       end
 
       # Records a door position change and counts the open / close events; the

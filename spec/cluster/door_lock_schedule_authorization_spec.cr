@@ -54,6 +54,39 @@ private def local_schedule_epoch(time : Time) : UInt32
 end
 
 describe "Door Lock schedule authorization" do
+  it "keeps schedule capacities below the clear-all index" do
+    features = ScheduledDoorLock::Feature::User |
+               ScheduledDoorLock::Feature::WeekDayAccessSchedules |
+               ScheduledDoorLock::Feature::YearDayAccessSchedules |
+               ScheduledDoorLock::Feature::HolidaySchedules
+    maximum = ScheduledDoorLock::ALL_SCHEDULES - 1_u8
+    lock = build(ScheduledDoorLock, feature_map: features,
+      number_of_week_day_schedules_supported_per_user: maximum,
+      number_of_year_day_schedules_supported_per_user: maximum,
+      number_of_holiday_schedules_supported: maximum)
+    read(lock, ScheduledDoorLock::ATTR_NUMBER_OF_WEEK_DAY_SCHEDULES_SUPPORTED_PER_USER).should eq(maximum)
+    read(lock, ScheduledDoorLock::ATTR_NUMBER_OF_YEAR_DAY_SCHEDULES_SUPPORTED_PER_USER).should eq(maximum)
+    read(lock, ScheduledDoorLock::ATTR_NUMBER_OF_HOLIDAY_SCHEDULES_SUPPORTED).should eq(maximum)
+
+    [ScheduledDoorLock::ALL_SCHEDULES, UInt8::MAX].each do |invalid|
+      expect_raises(ArgumentError) do
+        build(ScheduledDoorLock, feature_map: features,
+          number_of_week_day_schedules_supported_per_user: invalid)
+      end
+      expect_raises(ArgumentError) do
+        build(ScheduledDoorLock, feature_map: features,
+          number_of_year_day_schedules_supported_per_user: invalid)
+      end
+      expect_raises(ArgumentError) do
+        build(ScheduledDoorLock, feature_map: features,
+          number_of_holiday_schedules_supported: invalid)
+      end
+      expect_raises(ArgumentError) { lock.number_of_week_day_schedules_supported_per_user = invalid }
+      expect_raises(ArgumentError) { lock.number_of_year_day_schedules_supported_per_user = invalid }
+      expect_raises(ArgumentError) { lock.number_of_holiday_schedules_supported = invalid }
+    end
+  end
+
   it "denies a weekday user without a matching schedule, then honors the restored schedule" do
     now = Time.utc(2026, 10, 23, 12, 0, 0)
     clock = -> : Time? { now }

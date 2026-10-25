@@ -98,6 +98,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Door Lock
 
+- Bound advertised weekday, year-day, and holiday schedule capacities to 0xFD,
+  keeping the 0xFE clear-all index distinct from schedule slots.
 - Default SoundVolume to the Matter 1.6 Silent value (0); explicit and persisted
   configured volumes keep their existing values.
 - Keep a changed configured OperatingMode durable while an active holiday masks

@@ -91,6 +91,9 @@ must protect its files or database with appropriate access controls.
 
 WeekDayScheduleUser and YearDayScheduleUser require a matching schedule;
 ScheduleRestrictedUser requires a match from each configured schedule kind.
+Each advertised weekday, year-day, and holiday schedule capacity is limited to
+0xFD, leaving 0xFE for the clear-all command index. The constructor rejects
+larger capacities before they can make that index an ordinary schedule slot.
 Unknown local time denies these users. A host can supply a `local_time_provider`
 returning `Time?`; the default reads the system's local clock. Schedule denial
 does not count as an incorrect PIN. Weekday schedule fields are checked before
