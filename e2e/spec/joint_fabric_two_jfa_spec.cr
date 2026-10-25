@@ -1006,10 +1006,11 @@ describe "three provisioned Joint Fabric Administrators" do
     promoted_groups_before_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
-    promoted_groups_before_resume_data = promoted_groups_before_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    promoted_groups_before_resume_report = promoted_groups_before_resume.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first
+    promoted_groups_before_resume_data = promoted_groups_before_resume_report.attribute_data ||
+                                         raise "Promoted Anchor GroupList read failed with IM status #{promoted_groups_before_resume_report.attribute_status.try(&.status.status)}"
     transfer_admin_cat_version = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
-      .from_tlv(promoted_groups_before_resume_data.to_slice).find!(&.group_cat.==(0xFFFF_u16))
+      .from_tlv(promoted_groups_before_resume_data.data.as(TLV::Any).to_slice).find!(&.group_cat.==(0xFFFF_u16))
       .group_cat_version
     noc_before_resume = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,

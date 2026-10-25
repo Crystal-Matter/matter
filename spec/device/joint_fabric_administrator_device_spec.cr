@@ -28,6 +28,10 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
     select_anchor_administrator_fabric(index)
   end
 
+  def persist_anchor_role_for_spec(anchor : Bool) : Nil
+    persist_anchor_role(anchor)
+  end
+
   def migration_verifier_for_spec : Matter::Controller::DeviceAttestationVerifier
     migration_attestation_verifier
   end
@@ -54,6 +58,23 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
 
   def persist_icac_commit_for_spec(certificate : Bytes) : Nil
     persist_icac(certificate, APP_ICAC_DOCUMENT, joint_fabric_administrator)
+  end
+
+  def persist_bootstrap_icac_commit_for_spec(certificate : Bytes) : Nil
+    persist_bootstrap_icac(certificate, bootstrap_joint_fabric_administrator,
+      bootstrap_joint_fabric_datastore)
+  end
+
+  def restore_bootstrap_administrator_binding_for_spec : Nil
+    restore_bootstrap_administrator_binding
+  end
+
+  def propagation_fabric_for_spec : Matter::Fabric?
+    @propagation_fabric
+  end
+
+  def controller_store_for_spec : Matter::Controller::StateStore?
+    @controller_store
   end
 end
 
@@ -904,9 +925,15 @@ describe MatterJointFabricAdministrator::Device do
     device.install_test_fabric(b_fabric)
     device.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
     device.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
-    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
-      MatterJointFabricAdministrator::Device::IcacCertificateState.new(committed_a_icac).to_document)
+    device.bootstrap_joint_fabric_administrator.begin_provisional_administrator_fabric_index(2_u8)
+    device.persist_bootstrap_icac_commit_for_spec(committed_a_icac)
+    saved_icac = device.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT)
+      .as(Matter::Storage::Document)
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(saved_icac)
+      .certificate.should eq(committed_a_icac)
+    device.persistence.app_document(MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_ICAC_DOCUMENT).should be_nil
     device.install_test_fabric(a_fabric)
+    device.restore_bootstrap_administrator_binding_for_spec
     device.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
     device.joint_fabric_administrator.service.as(Matter::Commissioning::JointFabricAdministratorService)
       .cross_signed_icac.should eq(committed_a_icac)
@@ -967,6 +994,8 @@ describe MatterJointFabricAdministrator::Device do
     restored.install_test_fabric(a_fabric)
     restored.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
     restored.bootstrap_joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    restored.propagation_fabric_for_spec.try(&.fabric_id).should eq(0xB100_u64)
+    restored.controller_store_for_spec.should_not be_nil
     restored.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
     restored.remove_test_fabric(2_u8)
     restored.bootstrap_joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
@@ -979,6 +1008,33 @@ describe MatterJointFabricAdministrator::Device do
     device.joint_fabric_administrator.administrator_fabric_index.should eq(2_u8)
     device.joint_fabric_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
     device.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should_not be_nil
+
+    promoted_backend = Matter::Storage::Memory.new
+    promoted = InspectableJointFabricAdministratorDevice.new(storage: promoted_backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    promoted.install_test_fabric(b_fabric)
+    promoted.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(committed_a_icac).to_document)
+    promoted.install_test_fabric(a_fabric)
+    promoted.select_anchor_administrator_fabric_for_spec(1_u8)
+    promoted.persist_anchor_role_for_spec(true)
+
+    binding = MatterJointFabricAdministrator::Device::FabricBindingState.from_document(
+      promoted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT)
+        .as(Matter::Storage::Document))
+    binding.matches?(b_fabric).should be_true
+    promoted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).should be_nil
+
+    promoted_restored = InspectableJointFabricAdministratorDevice.new(storage: promoted_backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    promoted_restored.install_test_fabric(b_fabric)
+    promoted_restored.install_test_fabric(a_fabric)
+    promoted_restored.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    promoted_restored.joint_fabric_datastore.joint_fabric_index.should eq(1_u8)
+    promoted_restored.joint_fabric_datastore.access_mode.should eq(Matter::Cluster::JointFabricDatastore::AccessMode::Active)
+    promoted_restored.bootstrap_joint_fabric_administrator.administrator_fabric_index.should be_nil
+    promoted_restored.bootstrap_joint_fabric_datastore.joint_fabric_index.should eq(1_u8)
+    promoted_restored.bootstrap_joint_fabric_datastore.access_mode.should eq(Matter::Cluster::JointFabricDatastore::AccessMode::Inactive)
   ensure
     if previous_provisioned
       ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_provisioned
@@ -1049,19 +1105,6 @@ describe MatterJointFabricAdministrator::Device do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     device.advertised_joint_role.should eq(Matter::MDNS::JointFabricRole::Available)
-  end
-
-  it "persists the new Anchor fabric selection before participant follow-up" do
-    backend = Matter::Storage::Memory.new
-    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
-      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
-    device.joint_fabric_administrator.administrator_fabric_index = 2_u8
-    device.select_anchor_administrator_fabric_for_spec(1_u8)
-    device.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
-
-    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
-      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
-    restored.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
   end
 
   it "persists its propagation identity and removes it with the Anchor fabric" do

@@ -819,7 +819,7 @@ module MatterJointFabricAdministrator
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore,
           APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT),
         initial_icac: persisted_icac(APP_BOOTSTRAP_ICAC_DOCUMENT),
-        persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_BOOTSTRAP_ICAC_DOCUMENT, administrator) },
+        persist_icac: ->(certificate : Bytes?) { persist_bootstrap_icac(certificate, administrator, datastore) },
         verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
           verify_anchor_initiator(node_id, index, source)
         },
@@ -854,6 +854,8 @@ module MatterJointFabricAdministrator
         peer_hints: configured_peer_hints
       )
       @bootstrap_datastore_propagator = Matter::Controller::DatastorePropagator.new(datastore, delivery)
+      @controller_store = store
+      @propagation_fabric = fabric
       @bootstrap_datastore_propagator.try(&.start) if @propagation_started
     end
 
@@ -1100,6 +1102,7 @@ module MatterJointFabricAdministrator
         joint_fabric_service.try(&.on_commissioning_complete)
         bootstrap_joint_fabric_service.try(&.on_commissioning_complete)
         fabric_table.all_fabrics.each { |fabric| attach_joined_fabric(fabric) }
+        restore_bootstrap_administrator_binding
       end
     end
 
@@ -1135,6 +1138,32 @@ module MatterJointFabricAdministrator
         end
         backend.write(cluster_collection, cluster_key, cluster_document)
       end
+    end
+
+    private def persist_bootstrap_icac(certificate : Bytes?, administrator : Admin,
+                                       datastore : Datastore) : Nil
+      # AddICAC on endpoint 2 can join a new fabric while the original
+      # bootstrap fabric remains on this endpoint. The committed ICAC belongs
+      # to the fabric selected by AddICAC, not necessarily the bootstrap one.
+      document_name = administrator.administrator_fabric_index == datastore.joint_fabric_index ? APP_BOOTSTRAP_ICAC_DOCUMENT : APP_ICAC_DOCUMENT
+      persist_icac(certificate, document_name, administrator)
+    end
+
+    private def restore_bootstrap_administrator_binding : Nil
+      document = persistence.app_document(APP_BOOTSTRAP_BINDING_DOCUMENT) || return
+      binding = FabricBindingState.from_document(document)
+      fabric = fabric_table.get_fabric(binding.fabric_index) || return
+      return unless binding.matches?(fabric)
+      return if bootstrap_joint_fabric_administrator.administrator_fabric_index == fabric.fabric_index
+
+      # The AddICAC service provisionally used endpoint 2 for the newly joined
+      # fabric. After its ICAC is committed and endpoint 1 is activated,
+      # rebind endpoint 2 to its independently addressable bootstrap fabric.
+      attach_joint_fabric(fabric)
+      unless persistence.save_cluster(bootstrap_joint_fabric_administrator)
+        raise Matter::StorageError.new("Could not persist bootstrap Joint Fabric Administrator binding")
+      end
+      persistence.flush
     end
 
     private def bootstrap_anchor_role? : Bool
@@ -1518,18 +1547,29 @@ module MatterJointFabricAdministrator
     # new Anchor fabric. JCM may have pointed the attribute at the joined old
     # Anchor fabric, so persist the switch before participant follow-up.
     private def select_anchor_administrator_fabric(index : UInt8) : Nil
+      fabric = fabric_table.get_fabric(index) ||
+               raise Matter::ConfigurationError.new("Promoted Anchor fabric is unavailable")
+      bootstrap_binding = persistence.app_document(APP_BOOTSTRAP_BINDING_DOCUMENT) ||
+                          raise Matter::ConfigurationError.new("Promoted Anchor bootstrap binding is unavailable")
+      unless FabricBindingState.from_document(bootstrap_binding).matches?(fabric) && compliant_anchor_fabric?(fabric)
+        raise Matter::AuthenticationError.new("Promoted Anchor fabric does not match its bootstrap binding")
+      end
       cluster = joint_fabric_administrator
       cluster.administrator_fabric_index = index
       joint_fabric_datastore.joint_fabric_index = index
       @bootstrap_datastore_propagator.try(&.stop!)
-      persist_bootstrap_anchor_role(false, transfer_complete: true)
       bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
       bootstrap_joint_fabric_administrator.service = nil
-      unless persistence.save_cluster(cluster) &&
-             persistence.save_cluster(joint_fabric_datastore) &&
-             persistence.save_cluster(bootstrap_joint_fabric_administrator) &&
-             persistence.save_cluster(bootstrap_joint_fabric_datastore)
-        raise Matter::StorageError.new("Could not persist promoted Anchor Datastore and Administrator endpoints")
+      persistence.backend.transaction do
+        persist_bootstrap_anchor_role(false, transfer_complete: true)
+        persist_fabric_binding(fabric, APP_FABRIC_BINDING_DOCUMENT)
+        persistence.delete_app_document(APP_ICAC_DOCUMENT)
+        unless persistence.save_cluster(cluster) &&
+               persistence.save_cluster(joint_fabric_datastore) &&
+               persistence.save_cluster(bootstrap_joint_fabric_administrator) &&
+               persistence.save_cluster(bootstrap_joint_fabric_datastore)
+          raise Matter::StorageError.new("Could not persist promoted Anchor Datastore and Administrator endpoints")
+        end
       end
       persistence.flush
     end
