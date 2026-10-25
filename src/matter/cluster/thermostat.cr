@@ -159,8 +159,10 @@ module Matter
 
         getter presets : Array(Preset)
         getter active_preset_handle : Bytes?
+        getter used_preset_handles : Array(Bytes) = [] of Bytes
 
-        def initialize(@presets : Array(Preset), @active_preset_handle : Bytes?)
+        def initialize(@presets : Array(Preset), @active_preset_handle : Bytes?,
+                       @used_preset_handles : Array(Bytes) = [] of Bytes)
         end
       end
 
@@ -433,6 +435,7 @@ module Matter
         @last_running_state = thermostat_running_state
         @preset_types = [] of PresetType
         @presets = [] of Preset
+        @used_preset_handles = [] of Bytes
         @active_preset_handle = nil.as(Bytes?)
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
@@ -547,6 +550,7 @@ module Matter
         types_changed = @preset_types != types
         capacity_changed = @preset_types.sum(&.number_of_presets.to_i) != types.sum(&.number_of_presets.to_i)
         presets_changed = @presets != presets
+        remember_preset_handles(presets)
         @preset_types = types.dup
         @presets = copy_presets(presets)
         update_active_preset_handle(nil)
@@ -676,6 +680,14 @@ module Matter
         pending.write_data_versions << version unless pending.write_data_versions.includes?(version)
       end
 
+      # A removed fabric no longer owns an Atomic Write State, even if its
+      # index is later assigned to another fabric before the timeout expires.
+      def remove_fabric(fabric_index : UInt8) : Nil
+        if (pending = @pending_preset_write) && pending.fabric == fabric_index
+          @pending_preset_write = nil
+        end
+      end
+
       private def atomic_begin(request : AtomicRequest) : AtomicResponse | InteractionModel::Status
         timeout = request.timeout || return InteractionModel::Status.invalid_command
         return InteractionModel::Status.invalid_command if timeout == 0_u16
@@ -726,6 +738,7 @@ module Matter
               [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
           end
           unless @presets == values
+            remember_preset_handles(values)
             @presets = copy_presets(values)
             increment_version_and_notify(ATTR_PRESETS)
           end
@@ -772,9 +785,20 @@ module Matter
 
       private def new_preset_handle(staged : Array(Preset)) : Bytes
         loop do
-          handle = Random::Secure.random_bytes(MAX_PRESET_HANDLE_LENGTH)
-          return handle unless @presets.any? { |entry| entry.preset_handle == handle } ||
+          handle = candidate_preset_handle
+          return handle unless @used_preset_handles.any? { |used| used == handle } ||
                                staged.any? { |entry| entry.preset_handle == handle }
+        end
+      end
+
+      protected def candidate_preset_handle : Bytes
+        Random::Secure.random_bytes(MAX_PRESET_HANDLE_LENGTH)
+      end
+
+      private def remember_preset_handles(values : Array(Preset)) : Nil
+        values.each do |entry|
+          handle = entry.preset_handle || next
+          @used_preset_handles << handle.dup unless @used_preset_handles.any? { |used| used == handle }
         end
       end
 
@@ -1050,7 +1074,8 @@ module Matter
       private def extend_persisted_state(document : Storage::Document) : Nil
         return if @preset_types.empty?
 
-        document[PRESET_STATE_KEY] = PresetState.new(copy_presets(@presets), @active_preset_handle.try(&.dup)).to_document
+        document[PRESET_STATE_KEY] = PresetState.new(copy_presets(@presets),
+          @active_preset_handle.try(&.dup), @used_preset_handles.map(&.dup)).to_document
       end
 
       private def restore_persisted_extension(document : Storage::Document) : Nil
@@ -1067,6 +1092,11 @@ module Matter
         if handle = state.active_preset_handle
           raise StorageError.new("unknown active preset handle") unless state.presets.any? { |preset| preset.preset_handle == handle }
         end
+        state.used_preset_handles.each do |used_handle|
+          raise StorageError.new("invalid used preset handle") unless (0..MAX_PRESET_HANDLE_LENGTH).includes?(used_handle.size)
+          @used_preset_handles << used_handle.dup unless @used_preset_handles.any? { |used| used == used_handle }
+        end
+        remember_preset_handles(state.presets)
         @presets = copy_presets(state.presets)
         @active_preset_handle = state.active_preset_handle.try(&.dup)
         @pending_preset_write = nil

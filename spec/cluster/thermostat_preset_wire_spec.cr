@@ -15,6 +15,15 @@ private class WireReadyThermostat < PresetThermostat
   end
 end
 
+private class PredictableHandleThermostat < WireReadyThermostat
+  @candidate_attempts = 0
+
+  protected def candidate_preset_handle : Bytes
+    @candidate_attempts += 1
+    Bytes[@candidate_attempts.to_u8]
+  end
+end
+
 private def wire_preset_features : PresetThermostat::Feature
   PresetThermostat::Feature::Cooling | PresetThermostat::Feature::Heating |
     PresetThermostat::Feature::Presets
@@ -357,5 +366,73 @@ describe "Thermostat Presets wire preparation" do
     restored = build(WireReadyThermostat, feature_map: wire_preset_features, preset_types: types)
     restored.restore_state(saved)
     restored.presets.first.cooling_setpoint.should eq(2700_i16)
+  end
+
+  it "never reuses a deleted generated handle after persistence and restart" do
+    types = [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8)]
+    first = build(PredictableHandleThermostat, feature_map: wire_preset_features, preset_types: types)
+    creation = PresetThermostat::Preset.new(nil, PresetThermostat::PresetScenario::Sleep,
+      nil, 2700_i16, 1800_i16, nil)
+    wire_preset_begin(first)
+    wire_preset_write(first, [wire_preset_data(first, [] of PresetThermostat::Preset),
+                              wire_preset_data(first, creation, append: true)]).should eq([PresetCode::Success] * 2)
+    wire_preset_actor(first)
+    first.atomic_request(PresetThermostat::AtomicRequest.new(
+      PresetThermostat::AtomicRequestType::CommitWrite,
+      [PresetThermostat::ATTR_PRESETS])).as(PresetThermostat::AtomicResponse).status_code.should eq(PresetCode::Success)
+    first.presets.first.preset_handle.should eq(Bytes[1_u8])
+
+    wire_preset_begin(first)
+    wire_preset_write(first, [wire_preset_data(first, [] of PresetThermostat::Preset)]).should eq([PresetCode::Success])
+    wire_preset_actor(first)
+    first.atomic_request(PresetThermostat::AtomicRequest.new(
+      PresetThermostat::AtomicRequestType::CommitWrite,
+      [PresetThermostat::ATTR_PRESETS])).as(PresetThermostat::AtomicResponse).status_code.should eq(PresetCode::Success)
+    first.presets.should be_empty
+
+    restored = build(PredictableHandleThermostat, feature_map: wire_preset_features, preset_types: types)
+    restored.restore_state(first.save_state)
+    wire_preset_begin(restored)
+    wire_preset_write(restored, [wire_preset_data(restored, [] of PresetThermostat::Preset),
+                                 wire_preset_data(restored, creation, append: true)]).should eq([PresetCode::Success] * 2)
+    wire_preset_actor(restored)
+    restored.atomic_request(PresetThermostat::AtomicRequest.new(
+      PresetThermostat::AtomicRequestType::CommitWrite,
+      [PresetThermostat::ATTR_PRESETS])).as(PresetThermostat::AtomicResponse).status_code.should eq(PresetCode::Success)
+    restored.presets.first.preset_handle.should eq(Bytes[2_u8])
+  end
+
+  it "restores preset state saved before handle history was added" do
+    types = [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8)]
+    original = build(WireReadyThermostat, feature_map: wire_preset_features,
+      preset_types: types,
+      presets: [PresetThermostat::Preset.new(Bytes[1_u8], PresetThermostat::PresetScenario::Sleep,
+        nil, 2700_i16, 1800_i16, false)])
+    legacy = original.save_state
+    legacy_state = legacy[PresetThermostat::PRESET_STATE_KEY].as(Matter::Storage::Document)
+    legacy_state.delete("used_preset_handles")
+    restored = build(WireReadyThermostat, feature_map: wire_preset_features, preset_types: types)
+    restored.restore_state(legacy)
+    restored.presets.first.preset_handle.should eq(Bytes[1_u8])
+  end
+
+  it "discards only the removed fabric's pending atomic transaction" do
+    cluster = build(WireReadyThermostat, feature_map: wire_preset_features,
+      preset_types: [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8)])
+    creation = PresetThermostat::Preset.new(nil, PresetThermostat::PresetScenario::Sleep,
+      nil, 2700_i16, 1800_i16, nil)
+    wire_preset_begin(cluster)
+    wire_preset_write(cluster, [wire_preset_data(cluster, [] of PresetThermostat::Preset),
+                                wire_preset_data(cluster, creation, append: true)]).should eq([PresetCode::Success] * 2)
+
+    cluster.remove_fabric(2_u8)
+    wire_preset_read(cluster).size.should eq(1)
+    cluster.remove_fabric(1_u8)
+    wire_preset_read(cluster).should be_empty
+    wire_preset_actor(cluster)
+    cluster.atomic_request(PresetThermostat::AtomicRequest.new(
+      PresetThermostat::AtomicRequestType::CommitWrite,
+      [PresetThermostat::ATTR_PRESETS])).as(Matter::InteractionModel::Status).status
+      .should eq(PresetCode::InvalidInState)
   end
 end
