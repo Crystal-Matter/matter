@@ -1124,6 +1124,8 @@ describe MatterJointFabricAdministrator::Device do
     bootstrap_datastore = device.bootstrap_joint_fabric_datastore
     bootstrap_datastore.joint_fabric_index.should eq(1_u8)
     bootstrap_datastore.admin_list.first.node_id.should eq(node_id)
+    bootstrap_datastore.allow_jcm_pase_group_list.should_not be_nil
+    bootstrap_datastore.allow_jcm_pase_group_list.as(Proc(Bool)).call.should be_false
     bootstrap_administrator = device.bootstrap_joint_fabric_administrator
     bootstrap_administrator.administrator_fabric_index.should eq(1_u8)
     bootstrap_administrator.service.should be_a(Matter::Commissioning::JointFabricAdministratorService)
@@ -1183,8 +1185,11 @@ describe MatterJointFabricAdministrator::Device do
       request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8)
       .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess)
 
+    device.stage_fabric_removal_for_spec(1_u8)
+    device.bootstrap_joint_fabric_datastore.allow_jcm_pase_group_list.should be_nil
     device.remove_test_fabric(1_u8)
     device.bootstrap_joint_fabric_datastore.joint_fabric_index.should be_nil
+    device.bootstrap_joint_fabric_datastore.allow_jcm_pase_group_list.should be_nil
     state_store.load.fabrics.should be_empty
     device.advertised_joint_role.should eq(Matter::MDNS::JointFabricRole::Available)
     device.joint_fabric_datastore.anchor_root_ca.should be_empty

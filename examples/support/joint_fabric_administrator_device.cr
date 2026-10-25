@@ -420,6 +420,7 @@ module MatterJointFabricAdministrator
         @bootstrap_datastore_propagator = nil
         bootstrap_joint_fabric_datastore.access_mode = Datastore::AccessMode::Inactive
         bootstrap_joint_fabric_datastore.joint_fabric_index = nil
+        bootstrap_joint_fabric_datastore.allow_jcm_pase_group_list = nil
         bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
         bootstrap_joint_fabric_administrator.service = nil
         unless persistence.save_cluster(bootstrap_joint_fabric_datastore)
@@ -528,6 +529,7 @@ module MatterJointFabricAdministrator
         @bootstrap_datastore_propagator.try(&.stop!)
         @bootstrap_datastore_propagator = nil
         bootstrap_joint_fabric_datastore.clear_fabric_state
+        bootstrap_joint_fabric_datastore.allow_jcm_pase_group_list = nil
         bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
         bootstrap_joint_fabric_administrator.service = nil
         persistence.forget_cluster(2_u16, Datastore::CLUSTER_ID)
@@ -693,13 +695,7 @@ module MatterJointFabricAdministrator
                               else
                                 Datastore::AccessMode::Inactive
                               end
-      datastore.allow_jcm_pase_group_list = -> {
-        owner = @jcm_failsafe_session_id
-        !owner.nil? && owner == datastore.request_session_id &&
-        general_commissioning.failsafe_armed? &&
-        administrator_commissioning.window.joint_window? &&
-        administrator_commissioning.window_open?
-      }
+      configure_jcm_pase_group_list(datastore)
       unless datastore.status.state == Datastore::DatastoreStateEnum::DeletePending
         # Older Anchor stores may contain a zero key set without its IPK.
         # Persist the repaired key before this JFA serves the Datastore: a
@@ -793,6 +789,7 @@ module MatterJointFabricAdministrator
                               else
                                 Datastore::AccessMode::Frozen
                               end
+      configure_jcm_pase_group_list(datastore)
       datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Bootstrap Anchor", fabric.ipk)
       seed_joint_fabric_groups(datastore)
       seed_anchor_administrator(datastore, fabric, icac)
@@ -858,6 +855,16 @@ module MatterJointFabricAdministrator
       )
       @bootstrap_datastore_propagator = Matter::Controller::DatastorePropagator.new(datastore, delivery)
       @bootstrap_datastore_propagator.try(&.start) if @propagation_started
+    end
+
+    private def configure_jcm_pase_group_list(datastore : Datastore) : Nil
+      datastore.allow_jcm_pase_group_list = -> {
+        owner = @jcm_failsafe_session_id
+        !owner.nil? && owner == datastore.request_session_id &&
+        general_commissioning.failsafe_armed? &&
+        administrator_commissioning.window.joint_window? &&
+        administrator_commissioning.window_open?
+      }
     end
 
     # JCM leaves the bootstrap fabric in place. Its JFA stays on endpoint 2,
