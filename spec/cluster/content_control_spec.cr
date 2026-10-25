@@ -138,7 +138,6 @@ describe Control do
 
   it "rejects optional feature bits whose behavior is not implemented yet" do
     expect_raises(ArgumentError) { build(Control, feature_map: Control::Feature::ScreenTime) }
-    expect_raises(ArgumentError) { build(Control, feature_map: Control::Feature::PinManagement) }
     expect_raises(ArgumentError) { build(Control, feature_map: Control::Feature::BlockContentTimeWindow) }
     expect_raises(ArgumentError) do
       build(Control, feature_map: Control::Feature::OnDemandContentRating,
@@ -147,6 +146,62 @@ describe Control do
     expect_raises(ArgumentError) do
       build(Control, block_application_list: [Control::AppInfo.new(0xFFF1_u16, "radio")])
     end
+  end
+
+  it "updates and resets a private PIN with timed Manage and Administer access" do
+    cluster = build(Control, feature_map: Control::Feature::PinManagement)
+    accepted_command_ids(cluster).should eq([
+      Control::CMD_UPDATE_PIN, Control::CMD_RESET_PIN,
+      Control::CMD_ENABLE, Control::CMD_DISABLE,
+    ])
+    update = cluster.get_command_metadata(Control::CMD_UPDATE_PIN).as(Matter::Cluster::CommandMetadata)
+    update.access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
+    update.timed?.should be_true
+    reset = cluster.get_command_metadata(Control::CMD_RESET_PIN).as(Matter::Cluster::CommandMetadata)
+    reset.access.should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+    reset.timed?.should be_true
+    reset.response_id.should eq(Control::CMD_RESET_PIN_RESPONSE)
+    generated_command_ids(cluster).should contain(Control::CMD_RESET_PIN_RESPONSE)
+
+    first = invoke_response(cluster, Control::CMD_RESET_PIN, nil, Control::ResetPinResponse).pin_code
+    first.should match(/\A\d{6}\z/)
+    wrong = first == "000000" ? "111111" : "000000"
+    expect_status(invoke(cluster, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(wrong, "123456")), IMCode::Failure).cluster_status.should eq(0x02_u8)
+    expect_status(invoke(cluster, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(first, "1234567")), IMCode::ConstraintError)
+    expect_status(invoke(cluster, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(first, "12A456")), IMCode::ConstraintError)
+    expect_success(invoke(cluster, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(first, "123456")))
+    expect_status(invoke(cluster, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(first, "234567")), IMCode::Failure).cluster_status.should eq(0x02_u8)
+
+    saved = cluster.save_state
+    saved["pin_code"]?.should be_nil
+    saved["pin_salt"]?.should be_a(Bytes)
+    saved["pin_verifier"]?.should be_a(Bytes)
+    restored = build(Control, feature_map: Control::Feature::PinManagement)
+    restored.restore_state(saved)
+    expect_success(invoke(restored, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new("123456", "234567")))
+    second = invoke_response(restored, Control::CMD_RESET_PIN, nil, Control::ResetPinResponse).pin_code
+    second.should_not eq("234567")
+    expect_status(invoke(restored, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new("234567", "345678")), IMCode::Failure).cluster_status.should eq(0x02_u8)
+    expect_success(invoke(restored, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(second, "345678")))
+    accepted_command_ids(build(Control)).should eq([Control::CMD_ENABLE, Control::CMD_DISABLE])
+  end
+
+  it "upgrades a pre-PIN document with a fresh private PIN" do
+    legacy = build(Control).save_state
+    legacy.delete("features")
+    upgraded = build(Control, feature_map: Control::Feature::PinManagement)
+    upgraded.restore_state(legacy)
+    reset = invoke_response(upgraded, Control::CMD_RESET_PIN, nil, Control::ResetPinResponse)
+    expect_success(invoke(upgraded, Control::CMD_UPDATE_PIN,
+      Control::UpdatePinRequest.new(reset.pin_code, "123456")))
   end
 
   it "notifies a media host of policy changes and restores configured lists" do

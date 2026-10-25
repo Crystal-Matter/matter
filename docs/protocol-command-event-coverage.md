@@ -318,8 +318,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050A | command | 0x0000 | feature(CS) | declared; requires `:content_search` |
 | 0x050A | command | 0x0001 | feature(UP) | declared; requires `:url_playback` |
 | 0x050B | command | 0x0001 | feature(NU) | declared; requires `:name_updates` |
-| 0x050F | command | 0x0000 | feature(PM) | absent |
-| 0x050F | command | 0x0001 | feature(PM) | absent |
+| 0x050F | command | 0x0000 | feature(PM) | declared; requires `:pin_management` |
+| 0x050F | command | 0x0001 | feature(PM) | declared; requires `:pin_management` |
 | 0x050F | command | 0x0005 | feature(ST) | absent |
 | 0x050F | command | 0x0006 | feature(ST) | absent |
 | 0x050F | command | 0x0007 | feature(BU) | declared; requires `:block_unrated` |

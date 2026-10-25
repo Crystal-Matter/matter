@@ -24,7 +24,8 @@ module MatterContentControl
       cluster Playback, as: :playback
       cluster Matter::Cluster::KeypadInput
       cluster Control,
-        feature_map: Control::Feature::BlockUnrated | Control::Feature::OnDemandContentRating,
+        feature_map: Control::Feature::BlockUnrated | Control::Feature::OnDemandContentRating |
+                     Control::Feature::PinManagement,
         on_demand_ratings: [
           Control::RatingName.new("G"),
           Control::RatingName.new("PG"),
