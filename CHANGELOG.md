@@ -40,6 +40,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Aggregator endpoint exercises the wire protocol with chip-tool. Camera
   topology and actual media transport remain separate gaps.
 
+### Joint Fabric Administrator fabric removal
+
+- Persist JFA and Datastore cleanup before deleting their owning fabric, and
+  reconcile saved endpoint bindings against installed fabric identities at
+  startup. A replacement fabric reusing the same local index cannot inherit a
+  former Anchor's administrator and Datastore records.
+
 ### Fabric table durability
 
 - Keep a fabric's local index reserved if deleting its stored fabric document fails, so another fabric cannot reuse that index while the old document remains.

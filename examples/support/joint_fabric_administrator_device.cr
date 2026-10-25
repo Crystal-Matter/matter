@@ -24,6 +24,8 @@ module MatterJointFabricAdministrator
     APP_BOOTSTRAP_ROLE_DOCUMENT           = "joint-fabric-bootstrap-role"
     APP_BOOTSTRAP_ICAC_DOCUMENT           = "joint-fabric-bootstrap-icac"
     APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT = "joint-fabric-bootstrap-transfer-watch"
+    APP_FABRIC_BINDING_DOCUMENT           = "joint-fabric-admin-binding"
+    APP_BOOTSTRAP_BINDING_DOCUMENT        = "joint-fabric-bootstrap-binding"
     APP_TRANSFER_DOCUMENT                 = "joint-fabric-anchor-transfer"
     APP_TRANSFER_WATCH_DOCUMENT           = "joint-fabric-transfer-watch"
     APP_FOLLOW_UP_PREFIX                  = "joint-fabric-anchor-follow-up-"
@@ -66,6 +68,22 @@ module MatterJointFabricAdministrator
       getter? transfer_complete : Bool = true
 
       def initialize(@anchor : Bool, @transfer_complete : Bool = false)
+      end
+    end
+
+    struct FabricBindingState
+      include Matter::Storage::Record
+
+      getter fabric_index : UInt8
+      getter fabric_id : UInt64
+      getter root_public_key : Bytes
+
+      def initialize(@fabric_index : UInt8, @fabric_id : UInt64, @root_public_key : Bytes)
+      end
+
+      def matches?(fabric : Matter::Fabric) : Bool
+        @fabric_index == fabric.fabric_index && @fabric_id == fabric.fabric_id &&
+          @root_public_key == fabric.root_public_key
       end
     end
 
@@ -360,6 +378,7 @@ module MatterJointFabricAdministrator
 
     protected def before_start : Nil
       super
+      reconcile_saved_fabric_bindings
       # The second endpoint is a retained bootstrap JFA only when explicitly
       # provisioned. A wildcard JCM read must not discover a second JFA with
       # a null AdministratorFabricIndex, which the SDK correctly rejects.
@@ -375,6 +394,31 @@ module MatterJointFabricAdministrator
       attach_joint_fabric(fabric)
       attach_joined_fabric(fabric)
       attach_unprovisioned_administrator(fabric)
+    end
+
+    protected def before_fabric_removed(fabric_index : UInt8) : Nil
+      fabric_removed(fabric_index)
+      persistence.flush
+    end
+
+    private def reconcile_saved_fabric_bindings : Nil
+      {APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_BINDING_DOCUMENT}.each do |document_name|
+        if document = persistence.app_document(document_name)
+          binding = FabricBindingState.from_document(document)
+          fabric = fabric_table.get_fabric(binding.fabric_index)
+          fabric_removed(binding.fabric_index) unless fabric && binding.matches?(fabric)
+        end
+      end
+      { {joint_fabric_administrator, joint_fabric_datastore, APP_FABRIC_BINDING_DOCUMENT},
+       {bootstrap_joint_fabric_administrator, bootstrap_joint_fabric_datastore, APP_BOOTSTRAP_BINDING_DOCUMENT} }.each do |administrator, datastore, document_name|
+        if index = administrator.administrator_fabric_index
+          fabric = fabric_table.get_fabric(index)
+          if !fabric || (!persistence.app_document(document_name) &&
+             !datastore.anchor_root_ca.empty? && datastore.anchor_root_ca != fabric.root_cert)
+            fabric_removed(index)
+          end
+        end
+      end
     end
 
     protected def started_commissioning_mode : Nil
@@ -421,7 +465,9 @@ module MatterJointFabricAdministrator
         joint_fabric_administrator.service = nil
         @unprovisioned_service_fabric_index = nil
       end
-      if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index
+      if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index ||
+         bootstrap_joint_fabric_administrator.administrator_fabric_index == fabric_index ||
+         binding_index(APP_BOOTSTRAP_BINDING_DOCUMENT) == fabric_index
         @bootstrap_datastore_propagator.try(&.stop!)
         @bootstrap_datastore_propagator = nil
         bootstrap_joint_fabric_datastore.clear_fabric_state
@@ -431,6 +477,7 @@ module MatterJointFabricAdministrator
         persistence.delete_app_document(APP_BOOTSTRAP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_BOOTSTRAP_ICAC_DOCUMENT)
         persistence.delete_app_document(APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT)
+        persistence.delete_app_document(APP_BOOTSTRAP_BINDING_DOCUMENT)
         persistence.delete_app_document(APP_KEY_DOCUMENT) unless joint_fabric_datastore.joint_fabric_index
         if propagation = @propagation_fabric
           if propagation.fabric_index == fabric_index && joint_fabric_datastore.joint_fabric_index != fabric_index
@@ -446,7 +493,9 @@ module MatterJointFabricAdministrator
       end
       @participant_view_current = false
       close_new_anchor_subscription
-      if joint_fabric_datastore.joint_fabric_index == fabric_index
+      if joint_fabric_datastore.joint_fabric_index == fabric_index ||
+         joint_fabric_administrator.administrator_fabric_index == fabric_index ||
+         binding_index(APP_FABRIC_BINDING_DOCUMENT) == fabric_index
         @datastore_propagator.try(&.stop!)
         @datastore_propagator = nil
         if fabric = @propagation_fabric
@@ -472,8 +521,23 @@ module MatterJointFabricAdministrator
         @anchor_role = false
         persistence.delete_app_document(APP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_ICAC_DOCUMENT)
+        persistence.delete_app_document(APP_FABRIC_BINDING_DOCUMENT)
         persistence.delete_app_document(APP_KEY_DOCUMENT) unless bootstrap_joint_fabric_datastore.joint_fabric_index
       end
+      unless persistence.save_cluster(joint_fabric_administrator) &&
+             persistence.save_cluster(bootstrap_joint_fabric_administrator)
+        raise Matter::StorageError.new("Could not persist erased Joint Fabric Administrator index")
+      end
+    end
+
+    private def binding_index(document_name : String) : UInt8?
+      document = persistence.app_document(document_name)
+      document ? FabricBindingState.from_document(document).fabric_index : nil
+    end
+
+    private def persist_fabric_binding(fabric : Matter::Fabric, document_name : String) : Nil
+      persistence.write_app_document(document_name,
+        FabricBindingState.new(fabric.fabric_index, fabric.fabric_id, fabric.root_public_key).to_document)
     end
 
     protected def commissioning_info_for(mode : Matter::MDNS::CommissioningMode) : Matter::MDNS::CommissioningInfo
@@ -541,6 +605,18 @@ module MatterJointFabricAdministrator
           "JFA activation skipped: Anchor ICAC private key unavailable or mismatched (fabric_id=0x#{fabric.fabric_id.to_s(16)})"
         end
         return
+      end
+      if document = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT)
+        binding = FabricBindingState.from_document(document)
+        unless binding.matches?(fabric)
+          if installed = fabric_table.get_fabric(binding.fabric_index)
+            if binding.matches?(installed)
+              configure_bootstrap_datastore(fabric, root, icac, key)
+              return
+            end
+          end
+          fabric_removed(binding.fabric_index)
+        end
       end
 
       ::Log.for("matter.example.joint_fabric_administrator").info do
@@ -631,6 +707,7 @@ module MatterJointFabricAdministrator
       @unprovisioned_service_fabric_index = nil
       configure_propagator(fabric, root)
       configure_bootstrap_datastore(fabric, root, icac, key)
+      persist_fabric_binding(fabric, APP_FABRIC_BINDING_DOCUMENT)
     end
 
     private def configure_bootstrap_datastore(fabric : Matter::Fabric, root : Bytes, icac : Bytes,
@@ -712,6 +789,7 @@ module MatterJointFabricAdministrator
       unless persistence.save_cluster(datastore)
         raise Matter::StorageError.new("Could not persist bootstrap Joint Fabric Datastore")
       end
+      persist_fabric_binding(fabric, APP_BOOTSTRAP_BINDING_DOCUMENT)
       @bootstrap_datastore_propagator.try(&.stop!)
       store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
       delivery = Matter::Controller::DatastorePropagator::NetworkDelivery.new(
@@ -807,6 +885,7 @@ module MatterJointFabricAdministrator
       unless persistence.save_cluster(administrator) && persistence.save_cluster(datastore)
         raise Matter::StorageError.new("Could not persist joined Joint Fabric Administrator endpoints")
       end
+      persist_fabric_binding(fabric, APP_FABRIC_BINDING_DOCUMENT)
       persistence.flush
     end
 

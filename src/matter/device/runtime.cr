@@ -424,7 +424,6 @@ module Matter
             raise StorageError.new("Could not persist erased Binding for fabric #{fabric_index}")
           end
         end
-
         @message_handler.clusters.values.each do |cluster|
           next unless time_sync = cluster.as?(Cluster::TimeSynchronization)
           next unless time_sync.feature_map.trusted_time_client?
@@ -436,13 +435,13 @@ module Matter
             raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
           end
         end
-
         # WebRTC sessions are volatile, but a later ACL write can fail after
         # the fabric document is gone. End them before that index is reusable.
         @message_handler.clusters.values.each do |cluster|
           cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::WebRtcTransportRequestor).try(&.remove_fabric(fabric_index))
         end
+        before_fabric_removed(fabric_index)
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
@@ -698,6 +697,11 @@ module Matter
     end
 
     protected def fabric_added(fabric : Fabric) : Nil
+    end
+
+    # Persist application-owned fabric state before the fabric document is
+    # deleted and its local index becomes available for reuse.
+    protected def before_fabric_removed(fabric_index : UInt8) : Nil
     end
 
     protected def fabric_removed(fabric_index : UInt8) : Nil
