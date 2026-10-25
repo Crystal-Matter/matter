@@ -51,6 +51,17 @@ describe "matter_door_lock example" do
     expect_success(device.write("doorlock", "operating-mode", 0))
   end
 
+  it "reports an active holiday operating mode over chip-tool" do
+    local_now = Time.local
+    local_epoch = Time.utc(local_now.year, local_now.month, local_now.day,
+      local_now.hour, local_now.minute, local_now.second).to_unix
+    expect_success(device.invoke("doorlock", "set-holiday-schedule",
+      ["1", (local_epoch - 300).to_s, (local_epoch + 300).to_s, "3"]))
+    read_int(device, "doorlock", "operating-mode", "OperatingMode").should eq(3_i64)
+    expect_success(device.invoke("doorlock", "clear-holiday-schedule", ["1"]))
+    read_int(device, "doorlock", "operating-mode", "OperatingMode").should eq(0_i64)
+  end
+
   it "rejects an untimed unlock before changing lock state" do
     before = read_int(device, "doorlock", "lock-state", "LockState")
     result = device.invoke("doorlock", "unlock-door", options: pin)

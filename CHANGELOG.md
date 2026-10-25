@@ -78,6 +78,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Door Lock
 
+- Report changes to the effective OperatingMode at holiday schedule boundaries
+  through data versions and subscriptions. Reschedule after edits, restoration,
+  or host clock corrections, without duplicate reports for overlapping intervals.
 - Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted
   week-day access schedules.
 - Make `UnboltDoor` leave the latch closed and report `Unlocked` state and an
