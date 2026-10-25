@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-private alias Requestor = Matter::Cluster::WebrtcTransportRequestor
+private alias Requestor = Matter::Cluster::WebRtcTransportRequestor
 private alias IMCode = Matter::InteractionModel::StatusCode
 
 private class RequestorPeer < Requestor::Peer

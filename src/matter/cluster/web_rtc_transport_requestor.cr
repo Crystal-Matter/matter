@@ -6,7 +6,7 @@ module Matter
     # Matter 1.6 WebRTC Transport Requestor (0x0554). A host media engine
     # owns each session and handles signaling; this server validates and
     # dispatches Matter messages without inventing SDP or media streams.
-    class WebrtcTransportRequestor < Base
+    class WebRtcTransportRequestor < Base
       cluster 0x0554, revision: 2, persist_state: false
 
       MAX_SESSIONS         =         32
@@ -263,6 +263,8 @@ module Matter
         return session if session.is_a?(InteractionModel::Status)
         return InteractionModel::Status.constraint_error unless EndReason.from_value?(request.reason)
         status = @peer.end_session(session, request)
+        # The peer has ended its stream; drop protocol tracking even if host
+        # media cleanup fails. The host still owns that failure and its retry.
         remove_session(session.fabric_index, session.peer_node_id, session.id)
         status
       end

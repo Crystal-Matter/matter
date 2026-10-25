@@ -4,7 +4,7 @@ require "./support/main"
 # Synthetic signaling endpoint. A media host must own real sessions and SDP;
 # this fixture deliberately declines signaling after the Matter checks pass.
 module MatterWebrtcRequestor
-  alias Requestor = Matter::Cluster::WebrtcTransportRequestor
+  alias Requestor = Matter::Cluster::WebRtcTransportRequestor
   alias Status = Matter::InteractionModel::Status
 
   class DecliningPeer < Requestor::Peer
