@@ -55,12 +55,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared TestEventTrigger key gate. An isolated chip-tool fixture exercises it;
   production devices keep the feature disabled by default.
 
+### Time Synchronization trusted time client
+
+- Add opt-in TSC with fabric-scoped, durable TrustedTimeSource, administrator
+  SetTrustedTimeSource, MissingTrustedTimeSource events, and hourly CASE reads
+  of the configured peer's UTC time. The root Descriptor advertises the
+  Time Synchronization client role when TSC is enabled. NTPS remains unavailable.
+
 ### Time Synchronization NTP client
 
 - Add opt-in NTPC support for a persistent, nullable IPv6 DefaultNTP address,
   administrator SetDefaultNTP command, and bounded SNTPv4 fallback queries.
-  Validate response source and originate token before accepting time. TSC and
-  NTPS remain unavailable.
+  Validate response source and originate token before accepting time. NTPS
+  remains unavailable.
 
 ### Commodity Tariff rotating calendars
 

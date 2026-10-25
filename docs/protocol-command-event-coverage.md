@@ -185,14 +185,14 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0035 | command | 0x0000 | feature(ERRCNT) | declared; requires `:error_counts` |
 | 0x0036 | command | 0x0000 | feature(ERRCNT) | declared; requires `:error_counts` |
 | 0x0037 | command | 0x0000 | (feature(PKTCNT) or feature(ERRCNT)) | declared; requires `[:packet_counts, :error_counts]` |
-| 0x0038 | command | 0x0001 | feature(TSC) | absent |
+| 0x0038 | command | 0x0001 | feature(TSC) | declared; requires `:trusted_time_client` |
 | 0x0038 | command | 0x0002 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | command | 0x0004 | feature(TZ) | declared; requires `:time_zone` |
-| 0x0038 | command | 0x0005 | feature(NTPC) | absent |
+| 0x0038 | command | 0x0005 | feature(NTPC) | declared; requires `:ntp_client` |
 | 0x0038 | event | 0x0000 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0001 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0002 | feature(TZ) | declared; requires `:time_zone` |
-| 0x0038 | event | 0x0004 | feature(TSC) | absent |
+| 0x0038 | event | 0x0004 | feature(TSC) | declared; requires `:trusted_time_client` |
 | 0x0039 | command | 0x0080 | feature(BIS) | absent |
 | 0x0039 | event | 0x0080 | feature(BIS) | absent |
 | 0x003B | event | 0x0000 | feature(LS) | declared; requires `:latching_switch` |

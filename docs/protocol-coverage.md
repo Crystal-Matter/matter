@@ -7,9 +7,9 @@ It does not verify types, feature-dependent requirements, commands, events,
 behavior, interoperability,
 or certification. A matching row is not a completeness claim.
 
-Time Synchronization revision 2 now has an opt-in TimeZone feature with its
-conditional attributes, commands, and events. The base server still advertises
-no optional features by default; NTPC, NTPS, and TSC remain unavailable.
+Time Synchronization revision 2 has opt-in TimeZone, NTPC, and TSC features.
+The base server still advertises no optional features by default; NTPS remains
+unavailable.
 
 See [server command and event declaration audit](protocol-command-event-coverage.md)
 for a separate comparison of literal command and event IDs.
