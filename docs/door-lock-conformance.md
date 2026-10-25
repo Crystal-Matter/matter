@@ -17,6 +17,8 @@ replace it with a real one.
 `Unlocked` state and an `Unlock` operation event. `UnlockDoor` retracts the
 bolt, reports transient `Unlatched` state and an `Unlatch` event after the
 latch is pulled, then reports `Unlocked` and an `Unlock` event after release.
+`UnlockWithTimeout` uses the same physical sequence on an Unbolting lock and
+uses its command timeout for automatic relocking.
 An actuator failure before bolt retraction produces only an `Unlock` error.
 Failures after bolt retraction produce an `Unlatch` error and an `Unlock`
 event while retaining the last confirmed physical state. The host callback

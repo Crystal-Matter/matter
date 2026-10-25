@@ -1154,7 +1154,7 @@ module Matter
         end
 
         if @feature_map.unbolting?
-          return unlock_with_latch(source, authorization)
+          return unlock_with_latch(source, authorization, @auto_relock_time)
         end
         self.operating_mode = OperatingMode::Normal if source.manual? && @operating_mode.privacy?
         self.lock_state = LockState::Unlocked
@@ -1168,6 +1168,10 @@ module Matter
         authorization = authorize_remote_operation(pin, LockOperationType::Unlock, source)
         if status = authorization.status
           return status
+        end
+
+        if @feature_map.unbolting?
+          return unlock_with_latch(source, authorization, timeout_seconds.to_u32)
         end
 
         self.lock_state = LockState::Unlocked
@@ -1195,7 +1199,8 @@ module Matter
         InteractionModel::Status.success
       end
 
-      private def unlock_with_latch(source : OperationSource, authorization : Authorization) : InteractionModel::Status
+      private def unlock_with_latch(source : OperationSource, authorization : Authorization,
+                                    relock_seconds : UInt32) : InteractionModel::Status
         unless perform_unbolting_stage(:unbolt)
           report_lock_operation_error(LockOperationType::Unlock, source, OperationError::Unspecified, authorization)
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
@@ -1218,7 +1223,7 @@ module Matter
         end
 
         self.lock_state = LockState::Unlocked
-        schedule_relock(@auto_relock_time)
+        schedule_relock(relock_seconds)
         complete_lock_operation(LockOperationType::Unlock, source, authorization, preserve_operation_type: true)
         InteractionModel::Status.success
       end

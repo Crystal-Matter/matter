@@ -59,6 +59,24 @@ describe Lock do
       operations.should eq([Lock::LockOperationType::Unlatch, Lock::LockOperationType::Unlock])
     end
 
+    it "uses the latch actuator for UnlockWithTimeout and applies its timeout" do
+      actuator = TestUnboltingActuator.new
+      lock = unbolting_lock(actuator)
+      operations = [] of Lock::LockOperationType
+      lock.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _pr : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) {
+        operations << Lock::Events::LockOperation.from_tlv(data).lock_operation_type if event == Lock::EVENT_LOCK_OPERATION
+        nil
+      }
+
+      lock.unlock_with_timeout(1_u16).success?.should be_true
+      actuator.calls.should eq([:unbolt, :pull, :release])
+      operations.should eq([Lock::LockOperationType::Unlatch, Lock::LockOperationType::Unlock])
+      lock.lock_state.should eq(Lock::LockState::Unlocked)
+
+      sleep 1.2.seconds
+      lock.lock_state.should eq(Lock::LockState::Locked)
+    end
+
     it "reports only an Unlock error when the bolt cannot retract" do
       actuator = TestUnboltingActuator.new
       actuator.fail_step = :unbolt

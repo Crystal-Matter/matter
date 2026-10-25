@@ -58,6 +58,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Advertise Unbolting only with an explicit host actuator. Confirm bolt,
   latch-pull, and latch-release stages before publishing the required
   `Unlatched`/`Unlocked` states and operation events; report actuator failures.
+- Route `UnlockWithTimeout` through the same host actuator when Unbolting is
+  enabled, preserving the command's explicit relock timeout.
 
 ### General Diagnostics test payload
 
