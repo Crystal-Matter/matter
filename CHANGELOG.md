@@ -7,6 +7,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fabric table durability
+
+- Keep a fabric's local index reserved if deleting its stored fabric document fails, so another fabric cannot reuse that index while the old document remains.
+
 ### Thermostat events
 
 - Add opt-in Matter 1.6 Thermostat Events (TEVT) with typed mode, temperature, setpoint, relay-state, and running-mode events. Significant temperature events are rate-limited to one per minute, LTNE suppresses the sensor event, and controller writes remain persistent. The cluster retains revision 9 while the remaining revision 11 features are implemented separately.
