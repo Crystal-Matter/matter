@@ -400,10 +400,14 @@ module Matter
         requires: {cooling: true, occupancy: true}, present_if: :occupancy_wire_ready?, on_change: :unoccupied_cooling_setpoint_changed
       attribute 0x0014, :unoccupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true,
         requires: {heating: true, occupancy: true}, present_if: :occupancy_wire_ready?, on_change: :unoccupied_heating_setpoint_changed
-      attribute 0x0015, :min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, writable: true, write_access: :manage, optional: true, requires: :heating
-      attribute 0x0016, :max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, writable: true, write_access: :manage, optional: true, requires: :heating
-      attribute 0x0017, :min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, writable: true, write_access: :manage, optional: true, requires: :cooling
-      attribute 0x0018, :max_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_COOL, writable: true, write_access: :manage, optional: true, requires: :cooling
+      attribute 0x0015, :min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, writable: true, write_access: :manage,
+        optional: true, requires: :heating, validate: :validate_min_heat_limit, on_change: :min_heat_limit_changed
+      attribute 0x0016, :max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, writable: true, write_access: :manage,
+        optional: true, requires: :heating, validate: :validate_max_heat_limit, on_change: :max_heat_limit_changed
+      attribute 0x0017, :min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, writable: true, write_access: :manage,
+        optional: true, requires: :cooling, validate: :validate_min_cool_limit, on_change: :min_cool_limit_changed
+      attribute 0x0018, :max_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_COOL, writable: true, write_access: :manage,
+        optional: true, requires: :cooling, validate: :validate_max_cool_limit, on_change: :max_cool_limit_changed
       attribute 0x0019, :min_setpoint_dead_band, Int8, default: DEFAULT_DEAD_BAND, writable: true, write_access: :manage, min: MIN_DEAD_BAND, max: MAX_DEAD_BAND, requires: :automode
       attribute 0x001B, :control_sequence_of_operation, ControlSequenceOfOperation, default: ControlSequenceOfOperation::CoolingAndHeating, writable: true, write_access: :manage
       attribute 0x001C, :system_mode, SystemMode, default: SystemMode::Off, writable: true, write_access: :manage, on_change: :system_mode_changed
@@ -535,19 +539,19 @@ module Matter
       end
 
       before_write :min_heat_setpoint_limit do |limit|
-        InteractionModel::Status.constraint_error unless limit.in?(@abs_min_heat_setpoint_limit..@max_heat_setpoint_limit)
+        return InteractionModel::Status.constraint_error unless valid_min_heat_limit?(limit)
       end
 
       before_write :max_heat_setpoint_limit do |limit|
-        InteractionModel::Status.constraint_error unless limit.in?(@min_heat_setpoint_limit..@abs_max_heat_setpoint_limit)
+        return InteractionModel::Status.constraint_error unless valid_max_heat_limit?(limit)
       end
 
       before_write :min_cool_setpoint_limit do |limit|
-        InteractionModel::Status.constraint_error unless limit.in?(@abs_min_cool_setpoint_limit..@max_cool_setpoint_limit)
+        return InteractionModel::Status.constraint_error unless valid_min_cool_limit?(limit)
       end
 
       before_write :max_cool_setpoint_limit do |limit|
-        InteractionModel::Status.constraint_error unless limit.in?(@min_cool_setpoint_limit..@abs_max_cool_setpoint_limit)
+        return InteractionModel::Status.constraint_error unless valid_max_cool_limit?(limit)
       end
 
       before_write :system_mode do |mode|
@@ -1129,6 +1133,46 @@ module Matter
         raise ArgumentError.new("Occupancy must be 0 or 1") unless value <= 1_u8
       end
 
+      private def valid_min_heat_limit?(limit : Int16) : Bool
+        limit >= @abs_min_heat_setpoint_limit && limit <= @max_heat_setpoint_limit &&
+          limit <= @abs_max_heat_setpoint_limit &&
+          (!@feature_map.automode? || limit <= @min_cool_setpoint_limit - deadband)
+      end
+
+      private def valid_max_heat_limit?(limit : Int16) : Bool
+        limit >= @min_heat_setpoint_limit && limit >= @abs_min_heat_setpoint_limit &&
+          limit <= @abs_max_heat_setpoint_limit &&
+          (!@feature_map.automode? || limit <= @max_cool_setpoint_limit - deadband)
+      end
+
+      private def valid_min_cool_limit?(limit : Int16) : Bool
+        limit >= @abs_min_cool_setpoint_limit && limit <= @max_cool_setpoint_limit &&
+          limit <= @abs_max_cool_setpoint_limit &&
+          (!@feature_map.automode? || limit >= @min_heat_setpoint_limit + deadband)
+      end
+
+      private def valid_max_cool_limit?(limit : Int16) : Bool
+        limit >= @min_cool_setpoint_limit && limit >= @abs_min_cool_setpoint_limit &&
+          limit <= @abs_max_cool_setpoint_limit &&
+          (!@feature_map.automode? || limit >= @max_heat_setpoint_limit + deadband)
+      end
+
+      private def validate_min_heat_limit(limit : Int16) : Nil
+        raise ArgumentError.new("MinHeatSetpointLimit violates the setpoint limits") unless valid_min_heat_limit?(limit)
+      end
+
+      private def validate_max_heat_limit(limit : Int16) : Nil
+        raise ArgumentError.new("MaxHeatSetpointLimit violates the setpoint limits") unless valid_max_heat_limit?(limit)
+      end
+
+      private def validate_min_cool_limit(limit : Int16) : Nil
+        raise ArgumentError.new("MinCoolSetpointLimit violates the setpoint limits") unless valid_min_cool_limit?(limit)
+      end
+
+      private def validate_max_cool_limit(limit : Int16) : Nil
+        raise ArgumentError.new("MaxCoolSetpointLimit violates the setpoint limits") unless valid_max_cool_limit?(limit)
+      end
+
       private def after_restore_state : Nil
         @last_occupancy = @occupancy
         update_running_mode
@@ -1259,6 +1303,37 @@ module Matter
         emit_local_temperature_change(LocalTemperatureChangeEvent.new(value))
         @last_temperature_event_at = now
         @last_reported_temperature = value
+      end
+
+      # A limit write first validates the prospective limit relationship. Once
+      # accepted, clamp only the setpoints that now fall outside that limit;
+      # this is the minimum adjustment required by Thermostat §4.3.11.15–18.
+      private def min_heat_limit_changed(limit : Int16) : Nil
+        self.occupied_heating_setpoint = limit if @occupied_heating_setpoint < limit
+        if @feature_map.occupancy? && @unoccupied_heating_setpoint < limit
+          self.unoccupied_heating_setpoint = limit
+        end
+      end
+
+      private def max_heat_limit_changed(limit : Int16) : Nil
+        self.occupied_heating_setpoint = limit if @occupied_heating_setpoint > limit
+        if @feature_map.occupancy? && @unoccupied_heating_setpoint > limit
+          self.unoccupied_heating_setpoint = limit
+        end
+      end
+
+      private def min_cool_limit_changed(limit : Int16) : Nil
+        self.occupied_cooling_setpoint = limit if @occupied_cooling_setpoint < limit
+        if @feature_map.occupancy? && @unoccupied_cooling_setpoint < limit
+          self.unoccupied_cooling_setpoint = limit
+        end
+      end
+
+      private def max_cool_limit_changed(limit : Int16) : Nil
+        self.occupied_cooling_setpoint = limit if @occupied_cooling_setpoint > limit
+        if @feature_map.occupancy? && @unoccupied_cooling_setpoint > limit
+          self.unoccupied_cooling_setpoint = limit
+        end
       end
 
       private def cooling_setpoint_changed(value : Int16) : Nil
