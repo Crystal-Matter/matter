@@ -600,6 +600,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic thermostat and official chip-tool check. Thermostat remains at
   revision 9 pending its other Matter 1.6 revision 11 behaviors.
 
+### Thermostat Presets wire preparation
+
+- Declare the Matter 1.6 Preset attributes, SetActivePreset and AtomicRequest command behind a production gate. Pending list appends and reads now use the writer's private transaction state; commit publishes the list once and rejects stale DataVersion conditions. ActivePresetHandle changes notify subscribers and emit ActivePresetChange when TEVT is also enabled. Production Thermostat instances still reject PRES until the remaining conformance and chip-tool gates pass.
+
 ### Thermostat atomic preset preparation
 
 - Add typed Thermostat AtomicRequest/AtomicResponse payloads and a host-side pending Presets transaction owned by the operational peer and fabric, with bounded timeout, rollback, validation and durable commit. PRES stays off the wire until list-append transactions and the complete mandatory attribute/command surface are ready.

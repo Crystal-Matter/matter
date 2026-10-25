@@ -5,6 +5,7 @@ require "../cluster/cluster"
 require "../event_journal"
 require "../cluster/access_control"
 require "../cluster/group_key_management"
+require "../cluster/thermostat"
 require "../cluster/icd_management"
 require "tlv"
 
@@ -577,6 +578,10 @@ module Matter
                        write_status
                      end
 
+            if status.success? && attribute_id == Cluster::Thermostat::ATTR_PRESETS
+              cluster.as?(Cluster::Thermostat).try(&.record_preset_write_data_version(request.data_version))
+            end
+
             status_ib = InteractionModel::StatusIB.new(status: status.status.value, cluster_status: status.cluster_status)
             write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
           end
@@ -591,6 +596,9 @@ module Matter
         item : TLV::Any,
         fabric_index : UInt8?,
       ) : InteractionModel::Status
+        if thermostat = cluster.as?(Cluster::Thermostat)
+          return thermostat.append_preset(item) if attribute_id == Cluster::Thermostat::ATTR_PRESETS
+        end
         if group_keys = cluster.as?(Cluster::GroupKeyManagement)
           if attribute_id == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP
             return fabric_index ? group_keys.write_group_key_map(item, fabric_index) : InteractionModel::Status.unsupported_access
