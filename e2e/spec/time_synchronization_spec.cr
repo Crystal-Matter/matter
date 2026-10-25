@@ -41,7 +41,7 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
   it "sets and persists an IPv6 NTP fallback while rejecting a domain without DNS" do
     device.commission!
     expect_success(device.read("timesynchronization", "default-ntp", 0)).output.downcase.should contain("null")
-    expect_success(device.read("timesynchronization", "supports-dns-resolve", 0)).bool("SupportsDNSResolve").should be_false
+    expect_success(device.read("timesynchronization", "supports-dnsresolve", 0)).bool("SupportsDNSResolve").should be_false
     expect_success(device.invoke("timesynchronization", "set-default-ntp", ["2001:db8::123"], endpoint: 0))
     expect_failure(device.invoke("timesynchronization", "set-default-ntp", ["pool.ntp.org"], endpoint: 0),
       "INVALID_COMMAND")
