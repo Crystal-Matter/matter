@@ -27,7 +27,11 @@ module Matter
       MAX_PRESET_NAME_LENGTH         =     64
       PRESET_STATE_KEY               = "preset_state"
       CMD_ATOMIC_RESPONSE            = 0x00FD_u32
-      MAX_PRESET_ATOMIC_TIMEOUT      =  3_000_u16 # milliseconds
+      # Delegate maximum for a Presets atomic write. The wire field is uint16
+      # milliseconds and Matter leaves the server maximum implementation-defined.
+      # Separate controller commands can take several seconds; a lost writer
+      # blocks another writer for no more than one minute.
+      MAX_PRESET_ATOMIC_TIMEOUT = 60_000_u16
 
       # PRES is declared for conformance tests, but production instances refuse
       # the feature until the remaining atomic-write wire checks are complete.
