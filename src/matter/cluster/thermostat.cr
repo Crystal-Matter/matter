@@ -782,6 +782,12 @@ module Matter
         InteractionModel::Status.constraint_error unless mode_allowed?(mode)
       end
 
+      # Matter 1.6 §4.3.11.19 accepts legacy writes but leaves the host's
+      # minimum deadband unchanged. The DSL validates the 0..127 range first.
+      before_write :min_setpoint_dead_band do |_requested|
+        @min_setpoint_dead_band
+      end
+
       # Matter 1.6 §4.3.11.21 keeps this write accepted for legacy clients,
       # while the thermostat's physical control sequence remains fixed.
       before_write :control_sequence_of_operation do |_requested|

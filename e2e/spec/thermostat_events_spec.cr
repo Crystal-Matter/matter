@@ -10,6 +10,12 @@ describe "Matter Thermostat Events interoperability" do
     read_int(device, "thermostat", "thermostat-running-state", "ThermostatRunningState", 1).should eq(0_i64)
   end
 
+  it "accepts but ignores a legacy MinSetpointDeadBand write" do
+    original = read_int(device, "thermostat", "min-setpoint-dead-band", "MinSetpointDeadBand", 1)
+    expect_success(device.write("thermostat", "min-setpoint-dead-band", (original + 1).to_s, 1))
+    read_int(device, "thermostat", "min-setpoint-dead-band", "MinSetpointDeadBand", 1).should eq(original)
+  end
+
   it "reports typed mode, relay and setpoint events and restores controller writes" do
     expect_success(device.write("thermostat", "system-mode", 1, 1))
     expect_success(device.chip("thermostat", "read-event", "system-mode-change", device.node, "1"))
