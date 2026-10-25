@@ -96,6 +96,15 @@ describe "matter_door_lock example" do
     read_int(device, "doorlock", "auto-relock-time", "AutoRelockTime").should eq 30
   end
 
+  it "publishes an automatic lock operation after UnlockWithTimeout" do
+    expect_success(device.invoke("doorlock", "unlock-with-timeout", ["1"], options: timed + pin))
+    sleep 1.2.seconds
+    read_int(device, "doorlock", "lock-state", "LockState").should eq locked
+
+    operations = expect_success(device.chip(["doorlock", "read-event", "lock-operation", device.node, "1"]))
+    operations.ints("OperationSource").should contain(Matter::Cluster::DoorLock::OperationSource::Auto.value.to_i64)
+  end
+
   it "keeps a commissioned fabric, user, and PIN credential across restart" do
     credential = %({"credentialType":1,"credentialIndex":1})
     expect_success(device.invoke("doorlock", "set-user", ["0", "2", "Guest", "222", "1", "0", "0"], options: timed))

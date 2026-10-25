@@ -19,6 +19,9 @@ bolt, reports transient `Unlatched` state and an `Unlatch` event after the
 latch is pulled, then reports `Unlocked` and an `Unlock` event after release.
 `UnlockWithTimeout` uses the same physical sequence on an Unbolting lock and
 uses its command timeout for automatic relocking.
+Each successful unlock replaces the previous automatic relock timer, including
+when its timeout is zero. When a timer relocks the door, the server emits a
+`LockOperation` event with `Auto` as its source and no fabric or node attribution.
 An actuator failure before bolt retraction produces only an `Unlock` error.
 Failures after bolt retraction produce an `Unlatch` error and an `Unlock`
 event while retaining the last confirmed physical state. The host callback
