@@ -8,6 +8,8 @@ module MatterTimeZone
   class Device < Matter::Device
     include Examples::Console
 
+    @ntp_server : Matter::Cluster::TimeSynchronization::SntpServer?
+
     identity vendor: "Spider-Gazelle", product: "Synthetic Time Zone",
       vendor_id: 0xFFF1_u16,
       product_id: 0x1236_u16,
@@ -21,6 +23,7 @@ module MatterTimeZone
       cluster Matter::Cluster::TimeSynchronization,
         feature_map: Matter::Cluster::TimeSynchronization::Feature::TimeZone |
                      Matter::Cluster::TimeSynchronization::Feature::NtpClient |
+                     Matter::Cluster::TimeSynchronization::Feature::NtpServer |
                      Matter::Cluster::TimeSynchronization::Feature::TrustedTimeClient
     end
 
@@ -34,8 +37,21 @@ module MatterTimeZone
       end
     end
 
+    protected def on_started : Nil
+      time_sync = node.get_cluster!(Matter::Cluster::TimeSynchronization)
+      server = Matter::Cluster::TimeSynchronization::SntpServer.new(time_sync)
+      server.start
+      @ntp_server = server
+      super
+    end
+
+    protected def on_shutdown : Nil
+      @ntp_server.try(&.stop)
+      super
+    end
+
     def console_notes : Array(String)
-      ["Synthetic Matter 1.6 TimeZone, NTPClient, and Trusted Time Client server for E2E only"]
+      ["Synthetic Matter 1.6 TimeZone, NTPClient, NTPServer, and Trusted Time Client for E2E only"]
     end
   end
 end

@@ -10,7 +10,8 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
   it "commissions a root TimeZone server and updates local time and durable offsets" do
     device.commission!
     read_int(device, "timesynchronization", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
-    read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(11_i64)
+    read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(15_i64)
+    expect_success(device.read("timesynchronization", "ntp-server-available", 0)).bool("NTPServerAvailable").should be_false
     expect_success(device.read("descriptor", "client-list", 0)).output.should contain("56")
     read_int(device, "timesynchronization", "time-zone-list-max-size", "TimeZoneListMaxSize", 0).should eq(2_i64)
     read_int(device, "timesynchronization", "dstoffset-list-max-size", "DSTOffsetListMaxSize", 0).should eq(4_i64)
@@ -20,6 +21,10 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
     expect_success(device.read("timesynchronization", "time-zone", 0)).output.should contain("Australia/Sydney")
     expect_success(device.invoke("timesynchronization", "set-dstoffset", [no_dst], endpoint: 0))
     expect_success(device.invoke("timesynchronization", "set-utctime", ["1000000000", "4"], endpoint: 0))
+    expect_success(device.read("timesynchronization", "ntp-server-available", 0)).bool("NTPServerAvailable").should be_true
+    ntp_time = Matter::Cluster::TimeSynchronization::SntpClient.query(device.address)
+    ntp_time.should_not be_nil
+    ntp_time.as(UInt64).should be >= 1_000_000_000_u64
     standard = read_int(device, "timesynchronization", "local-time", "LocalTime", 0)
     standard.should be >= 37_000_000_000_i64
 
@@ -34,6 +39,7 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
     expect_success(device.read("timesynchronization", "dstoffset", 0)).output.should contain("3600")
 
     device.restart!
+    expect_success(device.read("timesynchronization", "ntp-server-available", 0)).bool("NTPServerAvailable").should be_false
     expect_success(device.read("timesynchronization", "time-zone", 0)).output.should contain("Australia/Sydney")
     expect_success(device.read("timesynchronization", "dstoffset", 0)).output.should contain("3600")
     expect_success(device.read("timesynchronization", "local-time", 0)).output.downcase.should contain("null")

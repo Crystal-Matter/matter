@@ -7,9 +7,8 @@ It does not verify types, feature-dependent requirements, commands, events,
 behavior, interoperability,
 or certification. A matching row is not a completeness claim.
 
-Time Synchronization revision 2 has opt-in TimeZone, NTPC, and TSC features.
-The base server still advertises no optional features by default; NTPS remains
-unavailable.
+Time Synchronization revision 2 has opt-in TimeZone, NTPC, NTPS, and TSC
+features. The base server still advertises no optional features by default.
 
 See [server command and event declaration audit](protocol-command-event-coverage.md)
 for a separate comparison of literal command and event IDs.

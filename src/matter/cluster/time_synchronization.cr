@@ -8,7 +8,8 @@ module Matter
     # administrator's UTC time and advances it using a monotonic clock. It
     # starts unsynchronized on every boot. Hosts may opt into the TimeZone
     # feature without a time-zone database. The NTP and Trusted Time clients
-    # are opt-in; trusted peer access is supplied by the device host.
+    # are opt-in; trusted peer access is supplied by the device host. The
+    # opt-in NTP server role needs a host-started SNTP UDP responder.
     class TimeSynchronization < Base
       Log = ::Log.for("matter.cluster.time_synchronization")
 
@@ -16,6 +17,7 @@ module Matter
 
       feature :time_zone, bit: 0
       feature :ntp_client, bit: 1
+      feature :ntp_server, bit: 2
       feature :trusted_time_client, bit: 3
 
       TIME_NOT_ACCEPTED                 = 0x02_u8
@@ -262,6 +264,8 @@ module Matter
         omit_changes: true, requires: :time_zone
       attribute 0x0008, :time_zone_database, TimeZoneDatabase, computed: true,
         fixed: true, requires: :time_zone
+      attribute 0x0009, :ntp_server_available, Bool, computed: true,
+        requires: :ntp_server
       attribute 0x000A, :time_zone_list_max_size, UInt8, computed: true,
         fixed: true, requires: :time_zone
       attribute 0x000B, :dst_offset_list_max_size, UInt8, computed: true,
@@ -300,6 +304,7 @@ module Matter
       @trusted_time_source : TrustedTimeSourceStruct?
       @last_trusted_time_attempt : Time::Instant?
       @last_missing_trusted_time_source : Time::Instant?
+      @ntp_server_bound : Bool
       property on_ntp_query : Proc(String, UInt64?)?
       property on_trusted_time_query : Proc(UInt8, UInt64, UInt16, TrustedTimeSample?)?
 
@@ -323,6 +328,7 @@ module Matter
         @last_trusted_time_attempt = nil
         @last_missing_trusted_time_source = nil
         @on_trusted_time_query = nil
+        @ntp_server_bound = false
       end
 
       def utc_time : UInt64?
@@ -352,6 +358,19 @@ module Matter
 
       def trusted_time_source : TrustedTimeSourceStruct?
         @trusted_time_source
+      end
+
+      def ntp_server_available? : Bool
+        @ntp_server_bound && @granularity.value >= Granularity::Seconds.value &&
+          SntpServer.representable_utc?(utc_time)
+      end
+
+      # A host NTP listener calls this after binding and before closing. The
+      # attribute remains false while UTC is unavailable, even if bound.
+      def report_ntp_server_bound(bound : Bool) : Nil
+        previous = ntp_server_available?
+        @ntp_server_bound = bound
+        increment_version_and_notify(ATTR_NTP_SERVER_AVAILABLE) if previous != ntp_server_available?
       end
 
       def apply_trusted_time_source(request : SetTrustedTimeSourceRequest) : InteractionModel::Status
@@ -585,11 +604,13 @@ module Matter
           return InteractionModel::Status.cluster_failure(TIME_NOT_ACCEPTED)
         end
 
+        was_ntp_available = ntp_server_available? if @feature_map.ntp_server?
         @base_utc_time = request.utc_time
         @base_instant = Time.instant
         self.granularity = request.granularity
         self.time_source = TimeSource::Admin
         increment_version_and_notify(ATTR_UTC_TIME)
+        notify_ntp_server_availability(was_ntp_available) if @feature_map.ntp_server?
         if @feature_map.time_zone?
           notify_changed(ATTR_LOCAL_TIME)
           refresh_time_state(request.utc_time)
@@ -598,11 +619,13 @@ module Matter
       end
 
       def report_time_failure : Bytes?
+        was_ntp_available = ntp_server_available? if @feature_map.ntp_server?
         @base_utc_time = nil
         @base_instant = nil
         self.granularity = Granularity::NoTime
         self.time_source = TimeSource::None
         increment_version_and_notify(ATTR_UTC_TIME)
+        notify_ntp_server_availability(was_ntp_available) if @feature_map.ntp_server?
         if @feature_map.time_zone?
           notify_changed(ATTR_LOCAL_TIME)
           @last_dst_entry_present = false
@@ -629,6 +652,10 @@ module Matter
           return false if index > 0 && entry.valid_at == 0_u64
         end
         true
+      end
+
+      private def notify_ntp_server_availability(previous : Bool?) : Nil
+        increment_version_and_notify(ATTR_NTP_SERVER_AVAILABLE) if previous != ntp_server_available?
       end
 
       private def valid_default_ntp?(address : String) : Bool
@@ -699,3 +726,4 @@ module Matter
 end
 
 require "./time_synchronization/sntp_client"
+require "./time_synchronization/sntp_server"
