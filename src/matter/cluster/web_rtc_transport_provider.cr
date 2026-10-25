@@ -337,10 +337,14 @@ module Matter
 
       def solicit_offer(request : SolicitOfferRequest) : InteractionModel::Status | SolicitOfferResponse
         fabric, node = authenticated_peer || return InteractionModel::Status.unsupported_access
-        return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, request.audio_stream_id, request.video_streams, request.video_stream_id, request.stream_usage)
+        audio_id = selected_audio_id(request.audio_stream_id_state, request.stream_usage)
+        video_id = selected_video_id(request.video_stream_id_state, request.stream_usage)
+        return InteractionModel::Status.resource_exhausted if request.audio_stream_id_state.null? && !audio_id
+        return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
+        return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, request.stream_usage)
         return InteractionModel::Status.constraint_error unless valid_ice?(request.ice_servers, request.ice_transport_policy)
-        audio = selected_audio(request.audio_streams, request.audio_stream_id)
-        video = selected_video(request.video_streams, request.video_stream_id)
+        audio = selected_audio(request.audio_streams, audio_id)
+        video = selected_video(request.video_streams, video_id)
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, request.stream_usage)
         id = allocate_id || return InteractionModel::Status.resource_exhausted
         session = Session.new(id, node, request.originating_endpoint_id, request.stream_usage,
@@ -359,7 +363,9 @@ module Matter
           remove_session(session, EndReason::UnknownReason)
           return status
         end
-        SolicitOfferResponse.new(id, true, request.audio_stream_id_state, request.video_stream_id_state)
+        SolicitOfferResponse.new(id, true,
+          response_stream_id(request.audio_stream_id_state, audio_id),
+          response_stream_id(request.video_stream_id_state, video_id))
       end
 
       def provide_offer(request : ProvideOfferRequest) : InteractionModel::Status | ProvideOfferResponse
@@ -371,8 +377,8 @@ module Matter
           return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
           return InteractionModel::Status.constraint_error if (usage = request.stream_usage) && usage != session.stream_usage
           return InteractionModel::Status.constraint_error if (endpoint = request.originating_endpoint_id) && endpoint != session.peer_endpoint_id
-          return InteractionModel::Status.constraint_error if request.audio_streams || request.audio_stream_id ||
-                                                              request.video_streams || request.video_stream_id
+          return InteractionModel::Status.constraint_error if request.audio_streams || !request.audio_stream_id_state.absent? ||
+                                                              request.video_streams || !request.video_stream_id_state.absent?
           status = @peer.accept_offer(session, request)
           return status unless status.success?
           @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
@@ -381,9 +387,13 @@ module Matter
         end
         usage = request.stream_usage || return InteractionModel::Status.invalid_command
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
-        return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, request.audio_stream_id, request.video_streams, request.video_stream_id, usage)
-        audio = selected_audio(request.audio_streams, request.audio_stream_id)
-        video = selected_video(request.video_streams, request.video_stream_id)
+        audio_id = selected_audio_id(request.audio_stream_id_state, usage)
+        video_id = selected_video_id(request.video_stream_id_state, usage)
+        return InteractionModel::Status.resource_exhausted if request.audio_stream_id_state.null? && !audio_id
+        return InteractionModel::Status.resource_exhausted if request.video_stream_id_state.null? && !video_id
+        return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, audio_id, request.video_streams, video_id, usage)
+        audio = selected_audio(request.audio_streams, audio_id)
+        video = selected_video(request.video_streams, video_id)
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, usage)
         id = allocate_id || return InteractionModel::Status.resource_exhausted
         session = Session.new(id, node, endpoint, usage,
@@ -402,7 +412,9 @@ module Matter
           remove_session(session, EndReason::UnknownReason)
           return status
         end
-        ProvideOfferResponse.new(id, request.audio_stream_id_state, request.video_stream_id_state)
+        ProvideOfferResponse.new(id,
+          response_stream_id(request.audio_stream_id_state, audio_id),
+          response_stream_id(request.video_stream_id_state, video_id))
       end
 
       def provide_answer(request : ProvideAnswerRequest) : InteractionModel::Status
@@ -448,6 +460,23 @@ module Matter
         fabric = request_fabric_index
         node = request_peer_node_id
         {fabric, node} if fabric && node
+      end
+
+      private def selected_audio_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
+        return field.value! if field.value?
+        return unless field.null?
+        @streams.allocated_audio_streams.find { |stream| stream.stream_usage == usage }.try(&.audio_stream_id)
+      end
+
+      private def selected_video_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
+        return field.value! if field.value?
+        return unless field.null?
+        @streams.allocated_video_streams.find { |stream| stream.stream_usage == usage }.try(&.video_stream_id)
+      end
+
+      private def response_stream_id(field : TLV::FieldState(UInt16), selected : UInt16?) : TLV::FieldState(UInt16)
+        return field unless field.null? && selected
+        TLV::FieldState(UInt16).value(selected)
       end
 
       private def selected_audio(streams : Array(UInt16)?, legacy : UInt16?) : Array(UInt16)?
