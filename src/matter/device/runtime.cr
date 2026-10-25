@@ -336,6 +336,9 @@ module Matter
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
       operational_credentials.on_before_fabric_removed = ->(fabric_index : UInt8) do
+        # Keep retained events private even if a later ACL write fails after
+        # the fabric document is deleted and its index becomes reusable.
+        @node.event_journal.remove_fabric(fabric_index)
         group_keys = @message_handler.node.get_cluster(Cluster::GroupKeyManagement).as(Cluster::GroupKeyManagement)
         group_keys.remove_fabric(fabric_index)
         unless @persistence.save_cluster(group_keys)
@@ -365,7 +368,6 @@ module Matter
         end
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
-        @node.event_journal.remove_fabric(fabric_index)
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
         @message_handler.clusters.values.each do |cluster|

@@ -343,9 +343,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fabric event isolation
 
-- Erase retained fabric-sensitive events when RemoveFabric completes, before
-  the local fabric index can be reused. Events for other fabrics and node-wide
-  events remain available, and event numbers continue increasing.
+- Erase retained fabric-sensitive events before deleting the fabric document,
+  including when a later ACL write fails and the local index is reused. Events
+  for other fabrics and node-wide events remain available, and event numbers
+  continue increasing.
 
 ### Messages
 
