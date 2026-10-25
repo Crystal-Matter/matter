@@ -584,7 +584,7 @@ module Matter
           recovered
         end
 
-        # Explicitly recover an unacknowledged AddICAC after its cumulative
+        # Explicitly recover an unacknowledged AddICAC or deferred handoff after its cumulative
         # fail-safe deadline. CASE to the joiner's original fabric supplies
         # on-device proof that the original identity remains and the Anchor
         # fabric was not committed. A legacy pending record without a durable
@@ -593,13 +593,16 @@ module Matter
                                       original_node_id : UInt64,
                                       peer : Socket::IPAddress,
                                       port : RecoveryPort? = nil) : Bool
-          return false if resume_pending
+          # A stale deferred result deadline makes ordinary reconciliation
+          # fail. Explicit abandonment instead requires the stronger device
+          # rollback proof below; acknowledged completion still resumes.
+          before = @hooks.pending
+          if before.nil? || before.handoff_nonce.nil? || before.completion_acknowledged?
+            return false if resume_pending
+          end
           pending = @hooks.pending || return false
           state = @store.load
           fabric = state.fabric_for(pending.fabric_id, pending.root_public_key, pending.controller_node_id)
-          if pending.handoff_nonce
-            raise Matter::CommissioningError.new("Deferred Joint Commissioning handoff needs its own reconciliation")
-          end
           if pending.completion_acknowledged? ||
              state.nodes_for(fabric.fabric_id, fabric.root_public_key,
                fabric.controller_node_id).has_key?(pending.node_id)
@@ -616,6 +619,19 @@ module Matter
                  pending.peer_address == OperationalPeerResolver.address_hint(peer) &&
                  pending.peer_port == peer.port
             raise Matter::AuthenticationError.new("Original fabric or peer differs from pending Joint Commissioning identity")
+          end
+          handoff = pending.handoff_nonce.try do |nonce|
+            state.pending_handoffs.find do |entry|
+              entry.fabric_id == pending.fabric_id && entry.root_public_key == pending.root_public_key &&
+                entry.controller_node_id == pending.controller_node_id && entry.node_id == pending.node_id &&
+                entry.nonce == nonce && entry.address == pending.peer_address && entry.port == pending.peer_port
+            end
+          end
+          if pending.handoff_nonce
+            raise Matter::CommissioningError.new("Deferred handoff changed during recovery") unless handoff
+            if Time.utc.to_unix <= handoff.expires_at_unix
+              raise Matter::CommissioningError.new("Deferred handoff deadline has not passed")
+            end
           end
           reader = port || NetworkRecoveryPort.new(@client, @crypto)
           entries = reader.fabrics(original_fabric, original_node_id, peer)
@@ -646,6 +662,10 @@ module Matter
             if latest.nodes_for(fabric.fabric_id, fabric.root_public_key,
                  fabric.controller_node_id).has_key?(pending.node_id)
               raise Matter::CommissioningError.new("Completed Joint Commissioning cannot be abandoned")
+            end
+            if handoff
+              latest.abandon_pending_handoff(handoff)
+              @store.save(latest)
             end
             backend.delete(COLLECTION, pending_document_id)
           end

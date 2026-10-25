@@ -64,7 +64,7 @@ item below as covered only to the extent of its cited tests.
   ICAC exchange; the returned certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
-  persist across restart. For a direct AddICAC interrupted before
+  persist across restart. For AddICAC or a deferred handoff interrupted before
   CommissioningComplete, the pending record also retains the observed
   cumulative fail-safe deadline and the joiner's original fabric identity.
   `JointCommissioning::Workflow#recover_abandoned_pending` can clear that
@@ -73,9 +73,10 @@ item below as covered only to the extent of its cited tests.
   identity for the joining node. The caller must supply original-fabric
   controller credentials and the peer address; the default network port
   performs the CASE exchange and read. A custom `RecoveryPort` must provide
-  equivalent authentication. Acknowledged completion still resumes through
-  the existing registration path. Legacy records without the saved deadline,
-  and deferred handoffs, remain blocked for separate reconciliation.
+  equivalent authentication. Deferred recovery additionally requires the
+  matching saved handoff and removes it with the registration in one storage
+  transaction. Acknowledged completion still resumes through the existing
+  registration path. Legacy records without the saved deadline remain blocked.
 - The device implements SignVIDVerificationRequest and
   SetVIDVerificationStatement, including signed challenge binding, fabric
   filtering, persistence, and fail-safe rollback. The controller verifier
