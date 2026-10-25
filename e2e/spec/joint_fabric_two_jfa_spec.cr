@@ -994,6 +994,23 @@ describe "three provisioned Joint Fabric Administrators" do
         anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
         Random::Secure.hex(8)))
     third_before_follow_up.fabric_present.should be_true
+    # The promoted JFA must serve B immediately, before a restart rebuilds its
+    # service. Opening a JCM window through B CASE must identify B as its owner.
+    live_promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    live_promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    live_window = live_promoted_im.invoke(session: live_promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricAdministrator::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricAdministrator::CMD_OPEN_JOINT_COMMISSIONING_WINDOW,
+      fields: open_request.to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(live_window)
+    live_window_owner = live_promoted_im.read_attribute(session: live_promoted_session, peer: joiner_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::AdministratorCommissioning::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AdministratorCommissioning::ATTR_ADMIN_FABRIC_INDEX)
+    live_window_owner_report = live_window_owner.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first
+    live_window_owner_data = live_window_owner_report.attribute_data ||
+                             raise "Promoted Anchor window owner read failed with IM status #{live_window_owner_report.attribute_status.try(&.status.status)}"
+    live_window_owner_data.data.as(TLV::Any).as_u8.should eq(1_u8)
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
