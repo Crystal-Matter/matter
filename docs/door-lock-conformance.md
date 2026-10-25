@@ -71,6 +71,11 @@ or RFID data fails restoration before changing live lock state, so the host
 must correct those records rather than silently assigning one code to two
 users.
 
+Matter 1.6 restricts the SetCredential command's `OperationType` to Add or
+Modify. Clear is accepted only by the separate timed ClearCredential command.
+An invalid SetCredential operation returns `InvalidField` without changing the
+credential table, user links, data version, or events.
+
 RFID and biometric feature bits now require a configured
 `DoorLock::LocalCredentialVerifier` that reports readiness for every advertised
 credential type. A host calls `perform_local_credential_transaction` with an
