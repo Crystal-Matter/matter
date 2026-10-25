@@ -215,6 +215,11 @@ def run(args):
         jfc.expect(JFC_PROMPT_PATTERN, 30, opened)
         print("PASS: SDK JFC opened B Joint Commissioning window", flush=True)
 
+        before_denial_b = inspect_identity(b_command)
+        if before_denial_b.get("inspected_fabric_count") != 1 or \
+                before_denial_b.get("inspected_administrator_fabric_index") != 1:
+            raise RuntimeError("B did not start Joint Commissioning on its original fabric")
+
         for mode, expected in (("wrong-vid", "deny"), ("removed", "deny"),
                                ("active", "accept")):
             write_dcl_state(dcl_state, mode, root_der)
@@ -230,7 +235,16 @@ def run(args):
                      str(b_root), str(a_exchange), str(a_command), str(cross_icac),
                      "5540", "5541"], logs / "crystal-jcm-consent-denied.log",
                     timeout=360, env=denied_env)
-        print("PASS: trusted SDK-issued root denied by explicit Joint Commissioning consent", flush=True)
+        after_denial_b = inspect_identity(b_command)
+        after_denial_a = inspect_identity(a_command)
+        for field in ("inspected_fabric_count", "inspected_administrator_fabric_index",
+                      "inspected_cross_signed_icac"):
+            if after_denial_b.get(field) != before_denial_b.get(field):
+                raise RuntimeError(f"Consent denial changed B {field}")
+        admins = after_denial_a.get("inspected_datastore_admin_entries")
+        if admins is None or len(admins) != 1:
+            raise RuntimeError("Consent denial registered a joining administrator in A Datastore")
+        print("PASS: consent denial left B fabrics and A Datastore unchanged", flush=True)
 
         # The denied attempt armed the target fail-safe. Restarting the test
         # JFA rolls it back before the authorized attempt opens a fresh window.

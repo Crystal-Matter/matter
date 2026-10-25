@@ -177,6 +177,8 @@ module MatterJointFabricAdministrator
       getter inspected_node_id : UInt64?
       getter inspected_cross_signed_icac : Bytes?
       getter inspected_administrator_fabric_index : UInt8?
+      getter inspected_fabric_count : Int32?
+      getter inspected_datastore_admin_entries : Array(Bytes)?
       getter inspected_transfer_requester_node_id : UInt64?
       getter inspected_transfer_frozen : Bool?
       getter nonce : String?
@@ -192,6 +194,8 @@ module MatterJointFabricAdministrator
                      @inspected_node_id : UInt64? = nil,
                      @inspected_cross_signed_icac : Bytes? = nil,
                      @inspected_administrator_fabric_index : UInt8? = nil,
+                     @inspected_fabric_count : Int32? = nil,
+                     @inspected_datastore_admin_entries : Array(Bytes)? = nil,
                      @inspected_transfer_requester_node_id : UInt64? = nil,
                      @inspected_transfer_frozen : Bool? = nil)
       end
@@ -1953,6 +1957,8 @@ module MatterJointFabricAdministrator
               inspected_root_certificate: root_certificate, inspected_icac_certificate: icac_certificate,
               inspected_node_id: fabric.node_id, inspected_cross_signed_icac: persisted_icac,
               inspected_administrator_fabric_index: joint_fabric_administrator.administrator_fabric_index,
+              inspected_fabric_count: fabric_table.all_fabrics.size,
+              inspected_datastore_admin_entries: joint_fabric_datastore.admin_list.map(&.to_slice),
               nonce: request.nonce)
           when "inspect-new-anchor"
             CommandResult.new("ok", nonce: request.nonce,
