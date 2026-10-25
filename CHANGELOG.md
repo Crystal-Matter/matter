@@ -119,6 +119,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric fail-safe recovery
 
+- Let the Anchor controller explicitly retry an interrupted direct Joint
+  Commissioning registration after the saved cumulative fail-safe deadline
+  and an authenticated original-fabric CASE read proves the Anchor fabric is
+  absent. Acknowledged completions retain their existing recovery path.
 - Roll back a provisional AdministratorFabricIndex restored after AddICAC when
   commissioning was interrupted before completion. The rollback value shares
   the cluster document with the provisional attribute.

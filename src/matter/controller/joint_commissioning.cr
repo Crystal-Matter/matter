@@ -126,17 +126,52 @@ module Matter
         getter peer_port : Int32?
         getter handoff_nonce : String?
         getter joiner_icac_public_key : Bytes?
+        getter fail_safe_deadline_unix : Int64?
+        getter fail_safe_max_seconds : UInt16?
+        getter original_fabric_id : UInt64?
+        getter original_root_public_key : Bytes?
+        getter original_node_id : UInt64?
 
         def initialize(@fabric_id, @controller_node_id, @root_public_key, @node_id,
                        @vendor_id, @friendly_name, @icac,
                        @peer_address : String? = nil, @peer_port : Int32? = nil,
                        @completion_acknowledged : Bool = false,
                        @handoff_nonce : String? = nil,
-                       @joiner_icac_public_key : Bytes? = nil)
+                       @joiner_icac_public_key : Bytes? = nil,
+                       @fail_safe_deadline_unix : Int64? = nil,
+                       @fail_safe_max_seconds : UInt16? = nil,
+                       @original_fabric_id : UInt64? = nil,
+                       @original_root_public_key : Bytes? = nil,
+                       @original_node_id : UInt64? = nil)
         end
 
         def add_admin_request : Cluster::JointFabricDatastore::AddAdminRequest
           Cluster::JointFabricDatastore::AddAdminRequest.new(@node_id, @friendly_name, @vendor_id, @icac)
+        end
+      end
+
+      # A recovery port must authenticate CASE to the original, independently
+      # commissioned fabric and read the device's unfiltered Fabrics list.
+      abstract class RecoveryPort
+        abstract def fabrics(fabric : FabricInfo, node_id : UInt64,
+                             peer : Socket::IPAddress) : Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+      end
+
+      class NetworkRecoveryPort < RecoveryPort
+        def initialize(@client : Client, @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                       @timeout : Time::Span = 15.seconds)
+        end
+
+        def fabrics(fabric : FabricInfo, node_id : UInt64,
+                    peer : Socket::IPAddress) : Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+          session = Pairing::CasePairing.new(@crypto).pair(@client, peer, fabric,
+            peer_node_id: node_id, timeout: @timeout)
+          report = ImClient.new(@client, @timeout).read_attribute(session, peer, 0_u16,
+            Cluster::OperationalCredentials::CLUSTER_ID,
+            Cluster::OperationalCredentials::ATTR_FABRICS, fabric_filtered: false)
+          data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+                 raise Matter::ProtocolError.new("OperationalCredentials Fabrics read omitted data")
+          Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(data.to_slice)
         end
       end
 
@@ -160,6 +195,8 @@ module Matter
         @verified_joiner : VerifiedJoiner?
         @pending_node_id : UInt64?
         @pending : PendingRegistration?
+        @fail_safe_deadline_unix : Int64?
+        @fail_safe_max_seconds : UInt16?
 
         getter pending : PendingRegistration?
 
@@ -193,6 +230,15 @@ module Matter
           !@anchor_finalize.nil?
         end
 
+        def record_fail_safe_deadline? : Bool
+          true
+        end
+
+        def fail_safe_deadline_observed(deadline_unix : Int64, max_seconds : UInt16) : Nil
+          @fail_safe_deadline_unix = deadline_unix
+          @fail_safe_max_seconds = max_seconds
+        end
+
         def finalize_deferred_handoff(fabric : FabricInfo, node_id : UInt64,
                                       im : ImClient, pase_session : Session::SecureContext,
                                       peer : Socket::IPAddress,
@@ -208,7 +254,12 @@ module Matter
             fabric.root_public_key, node_id, joiner.fabric.descriptor.vendor_id,
             @administrator_name, Bytes.empty, OperationalPeerResolver.address_hint(peer), peer.port,
             handoff_nonce: handoff.nonce,
-            joiner_icac_public_key: joiner.icac_public_key)
+            joiner_icac_public_key: joiner.icac_public_key,
+            fail_safe_deadline_unix: @fail_safe_deadline_unix,
+            fail_safe_max_seconds: @fail_safe_max_seconds,
+            original_fabric_id: joiner.fabric.descriptor.fabric_id,
+            original_root_public_key: joiner.fabric.descriptor.root_public_key,
+            original_node_id: joiner.fabric.descriptor.node_id)
           @save_pending.call(pending)
           @pending = pending
           icac = finalize.call(fabric, node_id, peer, @administrator_endpoint,
@@ -313,7 +364,12 @@ module Matter
           JointCommissioning.validate_cross_signed_icac(icac, fabric, joiner.icac_public_key, @icac_id)
           pending = PendingRegistration.new(fabric.fabric_id, fabric.controller_node_id,
             fabric.root_public_key, node_id, joiner.fabric.descriptor.vendor_id,
-            @administrator_name, icac, OperationalPeerResolver.address_hint(peer), peer.port)
+            @administrator_name, icac, OperationalPeerResolver.address_hint(peer), peer.port,
+            fail_safe_deadline_unix: @fail_safe_deadline_unix,
+            fail_safe_max_seconds: @fail_safe_max_seconds,
+            original_fabric_id: joiner.fabric.descriptor.fabric_id,
+            original_root_public_key: joiner.fabric.descriptor.root_public_key,
+            original_node_id: joiner.fabric.descriptor.node_id)
           @save_pending.call(pending)
           @pending = pending
         end
@@ -360,6 +416,19 @@ module Matter
                                 fabric.controller_node_id).has_key?(pending.node_id)
           complete_pending(fabric, pending.node_id)
           true
+        end
+
+        def pending_matches?(pending : PendingRegistration) : Bool
+          current = @pending
+          !!(current && !current.completion_acknowledged? &&
+            current.to_document == pending.to_document)
+        end
+
+        def abandon_pending(pending : PendingRegistration) : Nil
+          unless pending_matches?(pending)
+            raise Matter::CommissioningError.new("Joint Commissioning pending registration changed during recovery")
+          end
+          @pending = nil
         end
 
         private def complete_pending(fabric : FabricInfo, node_id : UInt64) : Nil
@@ -511,6 +580,75 @@ module Matter
             registrar.resume(fabric)
           end
           recovered
+        end
+
+        # Explicitly recover an unacknowledged AddICAC after its cumulative
+        # fail-safe deadline. CASE to the joiner's original fabric supplies
+        # on-device proof that the original identity remains and the Anchor
+        # fabric was not committed. A legacy pending record without a durable
+        # deadline or original identity is deliberately left pending.
+        def recover_abandoned_pending(original_fabric : FabricInfo,
+                                      original_node_id : UInt64,
+                                      peer : Socket::IPAddress,
+                                      port : RecoveryPort? = nil) : Bool
+          return false if resume_pending
+          pending = @hooks.pending || return false
+          state = @store.load
+          fabric = state.fabric_for(pending.fabric_id, pending.root_public_key, pending.controller_node_id)
+          if pending.handoff_nonce
+            raise Matter::CommissioningError.new("Deferred Joint Commissioning handoff needs its own reconciliation")
+          end
+          if pending.completion_acknowledged? ||
+             state.nodes_for(fabric.fabric_id, fabric.root_public_key,
+               fabric.controller_node_id).has_key?(pending.node_id)
+            raise Matter::CommissioningError.new("Completed Joint Commissioning cannot be abandoned")
+          end
+          deadline = pending.fail_safe_deadline_unix ||
+                     raise Matter::CommissioningError.new("Pending registration lacks a durable fail-safe deadline")
+          unless pending.fail_safe_max_seconds.try(&.> 0_u16) && Time.utc.to_unix > deadline
+            raise Matter::CommissioningError.new("Joint Commissioning fail-safe deadline has not passed")
+          end
+          unless pending.original_fabric_id == original_fabric.fabric_id &&
+                 pending.original_root_public_key == original_fabric.root_public_key &&
+                 pending.original_node_id == original_node_id &&
+                 pending.peer_address == OperationalPeerResolver.address_hint(peer) &&
+                 pending.peer_port == peer.port
+            raise Matter::AuthenticationError.new("Original fabric or peer differs from pending Joint Commissioning identity")
+          end
+          reader = port || NetworkRecoveryPort.new(@client, @crypto)
+          entries = reader.fabrics(original_fabric, original_node_id, peer)
+          unless entries.any? do |entry|
+                   entry.fabric_id == original_fabric.fabric_id &&
+                   entry.root_public_key == original_fabric.root_public_key &&
+                   entry.node_id == original_node_id
+                 end
+            raise Matter::AuthenticationError.new("Original fabric is absent from authenticated device Fabrics")
+          end
+          if entries.any? do |entry|
+               entry.fabric_id == pending.fabric_id &&
+               entry.root_public_key == pending.root_public_key
+             end
+            raise Matter::CommissioningError.new("Joint Fabric is still present on the device")
+          end
+          # A second workflow can update the durable record while the CASE
+          # read is in flight. Compare the complete record under the backend
+          # transaction, then clear memory only after deletion commits.
+          backend = opened_backend
+          backend.transaction do
+            current = load_pending
+            unless @hooks.pending_matches?(pending) && current &&
+                   current.to_document == pending.to_document
+              raise Matter::CommissioningError.new("Joint Commissioning pending registration changed during recovery")
+            end
+            latest = @store.load
+            if latest.nodes_for(fabric.fabric_id, fabric.root_public_key,
+                 fabric.controller_node_id).has_key?(pending.node_id)
+              raise Matter::CommissioningError.new("Completed Joint Commissioning cannot be abandoned")
+            end
+            backend.delete(COLLECTION, pending_document_id)
+          end
+          @hooks.abandon_pending(pending)
+          true
         end
 
         def stored_icac(node_id : UInt64) : Bytes?
