@@ -165,6 +165,67 @@ describe Matter::Controller::ImClient do
     client.try(&.close)
   end
 
+  it "rejects a wildcard response path for a concrete attribute read" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    ambiguous_path = Matter::InteractionModel::AttributePath.new(cluster: 6_u32, attribute: 0_u32)
+    client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+      attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(
+        attribute_data: Matter::InteractionModel::AttributeDataIB.new(ambiguous_path,
+          TLV::Any.from_slice(1_u8.to_tlv)))],
+      suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects a compressed response path without a prior full path" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    ambiguous_path = Matter::InteractionModel::AttributePath.new(cluster: 6_u32,
+      attribute: 0_u32, enable_tag_compression: true)
+    client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+      attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(
+        attribute_data: Matter::InteractionModel::AttributeDataIB.new(ambiguous_path,
+          TLV::Any.from_slice(1_u8.to_tlv)))],
+      suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "accepts a compressed response path after a full matching path" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    full_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    compressed_path = Matter::InteractionModel::AttributePath.new(cluster: 6_u32,
+      attribute: 0_u32, enable_tag_compression: true)
+    client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+      attribute_reports: [
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(full_path,
+            TLV::Any.from_slice(1_u8.to_tlv))),
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_status: Matter::InteractionModel::AttributeStatusIB.new(compressed_path,
+            Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::UnsupportedAttribute.value))),
+      ], suppress_response: true).to_slice)
+
+    report = Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    report.attribute_reports.try(&.size).should eq(2)
+  ensure
+    client.try(&.close)
+  end
+
   it "rejects a mixed read response containing an unrelated status path" do
     require_udp_sockets!
     client = ChunkedReadClient.new

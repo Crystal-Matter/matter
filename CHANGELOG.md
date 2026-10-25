@@ -121,7 +121,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Bind concrete single-attribute controller read responses to their requested
   path before VID verification, JCM credential reads, or abandoned-registration
-  recovery can consume them. Wildcard reads retain their multi-attribute form.
+  recovery can consume them. Omitted response IDs require valid tag-compression
+  context from an earlier full path. Wildcard reads retain their multi-attribute form.
 - Exercise interrupted AddICAC, controller Workflow restart, real fail-safe
   expiry, authenticated rollback proof, and a clean retry in the three-JFA
   Docker E2E fixture.

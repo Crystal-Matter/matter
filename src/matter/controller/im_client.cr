@@ -161,13 +161,21 @@ module Matter
       # single-report API by folding those items into one Array value.
       private def normalize_read_attribute(reports : Array(InteractionModel::AttributeReportIB),
                                            path : InteractionModel::AttributePath) : Array(InteractionModel::AttributeReportIB)
+        last_full_path : InteractionModel::AttributePath? = nil
         reports.each do |report|
           candidate = report.attribute_data.try(&.path) || report.attribute_status.try(&.path)
-          unless candidate &&
-                 (path.endpoint.nil? || candidate.endpoint.nil? || candidate.endpoint == path.endpoint) &&
-                 (path.cluster.nil? || candidate.cluster.nil? || candidate.cluster == path.cluster) &&
-                 (path.attribute.nil? || candidate.attribute.nil? || candidate.attribute == path.attribute)
+          raise Matter::ProtocolError.new("IM: Read response path differs from request") unless candidate
+          inherited = candidate.enable_tag_compression == true ? last_full_path : nil
+          endpoint = candidate.endpoint || inherited.try(&.endpoint)
+          cluster = candidate.cluster || inherited.try(&.cluster)
+          attribute = candidate.attribute || inherited.try(&.attribute)
+          unless (path.endpoint.nil? || endpoint == path.endpoint) &&
+                 (path.cluster.nil? || cluster == path.cluster) &&
+                 (path.attribute.nil? || attribute == path.attribute)
             raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+          unless candidate.enable_tag_compression == true
+            last_full_path = candidate.endpoint && candidate.cluster && candidate.attribute ? candidate : nil
           end
         end
         return reports if reports.size < 2
