@@ -736,7 +736,14 @@ module Matter
         increment_version_and_notify(ATTR_GROUP_TABLE)
       end
 
-      # Remove all groups for a fabric (fabric removal)
+      # Indexes with stored keys or group mappings, including crashed removals.
+      def fabric_indices : Array(UInt8)
+        (@key_sets.keys + @group_key_map.map(&.fabric_index) +
+          @group_table.map(&.fabric_index) +
+          @groupcast_adoption.compact_map(&.fabric_index)).uniq
+      end
+
+      # Remove all groups for a fabric (fabric removal).
       def remove_fabric(fabric_index : UInt8) : Nil
         @key_sets.delete(fabric_index)
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index }

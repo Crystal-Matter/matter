@@ -21,6 +21,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its local index is reused. Keep other fabrics' windows and preserve replay
   protection during epoch-key rotation on an installed fabric.
 
+### Durable group fabric removal
+
+- Persist erased Group Key Management credentials, mappings, and Groups names
+  before deleting a fabric record. A failed group-state write keeps the local
+  fabric index reserved so removal can be retried without exposing old state
+  to a replacement fabric. Startup also repairs orphaned group records left by
+  interrupted removals from older versions.
+
 ### Binding target validation
 
 - Reject malformed Matter 1.6 Binding targets: unicast entries need both Node

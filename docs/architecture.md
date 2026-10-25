@@ -201,8 +201,12 @@ the returned value to `GroupSecurePacket#encode`.
 The device runtime joins PerGroupId IPv6 multicast addresses for groups with
 both fabric-scoped GroupTable membership and a GroupKeyMap binding. Groups
 membership may be provisioned before its key mapping.
-Fabric removal clears its key sets, mappings, group names, replay windows,
-and multicast joins before the local FabricIndex can be reused.
+Fabric removal synchronously persists cleared Group Key Management key sets and
+mappings and each Groups cluster's names before deleting the fabric record. A
+failed write leaves the local FabricIndex reserved for a removal retry. The
+startup path also prunes orphaned group records left by older interrupted
+removals before a new fabric can use their indexes. The removal path also
+clears replay windows and multicast joins.
 It authenticates private group packets against mapped epoch keys before
 parsing commands, replay checks, or ACL evaluation. A group command path
 without an Endpoint tag expands over member endpoints; an explicit Endpoint
