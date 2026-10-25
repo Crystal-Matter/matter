@@ -131,8 +131,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   absent. Acknowledged completions retain their existing recovery path.
 - Recover an expired deferred Joint Commissioning handoff under the same
   authenticated rollback proof, clearing the matching handoff and pending
-  registration atomically. Legacy records without a durable deadline remain
-  blocked.
+  registration atomically. The three-Administrator E2E fixture interrupts
+  deferred finalization, observes the provisional fabric, then verifies the
+  real fail-safe rollback and controller retry. Legacy records without a
+  durable deadline remain blocked.
 - Roll back a provisional AdministratorFabricIndex restored after AddICAC when
   commissioning was interrupted before completion. The rollback value shares
   the cluster document with the provisional attribute.

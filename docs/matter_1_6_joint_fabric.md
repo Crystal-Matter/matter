@@ -76,7 +76,10 @@ item below as covered only to the extent of its cited tests.
   equivalent authentication. Deferred recovery additionally requires the
   matching saved handoff and removes it with the registration in one storage
   transaction. Acknowledged completion still resumes through the existing
-  registration path. Legacy records without the saved deadline remain blocked.
+  registration path. The three-Administrator E2E fixture interrupts a deferred
+  handoff before Anchor finalization and checks the provisional fabric, real
+  rollback, and authenticated controller recovery. Legacy records without the
+  saved deadline remain blocked.
 - The device implements SignVIDVerificationRequest and
   SetVIDVerificationStatement, including signed challenge binding, fabric
   filtering, persistence, and fail-safe rollback. The controller verifier
