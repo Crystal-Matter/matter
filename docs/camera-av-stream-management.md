@@ -67,3 +67,15 @@ and TLV Null auto-selection through TLV FieldState; an omitted field is rejected
 The optional WMARK/OSD modify command and Camera device type topology remain
 unimplemented. Applications should not present this slice as complete Camera
 conformance.
+
+Applications with a decoded RGB24 camera source can explicitly require
+`matter/media/ffmpeg_jpeg_encoder` and use `Media::DecodedRgbFrame` with
+`Media::FfmpegJpegEncoder` in `on_snapshot_capture`. This optional adapter runs
+an installed FFmpeg executable to encode an actual JPEG from the supplied
+pixels. Frames must be tightly packed RGB24 with exactly three bytes per pixel,
+nonzero dimensions, and at most 8,294,400 pixels. Quality is 1 through 100.
+The focused media test decodes the JPEG and checks its dimensions and
+pixel regions, then passes it through `CaptureSnapshot`. Applications still
+own sensor capture, privacy enforcement at the source, and host resource
+admission. Neither this adapter nor the synthetic fixture advertises Camera
+device type `0x0142` or proves a WebRTC media track.
