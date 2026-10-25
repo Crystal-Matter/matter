@@ -14,6 +14,27 @@ module Matter
     class Descriptor < Base
       cluster 0x001D, revision: 3
 
+      feature :tag_list, bit: 0
+
+      # Core SemanticTagStruct, shared by Descriptor.TagList and device
+      # composition. A null manufacturer code denotes a standard namespace.
+      struct SemanticTag
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter mfg_code : UInt16?
+        @[TLV::Field(tag: 1)]
+        getter namespace_id : UInt8
+        @[TLV::Field(tag: 2)]
+        getter tag : UInt8
+        @[TLV::Field(tag: 3, optional: true)]
+        getter label : String?
+
+        def initialize(@mfg_code : UInt16?, @namespace_id : UInt8, @tag : UInt8,
+                       @label : String? = nil)
+        end
+      end
+
       # Device Type Structure
       # IMPORTANT: Device type values MUST be encoded with correct widths per Matter spec:
       # - deviceType (tag 0): UInt32
@@ -38,12 +59,31 @@ module Matter
       attribute 0x0001, :server_list, Array(UInt32), default: [] of UInt32, fixed: true
       attribute 0x0002, :client_list, Array(UInt32), default: [] of UInt32, fixed: true
       attribute 0x0003, :parts_list, Array(UInt16), default: [] of UInt16, fixed: true
+      attribute 0x0004, :tag_list, Array(SemanticTag), default: [] of SemanticTag,
+        fixed: true, optional: true, requires: :tag_list
 
       def initialize(endpoint_id : DataType::EndpointNumber)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         # Descriptor cluster is always a server on every endpoint
         @server_list << CLUSTER_ID
+      end
+
+      def configure_tag_list(tags : Array(SemanticTag)) : Nil
+        unless tags.empty? || (1..6).includes?(tags.size)
+          raise ConfigurationError.new("Descriptor TagList must contain 1 to 6 tags")
+        end
+        if tags.any? { |tag| tag.label.try(&.bytesize).try { |size| size > 64 } }
+          raise ConfigurationError.new("Descriptor tag label exceeds 64 bytes")
+        end
+        if tags.any? { |tag| tag.mfg_code.nil? && !tag.label.nil? }
+          raise ConfigurationError.new("Descriptor standard tags cannot have a label")
+        end
+        if tags.any?(&.mfg_code) && tags.all?(&.mfg_code)
+          raise ConfigurationError.new("Descriptor manufacturer tags require a standard tag")
+        end
+        @tag_list = tags.dup
+        @feature_map = tags.empty? ? Feature::None : Feature::TagList
       end
 
       # Helper: Check if a cluster is in the server list

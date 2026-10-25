@@ -79,6 +79,7 @@ module Matter
     TIME_ZONE_POLL_INTERVAL = 1.second
     ENDPOINTS_KEY           = "endpoints"
     ENDPOINT_ID_KEY         = "endpoint_id"
+    PARENT_ENDPOINT_KEY     = "parent_endpoint_id"
     TEMPLATE_KEY            = "template"
     PARAMETERS_KEY          = "parameters"
 
@@ -108,7 +109,7 @@ module Matter
 
     # Endpoints added from a template, by endpoint number: the template name
     # and the parameters it was built from.
-    @dynamic_endpoints : Hash(UInt16, Tuple(String, Storage::Document)) = {} of UInt16 => Tuple(String, Storage::Document)
+    @dynamic_endpoints : Hash(UInt16, Tuple(String, Storage::Document, UInt16)) = {} of UInt16 => Tuple(String, Storage::Document, UInt16)
     @restoring_endpoints : Bool = false
     @started : Bool = false
     @time_zone_polling : Bool = false
@@ -661,6 +662,10 @@ module Matter
       {} of UInt16 => Array(UInt32)
     end
 
+    protected def endpoint_compositions : Hash(UInt16, Tuple(UInt16, Array(Cluster::Descriptor::SemanticTag)))
+      {} of UInt16 => Tuple(UInt16, Array(Cluster::Descriptor::SemanticTag))
+    end
+
     # ------------------------------------------------------------------------
     # Networking / diagnostics defaults
     # ------------------------------------------------------------------------
@@ -965,10 +970,20 @@ module Matter
 
       # The subclass's clusters, split by the endpoint each was built for.
       declared_types = endpoint_device_types
+      compositions = endpoint_compositions
       device_endpoints = device_clusters.group_by(&.endpoint_id.number)
+      compositions.each_key do |id|
+        next if id == Node::ROOT_ENDPOINT_ID
+        device_endpoints[id] ||= [] of Cluster::Base
+      end
+      if root_parent = compositions[Node::ROOT_ENDPOINT_ID]?.try(&.[0])
+        raise ConfigurationError.new("Root endpoint cannot have a parent") unless root_parent == Node::ROOT_ENDPOINT_ID
+      end
 
       # Root endpoint: replaces the MessageHandler defaults wholesale.
-      root = Endpoint.new(endpoint_0, device_types_for(Node::ROOT_ENDPOINT_ID, declared_types))
+      root_tags = compositions[Node::ROOT_ENDPOINT_ID]?.try(&.[1]) || [] of Cluster::Descriptor::SemanticTag
+      root = Endpoint.new(endpoint_0, device_types_for(Node::ROOT_ENDPOINT_ID, declared_types),
+        semantic_tags: root_tags)
       [
         basic_info,
         general_commissioning,
@@ -991,9 +1006,12 @@ module Matter
       @node.add_endpoint(root)
 
       device_endpoints.each do |endpoint_id, clusters|
+        parent, tags = compositions[endpoint_id]? || {Node::ROOT_ENDPOINT_ID, [] of Cluster::Descriptor::SemanticTag}
         endpoint = Endpoint.new(
           DataType::EndpointNumber.new(endpoint_id),
-          device_types_for(endpoint_id, declared_types)
+          device_types_for(endpoint_id, declared_types),
+          parent_endpoint_id: parent,
+          semantic_tags: tags
         )
         clusters.each { |cluster| endpoint.add_cluster(cluster) }
         (endpoint_client_clusters[endpoint_id]? || [] of UInt32).each { |id| endpoint.add_client_cluster(id) }
@@ -1005,7 +1023,8 @@ module Matter
         listener.on_membership_changed = -> { @message_handler.refresh_group_memberships }
       end
 
-      refresh_root_parts_list
+      validate_parent_tree!
+      refresh_parts_lists
       topology_errors = @node.validate
       unless topology_errors.empty?
         raise ConfigurationError.new("Incomplete device-type topology: #{topology_errors}")
@@ -1023,26 +1042,53 @@ module Matter
       device_types
     end
 
-    # The root endpoint's PartsList is the list of every other endpoint.
-    private def refresh_root_parts_list : Nil
-      descriptor = root_descriptor
-      descriptor.parts_list.clear
-      @node.endpoint_ids.each do |endpoint_id|
-        next if endpoint_id == Node::ROOT_ENDPOINT_ID
-        descriptor.add_part(endpoint_id)
+    # Root and Aggregators list their full family; composed application
+    # endpoints list direct children.
+    private def refresh_parts_lists(notify_subscribers : Bool = false) : Nil
+      old = {} of UInt16 => Array(UInt16)
+      @node.endpoint_ids.each do |id|
+        descriptor = @node.endpoint!(id).descriptor
+        old[id] = descriptor.parts_list.dup
+        descriptor.parts_list.clear
+      end
+      @node.endpoint_ids.each do |id|
+        next if id == Node::ROOT_ENDPOINT_ID
+        root_descriptor.add_part(id)
+        parent = @node.endpoint!(id).parent_endpoint_id
+        direct_parent = true
+        while parent != Node::ROOT_ENDPOINT_ID
+          ancestor = @node.endpoint!(parent)
+          if direct_parent || ancestor.device_types.any? { |type| type.device_type_id.id == DeviceType::AGGREGATOR }
+            ancestor.descriptor.add_part(id)
+          end
+          direct_parent = false
+          parent = ancestor.parent_endpoint_id
+        end
+      end
+      return unless notify_subscribers
+      @node.endpoint_ids.each do |id|
+        next if old[id] == @node.endpoint!(id).descriptor.parts_list
+        @message_handler.notify_subscriptions(id, Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Descriptor::ATTR_PARTS_LIST)
+      end
+    end
+
+    private def validate_parent_tree! : Nil
+      @node.endpoint_ids.each do |id|
+        next if id == Node::ROOT_ENDPOINT_ID
+        seen = Set(UInt16).new
+        current = id
+        while current != Node::ROOT_ENDPOINT_ID
+          raise ConfigurationError.new("Endpoint parent cycle at #{current}") unless seen.add?(current)
+          endpoint = @node.endpoint(current)
+          raise ConfigurationError.new("Endpoint parent #{current} does not exist") unless endpoint
+          current = endpoint.parent_endpoint_id
+        end
       end
     end
 
     private def root_descriptor : Cluster::Descriptor
       @node.endpoint!(Node::ROOT_ENDPOINT_ID).descriptor
-    end
-
-    private def notify_root_parts_list : Nil
-      @message_handler.notify_subscriptions(
-        Node::ROOT_ENDPOINT_ID,
-        Cluster::Descriptor::CLUSTER_ID,
-        Cluster::Descriptor::ATTR_PARTS_LIST
-      )
     end
 
     # Default to ephemeral test credentials unless the device overrides.
@@ -1082,10 +1128,11 @@ module Matter
     # taking the next free endpoint number unless *endpoint_id* names one.
     # The parameters are persisted, so the endpoint is rebuilt on the next
     # start. Returns the endpoint.
-    def add_endpoint(template : Symbol, endpoint_id : UInt16? = nil, **parameters) : Endpoint
+    def add_endpoint(template : Symbol, endpoint_id : UInt16? = nil,
+                     parent_endpoint : UInt16 = Node::ROOT_ENDPOINT_ID, **parameters) : Endpoint
       document = Storage::Document.new
       parameters.each { |key, value| document[key.to_s] = storage_value(key, value) }
-      add_endpoint(template, document, endpoint_id: endpoint_id)
+      add_endpoint(template, document, endpoint_id: endpoint_id, parent_endpoint: parent_endpoint)
     end
 
     # :ditto:
@@ -1094,17 +1141,18 @@ module Matter
       parameters : Storage::Document,
       endpoint_id : UInt16? = nil,
       notify_subscribers : Bool = true,
+      parent_endpoint : UInt16 = Node::ROOT_ENDPOINT_ID,
     ) : Endpoint
       name = template.to_s
       number = endpoint_id || next_endpoint_id
       clusters, device_types, clients = template_endpoint(name, number, parameters)
 
       unless add_endpoint(number, device_types, clusters, notify_subscribers: notify_subscribers,
-               client_clusters: clients)
+               client_clusters: clients, parent_endpoint: parent_endpoint, tag_list: template_tags(name))
         raise ConfigurationError.new("Endpoint #{number} already exists")
       end
 
-      @dynamic_endpoints[number] = {name, parameters}
+      @dynamic_endpoints[number] = {name, parameters, parent_endpoint}
       save_dynamic_endpoints
       @node.endpoint!(number)
     end
@@ -1129,13 +1177,17 @@ module Matter
       device_type_revision : UInt16? = nil,
       notify_subscribers : Bool = true,
       client_clusters : Array(UInt32) = [] of UInt32,
+      parent_endpoint : UInt16 = Node::ROOT_ENDPOINT_ID,
+      tag_list : Array(Cluster::Descriptor::SemanticTag) = [] of Cluster::Descriptor::SemanticTag,
     ) : Bool
       install_endpoint(
         endpoint_id,
         [dynamic_device_type(device_type, device_type_revision)],
         clusters,
         notify_subscribers,
-        client_clusters
+        client_clusters,
+        parent_endpoint,
+        tag_list
       )
     end
 
@@ -1146,9 +1198,11 @@ module Matter
       clusters : Array(Cluster::Base),
       notify_subscribers : Bool = true,
       client_clusters : Array(UInt32) = [] of UInt32,
+      parent_endpoint : UInt16 = Node::ROOT_ENDPOINT_ID,
+      tag_list : Array(Cluster::Descriptor::SemanticTag) = [] of Cluster::Descriptor::SemanticTag,
     ) : Bool
       install_endpoint(endpoint_id, device_types.map { |id| DeviceType.for(id) }, clusters,
-        notify_subscribers, client_clusters)
+        notify_subscribers, client_clusters, parent_endpoint, tag_list)
     end
 
     private def install_endpoint(
@@ -1157,12 +1211,16 @@ module Matter
       clusters : Array(Cluster::Base),
       notify_subscribers : Bool,
       client_clusters : Array(UInt32),
+      parent_endpoint : UInt16,
+      tag_list : Array(Cluster::Descriptor::SemanticTag),
     ) : Bool
       # Don't allow adding endpoint 0 (root node)
       return false if endpoint_id == Node::ROOT_ENDPOINT_ID
       return false if @node.has_endpoint?(endpoint_id)
+      raise ConfigurationError.new("Endpoint parent #{parent_endpoint} does not exist") unless @node.has_endpoint?(parent_endpoint)
 
-      endpoint = Endpoint.new(DataType::EndpointNumber.new(endpoint_id), device_types)
+      endpoint = Endpoint.new(DataType::EndpointNumber.new(endpoint_id), device_types,
+        parent_endpoint_id: parent_endpoint, semantic_tags: tag_list)
       clusters.each do |cluster|
         wire_ecosystem_information(cluster)
         wire_tls_certificate_management(cluster)
@@ -1181,14 +1239,7 @@ module Matter
         end
       end
       basic_info.increase_configuration_version if @started
-
-      # Tell controllers a new endpoint exists - they read its attributes on
-      # their own (same pattern as remove_endpoint).
-      descriptor = root_descriptor
-      return true if descriptor.has_part?(endpoint_id)
-
-      descriptor.add_part(endpoint_id)
-      notify_root_parts_list if notify_subscribers
+      refresh_parts_lists(notify_subscribers)
       true
     end
 
@@ -1265,6 +1316,9 @@ module Matter
     def remove_endpoint(endpoint_id : UInt16, notify_subscribers : Bool = true) : Bool
       # Don't allow removing endpoint 0 (root node)
       return false if endpoint_id == Node::ROOT_ENDPOINT_ID
+      if @node.endpoints.values.any? { |entry| entry.parent_endpoint_id == endpoint_id }
+        raise ConfigurationError.new("Endpoint #{endpoint_id} still has child endpoints")
+      end
 
       endpoint = @node.remove_endpoint(endpoint_id)
       return false unless endpoint
@@ -1273,11 +1327,7 @@ module Matter
       endpoint.clusters.each_value { |cluster| @persistence.forget_cluster(cluster) }
       save_dynamic_endpoints if @dynamic_endpoints.delete(endpoint_id)
 
-      descriptor = root_descriptor
-      return true unless descriptor.has_part?(endpoint_id)
-
-      descriptor.parts_list.reject! { |part| part == endpoint_id }
-      notify_root_parts_list if notify_subscribers
+      refresh_parts_lists(notify_subscribers)
       true
     end
 
@@ -1327,6 +1377,10 @@ module Matter
       raise ArgumentError.new("#{self.class} declares no endpoint template #{template.inspect}")
     end
 
+    protected def template_tags(template : String) : Array(Cluster::Descriptor::SemanticTag)
+      [] of Cluster::Descriptor::SemanticTag
+    end
+
     # The value of the template parameter *key*, which must be a *type*.
     protected def template_parameter(parameters : Storage::Document, key : String, type : T.class) : T forall T
       value = parameters[key]?
@@ -1358,13 +1412,15 @@ module Matter
       number = entry[ENDPOINT_ID_KEY]?
       template = entry[TEMPLATE_KEY]?
       parameters = entry[PARAMETERS_KEY]?
+      parent = entry[PARENT_ENDPOINT_KEY]?.as?(Int64).try(&.to_u16) || Node::ROOT_ENDPOINT_ID
       return unless number.is_a?(Int64) && template.is_a?(String) && parameters.is_a?(Hash(String, Storage::Type))
 
       endpoint = add_endpoint(
         template,
         parameters,
         endpoint_id: number.to_u16,
-        notify_subscribers: false
+        notify_subscribers: false,
+        parent_endpoint: parent
       )
       @persistence.restore_clusters(endpoint.clusters.values)
     rescue error
@@ -1374,11 +1430,12 @@ module Matter
     private def save_dynamic_endpoints : Nil
       return if @restoring_endpoints
 
-      entries = @dynamic_endpoints.map do |number, (template, parameters)|
+      entries = @dynamic_endpoints.map do |number, (template, parameters, parent)|
         Storage::Document{
-          ENDPOINT_ID_KEY => number.to_i64,
-          TEMPLATE_KEY    => template,
-          PARAMETERS_KEY  => parameters,
+          ENDPOINT_ID_KEY     => number.to_i64,
+          TEMPLATE_KEY        => template,
+          PARAMETERS_KEY      => parameters,
+          PARENT_ENDPOINT_KEY => parent.to_i64,
         }.as(Storage::Type)
       end
 
