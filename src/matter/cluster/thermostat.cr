@@ -33,6 +33,8 @@ module Matter
       MAX_SCHEDULE_TYPES             =          3
       MAX_SCHEDULE_HANDLE_LENGTH     =         16
       MAX_SCHEDULE_NAME_LENGTH       =         64
+      MINUTES_PER_HOUR               =         60
+      MAX_WEEKLY_LOOKBACK_DAYS       =          7
       CMD_ATOMIC_RESPONSE            = 0x00FD_u32
       # Delegate maximum for a Presets atomic write. The wire field is uint16
       # milliseconds and Matter leaves the server maximum implementation-defined.
@@ -666,7 +668,8 @@ module Matter
                      @system_mode : SystemMode = SystemMode::Off,
                      @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off,
                      preset_types : Array(PresetType)? = nil,
-                     presets : Array(Preset) = [] of Preset)
+                     presets : Array(Preset) = [] of Preset,
+                     @local_time_provider : Proc(Time?) = -> : Time? { nil })
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         @measured_temperature = @local_temperature
@@ -687,6 +690,7 @@ module Matter
         @schedules = [] of Schedule
         @used_schedule_handles = [] of Bytes
         @active_schedule_handle = nil.as(Bytes?)
+        @last_schedule_occurrence = nil.as(Tuple(Int64, UInt16)?)
         @number_of_schedule_transitions = 0_u8
         @number_of_schedule_transition_per_day = nil.as(UInt8?)
 
@@ -819,6 +823,10 @@ module Matter
       # PRES; controller writes to Presets require an atomic transaction.
       def configure_presets(types : Array(PresetType), presets : Array(Preset)) : Nil
         validate_presets!(types, presets)
+        unless @schedules.empty?
+          validate_schedules!(@schedule_types, @schedules, @number_of_schedule_transitions,
+            @number_of_schedule_transition_per_day, presets)
+        end
         @pending_preset_write = nil
         if @combined_atomic_write
           @pending_schedule_write = nil
@@ -830,6 +838,7 @@ module Matter
         remember_preset_handles(presets)
         @preset_types = types.dup
         @presets = copy_presets(presets)
+        @last_schedule_occurrence = nil if presets_changed
         update_active_preset_handle(nil)
         if @feature_map.presets? && preset_wire_ready?
           increment_version_and_notify(ATTR_PRESET_TYPES) if types_changed
@@ -885,6 +894,7 @@ module Matter
           @combined_atomic_write = false
         end
         @schedules = copy_schedules(schedules)
+        @last_schedule_occurrence = nil
         @number_of_schedule_transitions = max_transitions
         @number_of_schedule_transition_per_day = max_per_day
         remember_schedule_handles(@schedules)
@@ -929,7 +939,33 @@ module Matter
         return InteractionModel::Status.invalid_command unless @schedules.any? { |entry| entry.schedule_handle == handle }
 
         update_active_schedule_handle(handle)
+        tick_schedule
         InteractionModel::Status.success
+      end
+
+      # Hosts call this when local civil time becomes available or advances.
+      # The clock must already include the intended timezone and DST offset.
+      # It returns true when a new weekly transition occurrence was evaluated.
+      def tick_schedule(local_time : Time? = @local_time_provider.call) : Bool
+        unless local_time
+          @last_schedule_occurrence = nil
+          return false
+        end
+        handle = @active_schedule_handle || return false
+        schedule = @schedules.find { |entry| entry.schedule_handle == handle } || return false
+        occurrence = schedule_transition_at(schedule, local_time) || return false
+        date, transition = occurrence
+        key = {date, transition.transition_time}
+        if previous = @last_schedule_occurrence
+          # During a repeated DST hour, an earlier wall-clock transition must
+          # not undo a later transition already applied on the same date.
+          return false if date == previous[0] && transition.transition_time <= previous[1]
+          return false if key == previous
+        end
+
+        return false unless apply_schedule_transition(schedule, transition)
+        @last_schedule_occurrence = key
+        true
       end
 
       protected def schedules=(values : Array(Schedule)) : Nil
@@ -1189,6 +1225,7 @@ module Matter
           unless @presets == values
             remember_preset_handles(values)
             @presets = copy_presets(values)
+            @last_schedule_occurrence = nil
             increment_version_and_notify(ATTR_PRESETS)
           end
         end
@@ -1255,6 +1292,7 @@ module Matter
           unless @schedules == values
             remember_schedule_handles(values)
             @schedules = copy_schedules(values)
+            @last_schedule_occurrence = nil
             increment_version_and_notify(ATTR_SCHEDULES)
           end
         end
@@ -1353,11 +1391,13 @@ module Matter
         unless @presets == presets
           remember_preset_handles(presets)
           @presets = copy_presets(presets)
+          @last_schedule_occurrence = nil
           increment_version_and_notify(ATTR_PRESETS)
         end
         unless @schedules == schedules
           remember_schedule_handles(schedules)
           @schedules = copy_schedules(schedules)
+          @last_schedule_occurrence = nil
           increment_version_and_notify(ATTR_SCHEDULES)
         end
         atomic_response(InteractionModel::StatusCode::Success, [] of AtomicAttributeStatus)
@@ -1982,12 +2022,106 @@ module Matter
 
         previous = @active_schedule_handle.try(&.dup)
         @active_schedule_handle = handle.try(&.dup)
+        @last_schedule_occurrence = nil
         if @feature_map.matter_schedules? && schedule_wire_ready?
           increment_version_and_notify(ATTR_ACTIVE_SCHEDULE_HANDLE)
           if @feature_map.events?
             emit_active_schedule_change(ActiveScheduleChangeEvent.new(previous, @active_schedule_handle.try(&.dup)))
           end
         end
+      end
+
+      # Compare civil dates rather than elapsed UTC seconds. That keeps the
+      # weekly bitmap stable across timezone offsets and DST changes.
+      private def schedule_transition_at(schedule : Schedule, local_time : Time) : Tuple(Int64, ScheduleTransition)?
+        midnight = Time.utc(local_time.year, local_time.month, local_time.day)
+        minute = local_time.hour * MINUTES_PER_HOUR + local_time.minute
+        (0..MAX_WEEKLY_LOOKBACK_DAYS).each do |age|
+          date = midnight - age.days
+          day_bit = (1_u8 << (date.day_of_week.value % 7)).to_u8
+          latest = nil.as(ScheduleTransition?)
+          schedule.transitions.each do |transition|
+            next if (transition.day_of_week & day_bit) == 0_u8
+            next if age == 0 && transition.transition_time > minute
+            latest = transition if latest.nil? || transition.transition_time > latest.transition_time
+          end
+          return {date.to_unix, latest} if latest
+        end
+        nil
+      end
+
+      private def apply_schedule_transition(schedule : Schedule, transition : ScheduleTransition) : Bool
+        mode = transition.system_mode || schedule.system_mode
+        preset_handle = if handle = transition.preset_handle
+                          handle
+                        elsif transition.cooling_setpoint || transition.heating_setpoint
+                          nil
+                        else
+                          schedule.preset_handle
+                        end
+        preset = @presets.find { |entry| entry.preset_handle == preset_handle } if preset_handle
+        return false if preset_handle && !preset
+        cooling = transition.cooling_setpoint || preset.try(&.cooling_setpoint)
+        heating = transition.heating_setpoint || preset.try(&.heating_setpoint)
+        occupied = !@feature_map.occupancy? || @occupancy == 1_u8
+        targets = planned_scheduled_setpoints(cooling, heating, occupied) || return false
+        target_cooling, target_heating, corrected = targets
+        active_preset = corrected ? nil : preset_handle
+
+        @applying_preset = true
+        begin
+          apply_scheduled_setpoints(target_cooling, target_heating, occupied: occupied)
+          self.system_mode = mode
+          update_active_preset_handle(active_preset)
+        ensure
+          @applying_preset = false
+        end
+        true
+      end
+
+      private def planned_scheduled_setpoints(cooling : Int16?, heating : Int16?, occupied : Bool) : Tuple(Int16, Int16, Bool)?
+        current_cooling = occupied ? @occupied_cooling_setpoint : @unoccupied_cooling_setpoint
+        current_heating = occupied ? @occupied_heating_setpoint : @unoccupied_heating_setpoint
+        target_cooling = cooling || current_cooling
+        target_heating = heating || current_heating
+        corrected = false
+        if @feature_map.automode? && @feature_map.heating? && @feature_map.cooling? &&
+           target_cooling.to_i32 - target_heating.to_i32 < deadband
+          if heating && !cooling
+            value = target_heating.to_i32 + deadband
+            return unless value.in?(@min_cool_setpoint_limit..@max_cool_setpoint_limit)
+            target_cooling = value.to_i16
+          elsif cooling && !heating
+            value = target_cooling.to_i32 - deadband
+            return unless value.in?(@min_heat_setpoint_limit..@max_heat_setpoint_limit)
+            target_heating = value.to_i16
+          else
+            return
+          end
+          corrected = true
+        end
+        {target_cooling, target_heating, corrected}
+      end
+
+      private def apply_scheduled_setpoints(cooling : Int16?, heating : Int16?, *, occupied : Bool) : Nil
+        current_cooling = occupied ? @occupied_cooling_setpoint : @unoccupied_cooling_setpoint
+        # Lower the heat target first when cooling falls; otherwise raise the
+        # cool target first. Either order preserves the Auto deadband.
+        if cooling && heating && cooling < current_cooling
+          apply_scheduled_heating(heating, occupied)
+          apply_scheduled_cooling(cooling, occupied)
+        else
+          apply_scheduled_cooling(cooling, occupied) if cooling
+          apply_scheduled_heating(heating, occupied) if heating
+        end
+      end
+
+      private def apply_scheduled_cooling(value : Int16, occupied : Bool) : Nil
+        occupied ? self.occupied_cooling_setpoint = value : self.unoccupied_cooling_setpoint = value
+      end
+
+      private def apply_scheduled_heating(value : Int16, occupied : Bool) : Nil
+        occupied ? self.occupied_heating_setpoint = value : self.unoccupied_heating_setpoint = value
       end
 
       private def validate_presets!(types : Array(PresetType), values : Array(Preset)) : Nil
@@ -2080,6 +2214,7 @@ module Matter
           end
           remember_preset_handles(state.presets)
           @presets = copy_presets(state.presets)
+          @last_schedule_occurrence = nil
           @active_preset_handle = state.active_preset_handle.try(&.dup)
           @pending_preset_write = nil
         end
@@ -2101,6 +2236,7 @@ module Matter
           end
           remember_schedule_handles(state.schedules)
           @schedules = copy_schedules(state.schedules)
+          @last_schedule_occurrence = nil
           @active_schedule_handle = state.active_schedule_handle.try(&.dup)
           @pending_schedule_write = nil
         end
