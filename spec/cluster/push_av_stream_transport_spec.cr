@@ -39,7 +39,7 @@ describe PushAv do
     cluster.current_connections(1_u8).as(Array(PushAv::Tlv::TransportConfiguration)).size.should eq(1)
     cluster.request_fabric_index = 2_u8
     cluster.find_transport(PushAv::Tlv::FindRequest.new(0_u16))
-      .as(PushAv::Tlv::FindResponse).transport_configurations.should be_empty
+      .as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
     cluster.deallocate_push_transport(PushAv::Tlv::DeallocateRequest.new(0_u16)).status
       .should eq(Matter::InteractionModel::StatusCode::NotFound)
     cluster.request_fabric_index = 1_u8

@@ -21,6 +21,16 @@ Set `on_manual_trigger` to schedule a manual upload; then call
 `report_transport_begin` and `report_transport_end` when the upload actually
 starts and ends, passing the real CMAF session number. The cluster does not
 open TLS sockets, capture video/audio, generate CMAF segments, or upload data.
+Only one reported CMAF session can be active per connection. Repeated Begin,
+an End without Begin, and an End with a different session number are rejected.
+The Begin reporter accepts the actual `TriggerType` so a Motion transport
+started by a manual command emits `Command` with its required ActivationReason;
+the existing reporter overload infers this from the supplied reason.
+An accepted Inactive or deallocation closes a still-reported session and emits
+End with its saved number after the host stop callback succeeds. The host may
+report End from that callback; the server will not emit it twice. Session state
+is transient and is cleared on restart or fabric removal. Removing a fabric
+also calls the host stop callback for active connections before erasing them.
 For `Command` triggers, a manual request must include `TimeControl`; `Motion`
 triggers use their configured MotionTimeControl when a manual request omits it.
 Set `transport_busy` to report a connection already sending; a busy request
@@ -34,7 +44,8 @@ the example.
 
 Allocation starts `Inactive`. `CurrentConnections` omits TransportOptions so
 it is safe on transports without Large Message support; `FindTransport`
-returns complete options. All commands require a CASE session and expose only
+returns complete options and returns `NotFound` when no connection matches.
+All commands require a CASE session and expose only
 connections on the caller's fabric. Active status and manual triggering require
 host callbacks, so the configuration-only example cannot claim successful
 media transmission. Revision 1 explicit stream ID fields are accepted
@@ -59,7 +70,8 @@ Restored `Active` connections become `Inactive` until the host establishes a
 fresh transport.
 
 Official chip-tool E2E currently covers commissioning, metadata, attributes,
-an unknown manual trigger command, and restart of the empty connection catalog.
+unknown manual trigger and FindTransport commands, and restart of the empty
+connection catalog.
 The focused Crystal specs cover
 TLV tags, command lifecycle, fabric isolation, persistence, validation, and
 host event gating. A camera backend, actual media transport, nonempty
