@@ -62,6 +62,26 @@ describe Matter::Session::GroupSecurePacket do
     receiver.decode(valid).message.payload.should eq(Bytes[0x01, 0x03])
   end
 
+  it "retains the sender replay window across epoch key rotation on one installed fabric" do
+    old_key = GroupPacket::Key.new(1_u8, 0x0042_u16, Bytes.new(16, 0x11_u8))
+    new_key = GroupPacket::Key.new(1_u8, 0x0042_u16, Bytes.new(16, 0x22_u8))
+    receiver = GroupPacket.new([old_key])
+    old_sender = GroupPacket.new([old_key])
+    new_sender = GroupPacket.new([new_key])
+    header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 3_u16, protocol_id: 1_u16, message_type: 0x08_u8,
+      initiator_message: true, requires_acknowledge: false)
+    source = 0x1234_u64
+    receiver.decode(old_sender.encode(old_key, source, 100_u32, header, Bytes[0x01]))
+
+    receiver.keys = [new_key]
+    expect_raises(GroupPacket::Replay) do
+      receiver.decode(new_sender.encode(new_key, source, 100_u32, header, Bytes[0x02]))
+    end
+    receiver.decode(new_sender.encode(new_key, source, 101_u32, header, Bytes[0x03]))
+      .message.payload.should eq(Bytes[0x03])
+  end
+
   it "rejects unknown mappings and never evicts a peer replay state within a boot" do
     key = "a6f5306baf6d050af23ba4bd6b9dd960".hexbytes
     mapped = GroupPacket::Key.new(1_u8, 0x0042_u16, key)

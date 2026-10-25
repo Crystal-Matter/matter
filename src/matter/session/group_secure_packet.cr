@@ -77,6 +77,14 @@ module Matter
       def keys=(@keys : Array(Key)) : Nil
       end
 
+      # A local fabric index may be assigned to a different fabric after
+      # RemoveFabric. Discard only that fabric's authenticated sender windows;
+      # ordinary epoch-key refreshes must keep those windows intact.
+      def forget_fabric_reception(fabric_index : UInt8) : Nil
+        @reception.reject! { |identity, _| identity[0] == fabric_index }
+        nil
+      end
+
       def self.derive_operational_key(epoch_key : Bytes, compressed_fabric_id : Bytes) : Bytes
         raise Matter::SessionError.new("Epoch key must be 16 bytes") unless epoch_key.size == 16
         raise Matter::SessionError.new("Compressed fabric ID must be 8 bytes") unless compressed_fabric_id.size == 8

@@ -20,7 +20,85 @@ private def group_test_fabric(index : UInt8, fabric_id : UInt64) : Matter::Fabri
     Matter::Crypto::Key.generate_key_pair, Bytes.new(16, 1_u8))
 end
 
+private def group_replay_key(fabric : Matter::Fabric, group_id : UInt16,
+                             epoch_key : Bytes) : Matter::Session::GroupSecurePacket::Key
+  operational = Matter::Session::GroupSecurePacket.derive_operational_key(
+    epoch_key, fabric.compressed_fabric_id)
+  Matter::Session::GroupSecurePacket::Key.new(fabric.fabric_index, group_id, operational)
+end
+
 describe "group fabric removal" do
+  it "accepts a replacement fabric's low counters and new peers after old replay windows filled" do
+    old_index = 1_u8
+    other_index = 2_u8
+    group_id = 0x1234_u16
+    key_set_id = 5_u16
+    old_fabric = group_test_fabric(old_index, 0x100_u64)
+    other_fabric = group_test_fabric(other_index, 0x200_u64)
+    fabrics = Matter::FabricTable.new(Matter::Storage::Memory.new)
+    fabrics.add_fabric(old_fabric).should be_true
+    fabrics.add_fabric(other_fabric).should be_true
+    handler = Matter::Protocol::MessageHandler.new(
+      GroupCaptureTransport.new_for_spec, 20202021_u32, 3840_u16, fabrics)
+    root = handler.node.endpoint!(0_u16)
+    gkm = Matter::Cluster::GroupKeyManagement.new(Matter::DataType::EndpointNumber.new(0_u16))
+    root.add_cluster(gkm)
+    handler.node.add_endpoint(root)
+    old_epoch = Bytes.new(16, 0x11_u8)
+    other_epoch = Bytes.new(16, 0x22_u8)
+    {old_index => old_epoch, other_index => other_epoch}.each do |index, epoch|
+      gkm.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(key_set_id,
+          epoch_key0: epoch, epoch_start_time0: 1_u64)), index)
+      gkm.add_group_key_map(group_id, key_set_id, index)
+    end
+    header = Matter::Codec::MessageCodec::PayloadHeader.new(9_u16, 1_u16,
+      Matter::Protocol::IMHandler::MSG_INVOKE_REQUEST, true, false)
+    payload = Matter::InteractionModel::InvokeRequestMessage.new(
+      [] of Matter::InteractionModel::CommandDataIBTlv).to_slice
+    peer = Socket::IPAddress.new("::1", 5540)
+    old_key = group_replay_key(old_fabric, group_id, old_epoch)
+    old_sender = Matter::Session::GroupSecurePacket.new([old_key])
+
+    (1_u64..Matter::Session::GroupSecurePacket::DATA_PEER_CAPACITY.to_u64).each do |source|
+      handler.handle_group_packet(old_sender.encode(old_key, source, 100_u32, header, payload), peer)
+    end
+    handler.device_load_status(old_index).total_interaction_model_messages_received
+      .should eq(Matter::Session::GroupSecurePacket::DATA_PEER_CAPACITY.to_u32)
+    other_key = group_replay_key(other_fabric, group_id, other_epoch)
+    other_sender = Matter::Session::GroupSecurePacket.new([other_key])
+    other_wire = other_sender.encode(other_key, 1_u64, 100_u32, header, payload)
+    handler.handle_group_packet(other_wire, peer)
+    before_reuse = handler.device_load_status(other_index).total_interaction_model_messages_received
+
+    fabrics.remove_fabric(old_index).should be_true
+    handler.forget_group_fabric(old_index)
+    replacement = group_test_fabric(old_index, 0x300_u64)
+    fabrics.add_fabric(replacement).should be_true
+    new_epoch = Bytes.new(16, 0x33_u8)
+    gkm.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(key_set_id,
+        epoch_key0: new_epoch, epoch_start_time0: 1_u64)), old_index)
+    gkm.add_group_key_map(group_id, key_set_id, old_index)
+    new_key = group_replay_key(replacement, group_id, new_epoch)
+    new_sender = Matter::Session::GroupSecurePacket.new([new_key])
+
+    # The same source with a lower counter must be accepted on the new fabric.
+    handler.handle_group_packet(new_sender.encode(new_key, 1_u64, 1_u32, header, payload), peer)
+    handler.device_load_status(old_index).total_interaction_model_messages_received.should eq(before_reuse + 1)
+    # Old peer capacity must not prevent an additional source on that fabric.
+    new_source = Matter::Session::GroupSecurePacket::DATA_PEER_CAPACITY.to_u64 + 1
+    handler.handle_group_packet(new_sender.encode(new_key, new_source, 1_u32, header, payload), peer)
+    handler.device_load_status(old_index).total_interaction_model_messages_received.should eq(before_reuse + 2)
+
+    # A different fabric's replay window is retained by the targeted purge.
+    handler.handle_group_packet(other_wire, peer)
+    handler.device_load_status(other_index).total_interaction_model_messages_received.should eq(before_reuse + 2)
+    handler.handle_group_packet(other_sender.encode(other_key, 1_u64, 101_u32, header, payload), peer)
+    handler.device_load_status(other_index).total_interaction_model_messages_received.should eq(before_reuse + 3)
+    handler.close
+  end
+
   it "reports authenticated, replayed, failed-auth and unavailable-key group packets during listener testing" do
     fabric_table = Matter::FabricTable.new(Matter::Storage::Memory.new)
     fabric = group_test_fabric(1_u8, 0x100_u64)
