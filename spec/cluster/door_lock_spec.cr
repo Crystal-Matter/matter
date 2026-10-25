@@ -54,6 +54,23 @@ describe Matter::Cluster::DoorLock do
       read(cluster, Def::ATTR_SOUND_VOLUME).should eq(0_u8)
     end
 
+    it "limits Language to three bytes without changing valid persisted values" do
+      cluster = build(Def)
+      version_before_write = cluster.data_version
+      expect_status(write(cluster, Def::ATTR_LANGUAGE, "abcd"),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.language.should eq("en")
+      cluster.data_version.should eq(version_before_write)
+      expect_raises(ArgumentError) { cluster.language = "abcd" }
+      expect_raises(ArgumentError) { build(Def, language: "abcd") }
+
+      expect_success(write(cluster, Def::ATTR_LANGUAGE, "eng"))
+      read(cluster, Def::ATTR_LANGUAGE).should eq("eng")
+      restored = build(Def)
+      restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+      read(restored, Def::ATTR_LANGUAGE).should eq("eng")
+    end
+
     it "sets reserved bits and supports both mandatory operating modes" do
       cluster = build(Def)
       modes = cluster.supported_operating_modes
