@@ -21,6 +21,7 @@ module Matter
       feature :matter_schedules, bit: 7              # MSCH - gated until atomic schedule writes are complete
       feature :presets, bit: 8                       # PRES - gated until wire conformance is complete
       feature :events, bit: 9                        # TEVT - Thermostat change events
+      feature :thermostat_suggestions, bit: 10       # TSUGGEST - provisional, gated until behavior is complete
 
       TEMPERATURE_EVENT_INTERVAL     = 60.seconds
       SIGNIFICANT_TEMPERATURE_CHANGE = 50_i16 # 0.5°C
@@ -171,6 +172,74 @@ module Matter
         getter preset_handle : Bytes?
 
         def initialize(@preset_handle : Bytes?)
+        end
+      end
+
+      # Matter 1.6 TSUGGEST wire types. The feature remains disabled in
+      # production until its UTC, preset, and timer behavior is implemented.
+      @[Flags]
+      enum ThermostatSuggestionNotFollowingReason : UInt16
+        DemandResponseEvent    = 0x0001
+        OngoingHold            = 0x0002
+        Schedule               = 0x0004
+        Occupancy              = 0x0008
+        VacationMode           = 0x0010
+        TimeOfUseCostSavings   = 0x0020
+        PreCoolingOrPreHeating = 0x0040
+        ConflictingSuggestions = 0x0080
+      end
+
+      struct ThermostatSuggestion
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter unique_id : UInt8
+        @[TLV::Field(tag: 1)]
+        getter preset_handle : Bytes
+        @[TLV::Field(tag: 2)]
+        getter effective_time : UInt32
+        @[TLV::Field(tag: 3)]
+        getter expiration_time : UInt32
+
+        def initialize(@unique_id : UInt8, @preset_handle : Bytes,
+                       @effective_time : UInt32, @expiration_time : UInt32)
+          raise ArgumentError.new("preset_handle exceeds 16 bytes") if @preset_handle.size > MAX_PRESET_HANDLE_LENGTH
+        end
+      end
+
+      struct AddThermostatSuggestionRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter preset_handle : Bytes
+        @[TLV::Field(tag: 1, optional: false)]
+        getter effective_time : UInt32?
+        @[TLV::Field(tag: 2)]
+        getter expiration_in_minutes : UInt16
+
+        def initialize(@preset_handle : Bytes, @effective_time : UInt32?, @expiration_in_minutes : UInt16)
+          raise ArgumentError.new("preset_handle exceeds 16 bytes") if @preset_handle.size > MAX_PRESET_HANDLE_LENGTH
+          raise ArgumentError.new("expiration_in_minutes must be 30..1440") unless (30_u16..1440_u16).includes?(@expiration_in_minutes)
+        end
+      end
+
+      struct AddThermostatSuggestionResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter unique_id : UInt8
+
+        def initialize(@unique_id : UInt8)
+        end
+      end
+
+      struct RemoveThermostatSuggestionRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter unique_id : UInt8
+
+        def initialize(@unique_id : UInt8)
         end
       end
 
@@ -569,6 +638,8 @@ module Matter
         raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
         raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules?
         raise ArgumentError.new("OCC wire conformance is not yet enabled") if @feature_map.occupancy? && !occupancy_wire_ready?
+        raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
+        raise ArgumentError.new("TSUGGEST behavior is not yet enabled") if @feature_map.thermostat_suggestions?
         validate_occupancy(@occupancy)
 
         if @feature_map.heating?
