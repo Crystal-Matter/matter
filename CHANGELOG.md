@@ -55,6 +55,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric DCL signer trust
 
+- Reject explicitly aged DCL revocation-index responses before using PAA/PAI
+  CRL distribution points. The live three-JFA HTTPS fixture checks fresh and
+  stale index responses while production attestation still requires explicit
+  PAA, CD signer, and revocation policy.
 - Request uncached DCL operational trust records and reject responses with an
   aged cache header. The three-Administrator VVS test mirror includes a stale
   signer denial case.

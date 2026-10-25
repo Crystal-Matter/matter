@@ -38,6 +38,8 @@ def response(state, path):
             state, "wrong_signer_der" if mode == "wrong-signer" else "signer_der",
             "VIDSignerPKI", False)]
         return {"nocCertificatesByVidAndSkid": {"certs": records}}
+    if path.startswith("/dcl/pki/revocation-points/"):
+        return {"pkiRevocationDistributionPointsByIssuerSubjectKeyID": {"points": []}}
     return None
 
 

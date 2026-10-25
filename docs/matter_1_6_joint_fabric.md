@@ -457,7 +457,11 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected
-HTTPS gateway. `DclAttestationRevocation` validates direct and delegated
+HTTPS gateway. The built-in index fetch requests cache revalidation and rejects
+nonzero or malformed HTTP `Age` values before using distribution records. The
+three-JFA HTTPS fixture checks a fresh index and an explicitly aged response.
+This does not prove the gateway's ledger state is current.
+`DclAttestationRevocation` validates direct and delegated
 PAA/PAI CRLs, including complete partition sets indexed by the issuer SKID.
 Each partition needs a distinct DCL label and URL, and its critical IDP URI
 must match the URL byte for byte. The signer must be the candidate PAA/PAI or

@@ -407,6 +407,12 @@ describe "three provisioned Joint Fabric Administrators" do
     dcl_fixture.write_mode("active")
     Matter::Controller::VidVerification.verify(joiner_im, joiner_session, joiner_peer,
       descriptor.fabric_index, trust)
+    revocation_source = Matter::Controller::HttpDclRevocationSource.new("https://tests")
+    issuer_skid = Bytes.new(20, 1_u8)
+    revocation_source.points_for(issuer_skid).should be_empty
+    dcl_fixture.write_mode("stale")
+    expect_raises(Matter::AuthenticationError, /cache/) { revocation_source.points_for(issuer_skid) }
+    dcl_fixture.write_mode("active")
     registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
       anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
