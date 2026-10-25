@@ -82,6 +82,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   automatic privacy and stream-release teardown, and a host WebRTC peer
   interface. A synthetic chip-tool fixture checks wire behavior but does not
   establish a WebRTC media connection; independent SDP/ICE media proof remains.
+- Encode and require explicit TLV Null for Provider `ProvideOffer` session ID
+  and both nullable ICE candidate fields, matching Matter 1.6 mandatory fields.
 
 ### Camera AV Stream Management audio
 

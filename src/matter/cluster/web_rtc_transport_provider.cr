@@ -58,9 +58,9 @@ module Matter
 
         @[TLV::Field(tag: 0)]
         getter candidate : String
-        @[TLV::Field(tag: 1)]
+        @[TLV::Field(tag: 1, optional: false)]
         getter sdp_mid : String?
-        @[TLV::Field(tag: 2)]
+        @[TLV::Field(tag: 2, optional: false)]
         getter sdp_m_line_index : UInt16?
 
         def initialize(@candidate : String, @sdp_mid : String? = nil,
@@ -153,7 +153,7 @@ module Matter
 
       struct ProvideOfferRequest
         include TLV::Serializable
-        @[TLV::Field(tag: 0)]
+        @[TLV::Field(tag: 0, optional: false)]
         getter web_rtc_session_id : UInt16?
         @[TLV::Field(tag: 1)]
         getter sdp : String

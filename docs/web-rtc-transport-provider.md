@@ -8,6 +8,8 @@ mandatory `CurrentSessions` attribute and five server commands
 active sessions. Sessions are keyed by authenticated CASE fabric and peer node;
 reads are fabric filtered, and another peer receives `NotFound` for a session
 it does not own. Incomplete offer/answer exchanges expire after 30 seconds.
+`ProvideOffer.WebRTCSessionID` and both nullable ICE candidate fields are
+mandatory on the wire: callers send TLV Null when unknown, not an absent tag.
 
 The constructor requires the same-endpoint camera stream cluster and a `Peer`
 implementation. A host supplies RFC 9429 SDP negotiation, ICE gathering,

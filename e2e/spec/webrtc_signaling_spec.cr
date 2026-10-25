@@ -31,6 +31,8 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
 
     offer = %({"0":null,"1":"v=0","2":"u:3","3":"u:22","11":["u:0"]})
     expect_success(webrtc_command(device, 0x02_u32, offer))
+    expect_failure(webrtc_command(device, 0x02_u32,
+      %({"1":"v=0","2":"u:3","3":"u:22","11":["u:0"]})), "INVALID_COMMAND")
     sessions = expect_success(webrtc_read(device, 0x0000_u32)).output
     sessions.should contain("PeerEndpointID: 22")
     sessions.should contain("AudioStreams: 1 entries")
@@ -38,6 +40,10 @@ describe "Matter 1.6 WebRTC Provider signaling wire behavior" do
     expect_success(webrtc_command(device, 0x04_u32, %({"0":"u:0","1":"v=0"})))
     candidates = %({"0":"u:0","1":[{"0":"candidate:1 1 UDP 1 127.0.0.1 1234 typ host","1":"0","2":"u:0"}]})
     expect_success(webrtc_command(device, 0x05_u32, candidates))
+    nullable_candidates = %({"0":"u:0","1":[{"0":"candidate:2 1 UDP 1 127.0.0.1 1235 typ host","1":null,"2":null}]})
+    expect_success(webrtc_command(device, 0x05_u32, nullable_candidates))
+    absent_candidates = %({"0":"u:0","1":[{"0":"candidate:3 1 UDP 1 127.0.0.1 1236 typ host"}]})
+    expect_failure(webrtc_command(device, 0x05_u32, absent_candidates), "INVALID_COMMAND")
 
     window = expect_success(device.chip(["pairing", "open-commissioning-window",
                                          device.node, "1", "180", "1000", "3840"]))

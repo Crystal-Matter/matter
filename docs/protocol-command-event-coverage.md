@@ -9,11 +9,11 @@ Thermostat TEVT covers the base and AUTO events; OCC, MSCH and PRES remain unava
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 133
+- Implemented standard cluster IDs compared: 134
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 35
+- Feature or complex conditional IDs absent from Crystal: 34
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
