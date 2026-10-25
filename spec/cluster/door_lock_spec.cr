@@ -79,6 +79,52 @@ describe Matter::Cluster::DoorLock do
       expect_success(write(cluster, Def::ATTR_OPERATING_MODE, Def::OperatingMode::Privacy.value))
       cluster.operating_mode.should eq(Def::OperatingMode::Privacy)
     end
+
+    it "allows Privacy mode only while locked" do
+      expect_raises(ArgumentError) do
+        build(Def, lock_state: Def::LockState::Unlocked,
+          supported_operating_modes: 0xFFE2_u16,
+          operating_mode: Def::OperatingMode::Privacy)
+      end
+
+      cluster = build(Def, lock_state: Def::LockState::Unlocked,
+        supported_operating_modes: 0xFFE2_u16)
+      before_version = cluster.data_version
+      expect_status(write(cluster, Def::ATTR_OPERATING_MODE, Def::OperatingMode::Privacy.value),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.operating_mode.should eq(Def::OperatingMode::Normal)
+      cluster.data_version.should eq(before_version)
+    end
+
+    it "returns to Normal mode after manual unlocking from Privacy" do
+      cluster = build(Def, supported_operating_modes: 0xFFE2_u16,
+        operating_mode: Def::OperatingMode::Privacy)
+
+      expect_status(cluster.unlock,
+        Matter::InteractionModel::StatusCode::Failure)
+      cluster.lock_state.should eq(Def::LockState::Locked)
+
+      expect_success(cluster.unlock(source: Def::OperationSource::Manual))
+      cluster.lock_state.should eq(Def::LockState::Unlocked)
+      cluster.operating_mode.should eq(Def::OperatingMode::Normal)
+    end
+
+    it "publishes Normal mode before manual unlocking changes the lock state" do
+      cluster = build(Def, supported_operating_modes: 0xFFE2_u16,
+        operating_mode: Def::OperatingMode::Privacy)
+      published = [] of Tuple(UInt32, Def::LockState?, Def::OperatingMode)
+      cluster.on_attribute_changed = ->(_ep : UInt16, _cl : UInt32, attribute : UInt32) {
+        published << {attribute, cluster.lock_state, cluster.operating_mode}
+        nil
+      }
+
+      expect_success(cluster.unlock(source: Def::OperationSource::Manual))
+
+      published.should eq([
+        {Def::ATTR_OPERATING_MODE, Def::LockState::Locked, Def::OperatingMode::Normal},
+        {Def::ATTR_LOCK_STATE, Def::LockState::Unlocked, Def::OperatingMode::Normal},
+      ])
+    end
   end
 
   describe "lock commands" do
@@ -134,6 +180,22 @@ describe Matter::Cluster::DoorLock do
 
       status = result.as(Matter::InteractionModel::Status)
       status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedCommand)
+    end
+
+    it "unbolts without pulling the latch and reports an Unlock operation" do
+      cluster = build(Def, require_pin_for_remote_operation: true, default_pin_code: "2468")
+      emitted = [] of TLV::Any
+      cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _pr : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+        emitted << data if event == Def::EVENT_LOCK_OPERATION
+        nil
+      end
+
+      request = Def::UnboltDoorRequest.new(pin_code: "2468".to_slice)
+      expect_success(invoke(cluster, Def::CMD_UNBOLT_DOOR, request, fabric_index: 1_u8))
+
+      cluster.lock_state.should eq(Def::LockState::Unlocked)
+      emitted.size.should eq(1)
+      Def::Events::LockOperation.from_tlv(emitted.first).lock_operation_type.should eq(Def::LockOperationType::Unlock)
     end
   end
 
