@@ -16,6 +16,35 @@ private def index_reuse_attribute(im : Matter::Controller::ImClient,
     .attribute_data.as(IndexReuseIM::AttributeDataIB).data.as(TLV::Any)
 end
 
+private def index_reuse_bootstrap_with_same_root(previous : Matter::Controller::JointCommissioning::AnchorBootstrap,
+                                                 fabric_id : UInt64, controller_node_id : UInt64) : Matter::Controller::JointCommissioning::AnchorBootstrap
+  crypto = Matter::Crypto::StandardCrypto.new
+  root_key = previous.fabric.certificate_authority_key
+  root = previous.fabric.root_cert
+  icac_key = crypto.create_key_pair
+  icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+    icac_key.public_key, fabric_id, Matter::Controller::JointCommissioning::BOOTSTRAP_ICAC_ID,
+    root_key, Matter::Controller::JointCommissioning::BOOTSTRAP_RCAC_ID,
+    crypto.random_bytes(Matter::Controller::JointCommissioning::BOOTSTRAP_SERIAL_BYTES), crypto,
+    anchor: true, issuer_certificate: root)
+  controller_key = crypto.create_key_pair
+  base = Matter::Controller::FabricInfo.new(fabric_id: fabric_id,
+    controller_node_id: controller_node_id, ipk_value: crypto.random_bytes(Matter::Fabric::IPK_SIZE),
+    root_cert: root, root_public_key: root_key.public_key,
+    controller_noc: Bytes.empty, controller_private_key: controller_key.private_key,
+    root_private_key: root_key.private_key, admin_vendor_id: previous.fabric.admin_vendor_id,
+    intermediate_cert: icac, intermediate_private_key: icac_key.private_key)
+  temporary = Matter::Controller::JointCommissioning::AnchorBootstrap.new(base, icac_key.private_key)
+  noc = temporary.issue_anchor_administrator_noc(controller_node_id, controller_key.public_key)
+  fabric = Matter::Controller::FabricInfo.new(fabric_id: fabric_id,
+    controller_node_id: controller_node_id, ipk_value: base.ipk_value,
+    root_cert: root, root_public_key: root_key.public_key,
+    controller_noc: noc, controller_private_key: controller_key.private_key,
+    root_private_key: root_key.private_key, admin_vendor_id: previous.fabric.admin_vendor_id,
+    intermediate_cert: icac, intermediate_private_key: icac_key.private_key)
+  Matter::Controller::JointCommissioning::AnchorBootstrap.new(fabric, icac_key.private_key)
+end
+
 describe "Joint Fabric Administrator fabric index reuse" do
   anchor = E2E::Device["matter_joint_fabric_index_reuse_anchor"]
 
@@ -24,8 +53,8 @@ describe "Joint Fabric Administrator fabric index reuse" do
     new_anchor_node = 0xD202_u64
     old_bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0xD100_u64, 0xD101_u64, 0xFFF1_u16)
-    new_bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
-      0xD200_u64, 0xD201_u64, 0xFFF1_u16)
+    new_bootstrap = index_reuse_bootstrap_with_same_root(old_bootstrap, 0xD200_u64, 0xD201_u64)
+    new_bootstrap.fabric.root_cert.should eq(old_bootstrap.fabric.root_cert)
     store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
       File.join(E2E::LOG_DIR, "matter_joint_fabric_index_reuse_anchor.bootstrap.yml")))
     store.save(Matter::Controller::State.new(fabric: old_bootstrap.fabric,

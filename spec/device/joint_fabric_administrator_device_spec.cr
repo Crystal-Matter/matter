@@ -20,6 +20,10 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
     fabric_removed(index)
   end
 
+  def stage_fabric_removal_for_spec(index : UInt8) : Nil
+    before_fabric_removed(index)
+  end
+
   def select_anchor_administrator_fabric_for_spec(index : UInt8) : Nil
     select_anchor_administrator_fabric(index)
   end
@@ -77,12 +81,13 @@ class InterruptedJfaCommitSqlite < Matter::Storage::Sqlite
   end
 end
 
-private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64) : Matter::Fabric
+private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64,
+                                  root_key : Matter::Crypto::Key = Matter::Crypto::StandardCrypto.new.create_key_pair,
+                                  icac_key : Matter::Crypto::Key = Matter::Crypto::StandardCrypto.new.create_key_pair,
+                                  root_cert : Bytes? = nil) : Matter::Fabric
   crypto = Matter::Crypto::StandardCrypto.new
-  root_key = crypto.create_key_pair
-  icac_key = crypto.create_key_pair
   noc_key = crypto.create_key_pair
-  root = Matter::Crypto::MatterCertificate::Builder.root(root_key, 1_u64, Bytes[1], crypto)
+  root = root_cert || Matter::Crypto::MatterCertificate::Builder.root(root_key, 1_u64, Bytes[1], crypto)
   icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
     icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[2], crypto, anchor: true)
   noc = Matter::Crypto::MatterCertificate::Builder.node(
@@ -96,6 +101,15 @@ end
 
 private class FailingJfaMemory < Matter::Storage::Memory
   property? fail_next_administrator_write : Bool = false
+  property? fail_next_fabric_delete : Bool = false
+
+  def delete(collection : String, id : String) : Nil
+    if @fail_next_fabric_delete && collection == Matter::FabricTable::COLLECTION
+      @fail_next_fabric_delete = false
+      raise Matter::StorageError.new("Injected fabric document deletion failure")
+    end
+    super
+  end
 
   def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
     if @fail_next_administrator_write && collection == Matter::Storage::Collections::CLUSTERS &&
@@ -218,6 +232,176 @@ describe MatterJointFabricAdministrator::Device do
     before_commit.try(&.close) if before_commit.try(&.open?)
     device.try(&.shutdown!)
     File.delete?(path) if path
+  end
+
+  it "cleans retained Anchor credentials on restart after deletion without the post-delete callback" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    icac_key = crypto.create_key_pair
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64, icac_key: icac_key)
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
+    ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    backend = Matter::Storage::Memory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacKeyState.new(icac_key.private_key, icac_key.public_key).to_document)
+    first.install_test_fabric(fabric)
+
+    first.stage_fabric_removal_for_spec(1_u8)
+    first.joint_fabric_administrator.administrator_fabric_index.should be_nil
+    first.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should_not be_nil
+    first.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT).should_not be_nil
+    first.fabric_table.remove_fabric(1_u8).should be_true
+
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.prepare_for_start
+    restored.joint_fabric_administrator.administrator_fabric_index.should be_nil
+    restored.joint_fabric_datastore.joint_fabric_index.should be_nil
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should be_nil
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT).should be_nil
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+  end
+
+  it "retains Anchor credentials when fabric document deletion fails, then reattaches on restart" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    icac_key = crypto.create_key_pair
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64, icac_key: icac_key)
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
+    ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    backend = FailingJfaMemory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacKeyState.new(icac_key.private_key, icac_key.public_key).to_document)
+    first.install_test_fabric(fabric)
+    first.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+
+    backend.fail_next_fabric_delete = true
+    expect_raises(Matter::StorageError, "Injected fabric document deletion failure") do
+      first.operational_credentials.credentials.remove_fabric(1_u8)
+    end
+    first.fabric_table.get_fabric(1_u8).should eq(fabric)
+    first.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should_not be_nil
+
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.prepare_for_start
+    restored.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    restored.joint_fabric_datastore.joint_fabric_index.should eq(1_u8)
+    restored.operational_credentials.credentials.remove_fabric(1_u8).ok?.should be_true
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT).should be_nil
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+  end
+
+  it "fails closed for a legacy Anchor with no binding when the same root reuses its index" do
+    root_key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64, root_key: root_key)
+    new_fabric = jfa_reuse_test_fabric(0xB200_u64, 0xB203_u64,
+      root_key: root_key, root_cert: old_fabric.root_cert)
+    old_fabric.root_cert.should eq(new_fabric.root_cert)
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
+    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{Dir.tempdir}/jfa-index-#{Random::Secure.hex(6)}"
+    backend = Matter::Storage::Memory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    first.install_test_fabric(old_fabric)
+    first.joint_fabric_datastore.admin_list.map(&.node_id).should contain(old_fabric.node_id)
+    first.persistence.save_cluster(first.joint_fabric_datastore).should be_true
+    first.persistence.save_cluster(first.joint_fabric_administrator).should be_true
+    first.persistence.delete_app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT)
+
+    first.fabric_table.remove_fabric(1_u8).should be_true
+    first.fabric_table.add_fabric(new_fabric).should be_true
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.prepare_for_start
+    restored.joint_fabric_datastore.admin_list.map(&.node_id).should_not contain(old_fabric.node_id)
+    restored.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+  end
+
+  it "discards a legacy Datastore with no binding or saved AdministratorFabricIndex" do
+    root_key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64, root_key: root_key)
+    new_fabric = jfa_reuse_test_fabric(0xB200_u64, 0xB203_u64,
+      root_key: root_key, root_cert: old_fabric.root_cert)
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
+    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{Dir.tempdir}/jfa-index-#{Random::Secure.hex(6)}"
+    backend = Matter::Storage::Memory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    first.install_test_fabric(old_fabric)
+    first.joint_fabric_datastore.admin_list.map(&.node_id).should contain(old_fabric.node_id)
+    first.persistence.save_cluster(first.joint_fabric_datastore).should be_true
+    first.joint_fabric_administrator.administrator_fabric_index = nil
+    first.persistence.save_cluster(first.joint_fabric_administrator).should be_true
+    first.persistence.delete_app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT)
+
+    first.fabric_table.remove_fabric(1_u8).should be_true
+    first.fabric_table.add_fabric(new_fabric).should be_true
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.prepare_for_start
+    restored.joint_fabric_datastore.admin_list.map(&.node_id).should_not contain(old_fabric.node_id)
+    restored.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
   end
 
   it "reserves a fabric index when durable JFA cleanup fails before RemoveFabric" do

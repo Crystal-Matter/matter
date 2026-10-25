@@ -397,9 +397,43 @@ module MatterJointFabricAdministrator
     end
 
     protected def before_fabric_removed(fabric_index : UInt8) : Nil
-      # Fail closed before the index is reusable. If a later fabric-document
-      # delete fails, the still-installed fabric is reattached on restart.
-      fabric_removed(fabric_index)
+      # Erase fabric-scoped cluster state before the index becomes reusable.
+      # Keep the binding and credential documents until the fabric document
+      # has been deleted: if that deletion fails, startup can reattach the
+      # still-installed fabric. An orphan binding is cleared on startup if
+      # the post-delete callback was interrupted.
+      fabric = fabric_table.get_fabric(fabric_index) || return
+      if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index ||
+         bootstrap_joint_fabric_administrator.administrator_fabric_index == fabric_index ||
+         binding_index(APP_BOOTSTRAP_BINDING_DOCUMENT) == fabric_index
+        persist_fabric_binding(fabric, APP_BOOTSTRAP_BINDING_DOCUMENT)
+        @bootstrap_datastore_propagator.try(&.stop!)
+        @bootstrap_datastore_propagator = nil
+        bootstrap_joint_fabric_datastore.clear_fabric_state
+        bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
+        bootstrap_joint_fabric_administrator.service = nil
+        unless persistence.save_cluster(bootstrap_joint_fabric_datastore)
+          raise Matter::StorageError.new("Could not persist erased bootstrap Joint Fabric Datastore")
+        end
+      end
+      if joint_fabric_datastore.joint_fabric_index == fabric_index ||
+         joint_fabric_administrator.administrator_fabric_index == fabric_index ||
+         binding_index(APP_FABRIC_BINDING_DOCUMENT) == fabric_index
+        persist_fabric_binding(fabric, APP_FABRIC_BINDING_DOCUMENT)
+        @datastore_propagator.try(&.stop!)
+        @datastore_propagator = nil
+        joint_fabric_datastore.clear_fabric_state
+        joint_fabric_datastore.allow_jcm_pase_group_list = nil
+        joint_fabric_administrator.administrator_fabric_index = nil
+        joint_fabric_administrator.service = nil
+        unless persistence.save_cluster(joint_fabric_datastore)
+          raise Matter::StorageError.new("Could not persist erased Joint Fabric Datastore")
+        end
+      end
+      unless persistence.save_cluster(joint_fabric_administrator) &&
+             persistence.save_cluster(bootstrap_joint_fabric_administrator)
+        raise Matter::StorageError.new("Could not persist erased Joint Fabric Administrator index")
+      end
       persistence.flush
     end
 
@@ -411,14 +445,24 @@ module MatterJointFabricAdministrator
           fabric_removed(binding.fabric_index) unless fabric && binding.matches?(fabric)
         end
       end
-      { {joint_fabric_administrator, joint_fabric_datastore, APP_FABRIC_BINDING_DOCUMENT},
-       {bootstrap_joint_fabric_administrator, bootstrap_joint_fabric_datastore, APP_BOOTSTRAP_BINDING_DOCUMENT} }.each do |administrator, datastore, document_name|
+      { {joint_fabric_administrator, joint_fabric_datastore, 1_u16,
+         APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_BINDING_DOCUMENT, APP_ROLE_DOCUMENT, APP_ICAC_DOCUMENT},
+       {bootstrap_joint_fabric_administrator, bootstrap_joint_fabric_datastore, 2_u16,
+        APP_BOOTSTRAP_BINDING_DOCUMENT, APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_ROLE_DOCUMENT, APP_BOOTSTRAP_ICAC_DOCUMENT} }.each do |administrator, datastore, endpoint_id, document_name, other_document_name, role_document, icac_document|
+        next if persistence.app_document(document_name)
+
+        # Legacy stores without an authenticated binding cannot distinguish a
+        # new FabricID under the same root at a reused index. A partially
+        # erased store may lack the JFA index while retaining JFD lists.
         if index = administrator.administrator_fabric_index
-          fabric = fabric_table.get_fabric(index)
-          if !fabric || (!persistence.app_document(document_name) &&
-             !datastore.anchor_root_ca.empty? && datastore.anchor_root_ca != fabric.root_cert)
-            fabric_removed(index)
-          end
+          fabric_removed(index)
+        elsif !datastore.anchor_root_ca.empty?
+          datastore.clear_fabric_state
+          administrator.service = nil
+          persistence.forget_cluster(endpoint_id, Datastore::CLUSTER_ID)
+          persistence.delete_app_document(role_document)
+          persistence.delete_app_document(icac_document)
+          persistence.delete_app_document(APP_KEY_DOCUMENT) unless persistence.app_document(other_document_name)
         end
       end
     end
@@ -479,8 +523,8 @@ module MatterJointFabricAdministrator
         persistence.delete_app_document(APP_BOOTSTRAP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_BOOTSTRAP_ICAC_DOCUMENT)
         persistence.delete_app_document(APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT)
-        persistence.delete_app_document(APP_BOOTSTRAP_BINDING_DOCUMENT)
         persistence.delete_app_document(APP_KEY_DOCUMENT) unless joint_fabric_datastore.joint_fabric_index
+        persistence.delete_app_document(APP_BOOTSTRAP_BINDING_DOCUMENT)
         if propagation = @propagation_fabric
           if propagation.fabric_index == fabric_index && joint_fabric_datastore.joint_fabric_index != fabric_index
             if store = @controller_store
@@ -523,8 +567,8 @@ module MatterJointFabricAdministrator
         @anchor_role = false
         persistence.delete_app_document(APP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_ICAC_DOCUMENT)
-        persistence.delete_app_document(APP_FABRIC_BINDING_DOCUMENT)
         persistence.delete_app_document(APP_KEY_DOCUMENT) unless bootstrap_joint_fabric_datastore.joint_fabric_index
+        persistence.delete_app_document(APP_FABRIC_BINDING_DOCUMENT)
       end
       unless persistence.save_cluster(joint_fabric_administrator) &&
              persistence.save_cluster(bootstrap_joint_fabric_administrator)
