@@ -1,8 +1,8 @@
 require "./support/console"
 require "./support/main"
 
-# Synthetic SNP endpoint for wire interoperability; host supplies a tiny JPEG
-# marker payload only to exercise Matter response framing.
+# Synthetic SNP endpoint for wire interoperability; host supplies a checked-in
+# 320x240 JPEG so CaptureSnapshot returns a decodable still image.
 module MatterCameraSnapshot
   alias CameraAv = Matter::Cluster::CameraAvStreamManagement
 
@@ -33,10 +33,11 @@ module MatterCameraSnapshot
 
     protected def before_start : Nil
       camera = node.get_cluster!(1_u16, CameraAv)
+      snapshot = File.read("examples/assets/snapshot_320x240.jpg").to_slice
       camera.on_snapshot_allocate { |_request, _id| Matter::InteractionModel::Status.success }
       camera.on_snapshot_deallocate { |_id| Matter::InteractionModel::Status.success }
       camera.on_snapshot_capture do |_stream, resolution|
-        CameraAv::SnapshotImage.new(Bytes[0xFF, 0xD8, 0xFF, 0xD9], CameraAv::ImageCodec::Jpeg, resolution)
+        CameraAv::SnapshotImage.new(snapshot, CameraAv::ImageCodec::Jpeg, resolution)
       end
       super
     end

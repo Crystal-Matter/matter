@@ -60,8 +60,8 @@ soft livestream privacy is active. Allocations and the next ID persist; hosts
 must rebind callbacks after restart before capture or release can proceed.
 
 The synthetic [snapshot example](../examples/matter_camera_snapshot_device.cr)
-uses an Aggregator endpoint and a four-byte JPEG marker solely for Matter wire
-checks. Its payload is not a useful image or a claim of media delivery. The
+uses an Aggregator endpoint and a checked-in, decodable 320x240 JPEG for Matter
+wire checks. Its fixed payload is not a live camera source or a claim of media delivery. The
 mandatory nullable `CaptureSnapshot.SnapshotStreamID` field accepts explicit IDs
 and TLV Null auto-selection through TLV FieldState; an omitted field is rejected.
 The optional WMARK/OSD modify command and Camera device type topology remain
