@@ -97,8 +97,13 @@ local-time interval, which controls remote operation and the wire read of
 `OperatingMode`. The synthetic lock advertises these schedule features; its
 official chip-tool test checks a scheduled PIN across restart.
 
-A holiday boundary does not yet generate a data-version change or subscription
-report without another interaction. DisposableUser becomes disabled after its
+A holiday boundary now increments the data version and notifies OperatingMode
+subscribers when the effective mode changes, including after a restored schedule.
+Overlapping schedules with the same effective mode do not produce duplicate
+reports. A host that corrects its local clock, changes time zone, or crosses
+a daylight-saving transition should call `refresh_holiday_operating_mode` so
+the cluster can reschedule the next boundary against the new local wall time.
+DisposableUser becomes disabled after its
 first successful open; a lock operation does not consume it. ExpiringUser starts
 an absolute deadline on first successful credential use. The deadline is stored
 with the user record, survives a normal persistence flush and restart, and a

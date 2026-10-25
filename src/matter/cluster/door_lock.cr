@@ -106,7 +106,8 @@ module Matter
       private record Authorization, status : InteractionModel::Status? = nil,
         user_index : UInt16? = nil, credential : Credential? = nil
 
-      private record LocalScheduleTime, epoch_seconds : Int64, day_mask : UInt8, minute_of_day : Int32
+      private record LocalScheduleTime, epoch_seconds : Int64, day_mask : UInt8, minute_of_day : Int32,
+        nanosecond : Int32
 
       # The host confirms each physical stage before the cluster publishes its
       # corresponding LockState. An implementation must not return true until
@@ -115,6 +116,27 @@ module Matter
         abstract def unbolt : Bool
         abstract def pull_latch : Bool
         abstract def release_latch : Bool
+      end
+
+      # Applications with a simulated clock can supply a scheduler for
+      # deterministic holiday-boundary transitions.
+      abstract class HolidayTimer
+        abstract def schedule(delay : Time::Span, &block : -> Nil) : Proc(Nil)
+      end
+
+      class FiberHolidayTimer < HolidayTimer
+        def schedule(delay : Time::Span, &block : -> Nil) : Proc(Nil)
+          cancel = ::Channel(Nil).new
+          spawn do
+            select
+            when cancel.receive?
+              # Rescheduled or removed.
+            when timeout(delay)
+              block.call
+            end
+          end
+          -> { cancel.close unless cancel.closed? }
+        end
       end
 
       attribute 0x0000, :lock_state, LockState, nullable: true, default: LockState::Locked
@@ -140,7 +162,8 @@ module Matter
       attribute 0x0022, :led_settings, LedSettings, default: LedSettings::NoLedSignal, writable: true, write_access: :manage, optional: true
       attribute 0x0023, :auto_relock_time, UInt32, default: 0_u32, writable: true, write_access: :manage, optional: true
       attribute 0x0024, :sound_volume, SoundVolume, default: SoundVolume::Medium, writable: true, write_access: :manage, optional: true
-      attribute 0x0025, :operating_mode, OperatingMode, default: OperatingMode::Normal, writable: true, write_access: :manage
+      attribute 0x0025, :operating_mode, OperatingMode, default: OperatingMode::Normal, writable: true,
+        write_access: :manage, on_change: :track_operating_mode_change
       before_write :operating_mode do |mode|
         InteractionModel::Status.constraint_error if !operating_mode_supported?(mode) || (mode.privacy? && @lock_state != LockState::Locked)
       end
@@ -386,6 +409,9 @@ module Matter
       @lockout_until : Time? = nil
       @relock_generation : UInt64 = 0_u64
       @user_expiry_generations = {} of UInt16 => UInt64
+      @holiday_timer_generation : UInt64 = 0_u64
+      @cancel_holiday_timer : Proc(Nil)? = nil
+      @last_effective_operating_mode : OperatingMode = OperatingMode::Normal
 
       getter default_pin_code : String
 
@@ -432,6 +458,7 @@ module Matter
         @expiring_user_timeout : UInt16 = DEFAULT_EXPIRING_USER_TIMEOUT,
         @default_pin_code : String = DEFAULT_PIN_CODE,
         @local_time_provider : Proc(Time?) = -> : Time? { Time.local },
+        @holiday_timer : HolidayTimer = FiberHolidayTimer.new,
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
@@ -509,6 +536,7 @@ module Matter
             last_modified_fabric_index: @request_fabric_index
           )
         end
+        @last_effective_operating_mode = effective_operating_mode
       end
 
       # The DSL persists writable attributes. Keep the user database in the
@@ -684,6 +712,8 @@ module Matter
             end
           end
         end
+        @last_effective_operating_mode = effective_operating_mode
+        arm_next_holiday_boundary
       end
 
       # These local APIs stage Aliro material for a future reader delegate.
@@ -1423,6 +1453,7 @@ module Matter
           request.operating_mode
         )
         increment_version
+        update_holiday_operating_mode(version_already_changed: true)
         InteractionModel::Status.success
       end
 
@@ -1448,6 +1479,7 @@ module Matter
         end
 
         increment_version
+        update_holiday_operating_mode(version_already_changed: true)
         InteractionModel::Status.success
       end
 
@@ -1858,6 +1890,49 @@ module Matter
         @operating_mode
       end
 
+      private def track_operating_mode_change(_mode : OperatingMode) : Nil
+        @last_effective_operating_mode = effective_operating_mode
+        arm_next_holiday_boundary
+      end
+
+      # Re-evaluate after a host clock correction as well as from the scheduled
+      # holiday timer. The data version moves only when the wire value changes.
+      def refresh_holiday_operating_mode : Nil
+        update_holiday_operating_mode(version_already_changed: false)
+      end
+
+      private def update_holiday_operating_mode(version_already_changed : Bool) : Nil
+        mode = effective_operating_mode
+        if mode != @last_effective_operating_mode
+          @last_effective_operating_mode = mode
+          if version_already_changed
+            notify_changed(ATTR_OPERATING_MODE)
+          else
+            increment_version_and_notify(ATTR_OPERATING_MODE)
+          end
+        end
+        arm_next_holiday_boundary
+      end
+
+      private def arm_next_holiday_boundary : Nil
+        @cancel_holiday_timer.try(&.call)
+        @cancel_holiday_timer = nil
+        @holiday_timer_generation &+= 1_u64
+        generation = @holiday_timer_generation
+        return unless @feature_map.holiday_schedules?
+        return unless now = local_schedule_time
+
+        next_boundary = @holiday_schedules.values.flat_map do |schedule|
+          [schedule.local_start_time.to_i64, schedule.local_end_time.to_i64 + 1_i64]
+        end.select { |boundary| boundary > now.epoch_seconds }.min?
+        return unless next_boundary
+
+        delay = (next_boundary - now.epoch_seconds).seconds - now.nanosecond.nanoseconds
+        @cancel_holiday_timer = @holiday_timer.schedule(delay) do
+          refresh_holiday_operating_mode if generation == @holiday_timer_generation
+        end
+      end
+
       def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
         return tlv(effective_operating_mode.value) if attribute_id == ATTR_OPERATING_MODE
         super
@@ -1872,7 +1947,8 @@ module Matter
         epoch = Time.utc(time.year, time.month, time.day, time.hour, time.minute, time.second).to_unix
         # Crystal numbers Sunday as 7; Matter's WeekDay bitmap uses bit 0.
         day_bit = time.day_of_week.value % 7
-        LocalScheduleTime.new(epoch, (1_u8 << day_bit).to_u8, time.hour * MINUTES_PER_HOUR + time.minute)
+        LocalScheduleTime.new(epoch, (1_u8 << day_bit).to_u8,
+          time.hour * MINUTES_PER_HOUR + time.minute, time.nanosecond)
       end
 
       private def valid_week_day_schedule?(schedule : WeekDaySchedule) : Bool

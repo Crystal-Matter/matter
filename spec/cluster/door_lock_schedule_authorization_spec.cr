@@ -2,6 +2,25 @@ require "../spec_helper"
 
 private alias ScheduledDoorLock = Matter::Cluster::DoorLock
 
+private class HolidayTestTimer < ScheduledDoorLock::HolidayTimer
+  @callbacks = [] of Tuple(Time, Proc(Nil))
+
+  def initialize(@now : Proc(Time))
+  end
+
+  def schedule(delay : Time::Span, &block : -> Nil) : Proc(Nil)
+    active = true
+    @callbacks << {@now.call + delay, -> { block.call if active }}
+    -> { active = false; nil }
+  end
+
+  def fire_due : Nil
+    due, future = @callbacks.partition { |deadline, _| deadline <= @now.call }
+    @callbacks = future
+    due.each { |_, callback| callback.call }
+  end
+end
+
 private def schedule_test_lock(clock : Proc(Time?), wrong_code_entry_limit : UInt8 = 3_u8) : ScheduledDoorLock
   build(ScheduledDoorLock,
     feature_map: ScheduledDoorLock::Feature::PinCredential | ScheduledDoorLock::Feature::CredentialOverTheAirAccess |
@@ -131,5 +150,110 @@ describe "Door Lock schedule authorization" do
     read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::Normal.value)
     expect_success(invoke(lock, ScheduledDoorLock::CMD_UNLOCK_DOOR,
       ScheduledDoorLock::UnlockDoorRequest.new("9999".to_slice)))
+  end
+
+  it "reports only actual OperatingMode transitions at holiday boundaries" do
+    now = Time.utc(2026, 10, 23, 12, 0, 0)
+    clock = -> : Time? { now }
+    timer = HolidayTestTimer.new(-> { now })
+    lock = build(ScheduledDoorLock,
+      feature_map: ScheduledDoorLock::Feature::User | ScheduledDoorLock::Feature::HolidaySchedules,
+      local_time_provider: clock,
+      holiday_timer: timer)
+    notifications = [] of UInt32
+    lock.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) { notifications << attribute }
+
+    expect_success(invoke(lock, ScheduledDoorLock::CMD_SET_HOLIDAY_SCHEDULE,
+      ScheduledDoorLock::SetHolidayScheduleRequest.new(1_u8,
+        local_schedule_epoch(now + 1.hour), local_schedule_epoch(now + 3.hours),
+        ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock)))
+    version_after_set = lock.data_version
+    notifications.should be_empty
+
+    now += 1.hour
+    timer.fire_due
+    read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock.value)
+    lock.data_version.should eq(version_after_set &+ 1_u32)
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE])
+
+    # Adding an overlapping schedule with the same mode does not change the wire value.
+    expect_success(invoke(lock, ScheduledDoorLock::CMD_SET_HOLIDAY_SCHEDULE,
+      ScheduledDoorLock::SetHolidayScheduleRequest.new(2_u8,
+        local_schedule_epoch(now + 1.hour), local_schedule_epoch(now + 3.hours),
+        ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock)))
+    notifications.size.should eq(1)
+    now += 2.hours + 1.second
+    timer.fire_due
+    read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock.value)
+    notifications.size.should eq(1)
+
+    now += 1.hour
+    timer.fire_due
+    read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::Normal.value)
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE, ScheduledDoorLock::ATTR_OPERATING_MODE])
+
+    timer.fire_due
+    notifications.size.should eq(2)
+
+    # A host clock correction can re-enter an interval without waiting for an old timer.
+    now -= 1.hour
+    lock.refresh_holiday_operating_mode
+    read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock.value)
+    notifications.size.should eq(3)
+  end
+
+  it "arms a restored holiday schedule without reporting a false transition" do
+    now = Time.utc(2026, 10, 23, 12, 0, 0)
+    clock = -> : Time? { now }
+    features = ScheduledDoorLock::Feature::User | ScheduledDoorLock::Feature::HolidaySchedules
+    first = build(ScheduledDoorLock, feature_map: features, local_time_provider: clock,
+      holiday_timer: HolidayTestTimer.new(-> { now }))
+    expect_success(invoke(first, ScheduledDoorLock::CMD_SET_HOLIDAY_SCHEDULE,
+      ScheduledDoorLock::SetHolidayScheduleRequest.new(1_u8,
+        local_schedule_epoch(now + 1.hour), local_schedule_epoch(now + 2.hours),
+        ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock)))
+
+    timer = HolidayTestTimer.new(-> { now })
+    restored = build(ScheduledDoorLock, feature_map: features, local_time_provider: clock, holiday_timer: timer)
+    notifications = [] of UInt32
+    restored.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) { notifications << attribute }
+    restored.restore_state(first.save_state.as(Matter::Storage::Document))
+    version_after_restore = restored.data_version
+    notifications.should be_empty
+
+    now += 1.hour
+    timer.fire_due
+    restored.data_version.should eq(version_after_restore &+ 1_u32)
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE])
+
+    expect_success(invoke(restored, ScheduledDoorLock::CMD_CLEAR_HOLIDAY_SCHEDULE,
+      ScheduledDoorLock::ClearHolidayScheduleRequest.new(1_u8)))
+    read(restored, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::Normal.value)
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE, ScheduledDoorLock::ATTR_OPERATING_MODE])
+    now += 2.hours + 1.second
+    timer.fire_due
+    notifications.size.should eq(2)
+  end
+
+  it "does not report a boundary when the configured mode already matches the holiday" do
+    now = Time.utc(2026, 10, 23, 12, 0, 0)
+    timer = HolidayTestTimer.new(-> { now })
+    lock = build(ScheduledDoorLock,
+      feature_map: ScheduledDoorLock::Feature::User | ScheduledDoorLock::Feature::HolidaySchedules,
+      local_time_provider: -> : Time? { now }, holiday_timer: timer)
+    notifications = [] of UInt32
+    lock.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) { notifications << attribute }
+    lock.operating_mode = ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE])
+
+    expect_success(invoke(lock, ScheduledDoorLock::CMD_SET_HOLIDAY_SCHEDULE,
+      ScheduledDoorLock::SetHolidayScheduleRequest.new(1_u8,
+        local_schedule_epoch(now + 1.hour), local_schedule_epoch(now + 2.hours),
+        ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock)))
+    version_after_set = lock.data_version
+    now += 1.hour
+    timer.fire_due
+    lock.data_version.should eq(version_after_set)
+    notifications.size.should eq(1)
   end
 end
