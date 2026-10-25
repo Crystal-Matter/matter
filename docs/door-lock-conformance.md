@@ -5,6 +5,9 @@ declares cluster revision 10. Crystal Matter currently advertises revision 9.
 Revision 10 removes obsolete Zigbee commands and the reportable attribute
 quality; the Crystal cluster already omits those commands.
 
+With the Unbolting feature, `UnboltDoor` retracts the bolt without pulling
+the latch. It reports `Unlocked` lock state and an `Unlock` operation event.
+
 The server now uses the specified `SoundVolume` values (`High = 2`,
 `Medium = 3`) and an inverse `SupportedOperatingModes` bitmap. Its default
 supports the mandatory Normal and NoRemoteLockUnlock modes, marks optional

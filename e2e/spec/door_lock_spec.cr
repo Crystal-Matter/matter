@@ -68,6 +68,12 @@ describe "matter_door_lock example" do
     read_int(device, "doorlock", "lock-state", "LockState").should eq locked
   end
 
+  it "unbolts without pulling the latch" do
+    expect_success(device.invoke("doorlock", "unbolt-door", options: timed + pin))
+    read_int(device, "doorlock", "lock-state", "LockState").should eq unlocked
+    expect_success(device.invoke("doorlock", "lock-door", options: timed + pin))
+  end
+
   it "rejects remote operation without a PIN" do
     result = device.invoke("doorlock", "unlock-door", options: timed)
     result.success?.should be_false

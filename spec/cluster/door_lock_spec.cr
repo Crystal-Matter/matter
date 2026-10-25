@@ -135,6 +135,22 @@ describe Matter::Cluster::DoorLock do
       status = result.as(Matter::InteractionModel::Status)
       status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedCommand)
     end
+
+    it "unbolts without pulling the latch and reports an Unlock operation" do
+      cluster = build(Def, require_pin_for_remote_operation: true, default_pin_code: "2468")
+      emitted = [] of TLV::Any
+      cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _pr : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+        emitted << data if event == Def::EVENT_LOCK_OPERATION
+        nil
+      end
+
+      request = Def::UnboltDoorRequest.new(pin_code: "2468".to_slice)
+      expect_success(invoke(cluster, Def::CMD_UNBOLT_DOOR, request, fabric_index: 1_u8))
+
+      cluster.lock_state.should eq(Def::LockState::Unlocked)
+      emitted.size.should eq(1)
+      Def::Events::LockOperation.from_tlv(emitted.first).lock_operation_type.should eq(Def::LockOperationType::Unlock)
+    end
   end
 
   describe "door position sensor updates" do

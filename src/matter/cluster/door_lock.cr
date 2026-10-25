@@ -1144,14 +1144,14 @@ module Matter
       def unbolt(pin : String? = nil, source : OperationSource = OperationSource::Remote) : InteractionModel::Status
         return InteractionModel::Status.unsupported_command unless @feature_map.unbolting?
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
-        authorization = authorize_remote_operation(pin, LockOperationType::Unlatch, source)
+        authorization = authorize_remote_operation(pin, LockOperationType::Unlock, source)
         if status = authorization.status
           return status
         end
 
-        self.lock_state = LockState::Unlatched
+        self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
-        complete_lock_operation(LockOperationType::Unlatch, source, authorization)
+        complete_lock_operation(LockOperationType::Unlock, source, authorization)
         InteractionModel::Status.success
       end
 
