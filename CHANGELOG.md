@@ -29,6 +29,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   isolated chip-tool fixture covers write, read, and restart behavior; outbound
   command delivery through bindings remains application-owned.
 
+### Binding fabric removal
+
+- Erase and persist only the removed fabric's Binding targets before deleting
+  its fabric record. A failed Binding write keeps the index reserved for retry;
+  startup also repairs orphaned targets left by interrupted older removals.
+
 ### Door Lock
 
 - Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted

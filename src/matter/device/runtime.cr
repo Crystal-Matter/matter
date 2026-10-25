@@ -22,6 +22,7 @@ require "../cluster/general_diagnostics"
 require "../cluster/network_commissioning"
 require "../cluster/group_key_management"
 require "../cluster/groupcast"
+require "../cluster/binding"
 require "./groupcast_sender"
 require "../cluster/ota_requestor"
 require "../cluster/tls_certificate_management"
@@ -250,6 +251,17 @@ module Matter
         end
         @persistence.complete_credential_recovery
       end
+      # A crash can occur after the fabric document is removed but before its
+      # Binding state is saved. Erase those orphaned targets before index reuse.
+      @message_handler.clusters.values.each do |cluster|
+        next unless binding = cluster.as?(Cluster::Binding)
+        binding.binding.compact_map(&.fabric_index).uniq!.each do |index|
+          next if @fabric_table.get_fabric(index)
+          if binding.remove_fabric(index) && !@persistence.save_cluster(binding)
+            raise StorageError.new("Could not persist recovered Binding cleanup for fabric #{index}")
+          end
+        end
+      end
       @message_handler.refresh_group_memberships
       if @groupcast_sender_enabled
         groupcast = @node.get_cluster(Cluster::Groupcast).as(Cluster::Groupcast)
@@ -291,6 +303,18 @@ module Matter
       )
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
+      operational_credentials.on_before_fabric_removed = ->(fabric_index : UInt8) do
+        @message_handler.clusters.values.each do |cluster|
+          next unless binding = cluster.as?(Cluster::Binding)
+          binding.remove_fabric(fabric_index)
+          # Always rewrite the document: a prior attempt may have erased the
+          # in-memory target but failed to persist it before aborting removal.
+          unless @persistence.save_cluster(binding)
+            @persistence.mark_dirty(binding)
+            raise StorageError.new("Could not persist erased Binding for fabric #{fabric_index}")
+          end
+        end
+      end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))

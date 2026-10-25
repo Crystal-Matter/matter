@@ -198,6 +198,11 @@ module Matter
       # A fabric was removed via RemoveFabric
       property on_fabric_removed : Proc(UInt8, Nil)?
 
+      # Persist fabric-scoped state that must be erased before its index can be
+      # assigned to another fabric. Failure aborts removal while the index is
+      # still reserved.
+      property on_before_fabric_removed : Proc(UInt8, Nil)?
+
       # A fabric's operational identity changed via UpdateNOC or rollback.
       property on_fabric_updated : Proc(Fabric, Nil)?
 
@@ -613,6 +618,8 @@ module Matter
           Log.warn { "RemoveFabric: fabric #{fabric_index} not found" }
           return NocOutcome.new(NocStatus::InvalidFabricIndex, fabric_index, "Fabric not found")
         end
+
+        @on_before_fabric_removed.try(&.call(fabric_index))
 
         unless @fabric_table.remove_fabric(fabric_index)
           return NocOutcome.new(NocStatus::InvalidFabricIndex, debug_text: "Failed to remove fabric")

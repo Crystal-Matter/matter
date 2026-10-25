@@ -246,6 +246,7 @@ module Matter
         session_lookup, :session_lookup=,
         on_fabric_added, :on_fabric_added=,
         on_fabric_removed, :on_fabric_removed=,
+        on_before_fabric_removed, :on_before_fabric_removed=,
         on_fabric_updated, :on_fabric_updated=,
         set_attestation_credentials, set_attestation_from_manager,
         restore_root_cert,
