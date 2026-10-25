@@ -95,6 +95,16 @@ item below as covered only to the extent of its cited tests.
   Commissioning window. A freshly commissioned but unprovisioned Administrator
   serves the specified fail-safe and ICAC validation statuses while its
   AdministratorFabricIndex remains null.
+- AddICAC stores a provisional AdministratorFabricIndex and its rollback value
+  in one cluster document. A restart before CommissioningComplete restores the
+  previous index before the cluster serves reads. The service treats the
+  cross-signed ICAC as uncommitted until its persistence callback returns. A
+  host must reselect its committed fabric after restoring clusters. The
+  committed ICAC and cluster document use separate writes, so a crash after
+  the ICAC write but before clearing the provisional marker can restore the
+  prior index.
+  The worked JFA example does this in `before_start` when it reattaches its
+  validated fabric, before operational advertisement.
 - The Docker two-administrator test bootstraps separate fabrics, performs the
   JCM credential exchange between the Crystal implementations, and checks the
   stored cross-signed ICAC. CommissioningComplete is deferred to the Anchor

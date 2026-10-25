@@ -10,6 +10,19 @@ module Matter
 
       MIN_ADMINISTRATOR_FABRIC_INDEX =   1_u8
       MAX_ADMINISTRATOR_FABRIC_INDEX = 254_u8
+      PROVISIONAL_FABRIC_INDEX_KEY   = "provisional_administrator_fabric_index"
+
+      private struct ProvisionalFabricIndex
+        include Storage::Record
+
+        getter previous : UInt8?
+
+        def initialize(@previous : UInt8?)
+        end
+      end
+
+      @provisional_fabric_index_active = false
+      @previous_administrator_fabric_index : UInt8? = nil
 
       enum ICACCSRResponseStatusCodeEnum : UInt8
         OK                              = 0
@@ -146,6 +159,62 @@ module Matter
         @administrator_fabric_index = value
         increment_version_and_notify(ATTR_ADMINISTRATOR_FABRIC_INDEX)
         @on_administrator_fabric_index_changed.try &.call(previous, value)
+      end
+
+      # AddICAC changes this attribute under a fail-safe. Keep its rollback
+      # value in the same cluster document, so an interrupted process cannot
+      # restore the provisional index as if it were committed.
+      def begin_provisional_administrator_fabric_index(value : UInt8) : Nil
+        raise Matter::ConfigurationError.new("AdministratorFabricIndex is already provisional") if @provisional_fabric_index_active
+        if value < MIN_ADMINISTRATOR_FABRIC_INDEX || value > MAX_ADMINISTRATOR_FABRIC_INDEX
+          raise Matter::ConfigurationError.new("AdministratorFabricIndex must be in 1..254")
+        end
+
+        @previous_administrator_fabric_index = @administrator_fabric_index
+        @provisional_fabric_index_active = true
+        self.administrator_fabric_index = value
+        increment_version
+      end
+
+      def commit_provisional_administrator_fabric_index : Nil
+        return unless @provisional_fabric_index_active
+
+        @provisional_fabric_index_active = false
+        @previous_administrator_fabric_index = nil
+        increment_version
+      end
+
+      def rollback_provisional_administrator_fabric_index : Nil
+        return unless @provisional_fabric_index_active
+
+        previous = @previous_administrator_fabric_index
+        @provisional_fabric_index_active = false
+        @previous_administrator_fabric_index = nil
+        self.administrator_fabric_index = previous
+        increment_version
+      end
+
+      private def extend_persisted_state(document : Storage::Document) : Nil
+        if @provisional_fabric_index_active
+          document[PROVISIONAL_FABRIC_INDEX_KEY] = ProvisionalFabricIndex.new(@previous_administrator_fabric_index).to_document
+        end
+      end
+
+      private def restore_persisted_extension(document : Storage::Document) : Nil
+        if value = document[PROVISIONAL_FABRIC_INDEX_KEY]?
+          state = ProvisionalFabricIndex.from_document(value.as?(Storage::Document) ||
+                                                       raise StorageError.new("Invalid provisional AdministratorFabricIndex"))
+          previous = state.previous
+          if previous && (previous < MIN_ADMINISTRATOR_FABRIC_INDEX || previous > MAX_ADMINISTRATOR_FABRIC_INDEX)
+            raise StorageError.new("Invalid previous AdministratorFabricIndex")
+          end
+          @previous_administrator_fabric_index = previous
+          @provisional_fabric_index_active = true
+        end
+      end
+
+      private def after_restore_state : Nil
+        rollback_provisional_administrator_fabric_index
       end
 
       command 0x00, :icaccsr_request, response_id: 0x01, access: :administer
