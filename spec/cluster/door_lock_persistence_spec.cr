@@ -13,6 +13,61 @@ private def persistent_lock(local_time_provider : Proc(Time?) = -> : Time? { Tim
     local_time_provider: local_time_provider)
 end
 
+private def remote_unlock(lock : DoorLock, pin : String) : Matter::InteractionModel::Status
+  invoke(lock, DoorLock::CMD_UNLOCK_DOOR,
+    DoorLock::UnlockDoorRequest.new(pin.to_slice)).as(Matter::InteractionModel::Status)
+end
+
+describe "Door Lock PIN lockout persistence" do
+  it "keeps partial failed PIN attempts across a restart" do
+    first = build(DoorLock, require_pin_for_remote_operation: true,
+      wrong_code_entry_limit: 2_u8, user_code_temporary_disable_time: 2_u8,
+      default_pin_code: "2468")
+    remote_unlock(first, "0000").cluster_status.should eq(DoorLock::StatusCode::InvalidField.value)
+
+    restored = build(DoorLock, require_pin_for_remote_operation: true,
+      wrong_code_entry_limit: 2_u8, user_code_temporary_disable_time: 2_u8,
+      default_pin_code: "2468")
+    restored.restore_state(first.save_state.as(Matter::Storage::Document))
+    remote_unlock(restored, "0000").cluster_status.should eq(DoorLock::StatusCode::InvalidField.value)
+    remote_unlock(restored, "2468").cluster_status.should eq(DoorLock::StatusCode::Failure.value)
+  end
+
+  it "keeps an active temporary PIN lockout across a restart" do
+    first = build(DoorLock, require_pin_for_remote_operation: true,
+      wrong_code_entry_limit: 1_u8, user_code_temporary_disable_time: 2_u8,
+      default_pin_code: "2468")
+    remote_unlock(first, "0000").cluster_status.should eq(DoorLock::StatusCode::InvalidField.value)
+
+    restored = build(DoorLock, require_pin_for_remote_operation: true,
+      wrong_code_entry_limit: 1_u8, user_code_temporary_disable_time: 2_u8,
+      default_pin_code: "2468")
+    restored.restore_state(first.save_state.as(Matter::Storage::Document))
+    remote_unlock(restored, "2468").cluster_status.should eq(DoorLock::StatusCode::Failure.value)
+    sleep 2.1.seconds
+    remote_unlock(restored, "2468").success?.should be_true
+  end
+
+  it "loads a database saved before PIN security state was persisted" do
+    first = build(DoorLock, require_pin_for_remote_operation: true, default_pin_code: "2468")
+    expect_success(invoke(first, DoorLock::CMD_SET_USER, DoorLock::SetUserRequest.new(
+      operation_type: DoorLock::DataOperationType::Add,
+      user_index: 2_u16,
+      user_name: "Earlier snapshot",
+      user_status: DoorLock::UserStatus::OccupiedEnabled
+    )))
+    document = first.save_state.as(Matter::Storage::Document)
+    database = document[DoorLock::PERSISTED_DATABASE_KEY].as(Matter::Storage::Document)
+    database.delete("failed_remote_pin_attempts")
+    database.delete("lockout_until")
+
+    restored = build(DoorLock, require_pin_for_remote_operation: true, default_pin_code: "2468")
+    restored.restore_state(document)
+    restored.get_user(DoorLock::GetUserRequest.new(2_u16)).user_name.should eq("Earlier snapshot")
+    remote_unlock(restored, "2468").success?.should be_true
+  end
+end
+
 describe Matter::Cluster::DoorLock do
   it "authorizes a Sunday weekly schedule PIN after a persisted restart" do
     clock = -> : Time? { Time.utc(2026, 10, 25, 12, 0, 0) }

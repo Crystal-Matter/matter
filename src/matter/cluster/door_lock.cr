@@ -326,6 +326,8 @@ module Matter
         getter year_day_schedules : Array(PersistedYearDaySchedule)
         getter holiday_schedules : Array(PersistedHolidaySchedule)
         getter aliro_reader_config : AliroReaderConfig?
+        getter failed_remote_pin_attempts : UInt8 = 0_u8
+        getter lockout_until : Time?
 
         def initialize(
           @users : Array(UserRecord),
@@ -334,6 +336,8 @@ module Matter
           @year_day_schedules : Array(PersistedYearDaySchedule),
           @holiday_schedules : Array(PersistedHolidaySchedule),
           @aliro_reader_config : AliroReaderConfig? = nil,
+          @failed_remote_pin_attempts : UInt8 = 0_u8,
+          @lockout_until : Time? = nil,
         )
         end
       end
@@ -487,7 +491,9 @@ module Matter
           week_day_schedules: week_days,
           year_day_schedules: year_days,
           holiday_schedules: holidays,
-          aliro_reader_config: @aliro_reader_config
+          aliro_reader_config: @aliro_reader_config,
+          failed_remote_pin_attempts: @failed_remote_pin_attempts,
+          lockout_until: @lockout_until
         ).to_document
       end
 
@@ -511,6 +517,10 @@ module Matter
         return unless value
         database = PersistedDatabase.from_document(value.as?(Storage::Document) ||
                                                    raise StorageError.new("Invalid persisted Door Lock database"))
+        if database.failed_remote_pin_attempts >= @wrong_code_entry_limit ||
+           (database.lockout_until && database.failed_remote_pin_attempts != 0_u8)
+          raise StorageError.new("Invalid persisted Door Lock PIN lockout state")
+        end
         if (aliro_reader = database.aliro_reader_config) && !valid_aliro_reader_config?(aliro_reader)
           raise StorageError.new("Invalid persisted Door Lock Aliro reader configuration")
         end
@@ -617,6 +627,8 @@ module Matter
           AliroReaderConfig.new(restored_config.signing_key, restored_config.verification_key,
             restored_config.group_identifier, restored_config.group_resolving_key)
         end
+        @failed_remote_pin_attempts = database.failed_remote_pin_attempts
+        @lockout_until = database.lockout_until
       end
 
       private def after_restore_state : Nil
@@ -1917,11 +1929,14 @@ module Matter
           @failed_remote_pin_attempts = 0_u8
           @lockout_until = Time.utc + @user_code_temporary_disable_time.seconds
         end
+        increment_version
       end
 
       private def clear_failed_pin_state : Nil
+        changed = @failed_remote_pin_attempts != 0_u8 || !@lockout_until.nil?
         @failed_remote_pin_attempts = 0_u8
         @lockout_until = nil
+        increment_version if changed
       end
 
       # Relocks after *after_seconds* unless a later lock operation superseded it
