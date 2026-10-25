@@ -190,8 +190,10 @@ codec rejects private packets without an explicit privacy key.
 derives their privacy keys and session IDs, tries every colliding session ID,
 authenticates the AES-CCM payload, then checks the mapped Group ID. It tracks
 separate data and control replay windows per fabric/source, retaining peer
-entries until restart as the TrustFirst policy requires. The caller must supply
-only currently installed epoch keys. `Session::GroupOutgoingCounters` reserves
+entries until restart or fabric removal as the TrustFirst policy requires. The caller must supply
+only currently installed epoch keys. Removing a fabric clears just its inbound
+replay windows before its local index can be reused; rotating an epoch key on
+an installed fabric retains the windows. `Session::GroupOutgoingCounters` reserves
 blocks of node-global data and control counters in durable storage before use;
 it skips unused values after restart and refuses wraparound. A sender passes
 the returned value to `GroupSecurePacket#encode`.
@@ -199,8 +201,8 @@ the returned value to `GroupSecurePacket#encode`.
 The device runtime joins PerGroupId IPv6 multicast addresses for groups with
 both fabric-scoped GroupTable membership and a GroupKeyMap binding. Groups
 membership may be provisioned before its key mapping.
-Fabric removal clears its key sets, mappings, group names, and multicast joins
-before the local FabricIndex can be reused.
+Fabric removal clears its key sets, mappings, group names, replay windows,
+and multicast joins before the local FabricIndex can be reused.
 It authenticates private group packets against mapped epoch keys before
 parsing commands, replay checks, or ACL evaluation. A group command path
 without an Endpoint tag expands over member endpoints; an explicit Endpoint

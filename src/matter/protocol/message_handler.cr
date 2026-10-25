@@ -812,6 +812,7 @@ module Matter
       # Remove every group credential and membership associated with a fabric
       # before its local index can be reused by a new commissioner.
       def forget_group_fabric(fabric_index : UInt8) : Nil
+        @group_packets.forget_fabric_reception(fabric_index)
         @node.get_cluster(Cluster::Groupcast).try(&.remove_fabric(fabric_index))
         @node.get_cluster(Cluster::GroupKeyManagement).try(&.remove_fabric(fabric_index))
         @node.clusters.each_value do |cluster|
