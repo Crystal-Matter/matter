@@ -55,6 +55,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Count invalid verified RFID and biometric presentations toward the same
   temporary lockout as remote PIN failures, and reset that count after a
   successful credential. Reader outages do not count as wrong credentials.
+- Advertise Unbolting only with an explicit host actuator. Confirm bolt,
+  latch-pull, and latch-release stages before publishing the required
+  `Unlatched`/`Unlocked` states and operation events; report actuator failures.
 
 ### General Diagnostics test payload
 
