@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -35,6 +36,7 @@ CONDITIONAL_CONFORMANCE = {
     "provisionalConform",
     "disallowConform",
 }
+DEFAULT_NOTES = Path(__file__).resolve().parents[1] / "docs" / "protocol-coverage-notes.json"
 
 
 @dataclass(frozen=True)
@@ -289,7 +291,34 @@ def _ids(ids: frozenset[int]) -> str:
     return ", ".join(f"0x{value:04X}" for value in sorted(ids)) or "—"
 
 
-def render_markdown(report: CoverageReport, source_count: int, source_digest: str) -> str:
+def load_review_notes(path: Path) -> dict[int, str]:
+    """Load maintained qualitative notes separately from measured declarations."""
+    def unique_pairs(pairs: list[tuple[str, str]]) -> dict[str, str]:
+        values = {}
+        for key, value in pairs:
+            if key in values:
+                raise ValueError(f"Duplicate review note ID {key}: {path}")
+            values[key] = value
+        return values
+
+    raw = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_pairs)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Review notes must be a JSON object: {path}")
+    notes = {}
+    for key, value in raw.items():
+        if not re.fullmatch(r"0x[0-9A-F]{4}", key):
+            raise ValueError(f"Invalid review note ID {key!r}: {path}")
+        if not isinstance(value, str) or not value.strip() or "|" in value or "\n" in value:
+            raise ValueError(f"Invalid review note for {key}: {path}")
+        notes[int(key, 16)] = value
+    return notes
+
+
+def render_markdown(
+    report: CoverageReport, source_count: int, source_digest: str,
+    review_notes: dict[int, str] | None = None,
+) -> str:
+    review_notes = review_notes or {}
     entries = list(report.entries.values())
     present = [entry for entry in entries if entry.implemented]
     matching = sum(entry.revision_matches is True for entry in present)
@@ -307,6 +336,9 @@ def render_markdown(report: CoverageReport, source_count: int, source_digest: st
         "It does not verify types, feature-dependent requirements, commands, events,",
         "behavior, interoperability,",
         "or certification. A matching row is not a completeness claim.",
+        "The qualitative review notes are maintained in",
+        "[`protocol-coverage-notes.json`](protocol-coverage-notes.json); they are not",
+        "verified by this declaration scan.",
         "",
         "See [server command and event declaration audit](protocol-command-event-coverage.md)",
         "for a separate comparison of literal command and event IDs.",
@@ -321,8 +353,8 @@ def render_markdown(report: CoverageReport, source_count: int, source_digest: st
         f"- Crystal IDs absent from the XML input: {len(report.crystal_only)}"
         f"{f' ({_ids(report.crystal_only)})' if report.crystal_only else ''}",
         "",
-        "| Cluster ID | XML name | XML rev | Crystal rev | Mandatory attrs absent / Crystal-optional |",
-        "| --- | --- | ---: | ---: | --- |",
+        "| Cluster ID | XML name | XML rev | Crystal rev | Mandatory attrs absent / Crystal-optional | Review notes |",
+        "| --- | --- | ---: | ---: | --- | --- |",
     ]
     for entry in entries:
         xml = entry.xml
@@ -338,7 +370,7 @@ def render_markdown(report: CoverageReport, source_count: int, source_digest: st
             f"| 0x{xml.cluster_id:04X} | {xml.name.replace('|', '&#124;')} | "
             f"{xml.revision if xml.revision is not None else '?'} | "
             f"{crystal.revision if crystal is not None else '—'} | "
-            f"{gaps} |"
+            f"{gaps} | {review_notes.get(xml.cluster_id, '—')} |"
         )
     lines += [
         "",
@@ -367,6 +399,8 @@ def render_markdown(report: CoverageReport, source_count: int, source_digest: st
         "macros instantiated with literal arguments in `src/matter/cluster/*.cr`.",
         "Other generated declarations, dynamically computed attributes, and runtime",
         "feature gating require separate review.",
+        "Edit `docs/protocol-coverage-notes.json` to maintain the separate qualitative",
+        "notes; regeneration preserves them.",
         "",
     ]
     return "\n".join(lines)
@@ -377,17 +411,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--xml-root", required=True, type=Path)
     parser.add_argument("--crystal-root", default=Path("src/matter/cluster"), type=Path)
     parser.add_argument("--output", type=Path, help="Write report to this file; default stdout")
+    parser.add_argument("--notes", default=DEFAULT_NOTES, type=Path,
+                        help="Qualitative review notes JSON (default: repository docs)")
     arguments = parser.parse_args(argv)
     try:
         report = build_report(
             load_xml_clusters(arguments.xml_root),
             load_crystal_clusters(arguments.crystal_root),
         )
+        notes = load_review_notes(arguments.notes)
         output = render_markdown(
             report, source_count=len(list(arguments.xml_root.glob("*.xml"))),
             source_digest=source_digest(arguments.xml_root),
+            review_notes=notes,
         )
-    except (ValueError, ET.ParseError, OSError) as error:
+    except (ValueError, json.JSONDecodeError, ET.ParseError, OSError) as error:
         parser.error(str(error))
     if arguments.output:
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
