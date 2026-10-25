@@ -1,4 +1,5 @@
 require "./cluster"
+require "./access_control"
 require "../datatype/node_id"
 
 module Matter
@@ -1387,6 +1388,9 @@ module Matter
       def add_acl_to_node(request : AddACLToNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.constraint_error unless node_exists?(request.node_id)
+        acl = request.acl_entry
+        return InteractionModel::Status.constraint_error if (acl.subjects.try(&.size) || 0) > AccessControl::DEFAULT_SUBJECTS_PER_ENTRY ||
+                                                            (acl.targets.try(&.size) || 0) > AccessControl::DEFAULT_TARGETS_PER_ENTRY
         return InteractionModel::Status.resource_exhausted if @node_acl_list.size >= MAX_NODE_ENTRIES
         id = next_list_id(all_list_ids)
         return InteractionModel::Status.resource_exhausted unless id

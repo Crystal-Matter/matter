@@ -375,6 +375,42 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.node_acl_list.map(&.list_id).should eq([1_u16])
   end
 
+  it "rejects oversized datastore ACL subjects and targets without changing state" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    auth_mode = Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
+    target = Datastore::DatastoreAccessControlTargetStruct.new(nil, 1_u16, nil)
+    before = cluster.save_state
+    version = cluster.data_version
+
+    [
+      Datastore::DatastoreAccessControlEntryStruct.new(privilege, auth_mode, [1_u64, 2_u64, 3_u64, 4_u64, 5_u64], nil),
+      Datastore::DatastoreAccessControlEntryStruct.new(privilege, auth_mode, nil, [target, target, target, target]),
+    ].each do |acl|
+      cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl))
+        .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.node_acl_list.should be_empty
+      cluster.data_version.should eq(version)
+      cluster.save_state.should eq(before)
+    end
+  end
+
+  it "accepts datastore ACL lists at their Access Control capacity and nullable lists" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    auth_mode = Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
+    target = Datastore::DatastoreAccessControlTargetStruct.new(nil, 1_u16, nil)
+    bounded = Datastore::DatastoreAccessControlEntryStruct.new(privilege, auth_mode,
+      [1_u64, 2_u64, 3_u64, 4_u64], [target, target, target])
+    nullable = Datastore::DatastoreAccessControlEntryStruct.new(privilege, auth_mode, nil, nil)
+
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, bounded)).success?.should be_true
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, nullable)).success?.should be_true
+    cluster.node_acl_list.map(&.acl_entry).should eq([bounded, nullable])
+  end
+
   it "reserves key set zero when an Anchor Datastore is initialized" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor").success?.should be_true
