@@ -389,6 +389,12 @@ callbacks. The synthetic example and official chip-tool test use an Aggregator
 endpoint; [the camera audio guide](docs/camera-av-stream-management.md) lists
 the remaining camera device and transport work.
 
+`Cluster::WebRtcTransportProvider` adds opt-in Matter 1.6 signaling on the
+same endpoint as Camera AV Stream Management. It requires a host `Peer` to
+perform SDP/ICE negotiation and deliver media. The
+[WebRTC signaling guide](docs/web-rtc-transport-provider.md) explains the
+fabric-scoped session lifecycle and the unimplemented media transport pieces.
+
 `Cluster::OvenMode` adds the Matter 1.6 revision 2 oven tags (Bake through
 Frozen Food) to the same Mode Base transition contract. It has no OnOff,
 StartUpMode, or OnMode surface. `Cluster::OvenCavityOperationalState` is a

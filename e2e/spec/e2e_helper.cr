@@ -162,7 +162,11 @@ module E2E
       done.receive
     end
 
-    Result.new(final_args, status.exit_code, strip_ansi(output.to_s))
+    exit_code = status.exit_code?
+    unless exit_code
+      output << "\n[e2e] chip-tool exited abnormally: #{status.exit_signal? || "unknown signal"}\n"
+    end
+    Result.new(final_args, exit_code || -1, strip_ansi(output.to_s))
   end
 
   class CommissioningError < Exception

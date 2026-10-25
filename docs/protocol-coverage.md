@@ -17,8 +17,8 @@ for a separate comparison of literal command and event IDs.
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
 - Standard XML clusters: 135
-- Crystal declarations for those IDs: 133
-- Matching known revisions: 131
+- Crystal declarations for those IDs: 134
+- Matching known revisions: 132
 - Clusters with mandatory attributes absent or optional in Crystal: 0
 - XML clusters with unknown revision: 0
 - Crystal IDs absent from the XML input: 0
@@ -147,7 +147,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0550 | Zone Management Cluster | 1 | 1 | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
 | 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | ADO audio allocation and privacy slice; VDO/SNP, media transport and Camera topology remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | MPAN only |
-| 0x0553 | WebRTC Transport Provider Cluster | 2 | — | cluster absent |
+| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | signaling and host Peer interface; no independently verified SDP/ICE media transport |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | — | cluster absent |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — |

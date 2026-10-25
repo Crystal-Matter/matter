@@ -220,6 +220,8 @@ module Matter
       @audio_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
       @microphone_callback : Proc(Bool, UInt8, Nil)?
+      @delivery_observers = [] of Proc(Nil)
+      @audio_release_observers = [] of Proc(UInt16, Nil)
       @next_audio_stream_id : UInt16 = 0_u16
       @microphone_capabilities : AudioCapabilities
       @supported_stream_usages : Array(StreamUsage)
@@ -291,6 +293,17 @@ module Matter
         report_microphone_settings
       end
 
+      # Independent consumers can react to delivery restrictions without
+      # replacing the host's physical microphone and privacy callbacks.
+      def on_delivery_changed(&block : -> Nil) : Nil
+        @delivery_observers << block
+        block.call
+      end
+
+      def on_audio_released(&block : UInt16 -> Nil) : Nil
+        @audio_release_observers << block
+      end
+
       def stream_delivery_allowed?(usage : StreamUsage) : Bool
         return false if @hard_privacy_mode_on || @microphone_muted
         return false if @feature_map.privacy? && usage == StreamUsage::LiveView && @soft_livestream_privacy_mode_enabled
@@ -333,6 +346,7 @@ module Matter
           status = callback.call(stream.audio_stream_id)
           return status unless status.success?
           @allocated_audio_streams.delete_at(index)
+          @audio_release_observers.each(&.call(stream.audio_stream_id))
         end
         increment_version_and_notify(ATTR_ALLOCATED_AUDIO_STREAMS)
         InteractionModel::Status.success
@@ -385,6 +399,7 @@ module Matter
       private def report_privacy_state : Nil
         @privacy_callback.try(&.call(@hard_privacy_mode_on,
           @soft_recording_privacy_mode_enabled, @soft_livestream_privacy_mode_enabled))
+        @delivery_observers.each(&.call)
       end
 
       private def notify_microphone(_value : Bool | UInt8) : Nil
@@ -393,6 +408,7 @@ module Matter
 
       private def report_microphone_settings : Nil
         @microphone_callback.try(&.call(@microphone_muted, @microphone_volume_level))
+        @delivery_observers.each(&.call)
       end
 
       private def extend_persisted_state(document : Storage::Document) : Nil
