@@ -1,11 +1,13 @@
 """Fixture tests for the limited XML-to-Crystal declaration report."""
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from protocol_coverage import build_report, load_crystal_clusters, load_xml_clusters, render_markdown
+from protocol_coverage import (build_report, load_crystal_clusters, load_review_notes,
+                               load_xml_clusters, render_markdown)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "protocol_coverage"
@@ -63,6 +65,26 @@ class ProtocolCoverageTests(unittest.TestCase):
         self.assertIn("fixture-digest", text)
         self.assertIn("declaration coverage", text)
         self.assertIn("[server command and event declaration audit](protocol-command-event-coverage.md)", text)
+
+    def test_review_notes_survive_report_regeneration_without_changing_measured_gaps(self):
+        report = build_report(load_xml_clusters(FIXTURES / "xml"),
+                              load_crystal_clusters(FIXTURES / "crystal"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "notes.json"
+            path.write_text('{"0x1234": "Host owns physical state"}', encoding="utf-8")
+            notes = load_review_notes(path)
+        first = render_markdown(report, 1, "fixture-digest", notes)
+        second = render_markdown(report, 1, "fixture-digest", notes)
+        self.assertEqual(first, second)
+        self.assertIn("| 0x0006, 0x0007 (optional) | Host owns physical state |", first)
+        self.assertIn("| cluster absent | — |", first)
+
+    def test_review_notes_reject_duplicate_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "notes.json"
+            path.write_text('{"0x1234": "One", "0x1234": "Two"}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Duplicate review note ID"):
+                load_review_notes(path)
 
 
 if __name__ == "__main__":
