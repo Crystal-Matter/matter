@@ -7,6 +7,7 @@ require "../protocol/persistence"
 require "../cluster/cluster"
 require "../storage/backend"
 require "../commissioning/credential_journal"
+require "../commissioning/fabric_removal_journal"
 
 module Matter
   abstract class Device
@@ -58,6 +59,7 @@ module Matter
       def initialize(@backend : Storage::Backend, max_fabrics : UInt8 = FabricTable::DEFAULT_MAX_FABRICS)
         @backend.open unless @backend.open?
         @recovered_added_fabric_index = Commissioning::CredentialJournal.recover(@backend)
+        Commissioning::FabricRemovalJournal.recover(@backend)
         @debouncer = Debouncer.new(SAVE_DEBOUNCE) { write_dirty }
 
         @fabric_table = FabricTable.new(@backend, max_fabrics: max_fabrics)

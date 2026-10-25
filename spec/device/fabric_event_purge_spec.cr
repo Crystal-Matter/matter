@@ -9,6 +9,18 @@ private class FabricEventSpecDevice < Matter::Device
   storage :memory
 end
 
+private class FabricEventFailAclStorage < Matter::Storage::Memory
+  property fail_next_acl_id : String?
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::CLUSTERS && id == @fail_next_acl_id
+      @fail_next_acl_id = nil
+      raise Matter::StorageError.new("Injected ACL write failure")
+    end
+    super
+  end
+end
+
 private def event_spec_fabric(index : UInt8, fabric_id : UInt64) : Matter::Fabric
   Matter::Fabric.new(
     fabric_id: fabric_id, fabric_index: index, node_id: 0x5678_u64,
@@ -19,6 +31,43 @@ private def event_spec_fabric(index : UInt8, fabric_id : UInt64) : Matter::Fabri
 end
 
 describe Matter::Device do
+  it "purges old fabric events before an ACL failure can expose them to a reused index" do
+    require_udp_sockets!
+    storage = FabricEventFailAclStorage.new
+    device = FabricEventSpecDevice.new(storage: storage, port: 0)
+    device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x1001_u64)).should be_true
+    device.fabric_table.add_fabric(event_spec_fabric(2_u8, 0x1002_u64)).should be_true
+
+    journal = device.node.event_journal
+    before = journal.latest_event_number
+    old = journal.record(0_u16, Matter::Cluster::AccessControl::CLUSTER_ID,
+      Matter::Cluster::AccessControl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED,
+      :info, TLV::Any.new(11_u32, nil), fabric_index: 1_u8)
+    other = journal.record(0_u16, Matter::Cluster::AccessControl::CLUSTER_ID,
+      Matter::Cluster::AccessControl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED,
+      :info, TLV::Any.new(22_u32, nil), fabric_index: 2_u8)
+    global = journal.record(0_u16, Matter::Cluster::GeneralDiagnostics::CLUSTER_ID,
+      Matter::Cluster::GeneralDiagnostics::EVENT_BOOT_REASON,
+      :critical, TLV::Any.new(33_u32, nil))
+    path = [Matter::InteractionModel::EventPath.new]
+    journal.query(path, after: before, fabric_index: 1_u8).map(&.event_number).should eq([old.event_number, global.event_number])
+
+    storage.fail_next_acl_id = device.access_control.persistence_key
+    expect_raises(Matter::StorageError, "Injected ACL write failure") do
+      device.operational_credentials.credentials.remove_fabric(1_u8)
+    end
+    device.fabric_table.get_fabric(1_u8).should be_nil
+    device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x2001_u64)).should be_true
+    journal.query(path, after: before, fabric_index: 1_u8).map(&.event_number).should eq([global.event_number])
+    journal.query(path, after: before, fabric_index: 2_u8).map(&.event_number).should eq([other.event_number, global.event_number])
+  ensure
+    if device
+      device.message_handler.close
+      device.persistence.close
+      device.transport.close
+    end
+  end
+
   it "does not disclose retained fabric events after RemoveFabric reuses an index" do
     require_udp_sockets!
     device = FabricEventSpecDevice.new(storage: Matter::Storage::Memory.new, port: 0)

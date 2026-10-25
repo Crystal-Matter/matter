@@ -663,6 +663,7 @@ module Matter
       end
 
       private def process_bdx_work(task : BdxTask) : Nil
+        return if task.session.fabric_index.try { |index| @fabric_table.quarantined?(index) }
         return unless @registry.synchronize do
                         !@bdx_closing && @registry.sessions[task.session.session_id]?.same?(task.session)
                       end
@@ -871,6 +872,10 @@ module Matter
             Log.warn { "Dropping IM message: no session found (session_id=#{msg.packet_header.session_id})" }
             return
           end
+          if session.fabric_index.try { |index| @fabric_table.quarantined?(index) }
+            Log.warn { "Dropping IM message on quarantined fabric" }
+            return
+          end
 
           record_im_message_received
           @router.handle(msg, peer, session)
@@ -879,6 +884,7 @@ module Matter
             Log.warn { "Dropping BDX message without CASE session" }
             return
           end
+          return if session.fabric_index.try { |index| @fabric_table.quarantined?(index) }
           unless msg.payload_header.requires_acknowledge?
             @sender.send_bdx_status(msg, peer, session, Bdx::Transfer::StatusCode::BadMessageContents)
             return

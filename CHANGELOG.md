@@ -7,6 +7,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Durable Scenes fabric removal
+
+- Save erased Scenes and per-fabric scene information before releasing a fabric
+  index. A failed Scenes write keeps the index reserved; startup repairs orphaned
+  Scenes documents left by interrupted removals from older versions.
+
+### Trusted time source fabric removal
+
+- Erase and persist a removed fabric's TrustedTimeSource before its local index
+  can be reused. A failed write keeps the fabric available for a retry.
+
 ### Fabric table durability
 
 - Keep a fabric's local index reserved if deleting its stored fabric document fails, so another fabric cannot reuse that index while the old document remains.
@@ -350,9 +361,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fabric event isolation
 
-- Erase retained fabric-sensitive events when RemoveFabric completes, before
-  the local fabric index can be reused. Events for other fabrics and node-wide
-  events remain available, and event numbers continue increasing.
+- Erase retained fabric-sensitive events before deleting the fabric document,
+  including when a later ACL write fails and the local index is reused. Events
+  for other fabrics and node-wide events remain available, and event numbers
+  continue increasing.
 
 ### Messages
 

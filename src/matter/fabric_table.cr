@@ -32,6 +32,7 @@ module Matter
 
     # Fabrics indexed by fabric_index (1-254)
     @fabrics : Hash(UInt8, Fabric)
+    @quarantined : Set(UInt8) = Set(UInt8).new
 
     # Storage backend for persistence
     @backend : Storage::Backend
@@ -71,7 +72,7 @@ module Matter
       end
 
       # Check if fabric_index is already in use
-      if @fabrics.has_key?(fabric.fabric_index)
+      if @fabrics.has_key?(fabric.fabric_index) || quarantined?(fabric.fabric_index)
         return false
       end
 
@@ -132,6 +133,7 @@ module Matter
     def update_fabric(fabric : Fabric) : Bool
       # Fabric must already exist
       return false unless @fabrics.has_key?(fabric.fabric_index)
+      return false if quarantined?(fabric.fabric_index)
 
       write_fabric(fabric)
       @fabrics[fabric.fabric_index] = fabric
@@ -165,19 +167,31 @@ module Matter
       @fabrics[fabric_index]?
     end
 
+    # An ambiguous storage failure leaves the durable deletion outcome
+    # unknown. Keep the index reserved and reject its operational traffic
+    # until the backend is reopened and its undo journal is resolved.
+    def quarantine(fabric_index : UInt8) : Nil
+      @quarantined.add(fabric_index)
+      @dirty.delete(fabric_index)
+    end
+
+    def quarantined?(fabric_index : UInt8) : Bool
+      @quarantined.includes?(fabric_index)
+    end
+
     # Find a fabric by fabric_id
     def find_by_fabric_id(fabric_id : UInt64) : Fabric?
-      @fabrics.values.find { |fabric| fabric.fabric_id == fabric_id }
+      all_fabrics.find { |fabric| fabric.fabric_id == fabric_id }
     end
 
     # Find a fabric by its identity (root_public_key + fabric_id).
     def find_by_fabric_identity(fabric_id : UInt64, root_public_key : Bytes) : Fabric?
-      @fabrics.values.find { |fabric| fabric.fabric_id == fabric_id && fabric.root_public_key == root_public_key }
+      all_fabrics.find { |fabric| fabric.fabric_id == fabric_id && fabric.root_public_key == root_public_key }
     end
 
     # Get all fabrics
     def all_fabrics : Array(Fabric)
-      @fabrics.values.to_a
+      @fabrics.values.reject { |fabric| quarantined?(fabric.fabric_index) }
     end
 
     # Get fabric count
@@ -203,7 +217,7 @@ module Matter
     # Find next available fabric index (1-254)
     def next_available_index : UInt8?
       (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).each do |index|
-        return index unless @fabrics.has_key?(index)
+        return index unless @fabrics.has_key?(index) || quarantined?(index)
       end
       nil
     end
@@ -215,19 +229,21 @@ module Matter
 
     # Get all fabric descriptors (for Fabrics attribute)
     def fabric_descriptors : Array(FabricDescriptor)
-      @fabrics.values.map { |fabric| FabricDescriptor.from_fabric(fabric) }.to_a
+      all_fabrics.map { |fabric| FabricDescriptor.from_fabric(fabric) }
     end
 
     # Clear all fabrics (used for factory reset)
     def clear_all
       @fabrics.clear
       @dirty.clear
+      @quarantined.clear
       @backend.clear(COLLECTION)
     end
 
     # Mark a fabric as recently used (updates last_used_at). The write is
     # deferred when a `write_debouncer` is attached.
     def mark_fabric_used(fabric_index : UInt8) : Bool
+      return false if quarantined?(fabric_index)
       fabric = @fabrics[fabric_index]?
       return false unless fabric
 
@@ -248,7 +264,9 @@ module Matter
       pending = @dirty.values
       @dirty.clear
       @backend.transaction do
-        pending.each { |fabric| write_fabric(fabric) }
+        pending.each do |fabric|
+          write_fabric(fabric) unless quarantined?(fabric.fabric_index)
+        end
       end
     end
 
