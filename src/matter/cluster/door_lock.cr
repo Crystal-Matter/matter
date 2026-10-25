@@ -133,7 +133,7 @@ module Matter
       attribute 0x0024, :sound_volume, SoundVolume, default: SoundVolume::Medium, writable: true, write_access: :manage, optional: true
       attribute 0x0025, :operating_mode, OperatingMode, default: OperatingMode::Normal, writable: true, write_access: :manage
       before_write :operating_mode do |mode|
-        InteractionModel::Status.constraint_error unless operating_mode_supported?(mode)
+        InteractionModel::Status.constraint_error if !operating_mode_supported?(mode) || (mode.privacy? && @lock_state != LockState::Locked)
       end
       attribute 0x0026, :supported_operating_modes, UInt16, default: DEFAULT_SUPPORTED_OPERATING_MODES, fixed: true
       attribute 0x0027, :default_configuration_register, UInt16, default: 0_u16, optional: true
@@ -472,6 +472,7 @@ module Matter
         raise ArgumentError.new("Normal operating mode is mandatory") unless (@supported_operating_modes & NORMAL_OPERATING_MODE_BIT).zero?
         raise ArgumentError.new("NoRemoteLockUnlock operating mode is mandatory") unless (@supported_operating_modes & NO_REMOTE_OPERATING_MODE_BIT).zero?
         raise ArgumentError.new("operatingMode is not supported") unless operating_mode_supported?(@operating_mode)
+        raise ArgumentError.new("Privacy operating mode requires a locked door") if @operating_mode.privacy? && @lock_state != LockState::Locked
         raise ArgumentError.new("min_pin_code_length must be <= max_pin_code_length") if @min_pin_code_length > @max_pin_code_length
         raise ArgumentError.new("min_rfid_code_length must be <= max_rfid_code_length") if @min_rfid_code_length > @max_rfid_code_length
         raise ArgumentError.new("wrong_code_entry_limit must be >= 1") if @wrong_code_entry_limit < MIN_WRONG_CODE_ENTRY_LIMIT
@@ -854,6 +855,7 @@ module Matter
         source = local_credential_source(type)
         return InteractionModel::Status.unsupported_command unless source && credential_type_supported?(type)
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless @actuator_enabled
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) if effective_operating_mode.privacy?
 
         verifier = @local_credential_verifier || return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         authenticated = begin
@@ -1116,12 +1118,13 @@ module Matter
       end
 
       def unlock(pin : String? = nil, source : OperationSource = OperationSource::Remote) : InteractionModel::Status
-        return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless remote_control_allowed?
-        authorization = authorize_remote_operation(pin, LockOperationType::Unlock, source)
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) if !source.manual? && !remote_control_allowed?
+        authorization = source.manual? ? Authorization.new : authorize_remote_operation(pin, LockOperationType::Unlock, source)
         if status = authorization.status
           return status
         end
 
+        self.operating_mode = OperatingMode::Normal if source.manual? && @operating_mode.privacy?
         self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
         complete_lock_operation(LockOperationType::Unlock, source, authorization)

@@ -7,6 +7,9 @@ quality; the Crystal cluster already omits those commands.
 
 With the Unbolting feature, `UnboltDoor` retracts the bolt without pulling
 the latch. It reports `Unlocked` lock state and an `Unlock` operation event.
+`UnlockDoor` on an Unbolting lock still needs a hardware latch sequence that
+reports `Unlatch` followed by `Unlock`; the current software lock does not
+model that physical transition.
 
 The server now uses the specified `SoundVolume` values (`High = 2`,
 `Medium = 3`) and an inverse `SupportedOperatingModes` bitmap. Its default
@@ -14,6 +17,9 @@ supports the mandatory Normal and NoRemoteLockUnlock modes, marks optional
 modes unsupported, and sets reserved bits 5–15. Writes selecting an
 unsupported mode return `ConstraintError`. A credential feature requires the
 User feature in the advertised feature map.
+When Privacy is explicitly enabled, it can be selected only while locked.
+A manual unlock changes Privacy back to Normal while remote lock commands
+and exterior credential readers remain blocked in Privacy.
 
 The Door Lock user, credential, and week/day/year/holiday schedule tables now
 share the cluster's persisted document with its writable attributes and data

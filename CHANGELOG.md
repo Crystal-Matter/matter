@@ -7,11 +7,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Door Lock unbolting
-
-- Make `UnboltDoor` leave the latch closed and report `Unlocked` state and an
-  `Unlock` operation event, as required by the Unbolting feature.
-
 ### Fabric table durability
 
 - Keep a fabric's local index reserved if deleting its stored fabric document fails, so another fabric cannot reuse that index while the old document remains.
@@ -52,6 +47,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted
   week-day access schedules.
+- Make `UnboltDoor` leave the latch closed and report `Unlocked` state and an
+  `Unlock` operation event, as required by the Unbolting feature.
+- Permit Privacy mode only while locked; a manual unlock now restores Normal
+  mode while remote commands and exterior credential readers remain disabled
+  in Privacy.
 
 ### General Diagnostics test payload
 

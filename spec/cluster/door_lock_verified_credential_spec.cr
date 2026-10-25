@@ -44,6 +44,20 @@ private def authenticated_credential(credential : VerifiedDoorLock::Credential, 
 end
 
 describe "Door Lock trusted local credential verification" do
+  it "blocks an exterior RFID reader in Privacy mode" do
+    verifier = TestLocalCredentialVerifier.new
+    lock = build(VerifiedDoorLock,
+      feature_map: VerifiedDoorLock::Feature::User | VerifiedDoorLock::Feature::RfidCredential,
+      local_credential_verifier: verifier,
+      supported_operating_modes: 0xFFE2_u16,
+      operating_mode: VerifiedDoorLock::OperatingMode::Privacy)
+    credential = provision_verified_credential(lock, VerifiedDoorLock::CredentialType::Rfid)
+    verifier.authenticated = authenticated_credential(credential)
+
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x42]).success?.should be_false
+    lock.locked?.should be_true
+  end
+
   {VerifiedDoorLock::Feature::RfidCredential, VerifiedDoorLock::Feature::FingerCredentials,
    VerifiedDoorLock::Feature::FaceCredentials}.each do |feature|
     it "rejects advertised #{feature} without a ready verifier" do
