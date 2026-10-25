@@ -797,6 +797,10 @@ module Matter
 
       # Fabric indexes are reusable. Erase both scene data and the fabric's
       # SceneInfo before another commissioner can receive the same index.
+      def fabric_indices : Array(UInt8)
+        (@scenes.keys.map { |key| key[0] } + @scene_info_by_fabric.keys).uniq
+      end
+
       def remove_fabric(fabric_index : UInt8) : Nil
         previous_size = @scenes.size
         @scenes.reject! { |key, _| key[0] == fabric_index }

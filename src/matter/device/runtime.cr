@@ -294,6 +294,19 @@ module Matter
         end
       end
 
+      # Older builds could lose power after deleting a fabric document and
+      # before saving its Scenes document. Repair this before index reuse.
+      @message_handler.clusters.values.each do |cluster|
+        next unless scenes = cluster.as?(Cluster::ScenesManagement)
+        orphan_indices = scenes.fabric_indices.reject { |index| @fabric_table.get_fabric(index) }
+        unless orphan_indices.empty?
+          orphan_indices.each { |index| scenes.remove_fabric(index) }
+          unless @persistence.save_cluster(scenes)
+            raise StorageError.new("Could not persist recovered Scenes cleanup")
+          end
+        end
+      end
+
       @message_handler.refresh_group_memberships
       if @groupcast_sender_enabled
         groupcast = @node.get_cluster(Cluster::Groupcast).as(Cluster::Groupcast)
@@ -353,6 +366,17 @@ module Matter
           unless @persistence.save_cluster(groups)
             @persistence.mark_dirty(groups)
             raise StorageError.new("Could not persist erased Groups for fabric #{fabric_index}")
+          end
+        end
+
+        @message_handler.clusters.values.each do |cluster|
+          next unless scenes = cluster.as?(Cluster::ScenesManagement)
+          scenes.remove_fabric(fabric_index)
+          # Always rewrite: a failed prior removal can leave the old document
+          # after its in-memory entries were already erased.
+          unless @persistence.save_cluster(scenes)
+            @persistence.mark_dirty(scenes)
+            raise StorageError.new("Could not persist erased Scenes for fabric #{fabric_index}")
           end
         end
 

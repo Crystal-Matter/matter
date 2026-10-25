@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Durable Scenes fabric removal
+
+- Save erased Scenes and per-fabric scene information before releasing a fabric
+  index. A failed Scenes write keeps the index reserved; startup repairs orphaned
+  Scenes documents left by interrupted removals from older versions.
+
 ### Fabric table durability
 
 - Keep a fabric's local index reserved if deleting its stored fabric document fails, so another fabric cannot reuse that index while the old document remains.

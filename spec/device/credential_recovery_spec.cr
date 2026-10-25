@@ -3,6 +3,7 @@ require "../../src/matter/device"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
+require "../../src/matter/cluster/scenes_management"
 
 private class CredentialRecoveryDevice < Matter::Device
   def initialize(path : String, tc_min_required_version : UInt16? = nil,
@@ -46,7 +47,8 @@ private class CredentialRecoveryDevice < Matter::Device
   protected def device_clusters : Array(Matter::Cluster::Base)
     light = endpoint(1_u16)
     [Matter::Cluster::OnOff.new(light, feature_map: Matter::Cluster::OnOff::Feature::Lighting),
-     Matter::Cluster::Identify.new(light), Matter::Cluster::Groups.new(light)] of Matter::Cluster::Base
+     Matter::Cluster::Identify.new(light), Matter::Cluster::Groups.new(light),
+     Matter::Cluster::ScenesManagement.new(light)] of Matter::Cluster::Base
   end
 
   protected def endpoint_device_types : Hash(UInt16, UInt32)
@@ -480,6 +482,75 @@ describe "durable fail-safe credential recovery" do
         restored_groups.request_fabric_index = index
         restored_groups.member_of?(group_id).should be_false
       end
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "repairs persisted scenes left by an interrupted fabric removal before index reuse" do
+    path = File.join(Dir.tempdir, "matter-scene-recovery-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      scenes = first.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+      scenes.scenes[{index, 0x1234_u16, 1_u8}] = Matter::Cluster::ScenesManagement::SceneData.new(
+        scene_name: "Old fabric scene")
+      scenes.scene_info_by_fabric[index] = Matter::Cluster::ScenesManagement::SceneInfo.new(
+        scene_count: 1_u8, fabric_index: index)
+      first.persistence.save_cluster(scenes).should be_true
+
+      # Simulate an older build that lost power after deleting the fabric
+      # document, before its post-removal scene callback could run.
+      first.operational_credentials.on_before_fabric_removed = nil
+      backend.fail_next_cluster_id = first.access_control.persistence_key
+      expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
+        first.operational_credentials.credentials.remove_fabric(index)
+      end
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should be_nil
+      restored = restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+      restored.has_scene?(0x1234_u16, 1_u8, index).should be_false
+      restored.scene_info_by_fabric.has_key?(index).should be_false
+      replacement = add_recovery_fabric(restarted, fabric_id: 0x4444_u64)
+      replacement.should eq(index)
+      restored.has_scene?(0x1234_u16, 1_u8, replacement).should be_false
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "keeps the fabric reserved until erased scenes are durable" do
+    path = File.join(Dir.tempdir, "matter-scene-removal-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      device = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(device)
+      device.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      scenes = device.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+      scenes.scenes[{index, 0x1234_u16, 1_u8}] = Matter::Cluster::ScenesManagement::SceneData.new(
+        scene_name: "Old fabric scene")
+      scenes.scene_info_by_fabric[index] = Matter::Cluster::ScenesManagement::SceneInfo.new(
+        scene_count: 1_u8, fabric_index: index)
+      device.persistence.save_cluster(scenes).should be_true
+
+      backend.fail_next_cluster_id = scenes.persistence_key
+      expect_raises(Matter::StorageError, "Could not persist erased Scenes") do
+        device.operational_credentials.credentials.remove_fabric(index)
+      end
+      device.fabric_table.get_fabric(index).should_not be_nil
+      device.operational_credentials.credentials.remove_fabric(index).ok?.should be_true
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restored = restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+      restored.has_scene?(0x1234_u16, 1_u8, index).should be_false
+      restored.scene_info_by_fabric.has_key?(index).should be_false
       restarted.shutdown!
     ensure
       File.delete?(path)
