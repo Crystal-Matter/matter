@@ -853,7 +853,7 @@ module Matter
             endpoint, Cluster::Descriptor::ATTR_SERVER_LIST)
           if types.any?(&.device_type.==(DeviceType::JOINT_FABRIC_ADMINISTRATOR)) &&
              servers.includes?(Cluster::JointFabricAdministrator::CLUSTER_ID)
-            return endpoint
+            return endpoint if optional_administrator_fabric_index(im, session, peer, endpoint)
           end
           queue.concat(read_descriptor_list(UInt16, im, session, peer,
             endpoint, Cluster::Descriptor::ATTR_PARTS_LIST))
@@ -884,15 +884,21 @@ module Matter
 
       def read_administrator_fabric_index(im : ImClient, session : Session::SecureContext,
                                           peer : Socket::IPAddress, endpoint : UInt16) : UInt8
+        optional_administrator_fabric_index(im, session, peer, endpoint) ||
+          raise Matter::AuthenticationError.new("AdministratorFabricIndex is invalid")
+      end
+
+      private def optional_administrator_fabric_index(im : ImClient, session : Session::SecureContext,
+                                                      peer : Socket::IPAddress, endpoint : UInt16) : UInt8?
         report = im.read_attribute(session: session, peer: peer, endpoint_id: endpoint,
           cluster_id: Cluster::JointFabricAdministrator::CLUSTER_ID,
           attribute_id: Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX,
           fabric_filtered: false)
         data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
         raise Matter::ProtocolError.new("AdministratorFabricIndex read omitted data") unless data
+        return if data.header.element_type.null?
         index = UInt8.from_tlv(data.to_slice)
-        raise Matter::AuthenticationError.new("AdministratorFabricIndex is invalid") if index == 0_u8
-        index
+        index unless index == 0_u8
       end
 
       # The joining ecosystem's Datastore declares the versions to use for
