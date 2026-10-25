@@ -15,6 +15,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Validate user heat and cool limit writes against manufacturer bounds, opposing limits, and the Auto deadband before changing state. Accepted writes clamp both occupied and guarded unoccupied setpoints by the minimum required amount; rejected writes leave the limits, setpoints, and DataVersion untouched. The guarded chip-tool OCC fixture checks that a Manage limit write adjusts both pairs.
 
+### Bridged intermittent devices
+
+- Add opt-in BridgedICDSupport on Bridged Device Basic Information with typed
+  KeepActive and ActiveChanged. The bridge host supplies an external ICD
+  adapter; requests wait for a real device activation, merge to the longest
+  pending duration and deadline, and only report a confirmed active promise.
+  Ordinary bridged lights keep the feature disabled.
+
 ### Joint Fabric control isolation
 
 - Require the CASE fabric to match the JFA endpoint's AdministratorFabricIndex

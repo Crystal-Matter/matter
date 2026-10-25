@@ -1,6 +1,8 @@
 require "../spec_helper"
 require "../../src/matter/cluster/bridged_device_basic_information"
 
+alias Info = Matter::Cluster::BridgedDeviceBasicInformation
+
 describe Matter::Cluster::BridgedDeviceBasicInformation do
   describe "#initialize" do
     it "creates cluster with default values" do
@@ -160,6 +162,110 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
       # Verify it's valid TLV
       decoded = Matter::Cluster::BridgedDeviceBasicInformation::ReachableChangedEvent.from_slice(event_data)
       decoded.reachable_new_value?.should be_false
+    end
+  end
+
+  describe "BridgedICDSupport" do
+    it "does not advertise KeepActive or ActiveChanged without an external ICD adapter" do
+      cluster = build(Info, unique_id: "no-icd")
+      cluster.feature_map.should eq(Info::Feature::None)
+      accepted_command_ids(cluster).should_not contain(Info::CMD_KEEP_ACTIVE)
+      cluster.events.map(&.id.id).should_not contain(Info::EVENT_ACTIVE_CHANGED)
+      expect_raises(Matter::ConfigurationError) do
+        cluster.feature_map = Info::Feature::BridgedIcdSupport
+      end
+      expect_status(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(1_000_u32, 30_000_u32)),
+        Matter::InteractionModel::StatusCode::UnsupportedCommand)
+    end
+
+    it "queues a request until the host confirms the real bridged device is active" do
+      clock = Time.instant
+      requests = [] of UInt32
+      emitted = [] of TLV::Any
+      cluster = build(Info, unique_id: "icd", monotonic_clock: -> { clock },
+        keep_active_adapter: ->(duration : UInt32) { requests << duration; 1_200_u32.as(UInt32?) })
+      cluster.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32, priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+        event.should eq(Info::EVENT_ACTIVE_CHANGED)
+        priority.info?.should be_true
+        emitted << data
+        nil
+      end
+      cluster.feature_map.bridged_icd_support?.should be_true
+      accepted_command_ids(cluster).should contain(Info::CMD_KEEP_ACTIVE)
+      cluster.events.map(&.id.id).should contain(Info::EVENT_ACTIVE_CHANGED)
+      req = Info::KeepActiveRequest.new(1_000_u32, 30_000_u32)
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, req))
+      requests.should be_empty
+      cluster.bridged_device_became_active.should eq(1_200_u32)
+      requests.should eq([1_000_u32])
+      emitted.size.should eq(1)
+      Info::ActiveChangedEvent.from_tlv(emitted.first).promised_active_duration.should eq(1_200_u32)
+      cluster.bridged_device_became_active.should be_nil
+      emitted.size.should eq(1)
+    end
+
+    it "keeps the request pending when the external device cannot confirm a promise" do
+      confirmations = 0
+      cluster = build(Info, unique_id: "icd", keep_active_adapter: ->(duration : UInt32) do
+        confirmations += 1
+        confirmations == 1 ? nil : duration.as(UInt32?)
+      end)
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(2_000_u32, 30_000_u32)))
+      cluster.bridged_device_became_active.should be_nil
+      cluster.bridged_device_became_active.should eq(2_000_u32)
+      confirmations.should eq(2)
+    end
+
+    it "does not consume a newer KeepActive request while a host confirmation is in flight" do
+      started = Channel(Nil).new
+      resume = Channel(Nil).new
+      returned = Channel(UInt32?).new
+      requests = [] of UInt32
+      cluster = build(Info, unique_id: "icd", keep_active_adapter: ->(duration : UInt32) do
+        requests << duration
+        if duration == 1_000_u32
+          started.send(nil)
+          resume.receive
+        end
+        duration.as(UInt32?)
+      end)
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(1_000_u32, 30_000_u32)))
+      spawn { returned.send(cluster.bridged_device_became_active) }
+      started.receive
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(2_000_u32, 30_000_u32)))
+      resume.send(nil)
+      returned.receive.should eq(1_000_u32)
+      cluster.bridged_device_became_active.should eq(2_000_u32)
+      requests.should eq([1_000_u32, 2_000_u32])
+    end
+
+    it "rejects invalid timeouts without changing the pending request" do
+      cluster = build(Info, unique_id: "icd", keep_active_adapter: ->(duration : UInt32) { duration.as(UInt32?) })
+      expect_status(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(2_000_u32, 29_999_u32)),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      expect_status(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(2_000_u32, 3_600_001_u32)),
+        Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.bridged_device_became_active.should be_nil
+    end
+
+    it "coalesces endpoint-wide requests across fabrics and expires without waking the device" do
+      clock = Time.instant
+      requested = [] of UInt32
+      cluster = build(Info, unique_id: "icd", monotonic_clock: -> { clock },
+        keep_active_adapter: ->(duration : UInt32) { requested << duration; duration.as(UInt32?) })
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE,
+        Info::KeepActiveRequest.new(5_000_u32, 40_000_u32), fabric_index: 1_u8))
+      clock += 10_000.milliseconds
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE,
+        Info::KeepActiveRequest.new(3_000_u32, 35_000_u32), fabric_index: 2_u8))
+      clock += 34_999.milliseconds
+      cluster.bridged_device_became_active.should eq(5_000_u32)
+      requested.should eq([5_000_u32])
+
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(8_000_u32, 30_000_u32)))
+      clock += 30_001.milliseconds
+      cluster.bridged_device_became_active.should be_nil
+      requested.should eq([5_000_u32])
     end
   end
 

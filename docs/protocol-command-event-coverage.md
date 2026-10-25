@@ -192,8 +192,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0038 | event | 0x0001 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0002 | feature(TZ) | declared; requires `:time_zone` |
 | 0x0038 | event | 0x0004 | feature(TSC) | declared; requires `:trusted_time_client` |
-| 0x0039 | command | 0x0080 | feature(BIS) | absent |
-| 0x0039 | event | 0x0080 | feature(BIS) | absent |
+| 0x0039 | command | 0x0080 | feature(BIS) | declared; requires `:bridged_icd_support` |
+| 0x0039 | event | 0x0080 | feature(BIS) | declared; requires `:bridged_icd_support` |
 | 0x003B | event | 0x0000 | feature(LS) | declared; requires `:latching_switch` |
 | 0x003B | event | 0x0001 | feature(MS) | declared; requires `:momentary_switch` |
 | 0x003B | event | 0x0002 | feature(MSL) | declared; requires `:momentary_switch_long_press` |
@@ -274,7 +274,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0201 | command | 0x0008 | feature(TSUGGEST) | absent |
 | 0x0201 | event | 0x0000 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0001 | (feature(TEVT) and not(feature(LTNE))) | declared; requires `{events: true, local_temperature_not_exposed: false}` |
-| 0x0201 | event | 0x0002 | (feature(TEVT) and feature(OCC)) | absent |
+| 0x0201 | event | 0x0002 | (feature(TEVT) and feature(OCC)) | declared; requires `{events: true, occupancy: true}` |
 | 0x0201 | event | 0x0003 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0004 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0005 | (feature(TEVT) and feature(AUTO)) | declared; requires `{events: true, automode: true}` |

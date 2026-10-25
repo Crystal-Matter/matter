@@ -53,6 +53,8 @@ module Matter
     #   and the `feature_map` property (default `Feature::None`; a hand-written
     #   `initialize` takes it as `@feature_map : Feature = Feature::None`).
     #   Predicates come from the enum: `feature_map.lighting?`.
+    #   `validate_feature_map_change(value : Feature)` may reject host changes
+    #   to a feature that requires an external capability.
     # * `conflicts :a, :b, ...` — pairs that raise `ArgumentError` from the
     #   constructor when combined.
     # * `attribute id, :name, Type, **options` — see `ATTRIBUTE_OPTIONS`.
@@ -526,7 +528,12 @@ module Matter
               {% end %}
             end
 
-            property feature_map : Feature = Feature::None
+            getter feature_map : Feature = Feature::None
+
+            def feature_map=(value : Feature) : Nil
+              validate_feature_map_change(value)
+              @feature_map = value
+            end
 
             protected def dsl_features : UInt32
               @feature_map.value

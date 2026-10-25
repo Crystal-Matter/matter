@@ -43,6 +43,7 @@ RUN --mount=type=cache,target=/root/.cache/crystal,sharing=locked \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_door_lock_aliro crystal build e2e/fixture/matter_door_lock_aliro_device.cr -o bin/matter_door_lock_aliro --error-trace && \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_door_lock_verified crystal build e2e/fixture/matter_door_lock_verified_device.cr -o bin/matter_door_lock_verified --error-trace && \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_binding_validation crystal build e2e/fixture/matter_binding_validation_device.cr -o bin/matter_binding_validation --error-trace && \
+    CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_bridged_icd crystal build e2e/fixture/matter_bridged_icd_device.cr -o bin/matter_bridged_icd --error-trace && \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_thermostat_presets crystal build e2e/fixture/matter_thermostat_presets_device.cr -o bin/matter_thermostat_presets --error-trace && \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_thermostat_occupancy crystal build e2e/fixture/matter_thermostat_occupancy_device.cr -o bin/matter_thermostat_occupancy --error-trace && \
     ls -la bin
