@@ -189,6 +189,9 @@ module Matter
               endpoint_errors << "Missing required #{required_name} device type on node for #{device_type.name}"
             end
           end
+          if device_type.device_type_id.id == DeviceType::CAMERA
+            endpoint_errors.concat(CameraComposition.validate(self, endpoint_id))
+          end
         end
         errors[endpoint_id] = endpoint_errors unless endpoint_errors.empty?
       end

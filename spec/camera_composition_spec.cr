@@ -30,7 +30,124 @@ private class NoMediaPeer < WebRtcProvider::Peer
   end
 end
 
+private class CameraCompositionProbeDevice < Matter::Device
+  def device_name : String
+    "Camera Composition Probe"
+  end
+
+  def vendor_id : UInt16
+    0xFFF1_u16
+  end
+
+  def product_id : UInt16
+    0x8142_u16
+  end
+
+  def discriminator : UInt16
+    3842_u16
+  end
+
+  def setup_pin : UInt32
+    20202021_u32
+  end
+
+  def primary_device_type_id : UInt32
+    Matter::DeviceType::ROOT_NODE
+  end
+end
+
 describe Matter::CameraComposition do
+  it "defines Camera 0x0142 revision 1 with mandatory server and client roles" do
+    camera = Matter::DeviceType.for(Matter::DeviceType::CAMERA)
+
+    camera.name.should eq("Camera")
+    camera.revision.should eq(1_u16)
+    camera.required_server_clusters.should contain(CameraAv::CLUSTER_ID)
+    camera.required_server_clusters.should contain(WebRtcProvider::CLUSTER_ID)
+    camera.required_client_clusters.should contain(Matter::CameraComposition::REQUESTOR_CLUSTER_ID)
+    camera.required_node_device_types.should contain(Matter::DeviceType::ROOT_NODE)
+    camera.required_node_device_types.should contain(Matter::DeviceType::POWER_SOURCE)
+  end
+
+  it "refuses to install Camera without its mandatory server and client roles" do
+    node = Matter::Node.new
+    camera = Matter::Endpoint.new(CAMERA_ENDPOINT, Matter::DeviceType.camera)
+
+    expect_raises(Matter::ConfigurationError, /0x0551/) { node.add_endpoint(camera) }
+    camera.add_cluster(CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_536_u32,
+      max_network_bandwidth: 128_000_u32,
+      microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
+        [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+      feature_map: CameraAv::Feature::Audio))
+    expect_raises(Matter::ConfigurationError, /0x0553/) { node.add_endpoint(camera) }
+  end
+
+  it "rejects an advertised Camera when AV features and Root conditions are absent" do
+    node = Matter::Node.new
+    node.add_endpoint(Matter::Endpoint.new(ROOT_ENDPOINT))
+    camera = Matter::Endpoint.new(CAMERA_ENDPOINT, Matter::DeviceType.camera)
+    av = CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_536_u32,
+      max_network_bandwidth: 128_000_u32,
+      microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
+        [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+      feature_map: CameraAv::Feature::Audio)
+    camera.add_cluster(av)
+    camera.add_cluster(WebRtcProvider.new(CAMERA_ENDPOINT, av, NoMediaPeer.new))
+    camera.add_client_cluster(Matter::CameraComposition::REQUESTOR_CLUSTER_ID)
+    node.add_endpoint(camera)
+
+    descriptor = node.endpoint!(CAMERA_ENDPOINT.number).descriptor
+    descriptor.device_type_list.map(&.device_type).should contain(Matter::DeviceType::CAMERA)
+    descriptor.device_type_list.find!(&.device_type.==(Matter::DeviceType::CAMERA)).revision.should eq(1_u16)
+    descriptor.server_list.should contain(CameraAv::CLUSTER_ID)
+    descriptor.server_list.should contain(WebRtcProvider::CLUSTER_ID)
+    descriptor.client_list.should contain(Matter::CameraComposition::REQUESTOR_CLUSTER_ID)
+
+    errors = node.validate[CAMERA_ENDPOINT.number].join
+    errors.should contain("needs Video")
+    errors.should contain("needs Snapshot")
+    errors.should contain("Root Node")
+    errors.should contain("Power Source")
+    errors.should contain("TLS Certificate Management")
+    errors.should contain("TLS Client Management")
+    errors.should contain("Time Synchronization")
+    node.valid?.should be_false
+  end
+
+  it "rolls back a dynamic Camera endpoint with incomplete Root conditions" do
+    device = CameraCompositionProbeDevice.new(Matter::Storage::Memory.new)
+    av = CameraAv.new(CAMERA_ENDPOINT,
+      supported_stream_usages: [CameraAv::StreamUsage::LiveView],
+      max_content_buffer_size: 65_536_u32,
+      max_network_bandwidth: 128_000_u32,
+      microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
+        [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+      feature_map: CameraAv::Feature::Audio)
+    provider = WebRtcProvider.new(CAMERA_ENDPOINT, av, NoMediaPeer.new)
+
+    expect_raises(Matter::ConfigurationError, /Incomplete Camera composition/) do
+      device.add_endpoint(CAMERA_ENDPOINT.number, Matter::DeviceType::CAMERA,
+        [av, provider] of Matter::Cluster::Base,
+        client_clusters: [Matter::CameraComposition::REQUESTOR_CLUSTER_ID])
+    end
+    device.node.endpoint(CAMERA_ENDPOINT.number).should be_nil
+    device.node.endpoint!(ROOT_ENDPOINT.number).descriptor.parts_list.should_not contain(CAMERA_ENDPOINT.number)
+  end
+
+  it "accepts the supported TWODCART Zone Management feature" do
+    node = Matter::Node.new
+    node.add_endpoint(Matter::Endpoint.new(ROOT_ENDPOINT))
+    camera = Matter::Endpoint.new(CAMERA_ENDPOINT)
+    camera.add_cluster(Matter::Cluster::ZoneManagement.new(CAMERA_ENDPOINT))
+    node.add_endpoint(camera)
+
+    Matter::CameraComposition.validate(node, CAMERA_ENDPOINT.number).join.should_not contain("TWODCART")
+  end
+
   it "rejects a camera endpoint without AV/Provider servers or the Requestor client" do
     node = Matter::Node.new
     node.add_endpoint(Matter::Endpoint.new(ROOT_ENDPOINT))

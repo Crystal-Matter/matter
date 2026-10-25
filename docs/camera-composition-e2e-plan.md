@@ -1,9 +1,12 @@
 # Matter 1.6 Camera composition and device-to-device E2E plan
 
 This branch integrates the separate AV Audio, Video, Snapshot, WebRTC Provider,
-and WebRTC Requestor client slices. `CameraComposition.validate` is a structural
-inventory only. Do not advertise Camera device type `0x0142` until the conditions
-below are implemented and the E2E scenario passes with an independent peer.
+and WebRTC Requestor client/server slices. `DeviceType.camera` declares Camera
+type `0x0142` revision 1, its mandatory server/client roles, and its Root Node
+dependencies. `Node#validate` applies `CameraComposition.validate` to every
+endpoint declaring that type. Device startup rejects incomplete composition.
+No example advertises Camera until the conditions below and an independent
+media peer are implemented.
 
 ## Required composition
 
@@ -14,9 +17,10 @@ below are implemented and the E2E scenario passes with an independent peer.
   Synchronization `0x0038` server with TimeZone, NTPClient, and TimeSyncClient
   features plus `0x0038` client; TLS Certificate Management `0x0801` server;
   TLS Client Management `0x0802` server. These are mandatory Root Node
-  conditions in Matter 1.6 Camera.xml. The existing Time Synchronization
-  implementation supports TimeZone only; NTPClient/TimeSyncClient behavior must
-  be implemented before this gate can pass.
+  conditions in Matter 1.6 Camera.xml. The stack has opt-in NTPClient and
+  TimeSyncClient behavior, but a Camera fixture must configure and exercise
+  both before this gate is demonstrated. If Zone Management is present on the
+  Camera endpoint, it must expose TWODCART.
 - Host media callbacks must allocate real audio, video, and snapshot resources;
   the Provider peer must exchange actual SDP and ICE with an independent
   Requestor server. The current synthetic Aggregator fixtures and stub media
@@ -47,6 +51,7 @@ below are implemented and the E2E scenario passes with an independent peer.
    independent peer receives/observes termination. Re-read Descriptor and
    mandatory root attributes after restart.
 
-The E2E fixture requires a real Requestor server, a Camera host adapter that
-connects Provider callbacks to Requestor client signaling, and working
-NTPClient/TimeSyncClient behavior. None is supplied by this integration branch.
+The stack supplies Requestor signaling and opt-in NTPClient/TimeSyncClient
+behavior, but the E2E fixture still needs a Camera host adapter connecting
+Provider callbacks to outbound Requestor signaling, configured root time
+sources, and real media delivery.

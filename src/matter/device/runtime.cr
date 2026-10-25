@@ -1173,6 +1173,13 @@ module Matter
       end
       client_clusters.each { |id| endpoint.add_client_cluster(id) }
       @node.add_endpoint(endpoint)
+      if device_types.any? { |type| type.device_type_id.id == DeviceType::CAMERA }
+        composition_errors = CameraComposition.validate(@node, endpoint_id)
+        unless composition_errors.empty?
+          @node.remove_endpoint(endpoint_id)
+          raise ConfigurationError.new("Incomplete Camera composition: #{composition_errors.join("; ")}")
+        end
+      end
       basic_info.increase_configuration_version if @started
 
       # Tell controllers a new endpoint exists - they read its attributes on

@@ -5,12 +5,11 @@ require "./cluster/time_synchronization"
 require "./cluster/tls_certificate_management"
 require "./cluster/tls_client_management"
 require "./cluster/power_source"
+require "./cluster/zone_management"
 
 module Matter
-  # Structural inventory for a prospective Matter 1.6 Camera endpoint.
-  # This is not a conformance certificate: media transport, root time-sync
-  # client/NTP behavior and device-to-device operation still require proof.
-  # The Camera device type is deliberately absent from DeviceType.for.
+  # Structural requirements for a Matter 1.6 Camera endpoint. This does not
+  # prove host media delivery or device-to-device interoperability.
   module CameraComposition
     REQUESTOR_CLUSTER_ID    = 0x0554_u32
     TIME_SYNC_CLUSTER_ID    = Cluster::TimeSynchronization::CLUSTER_ID
@@ -41,11 +40,19 @@ module Matter
       unless camera.descriptor.has_client_cluster?(REQUESTOR_CLUSTER_ID)
         errors << "WebRTC Transport Requestor client is absent"
       end
+      if zone = camera.get_cluster(Cluster::ZoneManagement)
+        unless zone.feature_map.two_d_cartesian_zone?
+          errors << "Zone Management needs TWODCART"
+        end
+      end
 
       root = node.endpoint(Node::ROOT_ENDPOINT_ID)
       unless root
         errors << "Root Node endpoint is absent"
         return errors
+      end
+      unless root.device_types.any? { |type| type.device_type_id.id == DeviceType::ROOT_NODE }
+        errors << "Root Node device type is absent on Root Node endpoint"
       end
       unless root.device_types.any? { |type| type.device_type_id.id == DeviceType::POWER_SOURCE } &&
              root.has_cluster?(POWER_SOURCE_CLUSTER_ID)

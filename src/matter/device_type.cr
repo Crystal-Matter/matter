@@ -72,6 +72,7 @@ module Matter
     CONTENT_APP          = 0x0024_u32 # Content App
     CASTING_VIDEO_CLIENT = 0x0029_u32 # Casting Video Client
     VIDEO_REMOTE_CONTROL = 0x002A_u32 # Video Remote Control
+    CAMERA               = 0x0142_u32 # Camera (Matter 1.6)
 
     getter device_type_id : DataType::DeviceTypeId
     getter name : String
@@ -136,6 +137,29 @@ module Matter
           0x001D_u32, # Descriptor
           0x002F_u32, # Power Source
         ]
+      )
+    end
+
+    def self.camera : DeviceType
+      new(
+        DataType::DeviceTypeId.new(CAMERA),
+        "Camera",
+        1_u16,
+        required_server_clusters: [
+          0x001D_u32, # Descriptor
+          0x0551_u32, # Camera AV Stream Management (ADO, VDO, SNP)
+          0x0553_u32, # WebRTC Transport Provider
+        ],
+        optional_server_clusters: [
+          0x0003_u32, # Identify
+          0x0406_u32, # Occupancy Sensing
+          0x0550_u32, # Zone Management (TWODCART)
+          0x0552_u32, # Camera AV Settings User Level Management
+          0x0554_u32, # WebRTC Transport Requestor
+          0x0555_u32, # Push AV Stream Transport
+        ],
+        required_node_device_types: [ROOT_NODE, POWER_SOURCE],
+        required_client_clusters: [0x0554_u32] # WebRTC Transport Requestor
       )
     end
 
@@ -437,6 +461,7 @@ module Matter
       when THERMOSTAT                 then thermostat
       when FAN                        then fan
       when BASIC_VIDEO_PLAYER         then basic_video_player
+      when CAMERA                     then camera
       else
         new(
           DataType::DeviceTypeId.new(device_type),
@@ -490,6 +515,7 @@ module Matter
       when THERMOSTAT                 then "Thermostat"
       when FAN                        then "Fan"
       when BASIC_VIDEO_PLAYER         then "Basic Video Player"
+      when CAMERA                     then "Camera"
       when CASTING_VIDEO_PLAYER       then "Casting Video Player"
       when SPEAKER                    then "Speaker"
       when CONTENT_APP                then "Content App"
