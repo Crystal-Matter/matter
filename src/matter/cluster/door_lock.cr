@@ -1518,6 +1518,9 @@ module Matter
       # ------------------------------------------------------------------------
 
       def handle_set_user(request : SetUserRequest) : InteractionModel::Status
+        unless request.operation_type.add? || request.operation_type.modify?
+          return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
+        end
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidField) unless valid_user_index?(request.user_index)
         if (rule = request.credential_rule) && !rule.single?
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
@@ -1575,8 +1578,6 @@ module Matter
 
           user.last_modified_fabric_index = @request_fabric_index
           @users[request.user_index] = user
-        when DataOperationType::Clear
-          clear_user_record(request.user_index)
         else
           return InteractionModel::Status.cluster_failure(StatusCode::InvalidField)
         end
