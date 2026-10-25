@@ -628,6 +628,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic thermostat and official chip-tool check. Thermostat remains at
   revision 9 pending its other Matter 1.6 revision 11 behaviors.
 
+### Thermostat preset handle lifetime
+
+- Persist the history of committed preset handles so a device-generated handle is never reused after its preset is deleted, including after restart. Existing preset storage without the history field remains readable. Removing a fabric now discards its pending Thermostat atomic transaction immediately.
+
 ### Thermostat Presets wire preparation
 
 - Declare the Matter 1.6 Preset attributes, SetActivePreset and AtomicRequest command behind a production gate. Pending list appends and reads now use the writer's private transaction state; commit publishes the list once and rejects stale DataVersion conditions. ActivePresetHandle changes notify subscribers and emit ActivePresetChange when TEVT is also enabled. Production Thermostat instances still reject PRES until the remaining conformance and chip-tool gates pass.

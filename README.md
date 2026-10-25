@@ -679,6 +679,8 @@ The preparatory transaction model includes typed `AtomicRequest` and
 `AtomicResponse` payloads, secure-peer ownership, timeout, rollback and commit.
 The required Preset attribute and command declarations are present behind a
 feature gate, and pending list writes and reads use the writer's private state.
+Committed preset handles are retained in storage so deleted handles are never
+generated again after restart.
 Production Thermostat instances reject the PRES feature until its remaining
 atomic write and official chip-tool checks are complete.
 

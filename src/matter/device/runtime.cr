@@ -459,6 +459,7 @@ module Matter
             end
           end
           cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
+          cluster.as?(Cluster::Thermostat).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
