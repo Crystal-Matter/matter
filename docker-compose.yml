@@ -388,6 +388,11 @@ services:
     environment:
       E2E_DEVICE: matter_thermostat_presets
 
+  thermostat-schedules:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_thermostat_schedules
+
   thermostat-occupancy:
     <<: *device
     environment:
@@ -615,6 +620,7 @@ services:
       ambient-context: { condition: service_healthy }
       air-conditioner: { condition: service_healthy }
       thermostat-presets: { condition: service_healthy }
+      thermostat-schedules: { condition: service_healthy }
       bridge: { condition: service_healthy }
       bridged-icd: { condition: service_healthy }
       ecosystem-bridge: { condition: service_healthy }
