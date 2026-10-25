@@ -552,6 +552,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic thermostat and official chip-tool check. Thermostat remains at
   revision 9 pending its other Matter 1.6 revision 11 behaviors.
 
+### Thermostat preset foundation
+
+- Add typed Matter 1.6 preset data, validated host configuration, activation and persisted preset state. Presets remain unavailable to controllers until the required atomic-write command and writable list are implemented; the PRES feature bit and cluster revision are unchanged.
+
 ### Appliance modes
 
 - Keep fixed mode catalogues isolated from caller and read-result mutations.

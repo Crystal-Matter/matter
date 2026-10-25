@@ -7,7 +7,7 @@ module Matter
     # Provides an interface to thermostat functionality, including configuration
     # of setpoints, scheduling, and mode control.
     #
-    # Specification: Matter 1.4 § 4.3
+    # Specification: Matter 1.6 § 4.3 (revision 9 wire surface)
     class Thermostat < Base
       cluster 0x0201, revision: 9
 
@@ -21,6 +21,86 @@ module Matter
 
       TEMPERATURE_EVENT_INTERVAL     = 60.seconds
       SIGNIFICANT_TEMPERATURE_CHANGE = 50_i16 # 0.5°C
+      MAX_PRESET_TYPES               =      7
+      MAX_PRESET_HANDLE_LENGTH       =     16
+      MAX_PRESET_NAME_LENGTH         =     64
+      PRESET_STATE_KEY               = "preset_state"
+
+      # The PRES wire feature is deliberately withheld until atomic list writes
+      # are implemented. These types and the host API provide its state model.
+      enum PresetScenario : UInt8
+        Occupied     =   1
+        Unoccupied   =   2
+        Sleep        =   3
+        Wake         =   4
+        Vacation     =   5
+        GoingToSleep =   6
+        UserDefined  = 254
+      end
+
+      @[Flags]
+      enum PresetTypeFeatures : UInt8
+        Automatic     = 1
+        SupportsNames = 2
+      end
+
+      struct PresetType
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter preset_scenario : PresetScenario
+        @[TLV::Field(tag: 1)]
+        getter number_of_presets : UInt8
+        @[TLV::Field(tag: 2)]
+        getter preset_type_features : PresetTypeFeatures
+
+        def initialize(@preset_scenario : PresetScenario, @number_of_presets : UInt8,
+                       @preset_type_features : PresetTypeFeatures = PresetTypeFeatures::None)
+        end
+      end
+
+      struct Preset
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter preset_handle : Bytes?
+        @[TLV::Field(tag: 1)]
+        getter preset_scenario : PresetScenario
+        @[TLV::Field(tag: 2)]
+        getter name : String?
+        @[TLV::Field(tag: 3)]
+        getter cooling_setpoint : Int16?
+        @[TLV::Field(tag: 4)]
+        getter heating_setpoint : Int16?
+        @[TLV::Field(tag: 5, optional: false)]
+        getter built_in : Bool?
+
+        def initialize(@preset_handle : Bytes?, @preset_scenario : PresetScenario,
+                       @name : String?, @cooling_setpoint : Int16?, @heating_setpoint : Int16?,
+                       @built_in : Bool?)
+        end
+      end
+
+      struct SetActivePresetRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter preset_handle : Bytes?
+
+        def initialize(@preset_handle : Bytes?)
+        end
+      end
+
+      private struct PresetState
+        include Storage::Record
+
+        getter presets : Array(Preset)
+        getter active_preset_handle : Bytes?
+
+        def initialize(@presets : Array(Preset), @active_preset_handle : Bytes?)
+        end
+      end
 
       # System mode values
       enum SystemMode : UInt8
@@ -260,6 +340,10 @@ module Matter
         @last_reported_temperature = @local_temperature
         @last_temperature_event_at = nil.as(Time::Instant?)
         @last_running_state = thermostat_running_state
+        @preset_types = [] of PresetType
+        @presets = [] of Preset
+        @active_preset_handle = nil.as(Bytes?)
+        @applying_preset = false
 
         if @feature_map.heating?
           raise ArgumentError.new("min_heat_setpoint_limit must be >= abs minimum") if @min_heat_setpoint_limit < @abs_min_heat_setpoint_limit
@@ -350,6 +434,55 @@ module Matter
       # ------------------------------------------------------------------------
       # Public Interface
       # ------------------------------------------------------------------------
+
+      # Configure a host-owned preset list. PRES remains absent from FeatureMap:
+      # controller writes to Presets require Interaction Model atomic writes.
+      def configure_presets(types : Array(PresetType), presets : Array(Preset)) : Nil
+        validate_presets!(types, presets)
+        @preset_types = types.dup
+        @presets = copy_presets(presets)
+        @active_preset_handle = nil
+      end
+
+      def preset_types : Array(PresetType)
+        @preset_types.dup
+      end
+
+      def presets : Array(Preset)
+        copy_presets(@presets)
+      end
+
+      def active_preset_handle : Bytes?
+        @active_preset_handle.try(&.dup)
+      end
+
+      # Command payload and behavior are ready for command 0x06, but dispatch
+      # stays unavailable until the whole PRES feature can be advertised.
+      def activate_preset(request : SetActivePresetRequest) : InteractionModel::Status
+        handle = request.preset_handle
+        if handle.nil?
+          @active_preset_handle = nil
+          return InteractionModel::Status.success
+        end
+        return InteractionModel::Status.constraint_error if handle.size > MAX_PRESET_HANDLE_LENGTH
+        preset = @presets.find { |entry| entry.preset_handle == handle }
+        return InteractionModel::Status.invalid_command unless preset
+        return InteractionModel::Status.constraint_error unless valid_preset_setpoints?(preset)
+
+        @applying_preset = true
+        begin
+          if @feature_map.cooling? && (cooling = preset.cooling_setpoint)
+            self.occupied_cooling_setpoint = cooling
+          end
+          if @feature_map.heating? && (heating = preset.heating_setpoint)
+            self.occupied_heating_setpoint = heating
+          end
+          @active_preset_handle = handle.dup
+        ensure
+          @applying_preset = false
+        end
+        InteractionModel::Status.success
+      end
 
       # Update local temperature (typically called from a paired temperature sensor)
       def update_local_temperature(value : Int16?) : Nil
@@ -521,6 +654,91 @@ module Matter
         end
       end
 
+      private def copy_presets(values : Array(Preset)) : Array(Preset)
+        values.map do |entry|
+          Preset.new(entry.preset_handle.try(&.dup), entry.preset_scenario, entry.name,
+            entry.cooling_setpoint, entry.heating_setpoint, entry.built_in)
+        end
+      end
+
+      private def validate_presets!(types : Array(PresetType), values : Array(Preset)) : Nil
+        raise ArgumentError.new("preset types must contain 1 to 7 scenarios") unless (1..MAX_PRESET_TYPES).includes?(types.size)
+        raise ArgumentError.new("duplicate preset scenario") unless types.map(&.preset_scenario).uniq!.size == types.size
+        capacity = types.sum(&.number_of_presets.to_i)
+        raise ArgumentError.new("preset capacity must be positive") if capacity == 0
+        raise ArgumentError.new("too many presets") if values.size > capacity
+
+        handles = [] of Bytes
+        values.each do |entry|
+          handle = entry.preset_handle || raise ArgumentError.new("configured preset needs a handle")
+          unless (0..MAX_PRESET_HANDLE_LENGTH).includes?(handle.size)
+            raise ArgumentError.new("preset handle length is invalid")
+          end
+          raise ArgumentError.new("duplicate preset handle") if handles.any? { |used| used == handle }
+          handles << handle
+
+          type = types.find { |candidate| candidate.preset_scenario == entry.preset_scenario } ||
+                 raise ArgumentError.new("unsupported preset scenario")
+          if values.count { |candidate| candidate.preset_scenario == entry.preset_scenario } > type.number_of_presets
+            raise ArgumentError.new("preset scenario capacity exceeded")
+          end
+          if name = entry.name
+            raise ArgumentError.new("preset name too long") if name.bytesize > MAX_PRESET_NAME_LENGTH
+            raise ArgumentError.new("preset scenario does not support names") unless type.preset_type_features.supports_names?
+          elsif entry.preset_scenario.user_defined?
+            raise ArgumentError.new("user-defined preset requires a name")
+          end
+          raise ArgumentError.new("configured preset needs BuiltIn") if entry.built_in.nil?
+          raise ArgumentError.new("preset setpoints are invalid") unless valid_preset_setpoints?(entry)
+        end
+      end
+
+      private def valid_preset_setpoints?(preset : Preset) : Bool
+        if @feature_map.cooling?
+          cooling = preset.cooling_setpoint
+          return false unless cooling && cooling.in?(@min_cool_setpoint_limit..@max_cool_setpoint_limit)
+        elsif preset.cooling_setpoint
+          return false
+        end
+        if @feature_map.heating?
+          heating = preset.heating_setpoint
+          return false unless heating && heating.in?(@min_heat_setpoint_limit..@max_heat_setpoint_limit)
+        elsif preset.heating_setpoint
+          return false
+        end
+        if @feature_map.automode? && @feature_map.cooling? && @feature_map.heating?
+          cooling = preset.cooling_setpoint
+          heating = preset.heating_setpoint
+          return false unless cooling && heating
+          return false if cooling - heating < deadband
+        end
+        true
+      end
+
+      private def extend_persisted_state(document : Storage::Document) : Nil
+        return if @preset_types.empty?
+
+        document[PRESET_STATE_KEY] = PresetState.new(copy_presets(@presets), @active_preset_handle.try(&.dup)).to_document
+      end
+
+      private def restore_persisted_extension(document : Storage::Document) : Nil
+        raw = document[PRESET_STATE_KEY]?
+        return unless raw
+
+        state = PresetState.from_document(raw.as?(Storage::Document) ||
+                                          raise StorageError.new("invalid thermostat preset state"))
+        begin
+          validate_presets!(@preset_types, state.presets)
+        rescue ex : ArgumentError
+          raise StorageError.new("invalid thermostat preset state: #{ex.message}")
+        end
+        if handle = state.active_preset_handle
+          raise StorageError.new("unknown active preset handle") unless state.presets.any? { |preset| preset.preset_handle == handle }
+        end
+        @presets = copy_presets(state.presets)
+        @active_preset_handle = state.active_preset_handle.try(&.dup)
+      end
+
       private def local_temperature_changed(value : Int16?) : Nil
         @measured_temperature = value
         update_running_mode
@@ -541,11 +759,13 @@ module Matter
       end
 
       private def cooling_setpoint_changed(value : Int16) : Nil
+        @active_preset_handle = nil unless @applying_preset
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value)) if @feature_map.events?
         update_running_mode
       end
 
       private def heating_setpoint_changed(value : Int16) : Nil
+        @active_preset_handle = nil unless @applying_preset
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value)) if @feature_map.events?
         update_running_mode
       end
