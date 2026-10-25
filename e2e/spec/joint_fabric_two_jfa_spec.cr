@@ -434,11 +434,6 @@ describe "three provisioned Joint Fabric Administrators" do
     dcl_fixture.write_mode("stale")
     expect_raises(Matter::AuthenticationError, /cache/) { revocation_source.points_for(issuer_skid) }
     dcl_fixture.write_mode("active")
-    registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
-      anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
-      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
-      0xA102_u64, 1_u16)
-
     # Leave a direct JCM between AddICAC and CommissioningComplete, then
     # restart its controller Workflow while the joiner's fail-safe is armed.
     # A short device limit keeps the real expiry bounded for Docker CI.

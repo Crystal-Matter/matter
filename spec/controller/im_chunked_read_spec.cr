@@ -132,7 +132,7 @@ describe Matter::Controller::ImClient do
     client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
       attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(
         attribute_status: Matter::InteractionModel::AttributeStatusIB.new(
-          Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32, attribute: 1_u32),
+          Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32, attribute: 0_u32),
           Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::UnsupportedAttribute.value)))],
       more_chunked_messages: false).to_slice, message_id: 12_u32)
 
@@ -142,6 +142,73 @@ describe Matter::Controller::ImClient do
     client.sent.map(&.[1]).should eq([0x02_u8, 0x01_u8, 0x01_u8])
     client.sent[1][4].should eq(11_u32)
     client.sent[2][4].should eq(12_u32)
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an unrelated concrete path in a single-attribute read response" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    wrong_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 1_u32)
+    client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+      attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(
+        attribute_data: Matter::InteractionModel::AttributeDataIB.new(wrong_path,
+          TLV::Any.from_slice(1_u8.to_tlv)))],
+      suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects a mixed read response containing an unrelated status path" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    requested_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    wrong_path = Matter::InteractionModel::AttributePath.new(endpoint: 2_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+      attribute_reports: [
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(requested_path,
+            TLV::Any.from_slice(1_u8.to_tlv))),
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_status: Matter::InteractionModel::AttributeStatusIB.new(wrong_path,
+            Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::UnsupportedAttribute.value))),
+      ], suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "retains multiple attributes for a wildcard read" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    [0_u32, 1_u32].each do |attribute|
+      path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+        cluster: 6_u32, attribute: attribute)
+      client.queue(0x05_u8, Matter::InteractionModel::ReportDataMessage.new(
+        attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(path,
+            TLV::Any.from_slice(attribute.to_tlv)))],
+        more_chunked_messages: attribute == 0_u32,
+        suppress_response: attribute == 1_u32).to_slice)
+    end
+
+    wildcard = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32)
+    report = Matter::Controller::ImClient.new(client).read(chunked_read_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), attribute_paths: [wildcard])
+    report.attribute_reports.try(&.size).should eq(2)
   ensure
     client.try(&.close)
   end

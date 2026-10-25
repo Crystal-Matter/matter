@@ -587,6 +587,11 @@ CAT check. The controller's `OperationalTrustAnchors` implementation must
 validate the source of an operational root or VID Verification Statement. An
 absent trust decision fails the JCM verification step. Applications must make
 an explicit user consent decision for each ecosystem joining a fabric.
+Concrete single-attribute controller reads reject ReportData entries carrying
+another concrete AttributePath, including a mismatched status beside valid
+data. This guards VID verification, JCM attribute reads, and authenticated
+recovery's Fabrics read from consuming an unrelated response payload. Wildcard
+reads still return all reported paths.
 
 For DCL-backed operational VID checks, construct
 `VidVerification::DclOperationalTrustAnchors.new(VidVerification::HttpDclSource.new("https://<trusted-dcl-gateway>"))`

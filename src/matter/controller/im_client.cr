@@ -161,6 +161,15 @@ module Matter
       # single-report API by folding those items into one Array value.
       private def normalize_read_attribute(reports : Array(InteractionModel::AttributeReportIB),
                                            path : InteractionModel::AttributePath) : Array(InteractionModel::AttributeReportIB)
+        reports.each do |report|
+          candidate = report.attribute_data.try(&.path) || report.attribute_status.try(&.path)
+          unless candidate &&
+                 (path.endpoint.nil? || candidate.endpoint.nil? || candidate.endpoint == path.endpoint) &&
+                 (path.cluster.nil? || candidate.cluster.nil? || candidate.cluster == path.cluster) &&
+                 (path.attribute.nil? || candidate.attribute.nil? || candidate.attribute == path.attribute)
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+        end
         return reports if reports.size < 2
         data = reports.compact_map(&.attribute_data)
         return reports unless data.size == reports.size
