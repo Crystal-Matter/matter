@@ -141,7 +141,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | — |
 | 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO commands; SNP and optional video controls remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | MPAN only |
-| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | signaling commands only; media transport remains unverified |
+| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO/VDO signaling commands only; decoded video and media transport remain unverified |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | — |

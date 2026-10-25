@@ -93,13 +93,13 @@ module Matter
         getter fabric_index : UInt8
 
         def initialize(@id : UInt16, @peer_node_id : UInt64, @peer_endpoint_id : UInt16,
-                       @stream_usage : StreamUsage, audio_streams : Array(UInt16),
-                       @fabric_index : UInt8)
-          @video_stream_id = nil
-          @audio_stream_id = audio_streams.first?
+                       @stream_usage : StreamUsage, audio_streams : Array(UInt16)?,
+                       video_streams : Array(UInt16)?, @fabric_index : UInt8)
+          @video_stream_id = video_streams.try(&.first?)
+          @audio_stream_id = audio_streams.try(&.first?)
           @metadata_enabled = false
-          @video_streams = nil
-          @audio_streams = audio_streams.dup
+          @video_streams = video_streams.try(&.dup)
+          @audio_streams = audio_streams.try(&.dup)
         end
 
         def audio_streams : Array(UInt16)?
@@ -264,6 +264,11 @@ module Matter
             remove_session(session, EndReason::OutOfResources)
           end
         end
+        @streams.on_video_released do |id|
+          @sessions.select { |session| session.video_streams.try(&.includes?(id)) }.each do |session|
+            remove_session(session, EndReason::OutOfResources)
+          end
+        end
       end
 
       def current_sessions(fabric_index : UInt8?) : Array(Session) | InteractionModel::Status
@@ -276,10 +281,12 @@ module Matter
         fabric, node = authenticated_peer || return InteractionModel::Status.unsupported_access
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, request.audio_stream_id, request.video_streams, request.video_stream_id, request.stream_usage)
         return InteractionModel::Status.constraint_error unless valid_ice?(request.ice_servers, request.ice_transport_policy)
-        return InteractionModel::Status.invalid_in_state unless @streams.stream_delivery_allowed?(request.stream_usage)
+        audio = selected_audio(request.audio_streams, request.audio_stream_id)
+        video = selected_video(request.video_streams, request.video_stream_id)
+        return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, request.stream_usage)
         id = allocate_id || return InteractionModel::Status.resource_exhausted
         session = Session.new(id, node, request.originating_endpoint_id, request.stream_usage,
-          selected_audio(request.audio_streams, request.audio_stream_id), fabric)
+          audio, video, fabric)
         @sessions << session
         @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
         schedule_offer_timeout
@@ -303,7 +310,7 @@ module Matter
         return InteractionModel::Status.constraint_error unless valid_ice?(request.ice_servers, request.ice_transport_policy)
         if id = request.web_rtc_session_id
           session = owned_session(id, fabric, node) || return InteractionModel::Status.not_found
-          return InteractionModel::Status.invalid_in_state unless @streams.stream_delivery_allowed?(session.stream_usage)
+          return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
           return InteractionModel::Status.constraint_error if (usage = request.stream_usage) && usage != session.stream_usage
           return InteractionModel::Status.constraint_error if (endpoint = request.originating_endpoint_id) && endpoint != session.peer_endpoint_id
           return InteractionModel::Status.constraint_error if request.audio_streams || request.audio_stream_id ||
@@ -317,10 +324,12 @@ module Matter
         usage = request.stream_usage || return InteractionModel::Status.invalid_command
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
         return InteractionModel::Status.constraint_error unless valid_streams?(request.audio_streams, request.audio_stream_id, request.video_streams, request.video_stream_id, usage)
-        return InteractionModel::Status.invalid_in_state unless @streams.stream_delivery_allowed?(usage)
+        audio = selected_audio(request.audio_streams, request.audio_stream_id)
+        video = selected_video(request.video_streams, request.video_stream_id)
+        return InteractionModel::Status.invalid_in_state unless delivery_allowed?(audio, video, usage)
         id = allocate_id || return InteractionModel::Status.resource_exhausted
         session = Session.new(id, node, endpoint, usage,
-          selected_audio(request.audio_streams, request.audio_stream_id), fabric)
+          audio, video, fabric)
         @sessions << session
         @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
         schedule_offer_timeout
@@ -342,7 +351,7 @@ module Matter
         fabric, node = authenticated_peer || return InteractionModel::Status.unsupported_access
         session = owned_session(request.web_rtc_session_id, fabric, node) || return InteractionModel::Status.not_found
         return InteractionModel::Status.constraint_error if request.sdp.empty?
-        return InteractionModel::Status.invalid_in_state unless @streams.stream_delivery_allowed?(session.stream_usage)
+        return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
         status = @peer.accept_answer(session, request.sdp)
         @offer_deadlines.delete(session.id) if status.success?
         status
@@ -353,7 +362,7 @@ module Matter
         session = owned_session(request.web_rtc_session_id, fabric, node) || return InteractionModel::Status.not_found
         return InteractionModel::Status.constraint_error if request.ice_candidates.empty?
         return InteractionModel::Status.constraint_error if request.ice_candidates.any? { |candidate| candidate.sdp_mid == "" }
-        return InteractionModel::Status.invalid_in_state unless @streams.stream_delivery_allowed?(session.stream_usage)
+        return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
         @peer.add_ice_candidates(session, request.ice_candidates)
       end
 
@@ -371,7 +380,7 @@ module Matter
       end
 
       def end_private_sessions : Nil
-        @sessions.reject { |session| @streams.stream_delivery_allowed?(session.stream_usage) }.each do |session|
+        @sessions.reject { |session| delivery_allowed?(session) }.each do |session|
           remove_session(session, EndReason::PrivacyMode)
         end
       end
@@ -383,21 +392,50 @@ module Matter
         {fabric, node} if fabric && node
       end
 
-      private def selected_audio(streams : Array(UInt16)?, legacy : UInt16?) : Array(UInt16)
+      private def selected_audio(streams : Array(UInt16)?, legacy : UInt16?) : Array(UInt16)?
+        return unless streams || legacy
         ids = streams ? streams.dup : [] of UInt16
         ids << legacy if legacy && !ids.includes?(legacy)
         ids
       end
 
+      private def selected_video(streams : Array(UInt16)?, legacy : UInt16?) : Array(UInt16)?
+        return unless streams || legacy
+        ids = streams ? streams.dup : [] of UInt16
+        ids << legacy if legacy && !ids.includes?(legacy)
+        ids
+      end
+
+      private def delivery_allowed?(session : Session) : Bool
+        delivery_allowed?(session.audio_streams, session.video_streams, session.stream_usage)
+      end
+
+      private def delivery_allowed?(audio : Array(UInt16)?, video : Array(UInt16)?, usage : StreamUsage) : Bool
+        (!audio || @streams.stream_delivery_allowed?(usage)) &&
+          (!video || @streams.video_delivery_allowed?(usage))
+      end
+
       private def valid_streams?(audio : Array(UInt16)?, legacy_audio : UInt16?,
                                  video : Array(UInt16)?, legacy_video : UInt16?, usage : StreamUsage) : Bool
-        return false if video || legacy_video
         return false if audio && (audio.empty? || audio.size > MAX_STREAMS || audio.uniq.size != audio.size)
-        ids = selected_audio(audio, legacy_audio)
-        return false if ids.empty? || ids.size > MAX_STREAMS
+        return false if video && (video.empty? || video.size > MAX_STREAMS || video.uniq.size != video.size)
+        audio_ids = selected_audio(audio, legacy_audio)
+        video_ids = selected_video(video, legacy_video)
+        return false unless audio_ids || video_ids
+        return false if audio_ids && audio_ids.size > MAX_STREAMS
+        return false if video_ids && video_ids.size > MAX_STREAMS
         return false unless @streams.supported_stream_usages.includes?(usage)
-        available = @streams.allocated_audio_streams
-        ids.all? { |id| available.any? { |stream| stream.audio_stream_id == id && stream.stream_usage == usage } }
+        if audio_ids
+          return false unless @streams.feature_map.audio?
+          available = @streams.allocated_audio_streams
+          return false unless audio_ids.all? { |id| available.any? { |stream| stream.audio_stream_id == id && stream.stream_usage == usage } }
+        end
+        if video_ids
+          return false unless @streams.feature_map.video?
+          available = @streams.allocated_video_streams
+          return false unless video_ids.all? { |id| available.any? { |stream| stream.video_stream_id == id && stream.stream_usage == usage } }
+        end
+        true
       end
 
       private def valid_ice?(servers : Array(IceServer)?, policy : String?) : Bool

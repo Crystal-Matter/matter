@@ -18,6 +18,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erase and persist a removed fabric's TrustedTimeSource before its local index
   can be reused. A failed write keeps the fabric available for a retry.
 
+### WebRTC Provider video signaling
+
+- Accept allocated H.264 VDO streams in fabric and peer scoped WebRTC Provider
+  sessions, preserve video IDs in CurrentSessions, and end video-only sessions
+  when privacy blocks delivery or the host releases the stream. The synthetic
+  Aggregator chip-tool fixture checks VDO-only signaling; decoded video and
+  peer media transport remain unverified, and Camera type 0x0142 is not advertised.
+
 ### Camera AV Stream Management video
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
