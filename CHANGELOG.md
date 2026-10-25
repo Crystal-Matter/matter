@@ -204,6 +204,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ClientList, and validate mandatory client roles in device type definitions.
   Camera device type 0x0142 remains unadvertised pending full composition.
 
+### WebRTC Requestor server signaling
+
+- Add the Matter 1.6 revision 2 Requestor server with fabric-scoped CurrentSessions,
+  CASE peer binding, four signaling commands, validated payloads, and host
+  callbacks. A synthetic Aggregator fixture exercises the wire surface with
+  chip-tool. Applications must supply the real session lifecycle, SDP, and media;
+  the Camera device type remains unadvertised.
+
 ### WebRTC Transport Provider signaling
 
 - Add an opt-in Matter 1.6 revision 2 WebRTC Transport Provider signaling
