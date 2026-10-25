@@ -216,6 +216,29 @@ describe Matter::Cluster::BridgedDeviceBasicInformation do
       confirmations.should eq(2)
     end
 
+    it "does not consume a newer KeepActive request while a host confirmation is in flight" do
+      started = Channel(Nil).new
+      resume = Channel(Nil).new
+      returned = Channel(UInt32?).new
+      requests = [] of UInt32
+      cluster = build(Info, unique_id: "icd", keep_active_adapter: ->(duration : UInt32) do
+        requests << duration
+        if duration == 1_000_u32
+          started.send(nil)
+          resume.receive
+        end
+        duration.as(UInt32?)
+      end)
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(1_000_u32, 30_000_u32)))
+      spawn { returned.send(cluster.bridged_device_became_active) }
+      started.receive
+      expect_success(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(2_000_u32, 30_000_u32)))
+      resume.send(nil)
+      returned.receive.should eq(1_000_u32)
+      cluster.bridged_device_became_active.should eq(2_000_u32)
+      requests.should eq([1_000_u32, 2_000_u32])
+    end
+
     it "rejects invalid timeouts without changing the pending request" do
       cluster = build(Info, unique_id: "icd", keep_active_adapter: ->(duration : UInt32) { duration.as(UInt32?) })
       expect_status(invoke(cluster, Info::CMD_KEEP_ACTIVE, Info::KeepActiveRequest.new(2_000_u32, 29_999_u32)),

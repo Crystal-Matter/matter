@@ -21,6 +21,10 @@ module Matter
       MIN_KEEP_ACTIVE_TIMEOUT_MS =    30_000_u32
       MAX_KEEP_ACTIVE_TIMEOUT_MS = 3_600_000_u32
 
+      @pending_active_mutex = Mutex.new
+      @pending_active_generation = 0_u64
+      @activation_in_flight = false
+
       # Reuse enums and structs from BasicInformation
       alias ProductFinish = BasicInformation::ProductFinish
       alias Color = BasicInformation::Color
@@ -172,24 +176,27 @@ module Matter
           return InteractionModel::Status.constraint_error
         end
 
-        now = @monotonic_clock.call
-        deadline = now + request.timeout_ms.milliseconds
-        if prior_deadline = @pending_active_deadline
-          if prior_deadline > now
-            deadline = prior_deadline if prior_deadline > deadline
-            prior_duration = @pending_stay_active_duration
-            if prior_duration && prior_duration > request.stay_active_duration
-              @pending_stay_active_duration = prior_duration
+        @pending_active_mutex.synchronize do
+          now = @monotonic_clock.call
+          deadline = now + request.timeout_ms.milliseconds
+          if prior_deadline = @pending_active_deadline
+            if prior_deadline > now
+              deadline = prior_deadline if prior_deadline > deadline
+              prior_duration = @pending_stay_active_duration
+              if prior_duration && prior_duration > request.stay_active_duration
+                @pending_stay_active_duration = prior_duration
+              else
+                @pending_stay_active_duration = request.stay_active_duration
+              end
             else
               @pending_stay_active_duration = request.stay_active_duration
             end
           else
             @pending_stay_active_duration = request.stay_active_duration
           end
-        else
-          @pending_stay_active_duration = request.stay_active_duration
+          @pending_active_deadline = deadline
+          @pending_active_generation += 1_u64
         end
-        @pending_active_deadline = deadline
         InteractionModel::Status.success
       end
 
@@ -200,20 +207,40 @@ module Matter
       # An event is never emitted for a failed or expired request.
       def bridged_device_became_active : UInt32?
         adapter = @keep_active_adapter
-        duration = @pending_stay_active_duration
-        deadline = @pending_active_deadline
-        return unless adapter && duration && deadline
-        if @monotonic_clock.call >= deadline
-          @pending_stay_active_duration = nil
-          @pending_active_deadline = nil
-          return
-        end
+        return unless adapter
 
-        promised = adapter.call(duration)
+        pending = @pending_active_mutex.synchronize do
+          duration = @pending_stay_active_duration
+          deadline = @pending_active_deadline
+          if !@activation_in_flight && duration && deadline
+            if @monotonic_clock.call < deadline
+              @activation_in_flight = true
+              {duration, @pending_active_generation}
+            else
+              @pending_stay_active_duration = nil
+              @pending_active_deadline = nil
+              @pending_active_generation += 1_u64
+              nil
+            end
+          end
+        end
+        return unless pending
+
+        duration, generation = pending
+        promised = nil.as(UInt32?)
+        begin
+          promised = adapter.call(duration)
+        ensure
+          @pending_active_mutex.synchronize do
+            @activation_in_flight = false
+            if promised && @pending_active_generation == generation
+              @pending_stay_active_duration = nil
+              @pending_active_deadline = nil
+            end
+          end
+        end
         return unless promised
 
-        @pending_stay_active_duration = nil
-        @pending_active_deadline = nil
         emit_event(EVENT_ACTIVE_CHANGED, ActiveChangedEvent.new(promised))
         promised
       end
