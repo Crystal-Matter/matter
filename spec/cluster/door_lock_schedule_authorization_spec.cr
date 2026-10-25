@@ -256,4 +256,37 @@ describe "Door Lock schedule authorization" do
     lock.data_version.should eq(version_after_set)
     notifications.size.should eq(1)
   end
+
+  it "keeps a configured mode write silent while an active holiday masks it" do
+    now = Time.utc(2026, 10, 23, 12, 0, 0)
+    timer = HolidayTestTimer.new(-> { now })
+    lock = build(ScheduledDoorLock,
+      feature_map: ScheduledDoorLock::Feature::User | ScheduledDoorLock::Feature::HolidaySchedules,
+      supported_operating_modes: 0xFFE2_u16,
+      local_time_provider: -> : Time? { now }, holiday_timer: timer)
+    notifications = [] of UInt32
+    lock.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) { notifications << attribute }
+
+    expect_success(invoke(lock, ScheduledDoorLock::CMD_SET_HOLIDAY_SCHEDULE,
+      ScheduledDoorLock::SetHolidayScheduleRequest.new(1_u8,
+        local_schedule_epoch(now - 1.hour), local_schedule_epoch(now + 1.hour),
+        ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock)))
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE])
+    notifications.clear
+    version_before_write = lock.data_version
+
+    expect_success(write(lock, ScheduledDoorLock::ATTR_OPERATING_MODE,
+      ScheduledDoorLock::OperatingMode::Privacy.value))
+    lock.operating_mode.should eq(ScheduledDoorLock::OperatingMode::Privacy)
+    read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::NoRemoteLockUnlock.value)
+    # The stored configuration changed, so persistence still needs a version bump.
+    lock.data_version.should eq(version_before_write &+ 1_u32)
+    notifications.should be_empty
+
+    now += 1.hour + 1.second
+    timer.fire_due
+    read(lock, ScheduledDoorLock::ATTR_OPERATING_MODE).should eq(ScheduledDoorLock::OperatingMode::Privacy.value)
+    lock.data_version.should eq(version_before_write &+ 2_u32)
+    notifications.should eq([ScheduledDoorLock::ATTR_OPERATING_MODE])
+  end
 end

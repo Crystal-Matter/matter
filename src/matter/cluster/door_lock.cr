@@ -1895,8 +1895,19 @@ module Matter
         arm_next_holiday_boundary
       end
 
+      # A configured mode write still advances the data version for persistence,
+      # but a holiday can mask it from the wire OperatingMode attribute.
+      protected def notify_changed(attribute_id : UInt32)
+        if attribute_id == ATTR_OPERATING_MODE
+          mode = effective_operating_mode
+          return if mode == @last_effective_operating_mode
+          @last_effective_operating_mode = mode
+        end
+        super
+      end
+
       # Re-evaluate after a host clock correction as well as from the scheduled
-      # holiday timer. The data version moves only when the wire value changes.
+      # holiday timer. Re-evaluation moves the data version only on a wire change.
       def refresh_holiday_operating_mode : Nil
         update_holiday_operating_mode(version_already_changed: false)
       end
@@ -1904,7 +1915,6 @@ module Matter
       private def update_holiday_operating_mode(version_already_changed : Bool) : Nil
         mode = effective_operating_mode
         if mode != @last_effective_operating_mode
-          @last_effective_operating_mode = mode
           if version_already_changed
             notify_changed(ATTR_OPERATING_MODE)
           else

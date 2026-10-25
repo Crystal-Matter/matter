@@ -86,6 +86,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Door Lock
 
+- Keep a changed configured OperatingMode durable while an active holiday masks
+  it, without sending an unchanged OperatingMode subscription report.
 - Report changes to the effective OperatingMode at holiday schedule boundaries
   through data versions and subscriptions. Reschedule after edits, restoration,
   or host clock corrections, without duplicate reports for overlapping intervals.
