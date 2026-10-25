@@ -133,6 +133,9 @@ private class DatastoreImClient < Matter::Controller::ImClient
     if cluster_id == Matter::Cluster::AccessControl::CLUSTER_ID && code == Matter::InteractionModel::StatusCode::Success
       @acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(value)
     end
+    if cluster_id == Matter::Cluster::Binding::CLUSTER_ID && code == Matter::InteractionModel::StatusCode::Success
+      @binding_entries[endpoint_id] = Array(Matter::Cluster::Binding::Target).from_tlv(value)
+    end
     status = Matter::InteractionModel::StatusIB.new(code.value)
     Matter::InteractionModel::WriteResponseMessage.new([Matter::InteractionModel::AttributeStatusIB.new(path, status)])
   end
@@ -585,6 +588,90 @@ describe Matter::Controller::DatastoreSynchronizer do
     bindings = Array(Matter::Cluster::Binding::Target).from_tlv(im.writes.first[2])
     bindings.first.node.should eq(0x200_u64)
     store.endpoint_binding_list.first.status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
+  ensure
+    client.try(&.close)
+  end
+
+  it "retains a binding while another datastore ListID still requires it" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.add_pending_node(Datastore::AddPendingNodeRequest.new(0x100_u64, "Node"))
+    store.complete_node(0x100_u64)
+    store.record_endpoint(0x100_u64, 1_u16, "Endpoint")
+    target = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    request = Datastore::AddBindingToEndpointForNodeRequest.new(0x100_u64, 1_u16, target)
+    store.add_binding_to_endpoint_for_node(request).success?.should be_true
+    store.add_binding_to_endpoint_for_node(request).success?.should be_true
+    list_ids = store.endpoint_binding_list.map(&.list_id)
+    list_ids.uniq.size.should eq(2)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    store.endpoint_binding_list.all?(&.status_entry.state.committed?).should be_true
+
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64, endpoint: 1_u16)]
+    store.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(list_ids[0], 1_u16, 0x100_u64))
+      .success?.should be_true
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    first_removal = im.writes.last[2]
+    Array(Matter::Cluster::Binding::Target).from_tlv(first_removal).size.should eq(1)
+    store.endpoint_binding_list.map(&.list_id).should eq([list_ids[1]])
+
+    store.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(list_ids[1], 1_u16, 0x100_u64))
+      .success?.should be_true
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    final_removal = im.writes.last[2]
+    Array(Matter::Cluster::Binding::Target).from_tlv(final_removal).should be_empty
+    store.endpoint_binding_list.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "does not retain a binding for a ListID whose target write failed" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    target = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64, endpoint: 1_u16)]
+    deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
+    failed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::CommitFailed, 0_u32,
+      Matter::InteractionModel::StatusCode::ResourceExhausted.value)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.endpoint_binding_list = [
+      Datastore::DatastoreEndpointBindingEntryStruct.new(0x100_u64, 1_u16, 0_u16, target, deleting),
+      Datastore::DatastoreEndpointBindingEntryStruct.new(0x100_u64, 1_u16, 1_u16, target, failed),
+    ]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    Array(Matter::Cluster::Binding::Target).from_tlv(im.writes.last[2]).should be_empty
+    store.endpoint_binding_list.map(&.list_id).should eq([1_u16])
+  ensure
+    client.try(&.close)
+  end
+
+  it "removes a binding before a pending duplicate that later fails its write" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    target = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64, endpoint: 1_u16)]
+    im.write_response_codes.concat([
+      Matter::InteractionModel::StatusCode::Success,
+      Matter::InteractionModel::StatusCode::ResourceExhausted,
+    ])
+    deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.endpoint_binding_list = [
+      Datastore::DatastoreEndpointBindingEntryStruct.new(0x100_u64, 1_u16, 0_u16, target, deleting),
+      Datastore::DatastoreEndpointBindingEntryStruct.new(0x100_u64, 1_u16, 1_u16, target, pending),
+    ]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.binding_entries[1_u16].should be_empty
+    store.endpoint_binding_list.map(&.list_id).should eq([1_u16])
+    store.endpoint_binding_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
   ensure
     client.try(&.close)
   end
