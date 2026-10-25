@@ -220,6 +220,44 @@ describe Matter::Cluster::DoorLock do
   end
 
   describe "door position sensor updates" do
+    it "reports elapsed OpenPeriod minutes from the last closed-to-open transition" do
+      now = 0.seconds
+      cluster = build(Def, open_period_clock: -> { now })
+
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(0_u16)
+      cluster.update_door_state(Def::DoorState::DoorOpen)
+      now = 2.minutes + 59.seconds
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(2_u16)
+
+      cluster.update_door_state(Def::DoorState::DoorOpen)
+      now = 3.minutes
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(3_u16)
+
+      cluster.update_door_state(Def::DoorState::DoorClosed)
+      now = 8.minutes
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(3_u16)
+
+      cluster.update_door_state(Def::DoorState::DoorOpen)
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(0_u16)
+      now = 9.minutes
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(1_u16)
+    end
+
+    it "uses a written OpenPeriod as the new elapsed-minute baseline" do
+      now = 0.seconds
+      cluster = build(Def, open_period_clock: -> { now })
+      cluster.update_door_state(Def::DoorState::DoorOpen)
+      now = 2.minutes
+
+      expect_success(write(cluster, Def::ATTR_OPEN_PERIOD, 7_u16))
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(7_u16)
+      now = 3.minutes
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(8_u16)
+
+      now = 70_000.minutes
+      read(cluster, Def::ATTR_OPEN_PERIOD).should eq(UInt16::MAX)
+    end
+
     it "updates counters and notifies changed attributes" do
       cluster = build(Matter::Cluster::DoorLock)
 

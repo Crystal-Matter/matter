@@ -146,6 +146,10 @@ module Matter
       attribute 0x0004, :door_open_events, UInt32, default: 0_u32, writable: true, write_access: :manage, optional: true, requires: :door_position_sensor
       attribute 0x0005, :door_closed_events, UInt32, default: 0_u32, writable: true, write_access: :manage, optional: true, requires: :door_position_sensor
       attribute 0x0006, :open_period, UInt16, default: 0_u16, writable: true, write_access: :manage, optional: true, requires: :door_position_sensor
+      after_write :open_period do
+        @open_period_base = @open_period
+        @open_period_started_at = @open_period_clock.call if @door_state == DoorState::DoorOpen
+      end
       attribute 0x0011, :number_of_total_users_supported, UInt16, default: DEFAULT_USERS_SUPPORTED, fixed: true, requires: :user
       attribute 0x0012, :number_of_pin_users_supported, UInt16, default: DEFAULT_USERS_SUPPORTED, fixed: true, requires: :pin_credential
       attribute 0x0013, :number_of_rfid_users_supported, UInt16, default: DEFAULT_USERS_SUPPORTED, fixed: true, requires: :rfid_credential
@@ -412,6 +416,8 @@ module Matter
       @holiday_timer_generation : UInt64 = 0_u64
       @cancel_holiday_timer : Proc(Nil)? = nil
       @last_effective_operating_mode : OperatingMode = OperatingMode::Normal
+      @open_period_started_at : Time::Span? = nil
+      @open_period_base : UInt16 = 0_u16
 
       getter default_pin_code : String
 
@@ -459,6 +465,7 @@ module Matter
         @default_pin_code : String = DEFAULT_PIN_CODE,
         @local_time_provider : Proc(Time?) = -> : Time? { Time.local },
         @holiday_timer : HolidayTimer = FiberHolidayTimer.new,
+        @open_period_clock : Proc(Time::Span) = -> { Time.monotonic },
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
@@ -1293,9 +1300,17 @@ module Matter
         return unless @feature_map.door_position_sensor?
         return if @door_state == new_state
 
+        if @door_state == DoorState::DoorOpen
+          refresh_open_period
+          @open_period_started_at = nil
+        end
+
         case new_state
         when DoorState::DoorOpen
           self.door_open_events = @door_open_events + 1_u32
+          @open_period_base = 0_u16
+          @open_period_started_at = @open_period_clock.call
+          self.open_period = 0_u16
         when DoorState::DoorClosed
           self.door_closed_events = @door_closed_events + 1_u32
         end
@@ -1944,8 +1959,19 @@ module Matter
       end
 
       def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        refresh_open_period if attribute_id == ATTR_OPEN_PERIOD && @feature_map.door_position_sensor?
         return tlv(effective_operating_mode.value) if attribute_id == ATTR_OPERATING_MODE
         super
+      end
+
+      private def refresh_open_period : Nil
+        return unless started_at = @open_period_started_at
+        elapsed = @open_period_clock.call - started_at
+        return if elapsed < 0.seconds
+
+        minutes = @open_period_base.to_i64 + (elapsed.total_seconds / 60).to_i64
+        minutes = UInt16::MAX.to_i64 if minutes > UInt16::MAX
+        self.open_period = minutes.to_u16
       end
 
       private def local_schedule_time : LocalScheduleTime?
