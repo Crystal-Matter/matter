@@ -21,6 +21,14 @@ Set `on_manual_trigger` to schedule a manual upload; then call
 `report_transport_begin` and `report_transport_end` when the upload actually
 starts and ends, passing the real CMAF session number. The cluster does not
 open TLS sockets, capture video/audio, generate CMAF segments, or upload data.
+For `Command` triggers, a manual request must include `TimeControl`; `Motion`
+triggers use their configured MotionTimeControl when a manual request omits it.
+Set `transport_busy` to report a connection already sending; a busy request
+returns the Matter `Busy` status without calling the trigger hook. The device
+runtime links `privacy_allows` to Camera AV Stream Management when that cluster
+is installed, including hard, livestream, and recording privacy controls.
+Hosts without that cluster should set `privacy_allows` to their own policy
+before enabling manual capture. A denied request returns `InvalidInState`.
 The optional Metadata and PerZoneSensitivity feature bits are not enabled by
 the example.
 
@@ -51,7 +59,8 @@ Restored `Active` connections become `Inactive` until the host establishes a
 fresh transport.
 
 Official chip-tool E2E currently covers commissioning, metadata, attributes,
-and restart of the empty connection catalog. The focused Crystal specs cover
+an unknown manual trigger command, and restart of the empty connection catalog.
+The focused Crystal specs cover
 TLV tags, command lifecycle, fabric isolation, persistence, validation, and
 host event gating. A camera backend, actual media transport, nonempty
 chip-tool allocation, and certification suite are still needed before claiming

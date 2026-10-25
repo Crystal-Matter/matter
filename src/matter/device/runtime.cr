@@ -1220,6 +1220,18 @@ module Matter
         push.fabric_installed = ->(index : UInt8) { !@fabric_table.get_fabric(index).nil? }
         push.tls_endpoint_exists = ->(fabric : UInt8, id : UInt16) { tls.has_endpoint?(fabric, id) }
         push.on_reference_change = ->(fabric : UInt8, id : UInt16, delta : Int8) { tls.change_reference_count(fabric, id, delta) }
+        unless push.privacy_allows
+          push.privacy_allows = ->(usage : Cluster::PushAvStreamTransport::StreamUsage) do
+            if camera = @node.get_cluster(Cluster::CameraAvStreamManagement)
+              !camera.hard_privacy_mode_on? &&
+              !(usage.live_view? && camera.soft_livestream_privacy_mode_enabled?) &&
+              !(usage.in?(Cluster::PushAvStreamTransport::StreamUsage::Recording,
+                Cluster::PushAvStreamTransport::StreamUsage::Analysis) && camera.soft_recording_privacy_mode_enabled?)
+            else
+              true
+            end
+          end
+        end
         push.on_persist = -> do
           raise StorageError.new("Could not persist Push AV transport") unless @persistence.save_cluster(push)
           nil

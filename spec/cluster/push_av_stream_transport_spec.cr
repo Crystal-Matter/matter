@@ -117,10 +117,11 @@ describe PushAv do
     cluster.on_status_change = ->(_fabric : UInt8, _id : UInt16, _status : PushAv::TransportStatus) { true }
     cluster.set_transport_status(PushAv::Tlv::SetStatusRequest.new(0_u16, PushAv::TransportStatus::Active))
       .status.should eq(Matter::InteractionModel::StatusCode::Success)
-    cluster.manually_trigger_transport(PushAv::Tlv::ManualTriggerRequest.new(0_u16, PushAv::ActivationReason::DoorbellPressed))
+    control = PushAv::Tlv::MotionTimeControl.new(1_u16, 1_u16, 5_u32, 1_u16)
+    cluster.manually_trigger_transport(PushAv::Tlv::ManualTriggerRequest.new(0_u16, PushAv::ActivationReason::DoorbellPressed, control))
       .status.should eq(Matter::InteractionModel::StatusCode::InvalidInState)
     cluster.on_manual_trigger = ->(_fabric : UInt8, _id : UInt16, _reason : PushAv::ActivationReason, _time : PushAv::Tlv::MotionTimeControl?, _metadata : Bytes?) { true }
-    cluster.manually_trigger_transport(PushAv::Tlv::ManualTriggerRequest.new(0_u16, PushAv::ActivationReason::DoorbellPressed))
+    cluster.manually_trigger_transport(PushAv::Tlv::ManualTriggerRequest.new(0_u16, PushAv::ActivationReason::DoorbellPressed, control))
       .status.should eq(Matter::InteractionModel::StatusCode::Success)
     cluster.report_transport_begin(2_u8, 0_u16, PushAv::ActivationReason::DoorbellPressed, 5_u64).should be_false
     cluster.report_transport_begin(1_u8, 0_u16, PushAv::ActivationReason::DoorbellPressed, 5_u64).should be_true

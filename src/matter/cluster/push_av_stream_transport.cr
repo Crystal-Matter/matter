@@ -70,6 +70,8 @@ module Matter
       property on_manual_trigger : Proc(UInt8, UInt16, ActivationReason, Tlv::MotionTimeControl?, Bytes?, Bool)?
       property on_reference_change : Proc(UInt8, UInt16, Int8, Bool)?
       property on_modify_active : Proc(UInt8, UInt16, Tlv::TransportOptions, Bool)?
+      property privacy_allows : Proc(StreamUsage, Bool)?
+      property transport_busy : Proc(UInt8, UInt16, Bool)?
 
       def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
                      @feature_map : Feature = Feature::None,
@@ -218,16 +220,22 @@ module Matter
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidOptions) if request.user_defined && !feature_map.metadata?
         entry = find_owned(fabric, request.connection_id)
         return InteractionModel::Status.not_found unless entry
-        return InteractionModel::Status.cluster_failure(StatusCode::InvalidTransportStatus) unless entry.transport_status.active?
         options = entry.transport_options || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state if @privacy_allows.try { |check| !check.call(options.stream_usage) }
+        return InteractionModel::Status.busy if @transport_busy.try(&.call(fabric, entry.connection_id))
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidTransportStatus) unless entry.transport_status.active?
         return InteractionModel::Status.cluster_failure(StatusCode::InvalidTriggerType) if options.trigger_options.trigger_type.continuous?
-        if control = request.time_control
+        control = request.time_control || options.trigger_options.motion_time_control
+        if options.trigger_options.trigger_type.command? && !control
+          return InteractionModel::Status.dynamic_constraint_error
+        end
+        if control
           return InteractionModel::Status.constraint_error unless valid_time_control?(control)
         end
         callback = @on_manual_trigger
         return InteractionModel::Status.invalid_in_state unless callback
         return InteractionModel::Status.invalid_in_state unless callback.call(fabric, entry.connection_id,
-                                                                  request.activation_reason, request.time_control, request.user_defined)
+                                                                  request.activation_reason, control, request.user_defined)
         # The host emits Begin/End only when upload actually starts/stops.
         InteractionModel::Status.success
       end
