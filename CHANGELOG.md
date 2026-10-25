@@ -628,6 +628,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   synthetic thermostat and official chip-tool check. Thermostat remains at
   revision 9 pending its other Matter 1.6 revision 11 behaviors.
 
+### Thermostat preset atomic chip-tool fixture
+
+- Exercise BeginWrite, whole-list Presets write, CommitWrite, and SetActivePreset with the official Matter 1.6 chip-tool in the guarded certification fixture. The implementation-defined delegate timeout now permits up to 60,000 ms (within the UInt16 wire field), giving separate controller commands time to complete while monotonic expiry bounds a lost writer's reservation. Shorter requested timeouts pass through unchanged. Production PRES remains gated pending the full conformance surface.
+
 ### Thermostat preset handle lifetime
 
 - Persist the history of committed preset handles so a device-generated handle is never reused after its preset is deleted, including after restart. Existing preset storage without the history field remains readable. Removing a fabric now discards its pending Thermostat atomic transaction immediately.

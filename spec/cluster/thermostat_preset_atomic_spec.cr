@@ -138,7 +138,7 @@ describe "Thermostat preset atomic-write foundation" do
     atomic_actor(cluster)
     before = cluster.data_version
     started = atomic_request(cluster, AtomicType::BeginWrite, 9_000_u16).as(Thermostat::AtomicResponse)
-    started.timeout.should eq(3_000_u16)
+    started.timeout.should eq(9_000_u16)
     atomic_request(cluster, AtomicType::BeginWrite, 100_u16).as(Matter::InteractionModel::Status).status.should eq(IMCode::InvalidInState)
     atomic_actor(cluster, subject: 12_u64)
     busy = atomic_request(cluster, AtomicType::BeginWrite, 100_u16).as(Thermostat::AtomicResponse)
@@ -152,6 +152,40 @@ describe "Thermostat preset atomic-write foundation" do
     atomic_request(cluster, AtomicType::RollbackWrite).as(Thermostat::AtomicResponse).status_code.should eq(IMCode::Success)
     cluster.presets.should be_empty
     cluster.data_version.should eq(before)
+  end
+
+  it "caps a longer client timeout at the server's bounded maximum" do
+    cluster = build(Thermostat)
+    cluster.configure_presets([Thermostat::PresetType.new(Thermostat::PresetScenario::Sleep, 1_u8)],
+      [] of Thermostat::Preset)
+    atomic_actor(cluster)
+    response = atomic_request(cluster, AtomicType::BeginWrite, UInt16::MAX).as(Thermostat::AtomicResponse)
+    response.status_code.should eq(IMCode::Success)
+    response.timeout.should eq(60_000_u16)
+  end
+
+  it "holds a long write only until its monotonic timeout" do
+    cluster = build(Thermostat)
+    cluster.configure_presets([Thermostat::PresetType.new(Thermostat::PresetScenario::Sleep, 1_u8)],
+      [] of Thermostat::Preset)
+    Timecop.freeze(Time.utc) do
+      atomic_actor(cluster)
+      atomic_request(cluster, AtomicType::BeginWrite, UInt16::MAX).as(Thermostat::AtomicResponse)
+        .timeout.should eq(60_000_u16)
+      Timecop.travel(Time.utc + 59.seconds) do
+        atomic_actor(cluster, subject: 12_u64)
+        response = atomic_request(cluster, AtomicType::BeginWrite, 1_000_u16).as(Thermostat::AtomicResponse)
+        response.attribute_status.first.status_code.should eq(IMCode::Busy)
+      end
+      Timecop.travel(Time.utc + 61.seconds) do
+        atomic_actor(cluster, subject: 12_u64)
+        atomic_request(cluster, AtomicType::BeginWrite, 1_000_u16).as(Thermostat::AtomicResponse)
+          .status_code.should eq(IMCode::Success)
+        atomic_actor(cluster)
+        atomic_request(cluster, AtomicType::CommitWrite).as(Matter::InteractionModel::Status).status
+          .should eq(IMCode::InvalidInState)
+      end
+    end
   end
 
   it "validates each pending replacement and generates a unique handle on commit" do

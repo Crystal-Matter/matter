@@ -149,6 +149,32 @@ describe "Thermostat Presets wire preparation" do
     changed.should contain(PresetThermostat::ATTR_ACTIVE_PRESET_HANDLE)
   end
 
+  it "commits a whole-list IM write through the AtomicRequest wire command" do
+    cluster = build(WireReadyThermostat, feature_map: wire_preset_features)
+    handle = Bytes[1_u8]
+    cluster.configure_presets([PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8)],
+      [PresetThermostat::Preset.new(handle, PresetThermostat::PresetScenario::Sleep,
+        nil, 2700_i16, 1800_i16, true)])
+    changed = PresetThermostat::Preset.new(handle, PresetThermostat::PresetScenario::Sleep,
+      nil, 2700_i16, 1900_i16, true)
+
+    begun = wire_preset_invoke(cluster, PresetThermostat::CMD_ATOMIC_REQUEST,
+      PresetThermostat::AtomicRequest.new(PresetThermostat::AtomicRequestType::BeginWrite,
+        [PresetThermostat::ATTR_PRESETS], 9_000_u16))
+    begin_fields = begun.command_data.try(&.command_fields) || raise "expected BeginWrite response"
+    PresetThermostat::AtomicResponse.from_tlv(begin_fields).timeout.should eq(9_000_u16)
+    wire_preset_write(cluster, [wire_preset_data(cluster, [changed])]).should eq([PresetCode::Success])
+    cluster.presets.first.heating_setpoint.should eq(1800_i16)
+    wire_preset_read(cluster).first.heating_setpoint.should eq(1900_i16)
+
+    committed = wire_preset_invoke(cluster, PresetThermostat::CMD_ATOMIC_REQUEST,
+      PresetThermostat::AtomicRequest.new(PresetThermostat::AtomicRequestType::CommitWrite,
+        [PresetThermostat::ATTR_PRESETS]))
+    commit_fields = committed.command_data.try(&.command_fields) || raise "expected CommitWrite response"
+    PresetThermostat::AtomicResponse.from_tlv(commit_fields).status_code.should eq(PresetCode::Success)
+    cluster.presets.first.heating_setpoint.should eq(1900_i16)
+  end
+
   it "reports ActivePresetChange when TEVT and PRES are combined" do
     cluster = build(WireReadyThermostat,
       feature_map: wire_preset_features | PresetThermostat::Feature::Events)
