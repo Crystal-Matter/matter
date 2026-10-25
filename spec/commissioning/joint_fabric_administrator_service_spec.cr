@@ -233,6 +233,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     cluster.request_is_case_session = true
     cluster.request_peer_node_id = 0x44_u64
     cluster.request_fabric_index = 1_u8
+    cluster.administrator_fabric_index = 1_u8
     cluster.request_peer_subject_ids = [0x44_u64]
     service.transfer_anchor_request(cluster).should eq(Matter::InteractionModel::Status.unsupported_access)
     started.should be_false
@@ -306,6 +307,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex))
     cluster.administrator_fabric_index = 1_u8
+    cluster.request_fabric_index = 1_u8
     invalid = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
       180_u16, Bytes.new(96, 0_u8), 3839_u16, 2000_u32, Bytes.new(16, 0_u8))
     service.open_joint_commissioning_window(cluster, invalid).should eq(Matter::InteractionModel::Status.invalid_command)
@@ -313,6 +315,67 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::Busy))
+  end
+
+  it "rejects a different fabric's Administrator CAT for JFA control commands" do
+    fabrics = Matter::FabricTable.new(Matter::Storage::Memory.new)
+    {1_u8, 2_u8}.each do |index|
+      fabrics.add_fabric(Matter::Fabric.new(
+        fabric_id: index.to_u64,
+        fabric_index: index,
+        node_id: 0x10_u64,
+        root_public_key: Random::Secure.random_bytes(65),
+        operational_cert: Random::Secure.random_bytes(200),
+        operational_key: Matter::Crypto::Key.generate_key_pair,
+        ipk: Random::Secure.random_bytes(16)
+      )).should be_true
+    end
+    opened = 0
+    transferred = 0
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) {
+        opened += 1
+        Matter::InteractionModel::Status.success
+      },
+      ->(_node : UInt64) { true }, -> { false }, -> { transferred += 1; nil }, -> { nil }, crypto
+    )
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_peer_node_id = 0x44_u64
+    cluster.request_peer_subject_ids = [0x44_u64, 0xFFFF_FFFD_FFFF_0001_u64]
+    cluster.request_fabric_index = fabrics.get_fabric(2_u8).as(Matter::Fabric).fabric_index
+    valid = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
+      180_u16, Bytes.new(97, 0_u8), 3839_u16, 2000_u32, Bytes.new(16, 0_u8))
+
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.unsupported_access)
+    service.transfer_anchor_request(cluster).should eq(Matter::InteractionModel::Status.unsupported_access)
+    opened.should eq(0)
+    transferred.should eq(0)
+
+    cluster.request_fabric_index = fabrics.get_fabric(1_u8).as(Matter::Fabric).fabric_index
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
+    service.transfer_anchor_request(cluster).as(Matter::Cluster::JointFabricAdministrator::TransferAnchorResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK)
+    opened.should eq(1)
+    transferred.should eq(1)
+
+    restored = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    restored.administrator_fabric_index.should eq(1_u8)
+    restored.request_is_case_session = true
+    restored.request_peer_node_id = 0x44_u64
+    restored.request_peer_subject_ids = [0x44_u64, 0xFFFF_FFFD_FFFF_0001_u64]
+    restored.request_fabric_index = fabrics.get_fabric(2_u8).as(Matter::Fabric).fabric_index
+    service.open_joint_commissioning_window(restored, valid).should eq(Matter::InteractionModel::Status.unsupported_access)
+    service.transfer_anchor_request(restored).should eq(Matter::InteractionModel::Status.unsupported_access)
+    opened.should eq(1)
+    transferred.should eq(1)
+    restored.request_fabric_index = fabrics.get_fabric(1_u8).as(Matter::Fabric).fabric_index
+    service.open_joint_commissioning_window(restored, valid).should eq(Matter::InteractionModel::Status.success)
+    opened.should eq(2)
   end
 
   it "limits the ICAC exchange and Administrator announcement to an authenticated Anchor CAT" do
