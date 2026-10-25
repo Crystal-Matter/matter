@@ -65,7 +65,7 @@ module Matter
 
         store.endpoint_binding_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }.each do |entry|
           status = apply do
-            sync_binding(entry, session, peer)
+            sync_binding(store, entry, session, peer)
           end
           store.complete_binding(node_id, entry.endpoint_id, entry.list_id, status)
         end
@@ -321,12 +321,17 @@ module Matter
         )
       end
 
-      private def sync_binding(entry : Store::DatastoreEndpointBindingEntryStruct,
+      private def sync_binding(store : Store, entry : Store::DatastoreEndpointBindingEntryStruct,
                                session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         current = read_list(Cluster::Binding::Target, session, peer, entry.endpoint_id, Cluster::Binding::CLUSTER_ID, Cluster::Binding::ATTR_BINDING)
         source = entry.binding
         wanted = Cluster::Binding::Target.new(source.node, source.group, source.endpoint, source.cluster)
-        if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
+        another_active_binding = store.endpoint_binding_list.any? do |other|
+          other.node_id == entry.node_id && other.endpoint_id == entry.endpoint_id &&
+            other.list_id != entry.list_id && other.binding == source &&
+            other.status_entry.state == Store::DatastoreStateEnum::Committed
+        end
+        if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && !another_active_binding
           current.reject! { |item| same_binding?(item, wanted) }
         elsif !current.any? { |item| same_binding?(item, wanted) }
           current << wanted
