@@ -21,18 +21,21 @@ module Matter
     getter endpoint_id : DataType::EndpointNumber
     getter device_types : Array(DeviceType)
     getter clusters : Hash(UInt32, Cluster::Base)
+    getter client_cluster_ids : Array(UInt32)
 
     def initialize(
       @endpoint_id : DataType::EndpointNumber,
       @device_types : Array(DeviceType) = [] of DeviceType,
     )
       @clusters = {} of UInt32 => Cluster::Base
+      @client_cluster_ids = [] of UInt32
     end
 
     # Convenience constructor for single device type
     def initialize(@endpoint_id : DataType::EndpointNumber, device_type : DeviceType)
       @device_types = [device_type]
       @clusters = {} of UInt32 => Cluster::Base
+      @client_cluster_ids = [] of UInt32
     end
 
     # The endpoint number this endpoint answers on.
@@ -92,6 +95,11 @@ module Matter
       @clusters.keys.sort!
     end
 
+    # A client cluster has outbound behavior but no local server instance.
+    def add_client_cluster(cluster_id : UInt32) : Nil
+      @client_cluster_ids << cluster_id unless @client_cluster_ids.includes?(cluster_id)
+    end
+
     # Get the number of clusters
     def cluster_count : Int32
       @clusters.size
@@ -120,6 +128,10 @@ module Matter
       cluster_ids.each do |id|
         descriptor.server_list << id unless descriptor.server_list.includes?(id)
       end
+      @client_cluster_ids.each do |id|
+        descriptor.client_list << id unless descriptor.client_list.includes?(id)
+      end
+      descriptor.client_list.sort!
 
       descriptor.device_type_list.clear
       @device_types.each do |device_type|
@@ -173,6 +185,11 @@ module Matter
         device_type.required_server_clusters.each do |cluster_id|
           unless has_cluster?(cluster_id)
             errors << "Missing required cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
+          end
+        end
+        device_type.required_client_clusters.each do |cluster_id|
+          unless @client_cluster_ids.includes?(cluster_id)
+            errors << "Missing required client cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
           end
         end
         device_type.required_server_attributes.each do |cluster_id, attribute_ids|

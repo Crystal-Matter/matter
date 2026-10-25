@@ -77,6 +77,7 @@ module Matter
     getter name : String
     getter revision : UInt16
     getter required_server_clusters : Array(UInt32)
+    getter required_client_clusters : Array(UInt32)
     getter optional_server_clusters : Array(UInt32)
     getter required_server_attributes : Hash(UInt32, Array(UInt32))
     # Device types which must also appear somewhere on the node.
@@ -90,6 +91,7 @@ module Matter
       @optional_server_clusters : Array(UInt32) = [] of UInt32,
       @required_server_attributes : Hash(UInt32, Array(UInt32)) = {} of UInt32 => Array(UInt32),
       @required_node_device_types : Array(UInt32) = [] of UInt32,
+      @required_client_clusters : Array(UInt32) = [] of UInt32,
     )
     end
 
