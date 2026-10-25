@@ -4,16 +4,14 @@ This compares canonical Matter XML IDs with Crystal cluster DSL declarations
 for implemented standard clusters. A declared ID does not prove a working handler,
 correct payload, event emission, feature gating, or interoperability. This is not a completeness claim.
 Feature and complex conditions are displayed for manual review, not evaluated.
-OccupancyChanged is emitted when the OccupancyEvent feature is selected.
-Thermostat TEVT covers the base and AUTO events; OCC, MSCH and PRES remain unavailable.
 
 XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db4beb5059761567073bf89cba`.
 
-- Implemented standard cluster IDs compared: 134
+- Implemented standard cluster IDs compared: 135
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 29
+- Feature or complex conditional IDs absent from Crystal: 27
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -108,7 +106,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0403 | Pressure Measurement Cluster | 5 | 5 | — | — |
 | 0x0404 | Flow Measurement Cluster | 5 | 5 | — | — |
 | 0x0405 | Relative Humidity Measurement | 5 | 5 | — | — |
-| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | OccupancyChanged when OccupancyEvent is selected |
+| 0x0406 | Occupancy Sensing Cluster | 7 | 7 | — | — |
 | 0x040C | Carbon Monoxide Concentration Measurement | 5 | 5 | — | — |
 | 0x040D | Carbon Dioxide Concentration Measurement | 5 | 5 | — | — |
 | 0x0413 | Nitrogen Dioxide Concentration Measurement | 5 | 5 | — | — |
@@ -139,9 +137,10 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | — | — |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | — |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | — |
-| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO commands; SNP and optional video controls remain |
-| 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | MPAN only |
-| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO/VDO signaling commands only; decoded video and media transport remain unverified |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | — |
+| 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | — |
+| 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | — |
+| 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
 | 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | — |
@@ -270,7 +269,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0104 | event | 0x0002 | feature(MO) | declared; requires `:manually_operable` |
 | 0x0105 | command | 0x0001 | feature(PS) | declared; requires `:positioning` |
 | 0x0201 | command | 0x0005 | feature(MSCH) | absent |
-| 0x0201 | command | 0x0006 | feature(PRES) | absent |
+| 0x0201 | command | 0x0006 | feature(PRES) | declared; requires `:presets` |
 | 0x0201 | command | 0x0007 | feature(TSUGGEST) | absent |
 | 0x0201 | command | 0x0008 | feature(TSUGGEST) | absent |
 | 0x0201 | event | 0x0000 | feature(TEVT) | declared; requires `:events` |
@@ -280,7 +279,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0201 | event | 0x0004 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0005 | (feature(TEVT) and feature(AUTO)) | declared; requires `{events: true, automode: true}` |
 | 0x0201 | event | 0x0006 | (feature(TEVT) and feature(MSCH)) | absent |
-| 0x0201 | event | 0x0007 | (feature(TEVT) and feature(PRES)) | absent |
+| 0x0201 | event | 0x0007 | (feature(TEVT) and feature(PRES)) | declared; requires `{events: true, presets: true}` |
 | 0x0202 | command | 0x0000 | feature(STEP) | declared; requires `:step` |
 | 0x0300 | command | 0x0000 | feature(HS) | declared; requires `:hue_saturation` |
 | 0x0300 | command | 0x0001 | feature(HS) | declared; requires `:hue_saturation` |

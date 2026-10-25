@@ -353,6 +353,11 @@ services:
     environment:
       E2E_DEVICE: matter_camera_video
 
+  webrtc-requestor:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_webrtc_requestor
+
   oven:
     <<: *device
     environment:

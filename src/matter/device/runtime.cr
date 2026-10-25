@@ -436,6 +436,13 @@ module Matter
             raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
           end
         end
+
+        # WebRTC sessions are volatile, but a later ACL write can fail after
+        # the fabric document is gone. End them before that index is reusable.
+        @message_handler.clusters.values.each do |cluster|
+          cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
+          cluster.as?(Cluster::WebRtcTransportRequestor).try(&.remove_fabric(fabric_index))
+        end
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
         @message_handler.forget_group_fabric(fabric_index)
@@ -462,7 +469,6 @@ module Matter
           cluster.as?(Cluster::Thermostat).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
           cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
-          cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
         end
         icd_management.try do |fabric_icd|
           fabric_icd.remove_fabric(fabric_index)
