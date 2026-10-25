@@ -12,6 +12,7 @@ require "../certificate/attestation_certificate_manager"
 require "../certificate/certification_declaration"
 require "../interaction_model/status_code"
 require "./credential_journal"
+require "./fabric_removal_journal"
 
 module Matter
   module Commissioning
@@ -202,6 +203,12 @@ module Matter
       # assigned to another fabric. Failure aborts removal while the index is
       # still reserved.
       property on_before_fabric_removed : Proc(UInt8, Nil)?
+
+      # Restore live cluster objects if removal is aborted.
+      property on_fabric_removal_rollback : Proc(UInt8, Nil)?
+      property on_fabric_removal_quarantine : Proc(UInt8, Nil)?
+      property on_fabric_removal_snapshot : Proc(Storage::Document)?
+      property on_fabric_removal_app_snapshot_keys : Proc(Array(String))?
 
       # A fabric's operational identity changed via UpdateNOC or rollback.
       property on_fabric_updated : Proc(Fabric, Nil)?
@@ -619,10 +626,49 @@ module Matter
           return NocOutcome.new(NocStatus::InvalidFabricIndex, fabric_index, "Fabric not found")
         end
 
-        @on_before_fabric_removed.try(&.call(fabric_index))
+        begin
+          FabricRemovalJournal.start(@fabric_table.backend, fabric_index,
+            @on_fabric_removal_snapshot.try(&.call),
+            @on_fabric_removal_app_snapshot_keys.try(&.call) || [] of String)
+        rescue ex
+          @fabric_table.quarantine(fabric_index)
+          @on_fabric_removal_quarantine.try(&.call(fabric_index))
+          raise ex
+        end
+        begin
+          @on_before_fabric_removed.try(&.call(fabric_index))
+        rescue ex
+          begin
+            FabricRemovalJournal.restore_documents(@fabric_table.backend)
+            @on_fabric_removal_rollback.try(&.call(fabric_index))
+            FabricRemovalJournal.clear(@fabric_table.backend)
+          rescue error
+            @fabric_table.quarantine(fabric_index)
+            @on_fabric_removal_quarantine.try(&.call(fabric_index))
+            Log.error(exception: error) { "Could not roll back fabric removal #{fabric_index}" }
+          end
+          raise ex
+        end
 
-        unless @fabric_table.remove_fabric(fabric_index)
-          return NocOutcome.new(NocStatus::InvalidFabricIndex, debug_text: "Failed to remove fabric")
+        begin
+          unless @fabric_table.remove_fabric(fabric_index)
+            raise StorageError.new("Fabric #{fabric_index} disappeared during removal")
+          end
+        rescue ex
+          # A file backend can change its in-memory tree before a failed
+          # flush. Do not trust this process to decide whether deletion stuck.
+          @fabric_table.quarantine(fabric_index)
+          @on_fabric_removal_quarantine.try(&.call(fabric_index))
+          @on_fabric_removal_rollback.try(&.call(fabric_index))
+          raise ex
+        end
+
+        begin
+          FabricRemovalJournal.clear(@fabric_table.backend)
+        rescue ex
+          @fabric_table.quarantine(fabric_index)
+          @on_fabric_removal_quarantine.try(&.call(fabric_index))
+          raise ex
         end
 
         # Every fabric-scoped datum goes with the fabric (ACL entries, bindings)

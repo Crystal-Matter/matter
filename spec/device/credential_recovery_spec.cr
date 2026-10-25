@@ -3,6 +3,7 @@ require "../../src/matter/device"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
+require "../../src/matter/cluster/binding"
 require "../../src/matter/cluster/scenes_management"
 
 private class CredentialRecoveryDevice < Matter::Device
@@ -48,7 +49,8 @@ private class CredentialRecoveryDevice < Matter::Device
     light = endpoint(1_u16)
     [Matter::Cluster::OnOff.new(light, feature_map: Matter::Cluster::OnOff::Feature::Lighting),
      Matter::Cluster::Identify.new(light), Matter::Cluster::Groups.new(light),
-     Matter::Cluster::ScenesManagement.new(light)] of Matter::Cluster::Base
+     Matter::Cluster::ScenesManagement.new(light),
+     Matter::Cluster::Binding.new(light)] of Matter::Cluster::Base
   end
 
   protected def endpoint_device_types : Hash(UInt16, UInt32)
@@ -61,6 +63,11 @@ private class FailCredentialYamlFile < Matter::Storage::YamlFile
   property fail_next_cluster_id : String?
   property? fail_next_journal_delete : Bool = false
   property? fail_next_fabric_write : Bool = false
+  property? fail_next_fabric_delete : Bool = false
+  property? fail_after_fabric_delete : Bool = false
+  property fail_cluster_writes_remaining : Int32 = 0
+  property fail_cluster_writes_id : String?
+  property? fail_first_cluster_write_after : Bool = false
   property? fail_next_flush : Bool = false
 
   protected def flush : Nil
@@ -72,6 +79,15 @@ private class FailCredentialYamlFile < Matter::Storage::YamlFile
   end
 
   def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::CLUSTERS && id == @fail_cluster_writes_id &&
+       @fail_cluster_writes_remaining > 0
+      @fail_cluster_writes_remaining -= 1
+      if @fail_first_cluster_write_after
+        @fail_first_cluster_write_after = false
+        super
+      end
+      raise Matter::StorageError.new("Injected repeated cluster write failure")
+    end
     if collection == Matter::Storage::Collections::CLUSTERS && id == @fail_next_cluster_id
       @fail_next_cluster_id = nil
       raise Matter::StorageError.new("Injected targeted cluster write failure")
@@ -88,6 +104,15 @@ private class FailCredentialYamlFile < Matter::Storage::YamlFile
   end
 
   def delete(collection : String, id : String) : Nil
+    if @fail_next_fabric_delete && collection == Matter::Storage::Collections::FABRICS
+      @fail_next_fabric_delete = false
+      raise Matter::StorageError.new("Injected fabric delete failure")
+    end
+    if @fail_after_fabric_delete && collection == Matter::Storage::Collections::FABRICS
+      @fail_after_fabric_delete = false
+      super
+      raise Matter::StorageError.new("Injected error after fabric delete")
+    end
     if @fail_next_journal_delete && collection == Matter::Storage::Collections::DEVICE &&
        id == Matter::Commissioning::CredentialJournal::ID
       @fail_next_journal_delete = false
@@ -551,6 +576,198 @@ describe "durable fail-safe credential recovery" do
       restored = restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
       restored.has_scene?(0x1234_u16, 1_u8, index).should be_false
       restored.scene_info_by_fabric.has_key?(index).should be_false
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "restores fabric key, scene, and binding state when the fabric document cannot be deleted" do
+    path = File.join(Dir.tempdir, "matter-fabric-delete-undo-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      device = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(device)
+      device.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      key_management = device.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      scenes = device.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+      binding = device.message_handler.node.get_cluster!(1_u16, Matter::Cluster::Binding)
+      key_id = 5_u16
+      group_id = 0x1234_u16
+      epoch_key = Bytes.new(16, 0xA5_u8)
+      key_management.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(key_id,
+          epoch_key0: epoch_key, epoch_start_time0: 1_u64)), index)
+      scenes.scenes[{index, group_id, 1_u8}] = Matter::Cluster::ScenesManagement::SceneData.new(
+        scene_name: "Keep on delete failure")
+      scenes.scene_info_by_fabric[index] = Matter::Cluster::ScenesManagement::SceneInfo.new(
+        scene_count: 1_u8, fabric_index: index)
+      binding.request_fabric_index = index
+      binding.binding = [Matter::Cluster::Binding::Target.new(node: 0x111_u64, endpoint: 1_u16)]
+      [key_management, scenes, binding].each { |cluster| device.persistence.save_cluster(cluster).should be_true }
+
+      backend.fail_next_fabric_delete = true
+      expect_raises(Matter::StorageError, "Injected fabric delete failure") do
+        device.operational_credentials.credentials.remove_fabric(index)
+      end
+      device.fabric_table.get_fabric(index).should_not be_nil
+      device.fabric_table.quarantined?(index).should be_true
+      device.fabric_table.all_fabrics.any?(&.fabric_index.==(index)).should be_false
+      device.fabric_table.next_available_index.should_not eq(index)
+      key_management.get_key_set(key_id, index).try(&.epoch_key0).should eq(epoch_key)
+      scenes.has_scene?(group_id, 1_u8, index).should be_true
+      binding.binding.map(&.node).should eq([0x111_u64])
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should_not be_nil
+      restarted.fabric_table.quarantined?(index).should be_false
+      restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        .get_key_set(key_id, index).try(&.epoch_key0).should eq(epoch_key)
+      restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+        .has_scene?(group_id, 1_u8, index).should be_true
+      restarted_binding = restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::Binding)
+      restarted_binding.request_fabric_index = index
+      restarted_binding.binding.map(&.node).should eq([0x111_u64])
+      restarted.operational_credentials.credentials.remove_fabric(index).ok?.should be_true
+      replacement = add_recovery_fabric(restarted, fabric_id: 0x4444_u64)
+      replacement.should eq(index)
+      restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        .get_key_set(key_id, replacement).should be_nil
+      restarted.message_handler.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+        .has_scene?(group_id, 1_u8, replacement).should be_false
+      restarted_binding.request_fabric_index = replacement
+      restarted_binding.binding.should be_empty
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "quarantines a fabric if pre-delete cleanup and undo persistence both fail" do
+    path = File.join(Dir.tempdir, "matter-fabric-undo-save-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      keys = first.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(7_u16,
+          epoch_key0: Bytes.new(16, 0xD4_u8), epoch_start_time0: 1_u64)), index)
+      first.persistence.save_cluster(keys).should be_true
+
+      backend.fail_cluster_writes_id = keys.persistence_key
+      backend.fail_cluster_writes_remaining = 2
+      backend.fail_first_cluster_write_after = true
+      expect_raises(Matter::StorageError, "Could not persist erased Group Key Management") do
+        first.operational_credentials.credentials.remove_fabric(index)
+      end
+      first.fabric_table.all_fabrics.any?(&.fabric_index.==(index)).should be_false
+      first.fabric_table.quarantined?(index).should be_true
+      first.fabric_table.next_available_index.should_not eq(index)
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should_not be_nil
+      restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        .get_key_set(7_u16, index).try(&.epoch_key0).should eq(Bytes.new(16, 0xD4_u8))
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "quarantines a fabric when the initial undo write has an ambiguous flush failure" do
+    path = File.join(Dir.tempdir, "matter-fabric-undo-start-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      keys = first.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(7_u16,
+          epoch_key0: Bytes.new(16, 0xE6_u8), epoch_start_time0: 1_u64)), index)
+      first.persistence.save_cluster(keys).should be_true
+
+      backend.fail_next_flush = true
+      expect_raises(Matter::StorageError, "Injected file flush failure") do
+        first.operational_credentials.credentials.remove_fabric(index)
+      end
+      first.fabric_table.get_fabric(index).should_not be_nil
+      first.fabric_table.all_fabrics.any?(&.fabric_index.==(index)).should be_false
+      first.fabric_table.quarantined?(index).should be_true
+      first.fabric_table.mark_fabric_used(index).should be_false
+      first.fabric_table.flush_pending_writes
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should_not be_nil
+      restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        .get_key_set(7_u16, index).try(&.epoch_key0).should eq(Bytes.new(16, 0xE6_u8))
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "never restores old keys when the fabric delete commits before reporting failure" do
+    path = File.join(Dir.tempdir, "matter-fabric-delete-committed-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      keys = first.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(7_u16,
+          epoch_key0: Bytes.new(16, 0xE5_u8), epoch_start_time0: 1_u64)), index)
+      first.persistence.save_cluster(keys).should be_true
+
+      backend.fail_after_fabric_delete = true
+      expect_raises(Matter::StorageError, "Injected error after fabric delete") do
+        first.operational_credentials.credentials.remove_fabric(index)
+      end
+      first.fabric_table.quarantined?(index).should be_true
+      first.fabric_table.next_available_index.should_not eq(index)
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should be_nil
+      replacement = add_recovery_fabric(restarted, fabric_id: 0x4444_u64)
+      replacement.should eq(index)
+      restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        .get_key_set(7_u16, replacement).should be_nil
+      restarted.shutdown!
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "recovers a pending pre-delete purge after a crash with the old fabric still installed" do
+    path = File.join(Dir.tempdir, "matter-fabric-removal-crash-#{Random::Secure.hex(6)}.yml")
+    begin
+      backend = FailCredentialYamlFile.new(path)
+      first = CredentialRecoveryDevice.new(backend)
+      index = add_recovery_fabric(first)
+      first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      keys = first.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+        Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(7_u16,
+          epoch_key0: Bytes.new(16, 0xC3_u8), epoch_start_time0: 1_u64)), index)
+      first.persistence.save_cluster(keys).should be_true
+
+      first.persistence.flush
+      Matter::Commissioning::FabricRemovalJournal.start(backend, index)
+      first.operational_credentials.on_before_fabric_removed.try(&.call(index))
+      keys.get_key_set(7_u16, index).should be_nil
+      backend.close
+
+      restarted = CredentialRecoveryDevice.new(path)
+      restarted.fabric_table.get_fabric(index).should_not be_nil
+      restarted.message_handler.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        .get_key_set(7_u16, index).try(&.epoch_key0).should eq(Bytes.new(16, 0xC3_u8))
       restarted.shutdown!
     ensure
       File.delete?(path)

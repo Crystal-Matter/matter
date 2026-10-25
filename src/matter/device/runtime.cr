@@ -348,6 +348,40 @@ module Matter
       )
 
       @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
+      fabric_removal_clusters = -> do
+        @message_handler.clusters.values.select do |cluster|
+          cluster.is_a?(Cluster::GroupKeyManagement) ||
+            cluster.is_a?(Cluster::Groups) ||
+            cluster.is_a?(Cluster::ScenesManagement) ||
+            cluster.is_a?(Cluster::Binding) ||
+            cluster.is_a?(Cluster::TimeSynchronization)
+        end
+      end
+      operational_credentials.on_fabric_removal_snapshot = -> do
+        snapshot = Storage::Document.new
+        fabric_removal_clusters.call.each do |cluster|
+          if document = cluster.save_state
+            snapshot[cluster.persistence_key] = document
+          end
+        end
+        snapshot
+      end
+      operational_credentials.on_fabric_removal_quarantine = ->(fabric_index : UInt8) do
+        @message_handler.registry.sessions
+          .select { |_, session| session.fabric_index == fabric_index }
+          .keys.each { |session_id| @message_handler.registry.delete_session(session_id) }
+        @message_handler.refresh_group_memberships
+      end
+      operational_credentials.on_fabric_removal_rollback = ->(_fabric_index : UInt8) do
+        fabric_removal_clusters.call.each do |cluster|
+          next unless previous = Commissioning::FabricRemovalJournal.previous(
+                        @persistence.backend, Storage::Collections::CLUSTERS, cluster.persistence_key)
+          cluster.restore_state(previous)
+          unless cluster.save_state == previous
+            raise StorageError.new("Could not restore live #{cluster.name} after failed fabric removal")
+          end
+        end
+      end
       operational_credentials.on_before_fabric_removed = ->(fabric_index : UInt8) do
         # Keep retained events private even if a later ACL write fails after
         # the fabric document is deleted and its index becomes reusable.
