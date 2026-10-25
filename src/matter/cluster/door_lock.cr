@@ -2204,16 +2204,18 @@ module Matter
 
       # Relocks after *after_seconds* unless a later lock operation superseded it
       private def schedule_relock(after_seconds : UInt32) : Nil
+        cancel_pending_relock
         return if after_seconds == 0_u32
 
-        @relock_generation = @relock_generation &+ 1_u64
         generation = @relock_generation
 
         spawn do
           sleep after_seconds.seconds
           next unless generation == @relock_generation
+          next if @lock_state == LockState::Locked
 
           self.lock_state = LockState::Locked
+          emit_lock_operation(Events::LockOperation.new(LockOperationType::Lock, OperationSource::Auto), nil)
         end
       end
 
