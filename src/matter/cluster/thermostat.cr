@@ -25,6 +25,10 @@ module Matter
       MAX_PRESET_HANDLE_LENGTH       =     16
       MAX_PRESET_NAME_LENGTH         =     64
       PRESET_STATE_KEY               = "preset_state"
+      ATTR_PRESETS                   = 0x0050_u32
+      CMD_ATOMIC_REQUEST             = 0x00FE_u32
+      CMD_ATOMIC_RESPONSE            = 0x00FD_u32
+      MAX_PRESET_ATOMIC_TIMEOUT      =  3_000_u16 # milliseconds
 
       # The PRES wire feature is deliberately withheld until atomic list writes
       # are implemented. These types and the host API provide its state model.
@@ -89,6 +93,64 @@ module Matter
         getter preset_handle : Bytes?
 
         def initialize(@preset_handle : Bytes?)
+        end
+      end
+
+      enum AtomicRequestType : UInt8
+        BeginWrite    = 0
+        CommitWrite   = 1
+        RollbackWrite = 2
+      end
+
+      struct AtomicRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter request_type : AtomicRequestType
+        @[TLV::Field(tag: 1)]
+        getter attribute_requests : Array(UInt32)
+        @[TLV::Field(tag: 2)]
+        getter timeout : UInt16?
+
+        def initialize(@request_type : AtomicRequestType, @attribute_requests : Array(UInt32),
+                       @timeout : UInt16? = nil)
+        end
+      end
+
+      struct AtomicAttributeStatus
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter attribute_id : UInt32
+        @[TLV::Field(tag: 1)]
+        getter status_code : InteractionModel::StatusCode
+
+        def initialize(@attribute_id : UInt32, @status_code : InteractionModel::StatusCode)
+        end
+      end
+
+      struct AtomicResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter status_code : InteractionModel::StatusCode
+        @[TLV::Field(tag: 1)]
+        getter attribute_status : Array(AtomicAttributeStatus)
+        @[TLV::Field(tag: 2)]
+        getter timeout : UInt16?
+
+        def initialize(@status_code : InteractionModel::StatusCode,
+                       @attribute_status : Array(AtomicAttributeStatus), @timeout : UInt16? = nil)
+        end
+      end
+
+      private class PendingPresetWrite
+        getter fabric : UInt8
+        getter subject : UInt64
+        getter expires_at : Time::Instant
+        property presets : Array(Preset)?
+
+        def initialize(@fabric : UInt8, @subject : UInt64, @expires_at : Time::Instant)
         end
       end
 
@@ -344,6 +406,7 @@ module Matter
         @presets = [] of Preset
         @active_preset_handle = nil.as(Bytes?)
         @applying_preset = false
+        @pending_preset_write = nil.as(PendingPresetWrite?)
 
         if @feature_map.heating?
           raise ArgumentError.new("min_heat_setpoint_limit must be >= abs minimum") if @min_heat_setpoint_limit < @abs_min_heat_setpoint_limit
@@ -439,6 +502,7 @@ module Matter
       # controller writes to Presets require Interaction Model atomic writes.
       def configure_presets(types : Array(PresetType), presets : Array(Preset)) : Nil
         validate_presets!(types, presets)
+        @pending_preset_write = nil
         @preset_types = types.dup
         @presets = copy_presets(presets)
         @active_preset_handle = nil
@@ -482,6 +546,153 @@ module Matter
           @applying_preset = false
         end
         InteractionModel::Status.success
+      end
+
+      # The typed handler is retained behind the PRES advertisement gate. A
+      # BeginWrite reserves the Presets list for one operational peer; writes
+      # stay private until CommitWrite and are discarded by RollbackWrite.
+      def atomic_request(request : AtomicRequest) : AtomicResponse | InteractionModel::Status
+        return InteractionModel::Status.invalid_command unless atomic_peer?
+        ids = request.attribute_requests
+        return InteractionModel::Status.invalid_command if ids.empty? || ids.uniq.size != ids.size
+        return InteractionModel::Status.invalid_command unless ids == [ATTR_PRESETS]
+        return InteractionModel::Status.invalid_command if !request.request_type.begin_write? && request.timeout
+        expire_preset_write
+
+        case request.request_type
+        when .begin_write?
+          atomic_begin(request)
+        when .commit_write?
+          atomic_finish(ids, commit: true)
+        when .rollback_write?
+          atomic_finish(ids, commit: false)
+        else
+          InteractionModel::Status.invalid_command
+        end
+      end
+
+      # A whole-list replacement is staged only while its authenticated peer
+      # owns the matching atomic transaction. The wire attribute remains hidden.
+      protected def handle_write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
+        return super unless attribute_id == ATTR_PRESETS && @pending_preset_write
+
+        stage_presets(decode(value, Array(Preset)))
+      end
+
+      private def atomic_begin(request : AtomicRequest) : AtomicResponse | InteractionModel::Status
+        timeout = request.timeout || return InteractionModel::Status.invalid_command
+        return InteractionModel::Status.invalid_command if timeout == 0_u16
+        if current = @pending_preset_write
+          return InteractionModel::Status.invalid_in_state if atomic_owner?(current)
+        end
+
+        ids = request.attribute_requests
+        if @preset_types.empty?
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::InvalidCommand) })
+        end
+        if @pending_preset_write
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Busy)])
+        end
+
+        actual_timeout = {timeout, MAX_PRESET_ATOMIC_TIMEOUT}.min
+        fabric = request_fabric_index || return InteractionModel::Status.invalid_command
+        subject = request_peer_node_id || return InteractionModel::Status.invalid_command
+        @pending_preset_write = PendingPresetWrite.new(
+          fabric, subject, Time.instant + actual_timeout.milliseconds)
+        atomic_response(InteractionModel::StatusCode::Success,
+          [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Success)], actual_timeout)
+      end
+
+      private def atomic_finish(ids : Array(UInt32), *, commit : Bool) : AtomicResponse | InteractionModel::Status
+        pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending) && ids == [ATTR_PRESETS]
+        @pending_preset_write = nil
+        if commit && (values = pending.presets)
+          if @presets.any? { |entry| entry.built_in && !values.any? { |candidate| candidate.preset_handle == entry.preset_handle } }
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
+          end
+          if @active_preset_handle && !values.any? { |entry| entry.preset_handle == @active_preset_handle }
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::InvalidInState)])
+          end
+          begin
+            validate_presets!(@preset_types, values)
+          rescue ArgumentError
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
+          end
+          unless @presets == values
+            @presets = copy_presets(values)
+            increment_version_and_notify(ATTR_PRESETS)
+          end
+        end
+        atomic_response(InteractionModel::StatusCode::Success,
+          commit ? [] of AtomicAttributeStatus : [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Success)])
+      end
+
+      private def stage_presets(values : Array(Preset)) : InteractionModel::Status
+        expire_preset_write
+        pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending)
+
+        capacity = @preset_types.sum(&.number_of_presets.to_i)
+        return InteractionModel::Status.resource_exhausted if values.size > capacity
+        normalized = [] of Preset
+        values.each do |entry|
+          handle = entry.preset_handle
+          return InteractionModel::Status.constraint_error if handle && handle.size > MAX_PRESET_HANDLE_LENGTH
+          existing = handle ? @presets.find { |current| current.preset_handle == handle } : nil
+          return InteractionModel::Status.not_found if handle && !existing
+          return InteractionModel::Status.constraint_error if handle.nil? && entry.built_in == true
+          return InteractionModel::Status.constraint_error if existing && !entry.built_in.nil? && entry.built_in != existing.built_in
+          handle ||= new_preset_handle(normalized)
+          return InteractionModel::Status.constraint_error if normalized.any? { |current| current.preset_handle == handle }
+          normalized << Preset.new(handle, entry.preset_scenario, entry.name,
+            entry.cooling_setpoint, entry.heating_setpoint, existing.try(&.built_in) || false)
+        end
+        if @preset_types.any? { |type| normalized.count { |entry| entry.preset_scenario == type.preset_scenario } > type.number_of_presets }
+          return InteractionModel::Status.resource_exhausted
+        end
+        begin
+          validate_presets!(@preset_types, normalized)
+        rescue ArgumentError
+          return InteractionModel::Status.constraint_error
+        end
+        pending.presets = copy_presets(normalized)
+        InteractionModel::Status.success
+      end
+
+      private def new_preset_handle(staged : Array(Preset)) : Bytes
+        loop do
+          handle = Random::Secure.random_bytes(MAX_PRESET_HANDLE_LENGTH)
+          return handle unless @presets.any? { |entry| entry.preset_handle == handle } ||
+                               staged.any? { |entry| entry.preset_handle == handle }
+        end
+      end
+
+      private def atomic_peer? : Bool
+        subject = request_peer_node_id
+        fabric = request_fabric_index
+        request_is_case_session? && !fabric.nil? && fabric > 0 && !subject.nil? &&
+          subject >= DataType::NodeId::OPERATIONAL_MINIMUM && subject <= DataType::NodeId::OPERATIONAL_MAXIMUM
+      end
+
+      private def atomic_owner?(pending : PendingPresetWrite) : Bool
+        atomic_peer? && pending.fabric == request_fabric_index && pending.subject == request_peer_node_id
+      end
+
+      private def expire_preset_write : Nil
+        if (pending = @pending_preset_write) && Time.instant >= pending.expires_at
+          @pending_preset_write = nil
+        end
+      end
+
+      private def atomic_response(code : InteractionModel::StatusCode, statuses : Array(AtomicAttributeStatus),
+                                  timeout : UInt16? = nil) : AtomicResponse
+        AtomicResponse.new(code, statuses, timeout)
       end
 
       # Update local temperature (typically called from a paired temperature sensor)
@@ -737,6 +948,7 @@ module Matter
         end
         @presets = copy_presets(state.presets)
         @active_preset_handle = state.active_preset_handle.try(&.dup)
+        @pending_preset_write = nil
       end
 
       private def local_temperature_changed(value : Int16?) : Nil
