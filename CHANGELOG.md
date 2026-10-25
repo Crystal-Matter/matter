@@ -119,6 +119,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric fail-safe recovery
 
+- Exercise interrupted AddICAC, controller Workflow restart, real fail-safe
+  expiry, authenticated rollback proof, and a clean retry in the three-JFA
+  Docker E2E fixture.
 - Let the Anchor controller explicitly retry an interrupted direct Joint
   Commissioning registration after the saved cumulative fail-safe deadline
   and an authenticated original-fabric CASE read proves the Anchor fabric is

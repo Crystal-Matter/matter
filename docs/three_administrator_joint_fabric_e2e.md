@@ -14,6 +14,17 @@ ICAC stay installed through B's restart and Anchor transfer. Administrators
 use explicitly provisioned roots for no-VVS fabrics and the DCL signer for a
 VVS; rejection of a VVS never falls back to root trust.
 
+Before the normal B registration, the scenario deliberately interrupts A's
+controller after B has accepted AddICAC and before CommissioningComplete. A
+new controller Workflow reads the persisted pending registration, while an
+original-fabric CASE read still sees A's provisional fabric on B. Recovery is
+blocked before B's cumulative fail-safe expiry. After expiry, an authenticated
+original-fabric CASE read proves that A's fabric rolled back, allowing A to
+clear the pending record and retry normal Joint Commissioning. The fixture
+sets a test-only 120-second cumulative fail-safe limit through B's local
+command channel, adding about two minutes to this scenario. It leaves B
+running until expiry; restarting B earlier tests a separate rollback path.
+
 B then transfers the Anchor role from A. The fixture interrupts after
 TransferAnchorComplete, restarts B from its persisted FollowingUp journal,
 and resumes only the participant follow-up. C still has A's fabric before

@@ -449,7 +449,8 @@ module Matter
       # StateStore. Trust, attestation, consent and Datastore registration are
       # mandatory application policies; no implicit approval is provided.
       class Workflow
-        COLLECTION = "joint_commissioning"
+        COLLECTION                       = "joint_commissioning"
+        DEFAULT_FAIL_SAFE_EXPIRY_SECONDS = 900_u16
         record HandoffResult, nonce : String, certificate : Bytes
         alias HandoffResultLookup = Proc(String, HandoffResult?)
 
@@ -477,6 +478,7 @@ module Matter
           @handoff_result : HandoffResultLookup? = nil,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
           @datastore_registrar : DatastoreNodeRegistrar? = nil,
+          @fail_safe_expiry_seconds : UInt16 = DEFAULT_FAIL_SAFE_EXPIRY_SECONDS,
         )
           fabric = @store.load.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
           validate_anchor_fabric(fabric, anchor_cat_version)
@@ -520,7 +522,7 @@ module Matter
             raise Matter::CommissioningError.new("A Joint Commissioning Anchor handoff needs reconciliation")
           end
           commissioner = Commissioning::Commissioner.new(@store, @client,
-            crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: 900_u16,
+            crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: @fail_safe_expiry_seconds,
             attestation_verifier: @attestation_verifier,
             datastore_registrar: @datastore_registrar)
           commissioner.pairing_code(node_id, manual_code, peer,

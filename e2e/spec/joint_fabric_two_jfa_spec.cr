@@ -6,6 +6,27 @@ require "../interop/jfa_vvs_dcl_fixture"
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
 
+private class JcmInterruptedDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
+                       friendly_name : String) : Nil
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
+                  friendly_name : String) : Nil
+  end
+end
+
+# completing runs after the controller has persisted AddICAC and before it
+# invokes CommissioningComplete. The failure is scoped to this E2E registrar.
+private class JcmInterruptedRegistrar < Matter::Controller::DatastoreNodeRegistrar
+  def completing(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+    raise Matter::TransportError.new("Injected interruption after AddICAC")
+  end
+end
+
 private def jfa_command(device_name : String,
                         request : MatterJointFabricAdministrator::Device::CommandRequest,
                         timeout : Time::Span = 300.seconds) : MatterJointFabricAdministrator::Device::CommandResult
@@ -417,6 +438,16 @@ describe "three provisioned Joint Fabric Administrators" do
       anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
       0xA102_u64, 1_u16)
+
+    # Leave a direct JCM between AddICAC and CommissioningComplete, then
+    # restart its controller Workflow while the joiner's fail-safe is armed.
+    # A short device limit keeps the real expiry bounded for Docker CI.
+    recovery_max = 120_u16
+    recovery_expiry = 60_u16
+    configured = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("set-test-fail-safe-max", 0_u64,
+        fail_safe_max_seconds: recovery_max))
+    configured.status.should eq("ok")
     exchange_path = File.join(E2E::LOG_DIR, "matter_joint_fabric_anchor.jcm-rpc.yml")
     anchor_exchange = ->(fabric : Matter::Controller::FabricInfo, joining_node_id : UInt64, peer : Socket::IPAddress, endpoint : UInt16, icac_public_key : Bytes, icac_id : UInt64) do
       unless fabric.fabric_id == anchor_bootstrap.fabric.fabric_id
@@ -457,6 +488,96 @@ describe "three provisioned Joint Fabric Administrators" do
         sleep 100.milliseconds
       end
     end
+    interrupted_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+    interrupted = Matter::Controller::JointCommissioning::Workflow.new(
+      anchor_store, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
+      ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
+      anchor_exchange, client: interrupted_client,
+      datastore_registrar: JcmInterruptedRegistrar.new(anchor_store, JcmInterruptedDelivery.new),
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture),
+      fail_safe_expiry_seconds: recovery_expiry)
+    expect_raises(Matter::TransportError, /Injected interruption after AddICAC/) do
+      interrupted.commission(0xA103_u64,
+        Matter::SetupPayload.generate_manual_code(discriminator, passcode), joiner_peer)
+    end
+    pending = interrupted.hooks.pending.as(Matter::Controller::JointCommissioning::PendingRegistration)
+    pending.icac.empty?.should be_false
+    pending.fail_safe_max_seconds.should eq(recovery_max)
+    pending.original_fabric_id.should eq(joiner_bootstrap.fabric.fabric_id)
+    pending.original_node_id.should eq(0xB102_u64)
+    deadline_unix = pending.fail_safe_deadline_unix.as(Int64)
+    deadline_unix.should be > Time.utc.to_unix
+    interrupted.close
+
+    recovered_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+    recovered = Matter::Controller::JointCommissioning::Workflow.new(
+      anchor_store, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16, 3_u64, trust,
+      ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
+      anchor_exchange, client: recovered_client,
+      attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+        Matter::Controller::AttestationTrustStore.matter_test_fixture))
+    recovered.hooks.pending.as(Matter::Controller::JointCommissioning::PendingRegistration)
+      .to_document.should eq(pending.to_document)
+    joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    provisional_report = joiner_im.read_attribute(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    provisional_data = provisional_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+      .from_tlv(provisional_data.to_slice)
+      .any? do |entry|
+        entry.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+          entry.root_public_key == anchor_bootstrap.fabric.root_public_key
+      end.should be_true
+    recovered.resume_pending.should be_false
+    expect_raises(Matter::CommissioningError, /deadline has not passed/) do
+      recovered.recover_abandoned_pending(joiner_bootstrap.fabric, 0xB102_u64, joiner_peer,
+        Matter::Controller::JointCommissioning::NetworkRecoveryPort.new(joiner_client))
+    end
+    expect_raises(Matter::CommissioningError, /still pending/) do
+      recovered.commission(0xA103_u64, "invalid manual code", joiner_peer)
+    end
+    while Time.utc.to_unix <= deadline_unix
+      sleep 1.second
+    end
+    recovered.recover_abandoned_pending(joiner_bootstrap.fabric, 0xB102_u64, joiner_peer,
+      Matter::Controller::JointCommissioning::NetworkRecoveryPort.new(joiner_client)).should be_true
+    recovered.hooks.pending.should be_nil
+    expect_raises(ArgumentError, /11 digits/) do
+      recovered.commission(0xA103_u64, "invalid manual code", joiner_peer)
+    end
+    recovered.close
+    reset_max = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("set-test-fail-safe-max", 0_u64,
+        fail_safe_max_seconds: Matter::Commissioning::FailsafeService::DEFAULT_MAX_CUMULATIVE_SECONDS))
+    reset_max.status.should eq("ok")
+    joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    reopened_window = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
+      endpoint_id: 1_u16,
+      cluster_id: Matter::Cluster::JointFabricAdministrator::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricAdministrator::CMD_OPEN_JOINT_COMMISSIONING_WINDOW,
+      fields: open_request.to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(reopened_window)
+
+    registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     anchor_finalize = ->(fabric : Matter::Controller::FabricInfo, joining_node_id : UInt64, peer : Socket::IPAddress, endpoint : UInt16, icac_public_key : Bytes, _icac_id : UInt64, nonce : String) do
       unless fabric.fabric_id == anchor_bootstrap.fabric.fabric_id && peer == joiner_peer
         raise Matter::ConfigurationError.new("Anchor handoff selected the wrong fabric or joiner")
