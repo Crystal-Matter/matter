@@ -33,7 +33,7 @@ module MatterCameraSnapshot
 
     protected def before_start : Nil
       camera = node.get_cluster!(1_u16, CameraAv)
-      snapshot = File.read("examples/assets/snapshot_320x240.jpg").to_slice
+      snapshot = File.read(File.expand_path("assets/snapshot_320x240.jpg", __DIR__)).to_slice
       camera.on_snapshot_allocate { |_request, _id| Matter::InteractionModel::Status.success }
       camera.on_snapshot_deallocate { |_id| Matter::InteractionModel::Status.success }
       camera.on_snapshot_capture do |_stream, resolution|
