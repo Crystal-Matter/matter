@@ -12,7 +12,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 40
+- Feature or complex conditional IDs absent from Crystal: 39
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -177,7 +177,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0031 | command | 0x0004 | (feature(WI) or feature(TH)) | declared; requires `—` |
 | 0x0031 | command | 0x0006 | (feature(WI) or feature(TH)) | declared; requires `—` |
 | 0x0031 | command | 0x0008 | (feature(WI) or feature(TH)) | declared; requires `—` |
-| 0x0033 | command | 0x0003 | feature(DMTEST) | absent |
+| 0x0033 | command | 0x0003 | feature(DMTEST) | declared; requires `:data_model_test` |
 | 0x0034 | command | 0x0000 | feature(WTRMRK) | declared; requires `:watermarks` |
 | 0x0035 | command | 0x0000 | feature(ERRCNT) | declared; requires `:error_counts` |
 | 0x0036 | command | 0x0000 | feature(ERRCNT) | declared; requires `:error_counts` |

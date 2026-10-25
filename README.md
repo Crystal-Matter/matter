@@ -455,6 +455,14 @@ state: active subscriptions, the accessing fabric's share, cumulative
 subscription establishments, and sent and received Interaction Model messages.
 These counters start with each device process; restored active subscriptions
 count as established when restored.
+For certification or internal testing, a device may override
+`general_diagnostics_test_enable_key` with a nonzero 16-byte key. This opts in
+to General Diagnostics `DataModelTest` and enables `PayloadTestRequest` with
+Manage privilege, a matching key, and a maximum response of 2,048 bytes.
+`TestEventTrigger` uses the same key and needs an `on_test_event_trigger`
+callback for application-specific triggers. Production devices leave the key
+unset. The level-control example accepts `MATTER_DIAGNOSTICS_TEST_ENABLE_KEY`
+as 32 hex digits for the isolated DMTEST E2E fixture.
 Each `PowerSource` also exposes the Matter 1.6 mandatory `EndpointList`;
 pass the powered endpoint numbers at construction or call
 `update_endpoint_list` when the mapping changes.

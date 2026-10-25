@@ -12,6 +12,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Map Crystal's Sunday ordinal to Matter's Sunday bit when enforcing persisted
   week-day access schedules.
 
+### General Diagnostics test payload
+
+- Add opt-in Matter 1.6 DataModelTest with a nonzero 16-byte enable key,
+  Manage-protected PayloadTestRequest/Response, a 2,048-byte cap, and the
+  shared TestEventTrigger key gate. An isolated chip-tool fixture exercises it;
+  production devices keep the feature disabled by default.
+
 ### Commodity Tariff rotating calendars
 
 - Support rotating day patterns in calendar period order, including a durable

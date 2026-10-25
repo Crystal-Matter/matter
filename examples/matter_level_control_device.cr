@@ -10,6 +10,12 @@ module MatterLevelControl
   class Device < Matter::Device
     include Examples::Console
 
+    # Only the dedicated DMTEST E2E service sets this. Production examples
+    # retain the default disabled diagnostics test gate.
+    protected def general_diagnostics_test_enable_key : Bytes?
+      ENV["MATTER_DIAGNOSTICS_TEST_ENABLE_KEY"]?.try(&.hexbytes)
+    end
+
     DIMMABLE_LIGHT_ENDPOINT  = 1
     COLOR_LIGHT_ENDPOINT     = 2
     WINDOW_COVERING_ENDPOINT = 3

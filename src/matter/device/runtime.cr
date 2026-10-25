@@ -725,7 +725,8 @@ module Matter
         administrator_commissioning.close_window if administrator_commissioning.window_open?
       end
 
-      general_diagnostics = Cluster::GeneralDiagnostics.new(endpoint_0)
+      general_diagnostics = Cluster::GeneralDiagnostics.new(endpoint_0,
+        test_enable_key: general_diagnostics_test_enable_key)
       general_diagnostics.on_device_load_status = ->(fabric_index : UInt8?) do
         @message_handler.device_load_status(fabric_index)
       end
@@ -877,6 +878,12 @@ module Matter
     # Default to ephemeral test credentials unless the device overrides.
     protected def configure_attestation(operational_credentials : Cluster::OperationalCredentials) : Nil
       operational_credentials.set_attestation_from_manager(vendor_id: vendor_id, product_id: product_id)
+    end
+
+    # Test-only opt-in. Production devices leave this unset; a nonzero 16-byte
+    # key enables General Diagnostics DMTEST and TestEventTriggersEnabled.
+    protected def general_diagnostics_test_enable_key : Bytes?
+      nil
     end
 
     # The addresses the device advertises when the caller names none: the
