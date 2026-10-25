@@ -33,6 +33,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared TestEventTrigger key gate. An isolated chip-tool fixture exercises it;
   production devices keep the feature disabled by default.
 
+### Time Synchronization NTP client
+
+- Add opt-in NTPC support for a persistent, nullable IPv6 DefaultNTP address,
+  administrator SetDefaultNTP command, and bounded SNTPv4 fallback queries.
+  Validate response source and originate token before accepting time. TSC and
+  NTPS remain unavailable.
+
 ### Commodity Tariff rotating calendars
 
 - Support rotating day patterns in calendar period order, including a durable

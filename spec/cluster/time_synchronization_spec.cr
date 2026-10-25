@@ -7,6 +7,146 @@ private def zone(offset : Int32, valid_at : UInt64, name : String? = nil)
   TimeSync::TimeZoneStruct.new(offset, valid_at, name)
 end
 
+describe "Matter 1.6 NTPClient feature" do
+  it "queries a local SNTP responder and accepts only its matched packet" do
+    server = UDPSocket.new(:inet6)
+    server.bind("::1", 0)
+    done = Channel(Nil).new
+    spawn do
+      request = Bytes.new(TimeSync::SntpClient::PACKET_SIZE)
+      size, peer = server.receive(request)
+      size.should eq(TimeSync::SntpClient::PACKET_SIZE)
+      request[0].should eq(TimeSync::SntpClient::REQUEST_HEADER)
+      response = Bytes.new(TimeSync::SntpClient::PACKET_SIZE, 0_u8)
+      response[0] = 0x24_u8
+      response[1] = 2_u8
+      response[24, 8].copy_from(request[40, 8])
+      seconds = TimeSync::SntpClient::NTP_TO_MATTER_SECONDS + 456_u64
+      4.times { |i| response[40 + i] = ((seconds >> (24 - 8 * i)) & 0xFF).to_u8 }
+      server.send(response, peer)
+    ensure
+      done.send(nil)
+    end
+    TimeSync::SntpClient.query("::1", server.local_address.port).should eq(456_000_000_u64)
+    done.receive
+    server.close
+  end
+
+  it "refreshes from NTP at a bounded rate and marks the source accurately" do
+    ntpc = TimeSync.new(endpoint(0), feature_map: TimeSync::Feature::NtpClient)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("2001:db8::123"))
+    attempts = 0
+    ntpc.on_ntp_query = ->(_address : String) : UInt64? do
+      attempts += 1
+      123_000_000_000_u64
+    end
+    now = Time.instant
+    ntpc.refresh_from_default_ntp(now).should be_true
+    ntpc.refresh_from_default_ntp(now + 1.second).should be_false
+    attempts.should eq(1)
+    read(ntpc, TimeSync::ATTR_TIME_SOURCE).should eq(TimeSync::TimeSource::NonMatterSntp.value)
+    read(ntpc, TimeSync::ATTR_UTC_TIME).as(UInt64).should be >= 123_000_000_000_u64
+    ntpc.refresh_from_default_ntp(now + TimeSync::NTP_REFRESH_INTERVAL).should be_true
+    attempts.should eq(2)
+  end
+
+  it "reports an unavailable fallback once per interval without discarding administrator time" do
+    ntpc = TimeSync.new(endpoint(0), feature_map: TimeSync::Feature::NtpClient)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("2001:db8::123"))
+    ntpc.on_ntp_query = ->(_address : String) : UInt64? { nil }
+    events = [] of UInt32
+    ntpc.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      events << event
+      nil
+    end
+    now = Time.instant
+    ntpc.refresh_from_default_ntp(now).should be_false
+    ntpc.refresh_from_default_ntp(now + 1.second).should be_false
+    events.should eq([TimeSync::EVENT_TIME_FAILURE])
+
+    ntpc.apply_utc_time(TimeSync::SetUtcTimeRequest.new(123_000_000_000_u64, TimeSync::Granularity::Seconds))
+    ntpc.refresh_from_default_ntp(now + TimeSync::NTP_REFRESH_INTERVAL).should be_false
+    events.should eq([TimeSync::EVENT_TIME_FAILURE])
+    ntpc.utc_time.should_not be_nil
+  end
+
+  it "discards a response when the administrator changes the fallback during the query" do
+    ntpc = TimeSync.new(endpoint(0), feature_map: TimeSync::Feature::NtpClient)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("2001:db8::123"))
+    ntpc.on_ntp_query = ->(_address : String) : UInt64? do
+      ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new(nil))
+      123_000_000_000_u64
+    end
+    ntpc.refresh_from_default_ntp.should be_false
+    ntpc.utc_time.should be_nil
+  end
+
+  it "accepts a matching SNTP server response and rejects spoofed or unsynchronized packets" do
+    token = Bytes[1, 2, 3, 4, 5, 6, 7, 8]
+    response = Bytes.new(TimeSync::SntpClient::PACKET_SIZE, 0_u8)
+    response[0] = 0x24_u8
+    response[1] = 2_u8
+    response[24, 8].copy_from(token)
+    seconds = TimeSync::SntpClient::NTP_TO_MATTER_SECONDS + 123_u64
+    4.times { |i| response[40 + i] = ((seconds >> (24 - 8 * i)) & 0xFF).to_u8 }
+    response[44] = 0x80_u8
+    TimeSync::SntpClient.decode(response, token).should eq(123_500_000_u64)
+    response[24] = 0_u8
+    TimeSync::SntpClient.decode(response, token).should be_nil
+    response[24] = token[0]
+    response[0] = 0xE4_u8
+    TimeSync::SntpClient.decode(response, token).should be_nil
+    response[0] = 0x1C_u8
+    TimeSync::SntpClient.decode(response, token).should be_nil
+    response[0] = 0x24_u8
+    response[1] = 0_u8
+    TimeSync::SntpClient.decode(response, token).should be_nil
+  end
+
+  it "exposes only the NTPC contract and round-trips a mandatory nullable SetDefaultNTP field" do
+    base = TimeSync.new(endpoint(0))
+    base.get_attribute_metadata(TimeSync::ATTR_DEFAULT_NTP).should be_nil
+    base.get_command_metadata(TimeSync::CMD_SET_DEFAULT_NTP).should be_nil
+
+    ntpc = TimeSync.new(endpoint(0), feature_map: TimeSync::Feature::NtpClient)
+    read(ntpc, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(2_u32)
+    read(ntpc, TimeSync::ATTR_DEFAULT_NTP).should be_nil
+    read(ntpc, TimeSync::ATTR_SUPPORTS_DNS_RESOLVE).should be_false
+    ntpc.get_command_metadata(TimeSync::CMD_SET_DEFAULT_NTP).as(Matter::Cluster::CommandMetadata).access
+      .should eq(Matter::InteractionModel::EntryPrivilege::Administer)
+    TimeSync::SetDefaultNtpRequest.new(nil).to_slice.should eq(Bytes[0x15, 0x34, 0x00, 0x18])
+    TimeSync::SetDefaultNtpRequest.from_slice(TimeSync::SetDefaultNtpRequest.new(nil).to_slice).default_ntp.should be_nil
+    expect_raises(TLV::DeserializationError) do
+      TimeSync::SetDefaultNtpRequest.from_slice(Bytes[0x15, 0x18])
+    end
+    TimeSync::SetDefaultNtpRequest.from_slice(TimeSync::SetDefaultNtpRequest.new("2001:db8::123").to_slice).default_ntp
+      .should eq("2001:db8::123")
+  end
+
+  it "validates an IPv6-only address, persists a nullable default, and refuses a domain without DNS" do
+    ntpc = TimeSync.new(endpoint(0), feature_map: TimeSync::Feature::NtpClient)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("2001:db8::123")).status
+      .should eq(Matter::InteractionModel::StatusCode::Success)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("pool.ntp.org")).status
+      .should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("[2001:db8::123]:123")).status
+      .should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("2001:0db8::123")).status
+      .should eq(Matter::InteractionModel::StatusCode::InvalidCommand)
+    ntpc.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("x" * 129)).status
+      .should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    read(ntpc, TimeSync::ATTR_DEFAULT_NTP).should eq("2001:db8::123")
+
+    restored = TimeSync.new(endpoint(0), feature_map: TimeSync::Feature::NtpClient)
+    restored.restore_state(ntpc.save_state.as(Matter::Storage::Document))
+    read(restored, TimeSync::ATTR_DEFAULT_NTP).should eq("2001:db8::123")
+    restored.utc_time.should be_nil
+    restored.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new(nil)).status
+      .should eq(Matter::InteractionModel::StatusCode::Success)
+    read(restored, TimeSync::ATTR_DEFAULT_NTP).should be_nil
+  end
+end
+
 private def dst(offset : Int32, starts : UInt64, ends : UInt64?)
   TimeSync::DstOffsetStruct.new(offset, starts, ends)
 end

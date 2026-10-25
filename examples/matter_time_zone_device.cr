@@ -18,11 +18,12 @@ module MatterTimeZone
 
     endpoint 0, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Matter::Cluster::TimeSynchronization,
-        feature_map: Matter::Cluster::TimeSynchronization::Feature::TimeZone
+        feature_map: Matter::Cluster::TimeSynchronization::Feature::TimeZone |
+                     Matter::Cluster::TimeSynchronization::Feature::NtpClient
     end
 
     def console_notes : Array(String)
-      ["Synthetic Matter 1.6 TimeZone server for E2E only"]
+      ["Synthetic Matter 1.6 TimeZone and NTPClient server for E2E only"]
     end
   end
 end

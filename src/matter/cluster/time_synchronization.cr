@@ -7,22 +7,26 @@ module Matter
     # Matter 1.6 Time Synchronization (0x0038). This base server accepts an
     # administrator's UTC time and advances it using a monotonic clock. It
     # starts unsynchronized on every boot. Hosts may opt into the TimeZone
-    # feature without a time-zone database; NTP and TSC need host services.
+    # feature without a time-zone database. The NTP client is opt-in; TSC
+    # remains unavailable until peer synchronization is implemented.
     class TimeSynchronization < Base
       Log = ::Log.for("matter.cluster.time_synchronization")
 
       cluster 0x0038, revision: 2, persist_state: false
 
       feature :time_zone, bit: 0
+      feature :ntp_client, bit: 1
 
       TIME_NOT_ACCEPTED            = 0x02_u8
       TIME_FAILURE_MIN_INTERVAL    = 1.hour
       DST_TABLE_EMPTY_MIN_INTERVAL = 1.hour
-      TIME_ZONE_OFFSET_MIN         =        -43_200
-      TIME_ZONE_OFFSET_MAX         =         50_400
-      TIME_ZONE_NAME_MAX_BYTES     =             64
-      TIME_ZONE_LIST_MAX_SIZE      =           2_u8
-      DST_OFFSET_LIST_MAX_SIZE     =           4_u8
+      TIME_ZONE_OFFSET_MIN         = -43_200
+      TIME_ZONE_OFFSET_MAX         =  50_400
+      TIME_ZONE_NAME_MAX_BYTES     =      64
+      TIME_ZONE_LIST_MAX_SIZE      =    2_u8
+      DST_OFFSET_LIST_MAX_SIZE     =    4_u8
+      DEFAULT_NTP_MAX_BYTES        =     128
+      NTP_REFRESH_INTERVAL         = 1.hour
       MICROSECONDS_PER_SECOND      = 1_000_000_i128
 
       enum TimeZoneDatabase : UInt8
@@ -73,6 +77,16 @@ module Matter
 
         def initialize(@utc_time : UInt64, @granularity : Granularity,
                        @time_source : TimeSource? = nil)
+        end
+      end
+
+      struct SetDefaultNtpRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter default_ntp : String?
+
+        def initialize(@default_ntp : String?)
         end
       end
 
@@ -179,14 +193,16 @@ module Matter
         getter features : UInt32
         getter time_zone : Array(TimeZoneStruct)
         getter dst_offset : Array(DstOffsetStruct)
+        getter default_ntp : String?
 
-        def initialize(@data_version, @features, @time_zone, @dst_offset)
+        def initialize(@data_version, @features, @time_zone, @dst_offset, @default_ntp)
         end
       end
 
       attribute 0x0000, :utc_time, UInt64, computed: true, nullable: true, omit_changes: true
       attribute 0x0001, :granularity, Granularity, default: Granularity::NoTime
       attribute 0x0002, :time_source, TimeSource, default: TimeSource::None
+      attribute 0x0004, :default_ntp, String, computed: true, nullable: true, requires: :ntp_client
       attribute 0x0005, :time_zone, Array(TimeZoneStruct), computed: true, requires: :time_zone
       attribute 0x0006, :dst_offset, Array(DstOffsetStruct), computed: true, requires: :time_zone
       attribute 0x0007, :local_time, UInt64, computed: true, nullable: true,
@@ -197,6 +213,8 @@ module Matter
         fixed: true, requires: :time_zone
       attribute 0x000B, :dst_offset_list_max_size, UInt8, computed: true,
         fixed: true, requires: :time_zone
+      attribute 0x000C, :supports_dns_resolve, Bool, computed: true,
+        fixed: true, requires: :ntp_client
 
       event 0x0000, :dst_table_empty, priority: :info, requires: :time_zone
       event 0x0001, :dst_status, priority: :info, requires: :time_zone
@@ -208,6 +226,8 @@ module Matter
         requires: :time_zone, handler: :apply_time_zone
       command 0x0004, :set_dst_offset, request: SetDstOffsetRequest,
         access: :manage, requires: :time_zone, handler: :apply_dst_offset
+      command 0x0005, :set_default_ntp, request: SetDefaultNtpRequest,
+        access: :administer, requires: :ntp_client, handler: :apply_default_ntp
 
       @base_utc_time : UInt64?
       @base_instant : Time::Instant?
@@ -218,6 +238,9 @@ module Matter
       @last_zone_status : TimeZoneStruct?
       @last_dst_active : Bool
       @last_dst_entry_present : Bool
+      @default_ntp : String?
+      @last_ntp_attempt : Time::Instant?
+      property on_ntp_query : Proc(String, UInt64?)?
 
       def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
                      @feature_map : Feature = Feature::None)
@@ -232,6 +255,9 @@ module Matter
         @last_zone_status = @time_zone.first
         @last_dst_active = false
         @last_dst_entry_present = false
+        @default_ntp = nil
+        @last_ntp_attempt = nil
+        @on_ntp_query = nil
       end
 
       def utc_time : UInt64?
@@ -253,6 +279,52 @@ module Matter
 
       def dst_offset : Array(DstOffsetStruct)
         @dst_offset.dup
+      end
+
+      def default_ntp : String?
+        @default_ntp
+      end
+
+      def supports_dns_resolve? : Bool
+        false
+      end
+
+      def apply_default_ntp(request : SetDefaultNtpRequest) : InteractionModel::Status
+        address = request.default_ntp
+        if address
+          return InteractionModel::Status.constraint_error if address.bytesize > DEFAULT_NTP_MAX_BYTES
+          return InteractionModel::Status.invalid_command unless valid_default_ntp?(address)
+        end
+        @default_ntp = address
+        @last_ntp_attempt = nil
+        increment_version_and_notify(ATTR_DEFAULT_NTP)
+        InteractionModel::Status.success
+      end
+
+      # Called from the device clock poll. A failed query leaves any accepted
+      # time in place; the next attempt is bounded by NTP_REFRESH_INTERVAL.
+      def refresh_from_default_ntp(now : Time::Instant = Time.instant) : Bool
+        return false unless @feature_map.ntp_client?
+        address = @default_ntp
+        return false if address.nil? || address.empty?
+        if last = @last_ntp_attempt
+          return false if now - last < NTP_REFRESH_INTERVAL
+        end
+        @last_ntp_attempt = now
+        ntp_time = if query = @on_ntp_query
+                     query.call(address)
+                   else
+                     SntpClient.query(address)
+                   end
+        return false unless @default_ntp == address
+        unless ntp_time
+          report_time_failure if utc_time.nil?
+          return false
+        end
+        status = apply_utc_time(SetUtcTimeRequest.new(ntp_time, Granularity::Seconds))
+        return false unless status.status == InteractionModel::StatusCode::Success
+        self.time_source = TimeSource::NonMatterSntp
+        true
       end
 
       def time_zone_database : TimeZoneDatabase
@@ -283,6 +355,7 @@ module Matter
       # separate clock scheduler may call it too; comparisons suppress
       # duplicate status events when a read and a tick observe the same state.
       def advance_time_state(now : Time::Instant = Time.instant) : Nil
+        refresh_from_default_ntp(now) if @feature_map.ntp_client?
         return unless @feature_map.time_zone?
         if utc = utc_time_at(now)
           refresh_time_state(utc)
@@ -333,18 +406,22 @@ module Matter
       end
 
       def save_state : Storage::Document?
-        return unless @feature_map.time_zone?
-        PersistedState.new(@data_version, @feature_map.value, @time_zone, @dst_offset).to_document
+        return unless @feature_map.time_zone? || @feature_map.ntp_client?
+        PersistedState.new(@data_version, @feature_map.value, @time_zone, @dst_offset, @default_ntp).to_document
       end
 
       def restore_state(document : Storage::Document) : Nil
-        return unless @feature_map.time_zone?
+        return unless @feature_map.time_zone? || @feature_map.ntp_client?
         state = PersistedState.from_document(document)
         return if state.features != @feature_map.value
+        if address = state.default_ntp
+          raise StorageError.new("Invalid persisted DefaultNTP") if address.bytesize > DEFAULT_NTP_MAX_BYTES || !valid_default_ntp?(address)
+        end
         raise StorageError.new("Invalid persisted TimeZone") unless valid_time_zones?(state.time_zone)
         raise StorageError.new("Invalid persisted DSTOffset") unless valid_dst_offsets?(state.dst_offset)
         @time_zone = state.time_zone.dup
         @dst_offset = state.dst_offset.dup
+        @default_ntp = state.default_ntp
         @data_version = state.data_version
         @last_zone_status = @time_zone.first
         @last_dst_active = false
@@ -408,6 +485,14 @@ module Matter
         true
       end
 
+      private def valid_default_ntp?(address : String) : Bool
+        return true if address.empty?
+        parsed = Socket::IPAddress.new(address, SntpClient::NTP_PORT)
+        parsed.family == Socket::Family::INET6 && parsed.address == address
+      rescue Socket::Error
+        false
+      end
+
       private def valid_dst_offsets?(offsets : Array(DstOffsetStruct)) : Bool
         return false if offsets.size > DST_OFFSET_LIST_MAX_SIZE
         previous_until = nil.as(UInt64?)
@@ -466,3 +551,5 @@ module Matter
     end
   end
 end
+
+require "./time_synchronization/sntp_client"

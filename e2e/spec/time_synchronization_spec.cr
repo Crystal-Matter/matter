@@ -10,7 +10,7 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
   it "commissions a root TimeZone server and updates local time and durable offsets" do
     device.commission!
     read_int(device, "timesynchronization", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
-    read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(1_i64)
+    read_int(device, "timesynchronization", "feature-map", "FeatureMap", 0).should eq(3_i64)
     read_int(device, "timesynchronization", "time-zone-list-max-size", "TimeZoneListMaxSize", 0).should eq(2_i64)
     read_int(device, "timesynchronization", "dstoffset-list-max-size", "DSTOffsetListMaxSize", 0).should eq(4_i64)
 
@@ -36,5 +36,17 @@ describe "Matter 1.6 Time Synchronization TimeZone with official chip-tool" do
     expect_success(device.read("timesynchronization", "time-zone", 0)).output.should contain("Australia/Sydney")
     expect_success(device.read("timesynchronization", "dstoffset", 0)).output.should contain("3600")
     expect_success(device.read("timesynchronization", "local-time", 0)).output.downcase.should contain("null")
+  end
+
+  it "sets and persists an IPv6 NTP fallback while rejecting a domain without DNS" do
+    device.commission!
+    expect_success(device.read("timesynchronization", "default-ntp", 0)).output.downcase.should contain("null")
+    expect_success(device.read("timesynchronization", "supports-dnsresolve", 0)).bool("SupportsDNSResolve").should be_false
+    expect_success(device.invoke("timesynchronization", "set-default-ntp", ["2001:db8::123"], endpoint: 0))
+    expect_failure(device.invoke("timesynchronization", "set-default-ntp", ["pool.ntp.org"], endpoint: 0),
+      "INVALID_COMMAND")
+    expect_success(device.read("timesynchronization", "default-ntp", 0)).output.should contain("2001:db8::123")
+    device.restart!
+    expect_success(device.read("timesynchronization", "default-ntp", 0)).output.should contain("2001:db8::123")
   end
 end
