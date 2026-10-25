@@ -51,6 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/crystal,sharing=locked \
 FROM ${CRYSTAL_IMAGE} AS device
 WORKDIR /app
 COPY --from=builder /app/bin /app/bin
+COPY examples/assets /app/examples/assets
 COPY e2e/device-entrypoint.sh /usr/local/bin/device-entrypoint
 ENTRYPOINT ["device-entrypoint"]
 

@@ -52,6 +52,8 @@ module TLVFieldTypes
             {% leaves = [] of Nil %}
             {% members = ivar.type.union? ? ivar.type.union_types : [ivar.type] %}
             {% for member in members %}
+              # FieldState is serialized by the shard's field macro; its
+              # payload still needs an ordinary typed value codec.
               {% field_type = member.name.starts_with?("TLV::FieldState(") || member.name.starts_with?("::TLV::FieldState(") ? member.type_vars.first : member %}
               {% if field_type.name.starts_with?("Array(") || field_type.name.starts_with?("Tuple(") %}
                 {% for element in field_type.type_vars %}

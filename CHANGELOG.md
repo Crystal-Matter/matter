@@ -44,6 +44,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Aggregator chip-tool fixture checks VDO-only signaling; decoded video and
   peer media transport remain unverified, and Camera type 0x0142 is not advertised.
 
+### Camera AV Stream Management snapshot
+
+- Add opt-in Matter 1.6 revision 2 SNP capability and explicit-ID snapshot
+  allocation, reference-counted release and bounded capture through host
+  callbacks. The synthetic Aggregator fixture exercises the wire commands;
+  nullable auto-selection uses TLV FieldState; optional overlay controls and
+  real media remain open.
+
 ### Camera AV Stream Management video
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
