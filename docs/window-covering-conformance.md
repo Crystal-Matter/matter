@@ -8,7 +8,9 @@ Mode writes reject undefined bits, synchronize ConfigStatus, and block all movem
 
 Device integrations retain responsibility for physical motion and position reporting:
 
-- Settle OperationalStatus when a reported current position reaches its target. The current setters do not yet recompute movement status when hardware reports a new position.
+- Report current positions as hardware moves. When a reported lift or tilt
+  position reaches its target, the cluster settles that axis in
+  OperationalStatus and derives the global status from the remaining axis.
 - Report SafetyStatus based on device sensors and implement physical movement reversal when MotorDirectionReversed is set.
 - Count lift and tilt actuations where the optional counters are exposed; expose a hardware movement and stop hook rather than treating target assignment as physical movement.
 

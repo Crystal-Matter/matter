@@ -83,4 +83,34 @@ describe "Window Covering Matter 1.6 state and feature composition" do
       Covering::GoToTiltPercentageRequest.new(1_000_u16)))
     tilt_only.operational_status.value.should eq(0x11_u8)
   end
+
+  it "settles lift motion only when the reported position reaches its target" do
+    cluster = build(Covering)
+    cluster.current_position_lift_percent100ths = 0_u16
+    expect_success(invoke(cluster, Covering::CMD_DOWN_OR_CLOSE))
+    cluster.operational_status.should eq(Covering::OperationalStatus::GlobalClosing | Covering::OperationalStatus::LiftClosing)
+
+    cluster.current_position_lift_percent100ths = 5_000_u16
+    cluster.operational_status.should eq(Covering::OperationalStatus::GlobalClosing | Covering::OperationalStatus::LiftClosing)
+    cluster.current_position_lift_percent100ths = nil
+    cluster.operational_status.should eq(Covering::OperationalStatus::GlobalClosing | Covering::OperationalStatus::LiftClosing)
+
+    cluster.current_position_lift_percent100ths = 10_000_u16
+    cluster.current_position_lift_percentage.should eq(100_u8)
+    cluster.operational_status.should eq(Covering::OperationalStatus::None)
+  end
+
+  it "keeps the global status on tilt until both reported axes reach target" do
+    cluster = build(Covering,
+      feature_map: Covering::Feature::Lift | Covering::Feature::Tilt |
+                   Covering::Feature::PositionAwareLift | Covering::Feature::PositionAwareTilt)
+    cluster.current_position_lift_percent100ths = 0_u16
+    cluster.current_position_tilt_percent100ths = 0_u16
+    expect_success(invoke(cluster, Covering::CMD_DOWN_OR_CLOSE))
+
+    cluster.current_position_lift_percent100ths = 10_000_u16
+    cluster.operational_status.should eq(Covering::OperationalStatus::GlobalClosing | Covering::OperationalStatus::TiltClosing)
+    cluster.current_position_tilt_percent100ths = 10_000_u16
+    cluster.operational_status.should eq(Covering::OperationalStatus::None)
+  end
 end

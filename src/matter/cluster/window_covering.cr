@@ -243,10 +243,20 @@ module Matter
 
       private def sync_lift_percentage(position : UInt16?) : Nil
         self.current_position_lift_percentage = position.try { |value| (value // 100).to_u8 }
+        target = target_position_lift_percent100ths
+        return unless position && target && position == target
+        return if lift_movement_status.stopped?
+
+        set_movement_status(MovementStatus::Stopped, tilt_movement_status)
       end
 
       private def sync_tilt_percentage(position : UInt16?) : Nil
         self.current_position_tilt_percentage = position.try { |value| (value // 100).to_u8 }
+        target = target_position_tilt_percent100ths
+        return unless position && target && position == target
+        return if tilt_movement_status.stopped?
+
+        set_movement_status(lift_movement_status, MovementStatus::Stopped)
       end
 
       private def sync_mode_config_status(mode : Mode) : Nil
