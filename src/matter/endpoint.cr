@@ -22,17 +22,23 @@ module Matter
     getter device_types : Array(DeviceType)
     getter clusters : Hash(UInt32, Cluster::Base)
     getter client_cluster_ids : Array(UInt32)
+    getter parent_endpoint_id : UInt16
+    getter semantic_tags : Array(Cluster::Descriptor::SemanticTag)
 
     def initialize(
       @endpoint_id : DataType::EndpointNumber,
       @device_types : Array(DeviceType) = [] of DeviceType,
+      @parent_endpoint_id : UInt16 = 0_u16,
+      @semantic_tags : Array(Cluster::Descriptor::SemanticTag) = [] of Cluster::Descriptor::SemanticTag,
     )
       @clusters = {} of UInt32 => Cluster::Base
       @client_cluster_ids = [] of UInt32
     end
 
     # Convenience constructor for single device type
-    def initialize(@endpoint_id : DataType::EndpointNumber, device_type : DeviceType)
+    def initialize(@endpoint_id : DataType::EndpointNumber, device_type : DeviceType,
+                   @parent_endpoint_id : UInt16 = 0_u16,
+                   @semantic_tags : Array(Cluster::Descriptor::SemanticTag) = [] of Cluster::Descriptor::SemanticTag)
       @device_types = [device_type]
       @clusters = {} of UInt32 => Cluster::Base
       @client_cluster_ids = [] of UInt32
@@ -140,6 +146,8 @@ module Matter
           revision: device_type.revision
         )
       end
+
+      descriptor.configure_tag_list(@semantic_tags)
 
       descriptor
     end

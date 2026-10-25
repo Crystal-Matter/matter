@@ -20,6 +20,14 @@ describe "Matter 1.6 Closure Control and Dimension interoperability" do
 
   it "commissions the Closure and Closure Panel endpoints with revision-one clusters" do
     device.commission!
+    expect_success(device.read("descriptor", "parts-list", 0)).int_list("PartsList").should eq([1_i64, 2_i64])
+    expect_success(device.read("descriptor", "parts-list", 1)).int_list("PartsList").should eq([2_i64])
+    expect_success(device.read("descriptor", "parts-list", 2)).int_list("PartsList").should be_empty
+    expect_success(device.read("descriptor", "feature-map", 2)).int("FeatureMap").should eq(1_i64)
+    panel_tags = expect_success(device.read("descriptor", "tag-list", 2)).output
+    panel_tags.should match(/TagList:\s*1 entries/)
+    panel_tags.should match(/NamespaceID:\s*69\b/)
+    panel_tags.should match(/\bTag:\s*0\b/)
     expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList").should contain(0x0104_i64)
     expect_success(device.read("descriptor", "server-list", 2)).int_list("ServerList").should contain(0x0105_i64)
     closure_read(device, CONTROL_CLUSTER, "0xfffd", "1").output.should contain("Data = 1")

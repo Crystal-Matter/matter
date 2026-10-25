@@ -7,6 +7,8 @@ require "./support/main"
 module MatterClosure
   alias Control = Matter::Cluster::ClosureControl
   alias Dimension = Matter::Cluster::ClosureDimension
+  PANEL_TAG_NAMESPACE = 0x45_u8
+  PANEL_LIFT_TAG      =    0_u8
 
   class Device < Matter::Device
     include Examples::Console
@@ -28,7 +30,9 @@ module MatterClosure
         as: :closure_control
     end
 
-    endpoint 2, device_type: Matter::DeviceType::CLOSURE_PANEL do
+    endpoint 2, device_type: Matter::DeviceType::CLOSURE_PANEL,
+      parent_endpoint: 1_u16,
+      tag_list: [Matter::Cluster::Descriptor::SemanticTag.new(nil, PANEL_TAG_NAMESPACE, PANEL_LIFT_TAG)] do
       cluster Dimension,
         feature_map: Dimension::Feature::Positioning | Dimension::Feature::Translation,
         resolution: 100_u16,

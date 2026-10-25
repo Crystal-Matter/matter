@@ -250,12 +250,12 @@ module Matter
       end
 
       # One endpoint of the device and the clusters it serves.
-      macro endpoint(number, device_type, &block)
+      macro endpoint(number, device_type, parent_endpoint = nil, tag_list = nil, &block)
         {% raise "#{@type}: endpoint #{number} device_type: takes one device type id" if device_type.is_a?(ArrayLiteral) %}
         {% if @type.constant("ENDPOINT_DECLS").any? { |decl| decl[:kind] == :endpoint && decl[:number] == number } %}
           {% raise "#{@type}: endpoint #{number} declared twice" %}
         {% end %}
-        {% @type.constant("ENDPOINT_DECLS") << {kind: :endpoint, number: number, name: nil, device_type: device_type, parameters: nil} %}
+        {% @type.constant("ENDPOINT_DECLS") << {kind: :endpoint, number: number, name: nil, device_type: device_type, parameters: nil, parent_endpoint: parent_endpoint, tag_list: tag_list} %}
         {% if block %}
           {{ block.body }}
         {% end %}
@@ -263,7 +263,7 @@ module Matter
 
       # The shape of an endpoint the device adds at runtime with
       # `add_endpoint(:name, **parameters)`.
-      macro endpoint_template(name, device_type, parameters = nil, &block)
+      macro endpoint_template(name, device_type, parameters = nil, tag_list = nil, &block)
         {% raise "#{@type}: endpoint_template :#{name.id} needs a name symbol" unless name.is_a?(SymbolLiteral) %}
         {% if parameters && !parameters.is_a?(NamedTupleLiteral) %}
           {% raise "#{@type}: endpoint_template :#{name.id} parameters: must be a {name: Type} literal" %}
@@ -271,7 +271,7 @@ module Matter
         {% if @type.constant("ENDPOINT_DECLS").any? { |decl| decl[:kind] == :template && decl[:name] == name } %}
           {% raise "#{@type}: endpoint_template :#{name.id} declared twice" %}
         {% end %}
-        {% @type.constant("ENDPOINT_DECLS") << {kind: :template, number: nil, name: name, device_type: device_type, parameters: parameters} %}
+        {% @type.constant("ENDPOINT_DECLS") << {kind: :template, number: nil, name: name, device_type: device_type, parameters: parameters, parent_endpoint: nil, tag_list: tag_list} %}
         {% if block %}
           {{ block.body }}
         {% end %}
@@ -364,6 +364,17 @@ module Matter
         {% end %}
 
         {% unless statics.empty? %}
+          protected def endpoint_compositions : Hash(UInt16, Tuple(UInt16, Array(::Matter::Cluster::Descriptor::SemanticTag)))
+            compositions = {} of UInt16 => Tuple(UInt16, Array(::Matter::Cluster::Descriptor::SemanticTag))
+            {% for decl in statics %}
+              compositions[({{ decl[:number] }}).to_u16] = {
+                {% if decl[:parent_endpoint] %}({{ decl[:parent_endpoint] }}).to_u16{% else %}0_u16{% end %},
+                {% if decl[:tag_list] %}{{ decl[:tag_list] }}{% else %}[] of ::Matter::Cluster::Descriptor::SemanticTag{% end %},
+              }
+            {% end %}
+            compositions
+          end
+
           protected def endpoint_client_clusters : Hash(UInt16, Array(UInt32))
             clients = {} of UInt16 => Array(UInt32)
             {% for decl, index in endpoints %}
@@ -392,6 +403,17 @@ module Matter
         {% end %}
 
         {% unless templates.empty? %}
+          protected def template_tags(template : String) : Array(::Matter::Cluster::Descriptor::SemanticTag)
+            case template
+            {% for decl in templates %}
+              when {{ decl[:name].id.stringify }}
+                {% if decl[:tag_list] %}{{ decl[:tag_list] }}{% else %}[] of ::Matter::Cluster::Descriptor::SemanticTag{% end %}
+            {% end %}
+            else
+              super
+            end
+          end
+
           {% for decl, index in endpoints %}
             {% if decl[:kind] == :template %}
               private def dsl_template_clients_{{ decl[:name].id }} : Array(UInt32)

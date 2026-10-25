@@ -52,16 +52,16 @@ correctly but omit a nil feature-present `Position` or `Latch`. This is a wire
 conformance gap for unknown state values. The serializer needs a feature-aware
 presence mechanism before these fields can be fully conformant.
 
-## Composition limitation
+## Device composition
 
 Matter 1.6 defines Closure (`0x0230`) and Closure Panel (`0x0231`) as separate
 endpoint device types. A Closure Panel is a child of a Closure and its Descriptor
-requires the `TAGLIST` feature. Crystal Matter's endpoint DSL currently places
-all declared endpoints under the root and does not configure Descriptor TagList
-or a nonroot PartsList parent. The example verifies the cluster behavior on
-separate typed endpoints but does not claim full Closure/Closure Panel device
-composition conformance. Add parent endpoint and Descriptor TagList support in
-a follow-up before certifying a composite Closure device.
+requires the `TAGLIST` feature. The endpoint DSL accepts `parent_endpoint:`
+and `tag_list:`; see [Descriptor composition](descriptor-composition.md). The
+example composes its Panel beneath the Closure and advertises the standard
+Closure Panel Lift tag (namespace `0x45`, tag `0`). The chip-tool E2E spec
+reads root and Closure PartsList and the Panel's TagList. The nullable-state
+wire gap above still prevents a full Closure/Closure Panel conformance claim.
 
 Reference: [connectedhomeip ClosureControl.xml](https://github.com/project-chip/connectedhomeip/blob/master/data_model/1.6/clusters/ClosureControl.xml),
 [ClosureDimension.xml](https://github.com/project-chip/connectedhomeip/blob/master/data_model/1.6/clusters/ClosureDimension.xml),
