@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock credential user type validation
+
+- Enforce Matter 1.6 SetCredential UserType values. Schedule-specific user types
+  are configured through SetUser, then receive credentials without a UserType
+  in SetCredential. Invalid requests leave user and credential state unchanged.
+
 ### Door Lock credential status validation
 
 - Reject SetCredential requests that set UserStatus to Available. Matter 1.6 allows

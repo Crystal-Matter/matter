@@ -31,10 +31,13 @@ end
 
 private def provision_verified_credential(lock : VerifiedDoorLock, type : VerifiedDoorLock::CredentialType,
                                           user_type : VerifiedDoorLock::UserType = VerifiedDoorLock::UserType::UnrestrictedUser) : VerifiedDoorLock::Credential
+  lock.handle_set_user(VerifiedDoorLock::SetUserRequest.new(
+    VerifiedDoorLock::DataOperationType::Add, 2_u16,
+    user_status: VerifiedDoorLock::UserStatus::OccupiedEnabled,
+    user_type: user_type)).success?.should be_true
   credential = VerifiedDoorLock::Credential.new(type, 1_u16)
   response = lock.handle_set_credential(VerifiedDoorLock::SetCredentialRequest.new(
-    VerifiedDoorLock::DataOperationType::Add, credential, "1357".to_slice, 2_u16,
-    VerifiedDoorLock::UserStatus::OccupiedEnabled, user_type))
+    VerifiedDoorLock::DataOperationType::Add, credential, "1357".to_slice, user_index: 2_u16))
   response.status_code.should eq(VerifiedDoorLock::StatusCode::Success)
   credential
 end
