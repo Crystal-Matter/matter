@@ -916,6 +916,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_provisioned = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
     previous_bootstrap = ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"]?
     previous_keep = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
+    previous_jcm = ENV["MATTER_JFA_ALLOW_JCM"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV["MATTER_JFA_BOOTSTRAP_STATE_PATH"] = bootstrap_path
     ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
@@ -1019,6 +1020,23 @@ describe MatterJointFabricAdministrator::Device do
     promoted.select_anchor_administrator_fabric_for_spec(1_u8)
     promoted.persist_anchor_role_for_spec(true)
 
+    # The promoted JFA must serve B immediately. A restart should not be
+    # required to replace the joined A service's window callback.
+    ENV["MATTER_JFA_ALLOW_JCM"] = "1"
+    promoted_admin = promoted.joint_fabric_administrator
+    promoted_admin.request_is_case_session = true
+    promoted_admin.request_fabric_index = 1_u8
+    promoted_admin.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
+    window_request = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
+      400_u16, Bytes.new(97, 0_u8), 3839_u16, 1000_u32, Bytes.new(16, 0_u8))
+    begin
+      promoted_admin.service.as(Matter::Commissioning::JointFabricAdministratorService)
+        .open_joint_commissioning_window(promoted_admin, window_request).success?.should be_true
+      promoted.administrator_commissioning.window.admin_fabric_index.should eq(1_u8)
+    ensure
+      promoted.administrator_commissioning.window.revoke if promoted.administrator_commissioning.window.open?
+    end
+
     binding = MatterJointFabricAdministrator::Device::FabricBindingState.from_document(
       promoted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT)
         .as(Matter::Storage::Document))
@@ -1050,6 +1068,11 @@ describe MatterJointFabricAdministrator::Device do
       ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = previous_keep
     else
       ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
+    end
+    if previous_jcm
+      ENV["MATTER_JFA_ALLOW_JCM"] = previous_jcm
+    else
+      ENV.delete("MATTER_JFA_ALLOW_JCM")
     end
     File.delete?(bootstrap_path) if bootstrap_path
   end

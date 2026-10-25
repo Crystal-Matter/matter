@@ -1510,7 +1510,6 @@ module MatterJointFabricAdministrator
           -> { persistence.save_cluster(joint_fabric_datastore); persistence.flush; nil },
           -> {
             select_anchor_administrator_fabric(own_fabric.fabric_index)
-            configure_propagator(own_fabric, bootstrap.fabric.root_cert)
             persist_anchor_role(true)
             @transfer_in_progress = false
             lifecycle.sync_advertisements
@@ -1576,6 +1575,9 @@ module MatterJointFabricAdministrator
         end
       end
       persistence.flush
+      # The persisted binding is also the live service boundary. Without this,
+      # endpoint 1 keeps its old joined-fabric JFA window callback until restart.
+      attach_joint_fabric(fabric)
     end
 
     private def follow_up_administrators(source : Datastore, old_fabric : Matter::Fabric,
