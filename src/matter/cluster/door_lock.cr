@@ -161,7 +161,7 @@ module Matter
       attribute 0x0021, :language, String, default: DEFAULT_LANGUAGE, writable: true, write_access: :manage, optional: true
       attribute 0x0022, :led_settings, LedSettings, default: LedSettings::NoLedSignal, writable: true, write_access: :manage, optional: true
       attribute 0x0023, :auto_relock_time, UInt32, default: 0_u32, writable: true, write_access: :manage, optional: true
-      attribute 0x0024, :sound_volume, SoundVolume, default: SoundVolume::Medium, writable: true, write_access: :manage, optional: true
+      attribute 0x0024, :sound_volume, SoundVolume, default: SoundVolume::Silent, writable: true, write_access: :manage, optional: true
       attribute 0x0025, :operating_mode, OperatingMode, default: OperatingMode::Normal, writable: true,
         write_access: :manage, on_change: :track_operating_mode_change
       before_write :operating_mode do |mode|
@@ -425,7 +425,7 @@ module Matter
         @language : String = DEFAULT_LANGUAGE,
         @led_settings : LedSettings = LedSettings::NoLedSignal,
         @auto_relock_time : UInt32 = 0_u32,
-        @sound_volume : SoundVolume = SoundVolume::Medium,
+        @sound_volume : SoundVolume = SoundVolume::Silent,
         @operating_mode : OperatingMode = OperatingMode::Normal,
         @supported_operating_modes : UInt16 = DEFAULT_SUPPORTED_OPERATING_MODES,
         @default_configuration_register : UInt16 = 0_u16,
