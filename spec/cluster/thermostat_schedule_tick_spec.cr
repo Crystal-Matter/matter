@@ -94,7 +94,7 @@ describe "Thermostat MSCH timed schedule activation" do
     features = TickThermostat::Feature::Heating | TickThermostat::Feature::MatterSchedules |
                TickThermostat::Feature::Presets
     on = tick_transition(0x02_u8, 8_u16 * 60, nil, preset: preset_handle)
-    off = tick_transition(0x02_u8, 20_u16 * 60, nil, TickThermostat::SystemMode::Off)
+    off = tick_transition(0x02_u8, 20_u16 * 60, 2200_i16, TickThermostat::SystemMode::Off)
     type_features = TickThermostat::ScheduleTypeFeatures::SupportsPresets |
                     TickThermostat::ScheduleTypeFeatures::SupportsSetpoints |
                     TickThermostat::ScheduleTypeFeatures::SupportsOff

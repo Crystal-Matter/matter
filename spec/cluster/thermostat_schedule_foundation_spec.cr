@@ -75,6 +75,18 @@ describe "Thermostat Matter schedules foundation" do
     expect_raises(ArgumentError) { cluster.configure_schedules([schedule_type], [named], 4_u8, nil) }
   end
 
+  it "requires a heating setpoint for an Off override of a Heat schedule without a preset" do
+    cluster = build(ScheduleThermostat, feature_map: ScheduleThermostat::Feature::Heating)
+    features = ScheduleThermostat::ScheduleTypeFeatures::SupportsSetpoints |
+               ScheduleThermostat::ScheduleTypeFeatures::SupportsOff
+    off = ScheduleThermostat::ScheduleTransition.new(0x02_u8, 1200_u16, nil,
+      ScheduleThermostat::SystemMode::Off, nil, nil)
+    expect_raises(ArgumentError, "schedule transition needs heating setpoint") do
+      cluster.configure_schedules([schedule_type(features: features)],
+        [configured_schedule(transitions: [off])], 4_u8, nil)
+    end
+  end
+
   it "persists schedules and never reuses a removed schedule handle" do
     cluster = build(ScheduleThermostat, feature_map: ScheduleThermostat::Feature::Heating)
     types = [schedule_type]

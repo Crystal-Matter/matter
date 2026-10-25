@@ -1994,12 +1994,13 @@ module Matter
             raise ArgumentError.new("schedule deadband violated") if cooling - heating < deadband
           end
         end
-        effective_mode = transition.system_mode || schedule.system_mode
         return if schedule.preset_handle
-        if effective_mode.in?({SystemMode::Heat, SystemMode::Auto}) && !transition.heating_setpoint
+        if (schedule.system_mode.in?({SystemMode::Heat, SystemMode::Auto}) ||
+           transition.system_mode.try(&.in?({SystemMode::Heat, SystemMode::Auto}))) && !transition.heating_setpoint
           raise ArgumentError.new("schedule transition needs heating setpoint")
         end
-        if effective_mode.in?({SystemMode::Cool, SystemMode::Auto}) && !transition.cooling_setpoint
+        if (schedule.system_mode.in?({SystemMode::Cool, SystemMode::Auto}) ||
+           transition.system_mode.try(&.in?({SystemMode::Cool, SystemMode::Auto}))) && !transition.cooling_setpoint
           raise ArgumentError.new("schedule transition needs cooling setpoint")
         end
       end
