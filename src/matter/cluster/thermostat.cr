@@ -18,6 +18,7 @@ module Matter
       feature :occupancy, bit: 2                     # OCC - gated until wire conformance is complete
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
+      feature :matter_schedules, bit: 7              # MSCH - gated until atomic schedule writes are complete
       feature :presets, bit: 8                       # PRES - gated until wire conformance is complete
       feature :events, bit: 9                        # TEVT - Thermostat change events
 
@@ -27,6 +28,10 @@ module Matter
       MAX_PRESET_HANDLE_LENGTH       =     16
       MAX_PRESET_NAME_LENGTH         =     64
       PRESET_STATE_KEY               = "preset_state"
+      SCHEDULE_STATE_KEY             = "schedule_state"
+      MAX_SCHEDULE_TYPES             =          3
+      MAX_SCHEDULE_HANDLE_LENGTH     =         16
+      MAX_SCHEDULE_NAME_LENGTH       =         64
       CMD_ATOMIC_RESPONSE            = 0x00FD_u32
       # Delegate maximum for a Presets atomic write. The wire field is uint16
       # milliseconds and Matter leaves the server maximum implementation-defined.
@@ -87,6 +92,75 @@ module Matter
         def initialize(@preset_handle : Bytes?, @preset_scenario : PresetScenario,
                        @name : String?, @cooling_setpoint : Int16?, @heating_setpoint : Int16?,
                        @built_in : Bool?)
+        end
+      end
+
+      @[Flags]
+      enum ScheduleTypeFeatures : UInt16
+        SupportsPresets   = 1
+        SupportsSetpoints = 2
+        SupportsNames     = 4
+        SupportsOff       = 8
+      end
+
+      struct ScheduleType
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter system_mode : SystemMode
+        @[TLV::Field(tag: 1)]
+        getter number_of_schedules : UInt8
+        @[TLV::Field(tag: 2)]
+        getter schedule_type_features : ScheduleTypeFeatures
+
+        def initialize(@system_mode : SystemMode, @number_of_schedules : UInt8,
+                       @schedule_type_features : ScheduleTypeFeatures)
+        end
+      end
+
+      struct ScheduleTransition
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0)]
+        getter day_of_week : UInt8
+        @[TLV::Field(tag: 1)]
+        getter transition_time : UInt16
+        @[TLV::Field(tag: 2)]
+        getter preset_handle : Bytes?
+        @[TLV::Field(tag: 3)]
+        getter system_mode : SystemMode?
+        @[TLV::Field(tag: 4)]
+        getter cooling_setpoint : Int16?
+        @[TLV::Field(tag: 5)]
+        getter heating_setpoint : Int16?
+
+        def initialize(@day_of_week : UInt8, @transition_time : UInt16,
+                       @preset_handle : Bytes?, @system_mode : SystemMode?,
+                       @cooling_setpoint : Int16?, @heating_setpoint : Int16?)
+        end
+      end
+
+      struct Schedule
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter schedule_handle : Bytes?
+        @[TLV::Field(tag: 1)]
+        getter system_mode : SystemMode
+        @[TLV::Field(tag: 2)]
+        getter name : String?
+        @[TLV::Field(tag: 3)]
+        getter preset_handle : Bytes?
+        @[TLV::Field(tag: 4)]
+        getter transitions : Array(ScheduleTransition)
+        @[TLV::Field(tag: 5, optional: false)]
+        getter built_in : Bool?
+
+        def initialize(@schedule_handle : Bytes?, @system_mode : SystemMode,
+                       @name : String?, @preset_handle : Bytes?,
+                       @transitions : Array(ScheduleTransition), @built_in : Bool?)
         end
       end
 
@@ -168,6 +242,16 @@ module Matter
 
         def initialize(@presets : Array(Preset), @active_preset_handle : Bytes?,
                        @used_preset_handles : Array(Bytes) = [] of Bytes)
+        end
+      end
+
+      private struct ScheduleState
+        include Storage::Record
+
+        getter schedules : Array(Schedule)
+        getter used_schedule_handles : Array(Bytes)
+
+        def initialize(@schedules : Array(Schedule), @used_schedule_handles : Array(Bytes))
         end
       end
 
@@ -476,8 +560,14 @@ module Matter
         @active_preset_handle = nil.as(Bytes?)
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
+        @schedule_types = [] of ScheduleType
+        @schedules = [] of Schedule
+        @used_schedule_handles = [] of Bytes
+        @number_of_schedule_transitions = 0_u8
+        @number_of_schedule_transition_per_day = nil.as(UInt8?)
 
         raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
+        raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules?
         raise ArgumentError.new("OCC wire conformance is not yet enabled") if @feature_map.occupancy? && !occupancy_wire_ready?
         validate_occupancy(@occupancy)
 
@@ -624,6 +714,45 @@ module Matter
 
       def presets : Array(Preset)
         copy_presets(@presets)
+      end
+
+      # Host-owned schedule configuration. The MSCH wire feature remains gated
+      # until atomic Schedules writes and wall-clock activation are implemented.
+      def configure_schedules(types : Array(ScheduleType), schedules : Array(Schedule),
+                              max_transitions : UInt8, max_per_day : UInt8?) : Nil
+        validate_schedules!(types, schedules, max_transitions, max_per_day)
+        schedules.each do |entry|
+          handle = entry.schedule_handle || raise ArgumentError.new("configured schedule needs a handle")
+          if @used_schedule_handles.any? { |used| used == handle } &&
+             @schedules.none? { |old| old.schedule_handle == handle }
+            raise ArgumentError.new("schedule handle was previously deleted")
+          end
+        end
+        @schedules.each do |old|
+          if old.built_in && schedules.none? { |entry| entry.schedule_handle == old.schedule_handle }
+            raise ArgumentError.new("built-in schedule cannot be deleted")
+          end
+          if replacement = schedules.find { |entry| entry.schedule_handle == old.schedule_handle }
+            raise ArgumentError.new("built-in schedule cannot be changed") if replacement.built_in != old.built_in
+          end
+        end
+        @schedule_types = types.dup
+        @schedules = copy_schedules(schedules)
+        @number_of_schedule_transitions = max_transitions
+        @number_of_schedule_transition_per_day = max_per_day
+        remember_schedule_handles(@schedules)
+      end
+
+      def schedule_types : Array(ScheduleType)
+        @schedule_types.dup
+      end
+
+      def schedules : Array(Schedule)
+        copy_schedules(@schedules)
+      end
+
+      def number_of_schedules : UInt8
+        @schedule_types.sum(&.number_of_schedules.to_i).to_u8
       end
 
       # IM writes are handled by the pending atomic transaction. This setter
@@ -1185,6 +1314,152 @@ module Matter
         end
       end
 
+      private def copy_schedules(values : Array(Schedule)) : Array(Schedule)
+        values.map do |entry|
+          transitions = entry.transitions.map do |transition|
+            ScheduleTransition.new(transition.day_of_week, transition.transition_time,
+              transition.preset_handle.try(&.dup), transition.system_mode,
+              transition.cooling_setpoint, transition.heating_setpoint)
+          end
+          Schedule.new(entry.schedule_handle.try(&.dup), entry.system_mode,
+            entry.name, entry.preset_handle.try(&.dup), transitions, entry.built_in)
+        end
+      end
+
+      private def remember_schedule_handles(values : Array(Schedule)) : Nil
+        values.each do |entry|
+          handle = entry.schedule_handle || next
+          @used_schedule_handles << handle.dup unless @used_schedule_handles.any? { |used| used == handle }
+        end
+      end
+
+      private def validate_schedules!(types : Array(ScheduleType), values : Array(Schedule),
+                                      max_transitions : UInt8, max_per_day : UInt8?) : Nil
+        raise ArgumentError.new("schedule types must contain 1 to 3 modes") unless (1..MAX_SCHEDULE_TYPES).includes?(types.size)
+        raise ArgumentError.new("duplicate schedule mode") unless types.map(&.system_mode).uniq!.size == types.size
+        raise ArgumentError.new("schedule transition capacity must be positive") if max_transitions == 0_u8
+        if max_per_day && !(1_u8..254_u8).includes?(max_per_day)
+          raise ArgumentError.new("per-day transition capacity must be within 1..254")
+        end
+        types.each do |type|
+          raise ArgumentError.new("unsupported schedule mode") unless schedule_mode_allowed?(type.system_mode)
+          features = type.schedule_type_features
+          unless features.supports_presets? || features.supports_setpoints?
+            raise ArgumentError.new("schedule type needs presets or setpoints")
+          end
+          if features.supports_presets? && !@feature_map.presets?
+            raise ArgumentError.new("schedule presets require PRES")
+          end
+        end
+        capacity = types.sum(&.number_of_schedules.to_i)
+        raise ArgumentError.new("schedule capacity must be within 1..255") unless (1..255).includes?(capacity)
+        raise ArgumentError.new("too many schedules") if values.size > capacity
+
+        handles = [] of Bytes
+        values.each do |entry|
+          handle = entry.schedule_handle || raise ArgumentError.new("configured schedule needs a handle")
+          raise ArgumentError.new("schedule handle length is invalid") unless (0..MAX_SCHEDULE_HANDLE_LENGTH).includes?(handle.size)
+          raise ArgumentError.new("duplicate schedule handle") if handles.any? { |used| used == handle }
+          handles << handle
+          type = types.find { |candidate| candidate.system_mode == entry.system_mode } ||
+                 raise ArgumentError.new("unsupported schedule mode")
+          if values.count { |candidate| candidate.system_mode == entry.system_mode } > type.number_of_schedules
+            raise ArgumentError.new("schedule mode capacity exceeded")
+          end
+          raise ArgumentError.new("configured schedule needs BuiltIn") if entry.built_in.nil?
+          if name = entry.name
+            raise ArgumentError.new("schedule name too long") if name.bytesize > MAX_SCHEDULE_NAME_LENGTH
+            raise ArgumentError.new("schedule mode does not support names") unless type.schedule_type_features.supports_names?
+          end
+          validate_schedule_preset!(entry.preset_handle, type)
+          raise ArgumentError.new("schedule needs transitions") if entry.transitions.empty?
+          raise ArgumentError.new("schedule transition capacity exceeded") if entry.transitions.size > max_transitions
+
+          day_counts = Array(Int32).new(7, 0)
+          transitions = entry.transitions
+          transitions.each_with_index do |transition, index|
+            day = transition.day_of_week
+            raise ArgumentError.new("invalid schedule day bitmap") if day == 0_u8 || day.bit(7) == 1
+            raise ArgumentError.new("invalid transition time") if transition.transition_time > 1439_u16
+            if transitions[0...index].any? do |prior|
+                 prior.transition_time == transition.transition_time && (prior.day_of_week & day) != 0_u8
+               end
+              raise ArgumentError.new("overlapping schedule transitions")
+            end
+            7.times do |bit|
+              next if (day & (1_u8 << bit)) == 0_u8
+              day_counts[bit] += 1
+              if limit = max_per_day
+                raise ArgumentError.new("per-day transition capacity exceeded") if day_counts[bit] > limit
+              end
+            end
+            validate_schedule_transition!(transition, entry, type)
+          end
+        end
+      end
+
+      private def schedule_mode_allowed?(mode : SystemMode) : Bool
+        case mode
+        when SystemMode::Heat then @feature_map.heating?
+        when SystemMode::Cool then @feature_map.cooling?
+        when SystemMode::Auto then @feature_map.automode? && @feature_map.heating? && @feature_map.cooling?
+        else                       false
+        end
+      end
+
+      private def validate_schedule_preset!(handle : Bytes?, type : ScheduleType) : Nil
+        return unless handle
+        raise ArgumentError.new("schedule mode does not support presets") unless type.schedule_type_features.supports_presets?
+        raise ArgumentError.new("schedule preset handle length is invalid") if handle.size > MAX_PRESET_HANDLE_LENGTH
+        raise ArgumentError.new("unknown schedule preset") unless @presets.any? { |preset| preset.preset_handle == handle }
+      end
+
+      private def validate_schedule_transition!(transition : ScheduleTransition, schedule : Schedule,
+                                                type : ScheduleType) : Nil
+        features = type.schedule_type_features
+        validate_schedule_preset!(transition.preset_handle, type)
+        if transition.preset_handle
+          if transition.system_mode || transition.cooling_setpoint || transition.heating_setpoint
+            raise ArgumentError.new("preset transition cannot override mode or setpoints")
+          end
+          return
+        end
+        if mode = transition.system_mode
+          raise ArgumentError.new("schedule transition mode must differ") if mode == schedule.system_mode
+          unless mode.off? || schedule_mode_allowed?(mode)
+            raise ArgumentError.new("unsupported transition mode")
+          end
+          raise ArgumentError.new("schedule mode does not support setpoint transitions") unless features.supports_setpoints?
+          raise ArgumentError.new("schedule mode does not support Off") if mode.off? && !features.supports_off?
+        end
+        if (transition.cooling_setpoint || transition.heating_setpoint) && !features.supports_setpoints?
+          raise ArgumentError.new("schedule mode does not support setpoints")
+        end
+        if cooling = transition.cooling_setpoint
+          unless @feature_map.cooling? && cooling.in?(@min_cool_setpoint_limit..@max_cool_setpoint_limit)
+            raise ArgumentError.new("invalid schedule cooling setpoint")
+          end
+        end
+        if heating = transition.heating_setpoint
+          unless @feature_map.heating? && heating.in?(@min_heat_setpoint_limit..@max_heat_setpoint_limit)
+            raise ArgumentError.new("invalid schedule heating setpoint")
+          end
+        end
+        if cooling = transition.cooling_setpoint
+          if heating = transition.heating_setpoint
+            raise ArgumentError.new("schedule deadband violated") if cooling - heating < deadband
+          end
+        end
+        effective_mode = transition.system_mode || schedule.system_mode
+        return if schedule.preset_handle
+        if effective_mode.in?({SystemMode::Heat, SystemMode::Auto}) && !transition.heating_setpoint
+          raise ArgumentError.new("schedule transition needs heating setpoint")
+        end
+        if effective_mode.in?({SystemMode::Cool, SystemMode::Auto}) && !transition.cooling_setpoint
+          raise ArgumentError.new("schedule transition needs cooling setpoint")
+        end
+      end
+
       private def update_active_preset_handle(handle : Bytes?) : Nil
         return if @active_preset_handle == handle
 
@@ -1256,34 +1531,54 @@ module Matter
       end
 
       private def extend_persisted_state(document : Storage::Document) : Nil
-        return if @preset_types.empty?
-
-        document[PRESET_STATE_KEY] = PresetState.new(copy_presets(@presets),
-          @active_preset_handle.try(&.dup), @used_preset_handles.map(&.dup)).to_document
+        unless @preset_types.empty?
+          document[PRESET_STATE_KEY] = PresetState.new(copy_presets(@presets),
+            @active_preset_handle.try(&.dup), @used_preset_handles.map(&.dup)).to_document
+        end
+        unless @schedule_types.empty?
+          document[SCHEDULE_STATE_KEY] = ScheduleState.new(copy_schedules(@schedules),
+            @used_schedule_handles.map(&.dup)).to_document
+        end
       end
 
       private def restore_persisted_extension(document : Storage::Document) : Nil
         raw = document[PRESET_STATE_KEY]?
-        return unless raw
-
-        state = PresetState.from_document(raw.as?(Storage::Document) ||
-                                          raise StorageError.new("invalid thermostat preset state"))
-        begin
-          validate_presets!(@preset_types, state.presets)
-        rescue ex : ArgumentError
-          raise StorageError.new("invalid thermostat preset state: #{ex.message}")
+        if raw
+          state = PresetState.from_document(raw.as?(Storage::Document) ||
+                                            raise StorageError.new("invalid thermostat preset state"))
+          begin
+            validate_presets!(@preset_types, state.presets)
+          rescue ex : ArgumentError
+            raise StorageError.new("invalid thermostat preset state: #{ex.message}")
+          end
+          if handle = state.active_preset_handle
+            raise StorageError.new("unknown active preset handle") unless state.presets.any? { |preset| preset.preset_handle == handle }
+          end
+          state.used_preset_handles.each do |used_handle|
+            raise StorageError.new("invalid used preset handle") unless (0..MAX_PRESET_HANDLE_LENGTH).includes?(used_handle.size)
+            @used_preset_handles << used_handle.dup unless @used_preset_handles.any? { |used| used == used_handle }
+          end
+          remember_preset_handles(state.presets)
+          @presets = copy_presets(state.presets)
+          @active_preset_handle = state.active_preset_handle.try(&.dup)
+          @pending_preset_write = nil
         end
-        if handle = state.active_preset_handle
-          raise StorageError.new("unknown active preset handle") unless state.presets.any? { |preset| preset.preset_handle == handle }
+        if schedule_raw = document[SCHEDULE_STATE_KEY]?
+          state = ScheduleState.from_document(schedule_raw.as?(Storage::Document) ||
+                                              raise StorageError.new("invalid thermostat schedule state"))
+          begin
+            validate_schedules!(@schedule_types, state.schedules,
+              @number_of_schedule_transitions, @number_of_schedule_transition_per_day)
+          rescue ex : ArgumentError
+            raise StorageError.new("invalid thermostat schedule state: #{ex.message}")
+          end
+          state.used_schedule_handles.each do |used_handle|
+            raise StorageError.new("invalid used schedule handle") unless (0..MAX_SCHEDULE_HANDLE_LENGTH).includes?(used_handle.size)
+            @used_schedule_handles << used_handle.dup unless @used_schedule_handles.any? { |used| used == used_handle }
+          end
+          remember_schedule_handles(state.schedules)
+          @schedules = copy_schedules(state.schedules)
         end
-        state.used_preset_handles.each do |used_handle|
-          raise StorageError.new("invalid used preset handle") unless (0..MAX_PRESET_HANDLE_LENGTH).includes?(used_handle.size)
-          @used_preset_handles << used_handle.dup unless @used_preset_handles.any? { |used| used == used_handle }
-        end
-        remember_preset_handles(state.presets)
-        @presets = copy_presets(state.presets)
-        @active_preset_handle = state.active_preset_handle.try(&.dup)
-        @pending_preset_write = nil
       end
 
       private def local_temperature_changed(value : Int16?) : Nil
