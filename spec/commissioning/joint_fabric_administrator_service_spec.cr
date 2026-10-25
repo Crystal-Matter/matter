@@ -436,6 +436,8 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     anchor_key = crypto.create_key_pair
     anchor_root = Matter::Crypto::MatterCertificate::Builder.root(anchor_key, 1_u64, Bytes[0x03], crypto)
     anchor_fabric_id = 0x5678_u64
+    saved_icac = anchor_icac
+    interrupt_after_icac_write = false
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
       -> { true }, ->(_index : UInt8) { true },
@@ -444,6 +446,12 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
       resolve_accessing_fabric: ->(index : UInt8) {
         index == 2_u8 ? Matter::Commissioning::JointFabricAdministratorService::FabricIdentity.new(anchor_root, anchor_fabric_id) : nil
+      },
+      initial_icac: saved_icac,
+      persist_icac: ->(value : Bytes?) {
+        saved_icac = value.as(Bytes)
+        raise Matter::StorageError.new("Interrupted after ICAC write") if interrupt_after_icac_write
+        nil
       },
       failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
     )
@@ -466,6 +474,73 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     outcome.as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
     cluster.administrator_fabric_index.should eq(2_u8)
+    # A crash may persist the attribute while the fail-safe and the service's
+    # provisional ICAC are still in memory. Restoring that document must roll
+    # back the uncommitted fabric selection before serving reads.
+    restarted = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    restarted.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    restarted.administrator_fabric_index.should eq(1_u8)
+    restarted_service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      resolve_accessing_fabric: ->(index : UInt8) {
+        index == 2_u8 ? Matter::Commissioning::JointFabricAdministratorService::FabricIdentity.new(anchor_root, anchor_fabric_id) : nil
+      },
+      initial_icac: saved_icac,
+      persist_icac: ->(value : Bytes?) {
+        saved_icac = value.as(Bytes)
+        raise Matter::StorageError.new("Interrupted after ICAC write") if interrupt_after_icac_write
+        nil
+      },
+      failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
+    )
+    restarted_service.cross_signed_icac.should eq(anchor_icac)
+    restarted.request_is_case_session = true
+    restarted.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0001_u64]
+    restarted.request_peer_icac = anchor_icac
+    restarted.request_peer_node_id = 7_u64
+    restarted.request_fabric_index = 2_u8
+    restarted.request_session_id = 3_u64
+    restarted.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+    restarted_service.announce_joint_fabric_administrator(restarted,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
+    restarted_service.icaccsr_request(restarted).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+    retried = restarted_service.add_icac(restarted, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(cross_signed))
+    retried.as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
+    restarted_service.on_failsafe_expired
+    restarted.administrator_fabric_index.should eq(1_u8)
+    restarted_service.cross_signed_icac.should eq(anchor_icac)
+    saved_icac.should eq(anchor_icac)
+
+    restarted_service.announce_joint_fabric_administrator(restarted,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
+    restarted_service.icaccsr_request(restarted).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+    committed = restarted_service.add_icac(restarted, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(cross_signed))
+    committed.as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
+    interrupt_after_icac_write = true
+    expect_raises(Matter::StorageError, "Interrupted after ICAC write") { restarted_service.on_commissioning_complete }
+    saved_icac.should eq(cross_signed)
+    interrupted_commit = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    interrupted_commit.restore_state(restarted.save_state.as(Matter::Storage::Document))
+    interrupted_commit.administrator_fabric_index.should eq(1_u8)
+    # A host loading the committed ICAC after this split-store interruption
+    # reselects its committed fabric before serving the cluster.
+    interrupted_commit.administrator_fabric_index = 2_u8
+    interrupted_commit.administrator_fabric_index.should eq(2_u8)
+    interrupt_after_icac_write = false
+    restarted_service.on_commissioning_complete
+    saved_icac.should eq(cross_signed)
+    after_commit = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    after_commit.restore_state(restarted.save_state.as(Matter::Storage::Document))
+    after_commit.administrator_fabric_index.should eq(2_u8)
+
     service.on_failsafe_expired
     cluster.administrator_fabric_index.should eq(1_u8)
   end

@@ -110,6 +110,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Commissioning, restart, and Anchor transfer, using a test HTTPS DCL mirror
   with removal and mismatch denial checks.
 
+### Joint Fabric fail-safe recovery
+
+- Roll back a provisional AdministratorFabricIndex restored after AddICAC when
+  commissioning was interrupted before completion. The rollback value shares
+  the cluster document with the provisional attribute.
+
 ### WebRTC Requestor client infrastructure
 
 - Add typed Matter 1.6 WebRTC Transport Requestor outbound signaling commands

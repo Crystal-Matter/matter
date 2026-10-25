@@ -29,7 +29,6 @@ module Matter
       @transfer_requester_fabric_index : UInt8?
       @verified_initiator_node_id : UInt64?
       @verified_initiator_fabric_index : UInt8?
-      @previous_administrator_fabric_index : UInt8?
       @administrator_cluster : Admin?
       @authenticated_icac_public_key : Bytes?
 
@@ -111,10 +110,9 @@ module Matter
       def on_failsafe_expired : Nil
         @cross_signed_icac = @committed_icac.try(&.dup)
         if cluster = @administrator_cluster
-          cluster.administrator_fabric_index = @previous_administrator_fabric_index
+          cluster.rollback_provisional_administrator_fabric_index
         end
         @administrator_cluster = nil
-        @previous_administrator_fabric_index = nil
         @icac_pending_commit = false
         reset_failsafe
       end
@@ -124,9 +122,9 @@ module Matter
           certificate = @cross_signed_icac
           @persist_icac.try(&.call(certificate))
           @committed_icac = certificate.try(&.dup)
+          @administrator_cluster.try(&.commit_provisional_administrator_fabric_index)
           @icac_pending_commit = false
           @administrator_cluster = nil
-          @previous_administrator_fabric_index = nil
         end
         reset_failsafe
       end
@@ -204,12 +202,11 @@ module Matter
         root_key = Crypto::MatterCertificate.public_key_from_tlv(identity.root_certificate)
         Crypto::MatterCertificate::Validation.verify_issued_by(request.icac_value, identity.root_certificate)
         Crypto::MatterCertificate::Validation.verify_signature(request.icac_value, root_key)
-        @previous_administrator_fabric_index = cluster.administrator_fabric_index
+        cluster.begin_provisional_administrator_fabric_index(accessing_index)
         @administrator_cluster = cluster
         @cross_signed_icac = request.icac_value.dup
         @icac_attempt_fabric_indices.add(accessing_index)
         @icac_pending_commit = true
-        cluster.administrator_fabric_index = accessing_index
         Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::OK)
       rescue Matter::Error
         Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::InvalidICAC)
