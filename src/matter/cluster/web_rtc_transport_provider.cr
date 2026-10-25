@@ -114,9 +114,9 @@ module Matter
         @[TLV::Field(tag: 1)]
         getter originating_endpoint_id : UInt16
         @[TLV::Field(tag: 2, optional: true)]
-        getter video_stream_id : UInt16?
+        getter video_stream_id_state : TLV::FieldState(UInt16)
         @[TLV::Field(tag: 3, optional: true)]
-        getter audio_stream_id : UInt16?
+        getter audio_stream_id_state : TLV::FieldState(UInt16)
         @[TLV::Field(tag: 4, optional: true)]
         getter ice_servers : Array(IceServer)?
         @[TLV::Field(tag: 5, optional: true)]
@@ -128,11 +128,21 @@ module Matter
 
         def initialize(@stream_usage : StreamUsage, @originating_endpoint_id : UInt16,
                        @audio_streams : Array(UInt16)? = nil,
-                       @audio_stream_id : UInt16? = nil,
-                       @video_stream_id : UInt16? = nil,
+                       audio_stream_id : UInt16? | TLV::FieldState(UInt16) = nil,
+                       video_stream_id : UInt16? | TLV::FieldState(UInt16) = nil,
                        @video_streams : Array(UInt16)? = nil,
                        @ice_servers : Array(IceServer)? = nil,
                        @ice_transport_policy : String? = nil)
+          @audio_stream_id_state = WebRtcTransportProvider.stream_id_field(audio_stream_id)
+          @video_stream_id_state = WebRtcTransportProvider.stream_id_field(video_stream_id)
+        end
+
+        def video_stream_id : UInt16?
+          @video_stream_id_state.value! if @video_stream_id_state.value?
+        end
+
+        def audio_stream_id : UInt16?
+          @audio_stream_id_state.value! if @audio_stream_id_state.value?
         end
       end
 
@@ -143,11 +153,24 @@ module Matter
         @[TLV::Field(tag: 1)]
         getter? deferred_offer : Bool
 
+        @[TLV::Field(tag: 2, optional: true)]
+        getter video_stream_id_state : TLV::FieldState(UInt16)
         @[TLV::Field(tag: 3, optional: true)]
-        getter audio_stream_id : UInt16?
+        getter audio_stream_id_state : TLV::FieldState(UInt16)
 
         def initialize(@web_rtc_session_id : UInt16, @deferred_offer : Bool,
-                       @audio_stream_id : UInt16? = nil)
+                       audio_stream_id : UInt16? | TLV::FieldState(UInt16) = nil,
+                       video_stream_id : UInt16? | TLV::FieldState(UInt16) = nil)
+          @audio_stream_id_state = WebRtcTransportProvider.stream_id_field(audio_stream_id)
+          @video_stream_id_state = WebRtcTransportProvider.stream_id_field(video_stream_id)
+        end
+
+        def video_stream_id : UInt16?
+          @video_stream_id_state.value! if @video_stream_id_state.value?
+        end
+
+        def audio_stream_id : UInt16?
+          @audio_stream_id_state.value! if @audio_stream_id_state.value?
         end
       end
 
@@ -162,9 +185,9 @@ module Matter
         @[TLV::Field(tag: 3, optional: true)]
         getter originating_endpoint_id : UInt16?
         @[TLV::Field(tag: 4, optional: true)]
-        getter video_stream_id : UInt16?
+        getter video_stream_id_state : TLV::FieldState(UInt16)
         @[TLV::Field(tag: 5, optional: true)]
-        getter audio_stream_id : UInt16?
+        getter audio_stream_id_state : TLV::FieldState(UInt16)
         @[TLV::Field(tag: 6, optional: true)]
         getter ice_servers : Array(IceServer)?
         @[TLV::Field(tag: 7, optional: true)]
@@ -178,11 +201,21 @@ module Matter
                        @stream_usage : StreamUsage? = nil,
                        @originating_endpoint_id : UInt16? = nil,
                        @audio_streams : Array(UInt16)? = nil,
-                       @audio_stream_id : UInt16? = nil,
-                       @video_stream_id : UInt16? = nil,
+                       audio_stream_id : UInt16? | TLV::FieldState(UInt16) = nil,
+                       video_stream_id : UInt16? | TLV::FieldState(UInt16) = nil,
                        @video_streams : Array(UInt16)? = nil,
                        @ice_servers : Array(IceServer)? = nil,
                        @ice_transport_policy : String? = nil)
+          @audio_stream_id_state = WebRtcTransportProvider.stream_id_field(audio_stream_id)
+          @video_stream_id_state = WebRtcTransportProvider.stream_id_field(video_stream_id)
+        end
+
+        def video_stream_id : UInt16?
+          @video_stream_id_state.value! if @video_stream_id_state.value?
+        end
+
+        def audio_stream_id : UInt16?
+          @audio_stream_id_state.value! if @audio_stream_id_state.value?
         end
       end
 
@@ -191,10 +224,35 @@ module Matter
         @[TLV::Field(tag: 0)]
         getter web_rtc_session_id : UInt16
 
+        @[TLV::Field(tag: 1, optional: true)]
+        getter video_stream_id_state : TLV::FieldState(UInt16)
         @[TLV::Field(tag: 2, optional: true)]
-        getter audio_stream_id : UInt16?
+        getter audio_stream_id_state : TLV::FieldState(UInt16)
 
-        def initialize(@web_rtc_session_id : UInt16, @audio_stream_id : UInt16? = nil)
+        def initialize(@web_rtc_session_id : UInt16,
+                       audio_stream_id : UInt16? | TLV::FieldState(UInt16) = nil,
+                       video_stream_id : UInt16? | TLV::FieldState(UInt16) = nil)
+          @audio_stream_id_state = WebRtcTransportProvider.stream_id_field(audio_stream_id)
+          @video_stream_id_state = WebRtcTransportProvider.stream_id_field(video_stream_id)
+        end
+
+        def video_stream_id : UInt16?
+          @video_stream_id_state.value! if @video_stream_id_state.value?
+        end
+
+        def audio_stream_id : UInt16?
+          @audio_stream_id_state.value! if @audio_stream_id_state.value?
+        end
+      end
+
+      def self.stream_id_field(value : UInt16? | TLV::FieldState(UInt16)) : TLV::FieldState(UInt16)
+        case value
+        in TLV::FieldState(UInt16)
+          value
+        in UInt16
+          TLV::FieldState(UInt16).value(value)
+        in Nil
+          TLV::FieldState(UInt16).absent
         end
       end
 
@@ -301,7 +359,7 @@ module Matter
           remove_session(session, EndReason::UnknownReason)
           return status
         end
-        SolicitOfferResponse.new(id, true, request.audio_stream_id)
+        SolicitOfferResponse.new(id, true, request.audio_stream_id_state, request.video_stream_id_state)
       end
 
       def provide_offer(request : ProvideOfferRequest) : InteractionModel::Status | ProvideOfferResponse
@@ -319,7 +377,7 @@ module Matter
           return status unless status.success?
           @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
           schedule_offer_timeout
-          return ProvideOfferResponse.new(id, session.audio_stream_id)
+          return ProvideOfferResponse.new(id, request.audio_stream_id_state, request.video_stream_id_state)
         end
         usage = request.stream_usage || return InteractionModel::Status.invalid_command
         endpoint = request.originating_endpoint_id || return InteractionModel::Status.invalid_command
@@ -344,7 +402,7 @@ module Matter
           remove_session(session, EndReason::UnknownReason)
           return status
         end
-        ProvideOfferResponse.new(id, request.audio_stream_id)
+        ProvideOfferResponse.new(id, request.audio_stream_id_state, request.video_stream_id_state)
       end
 
       def provide_answer(request : ProvideAnswerRequest) : InteractionModel::Status
