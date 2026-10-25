@@ -78,6 +78,9 @@ Matter 1.6 restricts the SetCredential command's `OperationType` to Add or
 Modify. Clear is accepted only by the separate timed ClearCredential command.
 An invalid SetCredential operation returns `InvalidField` without changing the
 credential table, user links, data version, or events.
+SetUser has the same Add or Modify operation constraint. ClearUser is its
+separate timed deletion command; a Clear operation sent to SetUser returns
+`InvalidField` without changing the user or linked credentials.
 
 RFID and biometric feature bits now require a configured
 `DoorLock::LocalCredentialVerifier` that reports readiness for every advertised
