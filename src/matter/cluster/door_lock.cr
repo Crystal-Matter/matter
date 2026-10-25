@@ -338,6 +338,8 @@ module Matter
         getter year_day_schedules : Array(PersistedYearDaySchedule)
         getter holiday_schedules : Array(PersistedHolidaySchedule)
         getter aliro_reader_config : AliroReaderConfig?
+        # Keep the existing storage key for upgrades; it now holds the shared
+        # PIN, RFID, and biometric failure count.
         getter failed_remote_pin_attempts : UInt8 = 0_u8
         getter lockout_until : Time?
 
@@ -856,21 +858,35 @@ module Matter
         return InteractionModel::Status.unsupported_command unless source && credential_type_supported?(type)
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless @actuator_enabled
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) if effective_operating_mode.privacy?
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) if lockout_active
 
         verifier = @local_credential_verifier || return InteractionModel::Status.cluster_failure(StatusCode::Failure)
-        authenticated = begin
-          verifier.ready_for?(type) ? verifier.authenticate(type, transaction) : nil
+        ready = begin
+          verifier.ready_for?(type)
         rescue ex
           Log.error(exception: ex) { "Local credential verification failed for #{type}" }
-          nil
+          false
+        end
+        unless ready
+          report_local_credential_error(source, OperationError::InvalidCredential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        authenticated = begin
+          verifier.authenticate(type, transaction)
+        rescue ex
+          Log.error(exception: ex) { "Local credential verification failed for #{type}" }
+          report_local_credential_error(source, OperationError::InvalidCredential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
         unless authenticated && authenticated.credential.credential_type == type && credential_index_supported?(authenticated.credential)
+          record_failed_pin_attempt
           report_local_credential_error(source, OperationError::InvalidCredential)
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
 
         record = @credentials[credential_key(authenticated.credential)]?
         unless record && record.credential_data == authenticated.credential_data
+          record_failed_pin_attempt
           report_local_credential_error(source, OperationError::InvalidCredential)
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
@@ -891,6 +907,7 @@ module Matter
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
 
+        clear_failed_pin_state
         self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
         operation = user.user_type.forced_user? ? LockOperationType::ForcedUserEvent : LockOperationType::Unlock

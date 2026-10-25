@@ -43,7 +43,99 @@ private def authenticated_credential(credential : VerifiedDoorLock::Credential, 
   VerifiedDoorLock::LocalAuthenticatedCredential.new(credential, data.to_slice)
 end
 
+private def lockout_credential_lock(features : VerifiedDoorLock::Feature, verifier : TestLocalCredentialVerifier) : VerifiedDoorLock
+  build(VerifiedDoorLock,
+    feature_map: VerifiedDoorLock::Feature::User | features,
+    local_credential_verifier: verifier,
+    wrong_code_entry_limit: 2_u8,
+    user_code_temporary_disable_time: 1_u8,
+    require_pin_for_remote_operation: true,
+    default_pin_code: "2468")
+end
+
 describe "Door Lock trusted local credential verification" do
+  it "locks out RFID after the configured number of invalid presentations" do
+    verifier = TestLocalCredentialVerifier.new
+    lock = lockout_credential_lock(VerifiedDoorLock::Feature::RfidCredential, verifier)
+    credential = provision_verified_credential(lock, VerifiedDoorLock::CredentialType::Rfid)
+
+    2.times do
+      lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x01]).success?.should be_false
+    end
+    verifier.authenticated = authenticated_credential(credential)
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x02]).success?.should be_false
+    lock.locked?.should be_true
+
+    sleep 1.1.seconds
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x03]).success?.should be_true
+  end
+
+  it "resets the shared failure count after a valid RFID presentation" do
+    verifier = TestLocalCredentialVerifier.new
+    lock = lockout_credential_lock(VerifiedDoorLock::Feature::RfidCredential, verifier)
+    credential = provision_verified_credential(lock, VerifiedDoorLock::CredentialType::Rfid)
+
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x01]).success?.should be_false
+    verifier.authenticated = authenticated_credential(credential)
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x02]).success?.should be_true
+    lock.lock(source: VerifiedDoorLock::OperationSource::Manual).success?.should be_true
+
+    verifier.authenticated = nil
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x03]).success?.should be_false
+    verifier.authenticated = authenticated_credential(credential)
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x04]).success?.should be_true
+  end
+
+  it "shares the failure count and active lockout across PIN and RFID" do
+    features = VerifiedDoorLock::Feature::PinCredential | VerifiedDoorLock::Feature::CredentialOverTheAirAccess |
+               VerifiedDoorLock::Feature::RfidCredential
+    verifier = TestLocalCredentialVerifier.new
+    lock = lockout_credential_lock(features, verifier)
+    credential = provision_verified_credential(lock, VerifiedDoorLock::CredentialType::Rfid)
+
+    lock.unlock(pin: "wrong").success?.should be_false
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x01]).success?.should be_false
+    verifier.authenticated = authenticated_credential(credential)
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x02]).success?.should be_false
+    lock.unlock(pin: "2468").success?.should be_false
+
+    verifier.authenticated = nil
+    reverse = lockout_credential_lock(features, verifier)
+    reverse.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x03]).success?.should be_false
+    reverse.unlock(pin: "wrong").success?.should be_false
+    reverse.unlock(pin: "2468").success?.should be_false
+  end
+
+  { {VerifiedDoorLock::Feature::FingerCredentials, VerifiedDoorLock::CredentialType::Fingerprint},
+   {VerifiedDoorLock::Feature::FaceCredentials, VerifiedDoorLock::CredentialType::Face} }.each do |feature, type|
+    it "locks out invalid #{type} presentations" do
+      verifier = TestLocalCredentialVerifier.new
+      lock = lockout_credential_lock(feature, verifier)
+      credential = provision_verified_credential(lock, type)
+
+      2.times { lock.perform_local_credential_transaction(type, Bytes[0x01]).success?.should be_false }
+      verifier.authenticated = authenticated_credential(credential)
+      lock.perform_local_credential_transaction(type, Bytes[0x02]).success?.should be_false
+      lock.locked?.should be_true
+    end
+  end
+
+  it "does not count verifier outages as incorrect credential presentations" do
+    verifier = TestLocalCredentialVerifier.new
+    lock = lockout_credential_lock(VerifiedDoorLock::Feature::RfidCredential, verifier)
+    credential = provision_verified_credential(lock, VerifiedDoorLock::CredentialType::Rfid)
+    verifier.authenticated = authenticated_credential(credential)
+
+    verifier.ready = false
+    2.times { lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x01]).success?.should be_false }
+    verifier.ready = true
+    verifier.fail_authentication = true
+    2.times { lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x02]).success?.should be_false }
+    verifier.fail_authentication = false
+
+    lock.perform_local_credential_transaction(VerifiedDoorLock::CredentialType::Rfid, Bytes[0x03]).success?.should be_true
+  end
+
   it "blocks an exterior RFID reader in Privacy mode" do
     verifier = TestLocalCredentialVerifier.new
     lock = build(VerifiedDoorLock,

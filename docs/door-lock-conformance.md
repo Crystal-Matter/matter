@@ -39,6 +39,10 @@ with a fresh retry count. The lockout deadline uses the host's UTC wall clock,
 so deployed locks need a trustworthy clock and durable storage. The official
 chip-tool scenario restarts during a lockout and confirms the correct PIN
 remains blocked.
+Verified RFID and biometric presentations share this persisted attempt count
+and lockout deadline with remote PIN attempts. Invalid reader credentials count
+toward the same limit; a successful credential resets it. An unavailable or
+failing reader does not count as a wrong credential.
 
 SetCredential rejects duplicate PIN or RFID bytes in another slot of the
 same credential type with the Door Lock `Duplicate` status. Add and Modify
