@@ -1874,14 +1874,14 @@ module Matter
 
         if requires_pin
           pin_value = pin
-          if pin_value.nil? || pin_value.empty?
+          if pin_value.nil?
             report_lock_operation_error(operation, source, OperationError::InvalidCredential)
             return Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::InvalidField))
           end
           return authorize_pin(pin_value, operation, source)
         end
 
-        if pin && !pin.empty? && @feature_map.pin_credential?
+        if pin && @feature_map.pin_credential?
           return authorize_pin(pin, operation, source)
         end
 

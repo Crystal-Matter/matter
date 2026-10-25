@@ -274,6 +274,40 @@ describe Matter::Cluster::DoorLock do
       recovered_result = invoke(cluster, Matter::Cluster::DoorLock::CMD_UNLOCK_DOOR, lock_request("2468"))
       recovered_result.as(Matter::InteractionModel::Status).success?.should be_true
     end
+
+    it "counts a provided empty PIN toward the wrong-code limit" do
+      cluster = build(Def, require_pin_for_remote_operation: true,
+        default_pin_code: "2468", wrong_code_entry_limit: 1_u8,
+        user_code_temporary_disable_time: 1_u8)
+
+      expect_status(invoke(cluster, Def::CMD_UNLOCK_DOOR, lock_request("")),
+        Matter::InteractionModel::StatusCode::Failure)
+      expect_status(invoke(cluster, Def::CMD_UNLOCK_DOOR, lock_request("2468")),
+        Matter::InteractionModel::StatusCode::Failure)
+      cluster.lock_state.should eq(Def::LockState::Locked)
+    end
+
+    it "rejects a provided empty PIN when a PIN is optional" do
+      cluster = build(Def, require_pin_for_remote_operation: false,
+        default_pin_code: "2468", wrong_code_entry_limit: 1_u8,
+        user_code_temporary_disable_time: 1_u8)
+
+      expect_status(invoke(cluster, Def::CMD_UNLOCK_DOOR, lock_request("")),
+        Matter::InteractionModel::StatusCode::Failure)
+      expect_status(invoke(cluster, Def::CMD_UNLOCK_DOOR, lock_request("2468")),
+        Matter::InteractionModel::StatusCode::Failure)
+      cluster.lock_state.should eq(Def::LockState::Locked)
+    end
+
+    it "denies an omitted required PIN without counting a presented credential" do
+      cluster = build(Def, require_pin_for_remote_operation: true,
+        default_pin_code: "2468", wrong_code_entry_limit: 1_u8,
+        user_code_temporary_disable_time: 1_u8)
+
+      expect_status(invoke(cluster, Def::CMD_UNLOCK_DOOR, lock_request),
+        Matter::InteractionModel::StatusCode::Failure)
+      expect_success(invoke(cluster, Def::CMD_UNLOCK_DOOR, lock_request("2468")))
+    end
   end
 
   describe "user and credential commands" do
