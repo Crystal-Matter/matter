@@ -7,6 +7,22 @@ require "./support/main"
 # - Exposes Identify + DoorLock clusters
 # - Supports lock/unlock/unbolt + door open/close simulation
 module MatterDoorLock
+  # This example has no physical lock. A real device must complete each
+  # movement before reporting success to DoorLock.
+  class SimulatedUnboltingActuator < Matter::Cluster::DoorLock::UnboltingActuator
+    def unbolt : Bool
+      true
+    end
+
+    def pull_latch : Bool
+      true
+    end
+
+    def release_latch : Bool
+      true
+    end
+  end
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -36,6 +52,7 @@ module MatterDoorLock
                      Matter::Cluster::DoorLock::Feature::YearDayAccessSchedules |
                      Matter::Cluster::DoorLock::Feature::HolidaySchedules,
         auto_relock_time: AUTO_RELOCK_TIME,
+        unbolting_actuator: SimulatedUnboltingActuator.new,
         require_pin_for_remote_operation: true,
         default_pin_code: DEFAULT_PIN_CODE,
         as: :door_lock

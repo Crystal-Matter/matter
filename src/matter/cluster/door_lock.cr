@@ -108,6 +108,15 @@ module Matter
 
       private record LocalScheduleTime, epoch_seconds : Int64, day_mask : UInt8, minute_of_day : Int32
 
+      # The host confirms each physical stage before the cluster publishes its
+      # corresponding LockState. An implementation must not return true until
+      # the requested bolt or latch movement has actually completed.
+      abstract class UnboltingActuator
+        abstract def unbolt : Bool
+        abstract def pull_latch : Bool
+        abstract def release_latch : Bool
+      end
+
       attribute 0x0000, :lock_state, LockState, nullable: true, default: LockState::Locked
       attribute 0x0001, :lock_type, LockType, default: LockType::Deadbolt
       attribute 0x0002, :actuator_enabled, Bool, default: true
@@ -338,6 +347,8 @@ module Matter
         getter year_day_schedules : Array(PersistedYearDaySchedule)
         getter holiday_schedules : Array(PersistedHolidaySchedule)
         getter aliro_reader_config : AliroReaderConfig?
+        # Keep the existing storage key for upgrades; it now holds the shared
+        # PIN, RFID, and biometric failure count.
         getter failed_remote_pin_attempts : UInt8 = 0_u8
         getter lockout_until : Time?
 
@@ -380,7 +391,7 @@ module Matter
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
-        @feature_map : Feature = Feature::DoorPositionSensor | Feature::PinCredential | Feature::CredentialOverTheAirAccess | Feature::User | Feature::Unbolting,
+        @feature_map : Feature = Feature::DoorPositionSensor | Feature::PinCredential | Feature::CredentialOverTheAirAccess | Feature::User,
         @lock_state : LockState? = LockState::Locked,
         @lock_type : LockType = LockType::Deadbolt,
         @actuator_enabled : Bool = true,
@@ -413,6 +424,7 @@ module Matter
         @number_of_aliro_endpoint_keys_supported : UInt16 = 0_u16,
         @aliro_reader_delegate : AliroReaderDelegate? = nil,
         @local_credential_verifier : LocalCredentialVerifier? = nil,
+        @unbolting_actuator : UnboltingActuator? = nil,
         @wrong_code_entry_limit : UInt8 = DEFAULT_WRONG_CODE_ENTRY_LIMIT,
         @user_code_temporary_disable_time : UInt8 = DEFAULT_TEMPORARY_DISABLE_SECONDS,
         @send_pin_over_the_air : Bool = false,
@@ -422,6 +434,8 @@ module Matter
         @local_time_provider : Proc(Time?) = -> : Time? { Time.local },
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+
+        raise ArgumentError.new("Unbolting requires a host actuator") if @feature_map.unbolting? && !@unbolting_actuator
 
         if @feature_map.aliro_bleuwb?
           raise ArgumentError.new("Aliro BLE/UWB requires Aliro provisioning") unless @feature_map.aliro_provisioning?
@@ -856,21 +870,35 @@ module Matter
         return InteractionModel::Status.unsupported_command unless source && credential_type_supported?(type)
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) unless @actuator_enabled
         return InteractionModel::Status.cluster_failure(StatusCode::Failure) if effective_operating_mode.privacy?
+        return InteractionModel::Status.cluster_failure(StatusCode::Failure) if lockout_active
 
         verifier = @local_credential_verifier || return InteractionModel::Status.cluster_failure(StatusCode::Failure)
-        authenticated = begin
-          verifier.ready_for?(type) ? verifier.authenticate(type, transaction) : nil
+        ready = begin
+          verifier.ready_for?(type)
         rescue ex
           Log.error(exception: ex) { "Local credential verification failed for #{type}" }
-          nil
+          false
+        end
+        unless ready
+          report_local_credential_error(source, OperationError::InvalidCredential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+        authenticated = begin
+          verifier.authenticate(type, transaction)
+        rescue ex
+          Log.error(exception: ex) { "Local credential verification failed for #{type}" }
+          report_local_credential_error(source, OperationError::InvalidCredential)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
         unless authenticated && authenticated.credential.credential_type == type && credential_index_supported?(authenticated.credential)
+          record_failed_pin_attempt
           report_local_credential_error(source, OperationError::InvalidCredential)
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
 
         record = @credentials[credential_key(authenticated.credential)]?
         unless record && record.credential_data == authenticated.credential_data
+          record_failed_pin_attempt
           report_local_credential_error(source, OperationError::InvalidCredential)
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
@@ -891,6 +919,7 @@ module Matter
           return InteractionModel::Status.cluster_failure(StatusCode::Failure)
         end
 
+        clear_failed_pin_state
         self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
         operation = user.user_type.forced_user? ? LockOperationType::ForcedUserEvent : LockOperationType::Unlock
@@ -1124,6 +1153,9 @@ module Matter
           return status
         end
 
+        if @feature_map.unbolting?
+          return unlock_with_latch(source, authorization, @auto_relock_time)
+        end
         self.operating_mode = OperatingMode::Normal if source.manual? && @operating_mode.privacy?
         self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
@@ -1136,6 +1168,10 @@ module Matter
         authorization = authorize_remote_operation(pin, LockOperationType::Unlock, source)
         if status = authorization.status
           return status
+        end
+
+        if @feature_map.unbolting?
+          return unlock_with_latch(source, authorization, timeout_seconds.to_u32)
         end
 
         self.lock_state = LockState::Unlocked
@@ -1152,10 +1188,57 @@ module Matter
           return status
         end
 
+        unless perform_unbolting_stage(:unbolt)
+          report_lock_operation_error(LockOperationType::Unlock, source, OperationError::Unspecified, authorization)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
         self.lock_state = LockState::Unlocked
         schedule_relock(@auto_relock_time)
-        complete_lock_operation(LockOperationType::Unlock, source, authorization)
+        complete_lock_operation(LockOperationType::Unlock, source, authorization, preserve_operation_type: true)
         InteractionModel::Status.success
+      end
+
+      private def unlock_with_latch(source : OperationSource, authorization : Authorization,
+                                    relock_seconds : UInt32) : InteractionModel::Status
+        unless perform_unbolting_stage(:unbolt)
+          report_lock_operation_error(LockOperationType::Unlock, source, OperationError::Unspecified, authorization)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
+        self.operating_mode = OperatingMode::Normal if source.manual? && @operating_mode.privacy?
+        self.lock_state = LockState::Unlocked
+        unless perform_unbolting_stage(:pull)
+          report_lock_operation_error(LockOperationType::Unlatch, source, OperationError::Unspecified, authorization)
+          complete_lock_operation(LockOperationType::Unlock, source, authorization, preserve_operation_type: true)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
+        self.lock_state = LockState::Unlatched
+        report_lock_operation(LockOperationType::Unlatch, source, authorization)
+        unless perform_unbolting_stage(:release)
+          report_lock_operation_error(LockOperationType::Unlatch, source, OperationError::Unspecified, authorization)
+          complete_lock_operation(LockOperationType::Unlock, source, authorization, preserve_operation_type: true)
+          return InteractionModel::Status.cluster_failure(StatusCode::Failure)
+        end
+
+        self.lock_state = LockState::Unlocked
+        schedule_relock(relock_seconds)
+        complete_lock_operation(LockOperationType::Unlock, source, authorization, preserve_operation_type: true)
+        InteractionModel::Status.success
+      end
+
+      private def perform_unbolting_stage(stage : Symbol) : Bool
+        actuator = @unbolting_actuator || return false
+        case stage
+        when :unbolt  then actuator.unbolt
+        when :pull    then actuator.pull_latch
+        when :release then actuator.release_latch
+        else               false
+        end
+      rescue ex
+        Log.error(exception: ex) { "Unbolting actuator failed at #{stage}" }
+        false
       end
 
       def locked? : Bool
@@ -1222,10 +1305,11 @@ module Matter
         ), @request_fabric_index)
       end
 
-      private def complete_lock_operation(operation : LockOperationType, source : OperationSource, authorization : Authorization) : Nil
+      private def complete_lock_operation(operation : LockOperationType, source : OperationSource, authorization : Authorization,
+                                          preserve_operation_type : Bool = false) : Nil
         user = authorization.user_index.try { |index| @users[index]? }
         forced = user && user.user_type.forced_user?
-        report_lock_operation(forced ? LockOperationType::ForcedUserEvent : operation, source, authorization)
+        report_lock_operation(forced && !preserve_operation_type ? LockOperationType::ForcedUserEvent : operation, source, authorization)
         emit_door_lock_alarm(Events::DoorLockAlarm.new(AlarmCode::ForcedUser)) if forced
 
         if user
@@ -1857,14 +1941,14 @@ module Matter
 
         if requires_pin
           pin_value = pin
-          if pin_value.nil? || pin_value.empty?
+          if pin_value.nil?
             report_lock_operation_error(operation, source, OperationError::InvalidCredential)
             return Authorization.new(InteractionModel::Status.cluster_failure(StatusCode::InvalidField))
           end
           return authorize_pin(pin_value, operation, source)
         end
 
-        if pin && !pin.empty? && @feature_map.pin_credential?
+        if pin && @feature_map.pin_credential?
           return authorize_pin(pin, operation, source)
         end
 

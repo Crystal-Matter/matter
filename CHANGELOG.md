@@ -63,6 +63,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Permit Privacy mode only while locked; a manual unlock now restores Normal
   mode while remote commands and exterior credential readers remain disabled
   in Privacy.
+- Count invalid verified RFID and biometric presentations toward the same
+  temporary lockout as remote PIN failures, and reset that count after a
+  successful credential. Reader outages do not count as wrong credentials.
+- Advertise Unbolting only with an explicit host actuator. Confirm bolt,
+  latch-pull, and latch-release stages before publishing the required
+  `Unlatched`/`Unlocked` states and operation events; report actuator failures.
+- Route `UnlockWithTimeout` through the same host actuator when Unbolting is
+  enabled, preserving the command's explicit relock timeout.
 
 ### General Diagnostics test payload
 

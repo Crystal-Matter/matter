@@ -5,11 +5,24 @@ declares cluster revision 10. Crystal Matter currently advertises revision 9.
 Revision 10 removes obsolete Zigbee commands and the reportable attribute
 quality; the Crystal cluster already omits those commands.
 
-With the Unbolting feature, `UnboltDoor` retracts the bolt without pulling
-the latch. It reports `Unlocked` lock state and an `Unlock` operation event.
-`UnlockDoor` on an Unbolting lock still needs a hardware latch sequence that
-reports `Unlatch` followed by `Unlock`; the current software lock does not
-model that physical transition.
+Unbolting is no longer advertised by default. To enable it, pass both a
+feature map containing `DoorLock::Feature::Unbolting` and an application-owned
+`DoorLock::UnboltingActuator`. The actuator must confirm physical `unbolt`,
+`pull_latch`, and `release_latch` completion before returning true. The
+constructor rejects an Unbolting feature without this actuator. The example
+Door Lock supplies an explicit simulation actuator; hardware devices must
+replace it with a real one.
+
+`UnboltDoor` retracts the bolt without pulling the latch, then reports
+`Unlocked` state and an `Unlock` operation event. `UnlockDoor` retracts the
+bolt, reports transient `Unlatched` state and an `Unlatch` event after the
+latch is pulled, then reports `Unlocked` and an `Unlock` event after release.
+`UnlockWithTimeout` uses the same physical sequence on an Unbolting lock and
+uses its command timeout for automatic relocking.
+An actuator failure before bolt retraction produces only an `Unlock` error.
+Failures after bolt retraction produce an `Unlatch` error and an `Unlock`
+event while retaining the last confirmed physical state. The host callback
+owns the physical timing; the cluster does not invent a latch hold interval.
 
 The server now uses the specified `SoundVolume` values (`High = 2`,
 `Medium = 3`) and an inverse `SupportedOperatingModes` bitmap. Its default
@@ -39,6 +52,10 @@ with a fresh retry count. The lockout deadline uses the host's UTC wall clock,
 so deployed locks need a trustworthy clock and durable storage. The official
 chip-tool scenario restarts during a lockout and confirms the correct PIN
 remains blocked.
+Verified RFID and biometric presentations share this persisted attempt count
+and lockout deadline with remote PIN attempts. Invalid reader credentials count
+toward the same limit; a successful credential resets it. An unavailable or
+failing reader does not count as a wrong credential.
 
 SetCredential rejects duplicate PIN or RFID bytes in another slot of the
 same credential type with the Door Lock `Duplicate` status. Add and Modify
