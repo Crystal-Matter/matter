@@ -1601,7 +1601,7 @@ module Matter
 
       private def mark_group_memberships_pending(group_id : UInt16) : Nil
         self.endpoint_group_id_list = @endpoint_group_id_list.map do |entry|
-          if entry.group_id == group_id
+          if entry.group_id == group_id && entry.status_entry.state != DatastoreStateEnum::DeletePending
             entry.status_entry = status_entry(DatastoreStateEnum::Pending)
           end
           entry
