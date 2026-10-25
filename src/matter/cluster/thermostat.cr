@@ -653,6 +653,7 @@ module Matter
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
         @pending_schedule_write = nil.as(PendingScheduleWrite?)
+        @combined_atomic_write = false
         @schedule_types = [] of ScheduleType
         @schedules = [] of Schedule
         @used_schedule_handles = [] of Bytes
@@ -790,6 +791,10 @@ module Matter
       def configure_presets(types : Array(PresetType), presets : Array(Preset)) : Nil
         validate_presets!(types, presets)
         @pending_preset_write = nil
+        if @combined_atomic_write
+          @pending_schedule_write = nil
+          @combined_atomic_write = false
+        end
         types_changed = @preset_types != types
         capacity_changed = @preset_types.sum(&.number_of_presets.to_i) != types.sum(&.number_of_presets.to_i)
         presets_changed = @presets != presets
@@ -843,6 +848,10 @@ module Matter
         end
         @schedule_types = types.dup
         @pending_schedule_write = nil
+        if @combined_atomic_write
+          @pending_preset_write = nil
+          @combined_atomic_write = false
+        end
         @schedules = copy_schedules(schedules)
         @number_of_schedule_transitions = max_transitions
         @number_of_schedule_transition_per_day = max_per_day
@@ -961,11 +970,16 @@ module Matter
         return InteractionModel::Status.invalid_command unless atomic_peer?
         ids = request.attribute_requests
         return InteractionModel::Status.invalid_command if ids.empty? || ids.uniq.size != ids.size
-        return InteractionModel::Status.invalid_command unless ids == [ATTR_PRESETS] || ids == [ATTR_SCHEDULES]
+        combined = ids.size == 2 && ids.includes?(ATTR_PRESETS) && ids.includes?(ATTR_SCHEDULES)
+        return InteractionModel::Status.invalid_command unless ids == [ATTR_PRESETS] || ids == [ATTR_SCHEDULES] || combined
         return InteractionModel::Status.invalid_command if !request.request_type.begin_write? && request.timeout
         expire_preset_write
         expire_schedule_write
 
+        if combined
+          return InteractionModel::Status.invalid_command unless @feature_map.presets? && @feature_map.matter_schedules?
+          return atomic_combined_request(request)
+        end
         if ids == [ATTR_SCHEDULES]
           return InteractionModel::Status.invalid_command unless @feature_map.matter_schedules?
           return atomic_schedule_request(request)
@@ -1050,6 +1064,14 @@ module Matter
       # A removed fabric no longer owns an Atomic Write State, even if its
       # index is later assigned to another fabric before the timeout expires.
       def remove_fabric(fabric_index : UInt8) : Nil
+        if @combined_atomic_write &&
+           (@pending_preset_write.try(&.fabric) == fabric_index ||
+           @pending_schedule_write.try(&.fabric) == fabric_index)
+          @pending_preset_write = nil
+          @pending_schedule_write = nil
+          @combined_atomic_write = false
+          return
+        end
         if (pending = @pending_preset_write) && pending.fabric == fabric_index
           @pending_preset_write = nil
         end
@@ -1085,6 +1107,7 @@ module Matter
       end
 
       private def atomic_finish(ids : Array(UInt32), *, commit : Bool) : AtomicResponse | InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state if @combined_atomic_write
         pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
         return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending) && ids == [ATTR_PRESETS]
         @pending_preset_write = nil
@@ -1106,6 +1129,15 @@ module Matter
           rescue ArgumentError
             return atomic_response(InteractionModel::StatusCode::Failure,
               [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
+          end
+          if !@schedules.empty?
+            begin
+              validate_schedules!(@schedule_types, @schedules, @number_of_schedule_transitions,
+                @number_of_schedule_transition_per_day, values)
+            rescue ArgumentError
+              return atomic_response(InteractionModel::StatusCode::Failure,
+                [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
+            end
           end
           unless @presets == values
             remember_preset_handles(values)
@@ -1149,6 +1181,7 @@ module Matter
       end
 
       private def atomic_schedule_finish(ids : Array(UInt32), *, commit : Bool) : AtomicResponse | InteractionModel::Status
+        return InteractionModel::Status.invalid_in_state if @combined_atomic_write
         pending = @pending_schedule_write || return InteractionModel::Status.invalid_in_state
         return InteractionModel::Status.invalid_in_state unless schedule_atomic_owner?(pending) && ids == [ATTR_SCHEDULES]
         @pending_schedule_write = nil
@@ -1180,6 +1213,107 @@ module Matter
         end
         atomic_response(InteractionModel::StatusCode::Success,
           commit ? [] of AtomicAttributeStatus : [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::Success)])
+      end
+
+      private def atomic_combined_request(request : AtomicRequest) : AtomicResponse | InteractionModel::Status
+        ids = request.attribute_requests
+        case request.request_type
+        when .begin_write?
+          timeout = request.timeout || return InteractionModel::Status.invalid_command
+          return InteractionModel::Status.invalid_command if timeout == 0_u16
+          actual_timeout = {timeout, MAX_PRESET_ATOMIC_TIMEOUT}.min
+          preset_owner = @pending_preset_write.try { |pending| atomic_owner?(pending) } || false
+          schedule_owner = @pending_schedule_write.try { |pending| schedule_atomic_owner?(pending) } || false
+          if preset_owner || schedule_owner
+            return InteractionModel::Status.invalid_in_state
+          end
+          if @preset_types.empty? || @schedule_types.empty?
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::InvalidCommand) }, actual_timeout)
+          end
+          if @pending_preset_write || @pending_schedule_write
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::Busy) }, actual_timeout)
+          end
+          fabric = request_fabric_index || return InteractionModel::Status.invalid_command
+          subject = request_peer_node_id || return InteractionModel::Status.invalid_command
+          expires_at = Time.instant + actual_timeout.milliseconds
+          @pending_preset_write = PendingPresetWrite.new(fabric, subject, expires_at)
+          @pending_schedule_write = PendingScheduleWrite.new(fabric, subject, expires_at)
+          @combined_atomic_write = true
+          atomic_response(InteractionModel::StatusCode::Success,
+            ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::Success) }, actual_timeout)
+        when .commit_write?, .rollback_write?
+          atomic_combined_finish(ids, commit: request.request_type.commit_write?)
+        else
+          InteractionModel::Status.invalid_command
+        end
+      end
+
+      private def atomic_combined_finish(ids : Array(UInt32), *, commit : Bool) : AtomicResponse | InteractionModel::Status
+        presets_write = @pending_preset_write || return InteractionModel::Status.invalid_in_state
+        schedules_write = @pending_schedule_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless @combined_atomic_write &&
+                                                                atomic_owner?(presets_write) && schedule_atomic_owner?(schedules_write)
+        @pending_preset_write = nil
+        @pending_schedule_write = nil
+        @combined_atomic_write = false
+        unless commit
+          return atomic_response(InteractionModel::StatusCode::Success,
+            ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::Success) })
+        end
+
+        presets = presets_write.presets || @presets
+        schedules = schedules_write.schedules || @schedules
+        if presets_write.write_data_versions.any? { |version| version != data_version }
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::DataVersionMismatch)])
+        end
+        if schedules_write.write_data_versions.any? { |version| version != data_version }
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::DataVersionMismatch)])
+        end
+        if @presets.any? { |entry| entry.built_in && !presets.any? { |candidate| candidate.preset_handle == entry.preset_handle } }
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
+        end
+        if @active_preset_handle && !presets.any? { |entry| entry.preset_handle == @active_preset_handle }
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::InvalidInState)])
+        end
+        if @schedules.any? { |entry| entry.built_in && !schedules.any? { |candidate| candidate.schedule_handle == entry.schedule_handle } }
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::ConstraintError)])
+        end
+        if @active_schedule_handle && !schedules.any? { |entry| entry.schedule_handle == @active_schedule_handle }
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::InvalidInState)])
+        end
+        begin
+          validate_presets!(@preset_types, presets)
+        rescue ArgumentError
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::ConstraintError)])
+        end
+        begin
+          validate_schedules!(@schedule_types, schedules, @number_of_schedule_transitions,
+            @number_of_schedule_transition_per_day, presets)
+        rescue ArgumentError
+          return atomic_response(InteractionModel::StatusCode::Failure,
+            [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::ConstraintError)])
+        end
+
+        unless @presets == presets
+          remember_preset_handles(presets)
+          @presets = copy_presets(presets)
+          increment_version_and_notify(ATTR_PRESETS)
+        end
+        unless @schedules == schedules
+          remember_schedule_handles(schedules)
+          @schedules = copy_schedules(schedules)
+          increment_version_and_notify(ATTR_SCHEDULES)
+        end
+        atomic_response(InteractionModel::StatusCode::Success, [] of AtomicAttributeStatus)
       end
 
       private def stage_schedules(values : Array(Schedule), *, allow_new : Bool = false) : InteractionModel::Status
@@ -1222,8 +1356,9 @@ module Matter
           end
         end
         begin
+          candidate_presets = @combined_atomic_write ? (@pending_preset_write.try(&.presets) || @presets) : @presets
           validate_schedules!(@schedule_types, normalized, @number_of_schedule_transitions,
-            @number_of_schedule_transition_per_day)
+            @number_of_schedule_transition_per_day, candidate_presets)
         rescue ArgumentError
           return InteractionModel::Status.constraint_error
         end
@@ -1316,12 +1451,20 @@ module Matter
       private def expire_preset_write : Nil
         if (pending = @pending_preset_write) && Time.instant >= pending.expires_at
           @pending_preset_write = nil
+          if @combined_atomic_write
+            @pending_schedule_write = nil
+            @combined_atomic_write = false
+          end
         end
       end
 
       private def expire_schedule_write : Nil
         if (pending = @pending_schedule_write) && Time.instant >= pending.expires_at
           @pending_schedule_write = nil
+          if @combined_atomic_write
+            @pending_preset_write = nil
+            @combined_atomic_write = false
+          end
         end
       end
 
@@ -1646,7 +1789,8 @@ module Matter
       end
 
       private def validate_schedules!(types : Array(ScheduleType), values : Array(Schedule),
-                                      max_transitions : UInt8, max_per_day : UInt8?) : Nil
+                                      max_transitions : UInt8, max_per_day : UInt8?,
+                                      presets : Array(Preset) = @presets) : Nil
         raise ArgumentError.new("schedule types must contain 1 to 3 modes") unless (1..MAX_SCHEDULE_TYPES).includes?(types.size)
         raise ArgumentError.new("duplicate schedule mode") unless types.map(&.system_mode).uniq!.size == types.size
         raise ArgumentError.new("schedule transition capacity must be positive") if max_transitions == 0_u8
@@ -1683,7 +1827,7 @@ module Matter
             raise ArgumentError.new("schedule name too long") if name.bytesize > MAX_SCHEDULE_NAME_LENGTH
             raise ArgumentError.new("schedule mode does not support names") unless type.schedule_type_features.supports_names?
           end
-          validate_schedule_preset!(entry.preset_handle, type)
+          validate_schedule_preset!(entry.preset_handle, type, presets)
           raise ArgumentError.new("schedule needs transitions") if entry.transitions.empty?
           raise ArgumentError.new("schedule transition capacity exceeded") if entry.transitions.size > max_transitions
 
@@ -1705,7 +1849,7 @@ module Matter
                 raise ArgumentError.new("per-day transition capacity exceeded") if day_counts[bit] > limit
               end
             end
-            validate_schedule_transition!(transition, entry, type)
+            validate_schedule_transition!(transition, entry, type, presets)
           end
         end
       end
@@ -1719,17 +1863,18 @@ module Matter
         end
       end
 
-      private def validate_schedule_preset!(handle : Bytes?, type : ScheduleType) : Nil
+      private def validate_schedule_preset!(handle : Bytes?, type : ScheduleType,
+                                            presets : Array(Preset)) : Nil
         return unless handle
         raise ArgumentError.new("schedule mode does not support presets") unless type.schedule_type_features.supports_presets?
         raise ArgumentError.new("schedule preset handle length is invalid") if handle.size > MAX_PRESET_HANDLE_LENGTH
-        raise ArgumentError.new("unknown schedule preset") unless @presets.any? { |preset| preset.preset_handle == handle }
+        raise ArgumentError.new("unknown schedule preset") unless presets.any? { |preset| preset.preset_handle == handle }
       end
 
       private def validate_schedule_transition!(transition : ScheduleTransition, schedule : Schedule,
-                                                type : ScheduleType) : Nil
+                                                type : ScheduleType, presets : Array(Preset)) : Nil
         features = type.schedule_type_features
-        validate_schedule_preset!(transition.preset_handle, type)
+        validate_schedule_preset!(transition.preset_handle, type, presets)
         if transition.preset_handle
           if transition.system_mode || transition.cooling_setpoint || transition.heating_setpoint
             raise ArgumentError.new("preset transition cannot override mode or setpoints")
@@ -1854,6 +1999,9 @@ module Matter
       end
 
       private def restore_persisted_extension(document : Storage::Document) : Nil
+        @pending_preset_write = nil
+        @pending_schedule_write = nil
+        @combined_atomic_write = false
         raw = document[PRESET_STATE_KEY]?
         if raw
           state = PresetState.from_document(raw.as?(Storage::Document) ||
