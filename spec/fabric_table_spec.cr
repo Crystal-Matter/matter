@@ -23,6 +23,18 @@ ensure
   File.delete?(path) if path
 end
 
+private class FailFabricDeleteYamlFile < Matter::Storage::YamlFile
+  property? fail_next_fabric_delete : Bool = false
+
+  def delete(collection : String, id : String) : Nil
+    if @fail_next_fabric_delete && collection == Matter::FabricTable::COLLECTION
+      @fail_next_fabric_delete = false
+      raise Matter::StorageError.new("Injected fabric delete failure")
+    end
+    super
+  end
+end
+
 # A fabric id above Int64::MAX exercises the UInt64 path of every backend.
 private HUGE_FABRIC_ID = 0xFFFF_FFFF_FFFF_FFF0_u64
 
@@ -187,6 +199,36 @@ describe Matter::FabricTable do
   end
 
   describe "removing fabrics" do
+    it "keeps a fabric index reserved when its stored document cannot be deleted" do
+      with_temp_file(".yml") do |path|
+        storage = FailFabricDeleteYamlFile.new(path)
+        storage.open
+        table = Matter::FabricTable.new(storage)
+        original = build_fabric(1_u8)
+        table.add_fabric(original).should be_true
+
+        storage.fail_next_fabric_delete = true
+        expect_raises(Matter::StorageError, /Injected fabric delete failure/) do
+          table.remove_fabric(1_u8)
+        end
+
+        table.get_fabric(1_u8).should eq(original)
+        table.next_available_index.should eq(2_u8)
+        table.add_fabric(build_fabric(1_u8)).should be_false
+
+        reloaded = Matter::Storage::YamlFile.new(path)
+        reloaded.open
+        reloaded.read(Matter::FabricTable::COLLECTION, "1").should_not be_nil
+        Matter::FabricTable.new(reloaded).get_fabric(1_u8).should_not be_nil
+        reloaded.close
+
+        table.remove_fabric(1_u8).should be_true
+        table.next_available_index.should eq(1_u8)
+        storage.read(Matter::FabricTable::COLLECTION, "1").should be_nil
+        storage.close
+      end
+    end
+
     it "removes fabric by index" do
       storage = Matter::Storage::Memory.new
       table = Matter::FabricTable.new(storage, max_fabrics: 10_u8)

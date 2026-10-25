@@ -144,10 +144,11 @@ module Matter
       return false unless fabric
 
       @on_fabric_removed.try(&.call(fabric))
-      @fabrics.delete(fabric_index)
-
-      @dirty.delete(fabric_index)
+      # Keep the index reserved if durable deletion fails. A later AddNOC must
+      # not assign it to a different fabric while the old document remains.
       @backend.delete(COLLECTION, fabric_index.to_s)
+      @fabrics.delete(fabric_index)
+      @dirty.delete(fabric_index)
       true
     end
 
