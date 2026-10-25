@@ -45,7 +45,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Persist JFA and Datastore cleanup before deleting their owning fabric, and
   reconcile saved endpoint bindings against installed fabric identities at
   startup. A replacement fabric reusing the same local index cannot inherit a
-  former Anchor's administrator and Datastore records.
+  former Anchor's administrator and Datastore records. The joint-fabric E2E
+  suite now removes an Anchor fabric, restarts, and verifies a replacement
+  Anchor's fabric index and Datastore isolation over CASE.
 
 ### Fabric table durability
 

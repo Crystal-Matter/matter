@@ -235,6 +235,8 @@ describe MatterJointFabricAdministrator::Device do
       device.operational_credentials.credentials.remove_fabric(1_u8)
     end
     device.fabric_table.get_fabric(1_u8).should eq(fabric)
+    device.operational_credentials.credentials.remove_fabric(1_u8).ok?.should be_true
+    device.fabric_table.get_fabric(1_u8).should be_nil
   ensure
     device.try(&.shutdown!)
     if previous_anchor

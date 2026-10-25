@@ -212,6 +212,14 @@ services:
       MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_lifecycle_anchor.bootstrap.yml
       MATTER_JFA_TRANSFER_PEERS: c401=joint-fabric-lifecycle-target
 
+  joint-fabric-index-reuse-anchor:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_index_reuse_anchor
+      E2E_BINARY: matter_joint_fabric_administrator
+      MATTER_JFA_PROVISIONED_ANCHOR: "1"
+      MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_index_reuse_anchor.bootstrap.yml
+
   joint-fabric-lifecycle-target:
     <<: *device
     environment:
@@ -573,6 +581,7 @@ services:
       joint-fabric-refresh-target: { condition: service_healthy }
       joint-fabric-lifecycle-anchor: { condition: service_healthy }
       joint-fabric-lifecycle-target: { condition: service_healthy }
+      joint-fabric-index-reuse-anchor: { condition: service_healthy }
       joint-fabric-migration-target: { condition: service_healthy }
       level-control: { condition: service_healthy }
       scenes-fabric: { condition: service_healthy }

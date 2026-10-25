@@ -397,6 +397,8 @@ module MatterJointFabricAdministrator
     end
 
     protected def before_fabric_removed(fabric_index : UInt8) : Nil
+      # Fail closed before the index is reusable. If a later fabric-document
+      # delete fails, the still-installed fabric is reattached on restart.
       fabric_removed(fabric_index)
       persistence.flush
     end

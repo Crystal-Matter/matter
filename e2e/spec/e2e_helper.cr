@@ -251,10 +251,10 @@ module E2E
     end
 
     # Restarts the device binary in place (see e2e/device-entrypoint.sh) and
-    # waits until it reports being operational again. chip-tool's state is
+    # waits until it reports the expected mode. chip-tool's state is
     # untouched, so the device stays commissioned and later commands reuse the
     # existing fabric over a new CASE session.
-    def restart! : Nil
+    def restart!(expected_operational : Bool = true) : Nil
       @restart_offset = File.exists?(log_path) ? File.size(log_path) : 0_i64
       File.write(restart_marker_path, "")
 
@@ -265,10 +265,17 @@ module E2E
           restarted = output[index..]
           case operational_banner?(restarted)
           when true
+            unless expected_operational
+              raise RestartError.new("#{name}: came back in operational mode after a restart\n#{restarted}")
+            end
             sleep RESTART_SETTLE
             return
           when false
-            raise RestartError.new("#{name}: came back in commissioning mode after a restart\n#{restarted}")
+            if expected_operational
+              raise RestartError.new("#{name}: came back in commissioning mode after a restart\n#{restarted}")
+            end
+            sleep RESTART_SETTLE
+            return
           end
         end
         if Time.instant > deadline
