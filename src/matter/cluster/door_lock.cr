@@ -1712,28 +1712,24 @@ module Matter
                @credentials.any? { |key, record| key != credential_key && aliro_credential_type?(record.credential.credential_type) && record.credential_data == request.credential_data }
               return set_credential_response(request, StatusCode::Duplicate)
             end
-            remove_credential_from_user(existing)
-
-            existing.credential_data = request.credential_data.dup
-            if new_user_index = request.user_index
-              ensure_user_exists(new_user_index, request.user_status, request.user_type)
-              unless @users.has_key?(new_user_index)
-                add_credential_to_user(existing)
+            if (new_user_index = request.user_index) && new_user_index != existing.user_index
+              if user = @users[new_user_index]?
+                if user.credentials.size >= @number_of_credentials_supported_per_user
+                  return set_credential_response(request, StatusCode::ResourceExhausted)
+                end
+              elsif @users.size >= @number_of_total_users_supported || @number_of_credentials_supported_per_user.zero?
                 return set_credential_response(request, StatusCode::ResourceExhausted)
               end
 
-              if user = @users[new_user_index]?
-                if !credential_belongs_to_user?(user, request.credential) && user.credentials.size >= @number_of_credentials_supported_per_user
-                  add_credential_to_user(existing)
-                  return set_credential_response(request, StatusCode::ResourceExhausted)
-                end
-              end
+              ensure_user_exists(new_user_index, request.user_status, request.user_type)
+              remove_credential_from_user(existing)
               existing.user_index = new_user_index
               affected_user_index = new_user_index
+              add_credential_to_user(existing)
             end
+            existing.credential_data = request.credential_data.dup
             existing.last_modified_fabric_index = @request_fabric_index
             @credentials[credential_key] = existing
-            add_credential_to_user(existing)
             status = StatusCode::Success
           else
             status = StatusCode::NotFound

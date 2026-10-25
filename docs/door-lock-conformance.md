@@ -73,6 +73,10 @@ types have separate value spaces. A saved database containing duplicate PIN
 or RFID data fails restoration before changing live lock state, so the host
 must correct those records rather than silently assigning one code to two
 users.
+SetCredential Modify also checks destination capacity before changing the
+existing user or credential. A rejected move to a full user leaves the stored
+database and fabric attribution unchanged. Editing credential data for its
+current user changes only the credential's last-modified fabric index.
 
 Matter 1.6 restricts the SetCredential command's `OperationType` to Add or
 Modify. Clear is accepted only by the separate timed ClearCredential command.
