@@ -391,12 +391,12 @@ camera fixture is in `examples/matter_camera_pan_device.cr`.
 The fixture uses an Aggregator endpoint for interoperability testing; it is
 not a conformant Camera device. The required Camera endpoint topology remains absent.
 
-`Cluster::CameraAvStreamManagement` supports the Matter 1.6 revision 2 Audio
-feature with typed stream allocation, reference counts, microphone settings,
-privacy modes, and durable priorities. Hosts provide the microphone and media
-callbacks. The synthetic example and official chip-tool test use an Aggregator
-endpoint; [the camera audio guide](docs/camera-av-stream-management.md) lists
-the remaining camera device and transport work.
+`Cluster::CameraAvStreamManagement` supports the Matter 1.6 revision 2 Audio and Video features with typed stream
+allocation, reference counts, shared bandwidth and encoder limits, privacy
+modes, and durable priorities. Hosts provide media admission/release callbacks.
+The synthetic examples and official chip-tool tests use Aggregator endpoints;
+[the camera AV guide](docs/camera-av-stream-management.md) lists the remaining
+camera device and transport work.
 
 `Cluster::WebRtcTransportProvider` adds opt-in Matter 1.6 signaling on the
 same endpoint as Camera AV Stream Management. It requires a host `Peer` to
