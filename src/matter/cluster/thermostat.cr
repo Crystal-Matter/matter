@@ -18,7 +18,7 @@ module Matter
       feature :occupancy, bit: 2                     # OCC - gated until wire conformance is complete
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
-      feature :matter_schedules, bit: 7              # MSCH - gated until atomic schedule writes are complete
+      feature :matter_schedules, bit: 7              # MSCH - gated until timed schedule activation is complete
       feature :presets, bit: 8                       # PRES - gated until wire conformance is complete
       feature :events, bit: 9                        # TEVT - Thermostat change events
       feature :thermostat_suggestions, bit: 10       # TSUGGEST - provisional, gated until behavior is complete
@@ -243,6 +243,16 @@ module Matter
         end
       end
 
+      struct SetActiveScheduleRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter schedule_handle : Bytes
+
+        def initialize(@schedule_handle : Bytes)
+        end
+      end
+
       enum AtomicRequestType : UInt8
         BeginWrite    = 0
         CommitWrite   = 1
@@ -330,8 +340,10 @@ module Matter
 
         getter schedules : Array(Schedule)
         getter used_schedule_handles : Array(Bytes)
+        getter active_schedule_handle : Bytes? = nil
 
-        def initialize(@schedules : Array(Schedule), @used_schedule_handles : Array(Bytes))
+        def initialize(@schedules : Array(Schedule), @used_schedule_handles : Array(Bytes),
+                       @active_schedule_handle : Bytes? = nil)
         end
       end
 
@@ -440,6 +452,19 @@ module Matter
         getter current_preset_handle : Bytes?
 
         def initialize(@previous_preset_handle : Bytes?, @current_preset_handle : Bytes?)
+        end
+      end
+
+      struct ActiveScheduleChangeEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter previous_schedule_handle : Bytes?
+
+        @[TLV::Field(tag: 1, optional: false)]
+        getter current_schedule_handle : Bytes?
+
+        def initialize(@previous_schedule_handle : Bytes?, @current_schedule_handle : Bytes?)
         end
       end
 
@@ -607,10 +632,14 @@ module Matter
       event 0x04, :running_state_change, priority: :info, requires: :events, payload: RunningStateChangeEvent
       event 0x05, :running_mode_change, priority: :info,
         requires: {events: true, automode: true}, payload: RunningModeChangeEvent
+      event 0x06, :active_schedule_change, priority: :info,
+        requires: {events: true, matter_schedules: true}, payload: ActiveScheduleChangeEvent
       event 0x07, :active_preset_change, priority: :info,
         requires: {events: true, presets: true}, payload: ActivePresetChangeEvent
 
       command 0x00, :setpoint_raise_lower, request: SetpointRaiseLowerRequest
+      command 0x05, :set_active_schedule, request: SetActiveScheduleRequest, handler: :activate_schedule,
+        requires: :matter_schedules, present_if: :schedule_wire_ready?
       command 0x06, :set_active_preset, request: SetActivePresetRequest, handler: :activate_preset,
         requires: :presets, present_if: :preset_wire_ready?
       command 0xFE, :atomic_request, request: AtomicRequest, response: AtomicResponse,
@@ -822,7 +851,7 @@ module Matter
       end
 
       # Host-owned schedule configuration. The MSCH wire feature remains gated
-      # until atomic Schedules writes and wall-clock activation are implemented.
+      # until wall-clock activation is implemented.
       def configure_schedules(types : Array(ScheduleType), schedules : Array(Schedule),
                               max_transitions : UInt8, max_per_day : UInt8?) : Nil
         validate_schedules!(types, schedules, max_transitions, max_per_day)
@@ -845,6 +874,9 @@ module Matter
           if replacement = schedules.find { |entry| entry.schedule_handle == old.schedule_handle }
             raise ArgumentError.new("built-in schedule cannot be changed") if replacement.built_in != old.built_in
           end
+        end
+        if @active_schedule_handle && schedules.none? { |entry| entry.schedule_handle == @active_schedule_handle }
+          raise ArgumentError.new("active schedule cannot be deleted")
         end
         @schedule_types = types.dup
         @pending_schedule_write = nil
@@ -889,12 +921,27 @@ module Matter
         @active_schedule_handle.try(&.dup)
       end
 
+      # Selects a committed schedule. Timed transition execution is still
+      # gated, so production devices cannot expose MSCH yet.
+      def activate_schedule(request : SetActiveScheduleRequest) : InteractionModel::Status
+        handle = request.schedule_handle
+        return InteractionModel::Status.constraint_error if handle.size > MAX_SCHEDULE_HANDLE_LENGTH
+        return InteractionModel::Status.invalid_command unless @schedules.any? { |entry| entry.schedule_handle == handle }
+
+        update_active_schedule_handle(handle)
+        InteractionModel::Status.success
+      end
+
       protected def schedules=(values : Array(Schedule)) : Nil
         raise ArgumentError.new("Schedules require an atomic transaction")
       end
 
       protected def schedule_wire_ready? : Bool
         false
+      end
+
+      protected def schedule_wire_ready?(command_id : UInt32) : Bool
+        schedule_wire_ready?
       end
 
       protected def atomic_wire_ready? : Bool
@@ -1930,6 +1977,19 @@ module Matter
         end
       end
 
+      private def update_active_schedule_handle(handle : Bytes?) : Nil
+        return if @active_schedule_handle == handle
+
+        previous = @active_schedule_handle.try(&.dup)
+        @active_schedule_handle = handle.try(&.dup)
+        if @feature_map.matter_schedules? && schedule_wire_ready?
+          increment_version_and_notify(ATTR_ACTIVE_SCHEDULE_HANDLE)
+          if @feature_map.events?
+            emit_active_schedule_change(ActiveScheduleChangeEvent.new(previous, @active_schedule_handle.try(&.dup)))
+          end
+        end
+      end
+
       private def validate_presets!(types : Array(PresetType), values : Array(Preset)) : Nil
         raise ArgumentError.new("preset types must contain 1 to 7 scenarios") unless (1..MAX_PRESET_TYPES).includes?(types.size)
         raise ArgumentError.new("duplicate preset scenario") unless types.map(&.preset_scenario).uniq!.size == types.size
@@ -1994,7 +2054,7 @@ module Matter
         end
         unless @schedule_types.empty?
           document[SCHEDULE_STATE_KEY] = ScheduleState.new(copy_schedules(@schedules),
-            @used_schedule_handles.map(&.dup)).to_document
+            @used_schedule_handles.map(&.dup), @active_schedule_handle.try(&.dup)).to_document
         end
       end
 
@@ -2032,12 +2092,16 @@ module Matter
           rescue ex : ArgumentError
             raise StorageError.new("invalid thermostat schedule state: #{ex.message}")
           end
+          if handle = state.active_schedule_handle
+            raise StorageError.new("unknown active schedule handle") unless state.schedules.any? { |entry| entry.schedule_handle == handle }
+          end
           state.used_schedule_handles.each do |used_handle|
             raise StorageError.new("invalid used schedule handle") unless (0..MAX_SCHEDULE_HANDLE_LENGTH).includes?(used_handle.size)
             @used_schedule_handles << used_handle.dup unless @used_schedule_handles.any? { |used| used == used_handle }
           end
           remember_schedule_handles(state.schedules)
           @schedules = copy_schedules(state.schedules)
+          @active_schedule_handle = state.active_schedule_handle.try(&.dup)
           @pending_schedule_write = nil
         end
       end
