@@ -42,12 +42,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric Administrator fabric removal
 
-- Persist JFA and Datastore cleanup before deleting their owning fabric, and
-  reconcile saved endpoint bindings against installed fabric identities at
-  startup. A replacement fabric reusing the same local index cannot inherit a
-  former Anchor's administrator and Datastore records. The joint-fabric E2E
+- Persist a JFA and Datastore access fence before deleting their owning
+  fabric, then clean their state after deletion. Reconcile saved endpoint
+  bindings against installed fabric identities at startup. A replacement
+  fabric reusing the same local index cannot inherit a former Anchor's
+  administrator and Datastore records. The joint-fabric E2E
   suite now removes an Anchor fabric, restarts, and verifies a replacement
   Anchor's fabric index and Datastore isolation over CASE.
+- If fabric-document deletion fails, retain the installed Anchor's full
+  Datastore and credentials for restart recovery. JFA and Datastore access
+  stays fenced in the current process until restart.
 
 ### Fabric table durability
 

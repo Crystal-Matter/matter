@@ -397,10 +397,10 @@ module MatterJointFabricAdministrator
     end
 
     protected def before_fabric_removed(fabric_index : UInt8) : Nil
-      # Erase fabric-scoped cluster state before the index becomes reusable.
-      # Keep the binding and credential documents until the fabric document
-      # has been deleted: if that deletion fails, startup can reattach the
-      # still-installed fabric. An orphan binding is cleared on startup if
+      # Fence cluster access before the index becomes reusable, while keeping
+      # the Datastore contents, binding, and credentials until the fabric
+      # document is deleted. A failed deletion can reattach the same fabric
+      # with its full Datastore; an orphan binding is cleared on startup if
       # the post-delete callback was interrupted.
       fabric = fabric_table.get_fabric(fabric_index) || return
       if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index ||
@@ -409,11 +409,12 @@ module MatterJointFabricAdministrator
         persist_fabric_binding(fabric, APP_BOOTSTRAP_BINDING_DOCUMENT)
         @bootstrap_datastore_propagator.try(&.stop!)
         @bootstrap_datastore_propagator = nil
-        bootstrap_joint_fabric_datastore.clear_fabric_state
+        bootstrap_joint_fabric_datastore.access_mode = Datastore::AccessMode::Inactive
+        bootstrap_joint_fabric_datastore.joint_fabric_index = nil
         bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
         bootstrap_joint_fabric_administrator.service = nil
         unless persistence.save_cluster(bootstrap_joint_fabric_datastore)
-          raise Matter::StorageError.new("Could not persist erased bootstrap Joint Fabric Datastore")
+          raise Matter::StorageError.new("Could not persist fenced bootstrap Joint Fabric Datastore")
         end
       end
       if joint_fabric_datastore.joint_fabric_index == fabric_index ||
@@ -422,12 +423,13 @@ module MatterJointFabricAdministrator
         persist_fabric_binding(fabric, APP_FABRIC_BINDING_DOCUMENT)
         @datastore_propagator.try(&.stop!)
         @datastore_propagator = nil
-        joint_fabric_datastore.clear_fabric_state
+        joint_fabric_datastore.access_mode = Datastore::AccessMode::Inactive
+        joint_fabric_datastore.joint_fabric_index = nil
         joint_fabric_datastore.allow_jcm_pase_group_list = nil
         joint_fabric_administrator.administrator_fabric_index = nil
         joint_fabric_administrator.service = nil
         unless persistence.save_cluster(joint_fabric_datastore)
-          raise Matter::StorageError.new("Could not persist erased Joint Fabric Datastore")
+          raise Matter::StorageError.new("Could not persist fenced Joint Fabric Datastore")
         end
       end
       unless persistence.save_cluster(joint_fabric_administrator) &&
