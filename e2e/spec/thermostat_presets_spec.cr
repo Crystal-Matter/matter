@@ -13,7 +13,7 @@ describe "Matter Thermostat Presets guarded fixture" do
   end
 
   it "activates a preset and emits the TEVT ActivePresetChange event" do
-    expect_success(device.chip("thermostat", "set-active-preset-request", "01", device.node, "1"))
+    expect_success(device.chip("thermostat", "set-active-preset-request", "hex:01", device.node, "1"))
     expect_success(device.read("thermostat", "active-preset-handle", 1)).output.should contain("01")
     read_int(device, "thermostat", "occupied-heating-setpoint", "OccupiedHeatingSetpoint", 1).should eq(1800_i64)
     expect_success(device.chip("thermostat", "read-event", "active-preset-change", device.node, "1"))
