@@ -115,6 +115,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Preserve absent, Null, and concrete revision 1 stream IDs and conditional
   Motion fields across TLV and durable storage. Host selectors can resolve
   automatic stream requests to existing camera stream IDs.
+- Enforce manual Command TimeControl, use configured Motion time control when
+  omitted, and let camera privacy state or host busy checks reject manual
+  capture before invoking the media hook.
 
 ### Commodity Tariff
 
