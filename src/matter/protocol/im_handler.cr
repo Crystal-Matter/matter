@@ -581,6 +581,9 @@ module Matter
             if status.success? && attribute_id == Cluster::Thermostat::ATTR_PRESETS
               cluster.as?(Cluster::Thermostat).try(&.record_preset_write_data_version(request.data_version))
             end
+            if status.success? && attribute_id == Cluster::Thermostat::ATTR_SCHEDULES
+              cluster.as?(Cluster::Thermostat).try(&.record_schedule_write_data_version(request.data_version))
+            end
 
             status_ib = InteractionModel::StatusIB.new(status: status.status.value, cluster_status: status.cluster_status)
             write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
@@ -598,6 +601,7 @@ module Matter
       ) : InteractionModel::Status
         if thermostat = cluster.as?(Cluster::Thermostat)
           return thermostat.append_preset(item) if attribute_id == Cluster::Thermostat::ATTR_PRESETS
+          return thermostat.append_schedule(item) if attribute_id == Cluster::Thermostat::ATTR_SCHEDULES
         end
         if group_keys = cluster.as?(Cluster::GroupKeyManagement)
           if attribute_id == Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP

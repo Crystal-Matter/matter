@@ -302,6 +302,17 @@ module Matter
         end
       end
 
+      private class PendingScheduleWrite
+        getter fabric : UInt8
+        getter subject : UInt64
+        getter expires_at : Time::Instant
+        property schedules : Array(Schedule)?
+        getter write_data_versions = [] of UInt32
+
+        def initialize(@fabric : UInt8, @subject : UInt64, @expires_at : Time::Instant)
+        end
+      end
+
       private struct PresetState
         include Storage::Record
 
@@ -568,12 +579,24 @@ module Matter
       attribute 0x0029, :thermostat_running_state, RelayState, computed: true, optional: true, requires: :events
       attribute 0x0048, :preset_types, Array(PresetType), computed: true, optional: true,
         requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x0049, :schedule_types, Array(ScheduleType), computed: true, optional: true,
+        requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x004A, :number_of_presets, UInt8, computed: true, optional: true,
         requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x004B, :number_of_schedules, UInt8, computed: true, optional: true,
+        requires: :matter_schedules, present_if: :schedule_wire_ready?
+      attribute 0x004C, :number_of_schedule_transitions, UInt8, computed: true, optional: true,
+        requires: :matter_schedules, present_if: :schedule_wire_ready?
+      attribute 0x004D, :number_of_schedule_transition_per_day, UInt8, computed: true,
+        nullable: true, optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x004E, :active_preset_handle, Bytes, computed: true, nullable: true, optional: true,
         requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x004F, :active_schedule_handle, Bytes, computed: true, nullable: true, optional: true,
+        requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x0050, :presets, Array(Preset), computed: true, writable: true, write_access: :manage,
         optional: true, requires: :presets, present_if: :preset_wire_ready?
+      attribute 0x0051, :schedules, Array(Schedule), computed: true, writable: true, write_access: :manage,
+        optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
 
       event 0x00, :system_mode_change, priority: :info, requires: :events, payload: SystemModeChangeEvent
       event 0x01, :local_temperature_change, priority: :info,
@@ -591,7 +614,7 @@ module Matter
       command 0x06, :set_active_preset, request: SetActivePresetRequest, handler: :activate_preset,
         requires: :presets, present_if: :preset_wire_ready?
       command 0xFE, :atomic_request, request: AtomicRequest, response: AtomicResponse,
-        response_id: 0xFD, access: :manage, requires: :presets, present_if: :preset_wire_ready?
+        response_id: 0xFD, access: :manage, present_if: :atomic_wire_ready?
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::Cooling | Feature::Heating,
@@ -629,14 +652,16 @@ module Matter
         @active_preset_handle = nil.as(Bytes?)
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
+        @pending_schedule_write = nil.as(PendingScheduleWrite?)
         @schedule_types = [] of ScheduleType
         @schedules = [] of Schedule
         @used_schedule_handles = [] of Bytes
+        @active_schedule_handle = nil.as(Bytes?)
         @number_of_schedule_transitions = 0_u8
         @number_of_schedule_transition_per_day = nil.as(UInt8?)
 
         raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
-        raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules?
+        raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules? && !schedule_wire_ready?
         raise ArgumentError.new("OCC wire conformance is not yet enabled") if @feature_map.occupancy? && !occupancy_wire_ready?
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
         raise ArgumentError.new("TSUGGEST behavior is not yet enabled") if @feature_map.thermostat_suggestions?
@@ -682,6 +707,10 @@ module Matter
 
       before_write :presets do |values|
         stage_presets(values)
+      end
+
+      before_write :schedules do |values|
+        stage_schedules(values)
       end
 
       before_write :occupied_heating_setpoint do |setpoint|
@@ -792,6 +821,11 @@ module Matter
       def configure_schedules(types : Array(ScheduleType), schedules : Array(Schedule),
                               max_transitions : UInt8, max_per_day : UInt8?) : Nil
         validate_schedules!(types, schedules, max_transitions, max_per_day)
+        types_changed = @schedule_types != types
+        capacity_changed = number_of_schedules != types.sum(&.number_of_schedules.to_i)
+        transitions_changed = @number_of_schedule_transitions != max_transitions
+        per_day_changed = @number_of_schedule_transition_per_day != max_per_day
+        schedules_changed = @schedules != schedules
         schedules.each do |entry|
           handle = entry.schedule_handle || raise ArgumentError.new("configured schedule needs a handle")
           if @used_schedule_handles.any? { |used| used == handle } &&
@@ -808,10 +842,18 @@ module Matter
           end
         end
         @schedule_types = types.dup
+        @pending_schedule_write = nil
         @schedules = copy_schedules(schedules)
         @number_of_schedule_transitions = max_transitions
         @number_of_schedule_transition_per_day = max_per_day
         remember_schedule_handles(@schedules)
+        if @feature_map.matter_schedules? && schedule_wire_ready?
+          increment_version_and_notify(ATTR_SCHEDULE_TYPES) if types_changed
+          increment_version_and_notify(ATTR_NUMBER_OF_SCHEDULES) if capacity_changed
+          increment_version_and_notify(ATTR_NUMBER_OF_SCHEDULE_TRANSITIONS) if transitions_changed
+          increment_version_and_notify(ATTR_NUMBER_OF_SCHEDULE_TRANSITION_PER_DAY) if per_day_changed
+          increment_version_and_notify(ATTR_SCHEDULES) if schedules_changed
+        end
       end
 
       def schedule_types : Array(ScheduleType)
@@ -824,6 +866,35 @@ module Matter
 
       def number_of_schedules : UInt8
         @schedule_types.sum(&.number_of_schedules.to_i).to_u8
+      end
+
+      def number_of_schedule_transitions : UInt8
+        @number_of_schedule_transitions
+      end
+
+      def number_of_schedule_transition_per_day : UInt8?
+        @number_of_schedule_transition_per_day
+      end
+
+      def active_schedule_handle : Bytes?
+        @active_schedule_handle.try(&.dup)
+      end
+
+      protected def schedules=(values : Array(Schedule)) : Nil
+        raise ArgumentError.new("Schedules require an atomic transaction")
+      end
+
+      protected def schedule_wire_ready? : Bool
+        false
+      end
+
+      protected def atomic_wire_ready? : Bool
+        (@feature_map.presets? && preset_wire_ready?) ||
+          (@feature_map.matter_schedules? && schedule_wire_ready?)
+      end
+
+      protected def atomic_wire_ready?(command_id : UInt32) : Bool
+        atomic_wire_ready?
       end
 
       # IM writes are handled by the pending atomic transaction. This setter
@@ -890,9 +961,15 @@ module Matter
         return InteractionModel::Status.invalid_command unless atomic_peer?
         ids = request.attribute_requests
         return InteractionModel::Status.invalid_command if ids.empty? || ids.uniq.size != ids.size
-        return InteractionModel::Status.invalid_command unless ids == [ATTR_PRESETS]
+        return InteractionModel::Status.invalid_command unless ids == [ATTR_PRESETS] || ids == [ATTR_SCHEDULES]
         return InteractionModel::Status.invalid_command if !request.request_type.begin_write? && request.timeout
         expire_preset_write
+        expire_schedule_write
+
+        if ids == [ATTR_SCHEDULES]
+          return InteractionModel::Status.invalid_command unless @feature_map.matter_schedules?
+          return atomic_schedule_request(request)
+        end
 
         case request.request_type
         when .begin_write?
@@ -915,10 +992,19 @@ module Matter
             return tlv(copy_presets(pending.presets || @presets))
           end
         end
+        if attribute_id == ATTR_SCHEDULES && dsl_attribute_schedules_supported?
+          expire_schedule_write
+          if (pending = @pending_schedule_write) && schedule_atomic_owner?(pending)
+            return tlv(copy_schedules(pending.schedules || @schedules))
+          end
+        end
         super
       end
 
       protected def handle_write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
+        if attribute_id == ATTR_SCHEDULES && @pending_schedule_write
+          return stage_schedules(decode(value, Array(Schedule)))
+        end
         return super unless attribute_id == ATTR_PRESETS && @pending_preset_write
 
         stage_presets(decode(value, Array(Preset)))
@@ -936,6 +1022,15 @@ module Matter
         stage_presets((pending.presets || @presets) + [entry], allow_new: true)
       end
 
+      def append_schedule(value : TLV::Any) : InteractionModel::Status
+        entry = decode?(value, Schedule) || return InteractionModel::Status.invalid_data_type
+        expire_schedule_write
+        pending = @pending_schedule_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless schedule_atomic_owner?(pending)
+
+        stage_schedules((pending.schedules || @schedules) + [entry], allow_new: true)
+      end
+
       # IM records each successful conditional list write. The version must
       # still match when the pending list is published at commit.
       def record_preset_write_data_version(version : UInt32?) : Nil
@@ -945,11 +1040,21 @@ module Matter
         pending.write_data_versions << version unless pending.write_data_versions.includes?(version)
       end
 
+      def record_schedule_write_data_version(version : UInt32?) : Nil
+        return unless version
+        pending = @pending_schedule_write || return
+        return unless schedule_atomic_owner?(pending)
+        pending.write_data_versions << version unless pending.write_data_versions.includes?(version)
+      end
+
       # A removed fabric no longer owns an Atomic Write State, even if its
       # index is later assigned to another fabric before the timeout expires.
       def remove_fabric(fabric_index : UInt8) : Nil
         if (pending = @pending_preset_write) && pending.fabric == fabric_index
           @pending_preset_write = nil
+        end
+        if (pending = @pending_schedule_write) && pending.fabric == fabric_index
+          @pending_schedule_write = nil
         end
       end
 
@@ -966,7 +1071,7 @@ module Matter
           return atomic_response(InteractionModel::StatusCode::Failure,
             ids.map { |id| AtomicAttributeStatus.new(id, InteractionModel::StatusCode::InvalidCommand) }, actual_timeout)
         end
-        if @pending_preset_write
+        if @pending_preset_write || @pending_schedule_write
           return atomic_response(InteractionModel::StatusCode::Failure,
             [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Busy)], actual_timeout)
         end
@@ -1010,6 +1115,132 @@ module Matter
         end
         atomic_response(InteractionModel::StatusCode::Success,
           commit ? [] of AtomicAttributeStatus : [AtomicAttributeStatus.new(ATTR_PRESETS, InteractionModel::StatusCode::Success)])
+      end
+
+      private def atomic_schedule_request(request : AtomicRequest) : AtomicResponse | InteractionModel::Status
+        ids = request.attribute_requests
+        case request.request_type
+        when .begin_write?
+          timeout = request.timeout || return InteractionModel::Status.invalid_command
+          return InteractionModel::Status.invalid_command if timeout == 0_u16
+          actual_timeout = {timeout, MAX_PRESET_ATOMIC_TIMEOUT}.min
+          if current = @pending_schedule_write
+            return InteractionModel::Status.invalid_in_state if schedule_atomic_owner?(current)
+          end
+          if @schedule_types.empty?
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::InvalidCommand)], actual_timeout)
+          end
+          if @pending_schedule_write || @pending_preset_write
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::Busy)], actual_timeout)
+          end
+          fabric = request_fabric_index || return InteractionModel::Status.invalid_command
+          subject = request_peer_node_id || return InteractionModel::Status.invalid_command
+          @pending_schedule_write = PendingScheduleWrite.new(fabric, subject,
+            Time.instant + actual_timeout.milliseconds)
+          atomic_response(InteractionModel::StatusCode::Success,
+            [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::Success)], actual_timeout)
+        when .commit_write?, .rollback_write?
+          atomic_schedule_finish(ids, commit: request.request_type.commit_write?)
+        else
+          InteractionModel::Status.invalid_command
+        end
+      end
+
+      private def atomic_schedule_finish(ids : Array(UInt32), *, commit : Bool) : AtomicResponse | InteractionModel::Status
+        pending = @pending_schedule_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless schedule_atomic_owner?(pending) && ids == [ATTR_SCHEDULES]
+        @pending_schedule_write = nil
+        if commit && (values = pending.schedules)
+          if pending.write_data_versions.any? { |version| version != data_version }
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::DataVersionMismatch)])
+          end
+          if @schedules.any? { |entry| entry.built_in && !values.any? { |candidate| candidate.schedule_handle == entry.schedule_handle } }
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::ConstraintError)])
+          end
+          if @active_schedule_handle && !values.any? { |entry| entry.schedule_handle == @active_schedule_handle }
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::InvalidInState)])
+          end
+          begin
+            validate_schedules!(@schedule_types, values, @number_of_schedule_transitions,
+              @number_of_schedule_transition_per_day)
+          rescue ArgumentError
+            return atomic_response(InteractionModel::StatusCode::Failure,
+              [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::ConstraintError)])
+          end
+          unless @schedules == values
+            remember_schedule_handles(values)
+            @schedules = copy_schedules(values)
+            increment_version_and_notify(ATTR_SCHEDULES)
+          end
+        end
+        atomic_response(InteractionModel::StatusCode::Success,
+          commit ? [] of AtomicAttributeStatus : [AtomicAttributeStatus.new(ATTR_SCHEDULES, InteractionModel::StatusCode::Success)])
+      end
+
+      private def stage_schedules(values : Array(Schedule), *, allow_new : Bool = false) : InteractionModel::Status
+        expire_schedule_write
+        pending = @pending_schedule_write || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.invalid_in_state unless schedule_atomic_owner?(pending)
+
+        capacity = @schedule_types.sum(&.number_of_schedules.to_i)
+        return InteractionModel::Status.resource_exhausted if values.size > capacity
+        normalized = [] of Schedule
+        values.each do |entry|
+          handle = entry.schedule_handle
+          return InteractionModel::Status.constraint_error if handle && handle.size > MAX_SCHEDULE_HANDLE_LENGTH
+          existing = if handle
+                       pending.schedules.try(&.find { |current| current.schedule_handle == handle }) ||
+                         @schedules.find { |current| current.schedule_handle == handle }
+                     end
+          return InteractionModel::Status.not_found if handle && !existing
+          return InteractionModel::Status.constraint_error if handle.nil? && !allow_new
+          return InteractionModel::Status.constraint_error if handle.nil? && entry.built_in == true
+          return InteractionModel::Status.constraint_error if existing && !entry.built_in.nil? && entry.built_in != existing.built_in
+          handle ||= new_schedule_handle(normalized)
+          return InteractionModel::Status.constraint_error if normalized.any? { |current| current.schedule_handle == handle }
+          normalized << Schedule.new(handle, entry.system_mode, entry.name, entry.preset_handle,
+            entry.transitions, existing.try(&.built_in) || false)
+        end
+        if @schedule_types.any? { |type| normalized.count { |entry| entry.system_mode == type.system_mode } > type.number_of_schedules }
+          return InteractionModel::Status.resource_exhausted
+        end
+        if normalized.any? { |entry| entry.transitions.size > @number_of_schedule_transitions }
+          return InteractionModel::Status.resource_exhausted
+        end
+        if limit = @number_of_schedule_transition_per_day
+          normalized.each do |entry|
+            7.times do |bit|
+              if entry.transitions.count { |transition| (transition.day_of_week & (1_u8 << bit)) != 0_u8 } > limit
+                return InteractionModel::Status.resource_exhausted
+              end
+            end
+          end
+        end
+        begin
+          validate_schedules!(@schedule_types, normalized, @number_of_schedule_transitions,
+            @number_of_schedule_transition_per_day)
+        rescue ArgumentError
+          return InteractionModel::Status.constraint_error
+        end
+        pending.schedules = copy_schedules(normalized)
+        InteractionModel::Status.success
+      end
+
+      private def new_schedule_handle(staged : Array(Schedule)) : Bytes
+        loop do
+          handle = candidate_schedule_handle
+          return handle unless @used_schedule_handles.any? { |used| used == handle } ||
+                               staged.any? { |entry| entry.schedule_handle == handle }
+        end
+      end
+
+      protected def candidate_schedule_handle : Bytes
+        Random::Secure.random_bytes(MAX_SCHEDULE_HANDLE_LENGTH)
       end
 
       private def stage_presets(values : Array(Preset), *, allow_new : Bool = false) : InteractionModel::Status
@@ -1078,9 +1309,19 @@ module Matter
         atomic_peer? && pending.fabric == request_fabric_index && pending.subject == request_peer_node_id
       end
 
+      private def schedule_atomic_owner?(pending : PendingScheduleWrite) : Bool
+        atomic_peer? && pending.fabric == request_fabric_index && pending.subject == request_peer_node_id
+      end
+
       private def expire_preset_write : Nil
         if (pending = @pending_preset_write) && Time.instant >= pending.expires_at
           @pending_preset_write = nil
+        end
+      end
+
+      private def expire_schedule_write : Nil
+        if (pending = @pending_schedule_write) && Time.instant >= pending.expires_at
+          @pending_schedule_write = nil
         end
       end
 
@@ -1649,6 +1890,7 @@ module Matter
           end
           remember_schedule_handles(state.schedules)
           @schedules = copy_schedules(state.schedules)
+          @pending_schedule_write = nil
         end
       end
 

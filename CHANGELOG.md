@@ -10,6 +10,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Thermostat Matter schedules preparation
 
 - Add typed Matter 1.6 ScheduleType, Schedule, and ScheduleTransition TLV models with validated host configuration and durable schedule handle history. Validation covers mode and per-type capacity, transition day/time overlap, per-day limits, preset references, setpoint limits, names, and built-in schedule removal. The MSCH feature remains unavailable to controllers at revision 9 until atomic Schedules writes, activation, and official wire E2E are complete.
+- Prepare Manage-only Schedules atomic writes behind the MSCH gate: secure peer and fabric ownership, bounded timeouts, private list staging, null-handle append, conditional version checks, rollback, commit validation, and durable handle history. MSCH stays unadvertised pending combined Presets/Schedules transactions, active schedule behavior, and official E2E coverage.
 
 ### Thermostat setpoint limit reconciliation
 
