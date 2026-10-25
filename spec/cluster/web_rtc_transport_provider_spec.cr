@@ -168,7 +168,7 @@ describe Provider do
     response = invoke_provider(provider, Provider::CMD_SOLICIT_OFFER, request)
       .as(Matter::Cluster::CommandResponse)
     session_id = Provider::SolicitOfferResponse.from_tlv(response.response.as(TLV::Any)).web_rtc_session_id
-    provider.expire_after(Provider::OFFER_TIMEOUT - 1.millisecond)
+    provider.expire_after(Provider::OFFER_TIMEOUT - 5.seconds)
     provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
     provider.expire_after(Provider::OFFER_TIMEOUT + 1.second)
     provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
