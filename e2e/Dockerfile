@@ -14,6 +14,7 @@ ARG CHIP_TOOL_IMAGE=ghcr.io/matter-js/chip:3f1595e690f79ee3d18f174e720f53e73b80a
 
 # ---------------------------------------------------------------------------
 FROM ${CRYSTAL_IMAGE} AS builder
+ARG MATTER_E2E_BUILD_JOBS=2
 WORKDIR /app
 ENV CRYSTAL_CACHE_DIR=/root/.cache/crystal
 
@@ -35,7 +36,8 @@ COPY e2e/fixture ./e2e/fixture
 # shared between the roots -- the cache is per program either way.
 RUN --mount=type=cache,target=/root/.cache/crystal,sharing=locked \
     mkdir -p bin && \
-    jobs="$(nproc)"; [ "$jobs" -gt 2 ] && jobs=2; \
+    case "$MATTER_E2E_BUILD_JOBS" in 1|2) ;; *) echo 'MATTER_E2E_BUILD_JOBS must be 1 or 2' >&2; exit 1 ;; esac; \
+    jobs="$(nproc)"; [ "$jobs" -gt "$MATTER_E2E_BUILD_JOBS" ] && jobs="$MATTER_E2E_BUILD_JOBS"; \
     ls examples/matter_*_device.cr examples/device_validation.cr | \
       xargs -P "$jobs" -I{} sh -c 'name="$(basename {} .cr | sed "s/_device$//")"; echo "==> building bin/$name"; CRYSTAL_CACHE_DIR="/root/.cache/crystal/$name" crystal build {} -o "bin/$name" --error-trace' && \
     CRYSTAL_CACHE_DIR=/root/.cache/crystal/matter_door_lock_aliro crystal build e2e/fixture/matter_door_lock_aliro_device.cr -o bin/matter_door_lock_aliro --error-trace && \

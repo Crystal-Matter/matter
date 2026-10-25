@@ -29,6 +29,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: device
+      args:
+        MATTER_E2E_BUILD_JOBS: ${MATTER_E2E_BUILD_JOBS:-2}
     environment:
       E2E_DEVICE: matter_switch
 
@@ -506,6 +508,8 @@ services:
       context: .
       dockerfile: e2e/Dockerfile
       target: tests
+      args:
+        MATTER_E2E_BUILD_JOBS: ${MATTER_E2E_BUILD_JOBS:-2}
     image: matter-e2e-tests
     depends_on:
       switch: { condition: service_healthy }
