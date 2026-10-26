@@ -246,12 +246,9 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
-      # FabricTable is also a public host API. Compose SecureChannel's
-      # resumption cleanup with the security cleanup every removal needs,
-      # including removals that bypass OperationalCredentials.
-      previous_fabric_removed = @fabric_table.on_fabric_removed
-      @fabric_table.on_fabric_removed = ->(fabric : Fabric) do
-        previous_fabric_removed.try(&.call(fabric))
+      # FabricTable is also a public host API. Register security cleanup as an
+      # internal guard so a host observer cannot replace it.
+      @fabric_table.register_removal_guard do |fabric|
         index = fabric.fabric_index
         @message_handler.registry.synchronize do
           @message_handler.sessions

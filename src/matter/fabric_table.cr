@@ -36,6 +36,7 @@ module Matter
     # their public-key bytes are mutable, so comparing two Fabric references
     # cannot detect an in-place identity change.
     @identities : Hash(UInt8, String) = Hash(UInt8, String).new
+    @removal_guards : Array(Proc(Fabric, Nil)) = [] of Proc(Fabric, Nil)
     @quarantined : Set(UInt8) = Set(UInt8).new
 
     # Storage backend for persistence
@@ -44,6 +45,12 @@ module Matter
     getter backend : Storage::Backend
 
     property on_fabric_removed : Proc(Fabric, Nil)?
+
+    # Security cleanup registered by the device runtime and SecureChannel.
+    # Host observers may replace `on_fabric_removed` without replacing guards.
+    def register_removal_guard(&block : Fabric -> Nil) : Nil
+      @removal_guards << block
+    end
 
     # Fabrics whose `last_used_at` changed and have not been written yet.
     @dirty : Hash(UInt8, Fabric) = Hash(UInt8, Fabric).new
@@ -152,6 +159,7 @@ module Matter
       return false unless fabric
       return false if identity_changed?(fabric_index)
 
+      @removal_guards.each(&.call(fabric))
       @on_fabric_removed.try(&.call(fabric))
       # Keep the index reserved if durable deletion fails. A later AddNOC must
       # not assign it to a different fabric while the old document remains.
