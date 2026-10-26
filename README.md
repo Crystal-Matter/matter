@@ -667,7 +667,7 @@ With LTNE enabled, `update_local_temperature` feeds the internal measurement
 used by Auto mode while LocalTemperature always reads as TLV null. A direct
 `local_temperature=` call cannot expose a value on an LTNE thermostat. See the
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
-The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, occupied-setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. The `examples/matter_thermostat_events_device.cr` fixture exercises event reads with official chip-tool. The Thermostat cluster still advertises revision 9; the Matter 1.6 revision 11 preset, schedule, occupancy, and suggestion features remain unavailable.
+The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster still advertises revision 9; PRES, MSCH, and TSUGGEST remain unavailable in production.
 
 For host-side preset preparation, `Thermostat#configure_presets` accepts typed
 `PresetType` and `Preset` values. `activate_preset` applies a configured preset's

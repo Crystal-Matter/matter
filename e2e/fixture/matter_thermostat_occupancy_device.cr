@@ -1,16 +1,8 @@
 require "../../examples/support/console"
 require "../../examples/support/main"
 
-# Certification fixture only: production Thermostat rejects OCC until its
-# remaining wire conformance checks are completed.
 module MatterThermostatOccupancyFixture
   alias Thermostat = Matter::Cluster::Thermostat
-
-  class WireThermostat < Thermostat
-    protected def occupancy_wire_ready? : Bool
-      true
-    end
-  end
 
   class Device < Matter::Device
     include Examples::Console
@@ -27,7 +19,7 @@ module MatterThermostatOccupancyFixture
     endpoint 1, device_type: Matter::DeviceType::THERMOSTAT do
       cluster Matter::Cluster::Identify, identify_type: :visible_led
       cluster Matter::Cluster::Groups
-      cluster WireThermostat,
+      cluster Thermostat,
         feature_map: Thermostat::Feature::Heating | Thermostat::Feature::Cooling |
                      Thermostat::Feature::Occupancy | Thermostat::Feature::Events,
         occupancy: 0_u8,

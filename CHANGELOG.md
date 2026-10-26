@@ -87,6 +87,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before opening a Joint Commissioning window or starting an Anchor transfer.
   An Administrator CAT on another installed fabric cannot control that endpoint.
 
+### Thermostat Occupancy production support
+
+- Enable OCC on production Thermostat instances at revision 9. Occupancy remains read-only to controllers and host-owned; unoccupied heating and cooling setpoints follow their respective feature bits, persist across restart, and work with SetpointRaiseLower. TEVT reports occupancy and setpoint changes when enabled. The official chip-tool fixture now uses the production cluster.
+
 ### Thermostat Occupancy preparation
 
 - Add a guarded OCC wire surface with Occupancy and unoccupied heating/cooling setpoints, persistence, TEVT occupancy and setpoint event payloads, and occupancy-aware SetpointRaiseLower and preset activation. The unoccupied setpoints retain the configured limits and Auto deadband checks. An official chip-tool fixture exercises unoccupied writes and command routing. Production Thermostat continues to reject OCC and retains cluster revision 9 until the remaining conformance checks pass.
