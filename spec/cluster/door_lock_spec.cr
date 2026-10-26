@@ -424,6 +424,9 @@ describe Matter::Cluster::DoorLock do
         credential_index: 1_u16
       )
 
+      expect_success(invoke(cluster, Def::CMD_SET_USER,
+        Def::SetUserRequest.new(Def::DataOperationType::Add, 2_u16)))
+
       set_credential = Def::SetCredentialRequest.new(
         operation_type: Def::DataOperationType::Add,
         credential: credential,
@@ -436,7 +439,7 @@ describe Matter::Cluster::DoorLock do
 
       set_response = Def::SetCredentialResponse.from_tlv(set_result.as(Matter::Cluster::CommandResponse).response.as(TLV::Any))
       set_response.status_code.should eq(Def::StatusCode::Success)
-      set_response.user_index.should eq(2_u16)
+      set_response.user_index.should be_nil
 
       get_status = Def::GetCredentialStatusRequest.new(credential: credential)
       get_result = invoke(cluster, Matter::Cluster::DoorLock::CMD_GET_CREDENTIAL_STATUS, get_status)

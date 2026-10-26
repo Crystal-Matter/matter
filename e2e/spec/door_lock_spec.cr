@@ -174,6 +174,7 @@ describe "matter_door_lock example" do
     second = %({"credentialType":1,"credentialIndex":5})
     duplicate = %({"credentialType":1,"credentialIndex":6})
     expect_success(device.invoke("doorlock", "set-user", ["0", "6", "First", "666", "1", "0", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-user", ["0", "7", "Second", "777", "1", "0", "0"], options: timed))
     expect_success(device.invoke("doorlock", "set-credential", [add, first, "7777", "6", "null", "null"], options: timed))
     expect_success(device.invoke("doorlock", "set-credential", [add, second, "8888", "7", "null", "null"], options: timed))
 
@@ -207,6 +208,21 @@ describe "matter_door_lock example" do
     end
 
     expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_false
+  end
+
+  it "requires a specified user to exist before adding its credential" do
+    credential = %({"credentialType":1,"credentialIndex":9})
+    add = ["0", credential, "9091", "11", "null", "null"]
+
+    result = expect_success(device.invoke("doorlock", "set-credential", add, options: timed))
+    result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::InvalidField.value.to_i64), result.output
+    expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_false
+    expect_success(device.invoke("doorlock", "get-user", ["11"])).int("userStatus").should eq(0_i64)
+
+    expect_success(device.invoke("doorlock", "set-user", ["0", "11", "Present", "1111", "1", "0", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", add, options: timed)).int("status")
+      .should eq(Matter::Cluster::DoorLock::StatusCode::Success.value.to_i64)
+    expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_true
   end
 
   it "retains a wrong-PIN temporary lockout after a device restart" do
