@@ -35,6 +35,10 @@ module MatterThermostatSuggestionsFixture
 
     storage yaml: "matter_thermostat_suggestions_storage.yml"
 
+    endpoint 0, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Matter::Cluster::TimeSynchronization
+    end
+
     endpoint 1, device_type: Matter::DeviceType::THERMOSTAT do
       cluster Matter::Cluster::Identify, identify_type: :visible_led
       cluster Matter::Cluster::Groups
@@ -51,7 +55,6 @@ module MatterThermostatSuggestionsFixture
           Thermostat::Preset.new(Bytes[2_u8], Thermostat::PresetScenario::Wake,
             nil, 2800_i16, 2100_i16, true),
         ],
-        utc_time_provider: -> : UInt32? { (Time.utc.to_unix - Thermostat::MATTER_EPOCH_UNIX_SECONDS).to_u32 },
         as: :thermostat
     end
   end

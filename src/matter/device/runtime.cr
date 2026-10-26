@@ -239,6 +239,7 @@ module Matter
         wire_tls_certificate_management(cluster)
         wire_tls_client_management(cluster)
         wire_push_av_stream_transport(cluster)
+        wire_thermostat_utc(cluster)
         validate_thread_network_directory(cluster)
       end
       @message_handler.setup_cluster_notifications
@@ -596,12 +597,14 @@ module Matter
     end
 
     # The one-second poll serves optional Time Synchronization features and
-    # thermostats with an explicitly configured local civil-time provider.
+    # thermostats with a configured local or synchronized UTC clock.
     # Shutdown joins the fiber before closing the persistence journal.
     private def start_time_zone_polling : Nil
       return if @time_zone_polling
       return unless @message_handler.clusters.values.any? do |cluster|
-                      time_zone_polling_enabled?(cluster) || cluster.as?(Cluster::Thermostat).try(&.schedule_polling_enabled?)
+                      time_zone_polling_enabled?(cluster) || cluster.as?(Cluster::Thermostat).try do |thermostat|
+                        thermostat.schedule_polling_enabled? || thermostat.suggestion_polling_enabled?
+                      end
                     end
 
       @time_zone_polling = true
@@ -617,6 +620,7 @@ module Matter
                 cluster.as(Cluster::TimeSynchronization).advance_time_state
               elsif thermostat = cluster.as?(Cluster::Thermostat)
                 thermostat.tick_schedule if thermostat.schedule_polling_enabled?
+                thermostat.poll_suggestions if thermostat.suggestion_polling_enabled?
               end
             end
           rescue error
@@ -1328,6 +1332,7 @@ module Matter
         wire_tls_certificate_management(cluster)
         wire_tls_client_management(cluster)
         wire_push_av_stream_transport(cluster)
+        wire_thermostat_utc(cluster)
         validate_thread_network_directory(cluster)
         endpoint.add_cluster(cluster)
       end
@@ -1378,6 +1383,12 @@ module Matter
           nil
         end
       end
+    end
+
+    private def wire_thermostat_utc(cluster : Cluster::Base) : Nil
+      thermostat = cluster.as?(Cluster::Thermostat) || return
+      time_sync = @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization) || return
+      thermostat.bind_suggestion_utc_provider(-> : UInt32? { time_sync.matter_epoch_seconds })
     end
 
     private def wire_push_av_stream_transport(cluster : Cluster::Base) : Nil
