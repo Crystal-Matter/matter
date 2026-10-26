@@ -7,6 +7,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat suggestion guarded wire preparation
+
+- Declare Matter 1.6 TSUGGEST attributes and Manage Add/Remove commands behind
+  the certification fixture gate. The fixture exercises suggestion status,
+  selection, and capacity with chip-tool. Guarded suggestions now re-evaluate
+  at their effective and expiry times and rearm after state restoration, with
+  data-version and report notifications. Production PRES and TSUGGEST remain
+  disabled pending authoritative Time Synchronization validity, hold/schedule
+  reason policy, and the remaining conformance checks.
+
 ### Thermostat suggestion host state
 
 - Add guarded host-side TSUGGEST suggestion storage, UTC ticking, preset following,

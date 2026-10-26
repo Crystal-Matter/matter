@@ -30,8 +30,9 @@ module Matter
       MAX_PRESET_NAME_LENGTH         =     64
       PRESET_STATE_KEY               = "preset_state"
       SUGGESTION_STATE_KEY           = "suggestion_state"
-      MIN_SUGGESTION_CAPACITY        =       5_u8
-      MAX_SUGGESTION_AHEAD_SECONDS   = 86_400_u64
+      MIN_SUGGESTION_CAPACITY        =            5_u8
+      MAX_SUGGESTION_AHEAD_SECONDS   =      86_400_u64
+      MATTER_EPOCH_UNIX_SECONDS      = 946_684_800_i64
       SCHEDULE_STATE_KEY             = "schedule_state"
       MAX_SCHEDULE_TYPES             =          3
       MAX_SCHEDULE_HANDLE_LENGTH     =         16
@@ -640,6 +641,16 @@ module Matter
         optional: true, requires: :presets, present_if: :preset_wire_ready?
       attribute 0x0051, :schedules, Array(Schedule), computed: true, writable: true, write_access: :manage,
         optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
+      attribute 0x0053, :max_thermostat_suggestions, UInt8, computed: true,
+        optional: true, min: MIN_SUGGESTION_CAPACITY,
+        requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
+      attribute 0x0054, :thermostat_suggestions, Array(ThermostatSuggestion), computed: true,
+        optional: true, requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
+      attribute 0x0055, :current_thermostat_suggestion, ThermostatSuggestion, computed: true,
+        nullable: true, optional: true, requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
+      attribute 0x0056, :thermostat_suggestion_not_following_reason, ThermostatSuggestionNotFollowingReason,
+        computed: true, nullable: true, optional: true,
+        requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
 
       event 0x00, :system_mode_change, priority: :info, requires: :events, payload: SystemModeChangeEvent
       event 0x01, :local_temperature_change, priority: :info,
@@ -660,6 +671,12 @@ module Matter
         requires: :matter_schedules, present_if: :schedule_wire_ready?
       command 0x06, :set_active_preset, request: SetActivePresetRequest, handler: :activate_preset,
         requires: :presets, present_if: :preset_wire_ready?
+      command 0x07, :add_thermostat_suggestion, request: AddThermostatSuggestionRequest,
+        handler: :add_thermostat_suggestion_wire, response: AddThermostatSuggestionResponse,
+        response_id: 0x02, access: :manage,
+        requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
+      command 0x08, :remove_thermostat_suggestion, request: RemoveThermostatSuggestionRequest,
+        access: :manage, requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
       command 0xFE, :atomic_request, request: AtomicRequest, response: AtomicResponse,
         response_id: 0xFD, access: :manage, present_if: :atomic_wire_ready?
 
@@ -685,7 +702,12 @@ module Matter
                      @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off,
                      preset_types : Array(PresetType)? = nil,
                      presets : Array(Preset) = [] of Preset,
-                     local_time_provider : Proc(Time?)? = nil)
+                     local_time_provider : Proc(Time?)? = nil,
+                     @utc_time_provider : Proc(UInt32?) = -> : UInt32? { nil },
+                     @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Nil) = ->(delay : Time::Span, action : Proc(Nil)) : Nil {
+                       spawn { sleep delay; action.call }
+                       nil
+                     })
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
         @schedule_clock_configured = !local_time_provider.nil?
@@ -706,6 +728,8 @@ module Matter
         @next_suggestion_id = 0_u8
         @current_thermostat_suggestion = nil.as(ThermostatSuggestion?)
         @last_suggestion_now = nil.as(UInt32?)
+        @suggestion_timer_boundary = nil.as(UInt32?)
+        @suggestion_timer_generation = 0_u64
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
         @pending_schedule_write = nil.as(PendingScheduleWrite?)
@@ -724,7 +748,7 @@ module Matter
           raise ArgumentError.new("OCC requires heating or cooling")
         end
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
-        raise ArgumentError.new("TSUGGEST behavior is not yet enabled") if @feature_map.thermostat_suggestions?
+        raise ArgumentError.new("TSUGGEST wire conformance is not yet enabled") if @feature_map.thermostat_suggestions? && !suggestion_wire_ready?
         validate_occupancy(@occupancy)
 
         if @feature_map.heating?
@@ -905,15 +929,45 @@ module Matter
         raise ArgumentError.new("suggestion capacity must be at least five") if capacity < MIN_SUGGESTION_CAPACITY
         raise ArgumentError.new("suggestion capacity below live suggestion count") if capacity < @thermostat_suggestions.size
         @max_thermostat_suggestions = capacity
-        increment_version
+        suggestion_attribute_changed(ATTR_MAX_THERMOSTAT_SUGGESTIONS)
+      end
+
+      def max_thermostat_suggestions : UInt8
+        @max_thermostat_suggestions
       end
 
       def thermostat_suggestions : Array(ThermostatSuggestion)
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
         copy_suggestions(@thermostat_suggestions)
       end
 
       def current_thermostat_suggestion : ThermostatSuggestion?
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
         @current_thermostat_suggestion.try { |entry| copy_suggestion(entry) }
+      end
+
+      def thermostat_suggestion_not_following_reason : ThermostatSuggestionNotFollowingReason?
+        nil
+      end
+
+      protected def suggestion_wire_ready? : Bool
+        false
+      end
+
+      protected def suggestion_wire_ready?(command_id : UInt32) : Bool
+        suggestion_wire_ready?
+      end
+
+      private def add_thermostat_suggestion_wire(request : AddThermostatSuggestionRequest) : AddThermostatSuggestionResponse | InteractionModel::Status
+        add_thermostat_suggestion(request, @utc_time_provider.call)
+      end
+
+      private def suggestion_attribute_changed(attribute_id : UInt32) : Nil
+        if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
+          increment_version_and_notify(attribute_id)
+        else
+          increment_version
+        end
       end
 
       def add_thermostat_suggestion(request : AddThermostatSuggestionRequest,
@@ -935,7 +989,7 @@ module Matter
         return InteractionModel::Status.resource_exhausted if @thermostat_suggestions.any? { |entry| entry.unique_id == id }
         @next_suggestion_id = id &+ 1_u8
         @thermostat_suggestions << ThermostatSuggestion.new(id, request.preset_handle.dup, effective, expiration.to_u32)
-        increment_version
+        suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTIONS)
         tick_suggestions(now)
         AddThermostatSuggestionResponse.new(id)
       end
@@ -944,7 +998,7 @@ module Matter
         index = @thermostat_suggestions.index { |entry| entry.unique_id == request.unique_id }
         return InteractionModel::Status.not_found unless index
         @thermostat_suggestions.delete_at(index)
-        increment_version
+        suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTIONS)
         if now = @last_suggestion_now
           tick_suggestions(now)
         elsif @current_thermostat_suggestion.try(&.unique_id) == request.unique_id
@@ -961,19 +1015,48 @@ module Matter
         removed = @thermostat_suggestions.count { |entry| entry.expiration_time <= now }
         if removed > 0
           @thermostat_suggestions.reject! { |entry| entry.expiration_time <= now }
-          increment_version
+          suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTIONS)
         end
         selected = @thermostat_suggestions
-          .select { |entry| entry.effective_time <= now && entry.expiration_time > now }
+          .select do |entry|
+            entry.effective_time <= now && entry.expiration_time > now &&
+              @presets.any? { |preset| preset.preset_handle == entry.preset_handle && valid_preset_setpoints?(preset) }
+          end
           .min_by? { |entry| {entry.effective_time, entry.unique_id} }
         if @current_thermostat_suggestion.try(&.unique_id) != selected.try(&.unique_id)
           @current_thermostat_suggestion = selected.try { |entry| copy_suggestion(entry) }
-          increment_version
+          suggestion_attribute_changed(ATTR_CURRENT_THERMOSTAT_SUGGESTION)
         end
         if selected && @active_preset_handle != selected.preset_handle
           activate_preset(SetActivePresetRequest.new(selected.preset_handle))
         end
+        schedule_suggestion_boundary(now)
         removed
+      end
+
+      private def schedule_suggestion_boundary(now : UInt32) : Nil
+        return unless @feature_map.thermostat_suggestions? && suggestion_wire_ready?
+        next_boundary = nil.as(UInt32?)
+        @thermostat_suggestions.each do |entry|
+          if entry.effective_time > now
+            next_boundary = {next_boundary || UInt32::MAX, entry.effective_time}.min
+          end
+          if entry.expiration_time > now
+            next_boundary = {next_boundary || UInt32::MAX, entry.expiration_time}.min
+          end
+        end
+        return if @suggestion_timer_boundary == next_boundary
+        @suggestion_timer_boundary = next_boundary
+        @suggestion_timer_generation &+= 1_u64
+        return unless boundary = next_boundary
+        generation = @suggestion_timer_generation
+        delay = (boundary.to_i64 - now.to_i64).seconds
+        @suggestion_timer_scheduler.call(delay, -> : Nil {
+          if @suggestion_timer_generation == generation
+            @suggestion_timer_boundary = nil
+            tick_suggestions(@utc_time_provider.call)
+          end
+        })
       end
 
       # Host-owned schedule configuration. The MSCH wire feature remains gated
@@ -1970,6 +2053,7 @@ module Matter
       private def after_restore_state : Nil
         @last_occupancy = @occupancy
         update_running_mode
+        tick_suggestions(@utc_time_provider.call)
       end
 
       private def copy_presets(values : Array(Preset)) : Array(Preset)
@@ -1994,7 +2078,7 @@ module Matter
           @presets.none? { |preset| preset.preset_handle == entry.preset_handle }
         end
         if @thermostat_suggestions.size != original_size
-          increment_version
+          suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTIONS)
           if now = @last_suggestion_now
             tick_suggestions(now)
           elsif current = @current_thermostat_suggestion
@@ -2349,6 +2433,8 @@ module Matter
         @pending_preset_write = nil
         @pending_schedule_write = nil
         @combined_atomic_write = false
+        @suggestion_timer_generation &+= 1_u64
+        @suggestion_timer_boundary = nil
         raw = document[PRESET_STATE_KEY]?
         if raw
           state = PresetState.from_document(raw.as?(Storage::Document) ||
