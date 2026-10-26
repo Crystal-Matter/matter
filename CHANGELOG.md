@@ -348,9 +348,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   official chip-tool E2E. Other tariff feature families remain disabled.
 ### Camera AV Settings User Level Management
 
+- Add opt-in DPTZ-only stream viewport control. A same-endpoint VDO source
+  supplies active streams and sensor bounds; hosts register move-capable stream
+  IDs and apply DPTZSetViewport through a callback. Per-stream viewports track
+  global viewport changes and stream release. DPTZRelativeMove remains gated.
+
 - Add opt-in MPAN+MPRESETS with fixed capacity, durable measured-position
   presets, and move/save/remove commands. Save and remove require host callbacks;
-  moving uses the existing pan actuator. DPTZ, tilt, and zoom remain gated.
+  moving uses the existing pan actuator. DPTZ, tilt, and zoom were gated in
+  this initial preset slice.
 
 - Add the Matter 1.6 revision 1 MechanicalPan server with typed pan position
   and commands, validated host limits, an actuator callback, movement reporting,

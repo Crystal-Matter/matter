@@ -21,6 +21,17 @@ an ID and a reference count. `VideoStreamDeallocate` invokes
 does not need microphone capabilities. VDO does not enable watermark, OSD,
 snapshot, or image-control commands.
 
+The optional DPTZ-only profile of Camera AV Settings User Level Management
+binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`
+returns, call `register_dptz_stream(id)` only for streams that support digital
+movement. Their initial viewport is the VDO cluster's global `Viewport`.
+`DPTZSetViewport` validates the sensor bounds, minimum crop size, and requested
+stream aspect ratio, then calls `on_dptz_set_viewport` for the host to apply the
+crop. It changes the reported viewport only after host success. Global
+`Viewport` writes update every DPTZ entry; final video release removes that
+entry. DPTZ entries are persisted, but stale entries are removed when live
+video streams are absent after restart. Physical cropping remains host-owned.
+
 The host must register `on_audio_allocate` and `on_audio_deallocate` when ADO
 is enabled, and the corresponding `on_video_allocate` and
 `on_video_deallocate` callbacks when VDO is enabled. If no

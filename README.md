@@ -401,8 +401,10 @@ MechanicalPan (MPAN) feature. Configure pan limits, register
 with measured movement and completion. The measured position persists across
 restart. An opt-in MPAN+MPRESETS profile adds a bounded, persisted preset list
 and the three preset commands. Register `on_preset_save` and `on_preset_remove`
-to admit changes; moving to a preset uses the pan actuator callback. Digital
-PTZ, tilt, and zoom remain gated. A synthetic
+to admit changes; moving to a preset uses the pan actuator callback. An opt-in
+DPTZ-only profile binds to same-endpoint VDO stream management. The host marks
+allocated streams as move-capable and applies viewport changes through a callback.
+Tilt, zoom, and DPTZRelativeMove remain gated. A synthetic
 camera fixture is in `examples/matter_camera_pan_device.cr`.
 The fixture uses an Aggregator endpoint for interoperability testing; it is
 not a conformant Camera device. The required Camera endpoint topology remains absent.
