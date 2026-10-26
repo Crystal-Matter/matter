@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Chunked reverse commissioning responses
+
+- Start deferred reverse commissioning only after the final encrypted
+  `InvokeResponse` chunk is sent. Rejecting a chunk or failing to send a later
+  chunk discards the pending task.
+
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and

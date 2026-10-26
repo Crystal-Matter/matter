@@ -424,10 +424,15 @@ module Matter
           cache_for_mrp: true
         )
         if chunks.size > 1
+          session_identity = session.object_id.to_u64
+          exchange_id = original_msg.payload_header.exchange_id
+          on_sent = -> : Nil { @on_invoke_response_sent.try(&.call(session_identity, exchange_id)); nil }
+          on_failed = -> : Nil { @on_invoke_response_failed.try(&.call(session_identity, exchange_id)); nil }
           @subscriptions.await_invoke(original_msg.payload_header.exchange_id,
-            SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..]))
+            SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..], on_sent, on_failed))
+        else
+          @on_invoke_response_sent.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         end
-        @on_invoke_response_sent.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
         @on_invoke_response_failed.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))

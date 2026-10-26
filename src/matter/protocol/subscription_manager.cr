@@ -53,6 +53,14 @@ module Matter
 
       # An InvokeRequest whose command responses span multiple messages.
       class PendingInvoke < PendingChunks
+        getter on_sent : Proc(Nil)?
+        getter on_failed : Proc(Nil)?
+
+        def initialize(peer : Socket::IPAddress, session : Session::SecureContext,
+                       remaining_chunks : Array(Bytes), @on_sent : Proc(Nil)? = nil,
+                       @on_failed : Proc(Nil)? = nil)
+          super(peer, session, remaining_chunks)
+        end
       end
 
       # One active subscription Report transaction. Its dirty attribute keys
@@ -232,15 +240,26 @@ module Matter
                                 trigger.payload_header.message_type == InteractionModel::MessageType::StatusResponse.value
             unless success
               @pending_invokes.delete(key)
+              pending.on_failed.try(&.call)
               Log.warn { "Invoke response aborted: peer rejected a chunk (exchange=#{exchange_id})" }
               return true
             end
 
-            if chunk = pending.next_chunk
+            if chunk = pending.remaining_chunks.first?
               Log.debug { "Invoke response: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
-              send_chunk(pending, trigger, chunk)
+              begin
+                send_chunk(pending, trigger, chunk)
+                pending.next_chunk
+              rescue ex
+                @pending_invokes.delete(key)
+                pending.on_failed.try(&.call)
+                raise ex
+              end
             end
-            @pending_invokes.delete(key) unless pending.more_chunks?
+            unless pending.more_chunks?
+              @pending_invokes.delete(key)
+              pending.on_sent.try(&.call)
+            end
 
             return true
           end
