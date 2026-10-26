@@ -411,6 +411,11 @@ services:
     environment:
       E2E_DEVICE: matter_thermostat_presets
 
+  thermostat-suggestions:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_thermostat_suggestions
+
   thermostat-schedules:
     <<: *device
     environment:
