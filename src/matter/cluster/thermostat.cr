@@ -669,8 +669,11 @@ module Matter
                      @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off,
                      preset_types : Array(PresetType)? = nil,
                      presets : Array(Preset) = [] of Preset,
-                     @local_time_provider : Proc(Time?) = -> : Time? { nil })
+                     local_time_provider : Proc(Time?)? = nil)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+
+        @schedule_clock_configured = !local_time_provider.nil?
+        @local_time_provider = local_time_provider || -> : Time? { nil }
 
         @measured_temperature = @local_temperature
         @local_temperature = nil if @feature_map.local_temperature_not_exposed?
@@ -872,7 +875,7 @@ module Matter
       end
 
       # Host-owned schedule configuration. The MSCH wire feature remains gated
-      # until wall-clock activation is implemented.
+      # while its remaining conformance checks are completed.
       def configure_schedules(types : Array(ScheduleType), schedules : Array(Schedule),
                               max_transitions : UInt8, max_per_day : UInt8?) : Nil
         validate_schedules!(types, schedules, max_transitions, max_per_day)
@@ -943,8 +946,8 @@ module Matter
         @active_schedule_handle.try(&.dup)
       end
 
-      # Selects a committed schedule. Timed transition execution is still
-      # gated, so production devices cannot expose MSCH yet.
+      # Selects a committed schedule. Production MSCH wire exposure remains
+      # gated while its remaining conformance checks are completed.
       def activate_schedule(request : SetActiveScheduleRequest) : InteractionModel::Status
         handle = request.schedule_handle
         return InteractionModel::Status.constraint_error if handle.size > MAX_SCHEDULE_HANDLE_LENGTH
@@ -978,6 +981,12 @@ module Matter
         return false unless apply_schedule_transition(schedule, transition)
         @last_schedule_occurrence = key
         true
+      end
+
+      # Runtime polling is only useful when the host explicitly supplies local
+      # civil time and the guarded MSCH implementation is enabled.
+      def schedule_polling_enabled? : Bool
+        @feature_map.matter_schedules? && @schedule_clock_configured && schedule_wire_ready?
       end
 
       protected def schedules=(values : Array(Schedule)) : Nil

@@ -32,6 +32,7 @@ require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
 require "../cluster/thread_network_diagnostics"
 require "../cluster/time_synchronization"
+require "../cluster/thermostat"
 require "../cluster/mode_select"
 require "../cluster/bridged_device_basic_information"
 
@@ -590,17 +591,14 @@ module Matter
       @shutdown_channel.close unless Fiber.current == @time_zone_poll_fiber
     end
 
-    # Only a root node advertising the optional TimeZone feature needs this
-    # poll. Shutdown joins the fiber before closing the persistence journal.
+    # The one-second poll serves optional Time Synchronization features and
+    # thermostats with an explicitly configured local civil-time provider.
+    # Shutdown joins the fiber before closing the persistence journal.
     private def start_time_zone_polling : Nil
       return if @time_zone_polling
-      time_zones = [] of Cluster::TimeSynchronization
-      @message_handler.clusters.each_value do |cluster|
-        if time_zone = cluster.as?(Cluster::TimeSynchronization)
-          time_zones << time_zone if time_zone.feature_map.time_zone? || time_zone.feature_map.ntp_client? || time_zone.feature_map.trusted_time_client?
-        end
-      end
-      return if time_zones.empty?
+      return unless @message_handler.clusters.values.any? do |cluster|
+                      time_zone_polling_enabled?(cluster) || cluster.as?(Cluster::Thermostat).try(&.schedule_polling_enabled?)
+                    end
 
       @time_zone_polling = true
       done = Channel(Nil).new
@@ -610,15 +608,27 @@ module Matter
           sleep TIME_ZONE_POLL_INTERVAL
           break unless @time_zone_polling
           begin
-            time_zones.each(&.advance_time_state)
+            @message_handler.clusters.values.each do |cluster|
+              if time_zone_polling_enabled?(cluster)
+                cluster.as(Cluster::TimeSynchronization).advance_time_state
+              elsif thermostat = cluster.as?(Cluster::Thermostat)
+                thermostat.tick_schedule if thermostat.schedule_polling_enabled?
+              end
+            end
           rescue error
-            Log.error(exception: error) { "TimeZone polling stopped after a cluster error" }
+            Log.error(exception: error) { "Time polling stopped after a cluster error" }
             @time_zone_polling = false
           end
         end
       ensure
         done.close
       end
+    end
+
+    private def time_zone_polling_enabled?(cluster : Cluster::Base) : Bool
+      return false unless time_zone = cluster.as?(Cluster::TimeSynchronization)
+      time_zone.feature_map.time_zone? || time_zone.feature_map.ntp_client? ||
+        time_zone.feature_map.trusted_time_client?
     end
 
     # ------------------------------------------------------------------------
@@ -1300,6 +1310,7 @@ module Matter
       end
       basic_info.increase_configuration_version if @started
       refresh_parts_lists(notify_subscribers)
+      start_time_zone_polling if @started
       true
     end
 

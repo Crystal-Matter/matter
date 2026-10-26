@@ -7,13 +7,18 @@ module MatterThermostatSchedulesFixture
   alias Thermostat = Matter::Cluster::Thermostat
 
   class WireThermostat < Thermostat
-    # Activation observes the Monday 08:00 transition without relying on the
-    # runner's timezone, wall clock, or a background timer.
     FIXTURE_TIME = Time.utc(2026, 10, 26, 8, 30)
+    CLOCK_PATH   = ENV["MATTER_THERMOSTAT_CLOCK_PATH"]? || "/e2e/logs/matter_thermostat_schedules.clock"
+
+    def self.local_time : Time?
+      return FIXTURE_TIME unless File.exists?(CLOCK_PATH)
+      seconds = File.read(CLOCK_PATH).strip.to_i64?
+      seconds.try { |value| Time.unix(value) }
+    end
 
     def initialize(endpoint_id : Matter::DataType::EndpointNumber, feature_map : Feature)
       super(endpoint_id, feature_map: feature_map,
-        local_time_provider: -> : Time? { FIXTURE_TIME })
+        local_time_provider: -> : Time? { WireThermostat.local_time })
       type = ScheduleType.new(SystemMode::Heat, 1_u8,
         ScheduleTypeFeatures::SupportsSetpoints)
       transition = ScheduleTransition.new(0x02_u8, 480_u16, nil, nil, nil, 1900_i16)
