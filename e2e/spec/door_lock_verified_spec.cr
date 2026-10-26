@@ -34,6 +34,8 @@ describe "Door Lock verified RFID host input with official chip-tool" do
   it "manages RFID over Matter and unlocks only after a verified local presentation" do
     credential = %({"credentialType":2,"credentialIndex":1})
     add = Matter::Cluster::DoorLock::DataOperationType::Add.value.to_s
+    expect_success(device.invoke("doorlock", "set-user",
+      [add, "2", "RFID User", "222", "1", "0", "0"], options: timed))
     result = expect_success(device.invoke("doorlock", "set-credential",
       [add, credential, "RFID1357", "2", "null", "null"], options: timed))
     result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Success.value.to_i64), result.output
