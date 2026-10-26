@@ -1580,6 +1580,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   remains 7.
 
 
+### Joint Fabric group key validation
+
+- Reject non-IPK Datastore key sets with a missing first epoch, a zero first
+  start time, or a gap before the third epoch. These entries cannot be installed
+  through Group Key Management on a shared-fabric device.
+
 ### Group key validation
 
 - Reject KeySetWrite requests without the first epoch or with a gap before a
