@@ -344,6 +344,9 @@ module Matter
       @review_delivery_inflight = Set(UInt64).new
       @review_events_emitted = Set(UInt64).new
       @review_delivery_retry_scheduled = Set(UInt64).new
+      @restriction_fabric_generations = {} of UInt8 => UInt64
+      @review_fabrics = {} of UInt64 => UInt8
+      @review_generations = {} of UInt64 => UInt64
       @on_restriction_review_requested : Proc(RestrictionReviewRequest, Nil)? = nil
       @on_restriction_review_updated : Proc(UInt8, FabricRestrictionReviewUpdate, Nil)? = nil
       property on_persist : Proc(Nil)? = nil
@@ -534,6 +537,9 @@ module Matter
 
         @next_restriction_review_token += 1_u64
         token = @next_restriction_review_token
+        @review_fabrics[token] = fabric_index
+        @review_generations[token] = restriction_fabric_generation(fabric_index)
+        generation = @review_generations[token]
         request = RestrictionReviewRequest.new(fabric_index, token, entries.map do |entry|
           AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
         end)
@@ -546,12 +552,19 @@ module Matter
         @review_requests_in_progress << token
         begin
           @on_persist.try(&.call)
+          ensure_current_restriction_review!(fabric_index, token, generation)
           callback.call(request)
+          ensure_current_restriction_review!(fabric_index, token, generation)
         rescue ex
+          unless current_restriction_review?(fabric_index, token, generation)
+            @on_persist.try(&.call)
+            raise Matter::ConfigurationError.new("Restriction review fabric was removed", ex)
+          end
           @pending_restriction_reviews.delete(token)
           @pending_restriction_review_deadlines.delete(token)
           @restriction_review_timers.delete(token).try(&.close)
           @review_requests_in_progress.delete(token)
+          forget_restriction_review(token)
           increment_version
           begin
             @on_persist.try(&.call)
@@ -564,6 +577,10 @@ module Matter
         end
         @review_requests_in_progress.delete(token)
         @on_persist.try(&.call)
+        unless current_restriction_review?(fabric_index, token, generation)
+          @on_persist.try(&.call)
+          raise Matter::ConfigurationError.new("Restriction review fabric was removed")
+        end
         token
       end
 
@@ -590,7 +607,8 @@ module Matter
           raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
         end
         request = @pending_restriction_reviews[token]?
-        return false unless request && request.fabric_index == fabric_index
+        return false unless request && request.fabric_index == fabric_index && current_restriction_review?(fabric_index, token)
+        generation = @review_generations[token]
         callback = @on_restriction_review_updated ||
                    raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
         update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
@@ -600,8 +618,14 @@ module Matter
         @review_completions_in_progress << token
         begin
           @on_persist.try(&.call)
+          ensure_current_restriction_review!(fabric_index, token, generation)
           callback.call(fabric_index, update)
+          ensure_current_restriction_review!(fabric_index, token, generation)
         rescue ex
+          unless current_restriction_review?(fabric_index, token, generation)
+            @on_persist.try(&.call)
+            raise Matter::ConfigurationError.new("Restriction review fabric was removed", ex)
+          end
           @pending_restriction_reviews[token] = request
           @review_completions_in_progress.delete(token)
           if version = previous_policy_version
@@ -624,6 +648,8 @@ module Matter
 
       private def deliver_completed_restriction_review(token : UInt64) : Bool
         delivery = @reviews_awaiting_delivery[token]? || return false
+        return false unless current_restriction_review?(delivery[0], token)
+        generation = @review_generations[token]
         return false if @review_delivery_inflight.includes?(token)
         @review_delivery_inflight.add(token)
         begin
@@ -638,9 +664,14 @@ module Matter
               Log.error(exception: ex) { "Restriction review #{token} event observer failed after durable completion" }
             end
           end
+          return false unless current_restriction_review?(fabric_index, token, generation)
           @review_completions_in_progress.delete(token)
           begin
             @on_persist.try(&.call)
+            unless current_restriction_review?(fabric_index, token, generation)
+              @on_persist.try(&.call)
+              return false
+            end
           rescue ex
             schedule_restriction_review_delivery_retry(token, fabric_index)
             raise ex
@@ -650,6 +681,7 @@ module Matter
           @reviews_needing_replay.delete(token)
           @reviews_awaiting_delivery.delete(token)
           @review_events_emitted.delete(token)
+          forget_restriction_review(token)
           if arl_notification_required && @feature_map.managed_device?
             begin
               notify_changed(ATTR_ARL)
@@ -665,10 +697,12 @@ module Matter
 
       private def schedule_restriction_review_delivery_retry(token : UInt64, fabric_index : UInt8) : Nil
         return unless @review_delivery_retry_scheduled.add?(token)
+        generation = @review_generations[token]?
         spawn do
           loop do
             sleep @review_delivery_retry_interval
-            break unless @reviews_awaiting_delivery.has_key?(token)
+            break unless @reviews_awaiting_delivery.has_key?(token) &&
+                         current_restriction_review?(fabric_index, token, generation)
             begin
               break if complete_restriction_review(fabric_index, token)
             rescue ex
@@ -700,13 +734,15 @@ module Matter
           raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
         end
         request = @pending_restriction_reviews[token]?
-        return false unless request && request.fabric_index == fabric_index
+        return false unless request && request.fabric_index == fabric_index && current_restriction_review?(fabric_index, token)
+        generation = @review_generations[token]
         callback = @on_restriction_review_updated ||
                    raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
         update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
         callback.call(fabric_index, update)
+        return false unless current_restriction_review?(fabric_index, token, generation) && @pending_restriction_reviews.has_key?(token)
         emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
-        true
+        current_restriction_review?(fabric_index, token, generation)
       end
 
       # Host approval installs exactly the policy the host explicitly supplies
@@ -717,7 +753,8 @@ module Matter
                                      instruction : String? = nil,
                                      arl_request_flow_url : String? = nil) : Bool
         request = @pending_restriction_reviews[token]?
-        return false unless request && request.fabric_index == fabric_index
+        return false unless request && request.fabric_index == fabric_index && current_restriction_review?(fabric_index, token)
+        generation = @review_generations[token]
         if replacement.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
           raise Matter::ConfigurationError.new("Invalid approved access restriction configuration")
         end
@@ -733,13 +770,14 @@ module Matter
         end
         increment_version
         begin
+          ensure_current_restriction_review!(fabric_index, token, generation)
           unless finish_restriction_review(fabric_index, token, instruction, arl_request_flow_url,
                    previous, previous_version)
             restore_restriction_review_policy(fabric_index, previous, previous_version)
             return false
           end
         rescue ex
-          restore_restriction_review_policy(fabric_index, previous, previous_version) if @pending_restriction_reviews.has_key?(token)
+          restore_restriction_review_policy(fabric_index, previous, previous_version) if @pending_restriction_reviews.has_key?(token) && current_restriction_review?(fabric_index, token, generation)
           raise ex
         end
         true
@@ -756,19 +794,55 @@ module Matter
         @data_version = version
       end
 
+      private def restriction_fabric_generation(fabric_index : UInt8) : UInt64
+        @restriction_fabric_generations[fabric_index]? || 0_u64
+      end
+
+      private def current_restriction_review?(fabric_index : UInt8, token : UInt64,
+                                              generation : UInt64? = @review_generations[token]?) : Bool
+        return false unless generation
+        @review_fabrics[token]? == fabric_index &&
+          @review_generations[token]? == generation &&
+          generation == restriction_fabric_generation(fabric_index)
+      end
+
+      private def ensure_current_restriction_review!(fabric_index : UInt8, token : UInt64,
+                                                     generation : UInt64) : Nil
+        unless current_restriction_review?(fabric_index, token, generation)
+          raise Matter::ConfigurationError.new("Restriction review fabric was removed")
+        end
+      end
+
+      private def forget_restriction_review(token : UInt64) : Nil
+        @review_fabrics.delete(token)
+        @review_generations.delete(token)
+      end
+
       private def schedule_restriction_review_timer(fabric_index : UInt8, token : UInt64,
                                                     duration : Time::Span) : Nil
         return if @restriction_review_timers.has_key?(token)
         timer = ::Channel(Nil).new
         @restriction_review_timers[token] = timer
+        generation = @review_generations[token]?
         spawn do
-          select
-          when timer.receive?
-          when timeout(duration)
-            complete_restriction_review(fabric_index, token)
+          delay = duration
+          loop do
+            select
+            when timer.receive?
+              break
+            when timeout(delay)
+              break unless current_restriction_review?(fabric_index, token, generation)
+              begin
+                break if complete_restriction_review(fabric_index, token)
+              rescue ex
+                Log.error(exception: ex) { "Restriction review deadline update failed; retrying" }
+              end
+              break unless current_restriction_review?(fabric_index, token, generation)
+              delay = @review_delivery_retry_interval
+            end
           end
-        rescue ex
-          Log.error(exception: ex) { "Restriction review deadline update failed" }
+        ensure
+          @restriction_review_timers.delete(token) if @restriction_review_timers[token]? == timer
         end
       end
 
@@ -781,7 +855,12 @@ module Matter
           deadline = @pending_restriction_review_deadlines[token]
           begin
             if deadline <= Time.utc
-              complete_restriction_review(request.fabric_index, token)
+              begin
+                complete_restriction_review(request.fabric_index, token)
+              rescue ex
+                schedule_restriction_review_timer(request.fabric_index, token, @review_delivery_retry_interval)
+                raise ex
+              end
             else
               schedule_restriction_review_timer(request.fabric_index, token, deadline - Time.utc)
               requested.call(request)
@@ -1114,6 +1193,12 @@ module Matter
         @pending_restriction_reviews = pending
         @pending_restriction_review_deadlines = deadlines
         @reviews_needing_replay = pending.keys
+        @review_fabrics = {} of UInt64 => UInt8
+        @review_generations = {} of UInt64 => UInt64
+        pending.each do |token, request|
+          @review_fabrics[token] = request.fabric_index
+          @review_generations[token] = restriction_fabric_generation(request.fabric_index)
+        end
         @next_restriction_review_token = {state.next_restriction_review_token, pending.keys.max? || 0_u64}.max
         @managed_restrictions_configured = @feature_map.managed_device? ||
                                            !restrictions.empty? || state.commissioning_arl_configured? ||
@@ -1250,18 +1335,22 @@ module Matter
 
       # Helper: Remove all ACL entries for a fabric
       def remove_fabric_acl(fabric_index : UInt8) : Nil
+        @restriction_fabric_generations[fabric_index] = restriction_fabric_generation(fabric_index) &+ 1_u64
+        @review_fabrics.select { |_token, index| index == fabric_index }.keys.each do |token|
+          @restriction_review_timers.delete(token).try(&.close)
+          @pending_restriction_reviews.delete(token)
+          @pending_restriction_review_deadlines.delete(token)
+          @reviews_needing_replay.delete(token)
+          @review_requests_in_progress.delete(token)
+          @review_completions_in_progress.delete(token)
+          @reviews_awaiting_delivery.delete(token)
+          @review_events_emitted.delete(token)
+          forget_restriction_review(token)
+        end
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
         @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
         @access_restrictions.delete(fabric_index)
         increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
-        @pending_restriction_reviews.each do |token, request|
-          if request.fabric_index == fabric_index
-            @restriction_review_timers.delete(token).try(&.close)
-            @pending_restriction_review_deadlines.delete(token)
-            @reviews_needing_replay.delete(token)
-          end
-        end
-        @pending_restriction_reviews.reject! { |_, request| request.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_ACL)
         notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?
       end

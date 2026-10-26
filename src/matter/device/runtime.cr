@@ -448,6 +448,9 @@ module Matter
         before_fabric_removed(fabric_index)
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
+        # A review callback may have emitted after the earlier purge and before
+        # Access Control cancelled that fabric's in-flight reviews.
+        @node.event_journal.remove_fabric(fabric_index)
         @message_handler.forget_group_fabric(fabric_index)
         @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
         @message_handler.clusters.values.each do |cluster|

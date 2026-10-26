@@ -104,4 +104,26 @@ describe "host-managed restriction review lifecycle" do
     sleep 25.milliseconds
     updates.map(&.token).should eq([token])
   end
+
+  it "retries a deadline update after a transient host callback failure" do
+    acl = ReviewAcl.new(endpoint(0), review_timeout: 5.milliseconds,
+      review_delivery_retry_interval: 5.milliseconds)
+    attempts = 0
+    updates = [] of ReviewAcl::FabricRestrictionReviewUpdate
+    acl.on_restriction_review_requested { |_| }
+    acl.on_restriction_review_updated do |_fabric, update|
+      attempts += 1
+      raise Matter::ConfigurationError.new("host temporarily unavailable") if attempts == 1
+      updates << update
+    end
+
+    token = acl.request_restriction_review(1_u8, [review_entry])
+    40.times do
+      break unless updates.empty?
+      sleep 5.milliseconds
+    end
+    attempts.should be >= 2
+    updates.map(&.token).should eq([token])
+    acl.complete_restriction_review(1_u8, token).should be_false
+  end
 end
