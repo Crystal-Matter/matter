@@ -25,6 +25,7 @@ module Matter
       property on_invoke_response_sent : Proc(UInt64, UInt16, Nil)?
       property on_invoke_response_failed : Proc(Session::SecureContext, Codec::MessageCodec::Message, Nil)?
       property on_invoke_response_abandoned : Proc(UInt64, UInt16, Nil)?
+      property on_invoke_request_accepted : Proc(UInt64, UInt16, Nil)?
 
       WRITE_CHUNK_TIMEOUT = 60.seconds
 
@@ -386,6 +387,7 @@ module Matter
 
         return unless timed_interaction_satisfied?(request.timed_request, original_msg, peer, session)
 
+        @on_invoke_request_accepted.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         @subscriptions.abandon_invoke(original_msg.payload_header.exchange_id, session.session_id)
 
         Log.info { "InvokeRequest: #{request.invoke_requests.size} command(s) requested" }

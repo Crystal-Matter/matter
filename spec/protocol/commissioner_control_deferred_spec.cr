@@ -282,6 +282,72 @@ describe "reverse commissioning response handoff" do
     handler.close
   end
 
+  it "cannot retry an unsent old Invoke after a newer Invoke takes the exchange" do
+    handler, transport, session, control = reverse_fixture
+    preparations = 0
+    started = Channel(Nil).new(2)
+    control.configure_host(
+      ->(approval : ReverseControl::ApprovalRequest) do
+        control.resolve_approval(approval, Matter::InteractionModel::StatusCode::Success)
+        nil
+      end,
+      ->(_approval : ReverseControl::ApprovalRequest, _request : ReverseControl::CommissionNodeRequest) do
+        preparations += 1
+        ReverseControl::PreparedWindow.new(reverse_window, -> { started.send(nil); nil })
+          .as(ReverseControl::PreparedWindow?)
+      end)
+    reverse_invoke(handler, session, ReverseControl::CMD_REQUEST_COMMISSIONING_APPROVAL,
+      ReverseControl::RequestCommissioningApprovalRequest.new(85_u64, 0xFFF1_u16, 1_u16).to_slice,
+      1_u32, 135_u16)
+    transport.fail_next = true
+    reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
+      ReverseControl::CommissionNodeRequest.new(85_u64).to_slice,
+      2_u32, 136_u16)
+    preparations.should eq(1)
+
+    handler.clusters[{0_u16, ReverseChunkPadding::CLUSTER_ID}] =
+      ReverseChunkPadding.new(Matter::DataType::EndpointNumber.new(0_u16))
+    reverse_chunked_invoke(handler, session, 85_u64, 136_u16, 3_u32)
+    response = reverse_response(transport.sent_packets.last[0], session)
+    response.more_chunked_messages.should be_true
+    preparations.should eq(2)
+    sent_count = transport.sent_packets.size
+
+    # The old MRP retransmission is valid AEAD but has been superseded by the
+    # new Invoke. It must neither reprepare CommissionNode nor abandon its
+    # pending chunk ladder.
+    reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
+      ReverseControl::CommissionNodeRequest.new(85_u64).to_slice,
+      2_u32, 136_u16)
+    transport.sent_packets.size.should eq(sent_count)
+    preparations.should eq(2)
+    select
+    when started.receive
+      fail "superseded Invoke started reverse commissioning"
+    when timeout(20.milliseconds)
+    end
+
+    counter = 4_u32
+    while response.more_chunked_messages == true
+      handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, counter, 136_u16), REVERSE_PEER)
+      counter += 1_u32
+      response = reverse_response(transport.sent_packets.last[0], session)
+    end
+    response.invoke_responses.compact_map(&.command_data).map(&.command_path.command)
+      .should contain(REVERSE_OPEN_COMMAND_ID)
+    select
+    when started.receive
+    when timeout(1.second)
+      fail "newer Invoke did not start reverse commissioning after final chunk"
+    end
+    select
+    when started.receive
+      fail "superseded Invoke started a second commission"
+    when timeout(20.milliseconds)
+    end
+    handler.close
+  end
+
   it "does not release an old commission through a replacement encrypted session" do
     handler, transport, session, control, started = reverse_chunked_fixture(80_u64, 126_u16, 127_u16)
     reverse_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
