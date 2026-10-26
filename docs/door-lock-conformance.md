@@ -1,9 +1,10 @@
 # Door Lock conformance
 
 The [Matter 1.6 Door Lock definition](https://github.com/project-chip/connectedhomeip/blob/v1.6.0.0/data_model/1.6/clusters/DoorLock.xml)
-declares cluster revision 10. Crystal Matter currently advertises revision 9.
-Revision 10 removes obsolete Zigbee commands and the reportable attribute
-quality; the Crystal cluster already omits those commands.
+declares cluster revision 10, which Crystal Matter advertises. Revision 10
+removes obsolete Zigbee elements and the reportable attribute quality; the
+Crystal cluster omits the deprecated SecurityLevel attribute and disallowed
+Toggle command from its wire lists.
 
 Unbolting is no longer advertised by default. To enable it, pass both a
 feature map containing `DoorLock::Feature::Unbolting` and an application-owned
@@ -150,8 +151,8 @@ metadata. SendPINOverTheAir defaults to false and ExpiringUserTimeout accepts
 only 1–2880 minutes.
 
 The host must provide a trustworthy wall clock for absolute expiry across a
-restart. The advertised cluster revision remains 9; these tests do not
-establish complete Matter 1.6 revision 10 conformance.
+restart. These tests do not establish complete Matter 1.6 Door Lock
+conformance, including application-owned physical and radio behavior.
 
 The optional one-touch, inside LED, and privacy button settings default to
 false, and LocalProgrammingFeatures defaults to zero, following the Matter

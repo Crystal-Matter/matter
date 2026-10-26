@@ -26,6 +26,14 @@ end
 
 describe Matter::Cluster::DoorLock do
   describe "initialization" do
+    it "advertises revision 10 without removed Zigbee elements" do
+      cluster = build(Def)
+
+      read_tlv(cluster, Matter::Cluster::Base::GLOBAL_CLUSTER_REVISION).as_u16.should eq(10_u16)
+      attribute_ids(cluster).should_not contain(0x0034_u32)      # Deprecated SecurityLevel
+      accepted_command_ids(cluster).should_not contain(0x02_u32) # Disallowed Toggle
+    end
+
     it "creates with expected defaults" do
       cluster = build(Matter::Cluster::DoorLock)
 

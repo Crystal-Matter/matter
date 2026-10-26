@@ -91,7 +91,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x009E | Water Heater Mode Cluster | 1 | 1 | — | — |
 | 0x009F | Device Energy Management Mode Cluster | 2 | 2 | — | — |
 | 0x00A0 | Electrical Grid Conditions Cluster | 1 | 1 | — | — |
-| 0x0101 | Door Lock Cluster | 10 | 9 | — | — |
+| 0x0101 | Door Lock Cluster | 10 | 10 | — | — |
 | 0x0102 | Window Covering Cluster | 8 | 8 | — | — |
 | 0x0104 | Closure Control Cluster | 1 | 1 | — | — |
 | 0x0105 | Closure Dimension Cluster | 1 | 1 | — | — |

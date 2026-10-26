@@ -1280,6 +1280,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   continues to advertise revision 9 pending persistent credential storage and
   Aliro feature support; see [Door Lock conformance](docs/door-lock-conformance.md).
 
+### Door Lock revision 10
+
+- Advertise Matter 1.6 Door Lock revision 10 after confirming its removed Zigbee
+  elements are absent from the wire attribute and command lists.
+
 
 ### Thread Network Directory
 
