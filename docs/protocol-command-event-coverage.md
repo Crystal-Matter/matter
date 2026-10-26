@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 8
+- Feature or complex conditional IDs absent from Crystal: 6
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -301,8 +301,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0300 | command | 0x004B | feature(CT) | declared; requires `:color_temperature` |
 | 0x0300 | command | 0x004C | feature(CT) | declared; requires `:color_temperature` |
 | 0x0406 | event | 0x0000 | feature(OCCEVENT) | declared; requires `:occupancy_event` |
-| 0x0431 | event | 0x0000 | feature(HA) | declared; requires `:human_activity` |
-| 0x0431 | event | 0x0001 | feature(HA) | declared; requires `:human_activity` |
+| 0x0431 | event | 0x0000 | feature(HA) | declared; requires `[:human_activity, :object_identification]` |
+| 0x0431 | event | 0x0001 | feature(HA) | declared; requires `[:human_activity, :object_identification]` |
 | 0x0452 | command | 0x0004 | feature(PC) | declared; requires `:pan_change` |
 | 0x0504 | command | 0x0000 | (feature(CL) or feature(LI)) | declared; requires `[:channel_list, :lineup_info]` |
 | 0x0504 | command | 0x0004 | feature(EG) | declared; requires `:electronic_guide` |
@@ -340,10 +340,10 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0551 | command | 0x0000 | feature(ADO) | declared; requires `:audio` |
 | 0x0551 | command | 0x0002 | feature(ADO) | declared; requires `:audio` |
 | 0x0551 | command | 0x0003 | feature(VDO) | declared; requires `:video` |
-| 0x0551 | command | 0x0005 | (feature(VDO) and (feature(WMARK) or feature(OSD))) | absent |
+| 0x0551 | command | 0x0005 | (feature(VDO) and (feature(WMARK) or feature(OSD))) | declared; requires `[{video: true, watermark: true}, {video: true, osd: true}]` |
 | 0x0551 | command | 0x0006 | feature(VDO) | declared; requires `:video` |
 | 0x0551 | command | 0x0007 | feature(SNP) | declared; requires `:snapshot` |
-| 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | absent |
+| 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | declared; requires `[{snapshot: true, watermark: true}, {snapshot: true, osd: true}]` |
 | 0x0551 | command | 0x000A | feature(SNP) | declared; requires `:snapshot` |
 | 0x0551 | command | 0x000C | feature(SNP) | declared; requires `:snapshot` |
 | 0x0552 | command | 0x0000 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
