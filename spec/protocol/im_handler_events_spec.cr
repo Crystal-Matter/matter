@@ -25,6 +25,7 @@ private def read(
   filters : Array(Matter::InteractionModel::EventFilterIB)? = nil,
   fabric_index : UInt8? = nil,
   after : UInt64? = nil,
+  local_node_id : UInt64? = nil,
 ) : Array(Matter::InteractionModel::EventReportIB)
   Matter::Protocol::IMHandler.read_events(
     paths,
@@ -32,7 +33,8 @@ private def read(
     fixture.node.clusters,
     filters,
     fabric_index,
-    after: after
+    after: after,
+    local_node_id: local_node_id
   )
 end
 
@@ -124,7 +126,24 @@ describe "Matter::Protocol::IMHandler.read_events" do
       Matter::InteractionModel::EventFilterIB.new(event_min: 2_u64),
       Matter::InteractionModel::EventFilterIB.new(event_min: 3_u64, node: 7_u64),
     ]
-    event_numbers(read(fixture, wildcard, filters)).should eq([3_u64])
+    event_numbers(read(fixture, wildcard, filters, local_node_id: 7_u64)).should eq([3_u64])
+  end
+
+  it "ignores filters for other nodes while applying matching and unspecified filters" do
+    fixture = event_fixture
+    3.times { fixture.lock.lock(pin: fixture.lock.default_pin_code) }
+
+    foreign = Matter::InteractionModel::EventFilterIB.new(event_min: 99_u64, node: 8_u64)
+    unspecified = Matter::InteractionModel::EventFilterIB.new(event_min: 2_u64)
+    matching = Matter::InteractionModel::EventFilterIB.new(event_min: 3_u64, node: 7_u64)
+
+    event_numbers(read(fixture, wildcard, [foreign], local_node_id: 7_u64)).should eq([1_u64, 2_u64, 3_u64])
+    event_numbers(read(fixture, wildcard, [foreign, unspecified], local_node_id: 7_u64)).should eq([2_u64, 3_u64])
+    event_numbers(read(fixture, wildcard, [foreign, unspecified, matching], local_node_id: 7_u64)).should eq([3_u64])
+    event_numbers(read(fixture, wildcard, [matching], local_node_id: 7_u64, after: 2_u64)).should eq([3_u64])
+    unspecified_node = Matter::InteractionModel::EventFilterIB.new(event_min: 2_u64,
+      node: Matter::DataType::NodeId::UNSPECIFIED)
+    event_numbers(read(fixture, wildcard, [foreign, unspecified_node])).should eq([2_u64, 3_u64])
   end
 
   it "skips what a subscription has already reported" do

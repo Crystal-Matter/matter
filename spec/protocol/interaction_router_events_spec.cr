@@ -100,6 +100,62 @@ describe "InteractionRouter event paths" do
     events.compact_map(&.event_data).map(&.event_number).should eq([latest])
   end
 
+  it "ignores a foreign node's event minimum in a wildcard ReadRequest" do
+    fixture = router_fixture
+    2.times { fixture.lock.lock(pin: fixture.lock.default_pin_code) }
+    latest = fixture.handler.node.event_journal.latest_event_number
+
+    send(fixture, Matter::InteractionModel::MessageType::ReadRequest,
+      Matter::InteractionModel::ReadRequestMessage.new(
+        event_requests: [Matter::InteractionModel::EventPath.new],
+        event_filters: [
+          Matter::InteractionModel::EventFilterIB.new(event_min: 100_u64, node: 0x3333_u64),
+          Matter::InteractionModel::EventFilterIB.new(event_min: latest),
+        ]
+      ).to_slice)
+
+    events = first_report(fixture).event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+    events.compact_map(&.event_data).map(&.event_number).should eq([latest])
+  ensure
+    fixture.try(&.handler.close)
+  end
+
+  it "uses the session's local NodeID for an explicit matching filter" do
+    fixture = router_fixture
+    2.times { fixture.lock.lock(pin: fixture.lock.default_pin_code) }
+    latest = fixture.handler.node.event_journal.latest_event_number
+
+    send(fixture, Matter::InteractionModel::MessageType::ReadRequest,
+      Matter::InteractionModel::ReadRequestMessage.new(
+        event_requests: [Matter::InteractionModel::EventPath.new],
+        event_filters: [Matter::InteractionModel::EventFilterIB.new(event_min: latest, node: 0x1111_u64)]
+      ).to_slice)
+
+    events = first_report(fixture).event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+    events.compact_map(&.event_data).map(&.event_number).should eq([latest])
+  ensure
+    fixture.try(&.handler.close)
+  end
+
+  it "ignores foreign node filters in a subscription's wildcard priming report" do
+    fixture = router_fixture
+    2.times { fixture.lock.lock(pin: fixture.lock.default_pin_code) }
+    expected = fixture.handler.node.event_journal.query([Matter::InteractionModel::EventPath.new]).map(&.event_number)
+
+    send(fixture, Matter::InteractionModel::MessageType::SubscribeRequest,
+      Matter::InteractionModel::SubscribeRequestMessage.new(
+        min_interval_floor: 0_u16,
+        max_interval_ceiling: 60_u16,
+        event_requests: [Matter::InteractionModel::EventPath.new],
+        event_filters: [Matter::InteractionModel::EventFilterIB.new(event_min: 100_u64, node: 0x3333_u64)]
+      ).to_slice)
+
+    events = first_report(fixture).event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+    events.compact_map(&.event_data).map(&.event_number).should eq(expected)
+  ensure
+    fixture.try(&.handler.close)
+  end
+
   it "returns attribute and event reports in the same ReportData" do
     fixture = router_fixture
     fixture.lock.lock(pin: fixture.lock.default_pin_code)
