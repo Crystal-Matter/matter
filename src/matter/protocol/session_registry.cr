@@ -270,6 +270,16 @@ module Matter
         end
       end
 
+      # Terminates a publisher-side subscription after the subscriber rejects
+      # a ReportData transaction. Persist the removal just as for expiry.
+      def remove_subscription(subscription_id : UInt32) : Nil
+        @mutex.synchronize do
+          if @active_subscriptions.delete(subscription_id)
+            forget_subscription(subscription_id)
+          end
+        end
+      end
+
       # Claims the next subscription id.
       def allocate_subscription_id : UInt32
         @mutex.synchronize do

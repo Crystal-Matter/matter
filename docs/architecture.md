@@ -158,9 +158,14 @@ field. Crystal Matter caps TCP packets at 63,000 bytes, and uses a 60,000-byte
 Interaction Model TLV budget only on a live TCP token bound to the secure
 session. UDP retains its 1280-byte packet cap and 1100-byte TLV budget. BDX
 may negotiate blocks up to 60,000 bytes on TCP; UDP stays at 1024 bytes.
-Subscription updates that exceed their transport budget are logged and left
-unsent with the event cursor unchanged. Chunked updates on a device-initiated
-exchange still need their own acknowledgement state.
+Active subscription updates use the same transport budget as reads. Large
+list attributes and event batches become chunked ReportData messages on one
+device-initiated exchange; indivisible oversized values become
+ResourceExhausted status reports. The publisher waits for an Interaction Model
+StatusResponse before sending the next chunk or committing its event cursor.
+Concurrent changes remain queued for the next Report transaction. A missing
+Interaction Model status terminates the subscription after a bounded monotonic
+response deadline; a renewed CASE session replays its unacknowledged changes.
 
 Unsecured Secure Channel replies use a separate bounded replay cache keyed by
 the sending socket, optional source Node ID, and request counter. The transport
