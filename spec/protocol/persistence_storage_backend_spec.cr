@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/protocol/persistence"
+require "../../src/matter/protocol/message_handler"
 
 private SESSIONS      = Matter::Storage::Collections::SESSIONS
 private SUBSCRIPTIONS = Matter::Storage::Collections::SUBSCRIPTIONS
@@ -62,6 +63,65 @@ private def build_subscription(id : UInt32, session : Matter::Session::SecureCon
 end
 
 describe Matter::Protocol::Persistence::StorageBackend do
+  it "keeps event numbers increasing across restarts without subscriptions" do
+    storage = Matter::Storage::Memory.new
+    table = Matter::FabricTable.new(storage)
+    first = Matter::Protocol::MessageHandler.new(
+      transport: Matter::Spec::CaptureTransport.new_for_spec,
+      setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: table,
+      persistence: Matter::Protocol::Persistence::StorageBackend.new(storage))
+    first.node.event_journal.record(0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP, :critical, TLV::Any.new(1_u32))
+      .event_number.should eq(1_u64)
+    first.close
+
+    second = Matter::Protocol::MessageHandler.new(
+      transport: Matter::Spec::CaptureTransport.new_for_spec,
+      setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: table,
+      persistence: Matter::Protocol::Persistence::StorageBackend.new(storage))
+    second.node.event_journal.record(0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP, :critical, TLV::Any.new(2_u32))
+      .event_number.should eq(2_u64)
+    second.close
+  end
+
+  it "reports fresh events after restoring a subscription with an old journal cursor" do
+    storage = Matter::Storage::Memory.new
+    table = Matter::FabricTable.new(storage)
+    table.add_fabric(build_fabric(1_u8))
+    session = case_session(111_u16, 1_u8)
+    session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
+    storage.write(SESSIONS, "111", session.to_record.to_document)
+    subscription = Matter::Protocol::ActiveSubscription.new(
+      subscription_id: 10_u32, min_interval: 0_u16, max_interval: 60_u16,
+      peer: Socket::IPAddress.new("127.0.0.1", 5540), session: session,
+      attribute_paths: [] of Matter::InteractionModel::AttributePath,
+      exchange_id: 7_u16,
+      event_paths: [Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+        cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+        event: Matter::Cluster::BasicInformation::EVENT_START_UP)],
+      last_event_number: 100_u64)
+    storage.write(SUBSCRIPTIONS, "10", subscription.to_record.to_document)
+
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    handler = Matter::Protocol::MessageHandler.new(transport: transport,
+      setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: table,
+      persistence: Matter::Protocol::Persistence::StorageBackend.new(storage))
+    handler.active_subscriptions[10_u32].last_event_number.should eq(100_u64)
+    record = handler.node.event_journal.record(0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP, :critical, TLV::Any.new(1_u32))
+    record.event_number.should eq(101_u64)
+    handler.subscriptions.notify_events
+    transport.sent_packets.size.should eq(1)
+    stored_next = storage.read(DEVICE, Matter::Protocol::Persistence::StorageBackend::EVENT_COUNTER_ID)
+      .as(Matter::Storage::Document)[Matter::Protocol::Persistence::StorageBackend::NEXT_EVENT_NUMBER_KEY]
+    stored_next.should eq(102_u64)
+    handler.close
+  end
+
   describe "sessions" do
     it "writes established CASE sessions as documents and skips PASE sessions" do
       storage = Matter::Storage::Memory.new
