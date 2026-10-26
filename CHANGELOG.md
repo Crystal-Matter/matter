@@ -72,6 +72,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Content Control ScreenTime
 
+- Pin the ScreenTime persistence spec to its synthetic local clock before the
+  first attribute read, so daily rollover assertions remain stable across dates.
 - Implement Matter 1.6 ScreenTime daily and remaining balance, bonus and limit commands, expiry event, durable local-day accounting, media host tick, and ACL-sensitive PIN enforcement. The synthetic player exercises the wire commands and persistence through official chip-tool E2E.
 
 ### Content Control time windows

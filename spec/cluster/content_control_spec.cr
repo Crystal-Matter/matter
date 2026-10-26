@@ -147,7 +147,9 @@ describe Control do
   end
 
   it "accounts ScreenTime during enabled playback, expires once, and restores its balance" do
+    now = Time.local(2026, 10, 26, 10, 0, 0)
     cluster = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 30_u32)
+    cluster.local_time_provider = -> : Time? { now }
     attribute_ids(cluster).should contain(Control::ATTR_SCREEN_DAILY_TIME)
     attribute_ids(cluster).should contain(Control::ATTR_REMAINING_SCREEN_TIME)
     accepted_command_ids(cluster).should contain(Control::CMD_ADD_BONUS_TIME)
@@ -167,7 +169,6 @@ describe Control do
     cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
       events << id
     end
-    now = Time.local(2026, 10, 26, 10, 0, 0)
     tick = Time.instant
     cluster.tick_screen_time(true, now, tick)
     cluster.tick_screen_time(true, now + 5.seconds, tick + 5.seconds)
