@@ -118,6 +118,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
 
+### Identify write privilege
+
+- Require Operate privilege for IdentifyTime writes, matching Matter 1.6, and
+  verify that a View-only CASE subject cannot write it.
+
 ### Thermostat base revision 11
 
 - Report Matter 1.6 Thermostat ClusterRevision 11 for supported HEAT, COOL, and
@@ -1790,6 +1795,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when a device powers up. Bypass these startup settings after an OTA restart,
   and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
   retain the state reported by their host.
+
+### OnOff access control
+
+- Require Operate privilege for writes to the Lighting feature's OnTime and
+  OffWaitTime attributes, as specified by Matter 1.6.
 
 ### Identify countdown reporting
 

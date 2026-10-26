@@ -98,7 +98,7 @@ module Matter
       end
 
       # Remaining identify time in seconds; volatile, so not persisted
-      attribute 0x0000, :identify_time, UInt16, default: 0_u16, writable: true, persist: false
+      attribute 0x0000, :identify_time, UInt16, default: 0_u16, writable: true, write_access: :operate, persist: false
       attribute 0x0001, :identify_type, IdentifyType, default: IdentifyType::None, fixed: true
 
       command 0x00, :identify, request: Request, access: :manage
