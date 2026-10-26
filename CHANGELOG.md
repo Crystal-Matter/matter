@@ -1744,6 +1744,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   monotonic ticks, and Stop holds the current level. RemainingTime resets after
   restart instead of restoring a stale countdown.
 
+### Time Format Localization write access
+
+- Require Manage privilege to write HourFormat and CALFMT-gated ActiveCalendarType,
+  as specified by Matter 1.6. View reads remain available.
+
 ### Time synchronization
 
 - Add the Matter 1.6 Time Synchronization base server: nullable UTC before sync,
