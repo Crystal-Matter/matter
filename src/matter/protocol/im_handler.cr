@@ -309,6 +309,23 @@ module Matter
           fabric_index: fabric_index
         )
 
+        reports.concat(authorized_event_reports(records, clusters, fabric_index,
+          is_case_session, peer_subject_ids))
+
+        Log.debug { "Read #{reports.size} event report(s) from #{journal.size} journaled event(s)" }
+        reports
+      end
+
+      # Shared by a Read/Subscribe priming report and every later subscription
+      # update, so an ACL change cannot expose an event after priming.
+      def self.authorized_event_reports(
+        records : Array(EventJournal::Record),
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        fabric_index : UInt8?,
+        is_case_session : Bool,
+        peer_subject_ids : Array(UInt64)?,
+      ) : Array(InteractionModel::EventReportIB)
+        reports = [] of InteractionModel::EventReportIB
         records.each do |record|
           privilege = event_access(clusters, record)
           next unless privilege
@@ -316,8 +333,6 @@ module Matter
 
           reports << InteractionModel::EventReportIB.new(event_data: build_event_data(record))
         end
-
-        Log.debug { "Read #{reports.size} event report(s) from #{journal.size} journaled event(s)" }
         reports
       end
 
