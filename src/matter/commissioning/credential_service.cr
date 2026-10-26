@@ -391,6 +391,10 @@ module Matter
           return NocOutcome.new(NocStatus::TableFull, debug_text: "Fabric table is full")
         end
 
+        unless DataType::NodeId.valid_case_subject?(case_admin_subject)
+          return NocOutcome.new(NocStatus::InvalidAdminSubject, debug_text: "CaseAdminSubject is not a valid CASE ACL subject")
+        end
+
         begin
           Log.debug { "Received NOC certificate: #{noc.size} bytes" }
           Log.trace { "NOC hex (first #{CERTIFICATE_LOG_PREFIX}): #{certificate_prefix(noc, CERTIFICATE_LOG_PREFIX)}" }
