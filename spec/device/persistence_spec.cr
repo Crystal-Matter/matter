@@ -16,6 +16,21 @@ private class CountingYamlFile < Matter::Storage::YamlFile
   end
 end
 
+private class PausingClusterMemory < Matter::Storage::Memory
+  property? pause_next_cluster_write = false
+  getter write_started = Channel(Nil).new(1)
+  getter write_resume = Channel(Nil).new(1)
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::CLUSTERS && pause_next_cluster_write?
+      @pause_next_cluster_write = false
+      @write_started.send(nil)
+      @write_resume.receive
+    end
+    super
+  end
+end
+
 private CLUSTERS = Matter::Storage::Collections::CLUSTERS
 private DEVICE   = Matter::Storage::Collections::DEVICE
 private APP      = Matter::Storage::Collections::APP
@@ -49,6 +64,38 @@ end
 
 describe Matter::Device::Persistence do
   describe "clusters" do
+    it "orders a snapshotted Access Control write before fabric removal and replacement" do
+      storage = PausingClusterMemory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      acl = Matter::Cluster::AccessControl.new(endpoint(0), Matter::Cluster::AccessControl::Feature::ManagedDevice)
+      original = Matter::Cluster::AccessControl::AccessRestrictionEntry.new(1_u16, ManagedWifi::CLUSTER_ID, [
+        Matter::Cluster::AccessControl::AccessRestriction.new(
+          Matter::Cluster::AccessControl::AccessRestrictionType::AttributeAccessForbidden, ManagedWifi::ATTR_SSID),
+      ])
+      replacement = Matter::Cluster::AccessControl::AccessRestrictionEntry.new(1_u16, ManagedWifi::CLUSTER_ID, [
+        Matter::Cluster::AccessControl::AccessRestriction.new(
+          Matter::Cluster::AccessControl::AccessRestrictionType::AttributeWriteForbidden, ManagedWifi::ATTR_SSID),
+      ])
+      acl.configure_access_restrictions(1_u8, [original])
+      storage.pause_next_cluster_write = true
+      old_saved = Channel(Bool).new(1)
+      spawn { old_saved.send(persistence.save_cluster(acl)) }
+      storage.write_started.receive
+      replacement_saved = Channel(Bool).new(1)
+      spawn do
+        acl.remove_fabric_acl(1_u8)
+        acl.configure_access_restrictions(1_u8, [replacement])
+        replacement_saved.send(persistence.save_cluster(acl))
+      end
+      Fiber.yield
+      storage.write_resume.send(nil)
+      old_saved.receive.should be_true
+      replacement_saved.receive.should be_true
+      restored = Matter::Cluster::AccessControl.new(endpoint(0), Matter::Cluster::AccessControl::Feature::ManagedDevice)
+      restored.restore_state(storage.read(CLUSTERS, acl.persistence_key).as(Matter::Storage::Document))
+      restored.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+    end
+
     it "allows legacy fabrics without a saved Access Control document" do
       storage = Matter::Storage::Memory.new
       persistence = Matter::Device::Persistence.new(storage)

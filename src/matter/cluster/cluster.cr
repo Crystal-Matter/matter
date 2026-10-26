@@ -572,6 +572,12 @@ module Matter
         nil
       end
 
+      # A cluster may serialize its snapshot and backend write with lifecycle
+      # mutations that would otherwise invalidate that snapshot.
+      def with_persistence_guard(&)
+        yield
+      end
+
       # Restore cluster state from a document produced by `save_state`.
       # Override in subclasses that need to restore state.
       def restore_state(document : Storage::Document) : Nil

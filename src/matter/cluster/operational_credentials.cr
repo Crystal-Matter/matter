@@ -716,19 +716,23 @@ module Matter
       # A fabric was removed: so is every piece of data scoped to it
       def fabric_forgotten(fabric_index : UInt8) : Nil
         if access_control = @access_control_cluster
-          access_control.remove_fabric_acl(fabric_index)
-          # The credential journal may only be cleared after the removed
-          # fabric's ACL is durable. Otherwise a crash can resurrect an ACL
-          # under the same local fabric index on a later commission.
-          persist_acl(access_control, fabric_index)
+          access_control.with_persistence_guard do
+            access_control.remove_fabric_acl(fabric_index)
+            # The credential journal may only be cleared after the removed
+            # fabric's ACL is durable. Otherwise a crash can resurrect an ACL
+            # under the same local fabric index on a later commission.
+            persist_acl(access_control, fabric_index)
+          end
         end
       end
 
       private def persist_acl(access_control : AccessControl, fabric_index : UInt8) : Nil
-        state = access_control.save_state ||
-                raise StorageError.new("Could not encode ACL for fabric #{fabric_index}")
-        @fabric_table.backend.write(Storage::Collections::CLUSTERS,
-          access_control.persistence_key, state)
+        access_control.with_persistence_guard do
+          state = access_control.save_state ||
+                  raise StorageError.new("Could not encode ACL for fabric #{fabric_index}")
+          @fabric_table.backend.write(Storage::Collections::CLUSTERS,
+            access_control.persistence_key, state)
+        end
       end
     end
   end

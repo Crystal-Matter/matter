@@ -112,6 +112,160 @@ describe "Managed restriction fabric generation" do
     acl.arl(1_u8).first.restrictions.should eq(new_policy.restrictions)
   end
 
+  it "does not persist a replacement fabric's provisional policy from an obsolete callback" do
+    acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    old_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeAccessForbidden)
+    new_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeWriteForbidden)
+    acl.configure_access_restrictions(1_u8, [old_policy])
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    token = acl.request_restriction_review(1_u8, [old_policy])
+    callback_started = Channel(Nil).new(1)
+    callback_resume = Channel(Nil).new(1)
+    acl.on_restriction_review_updated do |_fabric, _update|
+      callback_started.send(nil)
+      callback_resume.receive
+      raise Matter::ConfigurationError.new("old callback failed")
+    end
+    old_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.approve_restriction_review(1_u8, token, [] of GenerationAcl::AccessRestrictionEntry)
+      old_outcome.send(nil)
+    rescue ex
+      old_outcome.send(ex)
+    end
+    callback_started.receive
+    acl.remove_fabric_acl(1_u8)
+    saved = acl.save_state.as(Matter::Storage::Document)
+
+    persist_started = Channel(Nil).new(1)
+    persist_resume = Channel(Nil).new(1)
+    persist_calls = 0
+    acl.on_persist = -> do
+      persist_calls += 1
+      if acl.arl(1_u8).first?.try(&.restrictions) == new_policy.restrictions
+        persist_started.send(nil)
+        persist_resume.receive
+        raise Matter::StorageError.new("replacement persist failed")
+      end
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    new_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.configure_access_restrictions(1_u8, [new_policy])
+      new_outcome.send(nil)
+    rescue ex
+      new_outcome.send(ex)
+    end
+    persist_started.receive
+    callback_resume.send(nil)
+    old_outcome.receive.should be_a(Matter::ConfigurationError)
+    persist_resume.send(nil)
+    new_outcome.receive.should be_a(Matter::StorageError)
+    persist_calls.should eq(4)
+    acl.arl(1_u8).should be_empty
+
+    restored = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(1_u8).should be_empty
+  end
+
+  it "does not save a replacement policy from an obsolete request callback" do
+    acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    old_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeAccessForbidden)
+    new_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeWriteForbidden)
+    request_started = Channel(Nil).new(1)
+    request_resume = Channel(Nil).new(1)
+    acl.on_restriction_review_requested do |_request|
+      request_started.send(nil)
+      request_resume.receive
+    end
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    request_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.request_restriction_review(1_u8, [old_policy])
+      request_outcome.send(nil)
+    rescue ex
+      request_outcome.send(ex)
+    end
+    request_started.receive
+    acl.remove_fabric_acl(1_u8)
+    saved = acl.save_state.as(Matter::Storage::Document)
+    persist_started = Channel(Nil).new(1)
+    persist_resume = Channel(Nil).new(1)
+    acl.on_persist = -> do
+      if acl.arl(1_u8).first?.try(&.restrictions) == new_policy.restrictions
+        persist_started.send(nil)
+        persist_resume.receive
+        raise Matter::StorageError.new("replacement persist failed")
+      end
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    replacement_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.configure_access_restrictions(1_u8, [new_policy])
+      replacement_outcome.send(nil)
+    rescue ex
+      replacement_outcome.send(ex)
+    end
+    persist_started.receive
+    request_resume.send(nil)
+    request_outcome.receive.should be_a(Matter::ConfigurationError)
+    persist_resume.send(nil)
+    replacement_outcome.receive.should be_a(Matter::StorageError)
+    restored = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(1_u8).should be_empty
+  end
+
+  it "finishes a snapshotted write before removing and reusing its fabric index" do
+    acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    old_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeAccessForbidden)
+    replacement = generation_entry(GenerationAcl::AccessRestrictionType::AttributeWriteForbidden)
+    saved = acl.save_state.as(Matter::Storage::Document)
+    write_started = Channel(Nil).new(1)
+    write_resume = Channel(Nil).new(1)
+    first_write = true
+    acl.on_persist = -> do
+      snapshot = acl.save_state.as(Matter::Storage::Document)
+      if first_write
+        first_write = false
+        write_started.send(nil)
+        write_resume.receive
+      end
+      saved = snapshot
+      nil
+    end
+    old_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.configure_access_restrictions(1_u8, [old_policy])
+      old_outcome.send(nil)
+    rescue ex
+      old_outcome.send(ex)
+    end
+    write_started.receive
+    replacement_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.remove_fabric_acl(1_u8)
+      acl.configure_access_restrictions(1_u8, [replacement])
+      replacement_outcome.send(nil)
+    rescue ex
+      replacement_outcome.send(ex)
+    end
+    Fiber.yield
+    write_resume.send(nil)
+    old_outcome.receive.should be_nil
+    replacement_outcome.receive.should be_nil
+    restored = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+  end
+
   it "does not emit an interim update paused while a fabric index is reused" do
     acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
     acl.on_restriction_review_requested { |_request| }

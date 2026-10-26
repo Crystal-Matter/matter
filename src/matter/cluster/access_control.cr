@@ -352,6 +352,9 @@ module Matter
       # A host callback can yield while an approval's policy is provisional.
       # Reject another mutation on that fabric until it commits or rolls back.
       @restriction_policy_transactions = {} of UInt8 => UInt64
+      @pending_policy_rollbacks = {} of UInt8 => Tuple(Array(AccessRestrictionEntry)?, String?)
+      @persist_gate = Mutex.new
+      @persist_gate_owner : Fiber? = nil
       @next_restriction_policy_transaction = 0_u64
       @review_fabrics = {} of UInt64 => UInt8
       @review_generations = {} of UInt64 => UInt64
@@ -439,7 +442,7 @@ module Matter
         @managed_restrictions_configured = true
         increment_version
         begin
-          @on_persist.try(&.call)
+          persist_access_control_state
         rescue ex
           @commissioning_arl = previous
           @commissioning_arl_configured = false
@@ -462,7 +465,10 @@ module Matter
       end
 
       # A host-owned policy replaces one fabric's durable ARL. Empty entries
-      # remove that fabric's restrictions.
+      # remove that fabric's restrictions. A StorageError after a backend write
+      # can mean the write committed before reporting failure. If both marker
+      # cleanup and compensation fail, the durable result is indeterminate;
+      # reload state before retrying or making decisions based on that result.
       def configure_access_restrictions(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : Nil
         if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
            entries.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
@@ -480,6 +486,18 @@ module Matter
           previous = @access_restrictions[fabric_index]?
           previous_identity = @access_restriction_fabric_identities[fabric_index]?
           @managed_restrictions_configured = true
+          # Save the previous policy before any provisional policy can reach
+          # storage. A failed write can have committed before reporting error.
+          @pending_policy_rollbacks[fabric_index] = {previous.try(&.dup), previous_identity}
+          begin
+            persist_access_control_state
+          rescue ex
+            @pending_policy_rollbacks.delete(fabric_index) if @restriction_policy_transactions[fabric_index]? == transaction
+            raise ex
+          end
+          unless @restriction_policy_transactions[fabric_index]? == transaction
+            raise Matter::ConfigurationError.new("Access restriction fabric was removed")
+          end
           previous_version = @data_version
           if entries.empty?
             @access_restrictions.delete(fabric_index)
@@ -498,13 +516,42 @@ module Matter
           increment_version
           written_version = @data_version
           begin
-            @on_persist.try(&.call)
+            persist_access_control_state
           rescue ex
             if restriction_policy_revision(fabric_index) == applied_revision
               restore_restriction_review_policy(fabric_index, previous, previous_version,
                 previous_identity, written_version)
+              begin
+                persist_access_control_state
+              rescue error
+                raise Matter::StorageError.new("Could not durably restore failed access restriction update", error)
+              end
+              if @restriction_policy_transactions[fabric_index]? == transaction
+                @pending_policy_rollbacks.delete(fabric_index)
+                persist_access_control_state
+              end
             end
             raise ex
+          end
+          if @restriction_policy_transactions[fabric_index]? == transaction
+            @pending_policy_rollbacks.delete(fabric_index)
+            begin
+              persist_access_control_state
+            rescue ex
+              if restriction_policy_revision(fabric_index) == applied_revision
+                restore_restriction_review_policy(fabric_index, previous, previous_version,
+                  previous_identity, written_version)
+                @pending_policy_rollbacks[fabric_index] = {previous.try(&.dup), previous_identity}
+                begin
+                  persist_access_control_state
+                rescue error
+                  raise Matter::StorageError.new("Could not durably restore failed access restriction update", error)
+                end
+                @pending_policy_rollbacks.delete(fabric_index)
+                persist_access_control_state
+              end
+              raise ex
+            end
           end
           notify_changed(ATTR_ARL) if @feature_map.managed_device?
         ensure
@@ -608,14 +655,14 @@ module Matter
         increment_version
         @review_requests_in_progress << token
         begin
-          @on_persist.try(&.call)
+          persist_access_control_state
           ensure_current_restriction_review!(fabric_index, token, generation)
           callback.call(request)
           ensure_current_restriction_review!(fabric_index, token, generation)
         rescue ex
           @deferred_restriction_review_decisions.delete(token)
           unless current_restriction_review?(fabric_index, token, generation)
-            @on_persist.try(&.call)
+            persist_access_control_state unless @restriction_policy_transactions.has_key?(fabric_index)
             raise Matter::ConfigurationError.new("Restriction review fabric was removed", ex)
           end
           @pending_restriction_reviews.delete(token)
@@ -625,7 +672,7 @@ module Matter
           forget_restriction_review(token)
           increment_version
           begin
-            @on_persist.try(&.call)
+            persist_access_control_state
           rescue error
             Log.error(exception: error) { "Could not durably cancel failed host restriction review #{token}" }
             raise Matter::StorageError.new("Could not durably cancel failed host restriction review #{token}", error)
@@ -635,7 +682,7 @@ module Matter
         end
         @review_requests_in_progress.delete(token)
         begin
-          @on_persist.try(&.call)
+          persist_access_control_state
         rescue ex
           @deferred_restriction_review_decisions.delete(token)
           raise ex
@@ -648,7 +695,7 @@ module Matter
           return token
         end
         unless current_restriction_review?(fabric_index, token, generation)
-          @on_persist.try(&.call)
+          persist_access_control_state unless @restriction_policy_transactions.has_key?(fabric_index)
           raise Matter::ConfigurationError.new("Restriction review fabric was removed")
         end
         token
@@ -714,13 +761,16 @@ module Matter
         @review_delivery_inflight.add(token)
         begin
           begin
-            @on_persist.try(&.call)
+            persist_access_control_state
             ensure_current_restriction_review!(fabric_index, token, generation)
             callback.call(fabric_index, update)
             ensure_current_restriction_review!(fabric_index, token, generation)
           rescue ex
             unless current_restriction_review?(fabric_index, token, generation)
-              @on_persist.try(&.call)
+              # A replacement fabric may already be saving a provisional ARL
+              # at this index. Its owner must finish before any other callback
+              # saves the Access Control document.
+              persist_access_control_state unless @restriction_policy_transactions.has_key?(fabric_index)
               raise Matter::ConfigurationError.new("Restriction review fabric was removed", ex)
             end
             @pending_restriction_reviews[token] = request
@@ -735,7 +785,7 @@ module Matter
               @data_version = previous_version
             end
             begin
-              @on_persist.try(&.call)
+              persist_access_control_state
             rescue error
               Log.error(exception: error) { "Could not durably restore failed restriction review #{token}" }
               raise Matter::StorageError.new("Could not durably restore failed restriction review #{token}", error)
@@ -783,9 +833,9 @@ module Matter
           return false unless current_restriction_review?(fabric_index, token, generation)
           @review_completions_in_progress.delete(token)
           begin
-            @on_persist.try(&.call)
+            persist_access_control_state
             unless current_restriction_review?(fabric_index, token, generation)
-              @on_persist.try(&.call)
+              persist_access_control_state unless @restriction_policy_transactions.has_key?(fabric_index)
               return false
             end
           rescue ex
@@ -963,13 +1013,41 @@ module Matter
       end
 
       private def start_restriction_policy_transaction(fabric_index : UInt8) : UInt64?
-        return if @restriction_policy_transactions.has_key?(fabric_index)
+        return if @restriction_policy_transactions.has_key?(fabric_index) ||
+                  @pending_policy_rollbacks.has_key?(fabric_index)
         @next_restriction_policy_transaction = @next_restriction_policy_transaction &+ 1_u64
         @restriction_policy_transactions[fabric_index] = @next_restriction_policy_transaction
       end
 
       private def finish_restriction_policy_transaction(fabric_index : UInt8, transaction : UInt64) : Nil
         @restriction_policy_transactions.delete(fabric_index) if @restriction_policy_transactions[fabric_index]? == transaction
+      end
+
+      # A storage callback may yield after taking a snapshot. Fabric removal
+      # must wait for that write to finish before the index can be reused.
+      # The callback may remove a fabric inline, so entry by its owning fiber
+      # is intentionally reentrant.
+      private def with_persist_gate(&)
+        if @persist_gate_owner == Fiber.current
+          yield
+        else
+          @persist_gate.synchronize do
+            @persist_gate_owner = Fiber.current
+            begin
+              yield
+            ensure
+              @persist_gate_owner = nil
+            end
+          end
+        end
+      end
+
+      private def persist_access_control_state : Nil
+        with_persist_gate { @on_persist.try(&.call) }
+      end
+
+      def with_persistence_guard(&)
+        with_persist_gate { yield }
       end
 
       private def restriction_fabric_generation(fabric_index : UInt8) : UInt64
@@ -1303,6 +1381,18 @@ module Matter
         end
       end
 
+      struct PersistedPolicyRollback
+        include Storage::Record
+
+        getter fabric_index : UInt8
+        getter entries : Array(PersistedRestrictionEntry)
+        getter fabric_identity : String?
+
+        def initialize(@fabric_index : UInt8, @entries : Array(PersistedRestrictionEntry),
+                       @fabric_identity : String? = nil)
+        end
+      end
+
       struct PersistedRestrictionReview
         include Storage::Record
 
@@ -1344,6 +1434,7 @@ module Matter
         getter extension : Array(PersistedExtensionEntry)
         getter access_restrictions : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry
         getter access_restriction_fabric_identities : Array(PersistedRestrictionFabricIdentity) = [] of PersistedRestrictionFabricIdentity
+        getter pending_policy_rollbacks : Array(PersistedPolicyRollback) = [] of PersistedPolicyRollback
         getter commissioning_arl : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry
         getter? commissioning_arl_configured : Bool = false
         getter pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview
@@ -1358,6 +1449,7 @@ module Matter
           @extension : Array(PersistedExtensionEntry),
           @access_restrictions : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry,
           @access_restriction_fabric_identities : Array(PersistedRestrictionFabricIdentity) = [] of PersistedRestrictionFabricIdentity,
+          @pending_policy_rollbacks : Array(PersistedPolicyRollback) = [] of PersistedPolicyRollback,
           @commissioning_arl : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry,
           @commissioning_arl_configured : Bool = false,
           @pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview,
@@ -1391,6 +1483,11 @@ module Matter
           end,
           access_restriction_fabric_identities: @access_restriction_fabric_identities.map do |fabric_index, identity|
             PersistedRestrictionFabricIdentity.new(fabric_index, identity)
+          end,
+          pending_policy_rollbacks: @pending_policy_rollbacks.map do |fabric_index, rollback|
+            previous, identity = rollback
+            PersistedPolicyRollback.new(fabric_index,
+              (previous || [] of AccessRestrictionEntry).map { |entry| persisted_restriction_entry(entry) }, identity)
           end,
           commissioning_arl: @commissioning_arl.map do |entry|
             persisted_restriction_entry(
@@ -1449,6 +1546,35 @@ module Matter
             raise Matter::AccessControlRestoreError.new("Invalid access restriction fabric identity")
           end
           restriction_identities[stored.fabric_index] = stored.fabric_identity
+        end
+        policy_rollbacks = {} of UInt8 => Tuple(Array(AccessRestrictionEntry)?, String?)
+        state.pending_policy_rollbacks.each do |stored|
+          if stored.fabric_index == 0 || stored.fabric_index > MAX_VALID_FABRIC_INDEX ||
+             policy_rollbacks.has_key?(stored.fabric_index) ||
+             stored.fabric_identity.try(&.empty?)
+            raise Matter::AccessControlRestoreError.new("Invalid pending policy rollback")
+          end
+          entries = stored.entries.map do |persisted|
+            entry = restored_restriction_entry(persisted)
+            if persisted.fabric_index || invalid_fabric_access_restriction_entry?(entry, stored.fabric_index)
+              raise Matter::AccessControlRestoreError.new("Invalid pending policy rollback entry")
+            end
+            entry
+          end
+          policy_rollbacks[stored.fabric_index] = {entries.empty? ? nil : entries, stored.fabric_identity}
+        end
+        policy_rollbacks.each do |fabric_index, rollback|
+          previous, identity = rollback
+          if previous
+            restrictions[fabric_index] = previous
+          else
+            restrictions.delete(fabric_index)
+          end
+          if identity
+            restriction_identities[fabric_index] = identity
+          else
+            restriction_identities.delete(fabric_index)
+          end
         end
         commissioning_arl = state.commissioning_arl.map do |stored|
           entry = restored_restriction_entry(stored)
@@ -1514,13 +1640,14 @@ module Matter
            request_tokens.any? { |token| outbox.has_key?(token) }
           raise Matter::AccessControlRestoreError.new("Invalid unfinished restriction review completion")
         end
-        if (!request_tokens.empty? || !outbox.empty?) && !@on_persist
+        if (!request_tokens.empty? || !outbox.empty? || !policy_rollbacks.empty?) && !@on_persist
           raise Matter::AccessControlRestoreError.new("Restriction review recovery needs durable storage")
         end
         @restriction_review_timers.each_value(&.close)
         @restriction_review_timers.clear
         @access_restrictions = restrictions
         @restriction_policy_revisions.clear
+        @pending_policy_rollbacks.clear
         @access_restriction_fabric_identities = restriction_identities
         @commissioning_arl = commissioning_arl
         @commissioning_arl_configured = state.commissioning_arl_configured?
@@ -1551,6 +1678,7 @@ module Matter
                                            !restrictions.empty? || state.commissioning_arl_configured? ||
                                            !pending.empty? || !outbox.empty? || state.next_restriction_review_token > 0_u64
         @data_version = state.data_version
+        increment_version unless policy_rollbacks.empty?
 
         @acl = state.acl.compact_map do |entry|
           idx = entry.fabric_index
@@ -1573,7 +1701,7 @@ module Matter
         end
 
         @extension = state.extension.map { |entry| ExtensionEntry.new(entry.data, entry.fabric_index) }
-        @on_persist.try(&.call) unless request_tokens.empty?
+        persist_access_control_state unless request_tokens.empty? && policy_rollbacks.empty?
         resume_restriction_reviews
       rescue ex : Matter::AccessControlRestoreError
         Log.error(exception: ex) { "AccessControl restore failed; refusing startup" }
@@ -1683,22 +1811,25 @@ module Matter
 
       # Helper: Remove all ACL entries for a fabric
       def remove_fabric_acl(fabric_index : UInt8) : Nil
-        @restriction_fabric_generations[fabric_index] = restriction_fabric_generation(fabric_index) &+ 1_u64
-        # The old fabric's callback may still be paused. A replacement using
-        # this local index needs a fresh transaction that the old ensure block
-        # cannot release.
-        @restriction_policy_transactions.delete(fabric_index)
-        @review_fabrics.select { |_token, index| index == fabric_index }.keys.each do |token|
-          cancel_restriction_review(token)
+        with_persist_gate do
+          @restriction_fabric_generations[fabric_index] = restriction_fabric_generation(fabric_index) &+ 1_u64
+          # The old fabric's callback may still be paused. A replacement using
+          # this local index needs a fresh transaction that the old ensure block
+          # cannot release.
+          @restriction_policy_transactions.delete(fabric_index)
+          @pending_policy_rollbacks.delete(fabric_index)
+          @review_fabrics.select { |_token, index| index == fabric_index }.keys.each do |token|
+            cancel_restriction_review(token)
+          end
+          @acl.reject! { |entry| entry.fabric_index == fabric_index }
+          @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
+          @access_restrictions.delete(fabric_index)
+          @access_restriction_fabric_identities.delete(fabric_index)
+          bump_restriction_policy_revision(fabric_index)
+          increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
+          increment_version_and_notify(ATTR_ACL)
+          notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?
         end
-        @acl.reject! { |entry| entry.fabric_index == fabric_index }
-        @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
-        @access_restrictions.delete(fabric_index)
-        @access_restriction_fabric_identities.delete(fabric_index)
-        bump_restriction_policy_revision(fabric_index)
-        increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
-        increment_version_and_notify(ATTR_ACL)
-        notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?
       end
 
       # Replaces the accessing fabric's ACL entries (all entries outside a fabric).

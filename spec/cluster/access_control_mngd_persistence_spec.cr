@@ -545,6 +545,126 @@ describe "Access Control managed restriction persistence" do
     restored.arl(2_u8).first.restrictions.should eq(replacement.restrictions)
   end
 
+  it "durably compensates a policy write that reports failure after saving" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    writes = 0
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      writes += 1
+      raise Matter::StorageError.new("write failed after saving") if acl.arl(1_u8).first.restrictions != stored_entry.restrictions
+      nil
+    end
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+
+    expect_raises(Matter::StorageError, /write failed after saving/) do
+      acl.configure_access_restrictions(1_u8, [replacement])
+    end
+    writes.should eq(4)
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    restored = stored_cluster
+    restored.restore_state(saved)
+    restored.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+  end
+
+  it "recovers the previous policy when both the policy write and compensation fail" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    writes = 0
+    acl.on_persist = -> do
+      writes += 1
+      if acl.arl(1_u8).first.restrictions != stored_entry.restrictions
+        saved = acl.save_state.as(Matter::Storage::Document)
+        raise Matter::StorageError.new("policy write failed")
+      end
+      raise Matter::StorageError.new("compensation failed") if writes > 1
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+
+    expect_raises(Matter::StorageError) do
+      acl.configure_access_restrictions(1_u8, [replacement])
+    end
+    writes.should be >= 2
+    recovered = saved
+    provisional_version = StoredAcl::PersistedState.from_document(recovered).data_version
+    restored = stored_cluster
+    restored.on_persist = -> do
+      saved = restored.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    restored.restore_state(recovered)
+    restored.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    restored.data_version.should eq(provisional_version &+ 1_u32)
+    StoredAcl::PersistedState.from_document(saved).data_version.should eq(restored.data_version)
+    restarted = stored_cluster
+    restarted.restore_state(saved)
+    restarted.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+  end
+
+  it "restores the live policy when rollback marker cleanup fails" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    writes = 0
+    acl.on_persist = -> do
+      writes += 1
+      raise Matter::StorageError.new("marker cleanup failed") if writes == 3
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+
+    expect_raises(Matter::StorageError, /marker cleanup failed/) do
+      acl.configure_access_restrictions(1_u8, [replacement])
+    end
+    writes.should eq(5)
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    restored = stored_cluster
+    restored.restore_state(saved)
+    restored.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+  end
+
+  it "exposes an indeterminate durable result when marker cleanup commits before failing" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    writes = 0
+    acl.on_persist = -> do
+      writes += 1
+      if writes == 4
+        raise Matter::StorageError.new("compensation did not commit")
+      end
+      saved = acl.save_state.as(Matter::Storage::Document)
+      raise Matter::StorageError.new("marker cleanup committed before failure") if writes == 3
+      nil
+    end
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+
+    expect_raises(Matter::StorageError, /Could not durably restore/) do
+      acl.configure_access_restrictions(1_u8, [replacement])
+    end
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    restored = stored_cluster
+    restored.restore_state(saved)
+    restored.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+  end
+
   it "blocks restart if compensation cannot save after a host callback failure" do
     acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
     acl.configure_access_restrictions(1_u8, [stored_entry])

@@ -82,21 +82,23 @@ module Matter
 
       # Writes the cluster's state now. Returns false when it has none.
       def save_cluster(cluster : Cluster::Base) : Bool
-        document = cluster.save_state
-        return false unless document
+        cluster.with_persistence_guard do
+          document = cluster.save_state
+          return false unless document
 
-        @dirty_clusters.delete(cluster)
-        if cluster.persist_restore_sentinel?
-          sentinel_key = restore_sentinel_key(cluster)
-          unless @backend.read(DEVICE, sentinel_key)
-            # Write the independent marker first: a failed cluster write then
-            # leaves evidence that a missing document must stop restore.
-            @backend.write(DEVICE, sentinel_key, Storage::Document{RESTORE_SENTINEL_KEY => true})
+          @dirty_clusters.delete(cluster)
+          if cluster.persist_restore_sentinel?
+            sentinel_key = restore_sentinel_key(cluster)
+            unless @backend.read(DEVICE, sentinel_key)
+              # Write the independent marker first: a failed cluster write then
+              # leaves evidence that a missing document must stop restore.
+              @backend.write(DEVICE, sentinel_key, Storage::Document{RESTORE_SENTINEL_KEY => true})
+            end
           end
+          @backend.write(CLUSTERS, cluster.persistence_key, document)
+          Log.debug { "Saved state for cluster #{cluster.name} (#{cluster.persistence_key})" }
+          true
         end
-        @backend.write(CLUSTERS, cluster.persistence_key, document)
-        Log.debug { "Saved state for cluster #{cluster.name} (#{cluster.persistence_key})" }
-        true
       rescue ex
         Log.error(exception: ex) { "Failed to save cluster state (cluster=#{cluster.name} key=#{cluster.persistence_key})" }
         false
@@ -105,9 +107,13 @@ module Matter
       # Writes every cluster's state in one transaction; returns how many had state.
       def save_clusters(clusters : Enumerable(Cluster::Base)) : Int32
         saved = 0
-        @backend.transaction do
-          clusters.each { |cluster| saved += 1 if save_cluster(cluster) }
-        end
+        pending = clusters.to_a.sort_by(&.persistence_key)
+        with_cluster_persistence_guards(pending, 0, -> do
+          @backend.transaction do
+            pending.each { |cluster| saved += 1 if save_cluster(cluster) }
+          end
+          nil
+        end)
         Log.info { "Saved state for #{saved} cluster(s)" } if saved > 0
         saved
       end
@@ -296,12 +302,24 @@ module Matter
       private def write_dirty : Nil
         return unless @backend.open?
 
-        pending = @dirty_clusters.to_a
+        pending = @dirty_clusters.to_a.sort_by(&.persistence_key)
         @dirty_clusters.clear
-        @backend.transaction do
-          pending.each { |cluster| save_cluster(cluster) }
-          @fabric_table.flush_pending_writes
-          @protocol_persistence.flush_pending_writes
+        with_cluster_persistence_guards(pending, 0, -> do
+          @backend.transaction do
+            pending.each { |cluster| save_cluster(cluster) }
+            @fabric_table.flush_pending_writes
+            @protocol_persistence.flush_pending_writes
+          end
+          nil
+        end)
+      end
+
+      private def with_cluster_persistence_guards(clusters : Array(Cluster::Base), index : Int32,
+                                                  action : Proc(Nil)) : Nil
+        if cluster = clusters[index]?
+          cluster.with_persistence_guard { with_cluster_persistence_guards(clusters, index + 1, action) }
+        else
+          action.call
         end
       end
     end
