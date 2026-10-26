@@ -1454,6 +1454,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   belonging to other fabrics.
   The provisional AUX and MNGD features remain disabled.
 
+### Access Control managed restriction foundation
+
+- Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
+  host-configured, fabric-specific Access Restriction List for attribute reads.
+  A restriction on one fabric does not affect another fabric or standard global
+  attributes. The policy is transient and ManagedDevice remains unadvertised;
+  writes, commands, events, persistence, and the restriction review flow are
+  still required before enabling the full feature.
+
 ### Ecosystem Information for bridged nodes
 
 - Add the Matter 1.6 Ecosystem Information cluster with read-only, persistent,
