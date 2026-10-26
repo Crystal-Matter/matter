@@ -340,7 +340,7 @@ module Matter
       @next_restriction_review_token = 0_u64
       @review_requests_in_progress = [] of UInt64
       @review_completions_in_progress = [] of UInt64
-      @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate)
+      @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
       @review_delivery_inflight = Set(UInt64).new
       @review_events_emitted = Set(UInt64).new
       @review_delivery_retry_scheduled = Set(UInt64).new
@@ -618,7 +618,7 @@ module Matter
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
-        @reviews_awaiting_delivery[token] = {fabric_index, update}
+        @reviews_awaiting_delivery[token] = {fabric_index, update, !previous_policy_version.nil?}
         deliver_completed_restriction_review(token)
       end
 
@@ -627,7 +627,7 @@ module Matter
         return false if @review_delivery_inflight.includes?(token)
         @review_delivery_inflight.add(token)
         begin
-          fabric_index, update = delivery
+          fabric_index, update, arl_notification_required = delivery
           # The decision and intent marker were durably saved before the host
           # callback. Emit once while the marker remains durable, then clear it.
           # An ambiguous final write can therefore never lose this update.
@@ -650,6 +650,13 @@ module Matter
           @reviews_needing_replay.delete(token)
           @reviews_awaiting_delivery.delete(token)
           @review_events_emitted.delete(token)
+          if arl_notification_required && @feature_map.managed_device?
+            begin
+              notify_changed(ATTR_ARL)
+            rescue ex
+              Log.error(exception: ex) { "Restriction review #{token} ARL observer failed after durable completion" }
+            end
+          end
           true
         ensure
           @review_delivery_inflight.delete(token)
@@ -735,7 +742,6 @@ module Matter
           restore_restriction_review_policy(fabric_index, previous, previous_version) if @pending_restriction_reviews.has_key?(token)
           raise ex
         end
-        notify_changed(ATTR_ARL) if @feature_map.managed_device?
         true
       end
 

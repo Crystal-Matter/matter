@@ -412,4 +412,40 @@ describe "Access Control managed restriction persistence" do
     events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
     acl.complete_restriction_review(1_u8, token).should be_false
   end
+
+  it "notifies ARL subscribers once after a failed final approval save is retried" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice,
+      review_delivery_retry_interval: 5.milliseconds)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    requested = [] of StoredAcl::RestrictionReviewRequest
+    updated = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(acl, requested, updated)
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    changed = [] of UInt32
+    events = [] of UInt32
+    acl.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) { changed << attribute; nil }
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    saves = 0
+    acl.on_persist = -> do
+      saves += 1
+      raise Matter::StorageError.new("final write failed") if saves == 2
+      nil
+    end
+
+    expect_raises(Matter::StorageError) do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+    end
+    changed.should be_empty
+    40.times do
+      break unless changed.empty?
+      sleep 5.milliseconds
+    end
+    saves.should be >= 3
+    acl.arl(1_u8).should be_empty
+    updated.size.should eq(1)
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+    changed.should eq([StoredAcl::ATTR_ARL])
+    acl.complete_restriction_review(1_u8, token).should be_false
+    changed.should eq([StoredAcl::ATTR_ARL])
+  end
 end
