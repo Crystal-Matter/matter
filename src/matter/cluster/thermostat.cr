@@ -29,6 +29,9 @@ module Matter
       MAX_PRESET_HANDLE_LENGTH       =     16
       MAX_PRESET_NAME_LENGTH         =     64
       PRESET_STATE_KEY               = "preset_state"
+      SUGGESTION_STATE_KEY           = "suggestion_state"
+      MIN_SUGGESTION_CAPACITY        =       5_u8
+      MAX_SUGGESTION_AHEAD_SECONDS   = 86_400_u64
       SCHEDULE_STATE_KEY             = "schedule_state"
       MAX_SCHEDULE_TYPES             =          3
       MAX_SCHEDULE_HANDLE_LENGTH     =         16
@@ -193,6 +196,7 @@ module Matter
 
       struct ThermostatSuggestion
         include TLV::Serializable
+        include Storage::Record
 
         @[TLV::Field(tag: 0)]
         getter unique_id : UInt8
@@ -334,6 +338,18 @@ module Matter
 
         def initialize(@presets : Array(Preset), @active_preset_handle : Bytes?,
                        @used_preset_handles : Array(Bytes) = [] of Bytes)
+        end
+      end
+
+      private struct SuggestionState
+        include Storage::Record
+
+        getter suggestions : Array(ThermostatSuggestion)
+        getter next_id : UInt8
+        getter capacity : UInt8 = MIN_SUGGESTION_CAPACITY
+
+        def initialize(@suggestions : Array(ThermostatSuggestion), @next_id : UInt8,
+                       @capacity : UInt8 = MIN_SUGGESTION_CAPACITY)
         end
       end
 
@@ -685,6 +701,11 @@ module Matter
         @presets = [] of Preset
         @used_preset_handles = [] of Bytes
         @active_preset_handle = nil.as(Bytes?)
+        @max_thermostat_suggestions = MIN_SUGGESTION_CAPACITY
+        @thermostat_suggestions = [] of ThermostatSuggestion
+        @next_suggestion_id = 0_u8
+        @current_thermostat_suggestion = nil.as(ThermostatSuggestion?)
+        @last_suggestion_now = nil.as(UInt32?)
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
         @pending_schedule_write = nil.as(PendingScheduleWrite?)
@@ -855,8 +876,10 @@ module Matter
         remember_preset_handles(presets)
         @preset_types = types.dup
         @presets = copy_presets(presets)
+        remove_orphan_suggestions
         @last_schedule_occurrence = nil if presets_changed
         update_active_preset_handle(nil)
+        tick_suggestions(@last_suggestion_now)
         if @feature_map.presets? && preset_wire_ready?
           increment_version_and_notify(ATTR_PRESET_TYPES) if types_changed
           increment_version_and_notify(ATTR_NUMBER_OF_PRESETS) if capacity_changed
@@ -874,6 +897,83 @@ module Matter
 
       def presets : Array(Preset)
         copy_presets(@presets)
+      end
+
+      # Host state only. The TSUGGEST feature and command/attribute wire surface
+      # remain gated until the pinned conformance cases have been exercised.
+      def configure_suggestion_capacity(capacity : UInt8) : Nil
+        raise ArgumentError.new("suggestion capacity must be at least five") if capacity < MIN_SUGGESTION_CAPACITY
+        raise ArgumentError.new("suggestion capacity below live suggestion count") if capacity < @thermostat_suggestions.size
+        @max_thermostat_suggestions = capacity
+        increment_version
+      end
+
+      def thermostat_suggestions : Array(ThermostatSuggestion)
+        copy_suggestions(@thermostat_suggestions)
+      end
+
+      def current_thermostat_suggestion : ThermostatSuggestion?
+        @current_thermostat_suggestion.try { |entry| copy_suggestion(entry) }
+      end
+
+      def add_thermostat_suggestion(request : AddThermostatSuggestionRequest,
+                                    now_epoch : UInt32?) : AddThermostatSuggestionResponse | InteractionModel::Status
+        now = now_epoch || return InteractionModel::Status.invalid_in_state
+        return InteractionModel::Status.not_found unless @presets.any? { |preset| preset.preset_handle == request.preset_handle }
+        effective = request.effective_time || now
+        return InteractionModel::Status.invalid_command if effective.to_u64 > now.to_u64 + MAX_SUGGESTION_AHEAD_SECONDS
+        expiration = effective.to_u64 + request.expiration_in_minutes.to_u64 * 60_u64
+        return InteractionModel::Status.invalid_command if expiration > UInt32::MAX
+        tick_suggestions(now)
+        return InteractionModel::Status.resource_exhausted if @thermostat_suggestions.size >= @max_thermostat_suggestions
+
+        id = @next_suggestion_id
+        256.times do
+          break unless @thermostat_suggestions.any? { |entry| entry.unique_id == id }
+          id = id &+ 1_u8
+        end
+        return InteractionModel::Status.resource_exhausted if @thermostat_suggestions.any? { |entry| entry.unique_id == id }
+        @next_suggestion_id = id &+ 1_u8
+        @thermostat_suggestions << ThermostatSuggestion.new(id, request.preset_handle.dup, effective, expiration.to_u32)
+        increment_version
+        tick_suggestions(now)
+        AddThermostatSuggestionResponse.new(id)
+      end
+
+      def remove_thermostat_suggestion(request : RemoveThermostatSuggestionRequest) : InteractionModel::Status
+        index = @thermostat_suggestions.index { |entry| entry.unique_id == request.unique_id }
+        return InteractionModel::Status.not_found unless index
+        @thermostat_suggestions.delete_at(index)
+        increment_version
+        if now = @last_suggestion_now
+          tick_suggestions(now)
+        elsif @current_thermostat_suggestion.try(&.unique_id) == request.unique_id
+          @current_thermostat_suggestion = nil
+        end
+        InteractionModel::Status.success
+      end
+
+      # Called by a host time service. UTC is deliberately explicit; the wire
+      # feature cannot rely on an unverified local wall clock.
+      def tick_suggestions(now_epoch : UInt32?) : Int32
+        now = now_epoch || return 0
+        @last_suggestion_now = now
+        removed = @thermostat_suggestions.count { |entry| entry.expiration_time <= now }
+        if removed > 0
+          @thermostat_suggestions.reject! { |entry| entry.expiration_time <= now }
+          increment_version
+        end
+        selected = @thermostat_suggestions
+          .select { |entry| entry.effective_time <= now && entry.expiration_time > now }
+          .min_by? { |entry| {entry.effective_time, entry.unique_id} }
+        if @current_thermostat_suggestion.try(&.unique_id) != selected.try(&.unique_id)
+          @current_thermostat_suggestion = selected.try { |entry| copy_suggestion(entry) }
+          increment_version
+        end
+        if selected && @active_preset_handle != selected.preset_handle
+          activate_preset(SetActivePresetRequest.new(selected.preset_handle))
+        end
+        removed
       end
 
       # Host-owned schedule configuration. The MSCH wire feature remains gated
@@ -1244,6 +1344,7 @@ module Matter
           unless @presets == values
             remember_preset_handles(values)
             @presets = copy_presets(values)
+            remove_orphan_suggestions
             @last_schedule_occurrence = nil
             increment_version_and_notify(ATTR_PRESETS)
           end
@@ -1410,6 +1511,7 @@ module Matter
         unless @presets == presets
           remember_preset_handles(presets)
           @presets = copy_presets(presets)
+          remove_orphan_suggestions
           @last_schedule_occurrence = nil
           increment_version_and_notify(ATTR_PRESETS)
         end
@@ -1877,6 +1979,30 @@ module Matter
         end
       end
 
+      private def copy_suggestion(entry : ThermostatSuggestion) : ThermostatSuggestion
+        ThermostatSuggestion.new(entry.unique_id, entry.preset_handle.dup,
+          entry.effective_time, entry.expiration_time)
+      end
+
+      private def copy_suggestions(values : Array(ThermostatSuggestion)) : Array(ThermostatSuggestion)
+        values.map { |entry| copy_suggestion(entry) }
+      end
+
+      private def remove_orphan_suggestions : Nil
+        original_size = @thermostat_suggestions.size
+        @thermostat_suggestions.reject! do |entry|
+          @presets.none? { |preset| preset.preset_handle == entry.preset_handle }
+        end
+        if @thermostat_suggestions.size != original_size
+          increment_version
+          if now = @last_suggestion_now
+            tick_suggestions(now)
+          elsif current = @current_thermostat_suggestion
+            @current_thermostat_suggestion = nil unless @thermostat_suggestions.any? { |entry| entry.unique_id == current.unique_id }
+          end
+        end
+      end
+
       private def copy_schedules(values : Array(Schedule)) : Array(Schedule)
         values.map do |entry|
           transitions = entry.transitions.map do |transition|
@@ -2212,6 +2338,11 @@ module Matter
           document[SCHEDULE_STATE_KEY] = ScheduleState.new(copy_schedules(@schedules),
             @used_schedule_handles.map(&.dup), @active_schedule_handle.try(&.dup)).to_document
         end
+        if !@thermostat_suggestions.empty? || @next_suggestion_id != 0_u8 ||
+           @max_thermostat_suggestions != MIN_SUGGESTION_CAPACITY
+          document[SUGGESTION_STATE_KEY] = SuggestionState.new(copy_suggestions(@thermostat_suggestions),
+            @next_suggestion_id, @max_thermostat_suggestions).to_document
+        end
       end
 
       private def restore_persisted_extension(document : Storage::Document) : Nil
@@ -2261,6 +2392,25 @@ module Matter
           @last_schedule_occurrence = nil
           @active_schedule_handle = state.active_schedule_handle.try(&.dup)
           @pending_schedule_write = nil
+        end
+        if suggestion_raw = document[SUGGESTION_STATE_KEY]?
+          state = SuggestionState.from_document(suggestion_raw.as?(Storage::Document) ||
+                                                raise StorageError.new("invalid thermostat suggestion state"))
+          raise StorageError.new("invalid thermostat suggestion capacity") if state.capacity < MIN_SUGGESTION_CAPACITY
+          raise StorageError.new("too many thermostat suggestions") if state.suggestions.size > state.capacity
+          ids = state.suggestions.map(&.unique_id)
+          raise StorageError.new("duplicate thermostat suggestion ID") if ids.uniq.size != ids.size
+          state.suggestions.each do |entry|
+            unless entry.preset_handle.size <= MAX_PRESET_HANDLE_LENGTH && entry.expiration_time > entry.effective_time
+              raise StorageError.new("invalid thermostat suggestion")
+            end
+          end
+          @thermostat_suggestions = copy_suggestions(state.suggestions)
+          @max_thermostat_suggestions = state.capacity
+          @next_suggestion_id = state.next_id
+          @current_thermostat_suggestion = nil
+          @last_suggestion_now = nil
+          remove_orphan_suggestions
         end
       end
 
