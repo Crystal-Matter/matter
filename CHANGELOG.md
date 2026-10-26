@@ -1456,6 +1456,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Add explicit opt-in host approval and denial for pending restriction reviews.
+  Approval atomically saves the host supplied replacement ARL with review
+  completion; denial retains the current ARL. Hosts may also emit interim
+  instructions without consuming a review token. Failed completion restores
+  the previous in-memory policy. MNGD remains disabled by default.
 - Recheck ACL and ARL on active attribute subscription reports after policy
   changes. Enforce CommissioningARL on PASE reads, writes, commands, and events
   when MNGD is explicitly enabled; require root endpoint for review commands.

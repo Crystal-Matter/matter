@@ -550,6 +550,8 @@ module Matter
 
       # A host may update its ARL independently before completing the review.
       # A completion only reports the correlated outcome; it never edits ARL.
+      # Host code that has made an explicit consent decision can use
+      # approve_restriction_review or deny_restriction_review instead.
       def complete_restriction_review(fabric_index : UInt8, token : UInt64,
                                       instruction : String? = nil,
                                       arl_request_flow_url : String? = nil) : Bool
@@ -562,21 +564,99 @@ module Matter
         callback = @on_restriction_review_updated ||
                    raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
         update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
+        previous_version = @data_version
         @pending_restriction_reviews.delete(token)
+        increment_version
         begin
           callback.call(fabric_index, update)
           emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
           @on_persist.try(&.call)
         rescue ex
           @pending_restriction_reviews[token] = request
+          @data_version = previous_version
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
         @restriction_review_timers.delete(token).try(&.close)
         @pending_restriction_review_deadlines.delete(token)
         @reviews_needing_replay.delete(token)
-        increment_version
         true
+      end
+
+      # A host denial leaves the fabric's restrictions in place. The Matter
+      # update event has no decision field; optional text or URL can explain
+      # the decision to the commissioner.
+      def deny_restriction_review(fabric_index : UInt8, token : UInt64,
+                                  instruction : String? = nil,
+                                  arl_request_flow_url : String? = nil) : Bool
+        complete_restriction_review(fabric_index, token, instruction, arl_request_flow_url)
+      end
+
+      # The host may publish instructions while consent is still pending. This
+      # does not consume the token or change ARL; a later decision or timeout
+      # still sends the final update for the same token.
+      def publish_restriction_review_update(fabric_index : UInt8, token : UInt64,
+                                            instruction : String? = nil,
+                                            arl_request_flow_url : String? = nil) : Bool
+        if instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
+           arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
+          raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
+        end
+        request = @pending_restriction_reviews[token]?
+        return false unless request && request.fabric_index == fabric_index
+        callback = @on_restriction_review_updated ||
+                   raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
+        update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
+        callback.call(fabric_index, update)
+        emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
+        true
+      end
+
+      # Host approval installs exactly the policy the host explicitly supplies
+      # and completes the token in one persisted Access Control document. The
+      # requested ARL snapshot is advisory and is never applied automatically.
+      def approve_restriction_review(fabric_index : UInt8, token : UInt64,
+                                     replacement : Array(AccessRestrictionEntry),
+                                     instruction : String? = nil,
+                                     arl_request_flow_url : String? = nil) : Bool
+        request = @pending_restriction_reviews[token]?
+        return false unless request && request.fabric_index == fabric_index
+        if replacement.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
+          raise Matter::ConfigurationError.new("Invalid approved access restriction configuration")
+        end
+
+        previous = @access_restrictions[fabric_index]?
+        previous_version = @data_version
+        if replacement.empty?
+          @access_restrictions.delete(fabric_index)
+        else
+          @access_restrictions[fabric_index] = replacement.map do |entry|
+            AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+          end
+        end
+        increment_version
+        begin
+          unless complete_restriction_review(fabric_index, token, instruction, arl_request_flow_url)
+            restore_restriction_review_policy(fabric_index, previous, previous_version)
+            return false
+          end
+        rescue ex
+          restore_restriction_review_policy(fabric_index, previous, previous_version)
+          raise ex
+        end
+        notify_changed(ATTR_ARL) if @feature_map.managed_device?
+        true
+      end
+
+      private def restore_restriction_review_policy(fabric_index : UInt8,
+                                                    previous : Array(AccessRestrictionEntry)?,
+                                                    version : UInt32) : Nil
+        if previous
+          @access_restrictions[fabric_index] = previous
+        else
+          @access_restrictions.delete(fabric_index)
+        end
+        @data_version = version
       end
 
       private def schedule_restriction_review_timer(fabric_index : UInt8, token : UInt64,

@@ -49,9 +49,18 @@ internal review lifecycle now accepts a fabric-specific request with a snapshot
 of the requested ARL entries. An empty request list means a generic review.
 The host installs `on_restriction_review_requested` and
 `on_restriction_review_updated` callbacks, then calls
-`request_restriction_review`. The returned token correlates a subsequent
-`complete_restriction_review` call and update payload. A host may adjust its
-ARL independently before completion; the review method never changes policy.
+`request_restriction_review`. The request callback should promptly queue an
+asynchronous consent decision. A request or its token never changes policy.
+While consent is pending, the host may call
+`publish_restriction_review_update` with instructions or a URL without
+consuming the token. `deny_restriction_review` leaves ARL unchanged;
+`approve_restriction_review` installs exactly the complete replacement list
+the host supplies and persists it with the completed review. Both decisions
+are bound to the request's fabric and token. The low-level
+`complete_restriction_review` still reports a correlated update without
+changing ARL, for hosts that manage policy separately. The wire update has no
+approval or denial field, so hosts should explain a denial in the optional
+instruction or URL.
 Pending requests retain their token and deadline across restart. When both
 host callbacks are installed after restore, unexpired requests are replayed
 with the original token, while expired requests produce their fallback update.
@@ -77,7 +86,10 @@ With MNGD explicitly enabled, CommissioningARL restricts PASE attribute reads
 and writes, command invocations, and event reads. CASE sessions continue to use
 their fabric's ARL.
 
-Host consent handling, validation that target clusters are actually installed,
-and independent managed-device interoperability remain future work. Device
+An application-specific consent UI or service and independent managed-device
+interoperability remain future work. The pinned SDK accepts ARL entries by
+allowed endpoint and cluster ID without requiring the target to be installed;
+this implementation follows that rule so policy can precede a dynamic endpoint.
+Device
 configurations should leave MNGD disabled until those paths are implemented
 and tested.
