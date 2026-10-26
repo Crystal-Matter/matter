@@ -584,6 +584,18 @@ module Matter
         false
       end
 
+      # Whether this cluster has host-managed state that requires an
+      # independent marker when its document is persisted.
+      def persist_restore_sentinel? : Bool
+        false
+      end
+
+      # Whether an advertised feature requires a saved document once a fabric
+      # exists, even before any host-managed state was configured.
+      def require_state_with_fabrics? : Bool
+        false
+      end
+
       # ------------------------------------------------------------------------
       # Scenes Management hooks
       # ------------------------------------------------------------------------

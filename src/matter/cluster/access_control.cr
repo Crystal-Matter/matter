@@ -33,6 +33,7 @@ module Matter
       INVALID_DATA_MODEL_ID                   = UInt32::MAX
       REVIEW_EVENT_DEADLINE                   = 1.hour
       DEFAULT_REVIEW_TIMEOUT                  = 59.minutes
+      DEFAULT_REVIEW_DELIVERY_RETRY_INTERVAL  = 5.seconds
       REVIEW_INSTRUCTION_LIMIT                = 512
       REVIEW_URL_LIMIT                        = 256
       MANAGED_PERSISTED_KEYS                  = {"access_restrictions", "commissioning_arl",
@@ -331,6 +332,7 @@ module Matter
       @access_restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
       @commissioning_arl = [] of CommissioningAccessRestrictionEntry
       @commissioning_arl_configured = false
+      @managed_restrictions_configured = false
       @pending_restriction_reviews = {} of UInt64 => RestrictionReviewRequest
       @pending_restriction_review_deadlines = {} of UInt64 => Time
       @reviews_needing_replay = [] of UInt64
@@ -338,6 +340,10 @@ module Matter
       @next_restriction_review_token = 0_u64
       @review_requests_in_progress = [] of UInt64
       @review_completions_in_progress = [] of UInt64
+      @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate)
+      @review_delivery_inflight = Set(UInt64).new
+      @review_events_emitted = Set(UInt64).new
+      @review_delivery_retry_scheduled = Set(UInt64).new
       @on_restriction_review_requested : Proc(RestrictionReviewRequest, Nil)? = nil
       @on_restriction_review_updated : Proc(UInt8, FabricRestrictionReviewUpdate, Nil)? = nil
       property on_persist : Proc(Nil)? = nil
@@ -367,9 +373,13 @@ module Matter
       end
 
       def initialize(endpoint_id : DataType::EndpointNumber, @feature_map : Feature = Feature::Extension,
-                     @review_timeout : Time::Span = DEFAULT_REVIEW_TIMEOUT)
+                     @review_timeout : Time::Span = DEFAULT_REVIEW_TIMEOUT,
+                     @review_delivery_retry_interval : Time::Span = DEFAULT_REVIEW_DELIVERY_RETRY_INTERVAL)
         unless @review_timeout > 0.seconds && @review_timeout <= REVIEW_EVENT_DEADLINE
           raise Matter::ConfigurationError.new("Restriction review timeout must be within one hour")
+        end
+        unless @review_delivery_retry_interval > 0.seconds
+          raise Matter::ConfigurationError.new("Restriction review retry interval must be positive")
         end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
@@ -413,6 +423,7 @@ module Matter
           CommissioningAccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
         end
         @commissioning_arl_configured = true
+        @managed_restrictions_configured = true
         increment_version
         begin
           @on_persist.try(&.call)
@@ -444,6 +455,7 @@ module Matter
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
         previous = @access_restrictions[fabric_index]?
+        @managed_restrictions_configured = true
         previous_version = @data_version
         if entries.empty?
           @access_restrictions.delete(fabric_index)
@@ -526,6 +538,7 @@ module Matter
           AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
         end)
         @pending_restriction_reviews[token] = request
+        @managed_restrictions_configured = true
         deadline = Time.utc + @review_timeout
         @pending_restriction_review_deadlines[token] = deadline
         schedule_restriction_review_timer(fabric_index, token, @review_timeout)
@@ -568,6 +581,10 @@ module Matter
                                             instruction : String?, arl_request_flow_url : String?,
                                             previous_policy : Array(AccessRestrictionEntry)? = nil,
                                             previous_policy_version : UInt32? = nil) : Bool
+        if delivery = @reviews_awaiting_delivery[token]?
+          return false unless delivery[0] == fabric_index
+          return deliver_completed_restriction_review(token)
+        end
         if instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
            arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
           raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
@@ -601,21 +618,59 @@ module Matter
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
-        @review_completions_in_progress.delete(token)
-        # A failed final write may have reached the backend. The previous
-        # durable document retains the intent marker and refuses restart.
-        @on_persist.try(&.call)
-        @restriction_review_timers.delete(token).try(&.close)
-        @pending_restriction_review_deadlines.delete(token)
-        @reviews_needing_replay.delete(token)
-        if @feature_map.managed_device?
-          begin
-            emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index)
-          rescue ex
-            Log.error(exception: ex) { "Restriction review #{token} event observer failed after durable completion" }
+        @reviews_awaiting_delivery[token] = {fabric_index, update}
+        deliver_completed_restriction_review(token)
+      end
+
+      private def deliver_completed_restriction_review(token : UInt64) : Bool
+        delivery = @reviews_awaiting_delivery[token]? || return false
+        return false if @review_delivery_inflight.includes?(token)
+        @review_delivery_inflight.add(token)
+        begin
+          fabric_index, update = delivery
+          # The decision and intent marker were durably saved before the host
+          # callback. Emit once while the marker remains durable, then clear it.
+          # An ambiguous final write can therefore never lose this update.
+          if @feature_map.managed_device? && @review_events_emitted.add?(token)
+            begin
+              emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index)
+            rescue ex
+              Log.error(exception: ex) { "Restriction review #{token} event observer failed after durable completion" }
+            end
           end
+          @review_completions_in_progress.delete(token)
+          begin
+            @on_persist.try(&.call)
+          rescue ex
+            schedule_restriction_review_delivery_retry(token, fabric_index)
+            raise ex
+          end
+          @restriction_review_timers.delete(token).try(&.close)
+          @pending_restriction_review_deadlines.delete(token)
+          @reviews_needing_replay.delete(token)
+          @reviews_awaiting_delivery.delete(token)
+          @review_events_emitted.delete(token)
+          true
+        ensure
+          @review_delivery_inflight.delete(token)
         end
-        true
+      end
+
+      private def schedule_restriction_review_delivery_retry(token : UInt64, fabric_index : UInt8) : Nil
+        return unless @review_delivery_retry_scheduled.add?(token)
+        spawn do
+          loop do
+            sleep @review_delivery_retry_interval
+            break unless @reviews_awaiting_delivery.has_key?(token)
+            begin
+              break if complete_restriction_review(fabric_index, token)
+            rescue ex
+              Log.warn(exception: ex) { "Restriction review #{token} delivery retry failed" }
+            end
+          end
+        ensure
+          @review_delivery_retry_scheduled.delete(token)
+        end
       end
 
       # A host denial leaves the fabric's restrictions in place. The Matter
@@ -1054,6 +1109,9 @@ module Matter
         @pending_restriction_review_deadlines = deadlines
         @reviews_needing_replay = pending.keys
         @next_restriction_review_token = {state.next_restriction_review_token, pending.keys.max? || 0_u64}.max
+        @managed_restrictions_configured = @feature_map.managed_device? ||
+                                           !restrictions.empty? || state.commissioning_arl_configured? ||
+                                           !pending.empty? || state.next_restriction_review_token > 0_u64
         @data_version = state.data_version
 
         @acl = state.acl.compact_map do |entry|
@@ -1088,6 +1146,14 @@ module Matter
 
       def fail_closed_restore? : Bool
         true
+      end
+
+      def persist_restore_sentinel? : Bool
+        @feature_map.managed_device? || @managed_restrictions_configured
+      end
+
+      def require_state_with_fabrics? : Bool
+        @feature_map.managed_device?
       end
 
       private def restored_restriction_entry(stored : PersistedRestrictionEntry) : AccessRestrictionEntry

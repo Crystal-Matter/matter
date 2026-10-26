@@ -34,10 +34,12 @@ module Matter
       DEVICE   = Storage::Collections::DEVICE
       APP      = Storage::Collections::APP
 
-      IDENTITY_ID       = "identity"
-      HOSTNAME_KEY      = "commissioning_hostname"
-      SERIAL_NUMBER_KEY = "serial_number"
-      UNIQUE_ID_KEY     = "unique_id"
+      IDENTITY_ID             = "identity"
+      HOSTNAME_KEY            = "commissioning_hostname"
+      SERIAL_NUMBER_KEY       = "serial_number"
+      UNIQUE_ID_KEY           = "unique_id"
+      RESTORE_SENTINEL_PREFIX = "critical_cluster_"
+      RESTORE_SENTINEL_KEY    = "required"
 
       # Generated hostnames are 16 uppercase hex digits followed by this suffix;
       # `update_hostname` may store any other `.local` name.
@@ -84,6 +86,14 @@ module Matter
         return false unless document
 
         @dirty_clusters.delete(cluster)
+        if cluster.persist_restore_sentinel?
+          sentinel_key = restore_sentinel_key(cluster)
+          unless @backend.read(DEVICE, sentinel_key)
+            # Write the independent marker first: a failed cluster write then
+            # leaves evidence that a missing document must stop restore.
+            @backend.write(DEVICE, sentinel_key, Storage::Document{RESTORE_SENTINEL_KEY => true})
+          end
+        end
         @backend.write(CLUSTERS, cluster.persistence_key, document)
         Log.debug { "Saved state for cluster #{cluster.name} (#{cluster.persistence_key})" }
         true
@@ -130,8 +140,10 @@ module Matter
       private def restore_cluster(cluster : Cluster::Base) : Bool
         document = @backend.read(CLUSTERS, cluster.persistence_key)
         unless document
-          if cluster.fail_closed_restore? && !@fabric_table.empty?
-            raise AccessControlRestoreError.new("Missing critical cluster state #{cluster.persistence_key} with existing fabrics")
+          if cluster.fail_closed_restore? &&
+             (@backend.read(DEVICE, restore_sentinel_key(cluster)) ||
+             (!@fabric_table.empty? && cluster.require_state_with_fabrics?))
+            raise AccessControlRestoreError.new("Missing managed cluster state #{cluster.persistence_key}")
           end
           return false
         end
@@ -148,6 +160,10 @@ module Matter
           raise AccessControlRestoreError.new("Could not read critical cluster state #{cluster.persistence_key}", ex)
         end
         false
+      end
+
+      private def restore_sentinel_key(cluster : Cluster::Base) : String
+        "#{RESTORE_SENTINEL_PREFIX}#{cluster.persistence_key}"
       end
 
       # Marks *cluster* as holding unsaved state; the debounced writer picks it

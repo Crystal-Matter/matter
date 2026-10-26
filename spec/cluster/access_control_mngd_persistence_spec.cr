@@ -361,4 +361,55 @@ describe "Access Control managed restriction persistence" do
     restored.arl(1_u8).should be_empty
     restored.deny_restriction_review(1_u8, token).should be_false
   end
+
+  it "retries final persistence and event delivery without repeating host consent" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    requested = [] of StoredAcl::RestrictionReviewRequest
+    updated = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(acl, requested, updated)
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    events = [] of UInt32
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    saves = 0
+    acl.on_persist = -> do
+      saves += 1
+      raise Matter::StorageError.new("final write failed") if saves == 2
+      nil
+    end
+    expect_raises(Matter::StorageError) do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+    end
+    updated.size.should eq(1)
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+    acl.complete_restriction_review(1_u8, token).should be_true
+    updated.size.should eq(1)
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+    acl.complete_restriction_review(1_u8, token).should be_false
+  end
+
+  it "automatically retries a failed final review write while the device is running" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice,
+      review_delivery_retry_interval: 5.milliseconds)
+    requested = [] of StoredAcl::RestrictionReviewRequest
+    updated = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(acl, requested, updated)
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    events = [] of UInt32
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    saves = 0
+    acl.on_persist = -> do
+      saves += 1
+      raise Matter::StorageError.new("final write failed") if saves == 2
+      nil
+    end
+    expect_raises(Matter::StorageError) { acl.deny_restriction_review(1_u8, token) }
+    40.times do
+      break if saves >= 3
+      sleep 5.milliseconds
+    end
+    saves.should be >= 3
+    updated.size.should eq(1)
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+    acl.complete_restriction_review(1_u8, token).should be_false
+  end
 end
