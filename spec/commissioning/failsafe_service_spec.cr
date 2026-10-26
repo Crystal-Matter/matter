@@ -60,29 +60,48 @@ module Matter::Commissioning
         service.disarm
       end
 
-      it "lets a PASE commissioner take over through an open window" do
+      it "keeps an armed CASE administrator's fail-safe when a PASE commissioner has an open window" do
         service = FailsafeService.new(RecordingRollbackTarget.new)
+        service.arm(60_u16, 4_u64, 1_u8, pase_session: false)
         service.commissioning_window_open = true
-        service.arm(60_u16, 0_u64, 1_u8, pase_session: false)
 
         outcome = service.arm(60_u16, 5_u64, nil, pase_session: true)
 
-        outcome.ok?.should be_true
+        outcome.error.should eq(ErrorCode::BusyWithOtherAdmin)
         service.armed?.should be_true
-        service.admin_fabric_index.should be_nil
+        service.admin_fabric_index.should eq(1_u8)
+        service.context.try(&.breadcrumb).should eq(4_u64)
         service.disarm
       end
 
-      it "carries a PASE context over to the CASE session of the new fabric" do
+      it "keeps a PASE commissioner's fail-safe from an unrelated CASE fabric" do
         service = FailsafeService.new(RecordingRollbackTarget.new)
-        service.arm(60_u16, 0_u64, nil, pase_session: true)
+        service.arm(60_u16, 4_u64, nil, pase_session: true)
 
-        outcome = service.arm(60_u16, 7_u64, 3_u8, pase_session: false)
+        outcome = service.arm(60_u16, 7_u64, 1_u8, pase_session: false)
 
-        outcome.ok?.should be_true
-        service.context.try(&.associated_fabric_index).should eq(3_u8)
+        outcome.error.should eq(ErrorCode::BusyWithOtherAdmin)
+        service.context.try(&.associated_fabric_index).should be_nil
+        service.context.try(&.breadcrumb).should eq(4_u64)
+        service.admin_fabric_index.should be_nil
+        service.arm(0_u16, 8_u64, 1_u8, pase_session: false).error.should eq(ErrorCode::BusyWithOtherAdmin)
+        service.armed?.should be_true
+        service.context.try(&.breadcrumb).should eq(4_u64)
+
+        service.record_added_fabric(3_u8)
         service.admin_fabric_index.should eq(3_u8)
+        service.arm(60_u16, 9_u64, 3_u8, pase_session: false).ok?.should be_true
+        service.context.try(&.breadcrumb).should eq(9_u64)
         service.disarm
+      end
+
+      it "reserves an open commissioning window for PASE while the fail-safe is unarmed" do
+        service = FailsafeService.new(RecordingRollbackTarget.new)
+        service.commissioning_window_open = true
+
+        service.arm(60_u16, 7_u64, 1_u8, pase_session: false).error.should eq(ErrorCode::BusyWithOtherAdmin)
+        service.armed?.should be_false
+        service.context.should be_nil
       end
 
       it "accepts CommissioningComplete from the fabric AddNOC created" do
@@ -168,8 +187,8 @@ module Matter::Commissioning
       it "restores the snapshots through the target when the failsafe expires" do
         target = RecordingRollbackTarget.new
         service = FailsafeService.new(target)
-        service.commissioning_window_open = true
         service.arm(1_u16, 100_u64, 1_u8, pase_session: false)
+        service.commissioning_window_open = true
         service.record_regulatory_config(1_u8, "AU")
 
         service.expire

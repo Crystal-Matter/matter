@@ -93,22 +93,17 @@ module Matter
           )
         end
 
-        # A context belonging to another administrator blocks this request,
-        # unless a PASE commissioner is taking over through an open window or
-        # this is the PASE→CASE handover of the session that armed it.
+        # Reserve an open commissioning window for a PASE commissioner.
+        # A CASE administrator cannot arm a fresh fail-safe during the window.
+        if @context.nil? && commissioning_window_open? && !pase_session
+          return Outcome.new(ErrorCode::BusyWithOtherAdmin, "Commissioning window reserved for PASE")
+        end
+
+        # An armed fail-safe belongs to its accessing fabric. Once AddNOC
+        # records the new fabric, that fabric may continue the PASE context.
         if context = @context
           unless context.matches_fabric?(session_fabric_index)
-            if context.associated_fabric_index.nil? && session_fabric_index
-              Log.info { "PASE transitioning to CASE with fabric #{session_fabric_index}" }
-            elsif pase_session && commissioning_window_open?
-              Log.warn { "PASE session taking over from fabric #{context.associated_fabric_index}" }
-              expire
-            else
-              return Outcome.new(
-                ErrorCode::BusyWithOtherAdmin,
-                "Another admin is currently commissioning"
-              )
-            end
+            return Outcome.new(ErrorCode::BusyWithOtherAdmin, "Another admin is currently commissioning")
           end
         end
 
@@ -122,13 +117,8 @@ module Matter
         if context = @context
           begin
             context.arm(expiry_length_seconds, @max_cumulative_seconds)
+            context.breadcrumb = breadcrumb
             self.breadcrumb = breadcrumb
-
-            if context.associated_fabric_index.nil? && session_fabric_index
-              context.associated_fabric_index = session_fabric_index
-              @admin_fabric_index = session_fabric_index
-              Log.info { "Updated failsafe fabric to #{session_fabric_index} (PASE→CASE transition)" }
-            end
 
             Log.info { "Re-armed failsafe" }
           rescue ex
@@ -250,6 +240,7 @@ module Matter
       def record_added_fabric(fabric_index : UInt8) : Nil
         if context = @context
           context.record_added_fabric(fabric_index)
+          @admin_fabric_index = fabric_index
           Log.info { "Recorded added fabric #{fabric_index} in failsafe context" }
         else
           Log.warn { "No failsafe context to record added fabric #{fabric_index}" }
@@ -264,8 +255,7 @@ module Matter
         end
       end
 
-      # Expire the failsafe immediately, rolling back (used when a PASE
-      # commissioner takes the device over from another administrator)
+      # Expire the failsafe immediately, rolling back provisional state.
       def expire : Nil
         if context = @context
           context.disarm

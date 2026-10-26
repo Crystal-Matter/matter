@@ -139,9 +139,8 @@ module Matter::Cluster
         cluster.breadcrumb.should eq(100_u64) # Not updated
       end
 
-      it "allows PASE session to take over when commissioning window is open" do
+      it "rejects PASE from another fabric when a CASE fail-safe is armed" do
         cluster = GeneralCommissioning.new
-        cluster.open_commissioning_window
 
         # Arm with fabric 1 (CASE session)
         request1 = GeneralCommissioning::ArmFailSafeRequest.new(
@@ -149,16 +148,31 @@ module Matter::Cluster
           breadcrumb: 100_u64
         )
         cluster.arm_failsafe(request1, 1_u8, false)
+        cluster.open_commissioning_window
 
-        # PASE session takes over
+        # An open window does not transfer an armed fail-safe.
         request2 = GeneralCommissioning::ArmFailSafeRequest.new(
           expiry_length_seconds: 60_u16,
           breadcrumb: 200_u64
         )
         response = cluster.arm_failsafe(request2, nil, true)
 
-        response.error_code.ok?.should be_true
-        cluster.breadcrumb.should eq(200_u64)
+        response.error_code.busy_with_other_admin?.should be_true
+        cluster.breadcrumb.should eq(100_u64)
+      end
+
+      it "rejects initial CASE arming while a commissioning window is open" do
+        cluster = GeneralCommissioning.new
+        cluster.open_commissioning_window
+
+        response = cluster.arm_failsafe(
+          GeneralCommissioning::ArmFailSafeRequest.new(expiry_length_seconds: 60_u16, breadcrumb: 200_u64),
+          1_u8, false
+        )
+
+        response.error_code.busy_with_other_admin?.should be_true
+        cluster.failsafe_armed?.should be_false
+        cluster.breadcrumb.should eq(0_u64)
       end
 
       it "invokes expiry callback when failsafe timer expires" do
@@ -306,7 +320,6 @@ module Matter::Cluster
     describe "commissioning complete callbacks" do
       it "closes commissioning window on successful complete" do
         cluster = GeneralCommissioning.new
-        cluster.open_commissioning_window
 
         # Arm failsafe
         arm_request = GeneralCommissioning::ArmFailSafeRequest.new(
@@ -314,6 +327,7 @@ module Matter::Cluster
           breadcrumb: 100_u64
         )
         cluster.arm_failsafe(arm_request, 1_u8, false)
+        cluster.open_commissioning_window
 
         # Complete commissioning
         response = cluster.commissioning_complete(1_u8, true)

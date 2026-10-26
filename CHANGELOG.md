@@ -1335,6 +1335,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to execute actions; the cluster reports state and handles duration expiry.
   It does not alter other endpoints itself.
 
+### Commissioning fail-safe ownership
+
+- Reserve an open commissioning window for PASE, reject fail-safe re-arming or
+  expiration from another fabric, and allow the newly added fabric to re-arm
+  after AddNOC transfers the fail-safe context.
+
 ### General Commissioning regulatory defaults
 
 - Let wireless devices configure their fixed LocationCapability at construction.

@@ -84,7 +84,8 @@ module Matter
         # This would create fabric index 2 for new commissioner
         # And update the failsafe context fabric index to 2
 
-        # For now, we'll re-arm failsafe with the new fabric to simulate AddNOC updating it
+        general_comm.record_added_fabric(2_u8)
+        # Re-arm after AddNOC transfers the fail-safe to the new fabric.
         rearm_request = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
           expiry_length_seconds: 3_u16,
           breadcrumb: 150_u64
@@ -131,6 +132,7 @@ module Matter
         sleep 0.2.seconds
 
         # Simulate AddNOC updating fabric
+        general_comm.record_added_fabric(2_u8)
         rearm_request = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
           expiry_length_seconds: 3_u16,
           breadcrumb: 250_u64
@@ -462,6 +464,7 @@ module Matter
         # Step 4: Add NOC and transition to CASE (simulated)
         # This would create fabric index 2
         new_fabric_index = 2_u8
+        general_comm.record_added_fabric(new_fabric_index)
         rearm_request = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
           expiry_length_seconds: 5_u16,
           breadcrumb: 150_u64
