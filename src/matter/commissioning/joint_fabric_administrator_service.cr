@@ -118,15 +118,34 @@ module Matter
       end
 
       def on_commissioning_complete : Nil
+        write_pending_completion
+        confirm_pending_completion
+      end
+
+      # Write the post-commit ICAC and AdministratorFabricIndex while the
+      # caller's backend transaction also clears the device NOC undo journal.
+      # A failed transaction leaves this service and cluster provisional so
+      # CommissioningComplete can be retried or the fail-safe can roll back.
+      def write_pending_completion : Nil
         if @icac_pending_commit
           certificate = @cross_signed_icac
           cluster = @administrator_cluster ||
                     raise Matter::ConfigurationError.new("Pending ICAC has no Administrator cluster")
           cluster.with_pending_provisional_commit do
             @persist_icac.try(&.call(certificate))
-            @committed_icac = certificate.try(&.dup)
-            cluster.commit_provisional_administrator_fabric_index
           end
+        end
+      end
+
+      # Called only after the backend transaction has returned successfully.
+      # This phase changes live state but performs no new durable writes.
+      def confirm_pending_completion : Nil
+        if @icac_pending_commit
+          certificate = @cross_signed_icac
+          cluster = @administrator_cluster ||
+                    raise Matter::ConfigurationError.new("Pending ICAC has no Administrator cluster")
+          @committed_icac = certificate.try(&.dup)
+          cluster.commit_provisional_administrator_fabric_index
           @icac_pending_commit = false
           @administrator_cluster = nil
         end

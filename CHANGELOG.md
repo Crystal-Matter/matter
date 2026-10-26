@@ -21,6 +21,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscriptions from older stores advance the counter past their saved cursor,
   so events remain visible after a process restart without reusing numbers.
 
+### Joint Fabric completion durability
+
+- Commit a joining Administrator's cross-signed ICAC, AdministratorFabricIndex,
+  accepted Terms and Conditions, and NOC journal clear in one storage
+  transaction. Failed writes and file flushes leave the live fail-safe
+  provisional for retry or rollback.
+
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and
@@ -237,7 +244,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nullable auto-selection uses TLV FieldState; optional overlay controls and
   real media remain open.
 
+- Add the gated SNP+WMARK profile: allocation carries the mandatory watermark
+  flag, stream records persist it, and Manage-privileged SnapshotStreamModify
+  commits a change after host callback success. The host must render the
+  watermark into image bytes; VDO+WMARK and OSD remain gated.
+
+- Extend the gated snapshot overlay profile to SNP+OSD, including combined
+  SNP+WMARK+OSD streams. Allocation and persisted stream records carry both
+  conditional flags; SnapshotStreamModify commits changes atomically after
+  the host applies the requested overlay state. VDO overlays remain gated.
+
 ### Camera AV Stream Management video
+
+- Add gated VDO+WMARK and VDO+OSD allocation and VideoStreamModify. Conditional
+  flags appear in allocated video streams; changes commit after a host callback
+  succeeds. Live video allocations still reset on restart because the host must
+  reopen encoders and transports. Overlay rendering remains host-owned.
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
   support with typed payloads, encoder/pixel-rate limits, shared audio/video
@@ -398,10 +420,30 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   official chip-tool E2E. Other tariff feature families remain disabled.
 ### Camera AV Settings User Level Management
 
+- Complete the optional DPTZ command profile with relative per-stream viewport
+  moves and support combined digital and mechanical PTZ features. Pixel shifts,
+  percentage crop changes, clipping, and aspect ratio checks are admitted by
+  the existing host viewport callback.
+
+- Add mechanical tilt and zoom feature combinations, including presets for
+  mixed pan/tilt/zoom profiles. Position and movement commands enforce the
+  enabled axes and configured bounds. Hosts apply complete movement targets
+  through `on_mptz_move` and report measured positions for persistence.
+
+- Add opt-in DPTZ-only stream viewport control. A same-endpoint VDO source
+  supplies active streams and sensor bounds; hosts register move-capable stream
+  IDs and apply DPTZSetViewport through a callback. Per-stream viewports track
+  global viewport changes and stream release. DPTZRelativeMove remains gated.
+
+- Add opt-in MPAN+MPRESETS with fixed capacity, durable measured-position
+  presets, and move/save/remove commands. Save and remove require host callbacks;
+  moving uses the existing pan actuator. DPTZ, tilt, and zoom were gated in
+  this initial preset slice.
+
 - Add the Matter 1.6 revision 1 MechanicalPan server with typed pan position
   and commands, validated host limits, an actuator callback, movement reporting,
   durable measured position, a synthetic fixture, and official chip-tool E2E.
-  Digital PTZ, tilt, zoom, and presets remain unavailable.
+  Digital PTZ, tilt, zoom, and presets initially remain unavailable.
   The fixture is an Aggregator and does not implement a complete Camera device.
 
 ### Joint Fabric DCL signer trust

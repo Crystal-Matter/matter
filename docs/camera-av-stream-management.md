@@ -18,8 +18,44 @@ host reports its current video frame rate through `current_frame_rate=`.
 budget, then invokes `on_video_allocate`. Exact duplicate allocations share
 an ID and a reference count. `VideoStreamDeallocate` invokes
 `on_video_deallocate` when the last reference is released. A VDO-only endpoint
-does not need microphone capabilities. VDO does not enable watermark, OSD,
-snapshot, or image-control commands.
+does not need microphone capabilities. Opt-in VDO+WMARK and VDO+OSD profiles
+require their Boolean flags in VideoStreamAllocate and expose the Manage-privileged
+VideoStreamModify command. The host must admit overlay settings during allocation
+and apply changes through `on_video_modify` before the library commits them.
+The host renders overlays into video frames; the library tracks stream settings.
+VDO without those features does not enable overlay, snapshot, or image-control
+commands.
+
+The optional DPTZ profile of Camera AV Settings User Level Management
+binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`
+returns, call `register_dptz_stream(id)` only for streams that support digital
+movement. The VDO cluster's global `Viewport` is used when its aspect ratio
+matches the stream; otherwise pass an existing, stream-compatible crop as the
+second argument. Registration rejects an incompatible crop.
+`DPTZSetViewport` validates the sensor bounds, minimum crop size, and requested
+stream aspect ratio, then calls `on_dptz_set_viewport` for the host to apply the
+crop. It changes the reported viewport only after host success. Global
+`Viewport` writes update DPTZ entries with a matching stream aspect ratio; final video release removes that
+entry. DPTZ entries are persisted, but stale entries are removed when live
+video streams are absent after restart. `DPTZRelativeMove` moves X to the right
+and Y up, and treats ZoomDelta as the percentage by which crop dimensions
+shrink. It clips the result to sensor bounds and the minimum crop size, while
+preserving the stream aspect ratio. The same host callback admits the result.
+DPTZ can be combined with mechanical axes and presets. Physical cropping
+remains host-owned.
+
+Mechanical PTZ profiles can advertise any combination of MPAN, MTILT, and
+MZOOM. `MPTZPosition` contains exactly the fields for those axes, and the set
+and relative-move commands accept one or more supported fields. The host uses
+`on_mptz_move` to start motion and `report_mptz_position` to publish measured
+pan, tilt, and zoom; the library does not infer completed movement from command
+success. `ZoomDelta` adds signed zoom units to the measured position and
+relative targets clamp to configured end stops; a rejected move preserves an
+earlier active movement state.
+MPAN-only hosts retain `on_pan_move` and `report_pan_position`.
+MPRESETS captures the full measured position and recalls it through the same
+actuator. Limit changes must continue to include both the measured position
+and saved presets.
 
 The host must register `on_audio_allocate` and `on_audio_deallocate` when ADO
 is enabled, and the corresponding `on_video_allocate` and
@@ -32,8 +68,10 @@ depend on microphone mute. Soft privacy settings
 are exposed only when the Privacy feature is enabled. Hard privacy is a
 read-only physical state set by the host. Microphone settings, privacy modes,
 stream priorities, and the next audio/video IDs survive restart; active ADO/VDO
-streams are released at restart because host media resources must be reopened
-explicitly. SNP allocations are retained and require host callback rebinding.
+streams, including their overlay state, are released at restart because host media
+resources must be reopened explicitly. The next video stream ID persists, avoiding
+reuse of a pre-restart ID. SNP allocations are retained and require host callback
+rebinding.
 
 The [synthetic audio example](../examples/matter_camera_audio_device.cr) and
 [synthetic video example](../examples/matter_camera_video_device.cr) use
@@ -64,9 +102,19 @@ uses an Aggregator endpoint and a checked-in, decodable 320x240 JPEG for Matter
 wire checks. Its fixed payload is not a live camera source or a claim of media delivery. The
 mandatory nullable `CaptureSnapshot.SnapshotStreamID` field accepts explicit IDs
 and TLV Null auto-selection through TLV FieldState; an omitted field is rejected.
-The optional WMARK/OSD modify command and Camera device type topology remain
-unimplemented. Applications should not present this slice as complete Camera
-conformance.
+Opt-in SNP+WMARK and SNP+OSD profiles add their respective mandatory Boolean
+fields to SnapshotStreamAllocate and allocated stream records. Either feature,
+or both together, exposes the Manage-privileged SnapshotStreamModify command.
+The host's `on_snapshot_allocate` callback must admit the requested overlay
+state; `on_snapshot_modify_overlays` receives the requested watermark and OSD changes
+as nullable Booleans and must apply them before returning success. The library
+commits both stream settings only after that callback succeeds and persists
+them across restart. The host remains responsible for rendering overlays into
+captured image bytes. The two-argument `on_snapshot_modify` remains available for
+WMARK-only hosts. Camera device type topology remains unavailable.
+
+Applications should not present the synthetic snapshot fixture as complete
+Camera conformance.
 
 Applications with a decoded RGB24 camera source can explicitly require
 `matter/media/ffmpeg_jpeg_encoder` and use `Media::DecodedRgbFrame` with

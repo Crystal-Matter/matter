@@ -369,6 +369,11 @@ services:
     environment:
       E2E_DEVICE: matter_camera_pan
 
+  camera-ptz:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_camera_ptz
+
   webrtc-signaling:
     <<: *device
     environment:
