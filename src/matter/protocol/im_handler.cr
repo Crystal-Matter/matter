@@ -93,9 +93,18 @@ module Matter
           cluster_id = path.cluster || return false
           attribute_id = path.attribute || return false
           cluster = clusters[{endpoint_id, cluster_id}]? || return false
-          required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
-          return false unless authorized?(clusters, required, endpoint_id, cluster_id,
-                                session.case_session?, session.fabric_index, peer_subject_ids)
+          # A dynamic profile may have removed this attribute since encoding.
+          # The global attributes are supplied by Base rather than metadata.
+          declared = cluster.attributes.any? { |attr| attr.id.id == attribute_id } ||
+                     [Cluster::Base::GLOBAL_GENERATED_COMMAND_LIST,
+                      Cluster::Base::GLOBAL_ACCEPTED_COMMAND_LIST,
+                      Cluster::Base::GLOBAL_ATTRIBUTE_LIST,
+                      Cluster::Base::GLOBAL_FEATURE_MAP,
+                      Cluster::Base::GLOBAL_CLUSTER_REVISION].includes?(attribute_id)
+          return false unless declared
+          current = read_attributes([path], clusters, session.fabric_index,
+            session.case_session?, peer_subject_ids)
+          return false unless current.any?(&.attribute_data)
         end
 
         (report.event_reports || [] of InteractionModel::EventReportIB).each do |entry|
@@ -105,9 +114,16 @@ module Matter
           cluster_id = path.cluster || return false
           event_id = path.event || return false
           cluster = clusters[{endpoint_id, cluster_id}]? || return false
-          required = cluster.get_event_metadata(event_id).try(&.access) || return false
-          return false unless authorized?(clusters, required, endpoint_id, cluster_id,
-                                session.case_session?, session.fabric_index, peer_subject_ids)
+          return false unless cluster.get_event_metadata(event_id)
+          # Use the ordinary event read path, including any host restrictions,
+          # against an isolated one-record journal. The live journal and its
+          # event-number sequence stay untouched.
+          journal = EventJournal.new
+          journal.record(endpoint_id, cluster_id, event_id, data.priority,
+            data.data || TLV::Any.new(nil), fabric_index: session.fabric_index)
+          current = read_events([path], journal, clusters, fabric_index: session.fabric_index,
+            is_case_session: session.case_session?, peer_subject_ids: peer_subject_ids)
+          return false unless current.any?(&.event_data)
         end
         true
       end
