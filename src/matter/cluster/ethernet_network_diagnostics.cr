@@ -41,7 +41,7 @@ module Matter
       attribute 0x0007, :carrier_detect, Bool, nullable: true, omit_changes: true, optional: true
       attribute 0x0008, :time_since_reset, UInt64, computed: true, omit_changes: true, optional: true
 
-      command 0x00, :reset_counts, requires: [:packet_counts, :error_counts]
+      command 0x00, :reset_counts, requires: [:packet_counts, :error_counts], access: :manage
 
       # Track when counters were last reset
       @reset_time : Time
