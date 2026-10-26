@@ -244,6 +244,7 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
+      @fabric_table.all_fabrics.each { |fabric| ensure_fabric_ipk_key_set(fabric) }
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
         if time_sync.feature_map.trusted_time_client? && time_sync.retain_fabrics(@fabric_table.all_fabrics.map(&.fabric_index))
           raise StorageError.new("Could not persist erased TrustedTimeSource") unless @persistence.save_cluster(time_sync)
@@ -352,7 +353,10 @@ module Matter
         operational_info_factory: ->(fabric : Fabric) { operational_info_for(fabric) }
       )
 
-      @lifecycle.on_fabric_added = ->(fabric : Fabric) { fabric_added(fabric) }
+      @lifecycle.on_fabric_added = ->(fabric : Fabric) do
+        ensure_fabric_ipk_key_set(fabric)
+        fabric_added(fabric)
+      end
       operational_credentials.on_fabric_removal_snapshot = -> do
         snapshot = Storage::Document.new
         fabric_removal_snapshot_clusters.each do |cluster|
@@ -732,6 +736,18 @@ module Matter
     protected def fabric_added(fabric : Fabric) : Nil
     end
 
+    private def ensure_fabric_ipk_key_set(fabric : Fabric) : Nil
+      keys = @node.get_cluster(Cluster::GroupKeyManagement).as(Cluster::GroupKeyManagement)
+      return if keys.get_key_set(Cluster::GroupKeyManagement::IPK_KEY_SET_ID, fabric.fabric_index)
+      epochs = fabric.ipk_epoch_keys
+      entry = Cluster::GroupKeyManagement::GroupKeySetStruct.new(
+        Cluster::GroupKeyManagement::IPK_KEY_SET_ID,
+        epoch_key0: epochs[0], epoch_start_time0: 1_u64,
+        epoch_key1: epochs[1]?, epoch_start_time1: epochs.size > 1 ? 2_u64 : nil,
+        epoch_key2: epochs[2]?, epoch_start_time2: epochs.size > 2 ? 3_u64 : nil)
+      keys.handle_key_set_write(Cluster::GroupKeyManagement::KeySetWriteRequest.new(entry), fabric.fabric_index)
+    end
+
     # Applications that persist fabric state during before_fabric_removed can
     # extend both snapshots. The removal journal restores these documents if
     # deleting the fabric itself fails.
@@ -980,6 +996,21 @@ module Matter
                              else
                                Cluster::GroupKeyManagement.new(endpoint_0)
                              end
+      group_key_management.on_ipk_key_set_write = ->(index : UInt8, key_set : Cluster::GroupKeyManagement::GroupKeySetStruct) do
+        fabric = @fabric_table.get_fabric(index) || raise Matter::ConfigurationError.new("Unknown fabric for IPK rotation")
+        keys = [key_set.epoch_key0, key_set.epoch_key1, key_set.epoch_key2].compact
+        previous = fabric.ipk_epoch_keys.map(&.dup)
+        begin
+          @persistence.backend.transaction do
+            raise Matter::StorageError.new("Could not persist IPK key set") unless @persistence.save_cluster(group_key_management)
+            fabric.ipk_epoch_keys = keys
+            raise Matter::StorageError.new("Could not persist fabric IPK") unless @fabric_table.update_fabric(fabric)
+          end
+        rescue ex
+          fabric.ipk_epoch_keys = previous
+          raise ex
+        end
+      end
       groupcast_features = Cluster::Groupcast::Feature::None
       groupcast_features |= Cluster::Groupcast::Feature::Listener if @groupcast_listener
       groupcast_features |= Cluster::Groupcast::Feature::Sender if @groupcast_sender_enabled

@@ -111,7 +111,8 @@ module Matter
           root_cert: root, root_public_key: root_key.public_key,
           controller_noc: controller_noc, controller_private_key: controller_key.private_key,
           root_private_key: root_key.private_key, admin_vendor_id: vendor_id,
-          intermediate_cert: icac, intermediate_private_key: icac_key.private_key)
+          intermediate_cert: icac, intermediate_private_key: icac_key.private_key,
+          ipk_epoch_keys: temporary.ipk_epoch_keys)
         AnchorBootstrap.new(fabric, icac_key.private_key)
       end
 
@@ -962,7 +963,8 @@ module Matter
           controller_noc: fabric.operational_cert,
           controller_private_key: fabric.operational_private_key,
           admin_vendor_id: fabric.vendor_id,
-          intermediate_cert: fabric.intermediate_cert)
+          intermediate_cert: fabric.intermediate_cert,
+          ipk_epoch_keys: fabric.ipk_epoch_keys)
         owns_client = client.nil?
         client ||= Client.new(unsecured_source_node_id: fabric.node_id, crypto: crypto)
         begin

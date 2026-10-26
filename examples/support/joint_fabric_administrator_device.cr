@@ -710,10 +710,14 @@ module MatterJointFabricAdministrator
         # Older Anchor stores may contain a zero key set without its IPK.
         # Persist the repaired key before this JFA serves the Datastore: a
         # debounced write alone can be lost on a process crash.
-        ipk_needs_repair = datastore.group_key_set_list.find do |entry|
+        stored_ipk = datastore.group_key_set_list.find do |entry|
           entry.group_key_set_id == ANCHOR_IPK_KEY_SET_ID
-        end.try(&.epoch_key0) != fabric.ipk
-        status = datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor", fabric.ipk)
+        end.try(&.epoch_key0)
+        ipk_needs_repair = stored_ipk.nil?
+        attach_anchor_ipk_key_set(datastore, fabric)
+        status = datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor",
+          ipk_needs_repair ? fabric.ipk : nil)
+        sync_anchor_group_key_set(datastore, fabric)
         if ipk_needs_repair
           raise Matter::StorageError.new("Could not repair Anchor Datastore IPK") unless status.success?
           unless persistence.save_cluster(datastore)
@@ -800,7 +804,11 @@ module MatterJointFabricAdministrator
                                 Datastore::AccessMode::Frozen
                               end
       configure_jcm_pase_group_list(datastore)
-      datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Bootstrap Anchor", fabric.ipk)
+      stored_ipk = datastore.group_key_set_list.find(&.group_key_set_id.==(ANCHOR_IPK_KEY_SET_ID)).try(&.epoch_key0)
+      attach_anchor_ipk_key_set(datastore, fabric)
+      datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Bootstrap Anchor",
+        stored_ipk.nil? ? fabric.ipk : nil)
+      sync_anchor_group_key_set(datastore, fabric)
       seed_joint_fabric_groups(datastore)
       seed_anchor_administrator(datastore, fabric, icac)
       administrator.service = Matter::Commissioning::JointFabricAdministratorService.new(
@@ -1038,7 +1046,7 @@ module MatterJointFabricAdministrator
                        end
       if existing && (existing.controller_noc != fabric.operational_cert ||
          existing.controller_private_key != fabric.operational_private_key ||
-         existing.ipk_value != fabric.ipk || existing.intermediate_cert != fabric.intermediate_cert ||
+         existing.ipk_epoch_keys != fabric.ipk_epoch_keys || existing.intermediate_cert != fabric.intermediate_cert ||
          existing.root_private_key != bootstrap_info.try(&.root_private_key) ||
          existing.intermediate_private_key != bootstrap_info.try(&.intermediate_private_key))
         state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
@@ -1056,7 +1064,8 @@ module MatterJointFabricAdministrator
           root_private_key: bootstrap_info.try(&.root_private_key),
           admin_vendor_id: fabric.vendor_id,
           intermediate_cert: fabric.intermediate_cert,
-          intermediate_private_key: bootstrap_info.try(&.intermediate_private_key)
+          intermediate_private_key: bootstrap_info.try(&.intermediate_private_key),
+          ipk_epoch_keys: fabric.ipk_epoch_keys
         ))
         store.save(state)
       end
@@ -1086,6 +1095,70 @@ module MatterJointFabricAdministrator
       return if datastore.admin_list.any?(&.node_id.==(fabric.node_id))
       datastore.add_admin(Datastore::AddAdminRequest.new(
         fabric.node_id, "Crystal Anchor", fabric.vendor_id, icac))
+    end
+
+    private def anchor_ipk_epoch_keys(entry : Datastore::DatastoreGroupKeySetStruct) : Array(Bytes)
+      [entry.epoch_key0, entry.epoch_key1, entry.epoch_key2].compact
+    end
+
+    private def anchor_group_key_set(entry : Datastore::DatastoreGroupKeySetStruct) : Matter::Cluster::GroupKeyManagement::GroupKeySetStruct
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(ANCHOR_IPK_KEY_SET_ID,
+        epoch_key0: entry.epoch_key0, epoch_start_time0: entry.epoch_start_time0,
+        epoch_key1: entry.epoch_key1, epoch_start_time1: entry.epoch_start_time1,
+        epoch_key2: entry.epoch_key2, epoch_start_time2: entry.epoch_start_time2)
+    end
+
+    private def sync_anchor_group_key_set(datastore : Datastore, fabric : Matter::Fabric) : Nil
+      entry = datastore.group_key_set_list.find(&.group_key_set_id.==(ANCHOR_IPK_KEY_SET_ID))
+      return unless entry && entry.epoch_key0
+      group_keys = @node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+      desired = anchor_group_key_set(entry)
+      return if group_keys.get_key_set(ANCHOR_IPK_KEY_SET_ID, fabric.fabric_index) == desired
+      group_keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(desired),
+        fabric.fabric_index, allow_zero_ipk_start_time: true)
+    end
+
+    private def attach_anchor_ipk_key_set(datastore : Datastore, fabric : Matter::Fabric) : Nil
+      if stored = datastore.group_key_set_list.find(&.group_key_set_id.==(ANCHOR_IPK_KEY_SET_ID))
+        keys = anchor_ipk_epoch_keys(stored)
+        unless keys.empty? || fabric.ipk_epoch_keys == keys
+          fabric.ipk_epoch_keys = keys
+          raise Matter::StorageError.new("Could not restore Anchor CASE IPK epochs") unless fabric_table.update_fabric(fabric)
+        end
+      end
+
+      datastore.on_ipk_key_set_updated = ->(cluster : Datastore, entry : Datastore::DatastoreGroupKeySetStruct) do
+        previous = fabric.ipk_epoch_keys.map(&.dup)
+        group_keys = @node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+        previous_group_key_set = group_keys.get_key_set(ANCHOR_IPK_KEY_SET_ID, fabric.fabric_index)
+        previous_group_version = group_keys.data_version
+        begin
+          persistence.backend.transaction do
+            raise Matter::StorageError.new("Could not persist Anchor Datastore IPK") unless persistence.save_cluster(cluster)
+            controller_store = Matter::Controller::StateStore.new(persistence.backend)
+            controller_state = controller_store.load
+            identity = controller_state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
+            identity.ipk_epoch_keys = [entry.epoch_key0, entry.epoch_key1, entry.epoch_key2].compact
+            controller_state.replace_fabric(identity)
+            controller_store.save(controller_state)
+            desired = anchor_group_key_set(entry)
+            group_keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(desired),
+              fabric.fabric_index, allow_zero_ipk_start_time: true, notify_version_change: false)
+          end
+        rescue ex
+          fabric.ipk_epoch_keys = previous
+          group_keys.restore_ipk_key_set_after_failed_write(fabric.fabric_index, previous_group_key_set,
+            previous_group_version)
+          raise ex
+        end
+        begin
+          group_keys.notify_persisted_ipk_key_set_write
+        rescue ex
+          ::Log.for("matter.example.joint_fabric_administrator").error(exception: ex) do
+            "Could not notify subscribers of persisted Anchor IPK update"
+          end
+        end
+      end
     end
 
     private def connect_failsafe_lifecycle : Nil
@@ -1341,7 +1414,8 @@ module MatterJointFabricAdministrator
             controller_noc: fabric.operational_cert,
             controller_private_key: fabric.operational_private_key,
             admin_vendor_id: fabric.vendor_id,
-            intermediate_cert: fabric.intermediate_cert)
+            intermediate_cert: fabric.intermediate_cert,
+            ipk_epoch_keys: fabric.ipk_epoch_keys)
           scanner = Matter::Controller::Scanner.new
           scanner.start
           @new_anchor_scanner = scanner
@@ -1427,7 +1501,8 @@ module MatterJointFabricAdministrator
         controller_noc: old_fabric.operational_cert,
         controller_private_key: old_fabric.operational_private_key,
         admin_vendor_id: old_fabric.vendor_id,
-        intermediate_cert: old_fabric.intermediate_cert)
+        intermediate_cert: old_fabric.intermediate_cert,
+        ipk_epoch_keys: old_fabric.ipk_epoch_keys)
       scanner = Matter::Controller::Scanner.new
       old_client = Matter::Controller::Client.new(unsecured_source_node_id: old_fabric.node_id)
       own_client = Matter::Controller::Client.new(unsecured_source_node_id: bootstrap.fabric.controller_node_id)
@@ -2386,7 +2461,8 @@ module MatterJointFabricAdministrator
         root_private_key: bootstrap.try(&.root_private_key),
         admin_vendor_id: fabric.vendor_id,
         intermediate_cert: fabric.intermediate_cert,
-        intermediate_private_key: bootstrap.try(&.intermediate_private_key)
+        intermediate_private_key: bootstrap.try(&.intermediate_private_key),
+        ipk_epoch_keys: fabric.ipk_epoch_keys
       )
     end
 

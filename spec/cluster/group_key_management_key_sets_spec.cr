@@ -276,6 +276,42 @@ module Matter::Cluster
         response = cluster.handle_key_set_read_all_indices(fabric_index: 1)
         response.group_key_set_i_ds.should eq([0_u16])
       end
+
+      it "accepts a bootstrap zero start time only for internal IPK synchronization" do
+        cluster = build(GroupKeyManagement, 0)
+        ipk = Cluster.create_key_set(id: 0_u16, key0: Cluster.test_key, time0: 0_u64)
+        request = GroupKeyManagement::KeySetWriteRequest.new(ipk)
+        expect_raises(ArgumentError, /cannot be 0/) do
+          cluster.handle_key_set_write(request, 1_u8)
+        end
+        cluster.handle_key_set_write(request, 1_u8, allow_zero_ipk_start_time: true)
+        cluster.get_key_set(0_u16, 1_u8).try(&.epoch_start_time0).should eq(0_u64)
+      end
+
+      it "restores IPK state and data version when durable storage fails" do
+        cluster = build(GroupKeyManagement, 0)
+        before_version = cluster.data_version
+        cluster.on_ipk_key_set_write = ->(_index : UInt8, _key_set : GroupKeyManagement::GroupKeySetStruct) do
+          raise Matter::StorageError.new("injected failure")
+        end
+        request = GroupKeyManagement::KeySetWriteRequest.new(Cluster.create_key_set(id: 0_u16))
+        expect_raises(Matter::StorageError) { cluster.handle_key_set_write(request, 1_u8) }
+        cluster.get_key_set(0_u16, 1_u8).should be_nil
+        cluster.data_version.should eq(before_version)
+      end
+
+      it "restores an enclosing IPK transaction's prior key and data version" do
+        cluster = build(GroupKeyManagement, 0)
+        original = Cluster.create_key_set(id: 0_u16, key0: Cluster.test_key, time0: 1_u64)
+        cluster.handle_key_set_write(GroupKeyManagement::KeySetWriteRequest.new(original), 1_u8)
+        before_version = cluster.data_version
+        replacement = Cluster.create_key_set(id: 0_u16, key0: Bytes.new(16, 0xA6_u8), time0: 2_u64)
+        cluster.handle_key_set_write(GroupKeyManagement::KeySetWriteRequest.new(replacement), 1_u8,
+          notify_version_change: false)
+        cluster.restore_ipk_key_set_after_failed_write(1_u8, original, before_version)
+        cluster.get_key_set(0_u16, 1_u8).should eq(original)
+        cluster.data_version.should eq(before_version)
+      end
     end
 
     describe "KeySetRead command" do

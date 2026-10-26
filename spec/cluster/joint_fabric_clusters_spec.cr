@@ -445,13 +445,68 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.group_key_set_list.map(&.group_key_set_id).should eq([0_u16])
     reserved = cluster.group_key_set_list.first
     cluster.add_key_set(Datastore::AddKeySetRequest.new(reserved)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
-    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(reserved)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(reserved)).success?.should be_true
     cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(0_u16)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     invalid = Datastore::DatastoreGroupKeySetStruct.new(UInt16::MAX,
       Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
       nil, nil, nil, nil, nil, nil)
     cluster.add_key_set(Datastore::AddKeySetRequest.new(invalid)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(UInt16::MAX)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+  end
+
+  it "updates the Anchor IPK key set and stages associated node delivery" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.on_ipk_key_set_updated = ->(_store : Datastore, _entry : Datastore::DatastoreGroupKeySetStruct) { nil }
+    first = Bytes.new(16, 0xA5_u8)
+    second = Bytes.new(16, 0xB6_u8)
+    cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor", first).success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(43_u64, "Device")).success?.should be_true
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    cluster.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(43_u64, 0_u16, committed)]
+    zero_time_update = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      first, 0_u64, second, 2_u64, nil, nil)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(zero_time_update)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    updated = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      first, 1_u64, second, 2_u64, nil, nil)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(updated)).success?.should be_true
+    cluster.group_key_set_list.first.epoch_key1.should eq(second)
+    cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+    cleared = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      nil, nil, nil, nil, nil, nil)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(cleared)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(0_u16)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+  end
+
+  it "does not acknowledge an IPK update without a durable host callback" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    first = Bytes.new(16, 0xA5_u8)
+    cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor", first).success?.should be_true
+    before_version = cluster.data_version
+    updated = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      first, 1_u64, nil, nil, nil, nil)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(updated)).status.should eq(Matter::InteractionModel::StatusCode::Failure)
+    cluster.data_version.should eq(before_version)
+    cluster.group_key_set_list.first.epoch_start_time0.should eq(0_u64)
+  end
+
+  it "restores the IPK and data version when durable rotation fails" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    first = Bytes.new(16, 0xA5_u8)
+    cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor", first).success?.should be_true
+    before_version = cluster.data_version
+    cluster.on_ipk_key_set_updated = ->(_store : Datastore, _entry : Datastore::DatastoreGroupKeySetStruct) do
+      raise Matter::StorageError.new("injected failure")
+    end
+    updated = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      first, 1_u64, nil, nil, nil, nil)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(updated)).status.should eq(Matter::InteractionModel::StatusCode::Failure)
+    cluster.data_version.should eq(before_version)
+    cluster.group_key_set_list.first.epoch_start_time0.should eq(0_u64)
   end
 
   it "allows removing a key set when every node reference is DeletePending" do

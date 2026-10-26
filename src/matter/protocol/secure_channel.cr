@@ -479,13 +479,14 @@ module Matter
         Log.info { "  Initiator session ID: #{sigma1.initiator_session_id}" }
         Log.debug { "  Destination ID: #{sigma1.destination_id.hexstring}" }
 
-        fabric = find_fabric(sigma1)
-        unless fabric
+        match = find_fabric(sigma1)
+        unless match
           Log.error { "No fabric found matching destination_id: #{sigma1.destination_id.hexstring}" }
           Log.error { "Device may not be commissioned or destination_id computation differs" }
           send_status_report(msg, peer, STATUS_REPORT_FAILURE, CASE_NO_SHARED_ROOT)
           return
         end
+        fabric, matched_ipk = match
 
         if sigma1.resumption_id.nil? != sigma1.initiator_resume_mic.nil?
           send_status_report_invalid_param(msg, peer)
@@ -513,7 +514,7 @@ module Matter
           operational_key: fabric.operational_key,
           fabric_id: fabric.fabric_id,
           node_id: fabric.node_id,
-          ipk: fabric.derived_ipk, # Derived with the "GroupKey v1.0" info string
+          ipk: matched_ipk,
           crypto: Crypto::StandardCrypto.new,
           # Sigma1 already pinned the fabric via the destination id; the peer's
           # node certificate has to chain to that fabric's root.
@@ -604,16 +605,14 @@ module Matter
 
       # The fabric whose destination id matches the one the initiator computed
       # as HMAC-SHA256(IPK, initiatorRandom || rootPublicKey || fabricId || nodeId).
-      private def find_fabric(sigma1 : Session::Case::Definitions::Sigma1) : Fabric?
+      private def find_fabric(sigma1 : Session::Case::Definitions::Sigma1) : Tuple(Fabric, Bytes)?
         Log.debug { "Searching #{@fabric_table.size} fabrics for destination_id match" } if @fabric_table.size > 0
 
-        matched = @fabric_table.all_fabrics.find do |fabric|
-          fabric.compute_destination_id(sigma1.initiator_random) == sigma1.destination_id
-        end
-
-        if matched
-          Log.info { "  Matched fabric by destination_id: #{matched.fabric_id.to_s(16)}" }
-          return matched
+        @fabric_table.all_fabrics.each do |fabric|
+          if ipk = fabric.matching_derived_ipk(sigma1.destination_id, sigma1.initiator_random)
+            Log.info { "  Matched fabric by destination_id: #{fabric.fabric_id.to_s(16)}" }
+            return {fabric, ipk}
+          end
         end
 
         fabric = @on_get_fabric.try(&.call)
@@ -621,10 +620,12 @@ module Matter
 
         # The callback bypasses destination id matching; say so rather than
         # silently commissioning against the wrong fabric.
-        if fabric.compute_destination_id(sigma1.initiator_random) != sigma1.destination_id
+        ipk = fabric.matching_derived_ipk(sigma1.destination_id, sigma1.initiator_random)
+        unless ipk
           Log.warn { "Fabric from callback doesn't match destination_id" }
+          return
         end
-        fabric
+        {fabric, ipk}
       end
 
       # Sigma3: verify the initiator's certificate and open the session.

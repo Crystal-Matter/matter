@@ -116,6 +116,24 @@ module Matter
           peer_node_id : UInt64,
           timeout : Time::Span = 10.seconds,
         ) : Session::SecureContext
+          keys = fabric.ipk_epoch_keys
+          preferred = fabric.case_ipk_value
+          candidates = [preferred] + keys.reverse.reject { |key| key == preferred }
+          last_error : NoSharedRoot? = nil
+          candidates.each do |epoch_key|
+            return pair_with_ipk(client, peer, fabric, peer_node_id, timeout, epoch_key)
+          rescue ex : NoSharedRoot
+            last_error = ex
+          end
+          raise(last_error || Matter::ProtocolError.new("CASE: no shared IPK epoch"))
+        end
+
+        private class NoSharedRoot < Matter::ProtocolError
+        end
+
+        private def pair_with_ipk(client : Client, peer : Socket::IPAddress,
+                                  fabric : FabricInfo, peer_node_id : UInt64,
+                                  timeout : Time::Span, epoch_key : Bytes) : Session::SecureContext
           controller_key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
           controller_key.private_bits = fabric.controller_private_key
           controller_key.public_bits = Crypto::MatterCertificate.from_slice(fabric.controller_noc).ec_public_key
@@ -127,7 +145,7 @@ module Matter
             root_public_key: fabric.root_public_key,
             operational_cert: fabric.controller_noc,
             operational_key: controller_key,
-            ipk: fabric.ipk_value,
+            ipk: epoch_key,
             vendor_id: fabric.admin_vendor_id,
             label: "controller",
             intermediate_cert: fabric.intermediate_cert
@@ -171,6 +189,9 @@ module Matter
           end
           if sigma2.message.payload_header.message_type == MSG_STATUS_REPORT
             report = Session::Pase::Definitions::StatusReport.from_bytes(sigma2.message.payload.to_slice)
+            if report.general_status == 1_u16 && report.protocol_status == 1_u16
+              raise NoSharedRoot.new("CASE: status report before Sigma2 (general_status=1 protocol_status=1)")
+            end
             raise Matter::ProtocolError.new(
               "CASE: status report before Sigma2 (general_status=#{report.general_status} protocol_status=#{report.protocol_status})")
           end

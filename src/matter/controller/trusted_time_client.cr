@@ -28,7 +28,8 @@ module Matter
           controller_noc: fabric.operational_cert,
           controller_private_key: fabric.operational_private_key,
           admin_vendor_id: fabric.vendor_id,
-          intermediate_cert: fabric.intermediate_cert)
+          intermediate_cert: fabric.intermediate_cert,
+          ipk_epoch_keys: fabric.ipk_epoch_keys)
         state = State.new(fabric: identity)
         peer = @resolver.resolve(state, identity, node_id, @timeout)
         client = Client.new(unsecured_source_node_id: fabric.node_id)

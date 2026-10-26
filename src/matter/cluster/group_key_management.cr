@@ -108,7 +108,7 @@ module Matter
         end
 
         # Validate that this key set meets all Matter spec requirements
-        def validate! : Nil
+        def validate!(allow_zero_ipk_start_time : Bool = false) : Nil
           # Validation 1: Epoch keys must be exactly 16 bytes if present
           validate_key_length!(epoch_key0, "epoch_key0")
           validate_key_length!(epoch_key1, "epoch_key1")
@@ -130,7 +130,7 @@ module Matter
           end
 
           # Validation 3: Epoch start times cannot be 0 if set
-          validate_nonzero_time!(epoch_start_time0, "epoch_start_time0")
+          validate_nonzero_time!(epoch_start_time0, "epoch_start_time0") unless allow_zero_ipk_start_time && group_key_set_id == IPK_KEY_SET_ID
           validate_nonzero_time!(epoch_start_time1, "epoch_start_time1")
           validate_nonzero_time!(epoch_start_time2, "epoch_start_time2")
 
@@ -373,6 +373,7 @@ module Matter
       # Internal storage (fabric-scoped)
       # Key: fabricIndex, Value: GroupKeySetStruct (with actual keys stored)
       @key_sets : Hash(UInt8, Hash(UInt16, GroupKeySetStruct))
+      property on_ipk_key_set_write : Proc(UInt8, GroupKeySetStruct, Nil)? = nil
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
@@ -494,11 +495,13 @@ module Matter
       # - Enforces max_group_keys_per_fabric limit
       # - Prevents creation of duplicate key set IDs within fabric
       # - Security policy must be TrustFirst
-      def handle_key_set_write(cmd : KeySetWriteRequest, fabric_index : UInt8) : Nil
+      def handle_key_set_write(cmd : KeySetWriteRequest, fabric_index : UInt8,
+                               allow_zero_ipk_start_time : Bool = false,
+                               notify_version_change : Bool = true) : Nil
         key_set = cmd.group_key_set
 
         # Validate the key set structure
-        key_set.validate!
+        key_set.validate!(allow_zero_ipk_start_time: allow_zero_ipk_start_time)
 
         # Ensure fabric key sets storage exists
         @key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new
@@ -513,8 +516,26 @@ module Matter
         end
 
         # Store the key set (create or update)
+        previous = fabric_key_sets[key_set.group_key_set_id]?
+        previous_version = @data_version
         fabric_key_sets[key_set.group_key_set_id] = key_set
-        increment_version
+        if key_set.group_key_set_id == IPK_KEY_SET_ID
+          begin
+            @data_version &+= 1_u32
+            @on_ipk_key_set_write.try(&.call(fabric_index, key_set))
+          rescue ex
+            if old = previous
+              fabric_key_sets[key_set.group_key_set_id] = old
+            else
+              fabric_key_sets.delete(key_set.group_key_set_id)
+            end
+            @data_version = previous_version
+            raise ex
+          end
+          @on_version_changed.try(&.call) if notify_version_change
+        else
+          increment_version
+        end
       end
 
       # KeySetRead command handler
@@ -761,6 +782,24 @@ module Matter
         return unless fabric_key_sets
 
         fabric_key_sets[group_key_set_id]?
+      end
+
+      # Restore only the local IPK view after an enclosing datastore transaction
+      # fails. Its persistent state is restored by the storage transaction.
+      def restore_ipk_key_set_after_failed_write(fabric_index : UInt8,
+                                                 previous : GroupKeySetStruct?,
+                                                 previous_version : UInt32) : Nil
+        sets = @key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new
+        if previous
+          sets[IPK_KEY_SET_ID] = previous
+        else
+          sets.delete(IPK_KEY_SET_ID)
+        end
+        @data_version = previous_version
+      end
+
+      def notify_persisted_ipk_key_set_write : Nil
+        @on_version_changed.try(&.call)
       end
 
       # Check if a group exists for a fabric
