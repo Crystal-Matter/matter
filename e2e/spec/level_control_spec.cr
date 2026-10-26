@@ -21,20 +21,20 @@ module LevelControlE2E
   HUE_MODE                     =    0
   TEMPERATURE_MODE             =    2
   LIFT_POSITION                = 5000
+  COVERING_TRAVEL_WAIT         = 3.2.seconds
   NO_TRANSITION                = "0"
   TIMED_TRANSITION             = "50"
   NO_OPTIONS                   = "0"
   SHORTEST_HUE_DIRECTION       = "0"
-  COLOR_OPTIONS                =    1
-  COLOR_OPTIONS_CLEAR          =    0
-  EXECUTE_IF_OFF               =    1
-  COVERING_MODE                =    1
-  COVERING_OPENING_STATUS      = 0x05
-  COVERING_CLOSING_STATUS      = 0x0A
-  COVERING_REVISION            =    8
-  COVERING_MAINTENANCE         =    4
-  COVERING_CALIBRATION         =    2
-  COVERING_REVERSED            =    1
+  COLOR_OPTIONS                = 1
+  COLOR_OPTIONS_CLEAR          = 0
+  EXECUTE_IF_OFF               = 1
+  COVERING_MODE                = 1
+  COVERING_STOPPED_STATUS      = 0
+  COVERING_REVISION            = 8
+  COVERING_MAINTENANCE         = 4
+  COVERING_CALIBRATION         = 2
+  COVERING_REVERSED            = 1
 end
 
 describe "matter_level_control example" do
@@ -267,16 +267,22 @@ describe "matter_level_control example" do
 
   it "moves the window lift and reads and writes its attributes" do
     endpoint = LevelControlE2E::COVERING_ENDPOINT
-    read_value(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq "null"
+    read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq 0
     read_value(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq "null"
-    expect_success(device.invoke("windowcovering", "down-or-close", endpoint: endpoint))
-    read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq 10_000
-    read_int(device, "windowcovering", "operational-status", "OperationalStatus", endpoint).should eq LevelControlE2E::COVERING_CLOSING_STATUS
-    expect_success(device.invoke("windowcovering", "up-or-open", endpoint: endpoint))
-    read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq 0
-    read_int(device, "windowcovering", "operational-status", "OperationalStatus", endpoint).should eq LevelControlE2E::COVERING_OPENING_STATUS
     expect_success(device.invoke("windowcovering", "go-to-lift-percentage", [LevelControlE2E::LIFT_POSITION.to_s], endpoint: endpoint))
     read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
+    sleep LevelControlE2E::COVERING_TRAVEL_WAIT
+    read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
+    read_int(device, "windowcovering", "operational-status", "OperationalStatus", endpoint).should eq LevelControlE2E::COVERING_STOPPED_STATUS
+
+    expect_success(device.invoke("windowcovering", "down-or-close", endpoint: endpoint))
+    expect_success(device.invoke("windowcovering", "stop-motion", endpoint: endpoint))
+    sleep LevelControlE2E::COVERING_TRAVEL_WAIT
+    read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
+    read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
+    expect_success(device.invoke("windowcovering", "up-or-open", endpoint: endpoint))
+    sleep LevelControlE2E::COVERING_TRAVEL_WAIT
+    read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq 0
     expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_MODE, endpoint))
     read_int(device, "windowcovering", "mode", "Mode", endpoint).should eq LevelControlE2E::COVERING_MODE
   end

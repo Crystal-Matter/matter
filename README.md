@@ -756,7 +756,9 @@ Confirmed working with iOS.
 `examples/matter_level_control_device.cr` exposes a dimmable light with Groups on
 endpoint 1, an extended color light on endpoint 2, and a window covering on endpoint 3.
 The Docker e2e suite commissions it with the official chip-tool and exercises group
-membership, hue, color temperature, and lift position commands.
+membership, hue, color temperature, and lift position commands. Its Window Covering
+endpoint uses `on_move` and `on_stop` callbacks to drive a synthetic motor and
+reports the completed position through `CurrentPositionLiftPercent100ths`.
 The extended color light also demonstrates Level Control's
 `CoupleColorTempToLevel` option: level changes adjust the active color
 temperature across the configured mired range. Per-command option masks can

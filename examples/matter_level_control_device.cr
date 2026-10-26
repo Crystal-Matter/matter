@@ -20,9 +20,12 @@ module MatterLevelControl
     COLOR_LIGHT_ENDPOINT     = 2
     WINDOW_COVERING_ENDPOINT = 3
 
-    MIN_LEVEL     =   1_u8
-    MAX_LEVEL     = 254_u8
-    INITIAL_LEVEL = 128_u8
+    MIN_LEVEL            =   1_u8
+    MAX_LEVEL            = 254_u8
+    INITIAL_LEVEL        = 128_u8
+    COVERING_TRAVEL_TIME = 3.seconds
+
+    @covering_motion_generation = 0_u32
 
     # Percentages a level is reported as.
     FULL_PERCENT = 100
@@ -67,8 +70,29 @@ module MatterLevelControl
     end
 
     endpoint WINDOW_COVERING_ENDPOINT, device_type: Matter::DeviceType::WINDOW_COVERING do
-      cluster Matter::Cluster::WindowCovering
+      cluster Matter::Cluster::WindowCovering, as: :window_covering
       cluster Matter::Cluster::Identify
+    end
+
+    protected def before_start : Nil
+      covering = window_covering
+      covering.current_position_lift_percent100ths ||= 0_u16
+      covering.on_move do |request|
+        if target = request.lift_target
+          @covering_motion_generation &+= 1_u32
+          generation = @covering_motion_generation
+          spawn do
+            sleep COVERING_TRAVEL_TIME
+            covering.current_position_lift_percent100ths = target if generation == @covering_motion_generation
+          end
+        end
+        Matter::InteractionModel::Status.success
+      end
+      covering.on_stop do
+        @covering_motion_generation &+= 1_u32
+        Matter::InteractionModel::Status.success
+      end
+      super
     end
 
     on(:on_off, :state_changed) do |state|
