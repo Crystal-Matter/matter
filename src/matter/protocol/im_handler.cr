@@ -259,8 +259,9 @@ module Matter
       # Wildcard paths stay silent, exactly as attribute reads do.
       #
       # *event_filters* carry the lowest event number the reader still wants;
-      # the node has one event number space, so the highest `event_min` across
-      # the filters wins. *after* is what a subscription has already reported.
+      # only filters for this node (or with no Node) apply. The node has one
+      # event number space, so the highest applicable `event_min` wins. *after*
+      # is what a subscription has already reported.
       def self.read_events(
         event_requests : Array(InteractionModel::EventPath)?,
         journal : EventJournal,
@@ -270,6 +271,7 @@ module Matter
         is_case_session : Bool = false,
         peer_subject_ids : Array(UInt64)? = nil,
         after : UInt64? = nil,
+        local_node_id : UInt64? = nil,
       ) : Array(InteractionModel::EventReportIB)
         reports = [] of InteractionModel::EventReportIB
         requests = event_requests || [] of InteractionModel::EventPath
@@ -287,7 +289,7 @@ module Matter
         records = journal.query(
           requests,
           after: after,
-          min_event_number: minimum_event_number(event_filters),
+          min_event_number: minimum_event_number(event_filters, local_node_id),
           fabric_index: fabric_index
         )
 
@@ -360,10 +362,11 @@ module Matter
       end
 
       # The lowest event number *event_filters* still want reported.
-      private def self.minimum_event_number(event_filters : Array(InteractionModel::EventFilterIB)?) : UInt64?
+      private def self.minimum_event_number(event_filters : Array(InteractionModel::EventFilterIB)?, local_node_id : UInt64?) : UInt64?
         return if event_filters.nil? || event_filters.empty?
 
-        event_filters.max_of(&.event_min)
+        node_id = local_node_id || DataType::NodeId::UNSPECIFIED
+        event_filters.select { |filter| filter.node.nil? || filter.node == node_id }.max_of?(&.event_min)
       end
 
       private def self.safe_read_attribute(

@@ -314,6 +314,9 @@ Reads take the same journal: `InteractionRouter#read_events` passes `Node#event_
 `IMHandler.read_events`, which shares the report chunk budget with attribute reads. A subscription
 carries its event paths and a persisted cursor; an urgent event bypasses the minimum-interval
 damping.
+For an EventFilterIB, the router passes the local NodeID from the secure session. Only filters
+with that NodeID or an omitted Node field set the minimum event number; filters for other nodes
+cannot suppress this node's events. Read and subscription priming reports use the same rule.
 When a SubscribeRequest sets `KeepSubscriptions` false, `SubscriptionManager`
 discards in-flight subscriptions and `SessionRegistry` removes active ones
 owned by that CASE node on the same fabric. Ownership is checked across secure

@@ -1880,6 +1880,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Interaction Model subscriptions
 
+- Apply Read and Subscribe EventFilterIB minimums only when their Node field is
+  omitted or matches the responding node, preserving wildcard event reports
+  when a request includes filters for other nodes.
 - Honor `SubscribeRequest.KeepSubscriptions`: when false, terminate active and
   pending subscriptions from the same CASE node on the same fabric, including
   subscriptions carried by older secure sessions and persisted records. A true

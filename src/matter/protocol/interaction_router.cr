@@ -472,7 +472,8 @@ module Matter
           filters,
           session.fabric_index,
           session.case_session?,
-          peer_subject_ids(session)
+          peer_subject_ids(session),
+          local_node_id: session.local_node_id.try(&.id)
         )
       end
 
