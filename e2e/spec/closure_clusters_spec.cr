@@ -37,6 +37,15 @@ describe "Matter 1.6 Closure Control and Dimension interoperability" do
     expect_failure(device.chip("any", "read-by-id", CONTROL_CLUSTER, "0x5", device.node, "1"), "UNSUPPORTED_ATTRIBUTE")
   end
 
+  it "reads feature-present unknown state members as explicit Null" do
+    ["0x3", "0x4"].each do |id|
+      closure_read(device, CONTROL_CLUSTER, id, "1").output.downcase.should contain("null")
+    end
+    ["0x0", "0x1"].each do |id|
+      closure_read(device, DIMENSION_CLUSTER, id, "2").output.downcase.should contain("null")
+    end
+  end
+
   it "enforces timed commands and reports admitted control targets" do
     expect_failure(closure_command(device, CONTROL_CLUSTER, "0x1", %({"0": "u:1"}), "1", false),
       "NEEDS_TIMED_INTERACTION")

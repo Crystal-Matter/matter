@@ -26,7 +26,8 @@ module MatterClosure
       cluster Matter::Cluster::Identify, identify_type: Matter::Cluster::Identify::IdentifyType::Actuator
       cluster Control,
         feature_map: Control::Feature::Positioning | Control::Feature::Calibration,
-        overall_current_state: Control::CurrentState.new(Control::CurrentPosition::FullyClosed),
+        overall_current_state: Control::CurrentState.new,
+        overall_target_state: Control::TargetState.new,
         as: :closure_control
     end
 
@@ -37,7 +38,8 @@ module MatterClosure
         feature_map: Dimension::Feature::Positioning | Dimension::Feature::Translation,
         resolution: 100_u16,
         step_value: 500_u16,
-        current_state: Dimension::State.new(0_u16),
+        current_state: Dimension::State.new,
+        target_state: Dimension::State.new,
         as: :closure_dimension
     end
 
