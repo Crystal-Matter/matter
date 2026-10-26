@@ -37,7 +37,9 @@ MZOOM. `MPTZPosition` contains exactly the fields for those axes, and the set
 and relative-move commands accept one or more supported fields. The host uses
 `on_mptz_move` to start motion and `report_mptz_position` to publish measured
 pan, tilt, and zoom; the library does not infer completed movement from command
-success. MPAN-only hosts retain `on_pan_move` and `report_pan_position`.
+success. `ZoomDelta` is a percentage of measured zoom and rounds to the nearest
+whole zoom value; a rejected move preserves an earlier active movement state.
+MPAN-only hosts retain `on_pan_move` and `report_pan_position`.
 MPRESETS captures the full measured position and recalls it through the same
 actuator. Limit changes must continue to include both the measured position
 and saved presets.

@@ -73,7 +73,7 @@ describe "Camera AV Settings mechanical tilt and zoom" do
     camera.movement_state.should eq(AxisCamera::PhysicalMovement::Idle)
     expect_success(invoke(camera, AxisCamera::CMD_MPTZ_RELATIVE_MOVE,
       AxisCamera::MPTZRelativeMoveRequest.new(-2_i16, 2_i16, -1_i8)))
-    targets.last.should eq(AxisCamera::MPTZPosition.new(3_i16, -1_i16, 3_u8))
+    targets.last.should eq(AxisCamera::MPTZPosition.new(3_i16, -1_i16, 4_u8))
     camera.on_preset_save { |_preset| AxisStatus.success }
     expect_success(invoke(camera, AxisCamera::CMD_MPTZ_SAVE_PRESET,
       AxisCamera::MPTZSavePresetRequest.new(nil, "Scene")))

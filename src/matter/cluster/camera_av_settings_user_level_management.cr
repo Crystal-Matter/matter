@@ -24,6 +24,8 @@ module Matter
       ZERO_TILT             =    0_i16
       MIN_ZOOM              =     1_u8
       MAX_ZOOM_LIMIT        =   100_u8
+      PERCENT_SCALE         =      100
+      PERCENT_ROUNDING      =       50
       MAX_PRESET_NAME_BYTES =       32
 
       enum PhysicalMovement : UInt8
@@ -318,7 +320,11 @@ module Matter
         zoom = @mptz_position.zoom.try(&.to_i32) || MIN_ZOOM.to_i32
         pan += request.pan_delta.try(&.to_i32) || 0
         tilt += request.tilt_delta.try(&.to_i32) || 0
-        zoom += request.zoom_delta.try(&.to_i32) || 0
+        if zoom_delta = request.zoom_delta
+          # The wire delta is a percentage of the measured zoom, rounded to
+          # the nearest whole zoom value. Integer math avoids float drift.
+          zoom = (zoom * (PERCENT_SCALE + zoom_delta.to_i32) + PERCENT_ROUNDING) // PERCENT_SCALE
+        end
         return InteractionModel::Status.constraint_error if @feature_map.mechanical_pan? && !(@pan_min.to_i32..@pan_max.to_i32).includes?(pan)
         return InteractionModel::Status.constraint_error if @feature_map.mechanical_tilt? && !(@tilt_min.to_i32..@tilt_max.to_i32).includes?(tilt)
         return InteractionModel::Status.constraint_error if @feature_map.mechanical_zoom? && !(MIN_ZOOM.to_i32..@zoom_max.to_i32).includes?(zoom)
@@ -409,13 +415,16 @@ module Matter
         actuator = @on_mptz_move
         pan_actuator = @on_pan_move if @feature_map.mechanical_pan? && !@feature_map.mechanical_tilt? && !@feature_map.mechanical_zoom?
         return InteractionModel::Status.invalid_in_state unless actuator || pan_actuator
+        previous_movement_state = @movement_state
         self.movement_state = PhysicalMovement::Moving
-        status = actuator ? actuator.call(target) : pan_actuator.as(Proc(Int16, InteractionModel::Status)).call(target.pan.as(Int16))
-        self.movement_state = PhysicalMovement::Idle unless status.success?
-        status
-      rescue ex
-        self.movement_state = PhysicalMovement::Idle
-        raise ex
+        begin
+          status = actuator ? actuator.call(target) : pan_actuator.as(Proc(Int16, InteractionModel::Status)).call(target.pan.as(Int16))
+          self.movement_state = previous_movement_state unless status.success?
+          status
+        rescue ex
+          self.movement_state = previous_movement_state
+          raise ex
+        end
       end
 
       private def valid_pan?(pan : Int16) : Bool
