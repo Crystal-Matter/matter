@@ -1728,6 +1728,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
   retain the state reported by their host.
 
+### OnOff access control
+
+- Require Operate privilege for writes to the Lighting feature's OnTime and
+  OffWaitTime attributes, as specified by Matter 1.6.
+
 ### Identify countdown reporting
 
 - Keep IdentifyTime's DataVersion current during the one-second countdown while
