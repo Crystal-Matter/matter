@@ -297,12 +297,16 @@ module Matter
       end
 
       # The host calls this after allocating a VDO stream that supports digital
-      # movement. Its initial viewport is the global Camera AV viewport.
-      def register_dptz_stream(video_stream_id : UInt16) : InteractionModel::Status
+      # movement. The crop must match the allocated stream's aspect ratio.
+      def register_dptz_stream(video_stream_id : UInt16,
+                               viewport : CameraAvStreamManagement::Viewport? = nil) : InteractionModel::Status
         source = @video_stream_management || return InteractionModel::Status.invalid_in_state
-        return InteractionModel::Status.not_found unless source.allocated_video_streams.any?(&.video_stream_id.==(video_stream_id))
+        stream = source.allocated_video_streams.find(&.video_stream_id.==(video_stream_id))
+        return InteractionModel::Status.not_found unless stream
         return InteractionModel::Status.success if @dptz_streams.any?(&.video_stream_id.==(video_stream_id))
-        self.dptz_streams = @dptz_streams + [DPTZStream.new(video_stream_id, source.viewport)]
+        initial = viewport || source.viewport
+        return InteractionModel::Status.constraint_error unless valid_stream_viewport?(source, stream, initial)
+        self.dptz_streams = @dptz_streams + [DPTZStream.new(video_stream_id, initial)]
         InteractionModel::Status.success
       end
 
@@ -340,14 +344,10 @@ module Matter
         zoom = @mptz_position.zoom.try(&.to_i32) || MIN_ZOOM.to_i32
         pan += request.pan_delta.try(&.to_i32) || 0
         tilt += request.tilt_delta.try(&.to_i32) || 0
-        if zoom_delta = request.zoom_delta
-          # The wire delta is a percentage of the measured zoom, rounded to
-          # the nearest whole zoom value. Integer math avoids float drift.
-          zoom = (zoom * (PERCENT_SCALE + zoom_delta.to_i32) + PERCENT_ROUNDING) // PERCENT_SCALE
-        end
-        return InteractionModel::Status.constraint_error if @feature_map.mechanical_pan? && !(@pan_min.to_i32..@pan_max.to_i32).includes?(pan)
-        return InteractionModel::Status.constraint_error if @feature_map.mechanical_tilt? && !(@tilt_min.to_i32..@tilt_max.to_i32).includes?(tilt)
-        return InteractionModel::Status.constraint_error if @feature_map.mechanical_zoom? && !(MIN_ZOOM.to_i32..@zoom_max.to_i32).includes?(zoom)
+        zoom += request.zoom_delta.try(&.to_i32) || 0
+        pan = pan.clamp(@pan_min.to_i32, @pan_max.to_i32)
+        tilt = tilt.clamp(@tilt_min.to_i32, @tilt_max.to_i32)
+        zoom = zoom.clamp(MIN_ZOOM.to_i32, @zoom_max.to_i32)
         target = MPTZPosition.new(
           @feature_map.mechanical_pan? ? pan.to_i16 : nil,
           @feature_map.mechanical_tilt? ? tilt.to_i16 : nil,
@@ -526,11 +526,24 @@ module Matter
         viewport.x2 - viewport.x1 >= minimum.width && viewport.y2 - viewport.y1 >= minimum.height
       end
 
+      private def valid_stream_viewport?(source : CameraAvStreamManagement,
+                                         stream : CameraAvStreamManagement::VideoStream,
+                                         viewport : CameraAvStreamManagement::Viewport) : Bool
+        return false unless valid_dptz_viewport?(source, viewport)
+        width = viewport.x2.to_u64 - viewport.x1
+        height = viewport.y2.to_u64 - viewport.y1
+        width * stream.max_resolution.height == height * stream.max_resolution.width
+      end
+
       private def valid_dptz_streams?(streams : Array(DPTZStream)) : Bool
         source = @video_stream_management || return streams.empty?
         active_ids = source.allocated_video_streams.map(&.video_stream_id).to_set
         streams.map(&.video_stream_id).to_set.size == streams.size &&
-          streams.all? { |stream| active_ids.includes?(stream.video_stream_id) && valid_dptz_viewport?(source, stream.viewport) }
+          streams.all? do |entry|
+            active_ids.includes?(entry.video_stream_id) &&
+              (stream = source.allocated_video_streams.find(&.video_stream_id.==(entry.video_stream_id))) &&
+              valid_stream_viewport?(source, stream, entry.viewport)
+          end
       end
 
       private def validate_dptz_streams!(streams : Array(DPTZStream)) : Nil
@@ -544,7 +557,16 @@ module Matter
 
       private def update_dptz_viewports(viewport : CameraAvStreamManagement::Viewport) : Nil
         return if @dptz_streams.empty?
-        self.dptz_streams = @dptz_streams.map { |stream| DPTZStream.new(stream.video_stream_id, viewport) }
+        source = @video_stream_management || return
+        streams = source.allocated_video_streams
+        self.dptz_streams = @dptz_streams.map do |entry|
+          stream = streams.find(&.video_stream_id.==(entry.video_stream_id))
+          if stream && valid_stream_viewport?(source, stream, viewport)
+            DPTZStream.new(entry.video_stream_id, viewport)
+          else
+            entry
+          end
+        end
       end
 
       private def valid_presets?(presets : Array(MPTZPreset)) : Bool
@@ -623,7 +645,8 @@ module Matter
           self.dptz_streams = @dptz_streams.select do |stream|
             if active_ids.includes?(stream.video_stream_id) &&
                !seen.includes?(stream.video_stream_id) &&
-               source && valid_dptz_viewport?(source, stream.viewport)
+               source && (video = source.allocated_video_streams.find(&.video_stream_id.==(stream.video_stream_id))) &&
+               valid_stream_viewport?(source, video, stream.viewport)
               seen << stream.video_stream_id
               true
             else

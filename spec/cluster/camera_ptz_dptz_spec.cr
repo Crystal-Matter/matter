@@ -5,11 +5,11 @@ private alias DptzAv = Matter::Cluster::CameraAvStreamManagement
 private alias DptzStatus = Matter::InteractionModel::Status
 private alias DptzCode = Matter::InteractionModel::StatusCode
 
-private def dptz_av_camera
+private def dptz_av_camera(sensor_height : UInt16 = 1080_u16)
   build(DptzAv,
     supported_stream_usages: [DptzAv::StreamUsage::LiveView],
     max_content_buffer_size: 65_536_u32, max_network_bandwidth: 2_000_000_u32,
-    video_sensor_params: DptzAv::VideoSensorParams.new(1920_u16, 1080_u16, 30_u16),
+    video_sensor_params: DptzAv::VideoSensorParams.new(1920_u16, sensor_height, 30_u16),
     min_viewport_resolution: DptzAv::VideoResolution.new(160_u16, 90_u16),
     rate_distortion_trade_off_points: [DptzAv::RateDistortionPoint.new(DptzAv::VideoCodec::H264,
       DptzAv::VideoResolution.new(1280_u16, 720_u16), 200_000_u32)],
@@ -30,6 +30,22 @@ private def allocate_dptz_video(av : DptzAv) : UInt16
 end
 
 describe "Camera AV Settings DPTZ" do
+  it "requires an aspect-matched initial crop for a stream on a different sensor aspect" do
+    av = dptz_av_camera(1440_u16)
+    camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    id = allocate_dptz_video(av)
+    expect_status(camera.register_dptz_stream(id), DptzCode::ConstraintError)
+    viewport = DptzAv::Viewport.new(0_u16, 180_u16, 1920_u16, 1260_u16)
+    expect_success(camera.register_dptz_stream(id, viewport))
+    camera.dptz_streams.first.viewport.should eq(viewport)
+    camera.on_dptz_set_viewport { |_stream_id, _viewport| DptzStatus.success }
+    expect_success(invoke(camera, DptzCamera::CMD_DPTZ_RELATIVE_MOVE,
+      DptzCamera::DPTZRelativeMoveRequest.new(id, 10_i16)))
+    camera.dptz_streams.first.viewport.x1.should eq(0_u16)
+    av.viewport = DptzAv::Viewport.new(160_u16, 120_u16, 1760_u16, 1320_u16)
+    camera.dptz_streams.first.viewport.y1.should eq(180_u16)
+  end
+
   it "advertises the complete DPTZ command profile when bound to same-endpoint VDO" do
     av = dptz_av_camera
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)

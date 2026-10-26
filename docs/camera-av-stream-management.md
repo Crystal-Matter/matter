@@ -24,11 +24,13 @@ snapshot, or image-control commands.
 The optional DPTZ profile of Camera AV Settings User Level Management
 binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`
 returns, call `register_dptz_stream(id)` only for streams that support digital
-movement. Their initial viewport is the VDO cluster's global `Viewport`.
+movement. The VDO cluster's global `Viewport` is used when its aspect ratio
+matches the stream; otherwise pass an existing, stream-compatible crop as the
+second argument. Registration rejects an incompatible crop.
 `DPTZSetViewport` validates the sensor bounds, minimum crop size, and requested
 stream aspect ratio, then calls `on_dptz_set_viewport` for the host to apply the
 crop. It changes the reported viewport only after host success. Global
-`Viewport` writes update every DPTZ entry; final video release removes that
+`Viewport` writes update DPTZ entries with a matching stream aspect ratio; final video release removes that
 entry. DPTZ entries are persisted, but stale entries are removed when live
 video streams are absent after restart. `DPTZRelativeMove` moves X to the right
 and Y up, and treats ZoomDelta as the percentage by which crop dimensions
@@ -42,8 +44,9 @@ MZOOM. `MPTZPosition` contains exactly the fields for those axes, and the set
 and relative-move commands accept one or more supported fields. The host uses
 `on_mptz_move` to start motion and `report_mptz_position` to publish measured
 pan, tilt, and zoom; the library does not infer completed movement from command
-success. `ZoomDelta` is a percentage of measured zoom and rounds to the nearest
-whole zoom value; a rejected move preserves an earlier active movement state.
+success. `ZoomDelta` adds signed zoom units to the measured position and
+relative targets clamp to configured end stops; a rejected move preserves an
+earlier active movement state.
 MPAN-only hosts retain `on_pan_move` and `report_pan_position`.
 MPRESETS captures the full measured position and recalls it through the same
 actuator. Limit changes must continue to include both the measured position
