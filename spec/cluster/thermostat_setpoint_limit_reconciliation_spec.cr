@@ -3,12 +3,6 @@ require "../spec_helper"
 private alias LimitThermostat = Matter::Cluster::Thermostat
 private alias LimitStatus = Matter::InteractionModel::StatusCode
 
-private class LimitReadyThermostat < LimitThermostat
-  protected def occupancy_wire_ready? : Bool
-    true
-  end
-end
-
 private def write_limit(cluster : LimitThermostat, id : UInt32, value : Int16) : Matter::InteractionModel::Status
   cluster.write_attribute(id, TLV::Serializable.serialize_value(value, nil))
 end
@@ -21,7 +15,7 @@ end
 
 describe "Thermostat setpoint limit reconciliation" do
   it "raises both occupied and unoccupied heating setpoints to a new minimum" do
-    cluster = build(LimitReadyThermostat, feature_map: limit_features,
+    cluster = build(LimitThermostat, feature_map: limit_features,
       occupied_heating_setpoint: 1800_i16, unoccupied_heating_setpoint: 1900_i16)
     write_limit(cluster, LimitThermostat::ATTR_MIN_HEAT_SETPOINT_LIMIT, 2100_i16)
       .status.should eq(LimitStatus::Success)
@@ -33,7 +27,7 @@ describe "Thermostat setpoint limit reconciliation" do
   end
 
   it "lowers both heating setpoints to a new maximum while preserving Auto deadband" do
-    cluster = build(LimitReadyThermostat, feature_map: limit_features(true),
+    cluster = build(LimitThermostat, feature_map: limit_features(true),
       occupied_heating_setpoint: 2500_i16, occupied_cooling_setpoint: 2800_i16,
       unoccupied_heating_setpoint: 2400_i16, unoccupied_cooling_setpoint: 2700_i16)
     write_limit(cluster, LimitThermostat::ATTR_MAX_HEAT_SETPOINT_LIMIT, 2200_i16)
@@ -45,7 +39,7 @@ describe "Thermostat setpoint limit reconciliation" do
   end
 
   it "raises both cooling setpoints to a new minimum and lowers them to a new maximum" do
-    cluster = build(LimitReadyThermostat, feature_map: limit_features,
+    cluster = build(LimitThermostat, feature_map: limit_features,
       occupied_cooling_setpoint: 2400_i16, unoccupied_cooling_setpoint: 2500_i16)
     write_limit(cluster, LimitThermostat::ATTR_MIN_COOL_SETPOINT_LIMIT, 2600_i16)
       .status.should eq(LimitStatus::Success)
@@ -63,7 +57,7 @@ describe "Thermostat setpoint limit reconciliation" do
   end
 
   it "rejects an impossible Auto limit relationship without changing either pair or DataVersion" do
-    cluster = build(LimitReadyThermostat, feature_map: limit_features(true))
+    cluster = build(LimitThermostat, feature_map: limit_features(true))
     version = cluster.data_version
     write_limit(cluster, LimitThermostat::ATTR_MIN_HEAT_SETPOINT_LIMIT, 1500_i16)
       .status.should eq(LimitStatus::ConstraintError)
@@ -77,7 +71,7 @@ describe "Thermostat setpoint limit reconciliation" do
   end
 
   it "retains both stored pairs when occupancy changes after a limit write" do
-    cluster = build(LimitReadyThermostat, feature_map: limit_features,
+    cluster = build(LimitThermostat, feature_map: limit_features,
       occupied_heating_setpoint: 1800_i16, unoccupied_heating_setpoint: 1900_i16)
     write_limit(cluster, LimitThermostat::ATTR_MIN_HEAT_SETPOINT_LIMIT, 2100_i16)
       .status.should eq(LimitStatus::Success)
@@ -88,7 +82,7 @@ describe "Thermostat setpoint limit reconciliation" do
   end
 
   it "applies the same validation and reconciliation to host limit setters" do
-    cluster = build(LimitReadyThermostat, feature_map: limit_features(true),
+    cluster = build(LimitThermostat, feature_map: limit_features(true),
       min_cool_setpoint_limit: 2500_i16, unoccupied_heating_setpoint: 1800_i16)
     cluster.min_heat_setpoint_limit = 2200_i16
     cluster.occupied_heating_setpoint.should eq(2200_i16)

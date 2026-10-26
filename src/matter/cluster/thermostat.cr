@@ -15,7 +15,7 @@ module Matter
 
       feature :heating, bit: 0                       # HEAT - Heating capability
       feature :cooling, bit: 1                       # COOL - Cooling capability
-      feature :occupancy, bit: 2                     # OCC - gated until wire conformance is complete
+      feature :occupancy, bit: 2                     # OCC - Occupied and Unoccupied setpoints
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
       feature :matter_schedules, bit: 7              # MSCH - gated until timed schedule activation is complete
@@ -580,7 +580,7 @@ module Matter
 
       attribute 0x0000, :local_temperature, Int16, nullable: true, validate: :validate_local_temperature, on_change: :local_temperature_changed
       attribute 0x0002, :occupancy, UInt8, default: 1_u8, max: 1_u8, persist: true,
-        requires: :occupancy, present_if: :occupancy_wire_ready?, validate: :validate_occupancy, on_change: :occupancy_changed
+        requires: :occupancy, validate: :validate_occupancy, on_change: :occupancy_changed
       attribute 0x0003, :abs_min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0004, :abs_max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0005, :abs_min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, fixed: true, optional: true, requires: :cooling
@@ -588,9 +588,9 @@ module Matter
       attribute 0x0011, :occupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, requires: :cooling, on_change: :cooling_setpoint_changed
       attribute 0x0012, :occupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, requires: :heating, on_change: :heating_setpoint_changed
       attribute 0x0013, :unoccupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true,
-        requires: {cooling: true, occupancy: true}, present_if: :occupancy_wire_ready?, on_change: :unoccupied_cooling_setpoint_changed
+        requires: {cooling: true, occupancy: true}, on_change: :unoccupied_cooling_setpoint_changed
       attribute 0x0014, :unoccupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true,
-        requires: {heating: true, occupancy: true}, present_if: :occupancy_wire_ready?, on_change: :unoccupied_heating_setpoint_changed
+        requires: {heating: true, occupancy: true}, on_change: :unoccupied_heating_setpoint_changed
       attribute 0x0015, :min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, writable: true, write_access: :manage,
         optional: true, requires: :heating, validate: :validate_min_heat_limit, on_change: :min_heat_limit_changed
       attribute 0x0016, :max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, writable: true, write_access: :manage,
@@ -696,7 +696,9 @@ module Matter
 
         raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
         raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules? && !schedule_wire_ready?
-        raise ArgumentError.new("OCC wire conformance is not yet enabled") if @feature_map.occupancy? && !occupancy_wire_ready?
+        if @feature_map.occupancy? && !(@feature_map.heating? || @feature_map.cooling?)
+          raise ArgumentError.new("OCC requires heating or cooling")
+        end
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
         raise ArgumentError.new("TSUGGEST behavior is not yet enabled") if @feature_map.thermostat_suggestions?
         validate_occupancy(@occupancy)
@@ -1013,10 +1015,6 @@ module Matter
 
       protected def preset_wire_ready?(command_id : UInt32) : Bool
         preset_wire_ready?
-      end
-
-      protected def occupancy_wire_ready? : Bool
-        false
       end
 
       def active_preset_handle : Bytes?
