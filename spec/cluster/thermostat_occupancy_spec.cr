@@ -20,7 +20,7 @@ describe "Thermostat Occupancy" do
   end
 
   it "advertises only the unoccupied setpoints supported by its heating and cooling features" do
-    expect_raises(ArgumentError, "OCC requires heating or cooling") do
+    expect_raises(ArgumentError, "Thermostat requires HEAT or COOL") do
       build(OccThermostat, feature_map: OccThermostat::Feature::Occupancy)
     end
     heat = build(OccThermostat, feature_map: OccThermostat::Feature::Heating | OccThermostat::Feature::Occupancy,
