@@ -307,6 +307,13 @@ module Matter
         end
       end
 
+      def event_restricted?(fabric_index : UInt8, endpoint : UInt16,
+                            cluster : UInt32, event : UInt32) : Bool
+        restricted_by?(fabric_index, endpoint, cluster, event) do |restriction|
+          restriction.type.event_forbidden?
+        end
+      end
+
       private def restricted_by?(fabric_index : UInt8, endpoint : UInt16,
                                  cluster : UInt32, id : UInt32, & : AccessRestriction -> Bool) : Bool
         (@access_restrictions[fabric_index]? || [] of AccessRestrictionEntry).any? do |entry|

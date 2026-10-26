@@ -1456,11 +1456,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Enforce host-configured `EventForbidden` restrictions on concrete and
+  wildcard event reads and active subscription updates. A concrete denied
+  event reports `AccessRestricted`; a wildcard silently omits it. Subscription
+  cursors advance past filtered events without exposing them. MNGD remains
+  unadvertised pending wire attributes, policy persistence, allowed-target
+  validation, and the review flow.
 - Enforce host-configured `AttributeWriteForbidden` and `CommandForbidden`
   restrictions for CASE writes and invokes, along with
   `AttributeAccessForbidden` on writes. Blocked requests return
   `AccessRestricted` before a cluster handler runs. ManagedDevice remains
-  unadvertised pending event restrictions, policy persistence, and review flow.
+  unadvertised pending policy persistence and review flow.
 - Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
   host-configured, fabric-specific Access Restriction List for attribute reads.
   A restriction on one fabric does not affect another fabric or standard global

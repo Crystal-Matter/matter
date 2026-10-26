@@ -324,9 +324,7 @@ module Matter
         )
 
         records.each do |record|
-          privilege = event_access(clusters, record)
-          next unless privilege
-          next unless authorized?(clusters, privilege, record.endpoint, record.cluster, is_case_session, fabric_index, peer_subject_ids)
+          next if event_read_status(record.to_path, clusters, is_case_session, fabric_index, peer_subject_ids)
 
           reports << InteractionModel::EventReportIB.new(event_data: build_event_data(record))
         end
@@ -346,17 +344,37 @@ module Matter
         )
       end
 
-      # The privilege required to read *record*'s event, or `nil` when the
-      # cluster no longer declares it.
-      private def self.event_access(
+      # The status a fully specified event path answers with, or `nil` when it
+      # names an event the reader may read. Active subscription updates use the
+      # same check as initial reads so a policy change cannot expose an event.
+      def self.event_read_status(
+        path : InteractionModel::EventPath,
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
-        record : EventJournal::Record,
-      ) : InteractionModel::EntryPrivilege?
-        clusters[{record.endpoint, record.cluster}]?.try(&.get_event_metadata(record.event)).try(&.access)
+        is_case_session : Bool,
+        fabric_index : UInt8?,
+        peer_subject_ids : Array(UInt64)?,
+      ) : InteractionModel::StatusCode?
+        endpoint_id = path.endpoint.as(UInt16)
+        cluster_id = path.cluster.as(UInt32)
+        event_id = path.event.as(UInt32)
+
+        cluster = clusters[{endpoint_id, cluster_id}]?
+        return missing_path_status(clusters, endpoint_id) unless cluster
+
+        metadata = cluster.get_event_metadata(event_id)
+        return InteractionModel::StatusCode::UnsupportedEvent unless metadata
+
+        unless authorized?(clusters, metadata.access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
+          return InteractionModel::StatusCode::UnsupportedAccess
+        end
+
+        if is_case_session && fabric_index && access_control_cluster(clusters).try(&.event_restricted?(fabric_index, endpoint_id, cluster_id, event_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
+
+        nil
       end
 
-      # The status a fully specified event path answers with, or `nil` when it
-      # names an event the reader may read.
       private def self.concrete_event_status(
         path : InteractionModel::EventPath,
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
@@ -364,21 +382,8 @@ module Matter
         fabric_index : UInt8?,
         peer_subject_ids : Array(UInt64)?,
       ) : InteractionModel::EventStatusIB?
-        endpoint_id = path.endpoint.as(UInt16)
-        cluster_id = path.cluster.as(UInt32)
-        event_id = path.event.as(UInt32)
-
-        cluster = clusters[{endpoint_id, cluster_id}]?
-        return event_status(path, missing_path_status(clusters, endpoint_id)) unless cluster
-
-        metadata = cluster.get_event_metadata(event_id)
-        return event_status(path, InteractionModel::StatusCode::UnsupportedEvent) unless metadata
-
-        unless authorized?(clusters, metadata.access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
-          return event_status(path, InteractionModel::StatusCode::UnsupportedAccess)
-        end
-
-        nil
+        status = event_read_status(path, clusters, is_case_session, fabric_index, peer_subject_ids)
+        status ? event_status(path, status) : nil
       end
 
       private def self.event_status(
