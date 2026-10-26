@@ -348,9 +348,9 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0551 | command | 0x000C | feature(SNP) | declared; requires `:snapshot` |
 | 0x0552 | command | 0x0000 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
 | 0x0552 | command | 0x0001 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
-| 0x0552 | command | 0x0002 | feature(MPRESETS) | absent |
-| 0x0552 | command | 0x0003 | feature(MPRESETS) | absent |
-| 0x0552 | command | 0x0004 | feature(MPRESETS) | absent |
+| 0x0552 | command | 0x0002 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
+| 0x0552 | command | 0x0003 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
+| 0x0552 | command | 0x0004 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
 | 0x0552 | command | 0x0005 | feature(DPTZ) | absent |
 | 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
