@@ -340,7 +340,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0551 | command | 0x0000 | feature(ADO) | declared; requires `:audio` |
 | 0x0551 | command | 0x0002 | feature(ADO) | declared; requires `:audio` |
 | 0x0551 | command | 0x0003 | feature(VDO) | declared; requires `:video` |
-| 0x0551 | command | 0x0005 | (feature(VDO) and (feature(WMARK) or feature(OSD))) | absent |
+| 0x0551 | command | 0x0005 | (feature(VDO) and (feature(WMARK) or feature(OSD))) | declared for VDO+WMARK and/or VDO+OSD; requires `:video` plus `:watermark` or `:osd` |
 | 0x0551 | command | 0x0006 | feature(VDO) | declared; requires `:video` |
 | 0x0551 | command | 0x0007 | feature(SNP) | declared; requires `:snapshot` |
 | 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | declared for SNP+WMARK and/or SNP+OSD; requires `:snapshot` plus `:watermark` or `:osd` |

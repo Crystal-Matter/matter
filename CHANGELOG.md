@@ -219,6 +219,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Camera AV Stream Management video
 
+- Add gated VDO+WMARK and VDO+OSD allocation and VideoStreamModify. Conditional
+  flags appear in allocated video streams; changes commit after a host callback
+  succeeds. Live video allocations still reset on restart because the host must
+  reopen encoders and transports. Overlay rendering remains host-owned.
+
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
   support with typed payloads, encoder/pixel-rate limits, shared audio/video
   bandwidth accounting, privacy gates, and host callbacks. A synthetic

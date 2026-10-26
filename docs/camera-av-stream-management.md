@@ -18,8 +18,13 @@ host reports its current video frame rate through `current_frame_rate=`.
 budget, then invokes `on_video_allocate`. Exact duplicate allocations share
 an ID and a reference count. `VideoStreamDeallocate` invokes
 `on_video_deallocate` when the last reference is released. A VDO-only endpoint
-does not need microphone capabilities. VDO does not enable watermark, OSD,
-snapshot, or image-control commands.
+does not need microphone capabilities. Opt-in VDO+WMARK and VDO+OSD profiles
+require their Boolean flags in VideoStreamAllocate and expose the Manage-privileged
+VideoStreamModify command. The host must admit overlay settings during allocation
+and apply changes through `on_video_modify` before the library commits them.
+The host renders overlays into video frames; the library tracks stream settings.
+VDO without those features does not enable overlay, snapshot, or image-control
+commands.
 
 The host must register `on_audio_allocate` and `on_audio_deallocate` when ADO
 is enabled, and the corresponding `on_video_allocate` and
@@ -32,8 +37,10 @@ depend on microphone mute. Soft privacy settings
 are exposed only when the Privacy feature is enabled. Hard privacy is a
 read-only physical state set by the host. Microphone settings, privacy modes,
 stream priorities, and the next audio/video IDs survive restart; active ADO/VDO
-streams are released at restart because host media resources must be reopened
-explicitly. SNP allocations are retained and require host callback rebinding.
+streams, including their overlay state, are released at restart because host media
+resources must be reopened explicitly. The next video stream ID persists, avoiding
+reuse of a pre-restart ID. SNP allocations are retained and require host callback
+rebinding.
 
 The [synthetic audio example](../examples/matter_camera_audio_device.cr) and
 [synthetic video example](../examples/matter_camera_video_device.cr) use
@@ -73,8 +80,7 @@ as nullable Booleans and must apply them before returning success. The library
 commits both stream settings only after that callback succeeds and persists
 them across restart. The host remains responsible for rendering overlays into
 captured image bytes. The two-argument `on_snapshot_modify` remains available for
-WMARK-only hosts. VDO+WMARK, VDO+OSD, and Camera device type topology remain
-unavailable; the constructor rejects those feature combinations.
+WMARK-only hosts. Camera device type topology remains unavailable.
 
 Applications should not present the synthetic snapshot fixture as complete
 Camera conformance.
