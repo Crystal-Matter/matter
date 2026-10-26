@@ -341,6 +341,7 @@ module Matter
       @review_requests_in_progress = [] of UInt64
       @review_completions_in_progress = [] of UInt64
       @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
+      @review_callbacks_needing_replay = Set(UInt64).new
       @review_delivery_inflight = Set(UInt64).new
       @review_events_emitted = Set(UInt64).new
       @review_delivery_retry_scheduled = Set(UInt64).new
@@ -616,6 +617,7 @@ module Matter
         @pending_restriction_reviews.delete(token)
         increment_version
         @review_completions_in_progress << token
+        @reviews_awaiting_delivery[token] = {fabric_index, update, !previous_policy_version.nil?}
         begin
           @on_persist.try(&.call)
           ensure_current_restriction_review!(fabric_index, token, generation)
@@ -628,6 +630,7 @@ module Matter
           end
           @pending_restriction_reviews[token] = request
           @review_completions_in_progress.delete(token)
+          @reviews_awaiting_delivery.delete(token)
           if version = previous_policy_version
             restore_restriction_review_policy(fabric_index, previous_policy, version)
           else
@@ -642,7 +645,6 @@ module Matter
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
-        @reviews_awaiting_delivery[token] = {fabric_index, update, !previous_policy_version.nil?}
         deliver_completed_restriction_review(token)
       end
 
@@ -654,6 +656,13 @@ module Matter
         @review_delivery_inflight.add(token)
         begin
           fabric_index, update, arl_notification_required = delivery
+          if @review_callbacks_needing_replay.includes?(token)
+            callback = @on_restriction_review_updated || return false
+            callback.call(fabric_index, update)
+            return false unless current_restriction_review?(fabric_index, token, generation)
+            @review_callbacks_needing_replay.delete(token)
+          end
+          return false unless current_restriction_review?(fabric_index, token, generation)
           # The decision and intent marker were durably saved before the host
           # callback. Emit once while the marker remains durable, then clear it.
           # An ambiguous final write can therefore never lose this update.
@@ -680,6 +689,7 @@ module Matter
           @pending_restriction_review_deadlines.delete(token)
           @reviews_needing_replay.delete(token)
           @reviews_awaiting_delivery.delete(token)
+          @review_callbacks_needing_replay.delete(token)
           @review_events_emitted.delete(token)
           forget_restriction_review(token)
           if arl_notification_required && @feature_map.managed_device?
@@ -849,6 +859,15 @@ module Matter
       private def resume_restriction_reviews : Nil
         requested = @on_restriction_review_requested || return
         return unless @on_restriction_review_updated
+        @review_callbacks_needing_replay.to_a.each do |token|
+          delivery = @reviews_awaiting_delivery[token]? || next
+          schedule_restriction_review_delivery_retry(token, delivery[0])
+          begin
+            deliver_completed_restriction_review(token)
+          rescue ex
+            Log.error(exception: ex) { "Could not replay restriction review completion #{token}" }
+          end
+        end
         @reviews_needing_replay.dup.each do |token|
           request = @pending_restriction_reviews[token]?
           next unless request
@@ -1068,6 +1087,23 @@ module Matter
         end
       end
 
+      # A completion is committed with the new ARL before the host is told.
+      # The token is the stable identity for at-least-once replay after a crash.
+      struct PersistedReviewCompletion
+        include Storage::Record
+
+        getter token : UInt64
+        getter fabric_index : UInt8
+        getter instruction : String?
+        getter arl_request_flow_url : String?
+        getter? arl_notification_required : Bool
+
+        def initialize(@token : UInt64, @fabric_index : UInt8,
+                       @instruction : String?, @arl_request_flow_url : String?,
+                       @arl_notification_required : Bool)
+        end
+      end
+
       struct PersistedState
         include Storage::Record
 
@@ -1081,6 +1117,7 @@ module Matter
         getter next_restriction_review_token : UInt64 = 0_u64
         getter review_requests_in_progress : Array(UInt64) = [] of UInt64
         getter review_completions_in_progress : Array(UInt64) = [] of UInt64
+        getter review_completion_outbox : Array(PersistedReviewCompletion) = [] of PersistedReviewCompletion
 
         def initialize(
           @data_version : UInt32,
@@ -1093,6 +1130,7 @@ module Matter
           @next_restriction_review_token : UInt64 = 0_u64,
           @review_requests_in_progress : Array(UInt64) = [] of UInt64,
           @review_completions_in_progress : Array(UInt64) = [] of UInt64,
+          @review_completion_outbox : Array(PersistedReviewCompletion) = [] of PersistedReviewCompletion,
         )
         end
       end
@@ -1129,7 +1167,14 @@ module Matter
           end,
           next_restriction_review_token: @next_restriction_review_token,
           review_requests_in_progress: @review_requests_in_progress.dup,
-          review_completions_in_progress: @review_completions_in_progress.dup
+          review_completions_in_progress: @review_completions_in_progress.dup,
+          review_completion_outbox: @review_completions_in_progress.compact_map do |token|
+            delivery = @reviews_awaiting_delivery[token]?
+            next unless delivery
+            fabric_index, update, notify_arl = delivery
+            PersistedReviewCompletion.new(token, fabric_index, update.instruction,
+              update.arl_request_flow_url, notify_arl)
+          end
         ).to_document
       end
 
@@ -1147,9 +1192,6 @@ module Matter
           raise Matter::AccessControlRestoreError.new("Missing managed restriction state fields")
         end
         state = PersistedState.from_document(document)
-        unless state.review_requests_in_progress.empty? && state.review_completions_in_progress.empty?
-          raise Matter::AccessControlRestoreError.new("Unfinished restriction review operation")
-        end
         restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
         state.access_restrictions.each do |stored|
           fabric_index = stored.fabric_index ||
@@ -1185,6 +1227,41 @@ module Matter
           pending[stored.token] = RestrictionReviewRequest.new(stored.fabric_index, stored.token, entries)
           deadlines[stored.token] = stored.deadline
         end
+        request_tokens = state.review_requests_in_progress
+        if request_tokens.uniq.size != request_tokens.size ||
+           request_tokens.any? { |token| !pending.has_key?(token) }
+          raise Matter::AccessControlRestoreError.new("Invalid unfinished restriction review request")
+        end
+        request_tokens.each do |token|
+          # No wire response was sent while this first-stage marker existed.
+          # Cancel the unanswered token rather than replaying a possibly
+          # half-delivered request to the host.
+          pending.delete(token)
+          deadlines.delete(token)
+        end
+        outbox = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
+        state.review_completion_outbox.each do |stored|
+          if stored.token == 0 || stored.fabric_index == 0 ||
+             stored.fabric_index > MAX_VALID_FABRIC_INDEX ||
+             outbox.has_key?(stored.token) || pending.has_key?(stored.token) ||
+             stored.instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
+             stored.arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
+            raise Matter::AccessControlRestoreError.new("Invalid restriction review completion outbox")
+          end
+          outbox[stored.token] = {stored.fabric_index,
+                                  FabricRestrictionReviewUpdate.new(stored.token,
+                                    stored.instruction, stored.arl_request_flow_url),
+                                  stored.arl_notification_required?}
+        end
+        completion_tokens = state.review_completions_in_progress
+        if completion_tokens.uniq.size != completion_tokens.size ||
+           completion_tokens.sort != outbox.keys.sort! ||
+           request_tokens.any? { |token| outbox.has_key?(token) }
+          raise Matter::AccessControlRestoreError.new("Invalid unfinished restriction review completion")
+        end
+        if (!request_tokens.empty? || !outbox.empty?) && !@on_persist
+          raise Matter::AccessControlRestoreError.new("Restriction review recovery needs durable storage")
+        end
         @restriction_review_timers.each_value(&.close)
         @restriction_review_timers.clear
         @access_restrictions = restrictions
@@ -1199,10 +1276,21 @@ module Matter
           @review_fabrics[token] = request.fabric_index
           @review_generations[token] = restriction_fabric_generation(request.fabric_index)
         end
-        @next_restriction_review_token = {state.next_restriction_review_token, pending.keys.max? || 0_u64}.max
+        outbox.each do |token, delivery|
+          @review_fabrics[token] = delivery[0]
+          @review_generations[token] = restriction_fabric_generation(delivery[0])
+        end
+        @review_requests_in_progress.clear
+        @review_completions_in_progress = completion_tokens.dup
+        @reviews_awaiting_delivery = outbox
+        @review_callbacks_needing_replay = outbox.keys.to_set
+        @next_restriction_review_token = {state.next_restriction_review_token,
+                                          pending.keys.max? || 0_u64,
+                                          outbox.keys.max? || 0_u64,
+                                          request_tokens.max? || 0_u64}.max
         @managed_restrictions_configured = @feature_map.managed_device? ||
                                            !restrictions.empty? || state.commissioning_arl_configured? ||
-                                           !pending.empty? || state.next_restriction_review_token > 0_u64
+                                           !pending.empty? || !outbox.empty? || state.next_restriction_review_token > 0_u64
         @data_version = state.data_version
 
         @acl = state.acl.compact_map do |entry|
@@ -1226,6 +1314,7 @@ module Matter
         end
 
         @extension = state.extension.map { |entry| ExtensionEntry.new(entry.data, entry.fabric_index) }
+        @on_persist.try(&.call) unless request_tokens.empty?
         resume_restriction_reviews
       rescue ex : Matter::AccessControlRestoreError
         Log.error(exception: ex) { "AccessControl restore failed; refusing startup" }
@@ -1344,6 +1433,8 @@ module Matter
           @review_requests_in_progress.delete(token)
           @review_completions_in_progress.delete(token)
           @reviews_awaiting_delivery.delete(token)
+          @review_callbacks_needing_replay.delete(token)
+          @review_delivery_inflight.delete(token)
           @review_events_emitted.delete(token)
           forget_restriction_review(token)
         end

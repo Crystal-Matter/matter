@@ -64,6 +64,7 @@ module Matter
                           cluster: path.cluster,
                           endpoint: endpoint,
                           auth_mode: InteractionModel::EntryAuthMode::Group)
+            next if acl.command_restricted?(fabric_index, endpoint, path.cluster, path.command)
 
             cluster.with_request_context do
               cluster.request_auth_mode = InteractionModel::EntryAuthMode::Group
@@ -118,6 +119,7 @@ module Matter
                           cluster: cluster_id,
                           endpoint: endpoint,
                           auth_mode: InteractionModel::EntryAuthMode::Group)
+            next if acl.attribute_write_restricted?(fabric_index, endpoint, cluster_id, attribute_id)
 
             cluster.with_request_context do
               cluster.request_auth_mode = InteractionModel::EntryAuthMode::Group
