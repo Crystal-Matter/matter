@@ -703,7 +703,7 @@ module Matter
                      preset_types : Array(PresetType)? = nil,
                      presets : Array(Preset) = [] of Preset,
                      local_time_provider : Proc(Time?)? = nil,
-                     @utc_time_provider : Proc(UInt32?) = -> : UInt32? { nil },
+                     utc_time_provider : Proc(UInt32?)? = nil,
                      @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Nil) = ->(delay : Time::Span, action : Proc(Nil)) : Nil {
                        spawn { sleep delay; action.call }
                        nil
@@ -712,6 +712,8 @@ module Matter
 
         @schedule_clock_configured = !local_time_provider.nil?
         @local_time_provider = local_time_provider || -> : Time? { nil }
+        @suggestion_clock_configured = !utc_time_provider.nil?
+        @utc_time_provider = utc_time_provider || -> : UInt32? { nil }
         if @feature_map.automode? && !(@feature_map.heating? && @feature_map.cooling?)
           raise ArgumentError.new("AUTO requires HEAT and COOL")
         end
@@ -938,6 +940,22 @@ module Matter
 
       def max_thermostat_suggestions : UInt8
         @max_thermostat_suggestions
+      end
+
+      # The device runtime supplies the root Time Synchronization clock when
+      # the host did not explicitly provide a synchronized UTC source.
+      def bind_suggestion_utc_provider(provider : Proc(UInt32?)) : Nil
+        return if @suggestion_clock_configured
+        @utc_time_provider = provider
+        @suggestion_clock_configured = true
+      end
+
+      def suggestion_polling_enabled? : Bool
+        @feature_map.thermostat_suggestions? && suggestion_wire_ready? && @suggestion_clock_configured
+      end
+
+      def poll_suggestions : Int32
+        tick_suggestions(@utc_time_provider.call)
       end
 
       def thermostat_suggestions : Array(ThermostatSuggestion)

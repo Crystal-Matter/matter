@@ -14,8 +14,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   selection, and capacity with chip-tool. Guarded suggestions now re-evaluate
   at their effective and expiry times and rearm after state restoration, with
   data-version and report notifications. Production PRES and TSUGGEST remain
-  disabled pending authoritative Time Synchronization validity, hold/schedule
-  reason policy, and the remaining conformance checks.
+  disabled pending hold/schedule reason policy and the remaining conformance
+  checks.
+- Bind guarded suggestions to the root Time Synchronization UTC clock when the
+  host supplies no clock, reject Add while UTC is unavailable or outside the
+  Matter epoch-seconds range, and poll for effective and expiry transitions
+  after a clock change without requiring an attribute read.
 
 ### Thermostat suggestion host state
 

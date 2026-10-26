@@ -335,6 +335,15 @@ module Matter
         utc_time_at(Time.instant)
       end
 
+      # Matter epoch seconds for clusters whose timestamps use epoch-s.
+      # An unset clock or a UTC value outside the epoch-s wire range is not usable.
+      def matter_epoch_seconds : UInt32?
+        utc = utc_time || return
+        seconds = utc // MICROSECONDS_PER_SECOND
+        return if seconds > UInt32::MAX
+        seconds.to_u32
+      end
+
       private def utc_time_at(now : Time::Instant) : UInt64?
         base = @base_utc_time
         started = @base_instant
