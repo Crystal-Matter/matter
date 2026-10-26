@@ -21,7 +21,9 @@ module LevelControlE2E
   HUE_MODE                     =    0
   TEMPERATURE_MODE             =    2
   LIFT_POSITION                = 5000
-  COVERING_TRAVEL_WAIT         = 3.2.seconds
+  COVERING_POSITION_TIMEOUT    = 10.seconds
+  COVERING_POLL_INTERVAL       = 100.milliseconds
+  COVERING_CANCELED_WAIT       = 4.seconds
   NO_TRANSITION                = "0"
   TIMED_TRANSITION             = "50"
   NO_OPTIONS                   = "0"
@@ -35,6 +37,16 @@ module LevelControlE2E
   COVERING_MAINTENANCE         = 4
   COVERING_CALIBRATION         = 2
   COVERING_REVERSED            = 1
+end
+
+def wait_for_covering_lift(device : E2E::Device, target : Int32, endpoint : Int32) : Nil
+  deadline = Time.instant + LevelControlE2E::COVERING_POSITION_TIMEOUT
+  loop do
+    current = read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint)
+    return if current == target
+    current.should eq(target) if Time.instant >= deadline
+    sleep LevelControlE2E::COVERING_POLL_INTERVAL
+  end
 end
 
 describe "matter_level_control example" do
@@ -271,18 +283,16 @@ describe "matter_level_control example" do
     read_value(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq "null"
     expect_success(device.invoke("windowcovering", "go-to-lift-percentage", [LevelControlE2E::LIFT_POSITION.to_s], endpoint: endpoint))
     read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
-    sleep LevelControlE2E::COVERING_TRAVEL_WAIT
-    read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
+    wait_for_covering_lift(device, LevelControlE2E::LIFT_POSITION, endpoint)
     read_int(device, "windowcovering", "operational-status", "OperationalStatus", endpoint).should eq LevelControlE2E::COVERING_STOPPED_STATUS
 
     expect_success(device.invoke("windowcovering", "down-or-close", endpoint: endpoint))
     expect_success(device.invoke("windowcovering", "stop-motion", endpoint: endpoint))
-    sleep LevelControlE2E::COVERING_TRAVEL_WAIT
+    sleep LevelControlE2E::COVERING_CANCELED_WAIT
     read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
     read_int(device, "windowcovering", "target-position-lift-percent100ths", "TargetPositionLiftPercent100ths", endpoint).should eq LevelControlE2E::LIFT_POSITION
     expect_success(device.invoke("windowcovering", "up-or-open", endpoint: endpoint))
-    sleep LevelControlE2E::COVERING_TRAVEL_WAIT
-    read_int(device, "windowcovering", "current-position-lift-percent100ths", "CurrentPositionLiftPercent100ths", endpoint).should eq 0
+    wait_for_covering_lift(device, 0, endpoint)
     expect_success(device.write("windowcovering", "mode", LevelControlE2E::COVERING_MODE, endpoint))
     read_int(device, "windowcovering", "mode", "Mode", endpoint).should eq LevelControlE2E::COVERING_MODE
   end
