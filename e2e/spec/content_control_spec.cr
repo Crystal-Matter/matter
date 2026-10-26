@@ -11,7 +11,7 @@ describe "Matter 1.6 Content Control interoperability" do
     read_int(device, "contentcontrol", "feature-map", "FeatureMap", 1).should eq(143_i64)
     read_int(device, "contentcontrol", "screen-daily-time", "ScreenDailyTime", 1).should eq(3_600_i64)
     before_bonus = read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1)
-    expect_success(device.invoke("contentcontrol", "add-bonus-time", ["5", "wrong"]))
+    expect_success(device.invoke("contentcontrol", "add-bonus-time", ["5"], options: ["--PINCode", "000000"]))
     read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1).should eq(before_bonus + 5_i64)
     expect_failure(device.invoke("contentcontrol", "reset-pin"), "NEEDS_TIMED_INTERACTION")
     reset = expect_success(device.invoke("contentcontrol", "reset-pin", options: timed))

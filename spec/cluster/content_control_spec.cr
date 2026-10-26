@@ -188,11 +188,19 @@ describe Control do
 
     restored = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 30_u32)
     restored.local_time_provider = -> : Time? { now + 55.seconds }
-    restored.restore_state(cluster.save_state)
+    restored.restore_state(Matter::Storage.deep_copy(cluster.save_state))
     read(restored, Control::ATTR_REMAINING_SCREEN_TIME).should eq(0_u32)
     restored.local_time_provider = -> : Time? { now + 1.day }
     read(restored, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
     restored.playback_allowed?.should be_true
+
+    [-1_i64, 86_401_i64, 86_401_u64, "invalid"].each do |invalid_value|
+      invalid = Matter::Storage.deep_copy(cluster.save_state)
+      invalid[Control::PERSISTED_SCREEN_REMAINING_KEY] = invalid_value
+      rejected = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 30_u32)
+      rejected.restore_state(invalid)
+      read(rejected, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
+    end
 
     legacy = cluster.save_state
     legacy.delete(Control::PERSISTED_SCREEN_DAY_KEY)

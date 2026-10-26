@@ -721,8 +721,8 @@ module Matter
           remaining_value = document[PERSISTED_SCREEN_REMAINING_KEY]?
           if day_value || remaining_value
             day = day_value.as?(String)
-            remaining = remaining_value.as?(UInt64)
-            unless day && day.matches?(/\A\d{4}-\d{2}-\d{2}\z/) && remaining && remaining <= MAX_SCREEN_SECONDS
+            remaining = remaining_value.as?(Int64 | UInt64)
+            unless day && day.matches?(/\A\d{4}-\d{2}-\d{2}\z/) && remaining && remaining.to_i128.in?(0_i128..MAX_SCREEN_SECONDS.to_i128)
               raise StorageError.new("Invalid persisted Content Control ScreenTime state")
             end
             @screen_day = day
