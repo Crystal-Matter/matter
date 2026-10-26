@@ -105,6 +105,22 @@ module Matter
         @level_on_effect = block
       end
 
+      # Lighting applications apply the persisted StartUpOnOff preference when
+      # power returns. OTA restarts retain the preceding OnOff state.
+      def apply_startup_on_off(ota_restart : Bool = false) : Nil
+        return unless feature_map.lighting?
+        return if ota_restart
+
+        case @start_up_on_off
+        when StartUpOnOff::Off
+          self.on_off = false
+        when StartUpOnOff::On
+          self.on_off = true
+        when StartUpOnOff::Toggle
+          self.on_off = !@on_off
+        end
+      end
+
       # ------------------------------------------------------------------------
       # Commands
       # ------------------------------------------------------------------------

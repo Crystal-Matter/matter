@@ -1560,6 +1560,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Return InvalidCommand for a Mode Select ChangeToMode request naming an
   unadvertised mode, as required by the Matter 1.6 command definition.
 
+### OnOff and Mode Select startup behavior
+
+- Apply Lighting StartUpOnOff (Off, On, or Toggle) and Mode Select StartUpMode
+  when a device powers up. Bypass these startup settings after an OTA restart,
+  and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
+  retain the state reported by their host.
+
 ### OnOff command level effect
 
 - Apply LevelControl OnLevel when a sibling OnOff `On` command turns the device

@@ -32,6 +32,8 @@ require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
 require "../cluster/thread_network_diagnostics"
 require "../cluster/time_synchronization"
+require "../cluster/mode_select"
+require "../cluster/bridged_device_basic_information"
 
 module Matter
   # A Matter device application.
@@ -482,14 +484,29 @@ module Matter
 
     # Starts mDNS and the configured transport and syncs advertisements for the current fabric set.
     # Returns immediately after starting - use `await_shutdown` to block until shutdown.
-    # Pass `ota_restart: true` when resuming after an OTA update so Level
-    # Control retains its pre-update CurrentLevel (Matter 1.6 §1.6.6.15).
+    # Pass `ota_restart: true` when resuming after an OTA update so lighting
+    # and mode clusters retain their pre-update state.
     def start(ota_restart : Bool = false) : Nil
+      @message_handler.clusters.each_value do |cluster|
+        next unless on_off = cluster.as?(Cluster::OnOff)
+        next if aggregated_endpoint?(cluster.endpoint_id.number)
+        on_off.apply_startup_on_off(ota_restart: ota_restart)
+      end
       @message_handler.clusters.each_value do |cluster|
         cluster.as?(Cluster::LevelControl).try(&.apply_startup_level(ota_restart: ota_restart))
       end
       @message_handler.clusters.each_value do |cluster|
         cluster.as?(Cluster::ColorControl).try(&.apply_startup_color_temperature(ota_restart: ota_restart))
+      end
+      @message_handler.clusters.each_value do |cluster|
+        next unless mode = cluster.as?(Cluster::ModeSelect)
+        on_off = @node.get_cluster(mode.endpoint_id.number, Cluster::OnOff)
+        on_mode_override = on_off.try do |on_off_cluster|
+          on_off_cluster.feature_map.lighting? &&
+            on_off_cluster.start_up_on_off == Cluster::OnOff::StartUpOnOff::On &&
+            on_off_cluster.on?
+        end || false
+        mode.apply_startup_mode(ota_restart: ota_restart, on_mode_override: on_mode_override)
       end
       before_start
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
@@ -511,6 +528,23 @@ module Matter
     rescue error
       Log.error(exception: error) { "error during startup" }
       shutdown!
+    end
+
+    # Bridge-owned endpoints represent physical devices that did not power up
+    # with this node. Their reported OnOff state belongs to the bridge host.
+    private def aggregated_endpoint?(endpoint_id : UInt16) : Bool
+      endpoint = @node.endpoint(endpoint_id)
+      return false unless endpoint
+      return true if endpoint.has_cluster?(Cluster::BridgedDeviceBasicInformation::CLUSTER_ID)
+      return true if endpoint.device_types.any? { |type| type.device_type_id.id == DeviceType::BRIDGED_NODE }
+
+      parent_id = endpoint.parent_endpoint_id
+      loop do
+        parent = @node.endpoint(parent_id) || return false
+        return true if parent.device_types.any? { |type| type.device_type_id.id == DeviceType::AGGREGATOR }
+        return false if parent_id == Node::ROOT_ENDPOINT_ID
+        parent_id = parent.parent_endpoint_id
+      end
     end
 
     # Blocks until `shutdown!` is called. Optional - use when you need the main
