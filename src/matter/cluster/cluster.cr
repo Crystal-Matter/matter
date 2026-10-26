@@ -130,6 +130,9 @@ module Matter
       property request_auth_mode : InteractionModel::EntryAuthMode? = nil
       property request_group_id : UInt16? = nil
       property? request_fabric_filtered : Bool = true
+      # Highest ACL privilege granted to this command's caller. Populated only
+      # during protocol command dispatch and cleared before the next invoke.
+      property request_command_privilege : InteractionModel::EntryPrivilege? = nil
 
       @request_command_depth : UInt32 = 0_u32
 
@@ -444,6 +447,7 @@ module Matter
         InteractionModel::Status.failure
       ensure
         @request_command_depth = previous_depth if previous_depth
+        @request_command_privilege = nil
       end
 
       # Handle command implementation (to be overridden)

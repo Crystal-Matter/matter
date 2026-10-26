@@ -25,7 +25,9 @@ module MatterContentControl
       cluster Matter::Cluster::KeypadInput
       cluster Control,
         feature_map: Control::Feature::BlockUnrated | Control::Feature::OnDemandContentRating |
-                     Control::Feature::PinManagement | Control::Feature::BlockContentTimeWindow,
+                     Control::Feature::PinManagement | Control::Feature::BlockContentTimeWindow |
+                     Control::Feature::ScreenTime,
+        screen_daily_time: 3_600_u32,
         on_demand_ratings: [
           Control::RatingName.new("G"),
           Control::RatingName.new("PG"),
@@ -50,6 +52,7 @@ module MatterContentControl
       end
       spawn do
         loop do
+          content_control.tick_screen_time(playback.current_state.playing?)
           content_control.tick_block_content_time_window
           sleep 1.second
         end

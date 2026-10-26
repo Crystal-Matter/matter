@@ -921,6 +921,19 @@ module Matter
           end
 
           result = cluster.with_request_context do
+            cluster.request_command_privilege = if !is_case_session
+                                                  nil
+                                                elsif authorized?(clusters,
+                                                        InteractionModel::EntryPrivilege::Administer, endpoint_id,
+                                                        path.cluster, is_case_session, fabric_index, peer_subject_ids)
+                                                  InteractionModel::EntryPrivilege::Administer
+                                                elsif authorized?(clusters,
+                                                        InteractionModel::EntryPrivilege::Manage, endpoint_id,
+                                                        path.cluster, is_case_session, fabric_index, peer_subject_ids)
+                                                  InteractionModel::EntryPrivilege::Manage
+                                                else
+                                                  InteractionModel::EntryPrivilege::Operate
+                                                end
             if icd = cluster.as?(Cluster::IcdManagement)
               icd.request_administer_privilege = authorized?(clusters,
                 InteractionModel::EntryPrivilege::Administer, endpoint_id, path.cluster,
@@ -935,7 +948,11 @@ module Matter
             cluster.request_session_identity = session_identity
             cluster.request_exchange_id = exchange_id
             cluster.request_fabric_filtered = true
-            safe_invoke_command(cluster, path, cmd_data.command_fields, session_id, is_case_session, fabric_index)
+            begin
+              safe_invoke_command(cluster, path, cmd_data.command_fields, session_id, is_case_session, fabric_index)
+            ensure
+              cluster.request_command_privilege = nil
+            end
           end
 
           if result.is_a?(InteractionModel::Status)
