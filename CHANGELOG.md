@@ -15,6 +15,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exact single-command MRP retransmission can now recover without re-running
   unrelated commands.
 
+### Chunked reverse commissioning responses
+
+- Start deferred reverse commissioning only after the final encrypted
+  `InvokeResponse` chunk is sent. Rejecting a chunk or failing to send a later
+  chunk discards the pending task. A later send failure attempts an IM Failure
+  response; a fresh Invoke can then use the still valid approval.
+
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and

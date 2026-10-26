@@ -594,9 +594,13 @@ The host must obtain any user consent it requires before approving. The
 `prepare_window` callback creates a `PreparedWindow`: public enhanced-window
 parameters and a private commissioning task holding the setup PIN. The cluster
 validates the wire parameters and returns them immediately. Only after the
-matching encrypted InvokeResponse has been sent does the protocol layer start
-the task, outside its session lock. This ordering matters: the client opens
-the intended target's window only after receiving `ReverseOpenCommissioningWindow`.
+matching encrypted InvokeResponse has been sent in full, including its final
+chunk, does the protocol layer start the task, outside its session lock. A
+rejected chunk or a later-chunk send failure discards the task. This ordering
+matters: the client opens the intended target's window only after receiving
+`ReverseOpenCommissioningWindow`.
+The device attempts an IM Failure status for a later-chunk send error. The
+controller can issue a fresh Invoke while the approval is still valid.
 The host must finish preparation within `ResponseTimeoutSeconds` and its task
 must use the approved VendorID/ProductID when calling
 `Controller::Commissioning::Commissioner#pairing_code` with `expected_identity`.
