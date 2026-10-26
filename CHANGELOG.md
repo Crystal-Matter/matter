@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   user. An empty slot returns InvalidField without creating a user or storing the
   credential, matching the pinned Matter SDK's interoperability behavior.
 
+### Mode Select OnMode transitions
+
+- Apply a non-null OnMode when the sibling OnOff attribute changes from Off to
+  On, including commands and bridge-host updates, without replacing application
+  OnOff callbacks.
+
 ### Door Lock existing-user credential fields
 
 - Reject SetCredential Add requests that provide a UserIndex together with a

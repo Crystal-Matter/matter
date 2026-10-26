@@ -1,4 +1,5 @@
 require "./cluster"
+require "./on_off"
 
 module Matter
   module Cluster
@@ -123,6 +124,19 @@ module Matter
           self.current_mode = mode
         elsif !ota_restart && (mode = @start_up_mode)
           self.current_mode = mode
+        end
+      end
+
+      # OnMode follows a same-endpoint OnOff Off-to-On change. The OnOff server
+      # invokes this through a dedicated internal hook on attribute updates.
+      def bind_on_off(cluster : OnOff?) : Nil
+        return unless @feature_map.on_off?
+        cluster.try do |on_off|
+          on_off.bind_mode_on_effect do
+            if mode = @on_mode
+              self.current_mode = mode
+            end
+          end
         end
       end
 
