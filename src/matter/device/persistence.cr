@@ -134,8 +134,14 @@ module Matter
         cluster.restore_state(document)
         Log.debug { "Restored state for cluster #{cluster.name} (#{cluster.persistence_key})" }
         true
+      rescue ex : AccessControlRestoreError
+        Log.error(exception: ex) { "Unsafe Access Control state (cluster=#{cluster.name} key=#{cluster.persistence_key})" }
+        raise ex
       rescue ex
         Log.error(exception: ex) { "Failed to restore cluster state (cluster=#{cluster.name} key=#{cluster.persistence_key})" }
+        if cluster.fail_closed_restore?
+          raise AccessControlRestoreError.new("Could not read critical cluster state #{cluster.persistence_key}", ex)
+        end
         false
       end
 

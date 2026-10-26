@@ -35,6 +35,9 @@ module Matter
       DEFAULT_REVIEW_TIMEOUT                  = 59.minutes
       REVIEW_INSTRUCTION_LIMIT                = 512
       REVIEW_URL_LIMIT                        = 256
+      MANAGED_PERSISTED_KEYS                  = {"access_restrictions", "commissioning_arl",
+                                                 "commissioning_arl_configured", "pending_restriction_reviews",
+                                                 "next_restriction_review_token"}
 
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
@@ -555,6 +558,13 @@ module Matter
       def complete_restriction_review(fabric_index : UInt8, token : UInt64,
                                       instruction : String? = nil,
                                       arl_request_flow_url : String? = nil) : Bool
+        finish_restriction_review(fabric_index, token, instruction, arl_request_flow_url)
+      end
+
+      private def finish_restriction_review(fabric_index : UInt8, token : UInt64,
+                                            instruction : String?, arl_request_flow_url : String?,
+                                            previous_policy : Array(AccessRestrictionEntry)? = nil,
+                                            previous_policy_version : UInt32? = nil) : Bool
         if instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
            arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
           raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
@@ -567,13 +577,27 @@ module Matter
         previous_version = @data_version
         @pending_restriction_reviews.delete(token)
         increment_version
+        persisted = false
         begin
+          @on_persist.try(&.call)
+          persisted = true
           callback.call(fabric_index, update)
           emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
-          @on_persist.try(&.call)
         rescue ex
           @pending_restriction_reviews[token] = request
-          @data_version = previous_version
+          if version = previous_policy_version
+            restore_restriction_review_policy(fabric_index, previous_policy, version)
+          else
+            @data_version = previous_version
+          end
+          if persisted
+            begin
+              @on_persist.try(&.call)
+            rescue error
+              Log.error(exception: error) { "Could not durably restore failed restriction review #{token}" }
+              raise Matter::StorageError.new("Could not durably restore failed restriction review #{token}", error)
+            end
+          end
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
@@ -636,7 +660,8 @@ module Matter
         end
         increment_version
         begin
-          unless complete_restriction_review(fabric_index, token, instruction, arl_request_flow_url)
+          unless finish_restriction_review(fabric_index, token, instruction, arl_request_flow_url,
+                   previous, previous_version)
             restore_restriction_review_policy(fabric_index, previous, previous_version)
             return false
           end
@@ -959,6 +984,11 @@ module Matter
       end
 
       def restore_state(document : Storage::Document) : Nil
+        has_managed_state = MANAGED_PERSISTED_KEYS.any? { |key| document.has_key?(key) }
+        if (has_managed_state || @feature_map.managed_device?) &&
+           MANAGED_PERSISTED_KEYS.any? { |key| !document.has_key?(key) }
+          raise Matter::AccessControlRestoreError.new("Missing managed restriction state fields")
+        end
         state = PersistedState.from_document(document)
         restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
         state.access_restrictions.each do |stored|
@@ -1028,8 +1058,16 @@ module Matter
 
         @extension = state.extension.map { |entry| ExtensionEntry.new(entry.data, entry.fabric_index) }
         resume_restriction_reviews
+      rescue ex : Matter::AccessControlRestoreError
+        Log.error(exception: ex) { "AccessControl restore failed; refusing startup" }
+        raise ex
       rescue ex
-        Log.error(exception: ex) { "AccessControl restore_state failed; starting fresh" }
+        Log.error(exception: ex) { "AccessControl restore failed; refusing startup" }
+        raise Matter::AccessControlRestoreError.new("Could not restore Access Control state", ex)
+      end
+
+      def fail_closed_restore? : Bool
+        true
       end
 
       private def restored_restriction_entry(stored : PersistedRestrictionEntry) : AccessRestrictionEntry

@@ -578,6 +578,12 @@ module Matter
         # Default: no-op
       end
 
+      # Clusters with security-critical persisted state can require startup to
+      # fail when their document cannot be read or restored.
+      def fail_closed_restore? : Bool
+        false
+      end
+
       # ------------------------------------------------------------------------
       # Scenes Management hooks
       # ------------------------------------------------------------------------

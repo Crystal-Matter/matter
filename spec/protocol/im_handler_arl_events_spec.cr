@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
 require "../support/allowed_arl_event_cluster"
+define_allowed_arl_event_cluster
 require "../../src/matter/protocol/im_handler"
 
 private alias EventAcl = Matter::Cluster::AccessControl

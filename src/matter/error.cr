@@ -34,6 +34,11 @@ module Matter
   class StorageError < Error
   end
 
+  # Persisted Access Control state cannot be restored safely. Device startup
+  # must stop rather than silently boot without its ACL or managed ARL.
+  class AccessControlRestoreError < StorageError
+  end
+
   # Message counter overflow, replay detection, decryption failure.
   class SessionError < Error
   end

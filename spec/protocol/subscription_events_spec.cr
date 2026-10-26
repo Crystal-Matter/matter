@@ -4,6 +4,7 @@ require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/wi_fi_network_management"
 require "../../src/matter/cluster/access_control"
 require "../support/allowed_arl_event_cluster"
+define_allowed_arl_event_cluster
 require "../../src/matter/protocol/message_handler"
 
 private PEER        = Socket::IPAddress.new("127.0.0.1", 5540)

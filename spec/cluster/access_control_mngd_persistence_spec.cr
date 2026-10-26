@@ -1,6 +1,17 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
 require "../../src/matter/cluster/wi_fi_network_management"
+require "../../src/matter/device/persistence"
+require "../../src/matter/cluster/on_off"
+
+private class FailingReadStorage < Matter::Storage::Memory
+  property? fail_reads = false
+
+  def read(collection : String, id : String) : Matter::Storage::Document?
+    raise Matter::StorageError.new("unreadable document") if @fail_reads
+    super
+  end
+end
 
 private alias StoredAcl = Matter::Cluster::AccessControl
 private alias StoredWifi = Matter::Cluster::WiFiNetworkManagement
@@ -160,5 +171,103 @@ describe "Access Control managed restriction persistence" do
     stored_callbacks(restored, replayed, updates)
     replayed.should be_empty
     updates.should be_empty
+  end
+
+  it "rejects missing or malformed managed fields instead of clearing restrictions" do
+    original = stored_cluster
+    original.configure_access_restrictions(1_u8, [stored_entry])
+    missing = original.save_state.as(Matter::Storage::Document)
+    missing.delete("access_restrictions")
+    expect_raises(Matter::AccessControlRestoreError) do
+      stored_cluster.restore_state(missing)
+    end
+
+    malformed = original.save_state.as(Matter::Storage::Document)
+    malformed["access_restrictions"] = "corrupt"
+    expect_raises(Matter::AccessControlRestoreError) do
+      stored_cluster.restore_state(malformed)
+    end
+  end
+
+  it "rejects malformed legacy ACL state while accepting valid legacy documents" do
+    legacy = stored_cluster.save_state.as(Matter::Storage::Document)
+    StoredAcl::MANAGED_PERSISTED_KEYS.each { |key| legacy.delete(key) }
+    stored_cluster.restore_state(legacy)
+    expect_raises(Matter::AccessControlRestoreError) do
+      StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice).restore_state(legacy)
+    end
+    legacy["acl"] = "corrupt"
+    expect_raises(Matter::AccessControlRestoreError) do
+      stored_cluster.restore_state(legacy)
+    end
+  end
+
+  it "aborts cluster restore when a saved managed policy is corrupt" do
+    storage = Matter::Storage::Memory.new
+    persistence = Matter::Device::Persistence.new(storage)
+    original = stored_cluster
+    original.configure_access_restrictions(1_u8, [stored_entry])
+    corrupt = original.save_state.as(Matter::Storage::Document)
+    corrupt["access_restrictions"] = "corrupt"
+    storage.write(Matter::Storage::Collections::CLUSTERS, original.persistence_key, corrupt)
+    expect_raises(Matter::AccessControlRestoreError) do
+      persistence.restore_clusters([stored_cluster] of Matter::Cluster::Base)
+    end
+    persistence.close
+  end
+
+  it "aborts Access Control startup on an unreadable document but retains best effort for ordinary clusters" do
+    storage = FailingReadStorage.new
+    persistence = Matter::Device::Persistence.new(storage)
+    storage.fail_reads = true
+    expect_raises(Matter::AccessControlRestoreError) do
+      persistence.restore_clusters([stored_cluster] of Matter::Cluster::Base)
+    end
+    on_off = Matter::Cluster::OnOff.new(endpoint(1))
+    persistence.restore_clusters([on_off] of Matter::Cluster::Base).should eq(0)
+    persistence.close
+  end
+
+  it "does not emit a review update when durable completion fails" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    requests = [] of StoredAcl::RestrictionReviewRequest
+    updates = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(acl, requests, updates)
+    events = [] of UInt32
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    acl.on_persist = -> { raise Matter::StorageError.new("storage failed") }
+    expect_raises(Matter::StorageError) { acl.deny_restriction_review(1_u8, token) }
+    events.should be_empty
+    updates.should be_empty
+    acl.on_persist = nil
+    acl.deny_restriction_review(1_u8, token).should be_true
+  end
+
+  it "compensates the persisted token and approved policy when delivery fails" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| raise Matter::ConfigurationError.new("host failed") }
+    events = [] of UInt32
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    expect_raises(Matter::ConfigurationError) do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+    end
+    restored = stored_cluster
+    restored.restore_state(saved)
+    restored.arl(1_u8).size.should eq(1)
+    restored.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    replayed = [] of StoredAcl::RestrictionReviewRequest
+    updates = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(restored, replayed, updates)
+    replayed.map(&.token).should eq([token])
+    events.should be_empty
   end
 end
