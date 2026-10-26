@@ -18,6 +18,15 @@ module Matter
         value >= OPERATIONAL_MINIMUM && value < JOINT_FABRIC_EXCLUSIVE_MAXIMUM
       end
 
+      # A CASE ACL subject is either an operational node or a CAT with a
+      # nonzero version. Reserved, group and PASE subject ranges are excluded.
+      def self.valid_case_subject?(value : UInt64) : Bool
+        return true if value >= OPERATIONAL_MINIMUM && value <= OPERATIONAL_MAXIMUM
+
+        (value & ~CAT_VALUE_MASK) == CAT_PREFIX &&
+          (value & CaseAuthenticatedTag::VERSION_MASK.to_u64) != 0_u64
+      end
+
       def self.random_joint_fabric : NodeId
         new(Random::Secure.rand(OPERATIONAL_MINIMUM...JOINT_FABRIC_EXCLUSIVE_MAXIMUM))
       end

@@ -1404,6 +1404,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Include the feature-required Wi-Fi or Thread scan result list on the wire
   even when a scan finds no networks or reports a networking error. An empty
   list remains an empty TLV array instead of disappearing from the response.
+### Operational Credentials administrator subjects
+
+- Reject AddNOC when CaseAdminSubject is outside the operational Node ID range
+  or is a CAT with version zero. Return InvalidAdminSubject before changing
+  fabric or ACL state, so a valid retry can use the same commissioning session.
+
 ### Operational Credentials fabric-scoped commands
 
 - Encode UpdateNOC with only NOCValue and optional ICACValue, and
