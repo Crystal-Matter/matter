@@ -194,7 +194,7 @@ if [[ "$FOCUSED" -eq 1 ]]; then
   compose up --no-build --no-deps -d --wait "${SERVICES[@]}"
   echo "==> Running selected E2E specs"
   set +e
-  compose run --rm --no-deps tests
+  compose run --rm --no-deps --use-aliases tests
   RESULT=$?
   set -e
   exit "$RESULT"

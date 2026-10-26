@@ -282,6 +282,18 @@ commands. B-to-A device migration already has the same five-command recovery
 matrix, plus rollback and a fresh file-backend restart test. These local tests
 exercise journal logic; wider live network interruption coverage remains open.
 
+The two-JFA Docker scenario also drops the `TransferAnchorComplete` response
+after the old Anchor commits it, restarts the candidate at `Completing`, and
+checks that follow-up resumes without repeating credential rotation. The old
+Datastore is inactive at this point and remains inaccessible on the Matter
+endpoint. The example obtains a fresh nonce-bound completion witness from the
+old Anchor's flushed private role and transfer-watch records through its
+opt-in, provisioned local command channel. The witness binds the old fabric,
+its root and Anchor Node ID, the authenticated requester on that fabric, and
+the mapped new Anchor Node ID. An embedding host must provide an equivalently
+authenticated and durable witness channel before it can reconcile
+`Completing`; when the channel or witness is unavailable, recovery fails closed.
+
 ## Official certification scenario mirrors
 
 `spec/cluster/joint_fabric_certification_parity_spec.cr` runs local command

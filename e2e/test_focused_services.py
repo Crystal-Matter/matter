@@ -115,7 +115,9 @@ class FocusedServicesTest(unittest.TestCase):
             self.assertIn("compose build switch", commands)
             self.assertIn("compose build tests", commands)
             self.assertIn("compose up --no-build --no-deps -d --wait door-lock-aliro", commands)
-            self.assertIn("compose run --rm --no-deps tests", commands)
+            # The one-off runner hosts the JFA HTTPS DCL mirror at https://tests.
+            # Compose must register its service alias on the focused network.
+            self.assertIn("compose run --rm --no-deps --use-aliases tests", commands)
             self.assertFalse(any(" shared-switch" in command for command in commands))
 
 

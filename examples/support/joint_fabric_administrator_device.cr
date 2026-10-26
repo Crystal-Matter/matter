@@ -157,6 +157,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_remove_admin : Bool = false
       getter? interrupt_before_transfer_follow_up : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
+      getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
       getter? interrupt_after_participant_rotation : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
@@ -178,6 +179,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_remove_admin : Bool = false,
                      @interrupt_before_transfer_follow_up : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
+                     @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
                      @interrupt_after_participant_rotation : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil)
@@ -201,6 +203,9 @@ module MatterJointFabricAdministrator
       getter inspected_datastore_admin_entries : Array(Bytes)?
       getter inspected_transfer_requester_node_id : UInt64?
       getter inspected_transfer_frozen : Bool?
+      getter inspected_transfer_complete : Bool?
+      getter inspected_new_anchor_node_id : UInt64?
+      getter inspected_transfer_stage : UInt8?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -217,7 +222,10 @@ module MatterJointFabricAdministrator
                      @inspected_fabric_count : Int32? = nil,
                      @inspected_datastore_admin_entries : Array(Bytes)? = nil,
                      @inspected_transfer_requester_node_id : UInt64? = nil,
-                     @inspected_transfer_frozen : Bool? = nil)
+                     @inspected_transfer_frozen : Bool? = nil,
+                     @inspected_transfer_complete : Bool? = nil,
+                     @inspected_new_anchor_node_id : UInt64? = nil,
+                     @inspected_transfer_stage : UInt8? = nil)
       end
     end
 
@@ -267,17 +275,20 @@ module MatterJointFabricAdministrator
     # Test-only loss of the TransferAnchorRequest acknowledgement. The old
     # Anchor is already frozen when the local journal remains Requesting.
     class InterruptedTransferPort < Matter::Controller::AnchorTransfer::Port
-      def initialize(@delegate : Matter::Controller::AnchorTransfer::Port)
+      def initialize(@delegate : Matter::Controller::AnchorTransfer::Port,
+                     @interrupt_after_request : Bool = false,
+                     @interrupt_after_complete : Bool = false)
       end
 
       def request : Admin::TransferAnchorResponseStatusEnum
         result = @delegate.request
-        raise Matter::TransportError.new("Injected lost TransferAnchorRequest acknowledgement") if result.ok?
+        raise Matter::TransportError.new("Injected lost TransferAnchorRequest acknowledgement") if result.ok? && @interrupt_after_request
         result
       end
 
       def complete : Nil
         @delegate.complete
+        raise Matter::TransportError.new("Injected lost TransferAnchorComplete acknowledgement") if @interrupt_after_complete
       end
     end
 
@@ -748,6 +759,7 @@ module MatterJointFabricAdministrator
           if bootstrap_joint_fabric_datastore.joint_fabric_index == fabric.fabric_index
             persist_bootstrap_anchor_role(false, transfer_complete: true)
           end
+          persistence.flush
           lifecycle.sync_advertisements
           nil
         },
@@ -828,6 +840,7 @@ module MatterJointFabricAdministrator
           if joint_fabric_datastore.joint_fabric_index == fabric.fabric_index
             persist_anchor_role(false, transfer_complete: true)
           end
+          persistence.flush
           lifecycle.sync_advertisements
           nil
         },
@@ -944,7 +957,7 @@ module MatterJointFabricAdministrator
         transfer_authorized: ->(_node_id : UInt64) { ENV["MATTER_JFA_ALLOW_TRANSFER"]? == "1" },
         datastore_busy: -> { datastore.transfer_busy? },
         begin_transfer: -> { begin_anchor_transfer },
-        complete_transfer: -> { persist_anchor_role(false, transfer_complete: true); lifecycle.sync_advertisements; nil },
+        complete_transfer: -> { persist_anchor_role(false, transfer_complete: true); persistence.flush; lifecycle.sync_advertisements; nil },
         on_transfer_requested: ->(node_id : UInt64, index : UInt8) { record_transfer_candidate(node_id, index) },
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: certificate,
@@ -1482,7 +1495,8 @@ module MatterJointFabricAdministrator
     # old Anchor to freeze; network operations after that point are journaled.
     private def transfer_anchor_from(old_anchor_node_id : UInt64,
                                      interrupt_before_follow_up : Bool = false,
-                                     interrupt_after_request : Bool = false) : Nil
+                                     interrupt_after_request : Bool = false,
+                                     interrupt_after_complete : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
@@ -1520,7 +1534,18 @@ module MatterJointFabricAdministrator
         return if journal.stage.completed?
         scanner.start
         scanner.query_operational
+        if journal.stage.completing?
+          raise Matter::CommissioningError.new("Anchor transfer needs authenticated completion reconciliation")
+        end
         if journal.stage.transferred? || journal.stage.following_up?
+          unless journal.stage.following_up?
+            journal.stage = Matter::Controller::AnchorTransfer::Stage::FollowingUp
+            persistence.write_app_document(APP_TRANSFER_DOCUMENT, journal.to_document)
+            persistence.flush
+          end
+          if interrupt_before_follow_up
+            raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
+          end
           follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, own_client, own_im)
           journal.stage = Matter::Controller::AnchorTransfer::Stage::Completed
           persistence.write_app_document(APP_TRANSFER_DOCUMENT, journal.to_document)
@@ -1608,7 +1633,7 @@ module MatterJointFabricAdministrator
             nil
           })
         port = Matter::Controller::AnchorTransfer::ImPort.new(old_im, old_session, old_peer, old_endpoint)
-        transfer_port = interrupt_after_request ? InterruptedTransferPort.new(port) : port
+        transfer_port = (interrupt_after_request || interrupt_after_complete) ? InterruptedTransferPort.new(port, interrupt_after_request, interrupt_after_complete) : port
         workflow = Matter::Controller::AnchorTransfer::Workflow.new(preflight,
           transfer_port, migration,
           -> { true },
@@ -1978,6 +2003,84 @@ module MatterJointFabricAdministrator
         }, proof.inspected_transfer_requester_node_id)
     end
 
+    # Local host witness for a lost Complete response. A sealed, provisioned
+    # host channel must carry this result; the inactive Matter Datastore stays
+    # inaccessible even to the former requester.
+    private def inspect_transfer_completion(requester_node_id : UInt64, nonce : String?) : CommandResult
+      raise Matter::ConfigurationError.new("Inspection nonce is required") if nonce.nil? || nonce.empty?
+      fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Old Anchor fabric is unavailable")
+      document = persistence.app_document(APP_TRANSFER_WATCH_DOCUMENT) ||
+                 raise Matter::ConfigurationError.new("Anchor transfer requester journal is absent")
+      watch = TransferWatchState.from_document(document)
+      new_anchor_node_id = watch.new_anchor_node_id
+      unless persisted_transfer_complete? && joint_fabric_datastore.status.state.delete_pending? &&
+             joint_fabric_datastore.access_mode.inactive? &&
+             watch.requester_node_id == requester_node_id &&
+             watch.old_fabric_id == fabric.fabric_id &&
+             watch.old_root_public_key == fabric.root_public_key &&
+             new_anchor_node_id && new_anchor_node_id == configured_new_anchor_node_id(requester_node_id)
+        raise Matter::AuthenticationError.new("Old Anchor cannot witness this transfer completion")
+      end
+      CommandResult.new("ok", inspected_node_id: fabric.node_id,
+        inspected_fabric_id: fabric.fabric_id,
+        inspected_root_public_key: fabric.root_public_key,
+        inspected_transfer_requester_node_id: watch.requester_node_id,
+        inspected_new_anchor_node_id: new_anchor_node_id,
+        inspected_transfer_complete: true, nonce: nonce)
+    end
+
+    # The proof file is an opt-in trusted local channel. Its result is checked
+    # again by the reusable journal helper before any stage change is saved.
+    private def reconcile_transfer_complete(old_anchor_node_id : UInt64, nonce : String?) : Nil
+      raise Matter::ConfigurationError.new("Inspection nonce is required") if nonce.nil? || nonce.empty?
+      proof_path = ENV["MATTER_JFA_OUTGOING_INSPECTION_PATH"]? ||
+                   raise Matter::ConfigurationError.new("Old Anchor inspection channel is unavailable")
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is unavailable")
+      old_fabrics = fabric_table.all_fabrics.select do |fabric|
+        fabric.root_public_key != own_fabric.root_public_key &&
+          fabric.cats.any?(&.identity_value.==(0xFFFF_u16))
+      end
+      unless old_fabrics.size == 1
+        raise Matter::ConfigurationError.new("Candidate must have exactly one joined Joint Fabric")
+      end
+      old_fabric = old_fabrics.first
+      document = persistence.app_document(APP_TRANSFER_DOCUMENT) ||
+                 raise Matter::ConfigurationError.new("Anchor transfer journal is absent")
+      journal = Matter::Controller::AnchorTransfer::Journal.from_document(document)
+      unless journal.stage.completing? && journal.candidate_node_id == old_fabric.node_id
+        raise Matter::ConfigurationError.new("Anchor transfer is not awaiting completion reconciliation")
+      end
+      backend = Matter::Storage::YamlFile.new(proof_path)
+      backend.open
+      proof = begin
+        result = backend.read(COMMAND_RPC_COLLECTION, "result") ||
+                 raise Matter::ConfigurationError.new("Old Anchor inspection result is absent")
+        CommandResult.from_document(result)
+      ensure
+        backend.close if backend.open?
+      end
+      unless proof.status == "ok" && proof.nonce == nonce &&
+             proof.inspected_transfer_complete == true &&
+             proof.inspected_node_id && proof.inspected_fabric_id &&
+             proof.inspected_root_public_key && proof.inspected_transfer_requester_node_id &&
+             proof.inspected_new_anchor_node_id
+        raise Matter::AuthenticationError.new("Old Anchor completion witness is incomplete")
+      end
+      witness = Matter::Controller::AnchorTransfer::CompletionWitness.new(
+        proof.nonce.as(String), proof.inspected_node_id.as(UInt64),
+        proof.inspected_fabric_id.as(UInt64), proof.inspected_root_public_key.as(Bytes),
+        proof.inspected_transfer_requester_node_id.as(UInt64),
+        proof.inspected_new_anchor_node_id.as(UInt64), proof.inspected_transfer_complete.as(Bool))
+      Matter::Controller::AnchorTransfer::Workflow.reconcile_completion_journal!(journal,
+        witness,
+        ->(state : Matter::Controller::AnchorTransfer::Journal) {
+          persistence.write_app_document(APP_TRANSFER_DOCUMENT, state.to_document)
+          persistence.flush
+          nil
+        }, nonce.as(String), old_anchor_node_id, old_fabric.fabric_id,
+        old_fabric.root_public_key, own_fabric.node_id)
+    end
+
     private def reconcile_datastore_removed(outgoing_node_id : UInt64) : Nil
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -2233,7 +2336,7 @@ module MatterJointFabricAdministrator
           case request.operation
           when "transfer-anchor"
             transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?,
-              request.interrupt_after_transfer_request?)
+              request.interrupt_after_transfer_request?, request.interrupt_after_transfer_complete?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
@@ -2278,6 +2381,16 @@ module MatterJointFabricAdministrator
           when "reconcile-transfer-requested"
             reconcile_transfer_requested(request.node_id, request.nonce)
             CommandResult.new("ok")
+          when "inspect-transfer-completion"
+            inspect_transfer_completion(request.node_id, request.nonce)
+          when "reconcile-transfer-complete"
+            reconcile_transfer_complete(request.node_id, request.nonce)
+            CommandResult.new("ok")
+          when "inspect-transfer-stage"
+            document = persistence.app_document(APP_TRANSFER_DOCUMENT) ||
+                       raise Matter::ConfigurationError.new("Anchor transfer journal is absent")
+            journal = Matter::Controller::AnchorTransfer::Journal.from_document(document)
+            CommandResult.new("ok", inspected_transfer_stage: journal.stage.value)
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
             CommandResult.new("ok")
