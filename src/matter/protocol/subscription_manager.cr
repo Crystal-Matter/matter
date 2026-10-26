@@ -24,7 +24,8 @@ module Matter
     # `SessionRegistry#synchronize`, the same lock inbound message handling
     # takes.
     class SubscriptionManager
-      Log = ::Log.for("matter.protocol.subscription_manager")
+      Log                   = ::Log.for("matter.protocol.subscription_manager")
+      REPORT_STATUS_TIMEOUT = 30.seconds
 
       # An exchange with chunks still to send, waiting for the controller to
       # acknowledge the chunk in flight.
@@ -52,6 +53,22 @@ module Matter
 
       # An InvokeRequest whose command responses span multiple messages.
       class PendingInvoke < PendingChunks
+      end
+
+      # One active subscription Report transaction. Its dirty attribute keys
+      # and event cursor are committed only after the final IM Status.Success.
+      class PendingUpdate < PendingChunks
+        getter subscription_id : UInt32
+        getter event_cursor : UInt64?
+        getter dirty_attributes : Set(Tuple(UInt16, UInt32, UInt32))
+        property last_progress_at : Time::Span
+
+        def initialize(@subscription_id, @event_cursor, @dirty_attributes,
+                       peer : Socket::IPAddress, session : Session::SecureContext,
+                       remaining_chunks : Array(Bytes))
+          super(peer, session, remaining_chunks)
+          @last_progress_at = Time.monotonic
+        end
       end
 
       # A SubscribeRequest whose priming report is still being delivered. The
@@ -87,6 +104,8 @@ module Matter
       @pending_subscriptions : Hash(ExchangeKey, PendingSubscription) = {} of ExchangeKey => PendingSubscription
       @pending_reads : Hash(ExchangeKey, PendingRead) = {} of ExchangeKey => PendingRead
       @pending_invokes : Hash(ExchangeKey, PendingInvoke) = {} of ExchangeKey => PendingInvoke
+      @pending_updates : Hash(ExchangeKey, PendingUpdate) = {} of ExchangeKey => PendingUpdate
+      @inflight_updates = {} of UInt32 => ExchangeKey
       alias AttributeKey = Tuple(UInt16, UInt32, UInt32)
       @dirty_attributes = {} of UInt32 => Set(AttributeKey)
 
@@ -132,10 +151,10 @@ module Matter
       # Advances the chunked exchange *exchange_id*, returning whether it was
       # one of ours.
       #
-      # A controller acknowledges each ReportData chunk with either a
-      # StatusResponse or - as iOS does - a bare MRP StandaloneAck. Both mean
-      # the same thing here: send the next chunk, or finish. *trigger* is the
-      # message that acknowledged, and is what the next message answers.
+      # Priming and read chunks accept StatusResponse or iOS's bare MRP ACK.
+      # Active subscription updates require an IM StatusResponse; transport
+      # acknowledgement alone cannot commit the report transaction. *trigger*
+      # is the message the next chunk answers.
       def advance(exchange_id : UInt16, trigger : Codec::MessageCodec::Message, success : Bool = true) : Bool
         @registry.synchronize do
           key = {trigger.packet_header.session_id, exchange_id}
@@ -154,6 +173,39 @@ module Matter
               complete_subscription(pending, trigger, exchange_id)
             end
 
+            return true
+          end
+
+          if pending = @pending_updates[key]?
+            # MRP only confirms transport delivery. Chunk ordering and
+            # successful completion require an IM StatusResponse.
+            return false unless trigger.payload_header.protocol_id == ProtocolId::InteractionModel.value &&
+                                trigger.payload_header.message_type == InteractionModel::MessageType::StatusResponse.value
+            unless success
+              @pending_updates.delete(key)
+              @inflight_updates.delete(pending.subscription_id)
+              @dirty_attributes.delete(pending.subscription_id)
+              @registry.remove_subscription(pending.subscription_id)
+              @sender.send_encrypted_ack(trigger, pending.peer, pending.session) if trigger.payload_header.requires_acknowledge?
+              Log.warn { "Subscription #{pending.subscription_id} terminated: subscriber rejected ReportData" }
+              return true
+            end
+
+            if chunk = pending.remaining_chunks.first?
+              send_chunk(pending, trigger, chunk)
+              pending.next_chunk
+              pending.last_progress_at = Time.monotonic
+            else
+              @pending_updates.delete(key)
+              @inflight_updates.delete(pending.subscription_id)
+              if subscription = @registry.active_subscriptions[pending.subscription_id]?
+                if cursor = pending.event_cursor
+                  subscription.last_event_number = cursor
+                end
+                subscription.last_report_time = Time.utc
+              end
+              @sender.send_encrypted_ack(trigger, pending.peer, pending.session) if trigger.payload_header.requires_acknowledge?
+            end
             return true
           end
 
@@ -212,6 +264,7 @@ module Matter
 
         @registry.synchronize do
           subscriptions = @registry.active_subscriptions
+          prune_inflight_updates(subscriptions)
           Log.debug { "notify_batched: #{attributes.size} attribute(s), active=#{subscriptions.size}" }
           return if subscriptions.empty?
 
@@ -221,6 +274,7 @@ module Matter
               dirty << attribute if subscription.matches?(*attribute)
             end
             next unless subscription.min_interval_elapsed?
+            next if @inflight_updates.has_key?(subscription.subscription_id)
 
             reports = collect_reports(subscription, dirty.to_a)
             # Every report drains whatever the journal still owes this
@@ -231,16 +285,16 @@ module Matter
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
             send_update(subscription, reports, events)
-            dirty.clear
           end
         end
       end
 
       # Run before the registry's expiry sweep: a quiet subscriber still needs
       # a ReportData at MaxInterval, while dirty values wait for MinInterval.
-      def tick(now : Time = Time.utc) : Nil
+      def tick(now : Time = Time.utc, monotonic_now : Time::Span = Time.monotonic) : Nil
         @registry.synchronize do
           subscriptions = @registry.active_subscriptions
+          prune_inflight_updates(subscriptions, monotonic_now)
           @dirty_attributes.reject! { |id, _| !subscriptions.has_key?(id) }
 
           subscriptions.each_value do |subscription|
@@ -248,6 +302,7 @@ module Matter
             min_elapsed = subscription.min_interval_elapsed?(now)
             max_elapsed = now >= subscription.last_report_time + subscription.max_interval.seconds
             next unless min_elapsed
+            next if @inflight_updates.has_key?(subscription.subscription_id)
             report_due = max_elapsed || dirty.try(&.empty?) == false || subscription.events?
             next unless report_due
 
@@ -255,12 +310,7 @@ module Matter
             events = pending_events(subscription)
             next if reports.empty? && events.empty? && !max_elapsed
 
-            if reports.empty? && events.empty?
-              send_update_batch(subscription, reports, events, nil)
-            else
-              send_update(subscription, reports, events)
-            end
-            dirty.try(&.clear)
+            send_update(subscription, reports, events)
           end
         end
       end
@@ -275,6 +325,7 @@ module Matter
       def notify_events : Nil
         @registry.synchronize do
           subscriptions = @registry.active_subscriptions
+          prune_inflight_updates(subscriptions)
           return if subscriptions.empty?
 
           now = Time.utc
@@ -286,6 +337,7 @@ module Matter
 
             urgent = records.any?(&.urgent_for?(subscription.event_paths))
             next unless urgent || subscription.min_interval_elapsed?(now)
+            next if @inflight_updates.has_key?(subscription.subscription_id)
 
             Log.debug do
               "Sending event report: subscription_id=#{subscription.subscription_id}, " \
@@ -296,74 +348,61 @@ module Matter
         end
       end
 
-      # Pack updates to the active transport's payload budget. Each packet is
-      # a complete subscription ReportData on a fresh exchange, so a large
-      # journal batch does not leave every later event stuck behind its head.
+      # One Report transaction may need several ReportData messages. Keep
+      # them on one exchange and wait for each IM status before proceeding.
       private def send_update(
         subscription : ActiveSubscription,
         reports : Array(InteractionModel::AttributeReportIB),
         events : Array(InteractionModel::EventReportIB),
       ) : Nil
+        return if @inflight_updates.has_key?(subscription.subscription_id)
         limit = @sender.im_payload_limit(subscription.session, subscription.peer)
-        batch_reports = [] of InteractionModel::AttributeReportIB
-        batch_events = [] of InteractionModel::EventReportIB
-        event_cursor = nil.as(UInt64?)
-
-        reports.each do |report|
-          unless update_fits?(subscription, batch_reports + [report], batch_events, limit)
-            send_update_batch(subscription, batch_reports, batch_events, event_cursor) unless batch_reports.empty? && batch_events.empty?
-            batch_reports.clear
-            batch_events.clear
-            event_cursor = nil
-          end
-          if update_fits?(subscription, [report], [] of InteractionModel::EventReportIB, limit)
-            batch_reports << report
-          else
-            Log.warn { "Subscription attribute update omitted: subscription_id=#{subscription.subscription_id} report=#{report.to_slice.size} exceeds transport limit=#{limit}" }
-          end
+        chunks = IMHandler.encode_chunked_report_data(reports, subscription.subscription_id,
+          events, max_payload_size: limit)
+        dirty = @dirty_attributes[subscription.subscription_id]? || Set(AttributeKey).new
+        @dirty_attributes[subscription.subscription_id] = Set(AttributeKey).new
+        cursor = events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
+        begin
+          exchange_id = @sender.send_report(subscription.session, subscription.peer, chunks.first[0])
+          key = {subscription.session.session_id, exchange_id}
+          @pending_updates[key] = PendingUpdate.new(subscription.subscription_id, cursor, dirty,
+            subscription.peer, subscription.session, chunks[1..].map(&.[0]))
+          @inflight_updates[subscription.subscription_id] = key
+        rescue ex
+          @dirty_attributes[subscription.subscription_id].concat(dirty)
+          raise ex
         end
-
-        events.each do |event|
-          number = event.event_data.try(&.event_number)
-          unless update_fits?(subscription, batch_reports, batch_events + [event], limit)
-            send_update_batch(subscription, batch_reports, batch_events, event_cursor) unless batch_reports.empty? && batch_events.empty?
-            batch_reports.clear
-            batch_events.clear
-            event_cursor = nil
-          end
-          if update_fits?(subscription, batch_reports, [event], limit)
-            batch_events << event
-            event_cursor = number if number
-          elsif data = event.event_data
-            # An indivisible event cannot be retransmitted in a smaller
-            # packet. Report ResourceExhausted for its path before advancing
-            # the cursor, then continue with later events.
-            status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
-            error = InteractionModel::EventReportIB.new(event_status: InteractionModel::EventStatusIB.new(data.path, status))
-            send_update_batch(subscription, [] of InteractionModel::AttributeReportIB, [error], data.event_number)
-          else
-            Log.warn { "Subscription event status omitted: subscription_id=#{subscription.subscription_id} exceeds transport limit=#{limit}" }
-          end
-        end
-
-        send_update_batch(subscription, batch_reports, batch_events, event_cursor) unless batch_reports.empty? && batch_events.empty?
-      end
-
-      private def update_fits?(subscription : ActiveSubscription,
-                               reports : Array(InteractionModel::AttributeReportIB),
-                               events : Array(InteractionModel::EventReportIB), limit : Int32) : Bool
-        IMHandler.encode_report_data(reports, subscription.subscription_id, event_reports: events).size <= limit
-      end
-
-      private def send_update_batch(subscription : ActiveSubscription,
-                                    reports : Array(InteractionModel::AttributeReportIB),
-                                    events : Array(InteractionModel::EventReportIB),
-                                    event_cursor : UInt64?) : Nil
-        payload = IMHandler.encode_report_data(reports, subscription.subscription_id, event_reports: events)
-        Log.trace { "Subscription update ReportData TLV (#{payload.size} bytes): #{payload.hexstring}" }
-        @sender.send_report(subscription.session, subscription.peer, payload)
-        subscription.last_event_number = event_cursor if event_cursor
         subscription.last_report_time = Time.utc
+      end
+
+      private def prune_inflight_updates(subscriptions : Hash(UInt32, ActiveSubscription),
+                                         monotonic_now : Time::Span = Time.monotonic) : Nil
+        @inflight_updates.reject! do |subscription_id, key|
+          pending = @pending_updates[key]?
+          subscription = subscriptions[subscription_id]?
+          timed_out = false
+          if pending && subscription && subscription.session.session_id == pending.session.session_id
+            if monotonic_now < pending.last_progress_at + REPORT_STATUS_TIMEOUT
+              next false
+            end
+            # §8.5 permits termination when a ReportData with
+            # SuppressResponse=false receives no IM StatusResponse. This
+            # avoids blocking later deltas indefinitely behind that exchange.
+            timed_out = true
+            @registry.remove_subscription(subscription_id)
+            Log.warn { "Subscription #{subscription_id} terminated: ReportData status timed out" }
+          end
+          @pending_updates.delete(key)
+          if subscription && pending && !timed_out
+            # CASE renewal kept the subscription but abandoned the old
+            # exchange. Replay its snapshot on the new session.
+            dirty = @dirty_attributes.put_if_absent(subscription_id) { Set(AttributeKey).new }
+            dirty.concat(pending.dirty_attributes)
+          else
+            @dirty_attributes.delete(subscription_id)
+          end
+          true
+        end
       end
 
       # The journal records *subscription* has not reported yet, in event

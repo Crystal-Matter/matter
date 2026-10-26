@@ -41,8 +41,8 @@ module Matter
         UseActiveLocale = 255
       end
 
-      attribute 0x0000, :hour_format, HourFormat, default: HourFormat::Hr24, writable: true
-      attribute 0x0001, :active_calendar_type, CalendarType, nullable: true, writable: true, requires: :calendar_format
+      attribute 0x0000, :hour_format, HourFormat, default: HourFormat::Hr24, writable: true, write_access: :manage
+      attribute 0x0001, :active_calendar_type, CalendarType, nullable: true, writable: true, write_access: :manage, requires: :calendar_format
       attribute 0x0002, :supported_calendar_types, Array(CalendarType), nullable: true, fixed: true, requires: :calendar_format
 
       # ActiveCalendarType is not nullable and must be a supported calendar

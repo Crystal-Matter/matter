@@ -99,4 +99,34 @@ describe "Subscription reporting intervals" do
     report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).size.should eq(1)
     handler.close
   end
+
+  it "replays an unacknowledged update after CASE session renewal" do
+    handler, transport, subscription = subscription_timing_fixture(0_u16, 60_u16)
+    handler.notify_subscriptions(1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
+      Matter::Cluster::OnOff::ATTR_ON_OFF)
+    transport.sent_packets.size.should eq(1)
+
+    renewed = Matter::Spec::ProtocolMessages.case_session(2_u16)
+    handler.sessions[renewed.session_id] = renewed
+    subscription.session = renewed
+    handler.subscriptions.tick
+
+    transport.sent_packets.size.should eq(2)
+    report = timing_report(transport.sent_packets.last[0], renewed)
+    report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).size.should eq(1)
+    handler.close
+  end
+
+  it "terminates an update that never receives an IM status before MaxInterval" do
+    handler, transport, subscription = subscription_timing_fixture(0_u16, 600_u16)
+    handler.notify_subscriptions(1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
+      Matter::Cluster::OnOff::ATTR_ON_OFF)
+    transport.sent_packets.size.should eq(1)
+
+    handler.subscriptions.tick(Time.utc, monotonic_now: Time.monotonic + 31.seconds)
+
+    handler.active_subscriptions.has_key?(subscription.subscription_id).should be_false
+    transport.sent_packets.size.should eq(1)
+    handler.close
+  end
 end

@@ -91,7 +91,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0095 | Commodity Price Cluster | 4 | 4 | — | FORE forecast, detailed response commands and PriceChange event |
 | 0x0097 | Messages Cluster | 3 | 3 | — | Fabric-scoped queue, StartTime/Duration lifecycle, and host-triggered presentation; optional user-interaction features remain absent |
 | 0x0098 | Device Energy Management Cluster | 4 | 4 | — | PA, PFR, SFR, PFR+STA, PFR+PAU, PFR+FA, or PFR+CON profiles; each adjustment uses a host decision |
-| 0x0099 | Energy EVSE Cluster | 4 | 4 | — | — |
+| 0x0099 | Energy EVSE Cluster | 4 | 4 | — | Charging Preferences base plus opt-in V2X; host owns charge/discharge relay and metering |
 | 0x009B | Energy Preference Cluster | 1 | 1 | — | BALA/LPMS feature choice; validated scales, persisted selections and restart migration |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |
 | 0x009D | Energy EVSE Mode Cluster | 2 | 2 | — | Mode Base transitions, fixed options with a Manual mode and persisted selection |
@@ -125,7 +125,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
 | 0x0430 | Soil Measurement Cluster | 1 | 1 | — | Fixed accuracy limits and nullable validated percentage reading; Soil Sensor chip-tool E2E |
-| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — | HA-only provisional slice; OC, OI, AUD and PRED remain unavailable |
+| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — | Opt-in HA or combined OC+OI provisional profiles; AUD, PRED and other feature combinations remain unavailable |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
@@ -144,7 +144,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | — | Core plus PM/BU/OCR/SCR/BC/BA/BTW/ST policies |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
-| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices and host JPEG capture; synthetic chip-tool SNP E2E, media delivery and Camera topology remain |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices, gated VDO/SNP+WMARK/OSD modification, and host JPEG capture; synthetic chip-tool SNP E2E, overlay rendering, media delivery and Camera topology remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | Mechanical pan/tilt/zoom combinations, MPRESETS, and DPTZ viewport control including relative moves and mixed profiles; Camera topology and physical host actuation remain |
 | 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO and VDO-only signaling, host Peer interface, and synthetic chip-tool E2E; no decoded video or independently verified SDP/ICE media transport |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |

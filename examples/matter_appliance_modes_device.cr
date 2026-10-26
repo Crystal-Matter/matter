@@ -47,6 +47,11 @@ module MatterApplianceModes
   class Device < Matter::Device
     include Examples::Console
 
+    # The E2E service alone enables the diagnostic event triggers.
+    protected def general_diagnostics_test_enable_key : Bytes?
+      ENV["MATTER_DIAGNOSTICS_TEST_ENABLE_KEY"]?.try(&.hexbytes)
+    end
+
     identity vendor: "Spider-Gazelle", product: "Synthetic Appliance Modes",
       vendor_id: Matter::SetupPayload.test_vendor_id,
       product_id: 0x5159_u16,
@@ -75,12 +80,46 @@ module MatterApplianceModes
         add_more_time: true
     end
 
+    # Synthetic bidirectional EVSE for the opt-in V2X wire tests.
+    endpoint 3, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Evse, circuit_capacity: 32_000_i64,
+        feature_map: Evse::Feature::ChargingPreferences | Evse::Feature::V2x
+    end
+
     protected def before_start : Nil
       evse = node.get_cluster!(1_u16, Evse)
       evse.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) do
         Status.success
       end
       evse.on_disable = -> { Status.success }
+      v2x = node.get_cluster!(3_u16, Evse)
+      v2x.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) { Status.success }
+      v2x.on_enable_discharging = ->(_until : UInt32?, _maximum : Int64) { Status.success }
+      v2x.on_disable = -> { Status.success }
+      diagnostics = node.get_cluster!(0_u16, Matter::Cluster::GeneralDiagnostics)
+      diagnostics.on_test_event_trigger = ->(trigger : UInt64) do
+        if trigger == 0x0099_0000_0000_0002_u64 # EV plugged in
+          v2x.report_ev_connected(1_u32)
+          true
+        elsif trigger == 0x0099_0000_0000_0004_u64 # Charge demand
+          v2x.report_transfer_started
+          true
+        elsif trigger == 0x0099_0000_0000_0005_u64 # Charge demand clear
+          v2x.report_transfer_stopped(Evse::EnergyTransferStoppedReason::EvStopped, 1_000_i64)
+          true
+        elsif trigger == 0x0099_0000_0000_0080_u64 # Synthetic discharge demand
+          v2x.report_discharge_started
+          true
+        elsif trigger == 0x0099_0000_0000_0081_u64 # Synthetic discharge demand clear
+          v2x.report_discharge_stopped(Evse::EnergyTransferStoppedReason::EvStopped, 2_000_i64)
+          true
+        elsif trigger == 0x0099_0000_0000_0003_u64 # EV unplugged
+          v2x.report_ev_disconnected(20_u32)
+          true
+        else
+          false
+        end
+      end
       control = node.get_cluster!(1_u16, MicrowaveOvenControl)
       control.on_set_cooking_parameters do |_mode, _seconds, _power, _start|
         Status.success

@@ -113,6 +113,7 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_tcp_large_payload
+      MATTER_SUBSCRIPTION_UPDATE_HOOK_PATH: /e2e/logs/matter_tcp_large_payload.trigger
 
   tls-certificates:
     <<: *device
@@ -336,6 +337,7 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_appliance_modes
+      MATTER_DIAGNOSTICS_TEST_ENABLE_KEY: 000102030405060708090a0b0c0d0e0f
 
   refrigerator-alarm:
     <<: *device

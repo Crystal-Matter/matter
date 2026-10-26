@@ -188,6 +188,13 @@ module Matter
                 next
               end
 
+              if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+                status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+                attr_status = InteractionModel::AttributeStatusIB.new(path: concrete_path, status: status_ib)
+                attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
+                next
+              end
+
               cluster.with_request_context do
                 cluster.request_fabric_index = fabric_index
                 cluster.request_session_id = session_id
@@ -225,6 +232,13 @@ module Matter
           required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
           unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
             status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+            attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+            attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
+            next
+          end
+
+          if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
             attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
             attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
             next
@@ -522,6 +536,11 @@ module Matter
           if metadata
             unless authorized?(clusters, metadata.write_access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+              write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+              next
+            end
+            if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_write_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
               next
             end
@@ -915,6 +934,12 @@ module Matter
           if metadata = cluster.commands.find { |cmd| cmd.id.id == path.command }
             unless authorized?(clusters, metadata.access, endpoint_id, path.cluster, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+              cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
+              invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
+              next
+            end
+            if is_case_session && fabric_index && access_control_cluster(clusters).try(&.command_restricted?(fabric_index, endpoint_id, path.cluster, path.command))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
               invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
               next

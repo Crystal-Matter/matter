@@ -7,6 +7,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fabric reuse isolation
+
+- Clean up CASE sessions, subscriptions, access control, retained events, and
+  resumption records before public FabricTable removal can free an index. Erase
+  group keys, scenes, bindings, and other fabric-scoped cluster state durably
+  before the index is released. Keep security cleanup independent of replaceable
+  host removal observers.
+- Bind persisted CASE sessions to the fabric ID and trust root, and reject
+  in-place or same-index fabric identity replacement before old fabric state
+  can be used by a different fabric.
+
 ### Joint Fabric keyed group propagation
 
 - Read the target's CurrentFabricIndex before writing its first GroupKeyMap
@@ -29,6 +40,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Matter epoch-seconds range, and poll for effective and expiry transitions
   after a clock change without requiring an attribute read. The official
   chip-tool fixture now checks Add before and after root SetUTCTime.
+- Add guarded optional TemperatureSetpointHold and indefinite hold duration
+  attributes. An active hold keeps CurrentThermostatSuggestion visible, reports
+  OngoingHold, and preserves the active preset; releasing it follows the
+  suggestion and reports the reason transition. Production TSUGGEST remains
+  gated while schedule and occupancy arbitration is completed.
 
 ### Thermostat suggestion host state
 
@@ -90,6 +106,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
 
+### Identify write privilege
+
+- Require Operate privilege for IdentifyTime writes, matching Matter 1.6, and
+  verify that a View-only CASE subject cannot write it.
+
 ### Thermostat base revision 11
 
 - Report Matter 1.6 Thermostat ClusterRevision 11 for supported HEAT, COOL, and
@@ -131,6 +152,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add typed Matter 1.6 ScheduleType, Schedule, and ScheduleTransition TLV models with validated host configuration and durable schedule handle history. Validation covers mode and per-type capacity, transition day/time overlap, per-day limits, preset references, setpoint limits, names, and built-in schedule removal. The MSCH feature remains unavailable to controllers at revision 9 until atomic Schedules writes, activation, and official wire E2E are complete.
 - Prepare Manage-only Schedules atomic writes behind the MSCH gate: secure peer and fabric ownership, bounded timeouts, private list staging, null-handle append, conditional version checks, rollback, commit validation, and durable handle history. MSCH stays unadvertised pending combined Presets/Schedules transactions, active schedule behavior, and official E2E coverage.
 - Prepare combined Presets and Schedules atomic writes behind the MSCH gate. One reservation stages both lists, validates final schedule references against final presets, and either publishes both or discards both. Preset-only writes cannot delete presets still referenced by committed schedules. Production MSCH remains gated pending active schedule behavior and official wire E2E.
+
+### Thermostat setpoint write access
+
+- Require Operate privilege for writes to occupied and unoccupied heating and
+  cooling setpoints, as specified by Matter 1.6.
 
 ### Thermostat setpoint limit reconciliation
 
@@ -197,7 +223,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nullable auto-selection uses TLV FieldState; optional overlay controls and
   real media remain open.
 
+- Add the gated SNP+WMARK profile: allocation carries the mandatory watermark
+  flag, stream records persist it, and Manage-privileged SnapshotStreamModify
+  commits a change after host callback success. The host must render the
+  watermark into image bytes; VDO+WMARK and OSD remain gated.
+
+- Extend the gated snapshot overlay profile to SNP+OSD, including combined
+  SNP+WMARK+OSD streams. Allocation and persisted stream records carry both
+  conditional flags; SnapshotStreamModify commits changes atomically after
+  the host applies the requested overlay state. VDO overlays remain gated.
+
 ### Camera AV Stream Management video
+
+- Add gated VDO+WMARK and VDO+OSD allocation and VideoStreamModify. Conditional
+  flags appear in allocated video streams; changes commit after a host callback
+  succeeds. Live video allocations still reset on restart because the host must
+  reopen encoders and transports. Overlay rendering remains host-owned.
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
   support with typed payloads, encoder/pixel-rate limits, shared audio/video
@@ -226,6 +267,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Thermostat events
 
 - Add opt-in Matter 1.6 Thermostat Events (TEVT) with typed mode, temperature, setpoint, relay-state, and running-mode events. Significant temperature events are rate-limited to one per minute, LTNE suppresses the sensor event, and controller writes remain persistent. The cluster retains revision 9 while the remaining revision 11 features are implemented separately.
+
+### Groups command access control
+
+- Require Manage privilege for AddGroup, RemoveGroup, RemoveAllGroups, and
+  AddGroupIfIdentifying as declared by Matter 1.6. Operate privilege still permits
+  ViewGroup and GetGroupMembership, but cannot change fabric group membership.
 
 ### Groupcast fabric removal
 
@@ -283,6 +330,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Unlatched`/`Unlocked` states and operation events; report actuator failures.
 - Route `UnlockWithTimeout` through the same host actuator when Unbolting is
   enabled, preserving the command's explicit relock timeout.
+
+### Ethernet Network Diagnostics ResetCounts access
+
+- Require Manage privilege to invoke ResetCounts, as specified by Matter 1.6.
 
 ### General Diagnostics test payload
 
@@ -561,7 +612,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preferences, typed charge commands and session events, validated daily
   target schedules, retained charging permission, and physical relay callbacks.
   The synthetic appliance fixture exercises the cluster through chip-tool.
-  Optional SoC, Plug and Charge, RFID, and V2X features remain unavailable.
+  Optional SoC, Plug and Charge, and RFID features remain unavailable.
+- Add an opt-in V2X profile with timed EnableDischarging, independent persistent
+  charge and discharge grants, combined SupplyState, host-approved relay changes,
+  separate expiry timers, and feature-required session counters and event fields.
+  The synthetic appliance fixture exposes V2X on a separate endpoint for
+  official chip-tool coverage.
 
 ### Application Launcher
 
@@ -1115,6 +1171,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   events; official chip-tool exercises the deterministic example hook. The
   other feature bits remain unavailable.
 
+- Add an opt-in combined ObjectCounting+ObjectIdentification profile with
+  Manage-writable persistent count configuration, conditional count reads,
+  identified-object semantic tags, threshold transitions, and start/end events.
+  The synthetic Aggregator fixture exercises the feature map and count
+  observation over chip-tool. Other feature combinations remain unavailable.
+
 ### Soil Measurement revision 1
 
 - Add the Matter 1.6 Soil Measurement server and Soil Sensor device type. The
@@ -1488,6 +1550,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   belonging to other fabrics.
   The provisional AUX and MNGD features remain disabled.
 
+### Access Control managed restriction foundation
+
+- Enforce host-configured `AttributeWriteForbidden` and `CommandForbidden`
+  restrictions for CASE writes and invokes, along with
+  `AttributeAccessForbidden` on writes. Blocked requests return
+  `AccessRestricted` before a cluster handler runs. ManagedDevice remains
+  unadvertised pending event restrictions, policy persistence, and review flow.
+- Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
+  host-configured, fabric-specific Access Restriction List for attribute reads.
+  A restriction on one fabric does not affect another fabric or standard global
+  attributes. Accept only the three Matter 1.6 network infrastructure management
+  clusters on non-root endpoints. Read, write, and invoke restrictions are
+  enforced after ACL checks. The policy is transient and ManagedDevice remains
+  unadvertised; events, persistence, and restriction review still need support
+  before enabling the full feature.
+
 ### Ecosystem Information for bridged nodes
 
 - Add the Matter 1.6 Ecosystem Information cluster with read-only, persistent,
@@ -1706,6 +1784,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
   retain the state reported by their host.
 
+### OnOff access control
+
+- Require Operate privilege for writes to the Lighting feature's OnTime and
+  OffWaitTime attributes, as specified by Matter 1.6.
+
 ### Identify countdown reporting
 
 - Keep IdentifyTime's DataVersion current during the one-second countdown while
@@ -1770,6 +1853,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   levels per second. CurrentLevel and RemainingTime advance on autonomous
   monotonic ticks, and Stop holds the current level. RemainingTime resets after
   restart instead of restoring a stale countdown.
+
+### Time Format Localization write access
+
+- Require Manage privilege to write HourFormat and CALFMT-gated ActiveCalendarType,
+  as specified by Matter 1.6. View reads remain available.
 
 ### Time synchronization
 
@@ -2060,6 +2148,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chunks, wait for each WriteResponse on the same exchange, and collect their
   statuses. Reject oversized individual items and multi-chunk timed writes
   before sending.
+
+### Active subscription report transactions
+
+- Send large list attributes and event batches as bounded ReportData chunks on
+  one exchange, advancing only after each Interaction Model success status.
+  Keep attribute changes and event cursors pending until the report completes,
+  and terminate subscriptions rejected by a peer or left without a response.
+  Replay unacknowledged changes after CASE renewal. Oversized scalar values
+  report ResourceExhausted instead of disappearing from the update stream.
 
 ### Subscription reporting intervals
 

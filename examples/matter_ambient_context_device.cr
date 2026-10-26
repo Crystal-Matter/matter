@@ -8,6 +8,8 @@ module MatterAmbientContext
     include Examples::Console
 
     alias Ambient = Matter::Cluster::AmbientContextSensing
+    UNKNOWN_OBJECT = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+    PERSON_OBJECT  = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
 
     @hook_active = false
 
@@ -30,6 +32,15 @@ module MatterAmbientContext
         as: :ambient
     end
 
+    endpoint 2, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification,
+        supported_object_tags: [UNKNOWN_OBJECT, PERSON_OBJECT],
+        object_count_config: Ambient::ObjectCountConfig.new(PERSON_OBJECT, 2_u16),
+        hold_time: 30_u16,
+        as: :object_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -50,6 +61,10 @@ module MatterAmbientContext
           File.delete(path)
           if nonce.starts_with?("walking:")
             ambient.observe_human_activity(Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking))
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("person-count:")
+            count = nonce.split(':')[1].to_u16
+            object_ambient.observe_object_count(PERSON_OBJECT, count)
             File.write("#{path}.ack", nonce)
           end
         end

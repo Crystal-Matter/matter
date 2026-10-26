@@ -39,7 +39,7 @@ module Matter
       Reserved9A            = 0x9A
       Reserved9B            = 0x9B
       Busy                  = 0x9C
-      Deprecated9D          = 0x9D
+      AccessRestricted      = 0x9D
       Deprecated9E          = 0x9E
       Deprecated9F          = 0x9F
       DeprecatedA0          = 0xA0
@@ -99,6 +99,7 @@ module Matter
         when DataVersionMismatch    then "Data Version Mismatch"
         when Timeout                then "Timeout"
         when Busy                   then "Busy"
+        when AccessRestricted       then "Access Restricted"
         when UnsupportedCluster     then "Unsupported Cluster"
         when NeedsTimedInteraction  then "Needs Timed Interaction"
         when UnsupportedEvent       then "Unsupported Event"
