@@ -71,7 +71,7 @@ private def removal_requestor_fabric(index : UInt8, id : UInt64) : Matter::Fabri
 end
 
 describe "WebRTC Requestor fabric removal" do
-  it "ends an old session before an ACL error permits its index and peer Node ID to be reused" do
+  it "ends an old session and reserves its index after an ACL failure" do
     require_udp_sockets!
     storage = RemovalRequestorFailAclStorage.new
     device = RemovalRequestorDevice.new(storage: storage, port: 0)
@@ -84,15 +84,16 @@ describe "WebRTC Requestor fabric removal" do
     requestor.current_sessions(1_u8).as(Array(RemovalRequestor::Session)).size.should eq(1)
 
     storage.fail_acl_write = true
-    expect_raises(Matter::StorageError, "Injected ACL write failure") do
+    expect_raises(Matter::StorageError, "Could not persist erased Access Control") do
       device.operational_credentials.credentials.remove_fabric(1_u8)
     end
-    device.fabric_table.get_fabric(1_u8).should be_nil
+    device.fabric_table.get_fabric(1_u8).should_not be_nil
+    device.fabric_table.quarantined?(1_u8).should be_true
     device.peer.endings.should eq([RemovalRequestor::EndReason::UnknownReason])
+    requestor.current_sessions(1_u8).as(Array(RemovalRequestor::Session)).should be_empty
 
     storage.fail_acl_write = false
-    device.fabric_table.add_fabric(removal_requestor_fabric(1_u8, 0x2001_u64)).should be_true
-    requestor.current_sessions(1_u8).as(Array(RemovalRequestor::Session)).should be_empty
+    device.fabric_table.add_fabric(removal_requestor_fabric(1_u8, 0x2001_u64)).should be_false
     requestor.request_peer_node_id = 100_u64
     offer = RemovalRequestor::OfferRequest.new(7_u16, "v=0")
     invoke(requestor, RemovalRequestor::CMD_OFFER, offer,

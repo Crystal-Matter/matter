@@ -308,6 +308,51 @@ describe Matter::FabricTable do
       storage.read(Matter::FabricTable::COLLECTION, "1").as(Matter::Storage::Document)["label"].should eq("Renamed")
     end
 
+    it "rejects an identity replacement at an occupied index" do
+      storage = Matter::Storage::Memory.new
+      table = Matter::FabricTable.new(storage)
+      original = build_fabric(1_u8)
+      table.add_fabric(original).should be_true
+      replacement = build_fabric(1_u8)
+      replacement.fabric_id = original.fabric_id + 1_u64
+
+      table.update_fabric(replacement).should be_false
+      table.get_fabric(1_u8).should be(original)
+      storage.read(Matter::FabricTable::COLLECTION, "1").as(Matter::Storage::Document)["fabric_id"].should eq(original.fabric_id.to_i64)
+
+      replacement.fabric_id = original.fabric_id
+      table.update_fabric(replacement).should be_false
+      table.get_fabric(1_u8).should be(original)
+    end
+
+    it "fails closed if a stored fabric identity is mutated in place" do
+      table = Matter::FabricTable.new(Matter::Storage::Memory.new)
+      fabric = build_fabric(1_u8)
+      table.add_fabric(fabric).should be_true
+
+      fabric.fabric_id += 1_u64
+      table.quarantined?(1_u8).should be_true
+      table.get_fabric(1_u8).should be_nil
+      table.all_fabrics.should be_empty
+      table.update_fabric(fabric).should be_false
+      table.remove_fabric(1_u8).should be_false
+
+      fabric.fabric_id -= 1_u64
+      fabric.root_public_key[0] ^= 1_u8
+      table.quarantined?(1_u8).should be_true
+      table.get_fabric(1_u8).should be_nil
+      table.all_fabrics.should be_empty
+      table.update_fabric(fabric).should be_false
+      table.remove_fabric(1_u8).should be_false
+
+      fabric.root_public_key[0] ^= 1_u8
+      fabric.fabric_index = 2_u8
+      table.quarantined?(1_u8).should be_true
+      table.all_fabrics.should be_empty
+      table.remove_fabric(1_u8).should be_false
+      expect_raises(Matter::StorageError, "Fabric index changed") { table.write_fabric(fabric) }
+    end
+
     it "clears the collection on clear_all" do
       storage = Matter::Storage::Memory.new
       table = Matter::FabricTable.new(storage)

@@ -65,7 +65,7 @@ module Matter
         @fabric_table = FabricTable.new(@backend, max_fabrics: max_fabrics)
         @fabric_table.write_debouncer = @debouncer
 
-        @protocol_persistence = Protocol::Persistence::StorageBackend.new(@backend)
+        @protocol_persistence = Protocol::Persistence::StorageBackend.new(@backend, @fabric_table)
         @protocol_persistence.write_debouncer = @debouncer
       end
 

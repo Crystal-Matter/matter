@@ -70,6 +70,7 @@ module Matter
       # fabric_index: the fabric index for CASE sessions (nil for PASE)
       property? case_session : Bool
       property fabric_index : UInt8?
+      property fabric_identity : String? = nil
 
       # The destination's advertised retransmission intervals (milliseconds).
       # Nil means the Matter 1.6 default applies.
@@ -177,6 +178,7 @@ module Matter
         getter peer_node_id : UInt64?
         getter local_node_id : UInt64?
         getter fabric_index : UInt8?
+        getter fabric_identity : String? = nil
         getter peer_subject_ids : Array(UInt64) = [] of UInt64
         getter peer_icac : Bytes? = nil
         getter peer_mrp_idle_interval_ms : UInt32? = nil
@@ -208,6 +210,7 @@ module Matter
           @peer_mrp_active_interval_ms : UInt32? = nil,
           @peer_mrp_active_threshold_ms : UInt16? = nil,
           @tcp_session : Bool = false,
+          @fabric_identity : String? = nil,
         )
         end
       end
@@ -227,6 +230,7 @@ module Matter
           peer_node_id: @peer_node_id.try(&.id),
           local_node_id: @local_node_id.try(&.id),
           fabric_index: @fabric_index,
+          fabric_identity: @fabric_identity,
           created_at: @creation_time,
           last_activity_at: @last_activity_time,
           peer_subject_ids: @peer_subject_ids,
@@ -258,6 +262,7 @@ module Matter
         context.last_activity_time = record.last_activity_at
         context.peer_subject_ids = record.peer_subject_ids.dup
         context.peer_icac = record.peer_icac.try(&.dup)
+        context.fabric_identity = record.fabric_identity
         context.peer_mrp_idle_interval_ms = record.peer_mrp_idle_interval_ms
         context.peer_mrp_active_interval_ms = record.peer_mrp_active_interval_ms
         context.peer_mrp_active_threshold_ms = record.peer_mrp_active_threshold_ms
