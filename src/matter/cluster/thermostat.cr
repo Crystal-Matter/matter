@@ -602,11 +602,11 @@ module Matter
       attribute 0x0004, :abs_max_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_HEAT, fixed: true, optional: true, requires: :heating
       attribute 0x0005, :abs_min_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_COOL, fixed: true, optional: true, requires: :cooling
       attribute 0x0006, :abs_max_cool_setpoint_limit, Int16, default: DEFAULT_ABS_MAX_COOL, fixed: true, optional: true, requires: :cooling
-      attribute 0x0011, :occupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, requires: :cooling, on_change: :cooling_setpoint_changed
-      attribute 0x0012, :occupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, requires: :heating, on_change: :heating_setpoint_changed
-      attribute 0x0013, :unoccupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true,
+      attribute 0x0011, :occupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, write_access: :operate, requires: :cooling, on_change: :cooling_setpoint_changed
+      attribute 0x0012, :occupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, write_access: :operate, requires: :heating, on_change: :heating_setpoint_changed
+      attribute 0x0013, :unoccupied_cooling_setpoint, Int16, default: DEFAULT_COOLING_SETPOINT, writable: true, write_access: :operate,
         requires: {cooling: true, occupancy: true}, on_change: :unoccupied_cooling_setpoint_changed
-      attribute 0x0014, :unoccupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true,
+      attribute 0x0014, :unoccupied_heating_setpoint, Int16, default: DEFAULT_HEATING_SETPOINT, writable: true, write_access: :operate,
         requires: {heating: true, occupancy: true}, on_change: :unoccupied_heating_setpoint_changed
       attribute 0x0015, :min_heat_setpoint_limit, Int16, default: DEFAULT_ABS_MIN_HEAT, writable: true, write_access: :manage,
         optional: true, requires: :heating, validate: :validate_min_heat_limit, on_change: :min_heat_limit_changed
