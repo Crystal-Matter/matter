@@ -94,6 +94,9 @@ module Matter
         if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
           return InteractionModel::StatusCode::AccessRestricted
         end
+        if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_attribute_read_restricted?(endpoint_id, cluster_id, attribute_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
         nil
       end
 
@@ -381,6 +384,9 @@ module Matter
         if is_case_session && fabric_index && access_control_cluster(clusters).try(&.event_restricted?(fabric_index, endpoint_id, cluster_id, event_id))
           return InteractionModel::StatusCode::AccessRestricted
         end
+        if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_event_restricted?(endpoint_id, cluster_id, event_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
 
         nil
       end
@@ -555,6 +561,11 @@ module Matter
               next
             end
             if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_write_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+              write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+              next
+            end
+            if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_attribute_write_restricted?(endpoint_id, cluster_id, attribute_id))
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
               next
@@ -954,6 +965,12 @@ module Matter
               next
             end
             if is_case_session && fabric_index && access_control_cluster(clusters).try(&.command_restricted?(fabric_index, endpoint_id, path.cluster, path.command))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+              cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
+              invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
+              next
+            end
+            if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_command_restricted?(endpoint_id, path.cluster, path.command))
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
               invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)

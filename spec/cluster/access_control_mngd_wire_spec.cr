@@ -163,4 +163,21 @@ describe "Access Control MNGD wire schema" do
     events.map(&.[1]).should eq([1_u8])
     MngdAcl::FabricRestrictionReviewUpdate.from_tlv(events.first[2]).token.should eq(token)
   end
+
+  it "rejects ReviewFabricRestrictions on a non-root Access Control endpoint" do
+    acl = MngdAcl.new(endpoint(1), MngdAcl::Feature::ManagedDevice)
+    requested = [] of MngdAcl::RestrictionReviewRequest
+    acl.on_restriction_review_requested { |request| requested << request }
+    acl.on_restriction_review_updated { |_, _| }
+    path = Matter::InteractionModel::CommandPath.new(1_u16, MngdAcl::CLUSTER_ID,
+      MngdAcl::CMD_REVIEW_FABRIC_RESTRICTIONS)
+    fields = MngdAcl::ReviewFabricRestrictionsRequest.new(
+      [] of MngdAcl::CommissioningAccessRestrictionEntry).to_tlv(nil)
+    request = Matter::InteractionModel::CommandDataIBTlv.new(path, fields)
+    response = Matter::Protocol::IMHandler.invoke_commands([request],
+      { {1_u16, MngdAcl::CLUSTER_ID} => acl.as(Matter::Cluster::Base) },
+      is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [MNGD_SUBJECT]).first
+    response.command_status.try(&.status.status).should eq(Matter::InteractionModel::StatusCode::InvalidCommand.value)
+    requested.should be_empty
+  end
 end

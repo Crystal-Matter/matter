@@ -36,6 +36,9 @@ event path returns `AccessRestricted`, while a
 wildcard event path silently omits restricted data. Active subscriptions apply
 the same check to later journal updates and advance past events that cannot be
 reported on that fabric.
+Attribute subscriptions also recheck ACL and ARL before every changed-value
+report. A concrete denied path receives its current status; a wildcard path
+omits that value.
 
 The host policy and fixed commissioning list are saved in the Access Control
 cluster document and restored after restart. Device startup removes saved
@@ -52,6 +55,8 @@ ARL independently before completion; the review method never changes policy.
 Pending requests retain their token and deadline across restart. When both
 host callbacks are installed after restore, unexpired requests are replayed
 with the original token, while expired requests produce their fallback update.
+If the host request callback fails before the token is returned, the library
+persists a compensating cancellation so restart does not replay that request.
 Completion delivery is at least once if storage fails after an update callback
 or event. If the host has not completed a request after 59 minutes, the library invokes
 the update callback with that token and no optional instructions. Removing a
@@ -66,7 +71,10 @@ list configured once during setup, `ARL` is View-readable and fabric scoped,
 and `ReviewFabricRestrictions` requires Administer privilege and a CASE fabric.
 The response carries a review token; completion emits a fabric-sensitive
 `FabricRestrictionReviewUpdate` event. Malformed wire requests fail before
-the host callback runs.
+the host callback runs. The command is accepted only on the root endpoint.
+With MNGD explicitly enabled, CommissioningARL restricts PASE attribute reads
+and writes, command invocations, and event reads. CASE sessions continue to use their
+fabric's ARL.
 
 Host consent handling, semantic validation of allowed endpoint/cluster targets,
 and independent managed-device interoperability remain future work. Device

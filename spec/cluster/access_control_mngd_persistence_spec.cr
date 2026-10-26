@@ -137,4 +137,28 @@ describe "Access Control managed restriction persistence" do
     restored.remove_fabric_acl(3_u8)
     restored.restriction_fabric_indexes.should be_empty
   end
+
+  it "does not replay a host request that failed before its token was returned" do
+    original = stored_cluster
+    saved_document = original.save_state.as(Matter::Storage::Document)
+    original.on_persist = -> do
+      saved_document = original.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    original.on_restriction_review_requested do |_request|
+      raise Matter::ConfigurationError.new("host unavailable")
+    end
+    original.on_restriction_review_updated { |_fabric, _update| }
+    expect_raises(Matter::ConfigurationError) do
+      original.request_restriction_review(1_u8, [] of StoredAcl::AccessRestrictionEntry)
+    end
+
+    restored = stored_cluster
+    restored.restore_state(saved_document)
+    replayed = [] of StoredAcl::RestrictionReviewRequest
+    updates = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(restored, replayed, updates)
+    replayed.should be_empty
+    updates.should be_empty
+  end
 end

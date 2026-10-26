@@ -489,6 +489,7 @@ module Matter
       end
 
       def review_fabric_restrictions(request : ReviewFabricRestrictionsRequest) : ReviewFabricRestrictionsResponse | InteractionModel::Status
+        return InteractionModel::Status.invalid_command unless @endpoint_id.number == 0_u16
         fabric_index = @request_fabric_index
         return InteractionModel::Status.unsupported_access unless @request_is_case_session && fabric_index
         entries = request.arl.map do |entry|
@@ -524,14 +525,23 @@ module Matter
         @pending_restriction_review_deadlines[token] = deadline
         schedule_restriction_review_timer(fabric_index, token, @review_timeout)
         increment_version
+        persisted = false
         begin
           @on_persist.try(&.call)
+          persisted = true
           callback.call(request)
         rescue ex
           @pending_restriction_reviews.delete(token)
           @pending_restriction_review_deadlines.delete(token)
           @restriction_review_timers.delete(token).try(&.close)
           increment_version
+          if persisted
+            begin
+              @on_persist.try(&.call)
+            rescue error
+              Log.error(exception: error) { "Could not durably cancel failed host restriction review #{token}" }
+            end
+          end
           Log.error(exception: ex) { "Host restriction review request failed" }
           raise ex
         end
@@ -615,10 +625,26 @@ module Matter
         end
       end
 
+      def commissioning_attribute_read_restricted?(endpoint : UInt16, cluster : UInt32,
+                                                   attribute : UInt32) : Bool
+        return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
+        commissioning_restricted_by?(endpoint, cluster, attribute) do |restriction|
+          restriction.type.attribute_access_forbidden?
+        end
+      end
+
       def attribute_write_restricted?(fabric_index : UInt8, endpoint : UInt16,
                                       cluster : UInt32, attribute : UInt32) : Bool
         return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
         restricted_by?(fabric_index, endpoint, cluster, attribute) do |restriction|
+          restriction.type.attribute_access_forbidden? || restriction.type.attribute_write_forbidden?
+        end
+      end
+
+      def commissioning_attribute_write_restricted?(endpoint : UInt16, cluster : UInt32,
+                                                    attribute : UInt32) : Bool
+        return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
+        commissioning_restricted_by?(endpoint, cluster, attribute) do |restriction|
           restriction.type.attribute_access_forbidden? || restriction.type.attribute_write_forbidden?
         end
       end
@@ -630,6 +656,13 @@ module Matter
         end
       end
 
+      def commissioning_command_restricted?(endpoint : UInt16, cluster : UInt32,
+                                            command : UInt32) : Bool
+        commissioning_restricted_by?(endpoint, cluster, command) do |restriction|
+          restriction.type.command_forbidden?
+        end
+      end
+
       def event_restricted?(fabric_index : UInt8, endpoint : UInt16,
                             cluster : UInt32, event : UInt32) : Bool
         restricted_by?(fabric_index, endpoint, cluster, event) do |restriction|
@@ -637,8 +670,16 @@ module Matter
         end
       end
 
+      def commissioning_event_restricted?(endpoint : UInt16, cluster : UInt32,
+                                          event : UInt32) : Bool
+        commissioning_restricted_by?(endpoint, cluster, event) do |restriction|
+          restriction.type.event_forbidden?
+        end
+      end
+
       private def restricted_by?(fabric_index : UInt8, endpoint : UInt16,
                                  cluster : UInt32, id : UInt32, & : AccessRestriction -> Bool) : Bool
+        return false unless restriction_target_allowed?(endpoint, cluster)
         (@access_restrictions[fabric_index]? || [] of AccessRestrictionEntry).any? do |entry|
           entry.endpoint == endpoint && entry.cluster == cluster && entry.restrictions.any? do |restriction|
             yield(restriction) && (restriction.id.nil? || restriction.id == id)
@@ -653,6 +694,17 @@ module Matter
           ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID,
           ARL_THREAD_BORDER_ROUTER_CLUSTER_ID,
           ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID)
+      end
+
+      private def commissioning_restricted_by?(endpoint : UInt16, cluster : UInt32,
+                                               id : UInt32, & : AccessRestriction -> Bool) : Bool
+        return false unless @feature_map.managed_device?
+        return false unless restriction_target_allowed?(endpoint, cluster)
+        @commissioning_arl.any? do |entry|
+          entry.endpoint == endpoint && entry.cluster == cluster && entry.restrictions.any? do |restriction|
+            yield(restriction) && (restriction.id.nil? || restriction.id == id)
+          end
+        end
       end
 
       # A Groupcast listener's auxiliary ACL is derived from Membership. Keep

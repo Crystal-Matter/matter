@@ -1456,6 +1456,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Recheck ACL and ARL on active attribute subscription reports after policy
+  changes. Enforce CommissioningARL on PASE reads, writes, commands, and events when
+  MNGD is explicitly enabled; require root endpoint for review commands.
+  Persist a compensating cancellation when a host review callback fails before
+  returning its token.
 - Persist per-fabric ARL, fixed CommissioningARL, and pending review requests
   with their tokens and deadlines in the Access Control document. Replay
   unexpired host reviews after restart, complete expired reviews, and prune
