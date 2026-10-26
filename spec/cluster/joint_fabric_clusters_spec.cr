@@ -253,10 +253,20 @@ describe Matter::Cluster::JointFabricDatastore do
       Datastore::DatastoreBindingTargetStruct.new(group: 0_u16),
       Datastore::DatastoreBindingTargetStruct.new(group: 1_u16, endpoint: 2_u16),
       Datastore::DatastoreBindingTargetStruct.new(node: 43_u64),
+      Datastore::DatastoreBindingTargetStruct.new(node: Matter::DataType::NodeId::UNSPECIFIED, endpoint: 1_u16),
+      Datastore::DatastoreBindingTargetStruct.new(node: Matter::DataType::NodeId::CAT_PREFIX, endpoint: 1_u16),
+      Datastore::DatastoreBindingTargetStruct.new(node: Matter::DataType::NodeId::JOINT_FABRIC_EXCLUSIVE_MAXIMUM, endpoint: 1_u16),
     ].each do |binding|
       cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, binding))
         .status.should eq(constraint)
     end
+    cluster.endpoint_binding_list.should be_empty
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+
+    cluster.reconcile_node_bindings(42_u64, 1_u16,
+      [Datastore::DatastoreBindingTargetStruct.new(node: Matter::DataType::NodeId::UNSPECIFIED, endpoint: 1_u16)])
+      .status.should eq(constraint)
     cluster.endpoint_binding_list.should be_empty
     cluster.save_state.should eq(before)
     cluster.data_version.should eq(version)
