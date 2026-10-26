@@ -393,17 +393,19 @@ describe "durable fail-safe credential recovery" do
     end
   end
 
-  it "prunes an orphan ACL after a normal RemoveFabric ACL write failure" do
+  it "prunes an orphan ACL after a legacy RemoveFabric ACL write failure" do
     path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
     begin
       backend = FailCredentialYamlFile.new(path)
       first = CredentialRecoveryDevice.new(backend)
       index = add_recovery_fabric(first)
       first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      # Model an older build that deleted the fabric document before its ACL
+      # write failed, leaving orphaned persisted ACL data for restart repair.
+      backend.delete(Matter::FabricTable::COLLECTION, index.to_s)
+      first.access_control.remove_fabric_acl(index)
       backend.fail_next_cluster_id = first.access_control.persistence_key
-      expect_raises(Matter::StorageError) do
-        first.operational_credentials.credentials.remove_fabric(index)
-      end
+      first.persistence.save_cluster(first.access_control).should be_false
       backend.close
 
       restarted = CredentialRecoveryDevice.new(path)
@@ -440,11 +442,10 @@ describe "durable fail-safe credential recovery" do
 
       # Model a removal started by an older build before the durable gate
       # existed; restart must repair its orphaned group documents.
-      first.operational_credentials.on_before_fabric_removed = nil
+      backend.delete(Matter::FabricTable::COLLECTION, index.to_s)
+      first.access_control.remove_fabric_acl(index)
       backend.fail_next_cluster_id = first.access_control.persistence_key
-      expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
-        first.operational_credentials.credentials.remove_fabric(index)
-      end
+      first.persistence.save_cluster(first.access_control).should be_false
       backend.close
 
       restarted = CredentialRecoveryDevice.new(path)
@@ -529,11 +530,10 @@ describe "durable fail-safe credential recovery" do
 
       # Simulate an older build that lost power after deleting the fabric
       # document, before its post-removal scene callback could run.
-      first.operational_credentials.on_before_fabric_removed = nil
+      backend.delete(Matter::FabricTable::COLLECTION, index.to_s)
+      first.access_control.remove_fabric_acl(index)
       backend.fail_next_cluster_id = first.access_control.persistence_key
-      expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
-        first.operational_credentials.credentials.remove_fabric(index)
-      end
+      first.persistence.save_cluster(first.access_control).should be_false
       backend.close
 
       restarted = CredentialRecoveryDevice.new(path)

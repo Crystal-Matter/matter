@@ -83,7 +83,7 @@ describe "TrustedTimeSource fabric removal durability" do
     end
   end
 
-  it "does not expose a removed fabric's source after ACL failure and index reuse" do
+  it "retains the old source after an ACL failure and permits safe reuse after restart" do
     require_udp_sockets!
     path = File.join(Dir.tempdir, "matter-trusted-time-removal-#{Random::Secure.hex(6)}.yml")
     begin
@@ -91,16 +91,29 @@ describe "TrustedTimeSource fabric removal durability" do
       device = TrustedTimeRemovalDevice.new(storage: storage, port: 0)
       device.fabric_table.add_fabric(trusted_time_fabric(1_u8, 0x1001_u64)).should be_true
       time_sync = set_trusted_time_source(device, 1_u8)
+      expected = time_sync.trusted_time_source
 
       storage.fail_next_cluster_id = device.access_control.persistence_key
-      expect_raises(Matter::StorageError, "Injected cluster write failure") do
+      expect_raises(Matter::StorageError, "Could not persist erased Access Control") do
         device.operational_credentials.credentials.remove_fabric(1_u8)
       end
-      device.fabric_table.get_fabric(1_u8).should be_nil
-      device.fabric_table.add_fabric(trusted_time_fabric(1_u8, 0x2001_u64)).should be_true
-      time_sync.trusted_time_source.should be_nil
+      device.fabric_table.get_fabric(1_u8).should_not be_nil
+      device.fabric_table.quarantined?(1_u8).should be_true
+      device.fabric_table.add_fabric(trusted_time_fabric(1_u8, 0x2001_u64)).should be_false
+      time_sync.trusted_time_source.should eq(expected)
+      device.shutdown!
+      device = nil
+
+      restarted = TrustedTimeRemovalDevice.new(storage: TrustedTimeFailStorage.new(path), port: 0)
+      restarted.fabric_table.get_fabric(1_u8).should_not be_nil
+      recovered_time_sync = restarted.node.get_cluster!(0_u16, TrustedTimeSync)
+      recovered_time_sync.trusted_time_source.should eq(expected)
+      restarted.operational_credentials.credentials.remove_fabric(1_u8).ok?.should be_true
+      restarted.fabric_table.add_fabric(trusted_time_fabric(1_u8, 0x2001_u64)).should be_true
+      recovered_time_sync.trusted_time_source.should be_nil
     ensure
       device.try(&.shutdown!)
+      restarted.try(&.shutdown!)
       File.delete?(path)
     end
   end
@@ -113,11 +126,9 @@ describe "TrustedTimeSource fabric removal durability" do
       first = TrustedTimeRemovalDevice.new(storage: storage, port: 0)
       first.fabric_table.add_fabric(trusted_time_fabric(1_u8, 0x1001_u64)).should be_true
       set_trusted_time_source(first, 1_u8)
-      # Model an interrupted removal by a build without durable pre-delete cleanup.
-      storage.fail_next_cluster_id = first.access_control.persistence_key
-      expect_raises(Matter::StorageError, "Injected cluster write failure") do
-        first.operational_credentials.credentials.remove_fabric(1_u8)
-      end
+      # Model an older build that deleted the fabric document before clearing
+      # its persisted source. Restart must repair the orphan.
+      storage.delete(Matter::FabricTable::COLLECTION, "1")
       first.shutdown!
 
       restarted = TrustedTimeRemovalDevice.new(storage: TrustedTimeFailStorage.new(path), port: 0)

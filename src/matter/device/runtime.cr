@@ -271,6 +271,21 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
+      # FabricTable is also a public host API. Register security cleanup as an
+      # internal guard so a host observer cannot replace it.
+      @fabric_table.register_removal_guard do |fabric|
+        index = fabric.fabric_index
+        @message_handler.registry.synchronize do
+          @message_handler.sessions
+            .select { |_id, session| session.fabric_index == index }
+            .keys.each { |id| @message_handler.delete_session(id) }
+          access_control.remove_fabric_acl(index)
+          unless @persistence.save_cluster(access_control)
+            raise StorageError.new("Could not persist erased Access Control for fabric #{index}")
+          end
+          @node.event_journal.remove_fabric(index)
+        end
+      end
       @fabric_table.all_fabrics.each { |fabric| ensure_fabric_ipk_key_set(fabric) }
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
         if time_sync.feature_map.trusted_time_client? && time_sync.retain_fabrics(@fabric_table.all_fabrics.map(&.fabric_index))

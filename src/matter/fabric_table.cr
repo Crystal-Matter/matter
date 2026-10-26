@@ -32,6 +32,11 @@ module Matter
 
     # Fabrics indexed by fabric_index (1-254)
     @fabrics : Hash(UInt8, Fabric)
+    # Copy the identity when a fabric enters the table. Fabric objects and
+    # their public-key bytes are mutable, so comparing two Fabric references
+    # cannot detect an in-place identity change.
+    @identities : Hash(UInt8, String) = Hash(UInt8, String).new
+    @removal_guards : Array(Proc(Fabric, Nil)) = [] of Proc(Fabric, Nil)
     @quarantined : Set(UInt8) = Set(UInt8).new
 
     # Storage backend for persistence
@@ -40,6 +45,12 @@ module Matter
     getter backend : Storage::Backend
 
     property on_fabric_removed : Proc(Fabric, Nil)?
+
+    # Security cleanup registered by the device runtime and SecureChannel.
+    # Host observers may replace `on_fabric_removed` without replacing guards.
+    def register_removal_guard(&block : Fabric -> Nil) : Nil
+      @removal_guards << block
+    end
 
     # Fabrics whose `last_used_at` changed and have not been written yet.
     @dirty : Hash(UInt8, Fabric) = Hash(UInt8, Fabric).new
@@ -85,6 +96,7 @@ module Matter
 
       write_fabric(fabric)
       @fabrics[fabric.fabric_index] = fabric
+      @identities[fabric.fabric_index] = fabric.storage_identity
       true
     end
 
@@ -134,6 +146,7 @@ module Matter
       # Fabric must already exist
       return false unless @fabrics.has_key?(fabric.fabric_index)
       return false if quarantined?(fabric.fabric_index)
+      return false unless @identities[fabric.fabric_index]? == fabric.storage_identity
 
       write_fabric(fabric)
       @fabrics[fabric.fabric_index] = fabric
@@ -144,12 +157,15 @@ module Matter
     def remove_fabric(fabric_index : UInt8) : Bool
       fabric = @fabrics[fabric_index]?
       return false unless fabric
+      return false if identity_changed?(fabric_index)
 
+      @removal_guards.each(&.call(fabric))
       @on_fabric_removed.try(&.call(fabric))
       # Keep the index reserved if durable deletion fails. A later AddNOC must
       # not assign it to a different fabric while the old document remains.
       @backend.delete(COLLECTION, fabric_index.to_s)
       @fabrics.delete(fabric_index)
+      @identities.delete(fabric_index)
       @dirty.delete(fabric_index)
       true
     end
@@ -164,6 +180,7 @@ module Matter
 
     # Get a fabric by fabric_index
     def get_fabric(fabric_index : UInt8) : Fabric?
+      return if identity_changed?(fabric_index)
       @fabrics[fabric_index]?
     end
 
@@ -176,7 +193,14 @@ module Matter
     end
 
     def quarantined?(fabric_index : UInt8) : Bool
-      @quarantined.includes?(fabric_index)
+      @quarantined.includes?(fabric_index) || identity_changed?(fabric_index)
+    end
+
+    private def identity_changed?(fabric_index : UInt8) : Bool
+      fabric = @fabrics[fabric_index]?
+      identity = @identities[fabric_index]?
+      !!(fabric && identity &&
+        (fabric.fabric_index != fabric_index || fabric.storage_identity != identity))
     end
 
     # Find a fabric by fabric_id
@@ -191,7 +215,7 @@ module Matter
 
     # Get all fabrics
     def all_fabrics : Array(Fabric)
-      @fabrics.values.reject { |fabric| quarantined?(fabric.fabric_index) }
+      @fabrics.compact_map { |index, fabric| fabric unless quarantined?(index) }
     end
 
     # Get fabric count
@@ -235,6 +259,7 @@ module Matter
     # Clear all fabrics (used for factory reset)
     def clear_all
       @fabrics.clear
+      @identities.clear
       @dirty.clear
       @quarantined.clear
       @backend.clear(COLLECTION)
@@ -261,17 +286,23 @@ module Matter
     def flush_pending_writes : Nil
       return if @dirty.empty?
 
-      pending = @dirty.values
+      pending = @dirty.dup
       @dirty.clear
       @backend.transaction do
-        pending.each do |fabric|
-          write_fabric(fabric) unless quarantined?(fabric.fabric_index)
+        pending.each do |index, fabric|
+          write_fabric(fabric) unless quarantined?(index)
         end
       end
     end
 
     # Writes *fabric* as the `fabrics/<index>` document.
     def write_fabric(fabric : Fabric) : Nil
+      if @fabrics.any? { |index, stored| stored.same?(fabric) && index != fabric.fabric_index }
+        raise StorageError.new("Fabric index changed while stored in the table")
+      end
+      if identity = @identities[fabric.fabric_index]?
+        raise StorageError.new("Fabric identity changed at index #{fabric.fabric_index}") unless identity == fabric.storage_identity
+      end
       @backend.write(COLLECTION, fabric.fabric_index.to_s, fabric.to_document)
     end
 
@@ -279,10 +310,12 @@ module Matter
     # with a warning so one bad entry does not take the whole table down.
     private def load_from_storage : Nil
       @fabrics.clear
+      @identities.clear
 
       @backend.all(COLLECTION).each do |id, document|
         fabric = Fabric.from_document(document)
         @fabrics[fabric.fabric_index] = fabric
+        @identities[fabric.fabric_index] = fabric.storage_identity
       rescue ex
         Log.warn(exception: ex) { "Skipping fabric document #{COLLECTION}/#{id}: cannot be decoded" }
       end
