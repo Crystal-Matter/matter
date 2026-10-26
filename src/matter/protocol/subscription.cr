@@ -26,6 +26,9 @@ module Matter
       # journal is drained from here on every report.
       property last_event_number : UInt64
 
+      # The SubscribeRequest's fabric-filter choice applies to every report.
+      getter? fabric_filtered : Bool
+
       def initialize(
         @subscription_id,
         @min_interval,
@@ -36,6 +39,7 @@ module Matter
         @exchange_id,
         @event_paths = [] of InteractionModel::EventPath,
         @last_event_number = 0_u64,
+        @fabric_filtered = true,
       )
         @last_report_time = Time.utc
       end
@@ -136,6 +140,7 @@ module Matter
         # has neither key, so both carry a default rather than a nilable type.
         getter event_paths : Array(EventPathRecord) = [] of EventPathRecord
         getter last_event_number : UInt64 = 0_u64
+        getter? fabric_filtered : Bool = true
 
         def initialize(
           @subscription_id : UInt32,
@@ -149,6 +154,7 @@ module Matter
           @attribute_paths : Array(AttributePathRecord),
           @event_paths : Array(EventPathRecord) = [] of EventPathRecord,
           @last_event_number : UInt64 = 0_u64,
+          @fabric_filtered : Bool = true,
         )
         end
       end
@@ -165,7 +171,8 @@ module Matter
           last_report_at: @last_report_time,
           attribute_paths: @attribute_paths.map { |path| AttributePathRecord.from_path(path) },
           event_paths: @event_paths.map { |path| EventPathRecord.from_path(path) },
-          last_event_number: @last_event_number
+          last_event_number: @last_event_number,
+          fabric_filtered: @fabric_filtered
         )
       end
 
@@ -180,7 +187,8 @@ module Matter
           attribute_paths: record.attribute_paths.map(&.to_path),
           exchange_id: record.exchange_id,
           event_paths: record.event_paths.map(&.to_path),
-          last_event_number: record.last_event_number
+          last_event_number: record.last_event_number,
+          fabric_filtered: record.fabric_filtered?
         )
         subscription.last_report_time = record.last_report_at
         subscription
