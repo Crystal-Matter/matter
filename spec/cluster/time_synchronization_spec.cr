@@ -118,6 +118,18 @@ private def zone(offset : Int32, valid_at : UInt64, name : String? = nil)
 end
 
 describe "Matter 1.6 NTPClient feature" do
+  it "keeps polling after a refresh rebases UTC later than the poll's captured instant" do
+    cluster = TimeSync.new(endpoint(0),
+      feature_map: TimeSync::Feature::TimeZone | TimeSync::Feature::NtpClient)
+    cluster.apply_default_ntp(TimeSync::SetDefaultNtpRequest.new("2001:db8::123"))
+    cluster.on_ntp_query = ->(_address : String) : UInt64? { 123_000_000_u64 }
+
+    captured = Time.instant - 1.second
+    cluster.advance_time_state(captured)
+    cluster.utc_time.should_not be_nil
+    cluster.advance_time_state(captured + 1.second)
+  end
+
   it "queries a local SNTP responder and accepts only its matched packet" do
     server = UDPSocket.new(:inet6)
     server.bind("::1", 0)
