@@ -1918,6 +1918,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resume from each stable stage. The existing B-to-A device migration matrix
   covers its five command boundaries and rollback stages.
 
+### Interaction Model endpoint status
+
+- Report `UnsupportedEndpoint` for a concrete read, write, event read, or invoke targeting a nonexistent endpoint, while retaining `UnsupportedCluster` for a missing cluster on an existing endpoint. Wildcard reads remain silent when they match nothing.
+
 ### Large Interaction Model reads
 
 - Split oversized list attributes into an initial array report followed by
