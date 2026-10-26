@@ -1506,14 +1506,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Enforce host-configured `AttributeWriteForbidden` and `CommandForbidden`
+  restrictions for CASE writes and invokes, along with
+  `AttributeAccessForbidden` on writes. Blocked requests return
+  `AccessRestricted` before a cluster handler runs. ManagedDevice remains
+  unadvertised pending event restrictions, policy persistence, and review flow.
 - Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
   host-configured, fabric-specific Access Restriction List for attribute reads.
   A restriction on one fabric does not affect another fabric or standard global
   attributes. Accept only the three Matter 1.6 network infrastructure management
-  clusters on non-root endpoints. The policy is transient and ManagedDevice
-  remains unadvertised;
-  writes, commands, events, persistence, and the restriction review flow are
-  still required before enabling the full feature.
+  clusters on non-root endpoints. Read, write, and invoke restrictions are
+  enforced after ACL checks. The policy is transient and ManagedDevice remains
+  unadvertised; events, persistence, and restriction review still need support
+  before enabling the full feature.
 
 ### Ecosystem Information for bridged nodes
 
