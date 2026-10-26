@@ -10,7 +10,7 @@ describe "Door Lock SetCredential UserStatus constraint" do
       StatusDoorLock::DataOperationType::Add,
       credential,
       "1357".to_slice,
-      user_index: 2_u16,
+      user_index: nil,
       user_status: StatusDoorLock::UserStatus::Available,
       user_type: StatusDoorLock::UserType::UnrestrictedUser
     )

@@ -10,9 +10,7 @@ describe "Door Lock SetCredential operation constraint" do
       operation_type: CredentialDoorLock::DataOperationType::Add,
       credential: credential,
       credential_data: "1357".to_slice,
-      user_index: 2_u16,
-      user_status: CredentialDoorLock::UserStatus::OccupiedEnabled,
-      user_type: CredentialDoorLock::UserType::UnrestrictedUser)
+      user_index: 2_u16)
     invoke_response(lock, CredentialDoorLock::CMD_SET_CREDENTIAL, add,
       CredentialDoorLock::SetCredentialResponse).status_code.should eq(CredentialDoorLock::StatusCode::Success)
 

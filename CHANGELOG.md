@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock existing-user credential fields
+
+- Reject SetCredential Add requests that provide a UserIndex together with a
+  non-null UserStatus or UserType. These fields apply when the lock creates a
+  user; adding a credential to a specified user leaves its record unchanged.
+
 ### Door Lock credential user type validation
 
 - Enforce Matter 1.6 SetCredential UserType values. Schedule-specific user types

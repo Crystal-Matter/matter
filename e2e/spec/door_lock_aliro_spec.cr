@@ -34,7 +34,7 @@ describe "Door Lock Aliro provisioning with official chip-tool" do
     endpoint = Matter::Crypto::Key.generate_key_pair
     credential = %({"credentialType":8,"credentialIndex":1})
     set_key = device.invoke("doorlock", "set-credential",
-      ["0", credential, "hex:#{endpoint.public_key.hexstring}", "1", "1", "0"], options: timed)
+      ["0", credential, "hex:#{endpoint.public_key.hexstring}", "1", "null", "null"], options: timed)
     expect_success(set_key)
     status = expect_success(device.invoke("doorlock", "get-credential-status", [credential]))
     status.bool("credentialExists").should be_true
