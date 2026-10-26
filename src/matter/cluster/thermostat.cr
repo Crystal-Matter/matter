@@ -782,6 +782,12 @@ module Matter
         InteractionModel::Status.constraint_error unless mode_allowed?(mode)
       end
 
+      # Matter 1.6 §4.3.11.21 keeps this write accepted for legacy clients,
+      # while the thermostat's physical control sequence remains fixed.
+      before_write :control_sequence_of_operation do |_requested|
+        @control_sequence_of_operation
+      end
+
       # ------------------------------------------------------------------------
       # Commands
       # ------------------------------------------------------------------------

@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat control sequence writes
+
+- Accept legacy ControlSequenceOfOperation writes while preserving the fixed
+  operating capability and DataVersion, as required by Matter 1.6.
+
 ### Thermostat Matter schedules preparation
 
 - Add host-driven local-clock evaluation for the selected MSCH schedule. Each tick chooses the latest weekly transition across day and timezone boundaries, applies preset, mode, and setpoint targets, preserves the Auto deadband, and waits when local time is unavailable. Production MSCH remains gated pending official wire E2E and remaining conformance work.
