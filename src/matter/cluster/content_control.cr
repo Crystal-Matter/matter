@@ -1,3 +1,4 @@
+require "openssl/pkcs5"
 require "./cluster"
 
 module Matter
@@ -16,9 +17,16 @@ module Matter
       feature :block_applications, bit: 6
       feature :block_content_time_window, bit: 7
 
-      MAX_RATING_BYTES             =        8
-      MAX_RATING_DESCRIPTION_BYTES =       64
-      SUPPORTED_FEATURES           = 0x7C_u32
+      MAX_RATING_BYTES             =  8
+      MAX_RATING_DESCRIPTION_BYTES = 64
+      PIN_LENGTH                   =  6
+      PIN_RANGE                    = 0...1_000_000
+      PIN_SALT_BYTES               =     16
+      PIN_VERIFIER_BYTES           =     32
+      PIN_DERIVATION_ITERATIONS    = 65_536
+      PERSISTED_PIN_SALT_KEY       = "pin_salt"
+      PERSISTED_PIN_VERIFIER_KEY   = "pin_verifier"
+      SUPPORTED_FEATURES           = 0x7E_u32
 
       enum StatusCode : UInt8
         InvalidPINCode            = 0x02
@@ -92,6 +100,29 @@ module Matter
         end
       end
 
+      struct UpdatePinRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter old_pin : String
+
+        @[TLV::Field(tag: 1)]
+        getter new_pin : String
+
+        def initialize(@old_pin : String, @new_pin : String)
+        end
+      end
+
+      struct ResetPinResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter pin_code : String
+
+        def initialize(@pin_code : String)
+        end
+      end
+
       struct ApplicationsRequest
         include TLV::Serializable
 
@@ -145,6 +176,11 @@ module Matter
         default: [] of AppInfo, persist: true, requires: :block_applications,
         copy_on_assign: true, on_change: :policy_changed
 
+      command 0x00, :update_pin, request: UpdatePinRequest,
+        access: :manage, timed: true, requires: :pin_management
+      command 0x01, :reset_pin, response: ResetPinResponse,
+        response_id: 0x02, access: :administer, timed: true,
+        requires: :pin_management
       command 0x03, :enable, access: :manage, timed: true
       command 0x04, :disable, access: :manage, timed: true
       command 0x07, :block_unrated_content, access: :manage,
@@ -191,6 +227,7 @@ module Matter
         raise ArgumentError.new("BlockUnrated feature is required") if @block_unrated && !@feature_map.block_unrated?
         raise ArgumentError.new("BlockChannels feature is required") if !@block_channel_list.empty? && !@feature_map.block_channels?
         raise ArgumentError.new("BlockApplications feature is required") if !@block_application_list.empty? && !@feature_map.block_applications?
+        set_pin(generate_pin) if @feature_map.pin_management?
         validate_ratings!(@on_demand_ratings, @on_demand_rating_threshold)
         validate_ratings!(@scheduled_content_ratings, @scheduled_content_rating_threshold)
         validate_channels!(@block_channel_list)
@@ -204,6 +241,8 @@ module Matter
       @validate_channel : Proc(BlockChannel, Bool)?
       @identify_application : Proc(AppInfo, Bool)?
       @on_policy_changed : Proc(Nil)?
+      @pin_salt : Bytes?
+      @pin_verifier : Bytes?
 
       def on_validate_channel(&block : BlockChannel -> Bool) : Nil
         @validate_channel = block
@@ -301,6 +340,24 @@ module Matter
         InteractionModel::Status.success
       end
 
+      def update_pin(request : UpdatePinRequest) : InteractionModel::Status
+        return InteractionModel::Status.constraint_error unless valid_pin?(request.old_pin) && valid_pin?(request.new_pin)
+        return InteractionModel::Status.cluster_failure(StatusCode::InvalidPINCode) unless pin_matches?(request.old_pin)
+        set_pin(request.new_pin)
+        increment_version
+        InteractionModel::Status.success
+      end
+
+      def reset_pin : ResetPinResponse
+        next_pin = generate_pin
+        while pin_matches?(next_pin)
+          next_pin = generate_pin
+        end
+        set_pin(next_pin)
+        increment_version
+        ResetPinResponse.new(next_pin)
+      end
+
       def block_unrated_content : InteractionModel::Status
         self.block_unrated = true
         InteractionModel::Status.success
@@ -372,6 +429,59 @@ module Matter
 
       private def same_app?(first : AppInfo, second : AppInfo) : Bool
         first.catalog_vendor_id == second.catalog_vendor_id && first.application_id == second.application_id
+      end
+
+      private def extend_persisted_state(document : Storage::Document) : Nil
+        if (salt = @pin_salt) && (verifier = @pin_verifier)
+          document[PERSISTED_PIN_SALT_KEY] = salt.dup
+          document[PERSISTED_PIN_VERIFIER_KEY] = verifier.dup
+        end
+      end
+
+      private def restore_persisted_extension(document : Storage::Document) : Nil
+        return unless @feature_map.pin_management?
+        salt_value = document[PERSISTED_PIN_SALT_KEY]?
+        verifier_value = document[PERSISTED_PIN_VERIFIER_KEY]?
+        # Documents written before PM existed have neither key. Keep a new,
+        # unknown PIN, which an administrator can replace with ResetPIN.
+        return if salt_value.nil? && verifier_value.nil?
+        salt = salt_value.as?(Bytes)
+        verifier = verifier_value.as?(Bytes)
+        unless salt && salt.size == PIN_SALT_BYTES && verifier && verifier.size == PIN_VERIFIER_BYTES
+          raise StorageError.new("Invalid persisted Content Control PIN verifier")
+        end
+        @pin_salt = salt.dup
+        @pin_verifier = verifier.dup
+      end
+
+      private def valid_pin?(pin : String) : Bool
+        pin.bytesize.in?(1..PIN_LENGTH) && pin.each_char.all?(&.ascii_number?)
+      end
+
+      private def generate_pin : String
+        Random::Secure.rand(PIN_RANGE).to_s.rjust(PIN_LENGTH, '0')
+      end
+
+      private def set_pin(pin : String) : Nil
+        salt = Random::Secure.random_bytes(PIN_SALT_BYTES)
+        verifier = derive_pin(pin, salt)
+        @pin_salt = salt
+        @pin_verifier = verifier
+      end
+
+      private def pin_matches?(pin : String) : Bool
+        salt = @pin_salt
+        verifier = @pin_verifier
+        return false unless salt && verifier
+        candidate = derive_pin(pin, salt)
+        difference = 0_u8
+        verifier.each_with_index { |byte, index| difference |= byte ^ candidate[index] }
+        difference.zero?
+      end
+
+      private def derive_pin(pin : String, salt : Bytes) : Bytes
+        OpenSSL::PKCS5.pbkdf2_hmac(pin.to_slice, salt, PIN_DERIVATION_ITERATIONS,
+          OpenSSL::Algorithm::SHA256, PIN_VERIFIER_BYTES)
       end
 
       private def policy_changed(_value) : Nil
