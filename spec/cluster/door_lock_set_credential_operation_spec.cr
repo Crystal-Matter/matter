@@ -5,6 +5,8 @@ private alias CredentialDoorLock = Matter::Cluster::DoorLock
 describe "Door Lock SetCredential operation constraint" do
   it "rejects Clear without changing a credential and leaves ClearCredential operational" do
     lock = build(CredentialDoorLock)
+    expect_success(invoke(lock, CredentialDoorLock::CMD_SET_USER,
+      CredentialDoorLock::SetUserRequest.new(CredentialDoorLock::DataOperationType::Add, 2_u16)))
     credential = CredentialDoorLock::Credential.new(CredentialDoorLock::CredentialType::Pin, 1_u16)
     add = CredentialDoorLock::SetCredentialRequest.new(
       operation_type: CredentialDoorLock::DataOperationType::Add,

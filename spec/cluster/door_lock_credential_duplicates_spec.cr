@@ -25,6 +25,11 @@ private def duplicate_credential(type : DuplicateDoorLock::CredentialType, index
   DuplicateDoorLock::Credential.new(type, index)
 end
 
+private def add_duplicate_user(lock : DuplicateDoorLock, index : UInt16) : Nil
+  lock.handle_set_user(DuplicateDoorLock::SetUserRequest.new(
+    DuplicateDoorLock::DataOperationType::Add, index)).success?.should be_true
+end
+
 private def set_duplicate_credential(lock : DuplicateDoorLock, operation : DuplicateDoorLock::DataOperationType,
                                      credential : DuplicateDoorLock::Credential, data : String, user_index : UInt16) : DuplicateDoorLock::SetCredentialResponse
   lock.handle_set_credential(DuplicateDoorLock::SetCredentialRequest.new(
@@ -37,6 +42,7 @@ describe "Door Lock duplicate credential values" do
       lock = duplicate_lock
       first = duplicate_credential(type, 1_u16)
       second = duplicate_credential(type, 2_u16)
+      add_duplicate_user(lock, 2_u16)
       set_duplicate_credential(lock, DuplicateDoorLock::DataOperationType::Add, first, "1357", 2_u16)
         .status_code.should eq(DuplicateDoorLock::StatusCode::Success)
 
@@ -52,6 +58,8 @@ describe "Door Lock duplicate credential values" do
       lock = duplicate_lock
       first = duplicate_credential(type, 1_u16)
       second = duplicate_credential(type, 2_u16)
+      add_duplicate_user(lock, 2_u16)
+      add_duplicate_user(lock, 3_u16)
       set_duplicate_credential(lock, DuplicateDoorLock::DataOperationType::Add, first, "1357", 2_u16)
         .status_code.should eq(DuplicateDoorLock::StatusCode::Success)
       set_duplicate_credential(lock, DuplicateDoorLock::DataOperationType::Add, second, "2468", 3_u16)
@@ -70,6 +78,8 @@ describe "Door Lock duplicate credential values" do
     lock = duplicate_lock
     pin = duplicate_credential(DuplicateDoorLock::CredentialType::Pin, 1_u16)
     rfid = duplicate_credential(DuplicateDoorLock::CredentialType::Rfid, 1_u16)
+    add_duplicate_user(lock, 2_u16)
+    add_duplicate_user(lock, 3_u16)
     set_duplicate_credential(lock, DuplicateDoorLock::DataOperationType::Add, pin, "1357", 2_u16)
       .status_code.should eq(DuplicateDoorLock::StatusCode::Success)
     set_duplicate_credential(lock, DuplicateDoorLock::DataOperationType::Add, rfid, "1357", 3_u16)
@@ -81,6 +91,8 @@ describe "Door Lock duplicate credential values" do
       original = duplicate_lock
       first = duplicate_credential(type, 1_u16)
       second = duplicate_credential(type, 2_u16)
+      add_duplicate_user(original, 2_u16)
+      add_duplicate_user(original, 3_u16)
       set_duplicate_credential(original, DuplicateDoorLock::DataOperationType::Add, first, "1357", 2_u16)
       set_duplicate_credential(original, DuplicateDoorLock::DataOperationType::Add, second, "2468", 3_u16)
       document = original.save_state.as(Matter::Storage::Document)
@@ -96,6 +108,7 @@ describe "Door Lock duplicate credential values" do
         database.holiday_schedules, database.aliro_reader_config).to_document
 
       restored = duplicate_lock
+      add_duplicate_user(restored, 2_u16)
       set_duplicate_credential(restored, DuplicateDoorLock::DataOperationType::Add, first, "8642", 2_u16)
       before = restored.save_state
       restored.restore_state(document)

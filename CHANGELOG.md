@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock credential attachment to existing users
+
+- Require SetCredential Add with a specified UserIndex to reference an existing
+  user. An empty slot returns InvalidField without creating a user or storing the
+  credential, matching the pinned Matter SDK's interoperability behavior.
+
 ### Door Lock existing-user credential fields
 
 - Reject SetCredential Add requests that provide a UserIndex together with a

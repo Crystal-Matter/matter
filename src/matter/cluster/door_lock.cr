@@ -1686,6 +1686,10 @@ module Matter
               return set_credential_response(request, StatusCode::InvalidField)
             end
 
+            if (specified_user_index = request.user_index) && !@users.has_key?(specified_user_index)
+              return set_credential_response(request, StatusCode::InvalidField)
+            end
+
             target_user_index = request.user_index
             if target_user_index.nil? && !request.credential.credential_type.programming_pin?
               target_user_index = (1_u16..@number_of_total_users_supported).find { |index| !@users.has_key?(index) }
