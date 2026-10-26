@@ -1456,6 +1456,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Persist per-fabric ARL, fixed CommissioningARL, and pending review requests
+  with their tokens and deadlines in the Access Control document. Replay
+  unexpired host reviews after restart, complete expired reviews, and prune
+  orphaned managed state before fabric index reuse. Host policy saves now
+  write through and roll back in-memory changes if storage fails. MNGD remains
+  unadvertised while host consent and semantic target validation are pending.
 - Define the gated Matter 1.6 MNGD wire structs, View-readable
   `CommissioningARL` and fabric-scoped `ARL`, Administer-only review command,
   and fabric-sensitive completion event. The default feature map omits MNGD;

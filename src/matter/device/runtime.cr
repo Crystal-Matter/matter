@@ -255,7 +255,8 @@ module Matter
       # Remove ACLs whose fabric document is absent. This also repairs an
       # interrupted ordinary RemoveFabric, where the fabric delete succeeded
       # but the ACL write did not. Do this before CASE can use a recycled index.
-      orphan_acl_indices = access_control.acl.compact_map(&.fabric_index).uniq!.reject do |index|
+      orphan_acl_indices = (access_control.acl.compact_map(&.fabric_index) +
+                            access_control.restriction_fabric_indexes).uniq.reject do |index|
         @fabric_table.get_fabric(index)
       end
       orphan_acl_indices.each do |index|
@@ -912,6 +913,10 @@ module Matter
         feature_map: @groupcast_listener ? Cluster::AccessControl::Feature::Extension | Cluster::AccessControl::Feature::Auxiliary : Cluster::AccessControl::Feature::Extension)
       @general_commissioning = general_commissioning
       @access_control = access_control
+      access_control.on_persist = -> do
+        raise StorageError.new("Could not persist Access Control managed restrictions") unless @persistence.save_cluster(access_control)
+        nil
+      end
       general_commissioning.on_tc_acceptance_write = ->(document : Storage::Document) do
         backend = @persistence.backend
         key = general_commissioning.persistence_key

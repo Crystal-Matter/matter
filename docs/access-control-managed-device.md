@@ -37,7 +37,11 @@ wildcard event path silently omits restricted data. Active subscriptions apply
 the same check to later journal updates and advance past events that cannot be
 reported on that fabric.
 
-The host policy is memory-only and must be installed again after restart. The
+The host policy and fixed commissioning list are saved in the Access Control
+cluster document and restored after restart. Device startup removes saved
+restrictions and reviews for fabric indexes absent from the fabric table before
+CASE can reuse an index. Host policy updates write through to storage; a
+failed save leaves the previous policy in force. The
 internal review lifecycle now accepts a fabric-specific request with a snapshot
 of the requested ARL entries. An empty request list means a generic review.
 The host installs `on_restriction_review_requested` and
@@ -45,7 +49,11 @@ The host installs `on_restriction_review_requested` and
 `request_restriction_review`. The returned token correlates a subsequent
 `complete_restriction_review` call and update payload. A host may adjust its
 ARL independently before completion; the review method never changes policy.
-If the host has not completed a request after 59 minutes, the library invokes
+Pending requests retain their token and deadline across restart. When both
+host callbacks are installed after restore, unexpired requests are replayed
+with the original token, while expired requests produce their fallback update.
+Completion delivery is at least once if storage fails after an update callback
+or event. If the host has not completed a request after 59 minutes, the library invokes
 the update callback with that token and no optional instructions. Removing a
 fabric cancels its pending reviews. The update fields use the Matter 1.6 TLV
 schema and enforce the 512-byte instruction and 256-byte URL limits.
@@ -60,7 +68,7 @@ The response carries a review token; completion emits a fabric-sensitive
 `FabricRestrictionReviewUpdate` event. Malformed wire requests fail before
 the host callback runs.
 
-Persistent ARL policy, completion delivery across restart, semantic validation
-of allowed endpoint/cluster targets, and independent managed-device
-interoperability remain future work. Device configurations should leave MNGD
-disabled until those paths are implemented and tested.
+Host consent handling, semantic validation of allowed endpoint/cluster targets,
+and independent managed-device interoperability remain future work. Device
+configurations should leave MNGD disabled until those paths are implemented
+and tested.

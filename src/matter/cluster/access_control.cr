@@ -329,10 +329,13 @@ module Matter
       @commissioning_arl = [] of CommissioningAccessRestrictionEntry
       @commissioning_arl_configured = false
       @pending_restriction_reviews = {} of UInt64 => RestrictionReviewRequest
+      @pending_restriction_review_deadlines = {} of UInt64 => Time
+      @reviews_needing_replay = [] of UInt64
       @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
       @next_restriction_review_token = 0_u64
       @on_restriction_review_requested : Proc(RestrictionReviewRequest, Nil)? = nil
       @on_restriction_review_updated : Proc(UInt8, FabricRestrictionReviewUpdate, Nil)? = nil
+      property on_persist : Proc(Nil)? = nil
       @acl_before_write = [] of AccessControlEntry
       @extension_before_write = [] of ExtensionEntry
 
@@ -399,10 +402,21 @@ module Matter
            end
           raise Matter::ConfigurationError.new("Invalid commissioning access restriction configuration")
         end
+        previous = @commissioning_arl
+        previous_version = @data_version
         @commissioning_arl = entries.map do |entry|
           CommissioningAccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
         end
         @commissioning_arl_configured = true
+        increment_version
+        begin
+          @on_persist.try(&.call)
+        rescue ex
+          @commissioning_arl = previous
+          @commissioning_arl_configured = false
+          @data_version = previous_version
+          raise ex
+        end
       end
 
       def arl(fabric_index : UInt8? = nil) : Array(AccessRestrictionEntry)
@@ -417,14 +431,15 @@ module Matter
         end
       end
 
-      # A host-owned policy replaces one fabric's transient ARL. Empty entries
-      # remove that fabric's restrictions. This is not an advertised MNGD wire
-      # attribute and hosts must reinstall it after restart.
+      # A host-owned policy replaces one fabric's durable ARL. Empty entries
+      # remove that fabric's restrictions.
       def configure_access_restrictions(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : Nil
         if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
            entries.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
+        previous = @access_restrictions[fabric_index]?
+        previous_version = @data_version
         if entries.empty?
           @access_restrictions.delete(fabric_index)
         else
@@ -432,7 +447,24 @@ module Matter
             AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
           end
         end
-        increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
+        increment_version
+        begin
+          @on_persist.try(&.call)
+        rescue ex
+          if previous
+            @access_restrictions[fabric_index] = previous
+          else
+            @access_restrictions.delete(fabric_index)
+          end
+          @data_version = previous_version
+          raise ex
+        end
+        notify_changed(ATTR_ARL) if @feature_map.managed_device?
+      end
+
+      # Include managed state when pruning fabrics absent from the fabric table.
+      def restriction_fabric_indexes : Array(UInt8)
+        (@access_restrictions.keys + @pending_restriction_reviews.values.map(&.fabric_index)).uniq
       end
 
       private def invalid_access_restriction_entry?(entry : AccessRestrictionEntry) : Bool
@@ -448,10 +480,12 @@ module Matter
 
       def on_restriction_review_requested(&block : RestrictionReviewRequest -> Nil) : Nil
         @on_restriction_review_requested = block
+        resume_restriction_reviews
       end
 
       def on_restriction_review_updated(&block : UInt8, FabricRestrictionReviewUpdate -> Nil) : Nil
         @on_restriction_review_updated = block
+        resume_restriction_reviews
       end
 
       def review_fabric_restrictions(request : ReviewFabricRestrictionsRequest) : ReviewFabricRestrictionsResponse | InteractionModel::Status
@@ -486,22 +520,18 @@ module Matter
           AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
         end)
         @pending_restriction_reviews[token] = request
-        timer = ::Channel(Nil).new
-        @restriction_review_timers[token] = timer
-        spawn do
-          select
-          when timer.receive?
-          when timeout(@review_timeout)
-            complete_restriction_review(fabric_index, token)
-          end
-        rescue ex
-          Log.error(exception: ex) { "Restriction review deadline update failed" }
-        end
+        deadline = Time.utc + @review_timeout
+        @pending_restriction_review_deadlines[token] = deadline
+        schedule_restriction_review_timer(fabric_index, token, @review_timeout)
+        increment_version
         begin
+          @on_persist.try(&.call)
           callback.call(request)
         rescue ex
           @pending_restriction_reviews.delete(token)
+          @pending_restriction_review_deadlines.delete(token)
           @restriction_review_timers.delete(token).try(&.close)
+          increment_version
           Log.error(exception: ex) { "Host restriction review request failed" }
           raise ex
         end
@@ -526,13 +556,54 @@ module Matter
         begin
           callback.call(fabric_index, update)
           emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
+          @on_persist.try(&.call)
         rescue ex
           @pending_restriction_reviews[token] = request
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
         @restriction_review_timers.delete(token).try(&.close)
+        @pending_restriction_review_deadlines.delete(token)
+        @reviews_needing_replay.delete(token)
+        increment_version
         true
+      end
+
+      private def schedule_restriction_review_timer(fabric_index : UInt8, token : UInt64,
+                                                    duration : Time::Span) : Nil
+        return if @restriction_review_timers.has_key?(token)
+        timer = ::Channel(Nil).new
+        @restriction_review_timers[token] = timer
+        spawn do
+          select
+          when timer.receive?
+          when timeout(duration)
+            complete_restriction_review(fabric_index, token)
+          end
+        rescue ex
+          Log.error(exception: ex) { "Restriction review deadline update failed" }
+        end
+      end
+
+      private def resume_restriction_reviews : Nil
+        requested = @on_restriction_review_requested || return
+        return unless @on_restriction_review_updated
+        @reviews_needing_replay.dup.each do |token|
+          request = @pending_restriction_reviews[token]?
+          next unless request
+          deadline = @pending_restriction_review_deadlines[token]
+          begin
+            if deadline <= Time.utc
+              complete_restriction_review(request.fabric_index, token)
+            else
+              schedule_restriction_review_timer(request.fabric_index, token, deadline - Time.utc)
+              requested.call(request)
+              @reviews_needing_replay.delete(token)
+            end
+          rescue ex
+            Log.error(exception: ex) { "Could not resume restriction review #{token}" }
+          end
+        end
       end
 
       def attribute_read_restricted?(fabric_index : UInt8, endpoint : UInt16,
@@ -653,17 +724,63 @@ module Matter
         end
       end
 
+      struct PersistedRestriction
+        include Storage::Record
+
+        getter type : AccessRestrictionType
+        getter id : UInt32?
+
+        def initialize(@type : AccessRestrictionType, @id : UInt32?)
+        end
+      end
+
+      struct PersistedRestrictionEntry
+        include Storage::Record
+
+        getter endpoint : UInt16
+        getter cluster : UInt32
+        getter restrictions : Array(PersistedRestriction)
+        getter fabric_index : UInt8?
+
+        def initialize(@endpoint : UInt16, @cluster : UInt32,
+                       @restrictions : Array(PersistedRestriction), @fabric_index : UInt8? = nil)
+        end
+      end
+
+      struct PersistedRestrictionReview
+        include Storage::Record
+
+        getter token : UInt64
+        getter fabric_index : UInt8
+        getter entries : Array(PersistedRestrictionEntry)
+        getter deadline : Time
+
+        def initialize(@token : UInt64, @fabric_index : UInt8,
+                       @entries : Array(PersistedRestrictionEntry), @deadline : Time)
+        end
+      end
+
       struct PersistedState
         include Storage::Record
 
         getter data_version : UInt32
         getter acl : Array(PersistedAclEntry)
         getter extension : Array(PersistedExtensionEntry)
+        getter access_restrictions : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry
+        getter commissioning_arl : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry
+        getter? commissioning_arl_configured : Bool = false
+        getter pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview
+        getter next_restriction_review_token : UInt64 = 0_u64
 
         def initialize(
           @data_version : UInt32,
           @acl : Array(PersistedAclEntry),
           @extension : Array(PersistedExtensionEntry),
+          @access_restrictions : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry,
+          @commissioning_arl : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry,
+          @commissioning_arl_configured : Bool = false,
+          @pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview,
+          @next_restriction_review_token : UInt64 = 0_u64,
         )
         end
       end
@@ -684,12 +801,77 @@ module Matter
           end,
           extension: @extension.compact_map do |entry|
             entry.fabric_index.try { |index| PersistedExtensionEntry.new(entry.data, index) }
-          end
+          end,
+          access_restrictions: @access_restrictions.flat_map do |fabric_index, entries|
+            entries.map { |entry| persisted_restriction_entry(entry, fabric_index) }
+          end,
+          commissioning_arl: @commissioning_arl.map do |entry|
+            persisted_restriction_entry(
+              AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions))
+          end,
+          commissioning_arl_configured: @commissioning_arl_configured,
+          pending_restriction_reviews: @pending_restriction_reviews.values.map do |request|
+            PersistedRestrictionReview.new(request.token, request.fabric_index,
+              request.entries.map { |entry| persisted_restriction_entry(entry) },
+              @pending_restriction_review_deadlines[request.token])
+          end,
+          next_restriction_review_token: @next_restriction_review_token
         ).to_document
+      end
+
+      private def persisted_restriction_entry(entry : AccessRestrictionEntry,
+                                              fabric_index : UInt8? = nil) : PersistedRestrictionEntry
+        PersistedRestrictionEntry.new(entry.endpoint, entry.cluster,
+          entry.restrictions.map { |restriction| PersistedRestriction.new(restriction.type, restriction.id) },
+          fabric_index)
       end
 
       def restore_state(document : Storage::Document) : Nil
         state = PersistedState.from_document(document)
+        restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
+        state.access_restrictions.each do |stored|
+          fabric_index = stored.fabric_index ||
+                         raise Matter::StorageError.new("ARL entry has no fabric index")
+          entry = restored_restriction_entry(stored)
+          if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
+             invalid_access_restriction_entry?(entry)
+            raise Matter::StorageError.new("Invalid persisted ARL entry")
+          end
+          (restrictions[fabric_index] ||= [] of AccessRestrictionEntry) << entry
+        end
+        commissioning_arl = state.commissioning_arl.map do |stored|
+          entry = restored_restriction_entry(stored)
+          if stored.fabric_index || invalid_access_restriction_entry?(entry)
+            raise Matter::StorageError.new("Invalid persisted CommissioningARL entry")
+          end
+          CommissioningAccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions)
+        end
+        pending = {} of UInt64 => RestrictionReviewRequest
+        deadlines = {} of UInt64 => Time
+        state.pending_restriction_reviews.each do |stored|
+          entries = stored.entries.map do |persisted|
+            entry = restored_restriction_entry(persisted)
+            if persisted.fabric_index || invalid_access_restriction_entry?(entry)
+              raise Matter::StorageError.new("Invalid persisted restriction review entry")
+            end
+            entry
+          end
+          if stored.token == 0 || stored.fabric_index == 0 ||
+             stored.fabric_index > MAX_VALID_FABRIC_INDEX || pending.has_key?(stored.token)
+            raise Matter::StorageError.new("Invalid persisted restriction review token or fabric")
+          end
+          pending[stored.token] = RestrictionReviewRequest.new(stored.fabric_index, stored.token, entries)
+          deadlines[stored.token] = stored.deadline
+        end
+        @restriction_review_timers.each_value(&.close)
+        @restriction_review_timers.clear
+        @access_restrictions = restrictions
+        @commissioning_arl = commissioning_arl
+        @commissioning_arl_configured = state.commissioning_arl_configured?
+        @pending_restriction_reviews = pending
+        @pending_restriction_review_deadlines = deadlines
+        @reviews_needing_replay = pending.keys
+        @next_restriction_review_token = {state.next_restriction_review_token, pending.keys.max? || 0_u64}.max
         @data_version = state.data_version
 
         @acl = state.acl.compact_map do |entry|
@@ -713,8 +895,14 @@ module Matter
         end
 
         @extension = state.extension.map { |entry| ExtensionEntry.new(entry.data, entry.fabric_index) }
+        resume_restriction_reviews
       rescue ex
         Log.error(exception: ex) { "AccessControl restore_state failed; starting fresh" }
+      end
+
+      private def restored_restriction_entry(stored : PersistedRestrictionEntry) : AccessRestrictionEntry
+        AccessRestrictionEntry.new(stored.endpoint, stored.cluster,
+          stored.restrictions.map { |restriction| AccessRestriction.new(restriction.type, restriction.id) })
       end
 
       # Check if a subject has the required privilege
@@ -805,7 +993,11 @@ module Matter
         @access_restrictions.delete(fabric_index)
         increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
         @pending_restriction_reviews.each do |token, request|
-          @restriction_review_timers.delete(token).try(&.close) if request.fabric_index == fabric_index
+          if request.fabric_index == fabric_index
+            @restriction_review_timers.delete(token).try(&.close)
+            @pending_restriction_review_deadlines.delete(token)
+            @reviews_needing_replay.delete(token)
+          end
         end
         @pending_restriction_reviews.reject! { |_, request| request.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_ACL)
