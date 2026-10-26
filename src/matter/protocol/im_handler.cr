@@ -3,6 +3,7 @@ require "../interaction_model/status_code"
 require "../interaction_model/tlv_messages"
 require "../cluster/cluster"
 require "../event_journal"
+require "../session/context"
 require "../cluster/access_control"
 require "../cluster/group_key_management"
 require "../cluster/thermostat"
@@ -71,6 +72,44 @@ module Matter
             auth_mode: InteractionModel::EntryAuthMode::Case
           )
         end
+      end
+
+      # A ReportData chunk may wait for an earlier chunk's acknowledgement.
+      # Recheck the payload at send time so an ACL change cannot release a
+      # sensitive value from a previously encoded read or subscription report.
+      def self.report_chunk_authorized?(
+        payload : Bytes,
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        session : Session::SecureContext,
+      ) : Bool
+        report = InteractionModel::ReportDataMessage.from_slice(payload)
+        subjects = session.peer_subject_ids
+        peer_subject_ids = subjects.empty? ? nil : subjects
+
+        (report.attribute_reports || [] of InteractionModel::AttributeReportIB).each do |entry|
+          next unless data = entry.attribute_data
+          path = data.path
+          endpoint_id = path.endpoint || return false
+          cluster_id = path.cluster || return false
+          attribute_id = path.attribute || return false
+          cluster = clusters[{endpoint_id, cluster_id}]? || return false
+          required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
+          return false unless authorized?(clusters, required, endpoint_id, cluster_id,
+                                session.case_session?, session.fabric_index, peer_subject_ids)
+        end
+
+        (report.event_reports || [] of InteractionModel::EventReportIB).each do |entry|
+          next unless data = entry.event_data
+          path = data.path
+          endpoint_id = path.endpoint || return false
+          cluster_id = path.cluster || return false
+          event_id = path.event || return false
+          cluster = clusters[{endpoint_id, cluster_id}]? || return false
+          required = cluster.get_event_metadata(event_id).try(&.access) || return false
+          return false unless authorized?(clusters, required, endpoint_id, cluster_id,
+                                session.case_session?, session.fabric_index, peer_subject_ids)
+        end
+        true
       end
 
       # IM message types
