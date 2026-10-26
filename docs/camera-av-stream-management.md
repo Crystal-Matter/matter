@@ -64,9 +64,19 @@ uses an Aggregator endpoint and a checked-in, decodable 320x240 JPEG for Matter
 wire checks. Its fixed payload is not a live camera source or a claim of media delivery. The
 mandatory nullable `CaptureSnapshot.SnapshotStreamID` field accepts explicit IDs
 and TLV Null auto-selection through TLV FieldState; an omitted field is rejected.
-The optional WMARK/OSD modify command and Camera device type topology remain
-unimplemented. Applications should not present this slice as complete Camera
-conformance.
+An opt-in SNP+WMARK profile adds the mandatory WatermarkEnabled field to
+SnapshotStreamAllocate and allocated snapshot stream records, and exposes the
+Manage-privileged SnapshotStreamModify command. The host's
+`on_snapshot_allocate` callback must admit the requested watermark state;
+`on_snapshot_modify` must apply an actual watermark change before returning
+success. The library commits the new stream state only after that callback
+succeeds and persists it across restart. The host remains responsible for
+rendering the watermark into captured image bytes. VDO+WMARK, OSD, and Camera
+device type topology remain unavailable; the constructor rejects those
+feature combinations.
+
+Applications should not present the synthetic snapshot fixture as complete
+Camera conformance.
 
 Applications with a decoded RGB24 camera source can explicitly require
 `matter/media/ffmpeg_jpeg_encoder` and use `Media::DecodedRgbFrame` with

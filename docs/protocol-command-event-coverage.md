@@ -343,7 +343,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0551 | command | 0x0005 | (feature(VDO) and (feature(WMARK) or feature(OSD))) | absent |
 | 0x0551 | command | 0x0006 | feature(VDO) | declared; requires `:video` |
 | 0x0551 | command | 0x0007 | feature(SNP) | declared; requires `:snapshot` |
-| 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | absent |
+| 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | declared for SNP+WMARK; requires `{snapshot: true, watermark: true}` |
 | 0x0551 | command | 0x000A | feature(SNP) | declared; requires `:snapshot` |
 | 0x0551 | command | 0x000C | feature(SNP) | declared; requires `:snapshot` |
 | 0x0552 | command | 0x0000 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |

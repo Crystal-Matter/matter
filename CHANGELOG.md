@@ -207,6 +207,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nullable auto-selection uses TLV FieldState; optional overlay controls and
   real media remain open.
 
+- Add the gated SNP+WMARK profile: allocation carries the mandatory watermark
+  flag, stream records persist it, and Manage-privileged SnapshotStreamModify
+  commits a change after host callback success. The host must render the
+  watermark into image bytes; VDO+WMARK and OSD remain gated.
+
 ### Camera AV Stream Management video
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
