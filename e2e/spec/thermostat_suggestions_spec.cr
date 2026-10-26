@@ -64,6 +64,30 @@ describe "Matter Thermostat Suggestions guarded fixture" do
     end
   end
 
+  it "keeps a selected suggestion visible during an indefinite hold and follows it when released" do
+    set_suggestion_utc(device)
+    expect_success(device.chip("thermostat", "set-active-preset-request", "hex:01", device.node, "1"))
+    expect_success(device.write("thermostat", "temperature-setpoint-hold-duration", "null", 1))
+    expect_success(device.write("thermostat", "temperature-setpoint-hold", 1, 1))
+    id = suggestion_id(expect_success(add_suggestion(device, "hex:02")))
+    begin
+      selected = expect_success(device.read("thermostat", "current-thermostat-suggestion", 1))
+      selected.output.should contain("PresetHandle")
+      selected.output.should contain("02")
+      read_int(device, "thermostat", "thermostat-suggestion-not-following-reason",
+        "ThermostatSuggestionNotFollowingReason", 1).should eq(2_i64)
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output.should contain("01")
+
+      expect_success(device.write("thermostat", "temperature-setpoint-hold", 0, 1))
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output.should contain("02")
+      expect_success(device.read("thermostat", "thermostat-suggestion-not-following-reason", 1))
+        .output.downcase.should contain("null")
+    ensure
+      expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
+      expect_success(device.write("thermostat", "temperature-setpoint-hold", 0, 1))
+    end
+  end
+
   it "accepts up to MaxThermostatSuggestions and then reports resource exhaustion" do
     set_suggestion_utc(device)
     ids = Array.new(5) { suggestion_id(expect_success(add_suggestion(device, "hex:01"))) }

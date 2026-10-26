@@ -181,8 +181,8 @@ module Matter
         end
       end
 
-      # Matter 1.6 TSUGGEST wire types. The feature remains disabled in
-      # production until its UTC, preset, and timer behavior is implemented.
+      # Matter 1.6 TSUGGEST wire types. Production remains gated while
+      # arbitration with schedules and occupancy is completed.
       @[Flags]
       enum ThermostatSuggestionNotFollowingReason : UInt16
         DemandResponseEvent    = 0x0001
@@ -193,6 +193,11 @@ module Matter
         TimeOfUseCostSavings   = 0x0020
         PreCoolingOrPreHeating = 0x0040
         ConflictingSuggestions = 0x0080
+      end
+
+      enum TemperatureSetpointHold : UInt8
+        Off = 0
+        On  = 1
       end
 
       struct ThermostatSuggestion
@@ -620,6 +625,14 @@ module Matter
       attribute 0x001B, :control_sequence_of_operation, ControlSequenceOfOperation, default: ControlSequenceOfOperation::CoolingAndHeating, writable: true, write_access: :manage
       attribute 0x001C, :system_mode, SystemMode, default: SystemMode::Off, writable: true, write_access: :manage, on_change: :system_mode_changed
       attribute 0x001E, :thermostat_running_mode, ThermostatRunningMode, default: ThermostatRunningMode::Off, optional: true, requires: :automode, on_change: :running_mode_changed
+      attribute 0x0023, :temperature_setpoint_hold, TemperatureSetpointHold,
+        default: TemperatureSetpointHold::Off, writable: true, write_access: :manage,
+        optional: true, requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?,
+        validate: :validate_suggestion_hold, on_change: :suggestion_hold_changed
+      attribute 0x0024, :temperature_setpoint_hold_duration, UInt16,
+        nullable: true, writable: true, write_access: :manage, optional: true,
+        requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?,
+        max: 1440, validate: :validate_suggestion_hold_duration
       attribute 0x0029, :thermostat_running_state, RelayState, computed: true, optional: true, requires: :events
       attribute 0x0048, :preset_types, Array(PresetType), computed: true, optional: true,
         requires: :presets, present_if: :preset_wire_ready?
@@ -736,6 +749,7 @@ module Matter
         @thermostat_suggestions = [] of ThermostatSuggestion
         @next_suggestion_id = 0_u8
         @current_thermostat_suggestion = nil.as(ThermostatSuggestion?)
+        @suggestion_not_following_reason = nil.as(ThermostatSuggestionNotFollowingReason?)
         @last_suggestion_now = nil.as(UInt32?)
         @suggestion_timer_boundary = nil.as(UInt32?)
         @suggestion_timer_generation = 0_u64
@@ -929,8 +943,8 @@ module Matter
         copy_presets(@presets)
       end
 
-      # Host state only. The TSUGGEST feature and command/attribute wire surface
-      # remain gated until the pinned conformance cases have been exercised.
+      # Host state and guarded TSUGGEST wire behavior. Production remains gated
+      # until the remaining suggestion policy and conformance checks complete.
       def configure_suggestion_capacity(capacity : UInt8) : Nil
         raise ArgumentError.new("suggestion capacity must be at least five") if capacity < MIN_SUGGESTION_CAPACITY
         raise ArgumentError.new("suggestion capacity below live suggestion count") if capacity < @thermostat_suggestions.size
@@ -969,7 +983,22 @@ module Matter
       end
 
       def thermostat_suggestion_not_following_reason : ThermostatSuggestionNotFollowingReason?
-        nil
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
+        @suggestion_not_following_reason
+      end
+
+      private def validate_suggestion_hold_duration(value : UInt16?) : Nil
+        # Duration values are reserved in Matter 1.6. This guarded slice
+        # supports indefinite holds only; null means no expiry.
+        raise ArgumentError.new("setpoint hold duration must be null") unless value.nil?
+      end
+
+      private def validate_suggestion_hold(value : TemperatureSetpointHold) : Nil
+        raise ArgumentError.new("invalid setpoint hold value") unless value.off? || value.on?
+      end
+
+      private def suggestion_hold_changed(value : TemperatureSetpointHold) : Nil
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
       end
 
       protected def suggestion_wire_ready? : Bool
@@ -1049,7 +1078,14 @@ module Matter
           @current_thermostat_suggestion = selected.try { |entry| copy_suggestion(entry) }
           suggestion_attribute_changed(ATTR_CURRENT_THERMOSTAT_SUGGESTION)
         end
-        if selected && @active_preset_handle != selected.preset_handle
+        reason = if selected && @temperature_setpoint_hold.on? && @active_preset_handle != selected.preset_handle
+                   ThermostatSuggestionNotFollowingReason::OngoingHold
+                 end
+        if @suggestion_not_following_reason != reason
+          @suggestion_not_following_reason = reason
+          suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON)
+        end
+        if selected && reason.nil? && @active_preset_handle != selected.preset_handle
           activate_preset(SetActivePresetRequest.new(selected.preset_handle))
         end
         schedule_suggestion_boundary(now)
