@@ -260,6 +260,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of the configured peer's UTC time. The root Descriptor advertises the
   Time Synchronization client role when TSC is enabled.
 
+### Time Synchronization polling
+
+- Keep TimeZone polling active when an NTP refresh replaces the UTC clock after
+  the poll captured its monotonic instant. The earlier instant now represents
+  zero elapsed time against the new clock baseline.
+
 ### Time Synchronization NTP client
 
 - Add opt-in NTPC support for a persistent, nullable IPv6 DefaultNTP address,

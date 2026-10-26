@@ -339,6 +339,9 @@ module Matter
         base = @base_utc_time
         started = @base_instant
         return unless base && started
+        # A poll may refresh UTC after capturing `now`; that sample predates
+        # the new monotonic baseline and has not elapsed any time against it.
+        return base if now <= started
         elapsed = (now - started).total_microseconds.to_u64
         return if elapsed > UInt64::MAX - base
         base + elapsed
