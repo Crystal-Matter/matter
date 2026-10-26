@@ -36,11 +36,11 @@ describe "Matter 1.6 Content Control interoperability" do
     expect_success(device.invoke("contentcontrol", "unblock-unrated-content"))
     all_day = %({"timeWindowIndex":null,"dayOfWeek":127,"timePeriod":[{"startHour":0,"startMinute":0,"endHour":23,"endMinute":59}]})
     expect_success(device.invoke("contentcontrol", "set-block-content-time-window", [all_day]))
-    expect_success(device.read("contentcontrol", "block-content-time-window")).output.should contain("dayOfWeek: 127")
+    expect_success(device.read("contentcontrol", "block-content-time-window")).output.should contain("DayOfWeek: 127")
     expect_success(device.invoke("contentcontrol", "enable", options: timed))
     expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(2_i64)
     device.restart!
-    expect_success(device.read("contentcontrol", "block-content-time-window")).output.should contain("dayOfWeek: 127")
+    expect_success(device.read("contentcontrol", "block-content-time-window")).output.should contain("DayOfWeek: 127")
     expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(2_i64)
     expect_success(device.invoke("contentcontrol", "remove-block-content-time-window", ["[0]"]))
     expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(0_i64)
