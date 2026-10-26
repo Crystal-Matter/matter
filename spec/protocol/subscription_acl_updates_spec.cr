@@ -1,11 +1,19 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
 require "../../src/matter/cluster/camera_av_stream_management"
+require "../../src/matter/cluster/on_off"
 require "../../src/matter/protocol/message_handler"
 
 private alias SubscriptionAcl = Matter::Cluster::AccessControl
 private alias SubscriptionCamera = Matter::Cluster::CameraAvStreamManagement
 private alias SubscriptionIM = Matter::Protocol::IMHandler
+
+private class FabricAwareSubscriptionOnOff < Matter::Cluster::OnOff
+  def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : Matter::InteractionModel::Status | TLV::Any
+    return TLV::Any.new(!request_fabric_filtered?) if attribute_id == ATTR_ON_OFF
+    super
+  end
+end
 
 private record SubscriptionAclFixture,
   handler : Matter::Protocol::MessageHandler,
@@ -73,7 +81,55 @@ private def subscription_acl_viewport_path(wildcard : Bool = false) : Matter::In
     attribute: wildcard ? nil : SubscriptionCamera::ATTR_VIEWPORT)
 end
 
+private def subscription_acl_report(bytes : Bytes, session : Matter::Session::SecureContext) : Matter::InteractionModel::ReportDataMessage
+  packet = Matter::Codec::MessageCodec::Base.decode_packet(bytes)
+  header = bytes[0, bytes.size - packet.payload.size]
+  nonce = Matter::Session::SecureMessage.build_nonce(
+    session.local_node_id.as(Matter::DataType::NodeId).id,
+    packet.header.message_id,
+    header[Matter::Codec::MessageCodec::SECURITY_FLAGS_OFFSET])
+  plaintext = Matter::Crypto::StandardCrypto.new.decrypt(
+    session.encryption_key, packet.payload, nonce, header)
+  payload = Matter::Codec::MessageCodec::Base.decode_payload(
+    Matter::Codec::MessageCodec::Packet.new(packet.header, plaintext)).payload
+  Matter::InteractionModel::ReportDataMessage.from_slice(payload)
+end
+
 describe "active subscription ACL updates" do
+  it "preserves an unfiltered SubscribeRequest through activation, update and restart" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
+    sensor = FabricAwareSubscriptionOnOff.new(endpoint(2))
+    fixture.handler.node.clusters[{2_u16, FabricAwareSubscriptionOnOff::CLUSTER_ID}] = sensor
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 2_u16,
+      cluster: FabricAwareSubscriptionOnOff::CLUSTER_ID,
+      attribute: FabricAwareSubscriptionOnOff::ATTR_ON_OFF)
+    request = Matter::InteractionModel::SubscribeRequestMessage.new(
+      attribute_requests: [path], min_interval_floor: 0_u16,
+      max_interval_ceiling: 60_u16, is_fabric_filtered: false)
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      fixture.session, Matter::InteractionModel::MessageType::SubscribeRequest.value,
+      request.to_slice, 3_u32, 31_u16), Socket::IPAddress.new("127.0.0.1", 5540))
+    first = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    first.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as_bool.should be_true
+
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 4_u32, 31_u16), Socket::IPAddress.new("127.0.0.1", 5540))
+    fixture.handler.active_subscriptions.size.should eq(1)
+    active = fixture.handler.active_subscriptions.values.first
+    active.fabric_filtered?.should be_false
+    record = Matter::Protocol::ActiveSubscription::SubscriptionRecord.from_document(active.to_record.to_document)
+    Matter::Protocol::ActiveSubscription.from_record(record, fixture.session).fabric_filtered?.should be_false
+    fixture.transport.sent_packets.clear
+
+    fixture.handler.subscriptions.notify(2_u16, FabricAwareSubscriptionOnOff::CLUSTER_ID,
+      FabricAwareSubscriptionOnOff::ATTR_ON_OFF)
+    update = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    update.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as_bool.should be_true
+    fixture.handler.close
+  end
+
   it "does not disclose a Manage viewport after View-only priming, including a wildcard path" do
     fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
     [false, true].each do |wildcard|

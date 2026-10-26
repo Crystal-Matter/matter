@@ -12,6 +12,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recheck attribute and event privileges for every active subscription update,
   including wildcard paths and ACL changes after the initial report. Events
   suppressed while access is denied are not replayed by a later privilege grant.
+  Preserve the SubscribeRequest fabric-filter choice through updates and
+  subscription restoration.
 
 ### Joint Fabric keyed group propagation
 

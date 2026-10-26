@@ -79,6 +79,7 @@ module Matter
         getter max_interval : UInt16
         getter attribute_paths : Array(InteractionModel::AttributePath)
         getter event_paths : Array(InteractionModel::EventPath)
+        getter? fabric_filtered : Bool
 
         # The highest event number the priming report carried, so the first
         # update does not repeat what the controller has already seen.
@@ -94,6 +95,7 @@ module Matter
           remaining_chunks : Array(Bytes),
           @event_paths = [] of InteractionModel::EventPath,
           @last_event_number = 0_u64,
+          @fabric_filtered = true,
         )
           super(peer, session, remaining_chunks)
         end
@@ -466,7 +468,8 @@ module Matter
           # A wildcard subscription still checks each concrete changed path.
           IMHandler.read_attributes([path], @node.clusters,
             subscription.session.fabric_index, subscription.session.case_session?,
-            subscription_subjects(subscription), session_id: subscription.session.session_id.to_u64,
+            subscription_subjects(subscription), subscription.fabric_filtered?,
+            session_id: subscription.session.session_id.to_u64,
             local_node_id: subscription.session.local_node_id.try(&.id)).each do |report|
             reports << report if report.attribute_data
           end
@@ -520,7 +523,8 @@ module Matter
           attribute_paths: pending.attribute_paths,
           exchange_id: exchange_id,
           event_paths: pending.event_paths,
-          last_event_number: pending.last_event_number
+          last_event_number: pending.last_event_number,
+          fabric_filtered: pending.fabric_filtered?
         ))
       end
     end
