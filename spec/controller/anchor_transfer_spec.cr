@@ -889,6 +889,15 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
 
   it "rotates all three Administrators with newer CAT versions before promotion" do
     old_store = committed_anchor_store
+    old_key = Bytes.new(16, 0xA1_u8)
+    old_store.group_key_set_list = [
+      TransferDatastore::DatastoreGroupKeySetStruct.new(0_u16,
+        TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        old_key, 1_u64, Bytes.new(16, 0xA2_u8), 2_u64, nil, nil),
+      TransferDatastore::DatastoreGroupKeySetStruct.new(1_u16,
+        TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        Bytes.new(16, 0xB1_u8), 1_u64, nil, nil, nil, nil),
+    ]
     old_store.group_list = [
       TransferDatastore::DatastoreGroupInformationEntryStruct.new(1_u64, "administrators", nil,
         0xFFFF_u16, 1_u16, TransferDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer),
@@ -926,6 +935,15 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
 
     migration.copy_datastore!
     candidate.group_list.map(&.group_cat_version).should eq([2_u16, 2_u16])
+    new_ipk = candidate.group_key_set_list.find!(&.group_key_set_id.==(0_u16))
+    new_ipk.epoch_key0.should eq(bootstrap.fabric.ipk_value)
+    new_ipk.epoch_key0.should_not eq(old_key)
+    new_ipk.epoch_start_time0.should eq(1_u64)
+    new_ipk.epoch_key1.should be_nil
+    new_ipk.epoch_start_time1.should be_nil
+    new_ipk.epoch_key2.should be_nil
+    new_ipk.epoch_start_time2.should be_nil
+    candidate.group_key_set_list.find!(&.group_key_set_id.==(1_u16)).should eq(old_store.group_key_set_list.last)
     migration.rotate_credentials!
     migration.promote_candidate!
     migration.follow_up_administrators!
