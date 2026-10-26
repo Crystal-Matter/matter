@@ -138,7 +138,8 @@ module Matter
         return InteractionModel::Status.failsafe_required unless @failsafe_armed.call
         return InteractionModel::Status.constraint_error if icac_attempted_on_fabric?(cluster)
         fabric_index = cluster.administrator_fabric_index
-        unless verified_initiator?(cluster) && (fabric_index.nil? || @vendor_id_verified.call(fabric_index))
+        accessing_fabric_index = cluster.request_fabric_index
+        unless verified_initiator?(cluster) && accessing_fabric_index && @vendor_id_verified.call(accessing_fabric_index)
           return InteractionModel::Status.cluster_failure(Admin::ICACCSRResponseStatusCodeEnum::VIDNotVerified)
         end
         unless fabric_index
