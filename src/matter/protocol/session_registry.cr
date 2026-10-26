@@ -32,7 +32,7 @@ module Matter
       CASE_RESUMPTION_GRACE_PERIOD = 5.seconds
 
       # How often the background sweep looks for expired state.
-      SWEEP_INTERVAL = 5.seconds
+      SWEEP_INTERVAL = 1.second
 
       # How often the sweep writes session message counters back to storage.
       SESSION_PERSIST_INTERVAL = 30.seconds
@@ -439,9 +439,9 @@ module Matter
           end
           break unless running?
 
+          @mutex.synchronize { @sweep_hooks.each(&.call) }
           process_expired_subscriptions
           process_pending_cleanups
-          @mutex.synchronize { @sweep_hooks.each(&.call) }
 
           since_persist += SWEEP_INTERVAL
           if since_persist >= SESSION_PERSIST_INTERVAL
