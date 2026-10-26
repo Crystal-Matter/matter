@@ -183,7 +183,25 @@ describe "Subscription event reporting" do
     end
     reports.compact_map(&.event_status).map(&.status.status).should eq([0x9d_u8])
     reports.compact_map(&.event_data).should be_empty
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number)
+    acknowledge_event_reports(fixture)
     fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 1_u64)
+    fixture.handler.close
+  end
+
+  it "commits a cursor past filtered and reported events only after final IM status" do
+    fixture, _acl = restricted_event_subscription_fixture([Matter::InteractionModel::EventPath.new])
+    fixture.handler.node.event_journal.record(ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID,
+      LOCK_EVENT, :critical, TLV::Any.new(1_u32, nil))
+    fixture.handler.node.event_journal.record(ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID,
+      Matter::Cluster::DoorLock::EVENT_DOOR_LOCK_ALARM, :critical, TLV::Any.new(2_u32, nil))
+
+    fixture.handler.subscriptions.notify_events
+    reported_events(fixture).should eq([fixture.base_event_number + 2_u64])
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number)
+
+    acknowledge_event_reports(fixture)
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 2_u64)
     fixture.handler.close
   end
 

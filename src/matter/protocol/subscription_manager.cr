@@ -280,11 +280,17 @@ module Matter
             # Every report drains whatever the journal still owes this
             # subscription, so a non-urgent event rides out with the next
             # attribute change rather than waiting for its own report.
-            events = pending_events(subscription)
-            next if reports.empty? && events.empty?
+            records = journal_records(subscription)
+            events = event_reports(subscription, records)
+            scanned_through = records.last?.try(&.event_number)
+            if reports.empty? && events.empty?
+              advance_event_cursor(subscription, scanned_through)
+              dirty.clear
+              next
+            end
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
-            send_update(subscription, reports, events)
+            send_update(subscription, reports, events, scanned_through)
           end
         end
       end
@@ -307,10 +313,15 @@ module Matter
             next unless report_due
 
             reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
-            events = pending_events(subscription)
-            next if reports.empty? && events.empty? && !max_elapsed
+            records = journal_records(subscription)
+            events = event_reports(subscription, records)
+            scanned_through = records.last?.try(&.event_number)
+            if reports.empty? && events.empty? && !max_elapsed
+              advance_event_cursor(subscription, scanned_through)
+              next
+            end
 
-            send_update(subscription, reports, events)
+            send_update(subscription, reports, events, scanned_through)
           end
         end
       end
@@ -343,7 +354,12 @@ module Matter
               "Sending event report: subscription_id=#{subscription.subscription_id}, " \
               "events=#{records.size}, urgent=#{urgent}"
             end
-            send_update(subscription, [] of InteractionModel::AttributeReportIB, event_reports(subscription, records))
+            events = event_reports(subscription, records)
+            if events.empty?
+              advance_event_cursor(subscription, records.last.event_number)
+            else
+              send_update(subscription, [] of InteractionModel::AttributeReportIB, events, records.last.event_number)
+            end
           end
         end
       end
@@ -354,6 +370,7 @@ module Matter
         subscription : ActiveSubscription,
         reports : Array(InteractionModel::AttributeReportIB),
         events : Array(InteractionModel::EventReportIB),
+        scanned_through : UInt64? = nil,
       ) : Nil
         return if @inflight_updates.has_key?(subscription.subscription_id)
         limit = @sender.im_payload_limit(subscription.session, subscription.peer)
@@ -361,7 +378,7 @@ module Matter
           events, max_payload_size: limit)
         dirty = @dirty_attributes[subscription.subscription_id]? || Set(AttributeKey).new
         @dirty_attributes[subscription.subscription_id] = Set(AttributeKey).new
-        cursor = events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
+        cursor = scanned_through || events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
         begin
           exchange_id = @sender.send_report(subscription.session, subscription.peer, chunks.first[0])
           key = {subscription.session.session_id, exchange_id}
@@ -373,6 +390,13 @@ module Matter
           raise ex
         end
         subscription.last_report_time = Time.utc
+      end
+
+      private def advance_event_cursor(subscription : ActiveSubscription, scanned_through : UInt64?) : Nil
+        return unless scanned_through
+        if scanned_through > subscription.last_event_number
+          subscription.last_event_number = scanned_through
+        end
       end
 
       private def prune_inflight_updates(subscriptions : Hash(UInt32, ActiveSubscription),
@@ -417,19 +441,38 @@ module Matter
         )
       end
 
-      # Turns *records* into reports. The cursor advances only after sending.
+      # Turns *records* into reports. A sent report advances the cursor only
+      # after the final IM Status.Success acknowledges the transaction.
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),
       ) : Array(InteractionModel::EventReportIB)
         return [] of InteractionModel::EventReportIB if records.empty?
 
-        records.map { |record| InteractionModel::EventReportIB.new(event_data: IMHandler.build_event_data(record)) }
-      end
-
-      # Everything the journal owes *subscription*, ready to report.
-      private def pending_events(subscription : ActiveSubscription) : Array(InteractionModel::EventReportIB)
-        event_reports(subscription, journal_records(subscription))
+        reports = [] of InteractionModel::EventReportIB
+        status_paths = Set(Tuple(UInt16, UInt32, UInt32)).new
+        session = subscription.session
+        subjects = session.peer_subject_ids.empty? ? nil : session.peer_subject_ids
+        records.each do |record|
+          path = record.to_path
+          status = IMHandler.event_read_status(path, @node.clusters, session.case_session?, session.fabric_index, subjects)
+          if status
+            # A wildcard path is silently filtered. A concrete request gets
+            # one status for each denied path in this update.
+            if subscription.event_paths.any? { |request| !request.wildcard? && record.matches?(request) }
+              key = {record.endpoint, record.cluster, record.event}
+              unless status_paths.includes?(key)
+                status_paths << key
+                status_ib = InteractionModel::StatusIB.new(status: status.value)
+                reports << InteractionModel::EventReportIB.new(
+                  event_status: InteractionModel::EventStatusIB.new(path, status_ib))
+              end
+            end
+          else
+            reports << InteractionModel::EventReportIB.new(event_data: IMHandler.build_event_data(record))
+          end
+        end
+        reports
       end
 
       # The reports *subscription* wants out of *attributes*, read at the
