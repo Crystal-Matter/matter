@@ -3,6 +3,9 @@ require "../../src/matter/controller"
 require "../../examples/support/joint_fabric_administrator_device"
 require "../interop/jfa_vvs_dcl_fixture"
 
+private alias JfaRolloutDatastore = Matter::Cluster::JointFabricDatastore
+private alias JfaRollout = Matter::Controller::IpkRollout
+
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
 
@@ -76,6 +79,17 @@ private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
     raise Matter::TimeoutError.new("B controller ACL did not commit for migrated A node") if Time.instant >= deadline
     sleep 1.second
   end
+end
+
+private def jfa_rollout_attribute(type : T.class, im : Matter::Controller::ImClient,
+                                  session : Matter::Session::SecureContext,
+                                  peer : Socket::IPAddress, attribute_id : UInt32) : T forall T
+  report = im.read_attribute(session: session, peer: peer, endpoint_id: 1_u16,
+    cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+    attribute_id: attribute_id)
+  data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  T.from_tlv(data.to_slice)
 end
 
 private def assert_joiner_vvs(client : Matter::Controller::Client,
@@ -760,6 +774,55 @@ describe "three provisioned Joint Fabric Administrators" do
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     third_acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(third_acl_data.to_slice)
     third_acl.any? { |entry| entry.subjects.try(&.includes?(0xFFFF_FFFD_FFFF_0001_u64)) || false }.should be_true
+
+    # The live Anchor now has two other Administrators. An eviction that drops
+    # its only IPK must wait for each trusted host to acknowledge the exact
+    # current KeySet0. The B/C processes have joined using this original IPK;
+    # this exercises the host guard, not adoption of a newly rotated epoch.
+    rollout = JfaRolloutDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    rollout.anchor_node_id = 0xA102_u64
+    rollout.anchor_root_ca = jfa_rollout_attribute(Bytes, anchor_im, anchor_session,
+      anchor_peer, JfaRolloutDatastore::ATTR_ANCHOR_ROOT_CA)
+    rollout.group_key_set_list = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreGroupKeySetStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_GROUP_KEY_SET_LIST)
+    rollout.node_list = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeInformationEntryStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_LIST)
+    rollout.node_key_set_list = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
+    rollout.admin_list = three_admins
+    current_ipk = rollout.group_key_set_list.find!(&.group_key_set_id.==(0_u16))
+    current_ipk.epoch_key0.should eq(anchor_bootstrap.fabric.ipk_value)
+    b_joined_node_id = 0xA103_u64
+    c_joined_node_id = 0xA104_u64
+    evicted_ipk = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(0_u16,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0xA6_u8), 2_u64, nil, nil, nil, nil)
+    expect_raises(Matter::ConfigurationError, Regex.new("Administrator #{b_joined_node_id} acknowledgment")) do
+      JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_cert, evicted_ipk, [] of JfaRollout::AdministratorAcknowledgment)
+    end
+    b_ack = JfaRollout.acknowledgment(b_joined_node_id, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, current_ipk)
+    expect_raises(Matter::ConfigurationError, Regex.new("Administrator #{c_joined_node_id} acknowledgment")) do
+      JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_cert, evicted_ipk, [b_ack])
+    end
+    stale_ipk = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(0_u16,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0xB7_u8), 1_u64, nil, nil, nil, nil)
+    stale_c_ack = JfaRollout.acknowledgment(c_joined_node_id, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, stale_ipk)
+    expect_raises(Matter::ConfigurationError, Regex.new("Administrator #{c_joined_node_id} acknowledgment")) do
+      JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_cert, evicted_ipk, [b_ack, stale_c_ack])
+    end
+    c_ack = JfaRollout.acknowledgment(c_joined_node_id, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, current_ipk)
+    JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, evicted_ipk, [b_ack, c_ack])
+    jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreGroupKeySetStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_GROUP_KEY_SET_LIST)
+      .find!(&.group_key_set_id.==(0_u16)).should eq(current_ipk)
 
     joined_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client, joiner_peer,
       anchor_bootstrap.fabric, peer_node_id: 0xA103_u64, timeout: E2E::COMMAND_TIMEOUT)
