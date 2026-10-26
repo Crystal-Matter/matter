@@ -26,6 +26,12 @@ describe "matter_humidity_sensor example" do
     read_int(device, "identify", "identify-time", "IdentifyTime").should be_in(1..60)
   end
 
+  it "accepts Identify commands from the commissioning administrator" do
+    expect_success(device.invoke("identify", "identify", ["5"]))
+    read_int(device, "identify", "identify-time", "IdentifyTime").should be_in(1..5)
+    expect_success(device.invoke("identify", "trigger-effect", ["0", "0"]))
+  end
+
   it "reads Matter 1.6 concentration clusters on an Air Quality Sensor endpoint" do
     expect_success(device.read("descriptor", "device-type-list", 2)).int("DeviceType").should eq 0x002C_i64
     read_int(device, "carbondioxideconcentrationmeasurement", "cluster-revision", "ClusterRevision", 2).should eq 5

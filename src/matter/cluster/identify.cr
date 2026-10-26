@@ -101,8 +101,8 @@ module Matter
       attribute 0x0000, :identify_time, UInt16, default: 0_u16, writable: true, persist: false
       attribute 0x0001, :identify_type, IdentifyType, default: IdentifyType::None, fixed: true
 
-      command 0x00, :identify, request: Request
-      command 0x40, :trigger_effect, request: TriggerEffectRequest
+      command 0x00, :identify, request: Request, access: :manage
+      command 0x40, :trigger_effect, request: TriggerEffectRequest, access: :manage
 
       # Whether the start / stop callbacks last saw an active identification
       @identifying = false
