@@ -1988,6 +1988,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   minimum interval and deliver pending ordinary events with the next report;
   urgent events still report immediately.
 
+### Controller subscription routing
+
+- Route reports from concurrent subscriptions on one controller client by CASE
+  session and subscription ID while retaining unrelated read and invoke replies.
+  Closing a subscription clears queued reports and rejects later reports for
+  that ID; a new subscription may reuse the ID on its own handshake exchange.
+
 ### Interaction Model subscriptions
 
 - Apply Read and Subscribe EventFilterIB minimums only when their Node field is

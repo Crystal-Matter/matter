@@ -6,6 +6,10 @@ private class SubscriptionSpecClient < Matter::Controller::Client
   getter request_payloads = [] of Bytes
   property scripted_messages = [] of ReceivedMessage
 
+  def next_exchange_id : UInt16
+    7_u16
+  end
+
   def send_encrypted_request(session : Matter::Session::SecureContext,
                              peer : Socket::IPAddress, protocol_id : UInt16,
                              message_type : UInt8, payload : Bytes | Slice(UInt8),
@@ -18,8 +22,36 @@ private class SubscriptionSpecClient < Matter::Controller::Client
     exchange_id
   end
 
-  def receive_message(timeout_span : Time::Span) : ReceivedMessage?
+  protected def receive_unfiltered_from_inbox(timeout_span : Time::Span) : ReceivedMessage?
     @scripted_messages.shift?
+  end
+end
+
+private class SharedSubscriptionSpecClient < Matter::Controller::Client
+  getter sent = [] of {UInt8, UInt16}
+  getter status_payloads = [] of Bytes
+  @next_request_exchange = 7_u16
+
+  def next_exchange_id : UInt16
+    id = @next_request_exchange
+    @next_request_exchange &+= 1
+    id
+  end
+
+  def send_encrypted_request(session : Matter::Session::SecureContext,
+                             peer : Socket::IPAddress, protocol_id : UInt16,
+                             message_type : UInt8, payload : Bytes | Slice(UInt8),
+                             exchange_id : UInt16 = 0_u16,
+                             initiator_message : Bool = true,
+                             requires_ack : Bool = true,
+                             acknowledged_message_id : UInt32? = nil) : UInt16
+    @sent << {message_type, exchange_id}
+    @status_payloads << payload.to_slice if message_type == Matter::InteractionModel::MessageType::StatusResponse.value
+    exchange_id
+  end
+
+  def enqueue(message : ReceivedMessage) : Nil
+    @inbox.send(message)
   end
 end
 
@@ -34,6 +66,71 @@ private def subscription_message(type : UInt8, payload : Bytes, exchange_id : UI
 end
 
 describe Matter::Controller::AttributeSubscription do
+  it "routes two shared-client subscriptions while retaining an unrelated read response" do
+    client = SharedSubscriptionSpecClient.new
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    client.register_session(session)
+    {42_u32, 43_u32}.each_with_index do |id, index|
+      exchange = (7 + index).to_u16
+      client.enqueue(subscription_message(5_u8,
+        Matter::InteractionModel::ReportDataMessage.new(subscription_id: id).to_slice, exchange, peer))
+      client.enqueue(subscription_message(4_u8,
+        Matter::InteractionModel::SubscribeResponseMessage.new(id, 60_u16).to_slice, exchange, peer))
+    end
+    im = Matter::Controller::ImClient.new(client)
+    first = im.subscribe_attribute(session, peer, 1_u16, 6_u32, 0_u32, keep_subscriptions: true)
+    second = im.subscribe_attribute(session, peer, 1_u16, 6_u32, 0_u32, keep_subscriptions: true)
+
+    read_exchange = 30_u16
+    invoke_exchange = 31_u16
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new.to_slice, read_exchange, peer, true))
+    client.enqueue(subscription_message(Matter::InteractionModel::MessageType::InvokeResponse.value,
+      Bytes.empty, invoke_exchange, peer, true))
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 43_u32).to_slice, 20_u16, peer, true))
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 21_u16, peer, true))
+
+    first.next_report.first.subscription_id.should eq(42_u32)
+    second.next_report.first.subscription_id.should eq(43_u32)
+    retained = client.wait_for_any(read_exchange, Matter::Controller::Client::PROTOCOL_INTERACTION_MODEL,
+      [5_u8], 1.second)
+    retained.should_not be_nil
+    retained.try(&.message.payload_header.exchange_id).should eq(read_exchange)
+    client.wait_for_any(invoke_exchange, Matter::Controller::Client::PROTOCOL_INTERACTION_MODEL,
+      [Matter::InteractionModel::MessageType::InvokeResponse.value], 1.second)
+      .try(&.message.payload_header.exchange_id).should eq(invoke_exchange)
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 22_u16, peer, true))
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 43_u32).to_slice, 23_u16, peer, true))
+    second.next_report.first.subscription_id.should eq(43_u32)
+    first.close
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 24_u16, peer, true))
+    client.receive_message(1.millisecond).should be_nil
+    Matter::InteractionModel::StatusResponseMessage.from_slice(client.status_payloads.last).status.should eq(
+      Matter::InteractionModel::StatusCode::InvalidSubscription.value)
+    expect_raises(Matter::ConfigurationError, /closed/) { first.next_report }
+
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 9_u16, peer))
+    client.enqueue(subscription_message(4_u8,
+      Matter::InteractionModel::SubscribeResponseMessage.new(42_u32, 60_u16).to_slice, 9_u16, peer))
+    reused = im.subscribe_attribute(session, peer, 1_u16, 6_u32, 0_u32, keep_subscriptions: true)
+    client.enqueue(subscription_message(5_u8,
+      Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice, 25_u16, peer, true))
+    reused.next_report.first.subscription_id.should eq(42_u32)
+    reused.close
+    second.close
+  ensure
+    client.try(&.close)
+  end
+
   it "bounds a priming stream that never finishes its ReportData chunks" do
     client = SubscriptionSpecClient.new
     peer = Socket::IPAddress.new("127.0.0.1", 5540)

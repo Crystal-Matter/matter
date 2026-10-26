@@ -8,6 +8,7 @@ require "../session/context"
 require "../session/secure_message"
 require "../transport/udp_transport"
 require "../transport/tcp_enabled_transport"
+require "../interaction_model/tlv_messages"
 
 module Matter
   module Controller
@@ -18,11 +19,14 @@ module Matter
       PROTOCOL_INTERACTION_MODEL = 0x0001_u16
       IPV4_MAPPED_PREFIX         = "::ffff:"
 
-      MSG_STANDALONE_ACK      = 0x10_u8
-      MSG_REPORT_DATA         = 0x05_u8
-      MAX_CACHED_ACKS         = Transport::MessageCounter::WINDOW_SIZE
-      MAX_DEFERRED_MESSAGES   = 256
-      DEFERRED_CHECK_INTERVAL = 10.milliseconds
+      MSG_STANDALONE_ACK       = 0x10_u8
+      MSG_STATUS_RESPONSE      = 0x01_u8
+      MSG_SUBSCRIBE_RESPONSE   = 0x04_u8
+      MSG_REPORT_DATA          = 0x05_u8
+      MAX_CACHED_ACKS          = Transport::MessageCounter::WINDOW_SIZE
+      MAX_DEFERRED_MESSAGES    = 256
+      MAX_CLOSED_SUBSCRIPTIONS = 256
+      DEFERRED_CHECK_INTERVAL  = 10.milliseconds
       # A bounded rejection limit for random candidates, not a wire protocol value.
       SESSION_ID_ALLOCATION_ATTEMPTS = 32
 
@@ -36,6 +40,11 @@ module Matter
       @inbox : Channel(ReceivedMessage)
       @deferred_messages : Array(ReceivedMessage)
       @deferred_mutex : Mutex
+      @subscription_mutex : Mutex
+      @receive_mutex : Mutex
+      @subscription_ids : Hash(UInt16, Set(UInt32))
+      @closed_subscription_ids : Hash(UInt16, Array(UInt32))
+      @pending_subscription_exchanges : Set(Tuple(UInt16, UInt16))
       @next_exchange_id : UInt16
       @unsecured_source_node_id : DataType::NodeId?
       @owns_transport : Bool
@@ -75,6 +84,11 @@ module Matter
         @inbox = Channel(ReceivedMessage).new(256)
         @deferred_messages = [] of ReceivedMessage
         @deferred_mutex = Mutex.new
+        @subscription_mutex = Mutex.new
+        @receive_mutex = Mutex.new
+        @subscription_ids = Hash(UInt16, Set(UInt32)).new
+        @closed_subscription_ids = Hash(UInt16, Array(UInt32)).new
+        @pending_subscription_exchanges = Set(Tuple(UInt16, UInt16)).new
         @next_exchange_id = Random.rand(UInt16).to_u16
 
         if tcp = @transport.as?(Transport::TcpEnabledTransport)
@@ -82,6 +96,13 @@ module Matter
             closed_sessions = @sessions.values.select { |session| session.tcp_session? && session.tcp_peer == peer }
             closed_sessions.each { |session| @sessions.delete(session.session_id) }
             ids = closed_sessions.map(&.session_id).to_set
+            @subscription_mutex.synchronize do
+              ids.each do |id|
+                @subscription_ids.delete(id)
+                @closed_subscription_ids.delete(id)
+              end
+              @pending_subscription_exchanges.reject! { |id, _| ids.includes?(id) }
+            end
             @ack_packets.reject! { |(session_id, _), _| ids.includes?(session_id) }
             @deferred_mutex.synchronize { @deferred_messages.reject! { |message| message.peer == peer } }
             @owned_unsecured_exchanges.reject! { |entry| entry[1] == peer }
@@ -113,6 +134,11 @@ module Matter
           @transport_observer_id = nil
         end
         @transport.close if @owns_transport
+        @subscription_mutex.synchronize do
+          @subscription_ids.clear
+          @closed_subscription_ids.clear
+          @pending_subscription_exchanges.clear
+        end
       end
 
       def register_session(session : Session::SecureContext,
@@ -322,30 +348,123 @@ module Matter
           remaining = deadline - Time.instant
           return if remaining <= 0.seconds
 
-          select
-          when rec = @inbox.receive
-            ack_encrypted_if_needed(rec)
+          if rec = receive_unfiltered_from_inbox({remaining, DEFERRED_CHECK_INTERVAL}.min)
             return rec if matches_exchange?(rec, exchange_id, message_types)
             defer(rec) unless standalone_ack?(rec)
-          when timeout({remaining, DEFERRED_CHECK_INTERVAL}.min)
           end
         end
       end
 
-      # Receive the next decrypted message without an exchange filter. Use a
-      # dedicated Client when consuming subscriptions so another interaction
-      # cannot lose a response to this reader.
+      def register_subscription(session_id : UInt16, subscription_id : UInt32) : Nil
+        @subscription_mutex.synchronize do
+          (@subscription_ids[session_id] ||= Set(UInt32).new).add(subscription_id)
+          @closed_subscription_ids[session_id]?.try(&.delete(subscription_id))
+        end
+      end
+
+      def begin_subscription_handshake(session_id : UInt16, exchange_id : UInt16) : Nil
+        @subscription_mutex.synchronize { @pending_subscription_exchanges.add({session_id, exchange_id}) }
+      end
+
+      def end_subscription_handshake(session_id : UInt16, exchange_id : UInt16) : Nil
+        @subscription_mutex.synchronize { @pending_subscription_exchanges.delete({session_id, exchange_id}) }
+      end
+
+      def unregister_subscription(session_id : UInt16, subscription_id : UInt32) : Nil
+        @subscription_mutex.synchronize do
+          if ids = @subscription_ids[session_id]?
+            ids.delete(subscription_id)
+            @subscription_ids.delete(session_id) if ids.empty?
+          end
+          closed = @closed_subscription_ids[session_id] ||= [] of UInt32
+          closed.delete(subscription_id)
+          closed.shift if closed.size >= MAX_CLOSED_SUBSCRIPTIONS
+          closed << subscription_id
+        end
+        @deferred_mutex.synchronize do
+          @deferred_messages.reject! { |received| received.message.packet_header.session_id == session_id && report_subscription_id(received.message) == subscription_id }
+        end
+      end
+
+      # One receive owner services all waiters. A notification is delivered
+      # only to the subscription with its authenticated session and ID;
+      # messages for reads, invokes, or other subscriptions remain queued.
+      def wait_for_subscription_message(session_id : UInt16, subscription_id : UInt32?,
+                                        handshake_exchange_id : UInt16?,
+                                        timeout_span : Time::Span) : ReceivedMessage?
+        deadline = Time.instant + timeout_span
+        loop do
+          if deferred = take_deferred do |rec|
+               matches_subscription?(rec, session_id, subscription_id, handshake_exchange_id)
+             end
+            return deferred
+          end
+          remaining = deadline - Time.instant
+          return if remaining <= 0.seconds
+          if rec = receive_unfiltered_from_inbox({remaining, DEFERRED_CHECK_INTERVAL}.min)
+            return rec if matches_subscription?(rec, session_id, subscription_id, handshake_exchange_id)
+            defer(rec) unless standalone_ack?(rec)
+          end
+        end
+      end
+
+      # Receive the next decrypted message without an exchange filter. Use
+      # only when no other receiver owns the client: this may consume an
+      # unrelated interaction. Subscription and exchange consumers use their
+      # filtered wait methods.
       def receive_message(timeout_span : Time::Span) : ReceivedMessage?
         if deferred = take_deferred { true }
           return deferred
         end
-        select
-        when rec = @inbox.receive
-          ack_encrypted_if_needed(rec)
-          rec
-        when timeout(timeout_span)
-          nil
+        receive_unfiltered_from_inbox(timeout_span)
+      end
+
+      protected def receive_unfiltered_from_inbox(timeout_span : Time::Span) : ReceivedMessage?
+        deadline = Time.instant + timeout_span
+        @receive_mutex.synchronize do
+          loop do
+            remaining = deadline - Time.instant
+            return if remaining <= 0.seconds
+            select
+            when rec = @inbox.receive
+              ack_encrypted_if_needed(rec)
+              next if reply_to_closed_subscription_report?(rec)
+              return rec
+            when timeout(remaining)
+              return
+            end
+          end
         end
+      end
+
+      private def matches_subscription?(rec : ReceivedMessage, session_id : UInt16,
+                                        subscription_id : UInt32?, handshake_exchange_id : UInt16?) : Bool
+        message = rec.message
+        return false unless message.packet_header.session_id == session_id &&
+                            message.payload_header.protocol_id == PROTOCOL_INTERACTION_MODEL
+        header = message.payload_header
+        if exchange_id = handshake_exchange_id
+          return header.exchange_id == exchange_id &&
+            {MSG_REPORT_DATA, MSG_SUBSCRIBE_RESPONSE, MSG_STATUS_RESPONSE}.includes?(header.message_type)
+        end
+        return false unless header.message_type == MSG_REPORT_DATA
+        id = report_subscription_id(message)
+        return false unless id
+        return true if id == subscription_id
+        # Preserve the existing error for an unexpected ID, while allowing
+        # another registered subscription to receive its own report.
+        @subscription_mutex.synchronize do
+          !(@subscription_ids[session_id]?.try(&.includes?(id)) || false)
+        end
+      end
+
+      private def report_subscription_id(message : Codec::MessageCodec::Message) : UInt32?
+        return unless message.payload_header.protocol_id == PROTOCOL_INTERACTION_MODEL &&
+                      message.payload_header.message_type == MSG_REPORT_DATA
+        InteractionModel::ReportDataMessage.from_slice(message.payload.to_slice).subscription_id
+      rescue ex
+        Log.debug(exception: ex) { "Could not decode controller ReportData subscription ID" }
+        nil
       end
 
       private def matches_exchange?(rec : ReceivedMessage, exchange_id : UInt16,
@@ -419,9 +538,37 @@ module Matter
           @transport.acknowledge_reliable(session.session_id,
             decrypted_message.payload_header.exchange_id, ack)
         end
-        @inbox.send(ReceivedMessage.new(decrypted_message, peer))
+        received = ReceivedMessage.new(decrypted_message, peer)
+        return if reply_to_closed_subscription_report?(received)
+        @inbox.send(received)
       rescue ex
         Log.error(exception: ex) { "Controller: failed handling inbound message (peer=#{peer} session_id=#{msg.packet_header.session_id} data_hex=#{msg.payload.hexstring})" }
+      end
+
+      private def closed_subscription_report?(session_id : UInt16,
+                                              message : Codec::MessageCodec::Message) : Bool
+        id = report_subscription_id(message)
+        return false unless id
+        @subscription_mutex.synchronize do
+          return false if @pending_subscription_exchanges.includes?({session_id, message.payload_header.exchange_id})
+          @closed_subscription_ids[session_id]?.try(&.includes?(id)) || false
+        end
+      end
+
+      private def reply_to_closed_subscription_report?(received : ReceivedMessage) : Bool
+        message = received.message
+        session_id = message.packet_header.session_id
+        return false unless closed_subscription_report?(session_id, message)
+        session = @sessions[session_id]?
+        return true unless session
+        send_encrypted_request(session, received.peer, PROTOCOL_INTERACTION_MODEL,
+          MSG_STATUS_RESPONSE,
+          InteractionModel::StatusResponseMessage.new(
+            InteractionModel::StatusCode::InvalidSubscription.value).to_slice,
+          exchange_id: message.payload_header.exchange_id,
+          initiator_message: !message.payload_header.initiator_message?,
+          acknowledged_message_id: message.packet_header.message_id)
+        true
       end
 
       private def decrypt_message(session : Session::SecureContext, msg : Codec::MessageCodec::Message) : Codec::MessageCodec::Message
