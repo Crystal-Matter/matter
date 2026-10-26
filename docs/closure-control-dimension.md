@@ -45,12 +45,10 @@ records the same unit mismatch.
 The 1.6 XML requires a feature-present `Position` or `Latch` member inside
 `OverallCurrentState`, `OverallTargetState`, `CurrentState`, or `TargetState`
 even when its value is null. It omits that member when the feature is absent.
-The current `TLV::Serializable` field model uses a nil value to omit an optional
-member, and cannot choose between omission and an explicit TLV null based on a
-cluster feature map. These cluster structs therefore serialize populated fields
-correctly but omit a nil feature-present `Position` or `Latch`. This is a wire
-conformance gap for unknown state values. The serializer needs a feature-aware
-presence mechanism before these fields can be fully conformant.
+Attribute reads now use `TLV::FieldState` in feature-aware wire structs to
+distinguish those cases. The public state value getters and request payloads
+are unchanged. The synthetic fixture starts with unknown current and target
+positions; the official chip-tool read test covers the emitted Null values.
 
 ## Device composition
 
@@ -60,8 +58,8 @@ requires the `TAGLIST` feature. The endpoint DSL accepts `parent_endpoint:`
 and `tag_list:`; see [Descriptor composition](descriptor-composition.md). The
 example composes its Panel beneath the Closure and advertises the standard
 Closure Panel Lift tag (namespace `0x45`, tag `0`). The chip-tool E2E spec
-reads root and Closure PartsList and the Panel's TagList. The nullable-state
-wire gap above still prevents a full Closure/Closure Panel conformance claim.
+reads root and Closure PartsList and the Panel's TagList. The synthetic
+callbacks still do not implement physical motion or full device conformance.
 
 Reference: [connectedhomeip ClosureControl.xml](https://github.com/project-chip/connectedhomeip/blob/master/data_model/1.6/clusters/ClosureControl.xml),
 [ClosureDimension.xml](https://github.com/project-chip/connectedhomeip/blob/master/data_model/1.6/clusters/ClosureDimension.xml),

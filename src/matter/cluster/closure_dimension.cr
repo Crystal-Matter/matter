@@ -101,6 +101,22 @@ module Matter
         end
       end
 
+      struct StateWire
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter position : TLV::FieldState(UInt16)
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter latch : TLV::FieldState(Bool)
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter speed : Speed?
+
+        def initialize(@position : TLV::FieldState(UInt16), @latch : TLV::FieldState(Bool), @speed : Speed?)
+        end
+      end
+
       struct PercentRange
         include TLV::Serializable
 
@@ -212,6 +228,19 @@ module Matter
         @set_target_callback = block
       end
 
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        value = super
+        return value unless value.is_a?(TLV::Any)
+        state = case attribute_id
+                when ATTR_CURRENT_STATE then @current_state
+                when ATTR_TARGET_STATE  then @target_state
+                end
+        return value unless state
+        tlv(StateWire.new(
+          nullable_feature_field(state.position, @feature_map.positioning?),
+          nullable_feature_field(state.latch, @feature_map.motion_latching?), state.speed))
+      end
+
       # ameba:disable Naming/AccessorMethodName
       def set_target(request : SetTargetRequest) : InteractionModel::Status
         return InteractionModel::Status.constraint_error if request.position.nil? && request.latch.nil? && request.speed.nil?
@@ -264,6 +293,11 @@ module Matter
       private def quantize(position : UInt16) : UInt16
         rounded = (position.to_u32 + @resolution.to_u32 // 2) // @resolution.to_u32 * @resolution.to_u32
         rounded.clamp(0_u32, (MAX_POSITION // @resolution * @resolution).to_u32).to_u16
+      end
+
+      private def nullable_feature_field(value : T?, enabled : Bool) : TLV::FieldState(T) forall T
+        return TLV::FieldState(T).absent unless enabled
+        value.nil? ? TLV::FieldState(T).null : TLV::FieldState(T).value(value)
       end
 
       private def validate_configuration! : Nil

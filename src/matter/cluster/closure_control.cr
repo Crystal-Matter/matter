@@ -104,6 +104,45 @@ module Matter
         end
       end
 
+      # Attribute wire forms keep a feature-present unknown value distinct from
+      # a feature-absent member. The public state structs keep their value API.
+      struct CurrentStateWire
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter position : TLV::FieldState(CurrentPosition)
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter latch : TLV::FieldState(Bool)
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter speed : Speed?
+
+        @[TLV::Field(tag: 3, optional: false)]
+        getter secure_state : Bool?
+
+        def initialize(@position : TLV::FieldState(CurrentPosition), @latch : TLV::FieldState(Bool),
+                       @speed : Speed?, @secure_state : Bool?)
+        end
+      end
+
+      struct TargetStateWire
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter position : TLV::FieldState(TargetPosition)
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter latch : TLV::FieldState(Bool)
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter speed : Speed?
+
+        def initialize(@position : TLV::FieldState(TargetPosition), @latch : TLV::FieldState(Bool),
+                       @speed : Speed?)
+        end
+      end
+
       struct MoveToRequest
         include TLV::Serializable
 
@@ -128,6 +167,13 @@ module Matter
         getter error_state : Array(ClosureError)
 
         def initialize(@error_state : Array(ClosureError))
+        end
+      end
+
+      struct MovementCompletedEvent
+        include TLV::Serializable
+
+        def initialize
         end
       end
 
@@ -167,7 +213,8 @@ module Matter
       command 0x02, :calibrate, access: :manage, timed: true, requires: :calibration
 
       event 0x00, :operational_error, priority: :critical, payload: OperationalErrorEvent
-      event 0x01, :movement_completed, priority: :info, requires: {instantaneous: false}
+      event 0x01, :movement_completed, priority: :info, payload: MovementCompletedEvent,
+        requires: {instantaneous: false}
       event 0x02, :engage_state_changed, priority: :info, payload: EngageStateChangedEvent,
         requires: :manually_operable
       event 0x03, :secure_state_changed, priority: :info, payload: SecureStateChangedEvent
@@ -190,6 +237,27 @@ module Matter
 
       def on_move_to(&block : MoveToRequest -> Bool) : Nil
         @move_callback = block
+      end
+
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        value = super
+        return value unless value.is_a?(TLV::Any)
+        case attribute_id
+        when ATTR_OVERALL_CURRENT_STATE
+          if state = @overall_current_state
+            return tlv(CurrentStateWire.new(
+              nullable_feature_field(state.position, @feature_map.positioning?),
+              nullable_feature_field(state.latch, @feature_map.motion_latching?),
+              state.speed, state.secure_state))
+          end
+        when ATTR_OVERALL_TARGET_STATE
+          if state = @overall_target_state
+            return tlv(TargetStateWire.new(
+              nullable_feature_field(state.position, @feature_map.positioning?),
+              nullable_feature_field(state.latch, @feature_map.motion_latching?), state.speed))
+          end
+        end
+        value
       end
 
       def on_stop(&block : -> Nil) : Nil
@@ -254,7 +322,7 @@ module Matter
           emit_secure_state_changed(SecureStateChangedEvent.new(state.secure_state.as(Bool)))
         end
         if !@feature_map.instantaneous? && main_state.stopped? && previous && previous.position != state.position
-          emit_movement_completed
+          emit_movement_completed(MovementCompletedEvent.new)
         end
       end
 
@@ -287,6 +355,11 @@ module Matter
         if target = @overall_target_state
           validate_target!(target)
         end
+      end
+
+      private def nullable_feature_field(value : T?, enabled : Bool) : TLV::FieldState(T) forall T
+        return TLV::FieldState(T).absent unless enabled
+        value.nil? ? TLV::FieldState(T).null : TLV::FieldState(T).value(value)
       end
 
       private def validate_main_state!(state : MainState) : Nil

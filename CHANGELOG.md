@@ -370,6 +370,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Closure and Closure Panel device-type declarations. Composite parent/TagList
   support remains a follow-up.
 
+### Closure nullable state fields
+
+- Encode unknown Position and Latch state members as explicit TLV Null when
+  their feature is present in Closure Control and Closure Dimension. Omit the
+  member when its feature is absent, while preserving the public state value
+  API and MoveTo/SetTarget request behavior. Add feature-combination wire
+  specs and an official chip-tool read fixture.
+
 ### Content Control
 
 - Add the provisional Matter 1.6 revision 1 Content Control server. Enable,

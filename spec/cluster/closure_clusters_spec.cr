@@ -67,6 +67,62 @@ describe Dimension do
 end
 
 describe "Closure feature and wire conformance" do
+  it "encodes unknown control state members as Null only when their feature is present" do
+    positioning = build(Control, feature_map: Control::Feature::Positioning,
+      overall_current_state: Control::CurrentState.new,
+      overall_target_state: Control::TargetState.new)
+    [Control::ATTR_OVERALL_CURRENT_STATE, Control::ATTR_OVERALL_TARGET_STATE].each do |id|
+      fields = positioning.read_attribute(id).as(TLV::Any).as_structure
+      fields.keys.should eq(id == Control::ATTR_OVERALL_CURRENT_STATE ? [0_u8, 3_u8] : [0_u8])
+      fields[0_u8].header.element_type.null?.should be_true
+    end
+
+    latching = build(Control, feature_map: Control::Feature::MotionLatching,
+      overall_current_state: Control::CurrentState.new,
+      overall_target_state: Control::TargetState.new)
+    [Control::ATTR_OVERALL_CURRENT_STATE, Control::ATTR_OVERALL_TARGET_STATE].each do |id|
+      fields = latching.read_attribute(id).as(TLV::Any).as_structure
+      fields.keys.should eq(id == Control::ATTR_OVERALL_CURRENT_STATE ? [1_u8, 3_u8] : [1_u8])
+      fields[1_u8].header.element_type.null?.should be_true
+    end
+
+    both = build(Control, feature_map: Control::Feature::Positioning | Control::Feature::MotionLatching,
+      overall_current_state: Control::CurrentState.new,
+      overall_target_state: Control::TargetState.new)
+    [Control::ATTR_OVERALL_CURRENT_STATE, Control::ATTR_OVERALL_TARGET_STATE].each do |id|
+      fields = both.read_attribute(id).as(TLV::Any).as_structure
+      fields.keys.should eq(id == Control::ATTR_OVERALL_CURRENT_STATE ? [0_u8, 1_u8, 3_u8] : [0_u8, 1_u8])
+      fields[0_u8].header.element_type.null?.should be_true
+      fields[1_u8].header.element_type.null?.should be_true
+    end
+    both.report_state(Control::CurrentState.new(Control::CurrentPosition::FullyClosed, false))
+    fields = both.read_attribute(Control::ATTR_OVERALL_CURRENT_STATE).as(TLV::Any).as_structure
+    fields[0_u8].header.element_type.null?.should be_false
+    fields[1_u8].header.element_type.null?.should be_false
+    both.overall_current_state.try(&.latch).should be_false
+  end
+
+  it "encodes unknown dimension state members as Null only when their feature is present" do
+    positioning = build(Dimension, feature_map: Dimension::Feature::Positioning | Dimension::Feature::Translation,
+      current_state: Dimension::State.new, target_state: Dimension::State.new)
+    latching = build(Dimension, feature_map: Dimension::Feature::MotionLatching,
+      current_state: Dimension::State.new, target_state: Dimension::State.new)
+    both = build(Dimension, feature_map: Dimension::Feature::Positioning | Dimension::Feature::Translation |
+                                         Dimension::Feature::MotionLatching,
+      current_state: Dimension::State.new, target_state: Dimension::State.new)
+    { {positioning, [0_u8]}, {latching, [1_u8]}, {both, [0_u8, 1_u8]} }.each do |cluster, expected|
+      [Dimension::ATTR_CURRENT_STATE, Dimension::ATTR_TARGET_STATE].each do |id|
+        fields = cluster.read_attribute(id).as(TLV::Any).as_structure
+        fields.keys.should eq(expected)
+        expected.each { |tag| fields[tag].header.element_type.null?.should be_true }
+      end
+    end
+    both.report_state(Dimension::State.new(500_u16, false))
+    fields = both.read_attribute(Dimension::ATTR_CURRENT_STATE).as(TLV::Any).as_structure
+    fields[0_u8].header.element_type.null?.should be_false
+    fields[1_u8].header.element_type.null?.should be_false
+  end
+
   it "hides conditional members and rejects impossible feature combinations" do
     latch_control = build(Control, feature_map: Control::Feature::MotionLatching,
       latch_control_modes: Control::REMOTE_LATCHING | Control::REMOTE_UNLATCHING)
@@ -164,6 +220,18 @@ describe "Closure latching and optional fields" do
 end
 
 describe "Closure Control events" do
+  it "emits an empty MovementCompleted payload after a reported position change" do
+    cluster = build(Control, overall_current_state: Control::CurrentState.new(Control::CurrentPosition::FullyClosed))
+    records = [] of {UInt32, TLV::Any}
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      records << {event, data}
+      nil
+    end
+    cluster.report_state(Control::CurrentState.new(Control::CurrentPosition::FullyOpened))
+    records.map(&.[0]).should eq([Control::EVENT_MOVEMENT_COMPLETED])
+    records[0][1].as_structure.should be_empty
+  end
+
   it "emits operational errors and manual engagement changes with canonical payloads" do
     cluster = build(Control, feature_map: Control::Feature::Positioning | Control::Feature::ManuallyOperable)
     records = [] of {UInt32, TLV::Any}
