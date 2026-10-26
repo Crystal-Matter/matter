@@ -527,6 +527,11 @@ services:
     environment:
       E2E_DEVICE: matter_wifi_management
 
+  network-failsafe:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_network_failsafe
+
   wake-on-lan:
     <<: *device
     environment:
