@@ -128,3 +128,6 @@ whose identity differs from the current occupant of that fabric index. Legacy
 policy or pending reviews without a saved identity are also erased. Cleanup is
 persisted before host callbacks can replay, and a failed cleanup save stops
 startup.
+An ARL read or access decision also checks the fabric identity, so direct
+same-process replacement of a fabric cannot reuse its predecessor's policy.
+If stale policy cannot be durably erased, the access fails closed.

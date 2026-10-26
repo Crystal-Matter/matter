@@ -294,6 +294,58 @@ describe "Device managed restriction host" do
     File.delete(path) if path && File.exists?(path)
   end
 
+  it "does not apply an old ARL to a replacement fabric before restart" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-live-policy-reused-#{Random::Secure.hex(8)}.yml")
+    device = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl = device.access_control
+    acl.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    acl.attribute_read_restricted?(1_u8, 1_u16, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+      Matter::Cluster::WiFiNetworkManagement::ATTR_SSID).should be_true
+    device.fabric_table.remove_fabric(1_u8).should be_true
+    device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+
+    acl.attribute_read_restricted?(1_u8, 1_u16, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+      Matter::Cluster::WiFiNetworkManagement::ATTR_SSID).should be_false
+    acl.arl(1_u8).should be_empty
+    device.release
+    device = nil
+
+    restarted = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    restarted.access_control.arl(1_u8).should be_empty
+  ensure
+    device.try(&.release)
+    restarted.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "fails closed if stale live ARL cleanup cannot persist" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-live-policy-failure-#{Random::Secure.hex(8)}.yml")
+    backend = ManagedPolicyFailingYaml.new(path)
+    device = ManagedRestrictionDslSpecDevice.new(storage: backend, port: 0)
+    device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl = device.access_control
+    acl.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    device.fabric_table.remove_fabric(1_u8).should be_true
+    device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    backend.fail_acl_id = acl.persistence_key
+
+    expect_raises(Matter::StorageError) do
+      acl.arl(1_u8)
+    end
+    expect_raises(Matter::StorageError) do
+      acl.attribute_read_restricted?(1_u8, 1_u16, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+        Matter::Cluster::WiFiNetworkManagement::ATTR_SSID)
+    end
+    backend.fail_acl_id = nil
+    acl.arl(1_u8).should be_empty
+  ensure
+    device.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
   it "retains ARL policy across restart for the same fabric" do
     require_udp_sockets!
     path = File.join(Dir.tempdir, "matter-managed-policy-same-#{Random::Secure.hex(8)}.yml")

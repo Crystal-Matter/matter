@@ -445,6 +445,7 @@ module Matter
 
       def arl(fabric_index : UInt8? = nil) : Array(AccessRestrictionEntry)
         if index = fabric_index
+          ensure_current_restriction_policy!(index)
           entries = [] of AccessRestrictionEntry
           (@access_restrictions[index]? || [] of AccessRestrictionEntry).each do |entry|
             entries << AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup, index)
@@ -1079,11 +1080,40 @@ module Matter
       private def restricted_by?(fabric_index : UInt8, endpoint : UInt16,
                                  cluster : UInt32, id : UInt32, & : AccessRestriction -> Bool) : Bool
         return false unless restriction_target_allowed?(endpoint, cluster)
+        ensure_current_restriction_policy!(fabric_index)
         (@access_restrictions[fabric_index]? || [] of AccessRestrictionEntry).any? do |entry|
           entry.endpoint == endpoint && entry.cluster == cluster && entry.restrictions.any? do |restriction|
             yield(restriction) && (restriction.id.nil? || restriction.id == id)
           end
         end
+      end
+
+      # A host can replace a fabric in the table without restarting the
+      # device. Never expose or enforce the previous occupant's policy under
+      # its recycled local index. Refuse the access if erasure cannot be saved.
+      private def ensure_current_restriction_policy!(fabric_index : UInt8) : Nil
+        previous = @access_restrictions[fabric_index]? || return
+        provider = @review_fabric_identity || return
+        previous_identity = @access_restriction_fabric_identities[fabric_index]?
+        return if previous_identity && provider.call(fabric_index) == previous_identity
+
+        persist = @on_persist ||
+                  raise Matter::StorageError.new("Stale access restriction cleanup requires durable storage")
+        previous_version = @data_version
+        @access_restrictions.delete(fabric_index)
+        @access_restriction_fabric_identities.delete(fabric_index)
+        increment_version
+        begin
+          persist.call
+        rescue ex
+          @access_restrictions[fabric_index] = previous
+          if previous_identity
+            @access_restriction_fabric_identities[fabric_index] = previous_identity
+          end
+          @data_version = previous_version
+          raise ex
+        end
+        notify_changed(ATTR_ARL) if @feature_map.managed_device?
       end
 
       # Matter 1.6's standard ARL exception checker permits only network
