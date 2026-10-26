@@ -1088,6 +1088,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   events; official chip-tool exercises the deterministic example hook. The
   other feature bits remain unavailable.
 
+- Add an opt-in combined ObjectCounting+ObjectIdentification profile with
+  Manage-writable persistent count configuration, conditional count reads,
+  identified-object semantic tags, threshold transitions, and start/end events.
+  The synthetic Aggregator fixture exercises the feature map and count
+  observation over chip-tool. Other feature combinations remain unavailable.
+
 ### Soil Measurement revision 1
 
 - Add the Matter 1.6 Soil Measurement server and Soil Sensor device type. The

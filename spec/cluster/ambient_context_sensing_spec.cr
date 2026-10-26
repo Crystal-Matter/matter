@@ -119,3 +119,114 @@ describe Ambient do
     restored.human_activity_detected?.should be_false
   end
 end
+
+describe "Ambient Context Sensing OC+OI profile" do
+  unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+  person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+  dog = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Dog)
+  feature_map = Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification
+
+  it "advertises the complete conditional count surface and validates Manage writes" do
+    config = Ambient::ObjectCountConfig.new(person, 2_u16)
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person, dog], object_count_config: config)
+
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(6_u32)
+    [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
+     Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_OBJECT_COUNT_REACHED,
+     Ambient::ATTR_OBJECT_COUNT_CONFIG].each do |id|
+      attribute_ids(cluster).should contain(id)
+    end
+    attribute_ids(cluster).should_not contain(Ambient::ATTR_HUMAN_ACTIVITY_DETECTED)
+    config_metadata = cluster.get_attribute_metadata(Ambient::ATTR_OBJECT_COUNT_CONFIG).as(Matter::Cluster::AttributeMetadata)
+    config_metadata.write_access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+
+    write(cluster, Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ObjectCountConfig.new(dog, 3_u16)).status
+      .should eq(Matter::InteractionModel::StatusCode::Success)
+    expect_raises(ArgumentError) { Ambient::ObjectCountConfig.new(person, 0_u16) }
+    zero_threshold = TLV::Any.new({
+      0_u8 => person.to_tlv(0_u8),
+      1_u8 => TLV::Any.new(0_u16, 1_u8),
+    } of TLV::TagId => TLV::Any)
+    write(cluster, Ambient::ATTR_OBJECT_COUNT_CONFIG, zero_threshold).status
+      .should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    source = cluster.save_state.as(Matter::Storage::Document)
+    source.keys.should contain("object_count_config")
+    restored = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person, dog], object_count_config: config)
+    restored.restore_state(source)
+    restored.object_count_config.counting_object.should eq(dog)
+    restored.object_count_config.object_count_threshold.should eq(3_u16)
+  end
+
+  it "reports object detection and threshold transitions with conditional event fields" do
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person, dog],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16), hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+
+    cluster.observe_object_count(person, 1_u16)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_COUNT)
+    start = Ambient::AmbientContextDetectStartedEvent.from_tlv(events[0][1])
+    start.ambient_context_detected.ambient_context_sensed.should eq([person])
+    start.object_count_reached.should be_false
+    start.object_count.should be_nil
+
+    cluster.observe_object_count(person, 2_u16)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(2_u16)
+    events.size.should eq(1)
+    cluster.observe_object_count(person, 3_u16)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(3_u16)
+    cluster.object_count_config = Ambient::ObjectCountConfig.new(person, 4_u16)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_COUNT)
+    cluster.object_count_config = Ambient::ObjectCountConfig.new(person, 2_u16)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_true
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(3_u16)
+    cluster.observe_object_count(person, 0_u16)
+    read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
+    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_COUNT)
+    events.map(&.[0]).should eq([Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+                                 Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED])
+
+    cluster.observe_object_count(person, 4_u16)
+    start = Ambient::AmbientContextDetectStartedEvent.from_tlv(events[-1][1])
+    start.object_count_reached.should be_true
+    start.object_count.should eq(4_u16)
+    deadline = Time.instant + 3.seconds
+    while cluster.object_identified? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.object_identified?.should be_false
+    events[-1][0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+  end
+
+  it "rejects unsupported object tags and incomplete feature combinations" do
+    expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::ObjectCounting) }
+    expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::ObjectIdentification) }
+    expect_raises(ArgumentError) do
+      build(Ambient, feature_map: Ambient::Feature::HumanActivity | feature_map)
+    end
+    expect_raises(ArgumentError) do
+      build(Ambient, feature_map: feature_map, supported_object_tags: [person, dog])
+    end
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [unknown_object, person],
+      object_count_config: Ambient::ObjectCountConfig.new(person, 2_u16))
+    expect_raises(ArgumentError) { cluster.observe_object_count(dog, 1_u16) }
+    expect_raises(ArgumentError) do
+      cluster.object_count_config = Ambient::ObjectCountConfig.new(dog, 2_u16)
+    end
+    expect_raises(ArgumentError) { cluster.feature_map = Ambient::Feature::HumanActivity }
+  end
+end
