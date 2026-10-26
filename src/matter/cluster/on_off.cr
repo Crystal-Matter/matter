@@ -74,8 +74,8 @@ module Matter
       attribute 0x0000, :on_off, Bool, default: false, persist: true, scene: true,
         callback: :new_only, on_change: :on_off_mode_changed
       attribute 0x4000, :global_scene_control, Bool, default: true, persist: true, requires: :lighting
-      attribute 0x4001, :on_time, UInt16, default: 0_u16, writable: true, persist: false, requires: :lighting
-      attribute 0x4002, :off_wait_time, UInt16, default: 0_u16, writable: true, persist: false, requires: :lighting
+      attribute 0x4001, :on_time, UInt16, default: 0_u16, writable: true, write_access: :operate, persist: false, requires: :lighting
+      attribute 0x4002, :off_wait_time, UInt16, default: 0_u16, writable: true, write_access: :operate, persist: false, requires: :lighting
       attribute 0x4003, :start_up_on_off, StartUpOnOff, nullable: true, writable: true, write_access: :manage, requires: :lighting
 
       command 0x00, :off

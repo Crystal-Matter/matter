@@ -21,6 +21,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscriptions from older stores advance the counter past their saved cursor,
   so events remain visible after a process restart without reusing numbers.
 
+### Fabric reuse isolation
+
+- Clean up CASE sessions, subscriptions, access control, retained events, and
+  resumption records before public FabricTable removal can free an index. Erase
+  group keys, scenes, bindings, and other fabric-scoped cluster state durably
+  before the index is released. Keep security cleanup independent of replaceable
+  host removal observers.
+- Bind persisted CASE sessions to the fabric ID and trust root, and reject
+  in-place or same-index fabric identity replacement before old fabric state
+  can be used by a different fabric.
+
 ### Joint Fabric keyed group propagation
 
 - Read the target's CurrentFabricIndex before writing its first GroupKeyMap
@@ -108,6 +119,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Identify command access
 
 - Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
+
+### Identify write privilege
+
+- Require Operate privilege for IdentifyTime writes, matching Matter 1.6, and
+  verify that a View-only CASE subject cannot write it.
 
 ### Thermostat base revision 11
 
@@ -1515,14 +1531,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Enforce host-configured `AttributeWriteForbidden` and `CommandForbidden`
+  restrictions for CASE writes and invokes, along with
+  `AttributeAccessForbidden` on writes. Blocked requests return
+  `AccessRestricted` before a cluster handler runs. ManagedDevice remains
+  unadvertised pending event restrictions, policy persistence, and review flow.
 - Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
   host-configured, fabric-specific Access Restriction List for attribute reads.
   A restriction on one fabric does not affect another fabric or standard global
   attributes. Accept only the three Matter 1.6 network infrastructure management
-  clusters on non-root endpoints. The policy is transient and ManagedDevice
-  remains unadvertised;
-  writes, commands, events, persistence, and the restriction review flow are
-  still required before enabling the full feature.
+  clusters on non-root endpoints. Read, write, and invoke restrictions are
+  enforced after ACL checks. The policy is transient and ManagedDevice remains
+  unadvertised; events, persistence, and restriction review still need support
+  before enabling the full feature.
 
 ### Ecosystem Information for bridged nodes
 
@@ -1741,6 +1762,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   when a device powers up. Bypass these startup settings after an OTA restart,
   and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
   retain the state reported by their host.
+
+### OnOff access control
+
+- Require Operate privilege for writes to the Lighting feature's OnTime and
+  OffWaitTime attributes, as specified by Matter 1.6.
 
 ### Identify countdown reporting
 

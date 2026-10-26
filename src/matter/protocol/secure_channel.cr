@@ -184,7 +184,7 @@ module Matter
         @default_salt = @salt.dup
         @passcode_verifier = nil
         @resumption_store = Session::Case::ResumptionStore.new(@fabric_table.backend)
-        @fabric_table.on_fabric_removed = ->(fabric : Fabric) do
+        @fabric_table.register_removal_guard do |fabric|
           @resumption_store.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
         end
       end

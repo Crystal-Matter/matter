@@ -59,7 +59,7 @@ module Matter
         @dirty_sessions : Hash(UInt16, Session::SecureContext) = Hash(UInt16, Session::SecureContext).new
         @dirty_mutex : Mutex = Mutex.new
 
-        def initialize(@backend : Storage::Backend)
+        def initialize(@backend : Storage::Backend, @fabric_table : FabricTable? = nil)
         end
 
         def restore(registry : SessionRegistry, fabric_table : FabricTable) : Nil
@@ -80,6 +80,10 @@ module Matter
         def session_established(registry : SessionRegistry, session : Session::SecureContext) : Nil
           return unless session.case_session?
           return if session.tcp_session?
+
+          if table = @fabric_table
+            session.fabric_identity = session.fabric_index.try { |index| table.get_fabric(index).try(&.storage_identity) }
+          end
 
           write_session(session)
         rescue ex
@@ -179,7 +183,9 @@ module Matter
             session = Session::SecureContext.from_record(Session::SecureContext::SessionRecord.from_document(document))
             fabric_index = session.fabric_index
 
-            if session.case_session? && !session.tcp_session? && fabric_index && fabric_table.get_fabric(fabric_index)
+            fabric = fabric_index.try { |index| fabric_table.get_fabric(index) }
+            if session.case_session? && !session.tcp_session? && fabric &&
+               session.fabric_identity == fabric.storage_identity
               registry.sessions[session.session_id] = session
               restored += 1
             else

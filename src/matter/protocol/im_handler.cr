@@ -610,6 +610,11 @@ module Matter
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
               next
             end
+            if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_write_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+              write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+              next
+            end
             if metadata.writable? && metadata.timed? && !timed_interaction
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::NeedsTimedInteraction.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
@@ -1000,6 +1005,12 @@ module Matter
           if metadata = cluster.commands.find { |cmd| cmd.id.id == path.command }
             unless authorized?(clusters, metadata.access, endpoint_id, path.cluster, is_case_session, fabric_index, peer_subject_ids)
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+              cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
+              invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
+              next
+            end
+            if is_case_session && fabric_index && access_control_cluster(clusters).try(&.command_restricted?(fabric_index, endpoint_id, path.cluster, path.command))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
               invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
               next
