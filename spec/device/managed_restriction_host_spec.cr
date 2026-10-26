@@ -328,8 +328,9 @@ describe "Device managed restriction host" do
     device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
     acl = device.access_control
     acl.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
-    device.fabric_table.remove_fabric(1_u8).should be_true
-    device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    # Simulate an out-of-band identity mutation. Normal removal now erases the
+    # old ARL before the index can be reused.
+    device.fabric_table.get_fabric(1_u8).as(Matter::Fabric).fabric_id = 0xA002_u64
     backend.fail_acl_id = acl.persistence_key
 
     expect_raises(Matter::StorageError) do
@@ -419,9 +420,14 @@ describe "Device managed restriction host" do
     first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
     acl = first.access_control
     acl.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    stale_document = first.persistence.backend.read(Matter::Storage::Collections::CLUSTERS,
+      acl.persistence_key).as(Matter::Storage::Document)
     first.fabric_table.remove_fabric(1_u8).should be_true
     first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
     acl_id = acl.persistence_key
+    # Model an interrupted older removal leaving its Access Control document
+    # behind; current removal guards clear the policy before index reuse.
+    first.persistence.backend.write(Matter::Storage::Collections::CLUSTERS, acl_id, stale_document)
     first.release
     first = nil
 

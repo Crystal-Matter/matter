@@ -93,6 +93,7 @@ describe Matter::Protocol::Persistence::StorageBackend do
     table.add_fabric(build_fabric(1_u8))
     session = case_session(111_u16, 1_u8)
     session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
+    session.fabric_identity = table.get_fabric(1_u8).as(Matter::Fabric).storage_identity
     storage.write(SESSIONS, "111", session.to_record.to_document)
     subscription = Matter::Protocol::ActiveSubscription.new(
       subscription_id: 10_u32, min_interval: 0_u16, max_interval: 60_u16,
