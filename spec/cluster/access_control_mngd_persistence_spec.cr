@@ -359,6 +359,192 @@ describe "Access Control managed restriction persistence" do
     restored.deny_restriction_review(1_u8, token).should be_false
   end
 
+  it "does not deliver the same token while its host completion callback is still running" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    entered = Channel(Nil).new(1)
+    release = Channel(Nil).new(1)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated do |_fabric, _update|
+      entered.send(nil)
+      release.receive
+      raise Matter::ConfigurationError.new("host completion failed")
+    end
+    events = [] of UInt32
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.deny_restriction_review(1_u8, token)
+      outcome.send(nil)
+    rescue ex
+      outcome.send(ex)
+    end
+    entered.receive
+    second_result = acl.complete_restriction_review(1_u8, token)
+    events_before_release = events.dup
+    outbox_size_before_release = saved["review_completion_outbox"].as(Array(Matter::Storage::Type)).size
+    release.send(nil)
+    second_result.should be_false
+    events_before_release.should be_empty
+    outbox_size_before_release.should eq(1)
+    outcome.receive.should be_a(Matter::ConfigurationError)
+    events.should be_empty
+    saved["review_completion_outbox"].as(Array(Matter::Storage::Type)).should be_empty
+    saved["pending_restriction_reviews"].as(Array(Matter::Storage::Type)).size.should eq(1)
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    acl.deny_restriction_review(1_u8, token).should be_true
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+  end
+
+  it "serializes same-fabric approvals and restores policy after failed callbacks" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    first_token = 0_u64
+    fail_second = true
+    entered = Channel(Nil).new(1)
+    release = Channel(Nil).new(1)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated do |_fabric, update|
+      if update.token == first_token
+        entered.send(nil)
+        release.receive
+        raise Matter::ConfigurationError.new("first host completion failed")
+      end
+      raise Matter::ConfigurationError.new("second host completion failed") if fail_second
+    end
+    first_token = acl.request_restriction_review(1_u8, [stored_entry])
+    second_token = acl.request_restriction_review(1_u8, [stored_entry])
+    outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.approve_restriction_review(1_u8, first_token, [] of StoredAcl::AccessRestrictionEntry)
+      outcome.send(nil)
+    rescue ex
+      outcome.send(ex)
+    end
+    entered.receive
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+    second_result = acl.approve_restriction_review(1_u8, second_token, [replacement])
+    release.send(nil)
+    second_result.should be_false
+    outcome.receive.should be_a(Matter::ConfigurationError)
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    expect_raises(Matter::ConfigurationError, /second host completion failed/) do
+      acl.approve_restriction_review(1_u8, second_token, [replacement])
+    end
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    fail_second = false
+    acl.approve_restriction_review(1_u8, second_token, [replacement]).should be_true
+    acl.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+    restored = stored_cluster
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+  end
+
+  it "rejects a same-fabric policy configuration during a yielding approval callback" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    entered = Channel(Nil).new(1)
+    release = Channel(Nil).new(1)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated do |_fabric, _update|
+      entered.send(nil)
+      release.receive
+      raise Matter::ConfigurationError.new("host completion failed")
+    end
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+      outcome.send(nil)
+    rescue ex
+      outcome.send(ex)
+    end
+    entered.receive
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+    configuration_error = begin
+      acl.configure_access_restrictions(1_u8, [replacement])
+      nil
+    rescue ex
+      ex
+    end
+    release.send(nil)
+    configuration_error.should be_a(Matter::ConfigurationError)
+    configuration_error.as(Matter::ConfigurationError).message.as(String).should contain("already in progress")
+    outcome.receive.should be_a(Matter::ConfigurationError)
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    acl.configure_access_restrictions(1_u8, [replacement])
+    acl.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+    restored = stored_cluster
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+  end
+
+  it "keeps another fabric's policy and data version when a yielding approval fails" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    acl.configure_access_restrictions(2_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    entered = Channel(Nil).new(1)
+    release = Channel(Nil).new(1)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated do |_fabric, _update|
+      entered.send(nil)
+      release.receive
+      raise Matter::ConfigurationError.new("host completion failed")
+    end
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+      outcome.send(nil)
+    rescue ex
+      outcome.send(ex)
+    end
+    entered.receive
+    replacement = StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
+      StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
+        StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
+    ])
+    acl.configure_access_restrictions(2_u8, [replacement])
+    version_after_other_fabric = acl.data_version
+    release.send(nil)
+    outcome.receive.should be_a(Matter::ConfigurationError)
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    acl.arl(2_u8).first.restrictions.should eq(replacement.restrictions)
+    acl.data_version.should be >= version_after_other_fabric
+    restored = stored_cluster
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(2_u8).first.restrictions.should eq(replacement.restrictions)
+  end
+
   it "blocks restart if compensation cannot save after a host callback failure" do
     acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
     acl.configure_access_restrictions(1_u8, [stored_entry])
