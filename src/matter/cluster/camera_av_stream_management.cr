@@ -3,7 +3,7 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video,
-    # Snapshot, and opt-in Snapshot Watermark features.
+    # Snapshot, and opt-in Snapshot Watermark and OSD features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -14,6 +14,7 @@ module Matter
       feature :snapshot, bit: 2
       feature :privacy, bit: 3
       feature :watermark, bit: 6
+      feature :osd, bit: 7
 
       MAX_STREAM_ID          = 65_534_u16
       MAX_REFERENCE_COUNT    =     255_u8
@@ -483,27 +484,34 @@ module Matter
         @[TLV::Field(tag: 9, optional: true)]
         getter watermark_enabled : Bool?
 
+        @[TLV::Field(tag: 10, optional: true)]
+        getter osd_enabled : Bool?
+
         def initialize(@snapshot_stream_id : UInt16, @image_codec : ImageCodec,
                        @frame_rate : UInt16, @min_resolution : VideoResolution,
                        @max_resolution : VideoResolution, @quality : UInt8,
                        @reference_count : UInt8, @encoded_pixels : Bool,
-                       @hardware_encoder : Bool, @watermark_enabled : Bool? = nil)
+                       @hardware_encoder : Bool, @watermark_enabled : Bool? = nil,
+                       @osd_enabled : Bool? = nil)
         end
 
         def matches?(request : SnapshotStreamAllocateRequest) : Bool
           @image_codec == request.image_codec && @frame_rate == request.max_frame_rate &&
             @min_resolution == request.min_resolution && @max_resolution == request.max_resolution &&
-            @quality == request.quality && @watermark_enabled == request.watermark_enabled
+            @quality == request.quality && @watermark_enabled == request.watermark_enabled &&
+            @osd_enabled == request.osd_enabled
         end
 
         def with_reference_count(count : UInt8) : SnapshotStream
           SnapshotStream.new(@snapshot_stream_id, @image_codec, @frame_rate, @min_resolution,
-            @max_resolution, @quality, count, @encoded_pixels, @hardware_encoder, @watermark_enabled)
+            @max_resolution, @quality, count, @encoded_pixels, @hardware_encoder,
+            @watermark_enabled, @osd_enabled)
         end
 
-        def with_watermark_enabled(enabled : Bool) : SnapshotStream
+        def with_overlays(watermark_enabled : Bool?, osd_enabled : Bool?) : SnapshotStream
           SnapshotStream.new(@snapshot_stream_id, @image_codec, @frame_rate, @min_resolution,
-            @max_resolution, @quality, @reference_count, @encoded_pixels, @hardware_encoder, enabled)
+            @max_resolution, @quality, @reference_count, @encoded_pixels, @hardware_encoder,
+            watermark_enabled, osd_enabled)
         end
       end
 
@@ -649,7 +657,7 @@ module Matter
       command 0x07, :snapshot_stream_allocate, request: SnapshotStreamAllocateRequest,
         response: SnapshotStreamAllocateResponse, response_id: 0x08, access: :manage, requires: :snapshot
       command 0x09, :snapshot_stream_modify, request: SnapshotStreamModifyRequest,
-        access: :manage, requires: {snapshot: true, watermark: true}
+        access: :manage, requires: [{snapshot: true, watermark: true}, {snapshot: true, osd: true}]
       command 0x0A, :snapshot_stream_deallocate, request: SnapshotStreamDeallocateRequest,
         access: :manage, requires: :snapshot
       command 0x0C, :capture_snapshot, request: CaptureSnapshotRequest,
@@ -662,7 +670,7 @@ module Matter
       @video_allocate_callback : Proc(VideoStreamAllocateRequest, UInt16, InteractionModel::Status)?
       @video_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
       @snapshot_allocate_callback : Proc(SnapshotStreamAllocateRequest, UInt16, InteractionModel::Status)?
-      @snapshot_modify_callback : Proc(UInt16, Bool, InteractionModel::Status)?
+      @snapshot_modify_callback : Proc(UInt16, Bool?, Bool?, InteractionModel::Status)?
       @snapshot_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
       @snapshot_capture_callback : Proc(SnapshotStream, VideoResolution, SnapshotImage | InteractionModel::Status)?
       @next_snapshot_stream_id : UInt16 = 0_u16
@@ -702,11 +710,11 @@ module Matter
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Watermark).value) == 0
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Watermark | Feature::Osd).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
         end
-        if @feature_map.watermark? && (!@feature_map.snapshot? || @feature_map.video?)
-          raise ArgumentError.new("Watermark currently requires Snapshot without Video")
+        if (@feature_map.watermark? || @feature_map.osd?) && (!@feature_map.snapshot? || @feature_map.video?)
+          raise ArgumentError.new("Watermark and OSD currently require Snapshot without Video")
         end
         raise ArgumentError.new("Audio feature requires microphone capabilities") if @feature_map.audio? && !@microphone_capabilities
         if @feature_map.snapshot?
@@ -785,6 +793,16 @@ module Matter
       end
 
       def on_snapshot_modify(&block : UInt16, Bool -> InteractionModel::Status) : Nil
+        @snapshot_modify_callback = ->(id : UInt16, watermark : Bool?, osd : Bool?) {
+          if osd.nil? && !watermark.nil?
+            block.call(id, watermark.as(Bool))
+          else
+            InteractionModel::Status.invalid_command
+          end
+        }
+      end
+
+      def on_snapshot_modify_overlays(&block : UInt16, Bool?, Bool? -> InteractionModel::Status) : Nil
         @snapshot_modify_callback = block
       end
 
@@ -970,11 +988,15 @@ module Matter
       end
 
       def snapshot_stream_allocate(request : SnapshotStreamAllocateRequest) : InteractionModel::Status | SnapshotStreamAllocateResponse
-        return InteractionModel::Status.invalid_command unless request.osd_enabled.nil?
         if @feature_map.watermark?
           return InteractionModel::Status.invalid_command if request.watermark_enabled.nil?
         else
           return InteractionModel::Status.invalid_command unless request.watermark_enabled.nil?
+        end
+        if @feature_map.osd?
+          return InteractionModel::Status.invalid_command if request.osd_enabled.nil?
+        else
+          return InteractionModel::Status.invalid_command unless request.osd_enabled.nil?
         end
         capability = matching_snapshot_capability(request) || return InteractionModel::Status.constraint_error
         if index = @allocated_snapshot_streams.index(&.matches?(request))
@@ -995,24 +1017,26 @@ module Matter
         return status unless status.success?
         @allocated_snapshot_streams << SnapshotStream.new(id, request.image_codec, request.max_frame_rate,
           request.min_resolution, request.max_resolution, request.quality, 1_u8, encoded_pixels,
-          hardware_encoder, request.watermark_enabled)
+          hardware_encoder, request.watermark_enabled, request.osd_enabled)
         @next_snapshot_stream_id = advance_audio_id(id)
         increment_version_and_notify(ATTR_ALLOCATED_SNAPSHOT_STREAMS)
         SnapshotStreamAllocateResponse.new(id)
       end
 
       def snapshot_stream_modify(request : SnapshotStreamModifyRequest) : InteractionModel::Status
-        return InteractionModel::Status.invalid_command unless request.osd_enabled.nil?
-        return InteractionModel::Status.invalid_command if request.watermark_enabled.nil?
+        return InteractionModel::Status.invalid_command if request.watermark_enabled.nil? && request.osd_enabled.nil?
+        return InteractionModel::Status.invalid_command if !request.watermark_enabled.nil? && !@feature_map.watermark?
+        return InteractionModel::Status.invalid_command if !request.osd_enabled.nil? && !@feature_map.osd?
         index = @allocated_snapshot_streams.index { |stream| stream.snapshot_stream_id == request.snapshot_stream_id }
         return InteractionModel::Status.not_found unless index
-        enabled = request.watermark_enabled.as(Bool)
         current = @allocated_snapshot_streams[index]
-        return InteractionModel::Status.success if current.watermark_enabled == enabled
+        watermark = request.watermark_enabled.nil? ? current.watermark_enabled : request.watermark_enabled
+        osd = request.osd_enabled.nil? ? current.osd_enabled : request.osd_enabled
+        return InteractionModel::Status.success if current.watermark_enabled == watermark && current.osd_enabled == osd
         callback = @snapshot_modify_callback || return InteractionModel::Status.invalid_in_state
-        status = callback.call(request.snapshot_stream_id, enabled)
+        status = callback.call(request.snapshot_stream_id, request.watermark_enabled, request.osd_enabled)
         return status unless status.success?
-        @allocated_snapshot_streams[index] = current.with_watermark_enabled(enabled)
+        @allocated_snapshot_streams[index] = current.with_overlays(watermark, osd)
         increment_version_and_notify(ATTR_ALLOCATED_SNAPSHOT_STREAMS)
         InteractionModel::Status.success
       end
@@ -1240,8 +1264,9 @@ module Matter
       private def valid_restored_snapshot?(stream : SnapshotStream) : Bool
         return false if stream.snapshot_stream_id > MAX_STREAM_ID || stream.reference_count.zero?
         return false if @feature_map.watermark? == stream.watermark_enabled.nil?
+        return false if @feature_map.osd? == stream.osd_enabled.nil?
         request = SnapshotStreamAllocateRequest.new(stream.image_codec, stream.frame_rate,
-          stream.min_resolution, stream.max_resolution, stream.quality, stream.watermark_enabled)
+          stream.min_resolution, stream.max_resolution, stream.quality, stream.watermark_enabled, stream.osd_enabled)
         capability = matching_snapshot_capability(request) || return false
         stream.encoded_pixels? == capability.requires_encoded_pixels? &&
           stream.hardware_encoder? == (capability.requires_hardware_encoder || false)

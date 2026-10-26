@@ -64,16 +64,17 @@ uses an Aggregator endpoint and a checked-in, decodable 320x240 JPEG for Matter
 wire checks. Its fixed payload is not a live camera source or a claim of media delivery. The
 mandatory nullable `CaptureSnapshot.SnapshotStreamID` field accepts explicit IDs
 and TLV Null auto-selection through TLV FieldState; an omitted field is rejected.
-An opt-in SNP+WMARK profile adds the mandatory WatermarkEnabled field to
-SnapshotStreamAllocate and allocated snapshot stream records, and exposes the
-Manage-privileged SnapshotStreamModify command. The host's
-`on_snapshot_allocate` callback must admit the requested watermark state;
-`on_snapshot_modify` must apply an actual watermark change before returning
-success. The library commits the new stream state only after that callback
-succeeds and persists it across restart. The host remains responsible for
-rendering the watermark into captured image bytes. VDO+WMARK, OSD, and Camera
-device type topology remain unavailable; the constructor rejects those
-feature combinations.
+Opt-in SNP+WMARK and SNP+OSD profiles add their respective mandatory Boolean
+fields to SnapshotStreamAllocate and allocated stream records. Either feature,
+or both together, exposes the Manage-privileged SnapshotStreamModify command.
+The host's `on_snapshot_allocate` callback must admit the requested overlay
+state; `on_snapshot_modify_overlays` receives the requested watermark and OSD changes
+as nullable Booleans and must apply them before returning success. The library
+commits both stream settings only after that callback succeeds and persists
+them across restart. The host remains responsible for rendering overlays into
+captured image bytes. The two-argument `on_snapshot_modify` remains available for
+WMARK-only hosts. VDO+WMARK, VDO+OSD, and Camera device type topology remain
+unavailable; the constructor rejects those feature combinations.
 
 Applications should not present the synthetic snapshot fixture as complete
 Camera conformance.

@@ -212,6 +212,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commits a change after host callback success. The host must render the
   watermark into image bytes; VDO+WMARK and OSD remain gated.
 
+- Extend the gated snapshot overlay profile to SNP+OSD, including combined
+  SNP+WMARK+OSD streams. Allocation and persisted stream records carry both
+  conditional flags; SnapshotStreamModify commits changes atomically after
+  the host applies the requested overlay state. VDO overlays remain gated.
+
 ### Camera AV Stream Management video
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
