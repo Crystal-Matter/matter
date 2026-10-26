@@ -132,7 +132,7 @@ describe "reverse commissioning response handoff" do
     handler.close
   end
 
-  it "retries an unsent reverse-window response without starting commissioning early or twice" do
+  it "retries an unsent reverse-window response on the same MRP counter without commissioning twice" do
     handler, transport, session, control = reverse_fixture
     started = Channel(Int32).new(1)
     control.configure_host(
@@ -152,11 +152,15 @@ describe "reverse commissioning response handoff" do
       ReverseControl::CommissionNodeRequest.new(9_u64).to_slice,
       2_u32, 111_u16)
     control.take_pending_commissions(session.object_id.to_u64, 111_u16).should be_empty
-    # The failed ciphertext must not be replayable from the MRP cache, and an
-    # approval is not consumed until the reverse-window response is sent.
+    # The failed ciphertext must not be replayable from the MRP cache. An
+    # authenticated retransmission of this exact request must reprepare it.
+    reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
+      ReverseControl::CommissionNodeRequest.new(10_u64).to_slice,
+      2_u32, 111_u16)
+    transport.sent_packets.size.should eq(1)
     reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
       ReverseControl::CommissionNodeRequest.new(9_u64).to_slice,
-      3_u32, 112_u16)
+      2_u32, 111_u16)
     transport.sent_packets.size.should eq(2)
     response = reverse_response(transport.sent_packets.last[0], session)
     response.invoke_responses.first.command_status.should be_nil
@@ -173,7 +177,7 @@ describe "reverse commissioning response handoff" do
 
     reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
       ReverseControl::CommissionNodeRequest.new(9_u64).to_slice,
-      4_u32, 113_u16)
+      3_u32, 112_u16)
     repeat = reverse_response(transport.sent_packets.last[0], session)
     repeat.invoke_responses.first.command_status.as(Matter::InteractionModel::CommandStatusIB)
       .status.status.should eq(Matter::InteractionModel::StatusCode::Failure.value)
@@ -182,6 +186,43 @@ describe "reverse commissioning response handoff" do
       fail "an already delivered response restarted reverse commissioning"
     when timeout(20.milliseconds)
     end
+    handler.close
+  end
+
+  it "does not re-execute another command in a failed multi-command InvokeRequest" do
+    handler, transport, session, control = reverse_fixture
+    preparations = 0
+    control.configure_host(
+      ->(approval : ReverseControl::ApprovalRequest) do
+        control.resolve_approval(approval, Matter::InteractionModel::StatusCode::Success)
+        nil
+      end,
+      ->(_approval : ReverseControl::ApprovalRequest, _request : ReverseControl::CommissionNodeRequest) do
+        preparations += 1
+        ReverseControl::PreparedWindow.new(reverse_window, -> { nil })
+          .as(ReverseControl::PreparedWindow?)
+      end)
+    reverse_invoke(handler, session, ReverseControl::CMD_REQUEST_COMMISSIONING_APPROVAL,
+      ReverseControl::RequestCommissioningApprovalRequest.new(12_u64, 1_u16, 1_u16).to_slice,
+      1_u32, 110_u16)
+    commands = [
+      Matter::InteractionModel::CommandDataIBTlv.new(
+        Matter::InteractionModel::CommandPath.new(0_u16, ReverseControl::CLUSTER_ID, ReverseControl::CMD_COMMISSION_NODE),
+        ReverseControl::CommissionNodeRequest.new(12_u64).to_tlv),
+      Matter::InteractionModel::CommandDataIBTlv.new(
+        Matter::InteractionModel::CommandPath.new(0_u16, ReverseControl::CLUSTER_ID, ReverseControl::CMD_REQUEST_COMMISSIONING_APPROVAL),
+        ReverseControl::RequestCommissioningApprovalRequest.new(13_u64, 1_u16, 1_u16).to_tlv),
+    ]
+    invoke = Matter::InteractionModel::InvokeRequestMessage.new(commands)
+    transport.fail_next = true
+    2.times do
+      inbound = Matter::Spec::ProtocolMessages.from_peer(session,
+        Matter::InteractionModel::MessageType::InvokeRequest.value,
+        invoke.to_slice, 2_u32, 111_u16)
+      handler.handle_message(inbound, REVERSE_PEER)
+    end
+    preparations.should eq(1)
+    transport.sent_packets.size.should eq(1)
     handler.close
   end
 end

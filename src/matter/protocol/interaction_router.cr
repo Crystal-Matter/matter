@@ -23,7 +23,7 @@ module Matter
       Log = ::Log.for("matter.protocol.interaction_router")
 
       property on_invoke_response_sent : Proc(UInt64, UInt16, Nil)?
-      property on_invoke_response_failed : Proc(UInt64, UInt16, Nil)?
+      property on_invoke_response_failed : Proc(Session::SecureContext, Codec::MessageCodec::Message, Nil)?
 
       WRITE_CHUNK_TIMEOUT = 60.seconds
 
@@ -408,7 +408,7 @@ module Matter
         # requires an InvokeResponse (Core 8.8.3.2.1).
         if request.suppress_response && invoke_responses.none? { |response| response.command_data != nil }
           Log.info { "Response suppressed per suppressResponse flag" }
-          @on_invoke_response_failed.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
+          @on_invoke_response_failed.try(&.call(session, original_msg))
           return
         end
 
@@ -430,7 +430,7 @@ module Matter
         @on_invoke_response_sent.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
-        @on_invoke_response_failed.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
+        @on_invoke_response_failed.try(&.call(session, original_msg))
         Log.error(exception: ex) do
           "Error handling InvokeRequest: peer=#{peer.address}:#{peer.port} session_id=#{session.session_id} " \
           "exchange=#{original_msg.payload_header.exchange_id} msg_id=#{original_msg.packet_header.message_id} " \
