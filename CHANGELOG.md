@@ -807,6 +807,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Optional SQLite storage
 
+- Anchor relative SQLite paths when the backend is constructed so a later
+  working-directory change cannot leave the database behind or make `destroy!`
+  remove an unrelated file with the same name.
 - Add `Matter::Storage::Sqlite` as an explicitly required durable backend.
   Applications add the `sqlite3` shard themselves; it is a development-only
   dependency of Matter. The driver-neutral SQL layer uses a tagged JSON document

@@ -551,6 +551,35 @@ describe Matter::Storage::Backend do
 end
 
 describe Matter::Storage::Sqlite do
+  it "keeps a relative database path anchored when the working directory changes" do
+    BackendContract.with_temp_path(".sqlite3") do |path|
+      directory = File.dirname(path)
+      original_directory = File.join(directory, "original")
+      other_directory = File.join(directory, "other")
+      FileUtils.mkdir_p(original_directory)
+      FileUtils.mkdir_p(other_directory)
+
+      filename = File.basename(path)
+      original_path = File.join(original_directory, filename)
+      other_path = File.join(other_directory, filename)
+      File.write(other_path, "unrelated database")
+      backend = Dir.cd(original_directory) { Matter::Storage::Sqlite.new(filename) }
+
+      Dir.cd(other_directory) do
+        backend.open
+        backend.write(BackendContract::COLLECTION, BackendContract::ID,
+          Matter::Storage::Document{"n" => 1_i64})
+        File.exists?(original_path).should be_true
+        backend.destroy!
+      end
+
+      File.exists?(original_path).should be_false
+      File.exists?("#{original_path}-wal").should be_false
+      File.exists?("#{original_path}-shm").should be_false
+      File.read(other_path).should eq("unrelated database")
+    end
+  end
+
   it "preserves maps whose keys resemble file JSON value wrappers" do
     BackendContract.with_temp_path(".sqlite3") do |path|
       backend = Matter::Storage::Sqlite.new(path).tap(&.open)
