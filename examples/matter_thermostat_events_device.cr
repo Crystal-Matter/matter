@@ -28,6 +28,17 @@ module MatterThermostatEvents
         as: :thermostat
     end
 
+    # Keep both feature bits present so chip-tool can verify that the fixed
+    # control sequence still prevents a cooling SystemMode write.
+    endpoint 2, device_type: Matter::DeviceType::THERMOSTAT do
+      cluster Matter::Cluster::Identify, identify_type: :visible_led
+      cluster Matter::Cluster::Groups
+      cluster Matter::Cluster::Thermostat,
+        feature_map: Matter::Cluster::Thermostat::Feature::Heating |
+                     Matter::Cluster::Thermostat::Feature::Cooling,
+        control_sequence_of_operation: Matter::Cluster::Thermostat::ControlSequenceOfOperation::HeatingOnly
+    end
+
     protected def before_start : Nil
       thermostat.update_local_temperature(INITIAL_TEMPERATURE)
       super

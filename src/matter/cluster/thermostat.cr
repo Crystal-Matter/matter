@@ -1798,9 +1798,11 @@ module Matter
         in .off?, .fan_only?, .dry?, .sleep?
           true
         in .cool?, .precooling?
-          @feature_map.cooling?
+          @feature_map.cooling? && !@control_sequence_of_operation.in?({ControlSequenceOfOperation::HeatingOnly,
+                                                                        ControlSequenceOfOperation::HeatingWithReheat})
         in .heat?, .emergency_heat?
-          @feature_map.heating?
+          @feature_map.heating? && !@control_sequence_of_operation.in?({ControlSequenceOfOperation::CoolingOnly,
+                                                                        ControlSequenceOfOperation::CoolingWithReheat})
         in .auto?
           @feature_map.automode?
         end
