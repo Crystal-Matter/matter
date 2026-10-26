@@ -1271,6 +1271,10 @@ module Matter
         preset_wire_ready?
       end
 
+      protected def validate_feature_map_change(value : Feature) : Nil
+        raise ArgumentError.new("Thermostat feature profile is fixed after construction") unless value == @feature_map
+      end
+
       def active_preset_handle : Bytes?
         @active_preset_handle.try(&.dup)
       end

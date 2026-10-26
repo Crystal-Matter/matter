@@ -88,11 +88,17 @@ describe "Thermostat Presets wire preparation" do
     hidden = build(PresetThermostat)
     hidden.get_attribute_metadata(0x48_u32).should be_nil
     hidden.get_command_metadata(0x06_u32).should be_nil
+    expect_raises(ArgumentError, /feature profile is fixed/) { hidden.feature_map = wire_preset_features }
+    hidden.feature_map.presets?.should be_false
 
     expect_raises(ArgumentError, /preset_types/) { build(PresetThermostat, feature_map: wire_preset_features) }
     types = [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 2_u8,
       PresetThermostat::PresetTypeFeatures::SupportsNames)]
     cluster = build(PresetThermostat, feature_map: wire_preset_features, preset_types: types)
+    expect_raises(ArgumentError, /feature profile is fixed/) do
+      cluster.feature_map = PresetThermostat::Feature::Cooling | PresetThermostat::Feature::Heating
+    end
+    cluster.feature_map.presets?.should be_true
     [0x48_u32, 0x4a_u32, 0x4e_u32, 0x50_u32].each do |id|
       metadata = cluster.get_attribute_metadata(id) || raise "expected PRES attribute metadata"
       metadata.optional?.should be_false

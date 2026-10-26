@@ -12,7 +12,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enable the opt-in Matter 1.6 PRES feature on production Thermostat instances
   when fixed preset types and capacity are supplied at construction. Declare
   its four mandatory attributes with their correct fixed qualities and reject
-  later changes to those fixed values. The official chip-tool fixture now uses
+  later changes to those fixed values or the Thermostat FeatureMap. The official
+  chip-tool fixture now uses
   the production class to verify atomic list writes, preset activation, events,
   generated handles, rollback, and restart persistence.
 

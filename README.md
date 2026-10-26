@@ -685,7 +685,8 @@ The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significa
 An opted-in production Thermostat advertises Presets (PRES) when constructed
 with fixed `preset_types` containing one to seven scenarios and a total preset
 capacity of one to 255. `configure_presets` can update the host-owned list but
-cannot change those fixed types or their capacity. Controller Presets writes
+cannot change those fixed types or their capacity; the Thermostat feature
+profile also remains fixed after construction. Controller Presets writes
 require `AtomicRequest`; the transaction has secure-peer ownership, timeout,
 rollback, commit, and private pending reads. `SetActivePreset` applies a
 configured preset's setpoints, while a later manual setpoint change clears its
