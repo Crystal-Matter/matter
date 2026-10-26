@@ -1,6 +1,7 @@
 require "../spec_helper"
 
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 require "../../src/matter/cluster/access_control"
 require "../../src/matter/protocol/message_handler"
 
@@ -354,6 +355,45 @@ describe "Subscription event reporting" do
 
     fixture.transport.sent_packets.should be_empty
 
+    fixture.handler.close
+  end
+end
+
+describe "Subscription attribute policy changes" do
+  it "reports AccessRestricted after a CASE subscriber's fabric gains an ARL restriction" do
+    fixture = event_subscription_fixture([] of Matter::InteractionModel::EventPath)
+    wifi = build(Matter::Cluster::WiFiNetworkManagement, ENDPOINT)
+    fixture.handler.node.clusters[{ENDPOINT, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID}] = wifi
+    path = Matter::InteractionModel::AttributePath.new(endpoint: ENDPOINT,
+      cluster: Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+      attribute: Matter::Cluster::WiFiNetworkManagement::ATTR_SSID)
+    fixture.handler.active_subscriptions[7_u32].attribute_paths = [path]
+    acl = Matter::Cluster::AccessControl.new(endpoint(0))
+    fixture.handler.node.clusters[{0_u16, Matter::Cluster::AccessControl::CLUSTER_ID}] = acl
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      [0x2222_u64], nil, 1_u8)
+
+    initial = Matter::Protocol::IMHandler.read_attributes([path], fixture.handler.node.clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
+    initial.compact_map(&.attribute_data).size.should eq(1)
+    acl.configure_access_restrictions(1_u8, [
+      Matter::Cluster::AccessControl::AccessRestrictionEntry.new(ENDPOINT,
+        Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID, [
+        Matter::Cluster::AccessControl::AccessRestriction.new(
+          Matter::Cluster::AccessControl::AccessRestrictionType::AttributeAccessForbidden,
+          Matter::Cluster::WiFiNetworkManagement::ATTR_SSID),
+      ]),
+    ])
+    fixture.handler.subscriptions.notify(ENDPOINT, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+      Matter::Cluster::WiFiNetworkManagement::ATTR_SSID)
+    reports = fixture.transport.sent_packets.flat_map do |packet_bytes, _|
+      message = Matter::InteractionModel::ReportDataMessage.from_slice(decrypt(packet_bytes, fixture.session))
+      message.attribute_reports || [] of Matter::InteractionModel::AttributeReportIB
+    end
+    reports.compact_map(&.attribute_status).map(&.status.status).should eq([0x9d_u8])
+    reports.compact_map(&.attribute_data).should be_empty
     fixture.handler.close
   end
 end

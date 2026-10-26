@@ -492,6 +492,25 @@ module Matter
             next
           end
 
+          session = subscription.session
+          status = IMHandler.attribute_read_status(endpoint_id, cluster_id, attribute_id,
+            @node.clusters, session.case_session?, session.fabric_index,
+            session.peer_subject_ids.empty? ? nil : session.peer_subject_ids)
+          if status
+            # Concrete requests receive a status. Wildcard requests omit paths
+            # the subscriber can no longer read.
+            if subscription.attribute_paths.any? do |request|
+                 !request.wildcard? && request.endpoint == endpoint_id &&
+                 request.cluster == cluster_id && request.attribute == attribute_id
+               end
+              path = InteractionModel::AttributePath.new(endpoint: endpoint_id,
+                cluster: cluster_id, attribute: attribute_id)
+              status_ib = InteractionModel::StatusIB.new(status: status.value)
+              reports << InteractionModel::AttributeReportIB.new(attribute_status: InteractionModel::AttributeStatusIB.new(path: path, status: status_ib))
+            end
+            next
+          end
+
           value = cluster.read_attribute(attribute_id, subscription.session.fabric_index)
           unless value.is_a?(TLV::Any)
             Log.warn { "Subscription update skipped: read_attribute returned #{value.class} (endpoint=#{endpoint_id}, cluster=0x#{cluster_id.to_s(16)}, attr=0x#{attribute_id.to_s(16)})" }

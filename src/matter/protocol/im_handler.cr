@@ -73,6 +73,30 @@ module Matter
         end
       end
 
+      # Shared authorization for concrete attribute reads, including active
+      # subscription updates after host policy or ACL changes.
+      def self.attribute_read_status(
+        endpoint_id : UInt16,
+        cluster_id : UInt32,
+        attribute_id : UInt32,
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        is_case_session : Bool,
+        fabric_index : UInt8?,
+        peer_subject_ids : Array(UInt64)?,
+      ) : InteractionModel::StatusCode?
+        cluster = clusters[{endpoint_id, cluster_id}]?
+        return missing_path_status(clusters, endpoint_id) unless cluster
+
+        required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
+        unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
+          return InteractionModel::StatusCode::UnsupportedAccess
+        end
+        if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
+        nil
+      end
+
       # IM message types
       MSG_STATUS_RESPONSE    = 0x01_u8
       MSG_READ_REQUEST       = 0x02_u8
@@ -180,16 +204,9 @@ module Matter
                 attribute: attribute_id
               )
 
-              required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
-              unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
-                status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
-                attr_status = InteractionModel::AttributeStatusIB.new(path: concrete_path, status: status_ib)
-                attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
-                next
-              end
-
-              if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
-                status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+              if status = attribute_read_status(endpoint_id, cluster_id, attribute_id, clusters,
+                   is_case_session, fabric_index, peer_subject_ids)
+                status_ib = InteractionModel::StatusIB.new(status: status.value)
                 attr_status = InteractionModel::AttributeStatusIB.new(path: concrete_path, status: status_ib)
                 attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
                 next
@@ -229,16 +246,9 @@ module Matter
           next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id,
                     cluster.data_version, local_node_id)
 
-          required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
-          unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
-            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
-            attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
-            attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
-            next
-          end
-
-          if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
-            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+          if status = attribute_read_status(endpoint_id, cluster_id, attribute_id, clusters,
+               is_case_session, fabric_index, peer_subject_ids)
+            status_ib = InteractionModel::StatusIB.new(status: status.value)
             attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
             attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
             next
