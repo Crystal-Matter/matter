@@ -161,6 +161,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
       getter? interrupt_after_participant_rotation : Bool = false
+      getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
@@ -184,6 +185,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
                      @interrupt_after_participant_rotation : Bool = false,
+                     @interrupt_after_migration_complete_before_ack : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil)
       end
     end
@@ -2520,6 +2522,9 @@ module MatterJointFabricAdministrator
         anchor_datastore_node_id, anchor_peer, 1_u16, "Migrated device", admin_cat,
         verifier,
         commissioning_ack: -> {
+          if request.interrupt_after_migration_complete_before_ack?
+            raise Matter::TransportError.new("Injected interruption after device CommissioningComplete")
+          end
           acknowledged = journal_store.load(old_fabric.fabric_id,
             old_fabric.root_public_key, request.node_id,
             anchor_fabric.fabric_id, anchor_fabric.root_public_key,

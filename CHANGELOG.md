@@ -54,6 +54,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   non-null UserStatus or UserType. These fields apply when the lock creates a
   user; adding a credential to a specified user leaves its record unchanged.
 
+### Joint Fabric device migration recovery E2E
+
+- Exercise a successful device CommissioningComplete followed by loss of the
+  joining Administrator's durable acknowledgement and a process restart. The
+  two-JFA fixture uses a bounded fail-safe interval and checks authenticated
+  A/B fabric state before recovery resumes without recommissioning the device.
+
 ### Joint Fabric RemoveAdmin no-effect recovery
 
 - Journal the outgoing Administrator entry before RemoveAdmin. After an interrupted
