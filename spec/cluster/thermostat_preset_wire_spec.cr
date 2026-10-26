@@ -84,19 +84,30 @@ private def wire_preset_invoke(cluster : PresetThermostat, command_id : UInt32, 
 end
 
 describe "Thermostat Presets wire preparation" do
-  it "declares the mandatory PRES metadata while keeping production instances gated" do
-    expect_raises(ArgumentError) { build(PresetThermostat, feature_map: wire_preset_features) }
+  it "exposes mandatory PRES metadata on production Thermostat instances" do
     hidden = build(PresetThermostat)
     hidden.get_attribute_metadata(0x48_u32).should be_nil
     hidden.get_command_metadata(0x06_u32).should be_nil
 
-    cluster = build(WireReadyThermostat, feature_map: wire_preset_features)
-    cluster.configure_presets([PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 2_u8,
-      PresetThermostat::PresetTypeFeatures::SupportsNames)],
-      [] of PresetThermostat::Preset)
+    expect_raises(ArgumentError, /preset_types/) { build(PresetThermostat, feature_map: wire_preset_features) }
+    types = [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 2_u8,
+      PresetThermostat::PresetTypeFeatures::SupportsNames)]
+    cluster = build(PresetThermostat, feature_map: wire_preset_features, preset_types: types)
     [0x48_u32, 0x4a_u32, 0x4e_u32, 0x50_u32].each do |id|
-      cluster.get_attribute_metadata(id).should_not be_nil
+      metadata = cluster.get_attribute_metadata(id) || raise "expected PRES attribute metadata"
+      metadata.optional?.should be_false
     end
+    preset_types_metadata = cluster.get_attribute_metadata(PresetThermostat::ATTR_PRESET_TYPES) ||
+                            raise "expected PresetTypes metadata"
+    preset_types_metadata.fixed?.should be_true
+    number_of_presets_metadata = cluster.get_attribute_metadata(PresetThermostat::ATTR_NUMBER_OF_PRESETS) ||
+                                 raise "expected NumberOfPresets metadata"
+    number_of_presets_metadata.fixed?.should be_true
+    expect_raises(ArgumentError, /fixed preset types/) do
+      cluster.configure_presets([PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 3_u8)],
+        [] of PresetThermostat::Preset)
+    end
+    read(cluster, PresetThermostat::ATTR_NUMBER_OF_PRESETS).should eq(2_u8)
     presets_metadata = cluster.get_attribute_metadata(0x50_u32) || raise "expected Presets metadata"
     presets_metadata.write_access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
     cluster.get_command_metadata(0x06_u32).should_not be_nil

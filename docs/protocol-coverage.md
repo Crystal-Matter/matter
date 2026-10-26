@@ -104,7 +104,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0105 | Closure Dimension Cluster | 1 | 1 | — | — |
 | 0x0150 | Service Area Cluster | 2 | 2 | — | SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | — | ConstantSpeed profile only; host owns physical mode change and telemetry |
-| 0x0201 | Thermostat Cluster | 11 | 11 | — | SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints and TEVT events; PRES, MSCH and TSUGGEST remain gated in production |
+| 0x0201 | Thermostat Cluster | 11 | 11 | — | SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints, TEVT events, and PRES atomic presets; MSCH and TSUGGEST remain gated in production |
 | 0x0202 | Fan Control Cluster | 6 | 6 | — | feature-gated attributes and Step; only FanMode nonvolatile |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — | — |
@@ -144,7 +144,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x050F | Content Control Cluster | 1 | 1 | — | Core plus PM/BU/OCR/SCR/BC/BA/BTW/ST policies |
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
-| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices, gated VDO/SNP+WMARK/OSD modification, and host JPEG capture; synthetic chip-tool SNP E2E, overlay rendering, media delivery and Camera topology remain |
+| 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices and host JPEG capture; synthetic chip-tool SNP E2E, media delivery and Camera topology remain |
 | 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | MPAN only |
 | 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO and VDO-only signaling, host Peer interface, and synthetic chip-tool E2E; no decoded video or independently verified SDP/ICE media transport |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
