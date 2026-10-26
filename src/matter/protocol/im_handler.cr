@@ -428,7 +428,7 @@ module Matter
 
       # The status a fully specified event path answers with, or `nil` when it
       # names an event the reader may read.
-      private def self.concrete_event_status(
+      def self.concrete_event_status(
         path : InteractionModel::EventPath,
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
         is_case_session : Bool,

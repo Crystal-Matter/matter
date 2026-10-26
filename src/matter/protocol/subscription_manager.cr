@@ -463,9 +463,18 @@ module Matter
       ) : Array(InteractionModel::EventReportIB)
         return [] of InteractionModel::EventReportIB if records.empty?
 
-        IMHandler.authorized_event_reports(records, @node.clusters,
+        reports = IMHandler.authorized_event_reports(records, @node.clusters,
           subscription.session.fabric_index, subscription.session.case_session?,
           subscription_subjects(subscription))
+        subscription.event_paths.each do |path|
+          next if path.wildcard? || !records.any?(&.matches?(path))
+          if status = IMHandler.concrete_event_status(path, @node.clusters,
+               subscription.session.case_session?, subscription.session.fabric_index,
+               subscription_subjects(subscription))
+            reports << InteractionModel::EventReportIB.new(event_status: status)
+          end
+        end
+        reports
       end
 
       # The reports *subscription* wants out of *attributes*, read at the
@@ -487,6 +496,10 @@ module Matter
 
           path = InteractionModel::AttributePath.new(endpoint: endpoint_id,
             cluster: cluster_id, attribute: attribute_id)
+          concrete = subscription.attribute_paths.any? do |requested|
+            requested.endpoint == endpoint_id && requested.cluster == cluster_id &&
+              requested.attribute == attribute_id
+          end
           # Use the same ACL and fabric-scoped read path as the priming report.
           # A wildcard subscription still checks each concrete changed path.
           IMHandler.read_attributes([path], @node.clusters,
@@ -494,7 +507,7 @@ module Matter
             subscription_subjects(subscription), subscription.fabric_filtered?,
             session_id: subscription.session.session_id.to_u64,
             local_node_id: subscription.session.local_node_id.try(&.id)).each do |report|
-            reports << report if report.attribute_data
+            reports << report if report.attribute_data || (concrete && report.attribute_status)
           end
         end
 
