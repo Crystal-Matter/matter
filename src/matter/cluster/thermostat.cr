@@ -7,9 +7,9 @@ module Matter
     # Provides an interface to thermostat functionality, including configuration
     # of setpoints, scheduling, and mode control.
     #
-    # Specification: Matter 1.6 § 4.3 (revision 9 wire surface)
+    # Specification: Matter 1.6 § 4.3 (revision 11 base wire surface)
     class Thermostat < Base
-      cluster 0x0201, revision: 9
+      cluster 0x0201, revision: 11
 
       @last_running_state : RelayState
 

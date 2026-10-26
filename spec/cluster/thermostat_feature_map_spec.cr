@@ -3,6 +3,23 @@ require "../spec_helper"
 private alias FeatureThermostat = Matter::Cluster::Thermostat
 
 describe "Thermostat base feature conformance" do
+  it "advertises the Matter 1.6 revision and mandatory base surface for each supported feature set" do
+    {
+      {FeatureThermostat::Feature::Heating, [0x0000_u32, 0x0012_u32, 0x001B_u32, 0x001C_u32], [0x0011_u32, 0x0019_u32]},
+      {FeatureThermostat::Feature::Cooling, [0x0000_u32, 0x0011_u32, 0x001B_u32, 0x001C_u32], [0x0012_u32, 0x0019_u32]},
+      {FeatureThermostat::Feature::Heating | FeatureThermostat::Feature::Cooling | FeatureThermostat::Feature::Automode,
+       [0x0000_u32, 0x0011_u32, 0x0012_u32, 0x0019_u32, 0x001B_u32, 0x001C_u32], [] of UInt32},
+    }.each do |features, required, forbidden|
+      cluster = build(FeatureThermostat, feature_map: features)
+      read(cluster, Matter::Cluster::Base::GLOBAL_CLUSTER_REVISION).should eq(11_u16)
+      read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(features.value.to_u32)
+      ids = attribute_ids(cluster)
+      required.each { |id| ids.should contain(id) }
+      forbidden.each { |id| ids.should_not contain(id) }
+      accepted_command_ids(cluster).should eq([FeatureThermostat::CMD_SETPOINT_RAISE_LOWER])
+    end
+  end
+
   it "requires a heating or cooling capability" do
     expect_raises(ArgumentError, "Thermostat requires HEAT or COOL") do
       build(FeatureThermostat, feature_map: FeatureThermostat::Feature::None)

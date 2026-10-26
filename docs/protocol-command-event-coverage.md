@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 11
+- Feature or complex conditional IDs absent from Crystal: 9
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -97,7 +97,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0105 | Closure Dimension Cluster | 1 | 1 | — | — |
 | 0x0150 | Service Area Cluster | 2 | 2 | — | — |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | — | — |
-| 0x0201 | Thermostat Cluster | 11 | 9 | — | — |
+| 0x0201 | Thermostat Cluster | 11 | 11 | — | — |
 | 0x0202 | Fan Control Cluster | 6 | 6 | — | — |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — | — |
@@ -270,8 +270,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0105 | command | 0x0001 | feature(PS) | declared; requires `:positioning` |
 | 0x0201 | command | 0x0005 | feature(MSCH) | declared; requires `:matter_schedules` |
 | 0x0201 | command | 0x0006 | feature(PRES) | declared; requires `:presets` |
-| 0x0201 | command | 0x0007 | feature(TSUGGEST) | absent |
-| 0x0201 | command | 0x0008 | feature(TSUGGEST) | absent |
+| 0x0201 | command | 0x0007 | feature(TSUGGEST) | declared; requires `:thermostat_suggestions` |
+| 0x0201 | command | 0x0008 | feature(TSUGGEST) | declared; requires `:thermostat_suggestions` |
 | 0x0201 | event | 0x0000 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0001 | (feature(TEVT) and not(feature(LTNE))) | declared; requires `{events: true, local_temperature_not_exposed: false}` |
 | 0x0201 | event | 0x0002 | (feature(TEVT) and feature(OCC)) | declared; requires `{events: true, occupancy: true}` |

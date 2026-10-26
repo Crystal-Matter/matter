@@ -5,7 +5,7 @@ describe "Matter Thermostat LocalTemperatureNotExposed interoperability" do
 
   it "commissions and reports TLV null for a private sensor value" do
     device.commission!
-    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(9_i64)
+    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(99_i64)
     expect_success(device.read("thermostat", "local-temperature", 1)).value("LocalTemperature").try(&.downcase).should eq("null")
     read_int(device, "thermostat", "thermostat-running-mode", "ThermostatRunningMode", 1).should eq(3_i64)

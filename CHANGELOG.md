@@ -83,6 +83,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
 
+### Thermostat base revision 11
+
+- Report Matter 1.6 Thermostat ClusterRevision 11 for supported HEAT, COOL, and
+  HEAT+COOL/AUTO configurations. Verify their FeatureMap, mandatory attributes,
+  and SetpointRaiseLower command with the official chip-tool. PRES, MSCH, and
+  TSUGGEST remain gated in production while their conformance work continues.
+
 ### Thermostat base feature conformance
 
 - Require HEAT or COOL, require both when AUTO is advertised, and select a matching

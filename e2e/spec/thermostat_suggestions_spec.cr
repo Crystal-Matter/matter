@@ -25,7 +25,7 @@ describe "Matter Thermostat Suggestions guarded fixture" do
   it "commissions and exposes TSUGGEST metadata and an empty list" do
     device.commission!
     read_int(device, "timesynchronization", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
-    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(9_i64)
+    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(0x503_i64)
     read_int(device, "thermostat", "max-thermostat-suggestions", "MaxThermostatSuggestions", 1).should eq(5_i64)
     expect_success(device.read("thermostat", "thermostat-suggestions", 1))
