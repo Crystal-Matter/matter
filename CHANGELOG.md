@@ -1549,7 +1549,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Apply Lighting StartUpOnOff (Off, On, or Toggle) and Mode Select StartUpMode
   when a device powers up. Bypass these startup settings after an OTA restart,
-  and give OnMode precedence when OnOff starts On.
+  and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
+  retain the state reported by their host.
 
 ### OnOff command level effect
 
