@@ -622,8 +622,7 @@ module Matter
         InteractionModel::Status.failure
       end
 
-      # Internal host lifecycle for a future ReviewFabricRestrictions command.
-      # MNGD remains disabled, so this does not expose a wire command or event.
+      # Host lifecycle shared by the opt-in wire command and direct host reviews.
       def request_restriction_review(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : UInt64
         if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
            entries.any? { |entry| invalid_access_restriction_entry?(entry) }

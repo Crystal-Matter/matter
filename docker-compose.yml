@@ -135,6 +135,13 @@ services:
     environment:
       E2E_DEVICE: matter_joint_fabric_administrator
 
+  managed-restrictions:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_managed_restrictions
+      MATTER_MNGD_REVIEW_PATH: /e2e/logs/matter_managed_restrictions.review
+      MATTER_MNGD_UPDATE_PATH: /e2e/logs/matter_managed_restrictions.update
+
   joint-fabric-anchor:
     <<: *device
     environment:
@@ -629,6 +636,7 @@ services:
       time-zone-peer: { condition: service_healthy }
       tcp-large-payload: { condition: service_healthy }
       joint-fabric-administrator: { condition: service_healthy }
+      managed-restrictions: { condition: service_healthy }
       joint-fabric-anchor: { condition: service_healthy }
       joint-fabric-joiner: { condition: service_healthy }
       joint-fabric-third: { condition: service_healthy }

@@ -118,6 +118,13 @@ With MNGD explicitly enabled, CommissioningARL restricts PASE attribute reads
 and writes, command invocations, and event reads. CASE sessions continue to use
 their fabric's ARL.
 
+The synthetic `matter_managed_restrictions` example opts in with durable YAML
+storage and denies each review from its host callback. Its official chip-tool
+E2E commissions the device, checks the MNGD attributes and command metadata,
+invokes `ReviewFabricRestrictions`, correlates the host callback token with
+`FabricRestrictionReviewUpdate`, and verifies that the empty ARL survives a
+restart. It exercises the wire and persistence path without a real consent UI.
+
 An application-specific consent UI or service and independent managed-device
 interoperability remain host and integration work. The pinned SDK accepts ARL entries by
 allowed endpoint and cluster ID without requiring the target to be installed;
