@@ -60,6 +60,14 @@ module Matter
       # The programming PIN occupies credential index zero
       PROGRAMMING_PIN_INDEX = 0_u16
 
+      # SetCredential's UserType field excludes the schedule-specific values;
+      # schedule users are configured with SetUser before credentials are added.
+      SET_CREDENTIAL_USER_TYPES = {
+        UserType::UnrestrictedUser, UserType::ProgrammingUser, UserType::NonAccessUser,
+        UserType::ForcedUser, UserType::DisposableUser, UserType::ExpiringUser,
+        UserType::RemoteOnlyUser,
+      }
+
       # Lowest accepted values of the credential policy attributes
       MIN_WRONG_CODE_ENTRY_LIMIT =     1_u8
       MIN_TEMPORARY_DISABLE_TIME =     1_u8
@@ -1634,6 +1642,10 @@ module Matter
         end
 
         if (user_status = request.user_status) && !user_status.occupied_enabled? && !user_status.occupied_disabled?
+          return set_credential_response(request, StatusCode::InvalidField)
+        end
+
+        if (user_type = request.user_type) && !SET_CREDENTIAL_USER_TYPES.includes?(user_type)
           return set_credential_response(request, StatusCode::InvalidField)
         end
 

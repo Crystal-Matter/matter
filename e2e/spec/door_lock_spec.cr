@@ -136,7 +136,7 @@ describe "matter_door_lock example" do
     credential = %({"credentialType":1,"credentialIndex":2})
     scheduled_pin = ["--PINCode", "8642"]
     expect_success(device.invoke("doorlock", "set-user", ["0", "3", "Cleaner", "333", "1", "2", "0"], options: timed))
-    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "8642", "3", "1", "2"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "8642", "3", "null", "null"], options: timed))
     expect_failure(device.invoke("doorlock", "unlock-door", options: timed + scheduled_pin), "FAILURE")
 
     # Every day, from midnight through the final second of 23:59.
