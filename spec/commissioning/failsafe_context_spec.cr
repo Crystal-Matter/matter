@@ -194,6 +194,19 @@ module Matter::Commissioning
 
         context.close
       end
+
+      it "keeps an independent first network snapshot across later mutations" do
+        context = FailsafeContext.new(nil, 0_u64, -> { })
+        original = Bytes[1, 2, 3]
+        first = Matter::Storage::Document{"credential" => original}
+        context.record_network_state(first)
+        original[0] = 9_u8
+        first["credential"] = Bytes[8]
+        context.record_network_state(Matter::Storage::Document{"credential" => Bytes[7]})
+
+        context.network_state_snapshot.as(Matter::Storage::Document)["credential"].should eq(Bytes[1, 2, 3])
+        context.close
+      end
     end
 
     describe "rollback" do

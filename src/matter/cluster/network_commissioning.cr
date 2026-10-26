@@ -283,7 +283,6 @@ module Matter
 
       attribute 0x0002, :scan_max_time_seconds, UInt8, default: DEFAULT_SCAN_MAX_TIME_SECONDS, fixed: true, requires: ANY_WIRELESS_INTERFACE
       attribute 0x0003, :connect_max_time_seconds, UInt8, default: DEFAULT_CONNECT_MAX_TIME_SECONDS, fixed: true, requires: ANY_WIRELESS_INTERFACE
-      # Persisted by `restore_network_state`, not by the DSL
       attribute 0x0004, :interface_enabled, Bool, default: true, writable: true, persist: false, write_access: :administer
       attribute 0x0005, :last_networking_status, NetworkCommissioningStatus, nullable: true, read_access: :administer
       attribute 0x0006, :last_network_id, Bytes, nullable: true, read_access: :administer
@@ -317,6 +316,10 @@ module Matter
       # The wire command path consults the live commissioning fail-safe.
       # A standalone cluster without one fails closed.
       property general_commissioning : GeneralCommissioning?
+
+      # The runtime persists committed network metadata; host credentials stay
+      # in the platform backend, which owns their durable storage.
+      property on_persist_network_state : Proc(Nil)?
 
       # Additional state for connected network tracking
       @connected_network_index : Int32?
@@ -876,6 +879,10 @@ module Matter
           return out_of_range_config_response("AddOrUpdateWiFiNetwork", ex)
         end
 
+        if status = checkpoint_network_state
+          return status
+        end
+
         # Call high-level handler (pass true - failsafe checks done at protocol layer)
         response = handle_add_or_update_wifi_network(req, failsafe_armed: true)
 
@@ -903,6 +910,10 @@ module Matter
           return out_of_range_config_response("AddOrUpdateThreadNetwork", ex)
         end
 
+        if status = checkpoint_network_state
+          return status
+        end
+
         # Call high-level handler (pass true - failsafe checks done at protocol layer)
         response = handle_add_or_update_thread_network(req, failsafe_armed: true)
 
@@ -928,6 +939,10 @@ module Matter
           )
         rescue ex : ArgumentError
           return out_of_range_config_response("RemoveNetwork", ex)
+        end
+
+        if status = checkpoint_network_state
+          return status
         end
 
         # Call high-level handler (pass true - failsafe checks done at protocol layer)
@@ -961,6 +976,10 @@ module Matter
           )
         end
 
+        if status = checkpoint_network_state
+          return status
+        end
+
         # Call high-level handler (pass true - failsafe checks done at protocol layer)
         response = handle_connect_network(req, failsafe_armed: true)
 
@@ -989,6 +1008,10 @@ module Matter
           return out_of_range_config_response("ReorderNetwork", ex)
         end
 
+        if status = checkpoint_network_state
+          return status
+        end
+
         # Call high-level handler (pass true - failsafe checks done at protocol layer)
         response = handle_reorder_network(req, failsafe_armed: true)
 
@@ -1000,60 +1023,94 @@ module Matter
         )
       end
 
-      # Restore network state from snapshot (used during failsafe rollback)
-      #
-      # This method restores the network configuration to a previously captured state.
-      # It's called during failsafe rollback to undo any network configuration changes
-      # made during a failed commissioning session.
-      #
-      # @param state Snapshot of network state (key-value pairs)
-      def restore_network_state(snapshot : Hash(String, String)) : Nil
-        state = snapshot
-        Log.info { "Restoring network state from snapshot" }
+      def restore_network_state(snapshot : Storage::Document) : Nil
+        backend = @backend || raise CommissioningError.new("Network backend unavailable for rollback")
+        backend_snapshot = snapshot["backend"].as(Storage::Document)
+        unless backend.restore_configuration(Storage.deep_copy(backend_snapshot))
+          raise CommissioningError.new("Network backend could not restore checkpoint")
+        end
 
-        # Restore networks list
-        if networks_json = state["networks"]?
-          begin
-            network_data = Array(Hash(String, JSON::Any)).from_json(networks_json)
-            @networks.clear
+        restore_state(snapshot["cluster"].as(Storage::Document))
+        @wifi_credentials = decode_credentials(snapshot["wifi_credentials"].as(Array(Storage::Type)))
+        @thread_credentials = decode_credentials(snapshot["thread_credentials"].as(Array(Storage::Type)))
+        @last_networking_status = snapshot["last_networking_status"].as(Int64?).try do |value|
+          NetworkCommissioningStatus.from_value(value.to_u8)
+        end
+        @last_network_id = snapshot["last_network_id"].as(Bytes?).try(&.dup)
+        @last_connect_error_value = snapshot["last_connect_error_value"].as(Int64?).try(&.to_i32)
+        @connected_network_index = snapshot["connected_network_index"].as(Int64?).try(&.to_i32)
+        @interface_enabled = snapshot["interface_enabled"].as(Bool)
+        @on_persist_network_state.try(&.call)
+        Log.info { "Restored network commissioning state" }
+      end
 
-            network_data.each do |net|
-              network_id = Base64.decode(net["network_id"].as_s)
-              connected = net["connected"].as_bool
-              @networks << NetworkInfo.new(network_id, connected)
-            end
+      def commit_network_state : Nil
+        backend = @backend || raise CommissioningError.new("Network backend unavailable for commit")
+        unless backend.commit_configuration
+          raise CommissioningError.new("Network backend could not commit configuration")
+        end
+        @on_persist_network_state.try(&.call)
+      end
 
-            Log.debug { "Restored #{@networks.size} network(s)" }
-          rescue ex
-            Log.error(exception: ex) { "Failed to restore networks from snapshot (networks_json=#{networks_json})" }
+      private def checkpoint_network_state : InteractionModel::Status?
+        context = @general_commissioning.try(&.failsafe_context)
+        return InteractionModel::Status.failsafe_required unless context && context.armed?
+        return if context.network_state_snapshot
+
+        backend = @backend || return InteractionModel::Status.failure
+        backend_snapshot = backend.checkpoint_configuration || return InteractionModel::Status.failure
+        snapshot = Storage::Document{
+          "backend"                  => Storage.deep_copy(backend_snapshot),
+          "cluster"                  => save_state.as(Storage::Document),
+          "wifi_credentials"         => encode_credentials(@wifi_credentials),
+          "thread_credentials"       => encode_credentials(@thread_credentials),
+          "last_networking_status"   => @last_networking_status.try(&.value.to_i64),
+          "last_network_id"          => @last_network_id.try(&.dup),
+          "last_connect_error_value" => @last_connect_error_value.try(&.to_i64),
+          "connected_network_index"  => @connected_network_index.try(&.to_i64),
+          "interface_enabled"        => @interface_enabled,
+        }
+        context.record_network_state(snapshot)
+        nil
+      rescue ex
+        Log.error(exception: ex) { "Could not checkpoint network configuration" }
+        InteractionModel::Status.failure
+      end
+
+      private def encode_credentials(credentials : Hash(Bytes, Bytes)) : Array(Storage::Type)
+        credentials.map do |id, secret|
+          Storage::Document{"id" => id.dup, "secret" => secret.dup}.as(Storage::Type)
+        end
+      end
+
+      private def decode_credentials(entries : Array(Storage::Type)) : Hash(Bytes, Bytes)
+        credentials = {} of Bytes => Bytes
+        entries.each do |entry|
+          document = entry.as(Storage::Document)
+          credentials[document["id"].as(Bytes).dup] = document["secret"].as(Bytes).dup
+        end
+        credentials
+      end
+
+      # Command-managed network metadata is persisted on commit. Credentials
+      # remain solely in the platform backend's durable storage.
+      def save_state : Storage::Document?
+        entries = @networks.map do |network|
+          Storage::Document{"id" => network.network_id.dup, "connected" => network.connected?}.as(Storage::Type)
+        end
+        document = super || Storage::Document.new
+        document["networks"] = entries
+        document
+      end
+
+      def restore_state(document : Storage::Document) : Nil
+        super(document)
+        if entries = document["networks"]?
+          @networks = entries.as(Array(Storage::Type)).map do |entry|
+            network = entry.as(Storage::Document)
+            NetworkInfo.new(network["id"].as(Bytes).dup, network["connected"].as(Bool))
           end
         end
-
-        # Restore interface enabled state
-        if interface_enabled_str = state["interface_enabled"]?
-          @interface_enabled = interface_enabled_str == "true"
-          Log.debug { "Restored interface_enabled: #{@interface_enabled}" }
-        end
-
-        # Restore last networking status
-        if last_status_str = state["last_networking_status"]?
-          @last_networking_status = NetworkCommissioningStatus.from_value(last_status_str.to_u8)
-          Log.debug { "Restored last_networking_status: #{@last_networking_status}" }
-        end
-
-        # Restore last network ID
-        if last_network_id_str = state["last_network_id"]?
-          @last_network_id = Base64.decode(last_network_id_str) unless last_network_id_str.empty?
-          Log.debug { "Restored last_network_id" }
-        end
-
-        # Restore last connect error value
-        if last_error_str = state["last_connect_error_value"]?
-          @last_connect_error_value = last_error_str.to_i32? unless last_error_str.empty?
-          Log.debug { "Restored last_connect_error_value: #{@last_connect_error_value}" }
-        end
-
-        Log.info { "Network state restored successfully" }
       end
 
       # Helper methods

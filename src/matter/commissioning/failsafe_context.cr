@@ -28,7 +28,7 @@ module Matter
       property max_cumulative_seconds : UInt16
 
       # Network commissioning state snapshot (for rollback)
-      property network_state_snapshot : Hash(String, String)?
+      getter network_state_snapshot : Storage::Document?
 
       # Whether a new fabric was added during this context
       property added_fabric_index : UInt8?
@@ -140,8 +140,8 @@ module Matter
       # Record network commissioning state for rollback
       #
       # @param state Snapshot of network configuration
-      def record_network_state(state : Hash(String, String)) : Nil
-        @network_state_snapshot = state
+      def record_network_state(state : Storage::Document) : Nil
+        @network_state_snapshot ||= Storage.deep_copy(state)
         Log.debug { "Recorded network state snapshot" }
       end
 
@@ -174,8 +174,9 @@ module Matter
       # 8. Clean up temporary state
       #
       # @param targets The live state to restore (nil leaves steps 3, 6 and 7 to the caller)
-      def rollback(targets : RollbackTargets? = nil) : Nil
+      def rollback(targets : RollbackTargets? = nil) : Bool
         Log.warn { "Performing failsafe rollback" }
+        network_restored = true
 
         # Step 3: Restore network commissioning state
         if (snapshot = @network_state_snapshot) && (target = targets)
@@ -183,7 +184,8 @@ module Matter
             target.restore_network_state(snapshot)
             Log.info { "Restored network commissioning state" }
           rescue ex
-            Log.error(exception: ex) { "Failed to restore network state (snapshot=#{snapshot.inspect})" }
+            Log.error(exception: ex) { "Failed to restore network state" }
+            network_restored = false
           end
         end
 
@@ -219,7 +221,12 @@ module Matter
         @regulatory_config_snapshot = nil
         Log.debug { "Cleaned up temporary state" }
 
-        Log.warn { "Rollback completed" }
+        if network_restored
+          Log.warn { "Rollback completed" }
+        else
+          Log.error { "Rollback incomplete: network state could not be restored" }
+        end
+        network_restored
       end
 
       # Close and cleanup the failsafe context
