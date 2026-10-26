@@ -224,15 +224,23 @@ module Matter
     # is subscribed yet.
     private def event_callback : Cluster::EventEmittedCallback
       ->(endpoint_id : UInt16, cluster_id : UInt32, event_id : UInt32, priority : InteractionModel::EventPriority, data : TLV::Any, fabric_index : UInt8?) do
-        record = @event_journal.record(
-          endpoint: endpoint_id,
-          cluster: cluster_id,
-          event: event_id,
-          priority: priority,
-          data: data,
-          fabric_index: fabric_index
-        )
-        @on_event_emitted.try(&.call(record))
+        record = begin
+          @event_journal.record(
+            endpoint: endpoint_id,
+            cluster: cluster_id,
+            event: event_id,
+            priority: priority,
+            data: data,
+            fabric_index: fabric_index
+          )
+        rescue ex
+          raise EventJournalError.new("Event was not journaled", ex)
+        end
+        begin
+          @on_event_emitted.try(&.call(record))
+        rescue ex
+          raise EventObserverError.new("Event observer failed after journaling", ex)
+        end
         nil
       end
     end

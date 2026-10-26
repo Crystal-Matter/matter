@@ -34,6 +34,16 @@ module Matter
   class StorageError < Error
   end
 
+  # Emission stopped before the event entered the node journal. Callers that
+  # promise an event must retain their durable intent and retry it.
+  class EventJournalError < StorageError
+  end
+
+  # The journal accepted the event, but a downstream notification failed.
+  # Retrying the emission would create a duplicate event.
+  class EventObserverError < Error
+  end
+
   # Persisted Access Control state cannot be restored safely. Device startup
   # must stop rather than silently boot without its ACL or managed ARL.
   class AccessControlRestoreError < StorageError

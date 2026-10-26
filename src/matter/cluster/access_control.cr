@@ -747,12 +747,18 @@ module Matter
           end
           return false unless current_restriction_review?(fabric_index, token, generation)
           # The decision and intent marker were durably saved before the host
-          # callback. Emit once while the marker remains durable, then clear it.
-          # An ambiguous final write can therefore never lose this update.
-          if @feature_map.managed_device? && @review_events_emitted.add?(token)
+          # callback. Keep the marker if the event was not journaled; a later
+          # retry or restart can then emit the required update. Once journaled,
+          # an observer failure must not cause another emission in this process.
+          if @feature_map.managed_device? && !@review_events_emitted.includes?(token)
             begin
               emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index)
+              @review_events_emitted.add(token)
+            rescue ex : Matter::EventJournalError
+              schedule_restriction_review_delivery_retry(token, fabric_index)
+              raise ex
             rescue ex
+              @review_events_emitted.add(token)
               Log.error(exception: ex) { "Restriction review #{token} event observer failed after durable completion" }
             end
           end

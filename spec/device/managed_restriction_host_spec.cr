@@ -56,6 +56,19 @@ private class ManagedPolicyFailingYaml < Matter::Storage::YamlFile
   end
 end
 
+private class ManagedEventCounterFailingYaml < Matter::Storage::YamlFile
+  property? fail_next_event_counter = false
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if @fail_next_event_counter && collection == Matter::Storage::Collections::DEVICE &&
+       id == Matter::Protocol::Persistence::StorageBackend::EVENT_COUNTER_ID
+      @fail_next_event_counter = false
+      raise Matter::StorageError.new("Injected event counter write failure")
+    end
+    super
+  end
+end
+
 private class ManagedNilPathDurableStore < Matter::Storage::Memory
   def durable? : Bool
     true
@@ -181,6 +194,66 @@ describe "Device managed restriction host" do
   ensure
     first.try(&.release)
     second.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "retains a completion outbox when its review event cannot be journaled durably" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-event-failure-#{Random::Secure.hex(8)}.yml")
+    backend = ManagedEventCounterFailingYaml.new(path)
+    first = ManagedRestrictionDslSpecDevice.new(storage: backend, port: 0)
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl = first.access_control
+    token = acl.request_restriction_review(1_u8, [] of HostAcl::AccessRestrictionEntry)
+    review_path = [Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: HostAcl::CLUSTER_ID, event: HostAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE)]
+
+    backend.fail_next_event_counter = true
+    expect_raises(Matter::EventJournalError, /not journaled/) do
+      acl.deny_restriction_review(1_u8, token)
+    end
+    first.updated.should eq([token])
+    first.node.event_journal.query(review_path, fabric_index: 1_u8).should be_empty
+    saved = backend.read(Matter::Storage::Collections::CLUSTERS,
+      acl.persistence_key).as(Matter::Storage::Document)
+    saved["review_completion_outbox"].as(Array(Matter::Storage::Type)).size.should eq(1)
+    first.release
+    first = nil
+
+    second = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    second.updated.should eq([token])
+    second.node.event_journal.query(review_path, fabric_index: 1_u8).size.should eq(1)
+    second.access_control.deny_restriction_review(1_u8, token).should be_false
+    second.node.event_journal.query(review_path, fabric_index: 1_u8).size.should eq(1)
+  ensure
+    first.try(&.release)
+    second.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "does not duplicate a journaled review event when its observer fails" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-event-observer-#{Random::Secure.hex(8)}.yml")
+    device = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    device.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl = device.access_control
+    token = acl.request_restriction_review(1_u8, [] of HostAcl::AccessRestrictionEntry)
+    review_path = [Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: HostAcl::CLUSTER_ID, event: HostAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE)]
+    observer_calls = 0
+    device.node.on_event_emitted = ->(_record : Matter::EventJournal::Record) do
+      observer_calls += 1
+      raise Matter::StorageError.new("Injected observer failure")
+    end
+
+    acl.deny_restriction_review(1_u8, token).should be_true
+    device.updated.should eq([token])
+    observer_calls.should eq(1)
+    device.node.event_journal.query(review_path, fabric_index: 1_u8).size.should eq(1)
+    acl.deny_restriction_review(1_u8, token).should be_false
+    device.node.event_journal.query(review_path, fabric_index: 1_u8).size.should eq(1)
+  ensure
+    device.try(&.release)
     File.delete(path) if path && File.exists?(path)
   end
 
