@@ -70,6 +70,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
 
+### Thermostat base feature conformance
+
+- Require HEAT or COOL, require both when AUTO is advertised, and select a matching
+  default ControlSequenceOfOperation for single-capability thermostats. Reject
+  explicit control sequences that require an absent capability or conflict with AUTO.
+  Normalize incompatible legacy saved sequences before restoring the running mode.
+
 ### Thermostat minimum deadband legacy writes
 
 - Accept valid legacy MinSetpointDeadBand writes while retaining the configured

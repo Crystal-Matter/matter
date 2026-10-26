@@ -7,7 +7,7 @@ private alias ModeStatus = Matter::InteractionModel::StatusCode
 # ControlSequenceOfOperation, even when the corresponding feature is present.
 describe "Thermostat SystemMode control sequence" do
   features = ModeThermostat::Feature::Heating | ModeThermostat::Feature::Cooling |
-             ModeThermostat::Feature::Automode | ModeThermostat::Feature::Events
+             ModeThermostat::Feature::Events
 
   {
     {ModeThermostat::ControlSequenceOfOperation::HeatingOnly, ModeThermostat::SystemMode::Cool},
@@ -46,7 +46,7 @@ describe "Thermostat SystemMode control sequence" do
   end
 
   it "permits heating when the combined-with-reheat sequence reports all modes" do
-    cluster = build(ModeThermostat, feature_map: features,
+    cluster = build(ModeThermostat, feature_map: features | ModeThermostat::Feature::Automode,
       control_sequence_of_operation: ModeThermostat::ControlSequenceOfOperation::CoolingAndHeatingWithReheat)
 
     result = cluster.write_attribute(ModeThermostat::ATTR_SYSTEM_MODE,

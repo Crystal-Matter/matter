@@ -697,7 +697,7 @@ module Matter
                      @min_cool_setpoint_limit : Int16 = DEFAULT_ABS_MIN_COOL,
                      @max_cool_setpoint_limit : Int16 = DEFAULT_ABS_MAX_COOL,
                      @min_setpoint_dead_band : Int8 = DEFAULT_DEAD_BAND,
-                     @control_sequence_of_operation : ControlSequenceOfOperation = ControlSequenceOfOperation::CoolingAndHeating,
+                     control_sequence_of_operation : ControlSequenceOfOperation? = nil,
                      @system_mode : SystemMode = SystemMode::Off,
                      @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off,
                      preset_types : Array(PresetType)? = nil,
@@ -712,6 +712,13 @@ module Matter
 
         @schedule_clock_configured = !local_time_provider.nil?
         @local_time_provider = local_time_provider || -> : Time? { nil }
+        if @feature_map.automode? && !(@feature_map.heating? && @feature_map.cooling?)
+          raise ArgumentError.new("AUTO requires HEAT and COOL")
+        end
+        raise ArgumentError.new("Thermostat requires HEAT or COOL") unless @feature_map.heating? || @feature_map.cooling?
+
+        @control_sequence_of_operation = control_sequence_of_operation || default_control_sequence
+        validate_control_sequence!
 
         @measured_temperature = @local_temperature
         @local_temperature = nil if @feature_map.local_temperature_not_exposed?
@@ -744,9 +751,6 @@ module Matter
 
         raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
         raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules? && !schedule_wire_ready?
-        if @feature_map.occupancy? && !(@feature_map.heating? || @feature_map.cooling?)
-          raise ArgumentError.new("OCC requires heating or cooling")
-        end
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
         raise ArgumentError.new("TSUGGEST wire conformance is not yet enabled") if @feature_map.thermostat_suggestions? && !suggestion_wire_ready?
         validate_occupancy(@occupancy)
@@ -1999,6 +2003,40 @@ module Matter
         end
       end
 
+      private def default_control_sequence : ControlSequenceOfOperation
+        if @feature_map.heating? && @feature_map.cooling?
+          ControlSequenceOfOperation::CoolingAndHeating
+        elsif @feature_map.heating?
+          ControlSequenceOfOperation::HeatingOnly
+        else
+          ControlSequenceOfOperation::CoolingOnly
+        end
+      end
+
+      private def validate_control_sequence! : Nil
+        if error = control_sequence_error
+          raise ArgumentError.new(error)
+        end
+      end
+
+      private def control_sequence_error : String?
+        case @control_sequence_of_operation
+        when .cooling_only?, .cooling_with_reheat?
+          return "AUTO requires a combined control sequence" if @feature_map.automode?
+          return "ControlSequenceOfOperation requires COOL" unless @feature_map.cooling?
+        when .heating_only?, .heating_with_reheat?
+          return "AUTO requires a combined control sequence" if @feature_map.automode?
+          return "ControlSequenceOfOperation requires HEAT" unless @feature_map.heating?
+        when .cooling_and_heating?, .cooling_and_heating_with_reheat?
+          unless @feature_map.heating? && @feature_map.cooling?
+            return "ControlSequenceOfOperation requires HEAT and COOL"
+          end
+        else
+          return "Unsupported ControlSequenceOfOperation"
+        end
+        nil
+      end
+
       private def validate_local_temperature(value : Int16?) : Nil
         if @feature_map.local_temperature_not_exposed? && !value.nil?
           raise ArgumentError.new("LocalTemperature must remain null when LTNE is enabled")
@@ -2050,6 +2088,8 @@ module Matter
       end
 
       private def after_restore_state : Nil
+        @control_sequence_of_operation = default_control_sequence if control_sequence_error
+        @system_mode = SystemMode::Off unless mode_allowed?(@system_mode)
         @last_occupancy = @occupancy
         update_running_mode
         tick_suggestions(@utc_time_provider.call)
