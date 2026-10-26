@@ -140,7 +140,9 @@ item below as covered only to the extent of its cited tests.
   transfers the Anchor from A to B, and removes A. It interrupts B after
   TransferAnchorComplete, restarts it with a persisted FollowingUp journal,
   and verifies participant follow-up without changing B's NOC or the
-  Administrator CAT version again. It also restarts B after a lost RemoveFabric
+  Administrator CAT version again. It also interrupts after A completes its
+  individual follow-up while C is still pending, restarts B, and verifies
+  that only C's follow-up runs on resume. It also restarts B after a lost RemoveFabric
   acknowledgement, verifies the persisted journal blocks replay,
   and reconciles the result. It also restarts B after a lost RemoveAdmin
   acknowledgement, checks the removal in B's persisted AdminList over CASE,
@@ -150,7 +152,9 @@ item below as covered only to the extent of its cited tests.
   have the journaled entry, including its ICAC, even if unrelated Datastore
   changes advanced the cluster-wide DataVersion,
   and the Administrator CAT must remain unchanged. The three-Administrator
-  Docker extension for this path is pending execution. B and C remain
+  Docker scenario now exercises this path by adding an unrelated Group entry
+  after B restarts, checking the advanced DataVersion and unchanged ICAC,
+  reconciling the no-effect outcome, and then completing removal. B and C remain
   registered while B is also restarted after lost Anchor and participant rotation
   acknowledgements. Recovery uses fresh CASE and a host-supplied 32-byte
   nonce in SignVIDVerificationRequest to prove possession of the target's

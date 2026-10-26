@@ -3,6 +3,9 @@ require "../../src/matter/controller"
 require "../../examples/support/joint_fabric_administrator_device"
 require "../interop/jfa_vvs_dcl_fixture"
 
+private alias JfaRolloutDatastore = Matter::Cluster::JointFabricDatastore
+private alias JfaRollout = Matter::Controller::IpkRollout
+
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
 
@@ -76,6 +79,17 @@ private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
     raise Matter::TimeoutError.new("B controller ACL did not commit for migrated A node") if Time.instant >= deadline
     sleep 1.second
   end
+end
+
+private def jfa_rollout_attribute(type : T.class, im : Matter::Controller::ImClient,
+                                  session : Matter::Session::SecureContext,
+                                  peer : Socket::IPAddress, attribute_id : UInt32) : T forall T
+  report = im.read_attribute(session: session, peer: peer, endpoint_id: 1_u16,
+    cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+    attribute_id: attribute_id)
+  data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  T.from_tlv(data.to_slice)
 end
 
 private def assert_joiner_vvs(client : Matter::Controller::Client,
@@ -761,6 +775,55 @@ describe "three provisioned Joint Fabric Administrators" do
     third_acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(third_acl_data.to_slice)
     third_acl.any? { |entry| entry.subjects.try(&.includes?(0xFFFF_FFFD_FFFF_0001_u64)) || false }.should be_true
 
+    # The live Anchor now has two other Administrators. An eviction that drops
+    # its only IPK must wait for each trusted host to acknowledge the exact
+    # current KeySet0. The B/C processes have joined using this original IPK;
+    # this exercises the host guard, not adoption of a newly rotated epoch.
+    rollout = JfaRolloutDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    rollout.anchor_node_id = 0xA102_u64
+    rollout.anchor_root_ca = jfa_rollout_attribute(Bytes, anchor_im, anchor_session,
+      anchor_peer, JfaRolloutDatastore::ATTR_ANCHOR_ROOT_CA)
+    rollout.group_key_set_list = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreGroupKeySetStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_GROUP_KEY_SET_LIST)
+    rollout.node_list = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeInformationEntryStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_LIST)
+    rollout.node_key_set_list = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
+    rollout.admin_list = three_admins
+    current_ipk = rollout.group_key_set_list.find!(&.group_key_set_id.==(0_u16))
+    current_ipk.epoch_key0.should eq(anchor_bootstrap.fabric.ipk_value)
+    b_joined_node_id = 0xA103_u64
+    c_joined_node_id = 0xA104_u64
+    evicted_ipk = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(0_u16,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0xA6_u8), 2_u64, nil, nil, nil, nil)
+    expect_raises(Matter::ConfigurationError, Regex.new("Administrator #{b_joined_node_id} acknowledgment")) do
+      JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_cert, evicted_ipk, [] of JfaRollout::AdministratorAcknowledgment)
+    end
+    b_ack = JfaRollout.acknowledgment(b_joined_node_id, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, current_ipk)
+    expect_raises(Matter::ConfigurationError, Regex.new("Administrator #{c_joined_node_id} acknowledgment")) do
+      JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_cert, evicted_ipk, [b_ack])
+    end
+    stale_ipk = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(0_u16,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0xB7_u8), 1_u64, nil, nil, nil, nil)
+    stale_c_ack = JfaRollout.acknowledgment(c_joined_node_id, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, stale_ipk)
+    expect_raises(Matter::ConfigurationError, Regex.new("Administrator #{c_joined_node_id} acknowledgment")) do
+      JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+        anchor_bootstrap.fabric.root_cert, evicted_ipk, [b_ack, stale_c_ack])
+    end
+    c_ack = JfaRollout.acknowledgment(c_joined_node_id, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, current_ipk)
+    JfaRollout.preflight_eviction!(rollout, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_cert, evicted_ipk, [b_ack, c_ack])
+    jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreGroupKeySetStruct),
+      anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_GROUP_KEY_SET_LIST)
+      .find!(&.group_key_set_id.==(0_u16)).should eq(current_ipk)
+
     joined_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client, joiner_peer,
       anchor_bootstrap.fabric, peer_node_id: 0xA103_u64, timeout: E2E::COMMAND_TIMEOUT)
     index_report = anchor_im.read_attribute(session: joined_session, peer: joiner_peer,
@@ -1071,11 +1134,51 @@ describe "three provisioned Joint Fabric Administrators" do
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     transfer_anchor_noc = Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
       .from_tlv(noc_before_resume_data.to_slice).first.noc
-    # The resumed command must perform only pending follow-up, not rotate B's
-    # credentials or recopy the frozen Datastore.
+    # A finishes follow-up, then B crashes before it reaches C. The journal
+    # must skip A after restart and finish C without rotating B again.
+    interrupted_participants = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_first_transfer_follow_up: true))
+    interrupted_participants.status.should eq("error")
+    interrupted_participants.error.to_s.should contain("Injected interruption after first Anchor participant follow-up")
+    a_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
+    a_follow_up.inspected_follow_up_stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
+    c_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    c_follow_up.inspected_follow_up_stage.should be_nil
+    first_done = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA102_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    first_done.fabric_present.should be_false
+    first_new_fabric = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA102_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    first_new_fabric.fabric_present.should be_true
+    third_pending = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    third_pending.fabric_present.should be_true
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_first_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
+    persisted_first_follow_up.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
+    # The resumed command must perform only pending C follow-up, not replay A,
+    # rotate B's credentials, or recopy the frozen Datastore.
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
+    completed_third_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    completed_third_follow_up.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
     completed_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     completed_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed.value)
@@ -1206,6 +1309,17 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-fabric-removed", 0xA102_u64,
         nonce: proof_nonce))
     reconciled.status.should eq("ok"), reconciled.error.to_s
+    before_no_effect_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    before_no_effect_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    before_no_effect_report = before_no_effect_im.read_attribute(session: before_no_effect_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    before_no_effect_data = before_no_effect_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    outgoing_admin = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(before_no_effect_data.to_slice).find!(&.node_id.==(0xA102_u64))
+    outgoing_admin.icac.empty?.should be_false
     # The next RemoveAdmin attempt is interrupted before the Datastore changes.
     no_effect = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
@@ -1226,10 +1340,30 @@ describe "three provisioned Joint Fabric Administrators" do
     present_report = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
-    present_data = present_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
-    Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
-      .from_tlv(present_data.to_slice).map(&.node_id).should contain(0xA102_u64)
+    present_attribute = present_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB)
+    present_version = present_attribute.data_version || raise Matter::ProtocolError.new("AdminList DataVersion is absent")
+    present_admin = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(present_attribute.data.as(TLV::Any).to_slice).find!(&.node_id.==(0xA102_u64))
+    present_admin.icac.should eq(outgoing_admin.icac)
+    # An unrelated committed change advances the cluster-wide DataVersion.
+    # Reconciliation still compares the journaled Administrator entry itself.
+    unrelated_group = promoted_im.invoke(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricDatastore::CMD_ADD_GROUP,
+      fields: Matter::Cluster::JointFabricDatastore::AddGroupRequest.new(
+        0x7A01_u16, "No-effect recovery probe", nil, nil, nil,
+        Matter::Cluster::JointFabricDatastore::DatastoreAccessControlEntryPrivilegeEnum::View).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(unrelated_group)
+    advanced_report = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    advanced_attribute = advanced_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB)
+    advanced_attribute.data_version.should_not eq(present_version)
+    advanced_admin = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(advanced_attribute.data.as(TLV::Any).to_slice).find!(&.node_id.==(0xA102_u64))
+    advanced_admin.icac.should eq(outgoing_admin.icac)
     unchanged_groups = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
