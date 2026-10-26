@@ -35,7 +35,7 @@ describe "Door Lock verified RFID host input with official chip-tool" do
     credential = %({"credentialType":2,"credentialIndex":1})
     add = Matter::Cluster::DoorLock::DataOperationType::Add.value.to_s
     result = expect_success(device.invoke("doorlock", "set-credential",
-      [add, credential, "RFID1357", "2", "1", "0"], options: timed))
+      [add, credential, "RFID1357", "2", "null", "null"], options: timed))
     result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Success.value.to_i64), result.output
     status = expect_success(device.invoke("doorlock", "get-credential-status", [credential]))
     status.bool("credentialExists").should be_true

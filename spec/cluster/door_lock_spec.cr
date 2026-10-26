@@ -428,9 +428,7 @@ describe Matter::Cluster::DoorLock do
         operation_type: Def::DataOperationType::Add,
         credential: credential,
         credential_data: "1357".to_slice,
-        user_index: 2_u16,
-        user_status: Def::UserStatus::OccupiedEnabled,
-        user_type: Def::UserType::UnrestrictedUser
+        user_index: 2_u16
       )
 
       set_result = invoke(cluster, Matter::Cluster::DoorLock::CMD_SET_CREDENTIAL, set_credential)
@@ -463,9 +461,7 @@ describe Matter::Cluster::DoorLock do
         operation_type: Def::DataOperationType::Add,
         credential: credential,
         credential_data: "9999".to_slice,
-        user_index: 2_u16,
-        user_status: Def::UserStatus::OccupiedEnabled,
-        user_type: Def::UserType::UnrestrictedUser
+        user_index: 2_u16
       )
 
       result = invoke(cluster, Matter::Cluster::DoorLock::CMD_SET_CREDENTIAL, request)

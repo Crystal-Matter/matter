@@ -115,7 +115,7 @@ describe "matter_door_lock example" do
   it "keeps a commissioned fabric, user, and PIN credential across restart" do
     credential = %({"credentialType":1,"credentialIndex":1})
     expect_success(device.invoke("doorlock", "set-user", ["0", "2", "Guest", "222", "1", "0", "0"], options: timed))
-    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "1357", "2", "1", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "1357", "2", "null", "null"], options: timed))
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "1357"]))
 
     device.restart!
@@ -154,7 +154,7 @@ describe "matter_door_lock example" do
     credential = %({"credentialType":1,"credentialIndex":3})
     disposable_pin = ["--PINCode", "5757"]
     expect_success(device.invoke("doorlock", "set-user", ["0", "4", "One Use", "444", "1", "6", "0"], options: timed))
-    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "5757", "4", "1", "6"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", ["0", credential, "5757", "4", "null", "null"], options: timed))
 
     expect_success(device.invoke("doorlock", "lock-door", options: timed + disposable_pin))
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + disposable_pin))
@@ -174,15 +174,15 @@ describe "matter_door_lock example" do
     second = %({"credentialType":1,"credentialIndex":5})
     duplicate = %({"credentialType":1,"credentialIndex":6})
     expect_success(device.invoke("doorlock", "set-user", ["0", "6", "First", "666", "1", "0", "0"], options: timed))
-    expect_success(device.invoke("doorlock", "set-credential", [add, first, "7777", "6", "1", "0"], options: timed))
-    expect_success(device.invoke("doorlock", "set-credential", [add, second, "8888", "7", "1", "0"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", [add, first, "7777", "6", "null", "null"], options: timed))
+    expect_success(device.invoke("doorlock", "set-credential", [add, second, "8888", "7", "null", "null"], options: timed))
 
-    result = expect_success(device.invoke("doorlock", "set-credential", [add, duplicate, "7777", "8", "1", "0"], options: timed))
+    result = expect_success(device.invoke("doorlock", "set-credential", [add, duplicate, "7777", "8", "null", "null"], options: timed))
     result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Duplicate.value.to_i64), result.output
     expect_success(device.invoke("doorlock", "get-credential-status", [duplicate])).bool("credentialExists").should be_false
     expect_success(device.invoke("doorlock", "get-user", ["8"])).int("userStatus").should eq(0_i64)
 
-    result = expect_success(device.invoke("doorlock", "set-credential", [modify, second, "7777", "7", "1", "0"], options: timed))
+    result = expect_success(device.invoke("doorlock", "set-credential", [modify, second, "7777", "7", "null", "null"], options: timed))
     result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::Duplicate.value.to_i64), result.output
     expect_success(device.invoke("doorlock", "unlock-door", options: timed + ["--PINCode", "8888"]))
   end
@@ -190,10 +190,23 @@ describe "matter_door_lock example" do
   it "rejects Available as the SetCredential user status without creating a user" do
     credential = %({"credentialType":1,"credentialIndex":7})
     result = expect_success(device.invoke("doorlock", "set-credential",
-      ["0", credential, "9090", "9", "0", "0"], options: timed))
+      ["0", credential, "9090", "null", "0", "0"], options: timed))
     result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::InvalidField.value.to_i64), result.output
     expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_false
     expect_success(device.invoke("doorlock", "get-user", ["9"])).int("userStatus").should eq(0_i64)
+  end
+
+  it "rejects non-null user fields when adding a credential to a specified user" do
+    credential = %({"credentialType":1,"credentialIndex":8})
+    expect_success(device.invoke("doorlock", "set-user", ["0", "10", "Fields", "1010", "1", "0", "0"], options: timed))
+
+    [{"1", "null"}, {"null", "0"}].each do |status, user_type|
+      result = expect_success(device.invoke("doorlock", "set-credential",
+        ["0", credential, "8080", "10", status, user_type], options: timed))
+      result.int("status").should eq(Matter::Cluster::DoorLock::StatusCode::InvalidField.value.to_i64), result.output
+    end
+
+    expect_success(device.invoke("doorlock", "get-credential-status", [credential])).bool("credentialExists").should be_false
   end
 
   it "retains a wrong-PIN temporary lockout after a device restart" do

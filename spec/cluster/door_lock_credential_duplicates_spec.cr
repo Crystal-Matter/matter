@@ -28,9 +28,7 @@ end
 private def set_duplicate_credential(lock : DuplicateDoorLock, operation : DuplicateDoorLock::DataOperationType,
                                      credential : DuplicateDoorLock::Credential, data : String, user_index : UInt16) : DuplicateDoorLock::SetCredentialResponse
   lock.handle_set_credential(DuplicateDoorLock::SetCredentialRequest.new(
-    operation, credential, data.to_slice, user_index,
-    DuplicateDoorLock::UserStatus::OccupiedEnabled,
-    DuplicateDoorLock::UserType::UnrestrictedUser))
+    operation, credential, data.to_slice, user_index: user_index))
 end
 
 describe "Door Lock duplicate credential values" do
