@@ -15,21 +15,22 @@ module Matter
       def initialize(@path : String)
         raise StorageError.new("SQLite storage path must not be empty") if @path.empty?
 
-        absolute_path = File.expand_path(@path)
-        database_url = "sqlite3://#{URI.encode_path(absolute_path)}?busy_timeout=#{BUSY_TIMEOUT_MS}&journal_mode=wal&synchronous=full"
+        # Keep filesystem operations anchored to the same file as the DB URL.
+        @absolute_path = File.expand_path(@path)
+        database_url = "sqlite3://#{URI.encode_path(@absolute_path)}?busy_timeout=#{BUSY_TIMEOUT_MS}&journal_mode=wal&synchronous=full"
         super(database_url)
       end
 
       def open : Nil
-        FileUtils.mkdir_p(File.dirname(@path))
+        FileUtils.mkdir_p(File.dirname(@absolute_path))
         super
       end
 
       def destroy! : Nil
         close
-        File.delete?(@path)
-        File.delete?("#{@path}-wal")
-        File.delete?("#{@path}-shm")
+        File.delete?(@absolute_path)
+        File.delete?("#{@absolute_path}-wal")
+        File.delete?("#{@absolute_path}-shm")
       end
 
       protected def bind(index : Int32) : String
