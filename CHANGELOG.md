@@ -125,6 +125,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Prepare Manage-only Schedules atomic writes behind the MSCH gate: secure peer and fabric ownership, bounded timeouts, private list staging, null-handle append, conditional version checks, rollback, commit validation, and durable handle history. MSCH stays unadvertised pending combined Presets/Schedules transactions, active schedule behavior, and official E2E coverage.
 - Prepare combined Presets and Schedules atomic writes behind the MSCH gate. One reservation stages both lists, validates final schedule references against final presets, and either publishes both or discards both. Preset-only writes cannot delete presets still referenced by committed schedules. Production MSCH remains gated pending active schedule behavior and official wire E2E.
 
+### Thermostat setpoint write access
+
+- Require Operate privilege for writes to occupied and unoccupied heating and
+  cooling setpoints, as specified by Matter 1.6.
+
 ### Thermostat setpoint limit reconciliation
 
 - Validate user heat and cool limit writes against manufacturer bounds, opposing limits, and the Auto deadband before changing state. Accepted writes clamp both occupied and guarded unoccupied setpoints by the minimum required amount; rejected writes leave the limits, setpoints, and DataVersion untouched. The guarded chip-tool OCC fixture checks that a Manage limit write adjusts both pairs.
