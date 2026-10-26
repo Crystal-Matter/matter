@@ -180,12 +180,12 @@ module Matter
 
       attribute 0x0000, :name_support, NameSupport, default: NameSupport::None
 
-      command 0x00, :add_group, request: AddGroupRequest, response: AddGroupResponse
+      command 0x00, :add_group, request: AddGroupRequest, response: AddGroupResponse, access: :manage
       command 0x01, :view_group, request: ViewGroupRequest, response: ViewGroupResponse
       command 0x02, :get_group_membership, request: GetGroupMembershipRequest, response: GetGroupMembershipResponse
-      command 0x03, :remove_group, request: RemoveGroupRequest, response: RemoveGroupResponse
-      command 0x04, :remove_all_groups
-      command 0x05, :add_group_if_identifying, request: AddGroupIfIdentifyingRequest
+      command 0x03, :remove_group, request: RemoveGroupRequest, response: RemoveGroupResponse, access: :manage
+      command 0x04, :remove_all_groups, access: :manage
+      command 0x05, :add_group_if_identifying, request: AddGroupIfIdentifyingRequest, access: :manage
 
       # Group storage: GroupId => GroupName
       property groups : Hash(UInt16, String)

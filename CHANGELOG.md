@@ -232,6 +232,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add opt-in Matter 1.6 Thermostat Events (TEVT) with typed mode, temperature, setpoint, relay-state, and running-mode events. Significant temperature events are rate-limited to one per minute, LTNE suppresses the sensor event, and controller writes remain persistent. The cluster retains revision 9 while the remaining revision 11 features are implemented separately.
 
+### Groups command access control
+
+- Require Manage privilege for AddGroup, RemoveGroup, RemoveAllGroups, and
+  AddGroupIfIdentifying as declared by Matter 1.6. Operate privilege still permits
+  ViewGroup and GetGroupMembership, but cannot change fabric group membership.
+
 ### Groupcast fabric removal
 
 - Clear authenticated group sender replay windows for a removed fabric before
