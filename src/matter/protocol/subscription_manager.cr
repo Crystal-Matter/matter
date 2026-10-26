@@ -217,9 +217,7 @@ module Matter
               @pending_updates.delete(key)
               @inflight_updates.delete(pending.subscription_id)
               if subscription = @registry.active_subscriptions[pending.subscription_id]?
-                if cursor = pending.event_cursor
-                  subscription.last_event_number = cursor
-                end
+                advance_event_cursor(subscription, pending.event_cursor)
                 subscription.last_report_time = Time.utc
               end
               @sender.send_encrypted_ack(trigger, pending.peer, pending.session) if trigger.payload_header.requires_acknowledge?
@@ -416,9 +414,7 @@ module Matter
 
       private def advance_event_cursor(subscription : ActiveSubscription, scanned_through : UInt64?) : Nil
         return unless scanned_through
-        if scanned_through > subscription.last_event_number
-          subscription.last_event_number = scanned_through
-        end
+        subscription.last_event_number = scanned_through if scanned_through > subscription.last_event_number
       end
 
       private def prune_inflight_updates(subscriptions : Hash(UInt32, ActiveSubscription),
@@ -451,10 +447,9 @@ module Matter
         end
       end
 
-      # Snapshot the global journal high watermark before selecting requested
-      # records. Unrelated events still trigger concrete denied-path statuses,
-      # while a new record written after this snapshot remains for the next
-      # report rather than being skipped when the cursor commits.
+      # Snapshot the global high watermark before selecting requested records.
+      # A newer unrelated event can trigger denied concrete path statuses,
+      # while records added after the snapshot stay available for the next report.
       private def journal_snapshot(subscription : ActiveSubscription) : Tuple(Array(EventJournal::Record), UInt64?)
         empty = [] of EventJournal::Record
         return {empty, nil} unless subscription.events?
@@ -484,10 +479,10 @@ module Matter
           subscription_subjects(subscription))
         subscription.event_paths.each do |path|
           next if path.wildcard?
-          if status = IMHandler.event_read_status(path, @node.clusters,
+          if status = IMHandler.concrete_event_status(path, @node.clusters,
                subscription.session.case_session?, subscription.session.fabric_index,
                subscription_subjects(subscription))
-            reports << InteractionModel::EventReportIB.new(event_status: InteractionModel::EventStatusIB.new(path, InteractionModel::StatusIB.new(status.value)))
+            reports << InteractionModel::EventReportIB.new(event_status: status)
           end
         end
         reports
