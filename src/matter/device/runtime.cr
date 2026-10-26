@@ -124,6 +124,7 @@ module Matter
     @administrator_commissioning : Cluster::AdministratorCommissioning? = nil
     @groupcast_outbound : GroupcastSender? = nil
     @groupcast_sender_enabled : Bool = false
+    @prepared_fabric_cleanup : Hash(UInt8, String) = {} of UInt8 => String
 
     # Endpoints added from a template, by endpoint number: the template name
     # and the parameters it was built from.
@@ -279,6 +280,8 @@ module Matter
           @message_handler.sessions
             .select { |_id, session| session.fabric_index == index }
             .keys.each { |id| @message_handler.delete_session(id) }
+          prepared_identity = @prepared_fabric_cleanup.delete(index)
+          prepare_fabric_scoped_removal(index) unless prepared_identity == fabric.storage_identity
           access_control.remove_fabric_acl(index)
           unless @persistence.save_cluster(access_control)
             raise StorageError.new("Could not persist erased Access Control for fabric #{index}")
@@ -434,6 +437,7 @@ module Matter
         @message_handler.refresh_group_memberships
       end
       operational_credentials.on_fabric_removal_rollback = ->(_fabric_index : UInt8) do
+        @prepared_fabric_cleanup.delete(_fabric_index)
         fabric_removal_snapshot_clusters.each do |cluster|
           next unless previous = Commissioning::FabricRemovalJournal.previous(
                         @persistence.backend, Storage::Collections::CLUSTERS, cluster.persistence_key)
@@ -444,99 +448,15 @@ module Matter
         end
       end
       operational_credentials.on_before_fabric_removed = ->(fabric_index : UInt8) do
-        # Keep retained events private even if a later ACL write fails after
-        # the fabric document is deleted and its index becomes reusable.
-        @node.event_journal.remove_fabric(fabric_index)
-        group_keys = @message_handler.node.get_cluster(Cluster::GroupKeyManagement).as(Cluster::GroupKeyManagement)
-        group_keys.remove_fabric(fabric_index)
-        unless @persistence.save_cluster(group_keys)
-          @persistence.mark_dirty(group_keys)
-          raise StorageError.new("Could not persist erased Group Key Management for fabric #{fabric_index}")
-        end
-
-        @message_handler.clusters.values.each do |cluster|
-          next unless groups = cluster.as?(Cluster::Groups)
-          groups.remove_fabric(fabric_index)
-          # A prior attempt may have cleared RAM but failed to save the file.
-          unless @persistence.save_cluster(groups)
-            @persistence.mark_dirty(groups)
-            raise StorageError.new("Could not persist erased Groups for fabric #{fabric_index}")
-          end
-        end
-
-        @message_handler.clusters.values.each do |cluster|
-          next unless scenes = cluster.as?(Cluster::ScenesManagement)
-          scenes.remove_fabric(fabric_index)
-          # Always rewrite: a failed prior removal can leave the old document
-          # after its in-memory entries were already erased.
-          unless @persistence.save_cluster(scenes)
-            @persistence.mark_dirty(scenes)
-            raise StorageError.new("Could not persist erased Scenes for fabric #{fabric_index}")
-          end
-        end
-
-        @message_handler.clusters.values.each do |cluster|
-          next unless binding = cluster.as?(Cluster::Binding)
-          binding.remove_fabric(fabric_index)
-          # Always rewrite the document: a prior attempt may have erased the
-          # in-memory target but failed to persist it before aborting removal.
-          unless @persistence.save_cluster(binding)
-            @persistence.mark_dirty(binding)
-            raise StorageError.new("Could not persist erased Binding for fabric #{fabric_index}")
-          end
-        end
-        @message_handler.clusters.values.each do |cluster|
-          next unless time_sync = cluster.as?(Cluster::TimeSynchronization)
-          next unless time_sync.feature_map.trusted_time_client?
-          time_sync.remove_fabric(fabric_index)
-          # A failed write may already have cleared RAM. Rewrite on every
-          # removal attempt before the old fabric index becomes reusable.
-          unless @persistence.save_cluster(time_sync)
-            @persistence.mark_dirty(time_sync)
-            raise StorageError.new("Could not persist erased TrustedTimeSource for fabric #{fabric_index}")
-          end
-        end
-        # WebRTC sessions are volatile, but a later ACL write can fail after
-        # the fabric document is gone. End them before that index is reusable.
-        @message_handler.clusters.values.each do |cluster|
-          cluster.as?(Cluster::WebRtcTransportProvider).try(&.remove_fabric(fabric_index))
-          cluster.as?(Cluster::WebRtcTransportRequestor).try(&.remove_fabric(fabric_index))
-        end
-        before_fabric_removed(fabric_index)
+        @prepared_fabric_cleanup.delete(fabric_index)
+        prepare_fabric_scoped_removal(fabric_index)
+        @prepared_fabric_cleanup[fabric_index] = @fabric_table.get_fabric(fabric_index).as(Fabric).storage_identity
       end
       @lifecycle.on_fabric_removed = ->(fabric_index : UInt8) do
-        # A review callback may have emitted after the earlier purge and before
-        # Access Control cancelled that fabric's in-flight reviews.
+        @prepared_fabric_cleanup.delete(fabric_index)
+        # A managed review callback can emit after the earlier purge and
+        # before Access Control cancels that fabric's pending reviews.
         @node.event_journal.remove_fabric(fabric_index)
-        @message_handler.forget_group_fabric(fabric_index)
-        @message_handler.node.get_cluster(Cluster::OtaRequestor).try(&.remove_fabric(fabric_index))
-        @message_handler.clusters.values.each do |cluster|
-          cluster.as?(Cluster::PushAvStreamTransport).try(&.remove_fabric(fabric_index))
-        end
-        @message_handler.clusters.values.each do |cluster|
-          if ecosystem_information = cluster.as?(Cluster::EcosystemInformation)
-            ecosystem_information.remove_fabric(fabric_index)
-            unless @persistence.save_cluster(ecosystem_information)
-              @persistence.mark_dirty(ecosystem_information)
-              raise StorageError.new("Could not persist erased Ecosystem Information for fabric #{fabric_index}")
-            end
-          end
-          if messages = cluster.as?(Cluster::Messages)
-            messages.remove_fabric(fabric_index)
-            unless @persistence.save_cluster(messages)
-              @persistence.mark_dirty(messages)
-              raise StorageError.new("Could not persist erased Messages for fabric #{fabric_index}")
-            end
-          end
-          cluster.as?(Cluster::CommissionerControl).try(&.remove_fabric(fabric_index))
-          cluster.as?(Cluster::Thermostat).try(&.remove_fabric(fabric_index))
-          cluster.as?(Cluster::TlsClientManagement).try(&.remove_fabric(fabric_index))
-          cluster.as?(Cluster::TlsCertificateManagement).try(&.remove_fabric(fabric_index))
-        end
-        icd_management.try do |fabric_icd|
-          fabric_icd.remove_fabric(fabric_index)
-          @persistence.save_cluster(fabric_icd)
-        end
         fabric_removed(fabric_index)
       end
       @lifecycle.on_commissioned = ->(fabric : Fabric) do
@@ -832,7 +752,15 @@ module Matter
           cluster.is_a?(Cluster::Groups) ||
           cluster.is_a?(Cluster::ScenesManagement) ||
           cluster.is_a?(Cluster::Binding) ||
-          cluster.is_a?(Cluster::TimeSynchronization)
+          cluster.is_a?(Cluster::TimeSynchronization) ||
+          cluster.is_a?(Cluster::Groupcast) ||
+          cluster.is_a?(Cluster::OtaRequestor) ||
+          cluster.is_a?(Cluster::PushAvStreamTransport) ||
+          cluster.is_a?(Cluster::EcosystemInformation) ||
+          cluster.is_a?(Cluster::Messages) ||
+          cluster.is_a?(Cluster::TlsClientManagement) ||
+          cluster.is_a?(Cluster::TlsCertificateManagement) ||
+          cluster.is_a?(Cluster::IcdManagement)
       end
     end
 
@@ -929,6 +857,49 @@ module Matter
     # ------------------------------------------------------------------------
     # Internal wiring
     # ------------------------------------------------------------------------
+    private def prepare_fabric_scoped_removal(fabric_index : UInt8) : Nil
+      @node.event_journal.remove_fabric(fabric_index)
+      @message_handler.forget_group_fabric(fabric_index)
+
+      # Always rewrite each document. A failed earlier attempt may already
+      # have erased RAM while leaving the old fabric's stored entries intact.
+      @message_handler.clusters.values.each do |cluster|
+        case cluster
+        when Cluster::GroupKeyManagement
+          persist_erased_fabric_cluster(cluster, fabric_index, "Group Key Management")
+        when Cluster::ScenesManagement
+          persist_erased_fabric_cluster(cluster, fabric_index, "Scenes")
+        when Cluster::Groupcast, Cluster::Groups
+          persist_erased_fabric_cluster(cluster, fabric_index)
+        when Cluster::Binding
+          cluster.remove_fabric(fabric_index)
+          persist_erased_fabric_cluster(cluster, fabric_index)
+        when Cluster::TimeSynchronization
+          if cluster.feature_map.trusted_time_client?
+            cluster.remove_fabric(fabric_index)
+            persist_erased_fabric_cluster(cluster, fabric_index, "TrustedTimeSource")
+          end
+        when Cluster::OtaRequestor, Cluster::PushAvStreamTransport,
+             Cluster::EcosystemInformation, Cluster::Messages,
+             Cluster::TlsClientManagement, Cluster::TlsCertificateManagement,
+             Cluster::IcdManagement
+          cluster.remove_fabric(fabric_index)
+          persist_erased_fabric_cluster(cluster, fabric_index)
+        when Cluster::CommissionerControl, Cluster::Thermostat,
+             Cluster::WebRtcTransportProvider, Cluster::WebRtcTransportRequestor
+          cluster.remove_fabric(fabric_index)
+        end
+      end
+      before_fabric_removed(fabric_index)
+    end
+
+    private def persist_erased_fabric_cluster(cluster : Cluster::Base, fabric_index : UInt8,
+                                              label : String = cluster.name) : Nil
+      return if @persistence.save_cluster(cluster)
+      @persistence.mark_dirty(cluster)
+      raise StorageError.new("Could not persist erased #{label} for fabric #{fabric_index}")
+    end
+
     private def restore_stored_document(collection : String, id : String,
                                         previous : Storage::Document?) : Nil
       if previous

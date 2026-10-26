@@ -1,5 +1,10 @@
 require "../spec_helper"
 require "../../src/matter/device"
+require "../../src/matter/cluster/groups"
+require "../../src/matter/cluster/scenes_management"
+require "../../src/matter/cluster/binding"
+require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/identify"
 
 private class FabricEventSpecDevice < Matter::Device
   identity vendor: "Crystal Matter", product: "Fabric Event Test",
@@ -9,13 +14,39 @@ private class FabricEventSpecDevice < Matter::Device
   storage :memory
 end
 
+private class FabricScopedReuseDevice < Matter::Device
+  identity vendor: "Crystal Matter", product: "Fabric Reuse Test",
+    vendor_id: 0xFFF1_u16, product_id: 0x8134_u16,
+    discriminator: 3844_u16, pin: 20202097_u32,
+    device_type: Matter::DeviceType::ROOT_NODE
+  storage :memory
+
+  protected def endpoint_device_types : Hash(UInt16, UInt32)
+    {1_u16 => Matter::DeviceType::ON_OFF_LIGHT}
+  end
+
+  protected def device_clusters : Array(Matter::Cluster::Base)
+    endpoint = Matter::DataType::EndpointNumber.new(1_u16)
+    [Matter::Cluster::OnOff.new(endpoint), Matter::Cluster::Identify.new(endpoint),
+     Matter::Cluster::Groups.new(endpoint), Matter::Cluster::ScenesManagement.new(endpoint),
+     Matter::Cluster::Binding.new(endpoint)] of Matter::Cluster::Base
+  end
+end
+
 private class FabricEventFailAclStorage < Matter::Storage::Memory
   property fail_next_acl_id : String?
+  property fail_next_cluster_id : String?
 
   def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
-    if collection == Matter::Storage::Collections::CLUSTERS && id == @fail_next_acl_id
-      @fail_next_acl_id = nil
-      raise Matter::StorageError.new("Injected ACL write failure")
+    if collection == Matter::Storage::Collections::CLUSTERS
+      if id == @fail_next_acl_id
+        @fail_next_acl_id = nil
+        raise Matter::StorageError.new("Injected ACL write failure")
+      end
+      if id == @fail_next_cluster_id
+        @fail_next_cluster_id = nil
+        raise Matter::StorageError.new("Injected cluster write failure")
+      end
     end
     super
   end
@@ -31,6 +62,82 @@ private def event_spec_fabric(index : UInt8, fabric_id : UInt64) : Matter::Fabri
 end
 
 describe Matter::Device do
+  it "keeps the old fabric reserved after a failed group-key purge and safely retries after restart" do
+    require_udp_sockets!
+    storage = FabricEventFailAclStorage.new
+    device = FabricScopedReuseDevice.new(storage: storage, port: 0)
+    device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x1001_u64)).should be_true
+    keys = device.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+    keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(5_u16,
+        epoch_key0: Bytes.new(16, 0xAA_u8), epoch_start_time0: 1_u64)), 1_u8)
+    device.persistence.save_cluster(keys).should be_true
+    stored = storage.read(Matter::Storage::Collections::CLUSTERS, keys.persistence_key)
+    storage.fail_next_cluster_id = keys.persistence_key
+    expect_raises(Matter::StorageError, /Group Key Management/) do
+      device.fabric_table.remove_fabric(1_u8)
+    end
+    device.fabric_table.get_fabric(1_u8).should_not be_nil
+    device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x2001_u64)).should be_false
+    storage.read(Matter::Storage::Collections::CLUSTERS, keys.persistence_key).should eq(stored)
+
+    # Simulate an abrupt restart without flushing dirty in-memory state.
+    device.message_handler.close
+    device.transport.close
+    storage.close
+    restarted = FabricScopedReuseDevice.new(storage: storage, port: 0)
+    restarted.fabric_table.get_fabric(1_u8).should_not be_nil
+    restarted_keys = restarted.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+    restarted_keys.get_key_set(5_u16, 1_u8).should_not be_nil
+    restarted.fabric_table.remove_fabric(1_u8).should be_true
+    restarted.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x2001_u64)).should be_true
+    restarted_keys.get_key_set(5_u16, 1_u8).should be_nil
+  ensure
+    if restarted
+      restarted.message_handler.close
+      restarted.persistence.close
+      restarted.transport.close
+    end
+  end
+
+  it "erases fabric-scoped group keys, scenes, and bindings before direct index reuse" do
+    require_udp_sockets!
+    storage = Matter::Storage::Memory.new
+    device = FabricScopedReuseDevice.new(storage: storage, port: 0)
+    device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x1001_u64)).should be_true
+    keys = device.node.get_cluster!(Matter::Cluster::GroupKeyManagement)
+    keys.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(5_u16,
+        epoch_key0: Bytes.new(16, 0xAA_u8), epoch_start_time0: 1_u64)), 1_u8)
+    keys.add_group_key_map(0x1234_u16, 5_u16, 1_u8)
+    device.persistence.save_cluster(keys).should be_true
+    scenes = device.node.get_cluster!(1_u16, Matter::Cluster::ScenesManagement)
+    scenes.scenes[{1_u8, 0x1234_u16, 1_u8}] = Matter::Cluster::ScenesManagement::SceneData.new(
+      scene_name: "Old fabric scene")
+    device.persistence.save_cluster(scenes).should be_true
+    binding = device.node.get_cluster!(1_u16, Matter::Cluster::Binding)
+    binding.binding = [Matter::Cluster::Binding::Target.new(node: 0x1234_u64,
+      endpoint: 1_u16, fabric_index: 1_u8)]
+    device.persistence.save_cluster(binding).should be_true
+
+    device.fabric_table.remove_fabric(1_u8).should be_true
+    device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x2001_u64)).should be_true
+    keys.get_key_set(5_u16, 1_u8).should be_nil
+    keys.group_key_map(1_u8).should be_empty
+    scenes.has_scene?(0x1234_u16, 1_u8, 1_u8).should be_false
+    binding.binding.should be_empty
+    [keys, scenes, binding].each do |cluster|
+      stored = storage.read(Matter::Storage::Collections::CLUSTERS, cluster.persistence_key)
+      stored.should eq(cluster.save_state)
+    end
+  ensure
+    if device
+      device.message_handler.close
+      device.persistence.close
+      device.transport.close
+    end
+  end
+
   it "purges CASE sessions, ACL, and retained events on direct fabric table removal" do
     require_udp_sockets!
     device = FabricEventSpecDevice.new(storage: Matter::Storage::Memory.new, port: 0)

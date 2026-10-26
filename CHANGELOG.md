@@ -24,8 +24,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and
-  resumption records before public FabricTable removal can free an index. Keep
-  security cleanup independent of replaceable host removal observers.
+  resumption records before public FabricTable removal can free an index. Erase
+  group keys, scenes, bindings, and other fabric-scoped cluster state durably
+  before the index is released. Keep security cleanup independent of replaceable
+  host removal observers.
 - Bind persisted CASE sessions to the fabric ID and trust root, and reject
   in-place or same-index fabric identity replacement before old fabric state
   can be used by a different fabric.
