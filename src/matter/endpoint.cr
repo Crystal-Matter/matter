@@ -6,6 +6,7 @@ require "./cluster/color_control"
 require "./cluster/descriptor"
 require "./cluster/level_control"
 require "./cluster/on_off"
+require "./cluster/mode_select"
 require "./cluster/scenes_management"
 require "./datatype/endpoint_number"
 
@@ -65,6 +66,9 @@ module Matter
       end
       if color = get_cluster(Cluster::ColorControl)
         color.bind_on_off(get_cluster(Cluster::OnOff))
+      end
+      if mode = get_cluster(Cluster::ModeSelect)
+        mode.bind_on_off(get_cluster(Cluster::OnOff))
       end
       cluster
     end

@@ -71,7 +71,8 @@ module Matter
         end
       end
 
-      attribute 0x0000, :on_off, Bool, default: false, persist: true, scene: true, callback: :new_only
+      attribute 0x0000, :on_off, Bool, default: false, persist: true, scene: true,
+        callback: :new_only, on_change: :on_off_mode_changed
       attribute 0x4000, :global_scene_control, Bool, default: true, persist: true, requires: :lighting
       attribute 0x4001, :on_time, UInt16, default: 0_u16, writable: true, persist: false, requires: :lighting
       attribute 0x4002, :off_wait_time, UInt16, default: 0_u16, writable: true, persist: false, requires: :lighting
@@ -93,16 +94,28 @@ module Matter
         @next_timed_tick = nil
         @timed_fiber_running = false
         @level_on_effect = nil
+        @mode_on_effect = nil
       end
 
       @next_timed_tick : Time::Instant?
       @timed_fiber_running : Bool
       @level_on_effect : Proc(Nil)?
+      @mode_on_effect : Proc(Nil)?
 
       # Internal endpoint hook for the LevelControl OnLevel effect. This is
       # separate from the application-facing OnOff attribute change callback.
       def bind_level_on_effect(&block : -> Nil) : Nil
         @level_on_effect = block
+      end
+
+      # Internal sibling-cluster hook. It does not replace the application
+      # callback registered with on_state_changed.
+      def bind_mode_on_effect(&block : -> Nil) : Nil
+        @mode_on_effect = block
+      end
+
+      private def on_off_mode_changed(value : Bool) : Nil
+        @mode_on_effect.try(&.call) if value
       end
 
       # Lighting applications apply the persisted StartUpOnOff preference when
