@@ -152,7 +152,9 @@ item below as covered only to the extent of its cited tests.
   have the journaled entry, including its ICAC, even if unrelated Datastore
   changes advanced the cluster-wide DataVersion,
   and the Administrator CAT must remain unchanged. The three-Administrator
-  Docker extension for this path is pending execution. B and C remain
+  Docker scenario now exercises this path by adding an unrelated Group entry
+  after B restarts, checking the advanced DataVersion and unchanged ICAC,
+  reconciling the no-effect outcome, and then completing removal. B and C remain
   registered while B is also restarted after lost Anchor and participant rotation
   acknowledgements. Recovery uses fresh CASE and a host-supplied 32-byte
   nonce in SignVIDVerificationRequest to prove possession of the target's

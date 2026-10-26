@@ -1246,6 +1246,17 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-fabric-removed", 0xA102_u64,
         nonce: proof_nonce))
     reconciled.status.should eq("ok"), reconciled.error.to_s
+    before_no_effect_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    before_no_effect_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    before_no_effect_report = before_no_effect_im.read_attribute(session: before_no_effect_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    before_no_effect_data = before_no_effect_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    outgoing_admin = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(before_no_effect_data.to_slice).find!(&.node_id.==(0xA102_u64))
+    outgoing_admin.icac.empty?.should be_false
     # The next RemoveAdmin attempt is interrupted before the Datastore changes.
     no_effect = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
@@ -1266,10 +1277,30 @@ describe "three provisioned Joint Fabric Administrators" do
     present_report = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
-    present_data = present_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
-    Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
-      .from_tlv(present_data.to_slice).map(&.node_id).should contain(0xA102_u64)
+    present_attribute = present_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB)
+    present_version = present_attribute.data_version || raise Matter::ProtocolError.new("AdminList DataVersion is absent")
+    present_admin = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(present_attribute.data.as(TLV::Any).to_slice).find!(&.node_id.==(0xA102_u64))
+    present_admin.icac.should eq(outgoing_admin.icac)
+    # An unrelated committed change advances the cluster-wide DataVersion.
+    # Reconciliation still compares the journaled Administrator entry itself.
+    unrelated_group = promoted_im.invoke(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricDatastore::CMD_ADD_GROUP,
+      fields: Matter::Cluster::JointFabricDatastore::AddGroupRequest.new(
+        0x7A01_u16, "No-effect recovery probe", nil, nil, nil,
+        Matter::Cluster::JointFabricDatastore::DatastoreAccessControlEntryPrivilegeEnum::View).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(unrelated_group)
+    advanced_report = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    advanced_attribute = advanced_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB)
+    advanced_attribute.data_version.should_not eq(present_version)
+    advanced_admin = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(advanced_attribute.data.as(TLV::Any).to_slice).find!(&.node_id.==(0xA102_u64))
+    advanced_admin.icac.should eq(outgoing_admin.icac)
     unchanged_groups = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
