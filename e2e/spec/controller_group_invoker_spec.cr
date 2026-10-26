@@ -2,6 +2,7 @@ require "./e2e_helper"
 require "../../src/matter/controller"
 
 private alias GKM = Matter::Cluster::GroupKeyManagement
+private alias JFD = Matter::Cluster::JointFabricDatastore
 private alias IM = Matter::InteractionModel
 
 private def group_e2e_invoke!(im : Matter::Controller::ImClient,
@@ -69,16 +70,31 @@ describe "Crystal controller group Invoke to official connectedhomeip recipient"
     session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, fabric,
       peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
     im = Matter::Controller::ImClient.new(client, E2E::COMMAND_TIMEOUT)
-    keyset = GKM::GroupKeySetStruct.new(keyset_id, GKM::GroupKeySecurityPolicyEnum::TrustFirst,
-      epoch_key, 1_110_000_u64)
-    group_e2e_invoke!(im, session, peer, 0_u16, GKM::CLUSTER_ID, GKM::CMD_KEY_SET_WRITE,
-      GKM::KeySetWriteRequest.new(keyset).to_slice)
-    mapping = [GKM::GroupKeyMapStruct.new(group_id, keyset_id, 1_u8)]
-    group_e2e_write!(im, session, peer, GKM::CLUSTER_ID, GKM::ATTR_GROUP_KEY_MAP,
-      mapping.to_tlv)
-    group_e2e_invoke!(im, session, peer, 1_u16, Matter::Cluster::Groups::CLUSTER_ID,
-      Matter::Cluster::Groups::CMD_ADD_GROUP,
-      Matter::Cluster::Groups::AddGroupRequest.new(Matter::DataType::GroupId.new(group_id), "Crystal sender").to_slice)
+    datastore = JFD.new(Matter::DataType::EndpointNumber.new(0_u16))
+    pending = JFD::DatastoreStatusEntryStruct.new(JFD::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    datastore.group_key_set_list = [JFD::DatastoreGroupKeySetStruct.new(keyset_id,
+      JFD::DatastoreGroupKeySecurityPolicyEnum::TrustFirst, epoch_key, 1_110_000_u64,
+      nil, nil, nil, nil)]
+    datastore.group_list = [JFD::DatastoreGroupInformationEntryStruct.new(group_id.to_u64,
+      "Crystal sender", keyset_id, nil, nil, JFD::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    datastore.node_key_set_list = [JFD::DatastoreNodeKeySetEntryStruct.new(node_id, keyset_id, pending)]
+    datastore.endpoint_group_id_list = [JFD::DatastoreEndpointGroupIDEntryStruct.new(
+      node_id, 1_u16, group_id, pending)]
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(datastore, node_id, session, peer)
+    datastore.node_key_set_list.first.status_entry.state.should eq(JFD::DatastoreStateEnum::Committed)
+    datastore.endpoint_group_id_list.first.status_entry.state.should eq(JFD::DatastoreStateEnum::Committed)
+    fabric_index_report = im.read_attribute(session, peer, 0_u16,
+      Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      Matter::Cluster::OperationalCredentials::ATTR_CURRENT_FABRIC_INDEX)
+    fabric_index_data = fabric_index_report.attribute_reports.as(Array(IM::AttributeReportIB))
+      .first.attribute_data.as(IM::AttributeDataIB).data.as(TLV::Any)
+    fabric_index = UInt8.from_tlv(fabric_index_data.to_slice)
+    mapping_report = im.read_attribute(session, peer, 0_u16,
+      GKM::CLUSTER_ID, GKM::ATTR_GROUP_KEY_MAP)
+    mapping_data = mapping_report.attribute_reports.as(Array(IM::AttributeReportIB))
+      .first.attribute_data.as(IM::AttributeDataIB).data.as(TLV::Any)
+    mappings = Array(GKM::GroupKeyMapStruct).from_tlv(mapping_data.to_slice)
+    mappings.any? { |item| item.group_id == group_id && item.fabric_index == fabric_index }.should be_true
     acl = [
       Matter::Cluster::AccessControl::AccessControlEntry.new(
         Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
