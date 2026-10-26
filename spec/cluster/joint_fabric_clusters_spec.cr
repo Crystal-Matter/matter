@@ -509,6 +509,48 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.group_key_set_list.first.epoch_start_time0.should eq(0_u64)
   end
 
+  it "rejects key sets that a device cannot install without changing datastore state" do
+    policy = Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst
+    key = Bytes.new(16, 1_u8)
+    invalid = [
+      Datastore::DatastoreGroupKeySetStruct.new(10_u16, policy, nil, nil, nil, nil, nil, nil),
+      Datastore::DatastoreGroupKeySetStruct.new(10_u16, policy, key, 0_u64, nil, nil, nil, nil),
+      Datastore::DatastoreGroupKeySetStruct.new(10_u16, policy, key, 1_u64, nil, nil, key, 3_u64),
+    ]
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    before = cluster.save_state
+    version = cluster.data_version
+    notifications = 0
+    cluster.on_version_changed = -> { notifications += 1; nil }
+
+    invalid.each do |entry|
+      cluster.add_key_set(Datastore::AddKeySetRequest.new(entry)).status
+        .should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.group_key_set_list.should be_empty
+      cluster.save_state.should eq(before)
+      cluster.data_version.should eq(version)
+      notifications.should eq(0)
+    end
+
+    valid = Datastore::DatastoreGroupKeySetStruct.new(10_u16, policy, key, 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(valid)).success?.should be_true
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    cluster.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 10_u16, committed)]
+    before = cluster.save_state
+    version = cluster.data_version
+    notifications = 0
+
+    invalid.each do |entry|
+      cluster.update_key_set(Datastore::UpdateKeySetRequest.new(entry)).status
+        .should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+      cluster.group_key_set_list.should eq([valid])
+      cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+      cluster.save_state.should eq(before)
+      cluster.data_version.should eq(version)
+      notifications.should eq(0)
+    end
+  end
+
   it "allows removing a key set when every node reference is DeletePending" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     key = Datastore::DatastoreGroupKeySetStruct.new(10_u16,

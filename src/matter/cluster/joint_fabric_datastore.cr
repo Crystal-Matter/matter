@@ -1610,6 +1610,12 @@ module Matter
         keys = {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}
         times = {entry.epoch_start_time0, entry.epoch_start_time1, entry.epoch_start_time2}
         return false unless keys.zip(times).all? { |key, time| key.nil? == time.nil? && (key.nil? || key.size == EPOCH_KEY_BYTES) }
+        # Every non-IPK Datastore key set must be installable with Group Key
+        # Management KeySetWrite on its target nodes.
+        if entry.group_key_set_id != 0_u16
+          return false unless entry.epoch_key0 && (first_time = entry.epoch_start_time0) && first_time > 0_u64
+        end
+        return false if entry.epoch_key2 && entry.epoch_key1.nil?
         present_times = times.to_a.compact
         present_times.each_with_index.all? { |time, index| index == 0 || present_times[index - 1] < time }
       end
