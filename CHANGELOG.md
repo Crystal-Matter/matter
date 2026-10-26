@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat suggestion host state
+
+- Add guarded host-side TSUGGEST suggestion storage, UTC ticking, preset following,
+  persistence, and cleanup when presets are removed. The production feature and
+  its wire attributes and commands remain disabled pending conformance work.
+
 ### Door Lock credential attachment to existing users
 
 - Require SetCredential Add with a specified UserIndex to reference an existing
