@@ -16,6 +16,7 @@ class NoSocketTransportForPeerNodeIdSpec < Matter::Transport::UDPTransport
   end
 
   protected def initialize_for_spec : Nil
+    initialize_reliable_messages
   end
 
   def send_raw(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil

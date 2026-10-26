@@ -80,12 +80,14 @@ private def case_test_fabric : Matter::Fabric
 end
 
 # An unsecured PBKDFParamRequest, as a commissioner opens PASE with.
-private def pbkdf_param_request(exchange_id : UInt16, initiator_session_id : UInt16) : Matter::Codec::MessageCodec::Message
+private def pbkdf_param_request(exchange_id : UInt16, initiator_session_id : UInt16,
+                                mrp_parameters : Matter::Session::Pase::Definitions::MrpParameters? = nil) : Matter::Codec::MessageCodec::Message
   payload = Matter::Session::Pase::Definitions::PbkdfParamRequest.new(
     initiator_random: Random::Secure.random_bytes(32),
     initiator_session_id: initiator_session_id,
     passcode_id: 0_u16,
-    has_pbkdf_parameters: false
+    has_pbkdf_parameters: false,
+    mrp_parameters: mrp_parameters
   ).to_slice
 
   Matter::Codec::MessageCodec::Message.new(
@@ -131,6 +133,54 @@ private def pake1_request(exchange_id : UInt16) : Matter::Codec::MessageCodec::M
 end
 
 describe Matter::Protocol::SecureChannel do
+  it "uses initiator PASE retry intervals before secure session creation" do
+    fixture = build_secure_channel
+    params = Matter::Session::Pase::Definitions::MrpParameters.new(4000_u32, 300_u32)
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x1111_u16, params), PEER).should be_true
+    sent = fixture.transport.sent_packets.size
+    fixture.transport.send_reliable_raw(Bytes[0x01], PEER, 0_u16, 2_u16, 42_u32)
+    fixture.transport.retransmit_due(Time.instant + 1.second)
+    fixture.transport.sent_packets.size.should eq(sent + 1)
+  end
+
+  it "advertises local ICD retry intervals in PASE and CASE handshakes" do
+    fixture = build_secure_channel
+    fixture.channel.configure_local_mrp(4000_u32, 300_u32, 4000_u16)
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x1111_u16), PEER).should be_true
+    pbkdf = decode_pbkdf_response(fixture.transport.sent_packets.last[0])
+    pbkdf.mrp_parameters.try(&.idle_retransmit_timeout_ms).should eq(4000_u32)
+    pbkdf.mrp_parameters.try(&.active_retransmit_timeout_ms).should eq(300_u32)
+
+    fabric = case_test_fabric
+    fixture.fabric_table.add_fabric(fabric).should be_true
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x2222_u16), OTHER_PEER).should be_true
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(fixture.transport.sent_packets.last[0])
+    message = Matter::Codec::MessageCodec::Base.decode_payload(packet)
+    sigma2 = Matter::Session::Case::Definitions::Sigma2.from_slice(message.payload)
+    sigma2.responder_session_params.try(&.session_idle_interval).should eq(4000_u32)
+    sigma2.responder_session_params.try(&.session_active_interval).should eq(300_u32)
+    sigma2.responder_session_params.try(&.session_active_threshold).should eq(4000_u16)
+  end
+
+  it "advertises active retry and threshold without an idle interval for LIT" do
+    fixture = build_secure_channel
+    fixture.channel.configure_local_mrp(nil, 350_u32, 5000_u16)
+    fixture.channel.handle(pbkdf_param_request(1_u16, 0x1111_u16), PEER).should be_true
+    pbkdf = decode_pbkdf_response(fixture.transport.sent_packets.last[0])
+    pbkdf.mrp_parameters.try(&.idle_retransmit_timeout_ms).should be_nil
+    pbkdf.mrp_parameters.try(&.active_retransmit_timeout_ms).should eq(350_u32)
+
+    fabric = case_test_fabric
+    fixture.fabric_table.add_fabric(fabric).should be_true
+    fixture.channel.handle(case_sigma1_request(fabric, 7_u16, 0x2222_u16), OTHER_PEER).should be_true
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(fixture.transport.sent_packets.last[0])
+    message = Matter::Codec::MessageCodec::Base.decode_payload(packet)
+    sigma2 = Matter::Session::Case::Definitions::Sigma2.from_slice(message.payload)
+    sigma2.responder_session_params.try(&.session_idle_interval).should be_nil
+    sigma2.responder_session_params.try(&.session_active_interval).should eq(350_u32)
+    sigma2.responder_session_params.try(&.session_active_threshold).should eq(5000_u16)
+  end
+
   it "rejects zero, active, and pending responder IDs across PASE and CASE" do
     candidates = [0_u16, 0x2222_u16, 0x3333_u16,
                   0_u16, 0x2222_u16, 0x3333_u16, 0x4444_u16]

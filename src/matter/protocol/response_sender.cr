@@ -33,6 +33,23 @@ module Matter
       def initialize(@transport : Transport::PacketTransport, @mrp_cache : MrpCache)
       end
 
+      def configure_mrp_peer(peer : Socket::IPAddress, session : Session::SecureContext) : Nil
+        @transport.configure_mrp_peer(peer, session.session_id,
+          session.peer_mrp_idle_interval_ms, session.peer_mrp_active_interval_ms,
+          session.peer_mrp_active_threshold_ms)
+      end
+
+      def mark_mrp_peer_active(peer : Socket::IPAddress, session : Session::SecureContext) : Nil
+        @transport.mark_mrp_peer_active(peer, session.session_id)
+      end
+
+      def configure_unsecured_mrp_peer(peer : Socket::IPAddress,
+                                       idle_interval_ms : UInt32?, active_interval_ms : UInt32?,
+                                       active_threshold_ms : UInt16? = nil) : Nil
+        @transport.configure_mrp_peer(peer, 0_u16,
+          idle_interval_ms, active_interval_ms, active_threshold_ms)
+      end
+
       # A large IM payload is allowed only on the authenticated session's
       # currently live TCP connection. The same device may still serve UDP.
       def im_payload_limit(session : Session::SecureContext, peer : Socket::IPAddress) : Int32
@@ -72,6 +89,7 @@ module Matter
           source_node_id: original_msg.packet_header.destination_node_id || session.local_node_id,
           destination_node_id: original_msg.packet_header.source_node_id)
 
+        configure_mrp_peer(peer, session)
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           payload_header.exchange_id, counter)
         if cache_for_mrp && !session.tcp_session? && original_msg.packet_header.session_id != 0
@@ -111,6 +129,7 @@ module Matter
           requires_acknowledge: true)
         packet, counter = Session::SecureMessage.encode(session, header, payload,
           source_node_id: session.local_node_id, destination_node_id: session.peer_node_id)
+        configure_mrp_peer(peer, session)
         @transport.send_reliable_raw(packet, peer, session.session_id, exchange_id, counter)
       end
 
@@ -155,6 +174,7 @@ module Matter
               original_msg.packet_header.message_id, packet.dup)
           end
         end
+        configure_mrp_peer(peer, session)
         @transport.send_reliable_raw(packet, peer, session.session_id,
           payload_header.exchange_id, counter)
       end
@@ -205,6 +225,7 @@ module Matter
         )
         udp_packet, counter = Session::SecureMessage.encode(session, payload_header, payload,
           source_node_id: session.local_node_id)
+        configure_mrp_peer(peer, session)
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           exchange_id, counter)
         @on_im_message_sent.try(&.call)

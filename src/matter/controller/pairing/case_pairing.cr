@@ -85,8 +85,20 @@ module Matter
                      state.fabric || raise Matter::ConfigurationError.new("No controller fabric is installed")
                    end
           peer = resolver.resolve(state, fabric, peer_node_id, timeout)
+          if intervals = resolver.last_mrp_parameters
+            client.transport.configure_mrp_peer(peer, 0_u16,
+              intervals[0], intervals[1], intervals[2])
+          end
           begin
             session = pair(client, peer, fabric, peer_node_id: peer_node_id, timeout: timeout)
+            if intervals = resolver.last_mrp_parameters
+              session.peer_mrp_idle_interval_ms ||= intervals[0]
+              session.peer_mrp_active_interval_ms ||= intervals[1]
+              session.peer_mrp_active_threshold_ms ||= intervals[2]
+              client.transport.configure_mrp_peer(peer, session.session_id,
+                session.peer_mrp_idle_interval_ms, session.peer_mrp_active_interval_ms,
+                session.peer_mrp_active_threshold_ms)
+            end
             state.record_node(fabric.fabric_id, NodeInfo.new(peer_node_id, OperationalPeerResolver.address_hint(peer), peer.port),
               fabric.root_public_key, fabric.controller_node_id)
             {session, peer}
@@ -262,6 +274,11 @@ module Matter
           )
           secure_context.peer_subject_ids = verified_responder.subject_ids
           secure_context.peer_icac = verified_responder.icac
+          if params = sigma2_msg.responder_session_params
+            secure_context.peer_mrp_idle_interval_ms = params.session_idle_interval
+            secure_context.peer_mrp_active_interval_ms = params.session_active_interval
+            secure_context.peer_mrp_active_threshold_ms = params.session_active_threshold
+          end
 
           client.register_session(secure_context, peer: peer)
           save_resumption_record(Session::Case::ResumptionStore::Record.new(
@@ -298,6 +315,11 @@ module Matter
             case_session: true)
           session.peer_subject_ids = record.peer_subject_ids.dup
           session.peer_icac = record.peer_icac.try(&.dup)
+          if params = sigma2.responder_session_params
+            session.peer_mrp_idle_interval_ms = params.session_idle_interval
+            session.peer_mrp_active_interval_ms = params.session_active_interval
+            session.peer_mrp_active_threshold_ms = params.session_active_threshold
+          end
           client.send_unsecured_on_exchange(peer: peer, exchange_id: exchange_id,
             protocol_id: Client::PROTOCOL_SECURE_CHANNEL,
             message_type: MSG_STATUS_REPORT,

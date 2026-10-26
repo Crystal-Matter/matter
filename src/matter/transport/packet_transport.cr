@@ -33,6 +33,16 @@ module Matter
                                         peer : Socket::IPAddress? = nil) : Bool
       abstract def clear_reliable_session(session_id : UInt16) : Nil
 
+      # UDP transport uses the destination's advertised MRP retry intervals.
+      def configure_mrp_peer(peer : Socket::IPAddress, session_id : UInt16,
+                             idle_interval_ms : UInt32? = nil,
+                             active_interval_ms : UInt32? = nil,
+                             active_threshold_ms : UInt16? = nil) : Nil
+      end
+
+      def mark_mrp_peer_active(peer : Socket::IPAddress, session_id : UInt16) : Nil
+      end
+
       # Stream transports override this for their connection-local route.
       # A UDP or BTP peer is not a Matter TCP connection token.
       def tcp_peer?(peer : Socket::IPAddress) : Bool

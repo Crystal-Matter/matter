@@ -183,4 +183,28 @@ describe Matter::Session::SecureMessage do
     legacy.peer_subject_ids.should be_empty
     legacy.peer_icac.should be_nil
   end
+
+  it "persists peer MRP intervals while reading older session records" do
+    session = wire_session
+    session.peer_mrp_idle_interval_ms = 4000_u32
+    session.peer_mrp_active_interval_ms = 300_u32
+    session.peer_mrp_active_threshold_ms = 4000_u16
+    document = session.to_record.to_document
+    restored = Matter::Session::SecureContext.from_record(
+      Matter::Session::SecureContext::SessionRecord.from_document(document)
+    )
+    restored.peer_mrp_idle_interval_ms.should eq(4000_u32)
+    restored.peer_mrp_active_interval_ms.should eq(300_u32)
+    restored.peer_mrp_active_threshold_ms.should eq(4000_u16)
+
+    document.delete("peer_mrp_idle_interval_ms")
+    document.delete("peer_mrp_active_interval_ms")
+    document.delete("peer_mrp_active_threshold_ms")
+    legacy = Matter::Session::SecureContext.from_record(
+      Matter::Session::SecureContext::SessionRecord.from_document(document)
+    )
+    legacy.peer_mrp_idle_interval_ms.should be_nil
+    legacy.peer_mrp_active_interval_ms.should be_nil
+    legacy.peer_mrp_active_threshold_ms.should be_nil
+  end
 end

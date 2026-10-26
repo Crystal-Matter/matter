@@ -1964,6 +1964,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Reliable messaging
 
+- Use Matter 1.6 idle and active MRP intervals for UDP retries, including peer
+  SII/SAI/SAT discovery, CASE and PASE session parameters, and persisted CASE sessions.
+  New exchanges to idle peers use the advertised idle interval; messages to a
+  recently active peer use the active interval.
+- ICD applications can set slow and fast polling intervals independently of
+  active mode duration; the resulting retry intervals are advertised in mDNS
+  and secure channel handshakes.
 - Keep in-progress PASE and CASE handshakes separate by peer endpoint and
   exchange ID. Concurrent commissioners may reuse an exchange ID without
   replacing each other's state, and unsecured follow-ups from another peer

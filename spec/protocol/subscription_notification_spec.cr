@@ -15,6 +15,7 @@ class NoSocketTransportForSubscriptionNotificationSpec < Matter::Transport::UDPT
   protected def initialize_for_spec : Nil
     @port = 0
     @on_message = nil
+    initialize_reliable_messages
   end
 
   def start : Nil
