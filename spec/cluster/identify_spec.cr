@@ -322,6 +322,51 @@ describe Matter::Cluster::Identify do
   end
 
   describe "data versioning" do
+    it "increments data version without reporting intermediate countdown ticks" do
+      cluster = build(Matter::Cluster::Identify)
+      changed = [] of UInt32
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster_id : UInt32, attribute_id : UInt32) {
+        changed << attribute_id
+        nil
+      }
+
+      invoke(cluster, Matter::Cluster::Identify::CMD_IDENTIFY, encode_identify_command(3_u16))
+      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+      changed.clear
+      version = cluster.data_version
+
+      cluster.tick
+      cluster.identify_time.should eq(2_u16)
+      cluster.data_version.should eq(version + 1)
+      changed.should be_empty
+
+      cluster.tick
+      cluster.identify_time.should eq(1_u16)
+      cluster.data_version.should eq(version + 2)
+      changed.should be_empty
+
+      cluster.tick
+      cluster.identify_time.should eq(0_u16)
+      cluster.data_version.should eq(version + 3)
+      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+    end
+
+    it "reports client writes and Identify commands" do
+      cluster = build(Matter::Cluster::Identify)
+      changed = [] of UInt32
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster_id : UInt32, attribute_id : UInt32) {
+        changed << attribute_id
+        nil
+      }
+      version = cluster.data_version
+
+      write(cluster, Matter::Cluster::Identify::ATTR_IDENTIFY_TIME, 5_u16).success?.should be_true
+      invoke(cluster, Matter::Cluster::Identify::CMD_IDENTIFY, encode_identify_command(3_u16))
+
+      cluster.data_version.should eq(version + 2)
+      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME] * 2)
+    end
+
     it "increments version when identify time changes" do
       cluster = build(Matter::Cluster::Identify)
 

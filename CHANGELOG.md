@@ -1600,6 +1600,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and give OnMode precedence when OnOff starts On. Bridge-owned OnOff endpoints
   retain the state reported by their host.
 
+### Identify countdown reporting
+
+- Keep IdentifyTime's DataVersion current during the one-second countdown while
+  reporting only its transition to zero. Client writes and Identify commands
+  continue to report changes.
+
 ### OnOff command level effect
 
 - Apply LevelControl OnLevel when a sibling OnOff `On` command turns the device
