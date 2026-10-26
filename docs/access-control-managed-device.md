@@ -13,6 +13,11 @@ its attribute ID, or every nonglobal attribute in the cluster when the ID is
 `nil`. Passing an empty list removes that fabric's restrictions. Removing the
 fabric also clears its list.
 
+The Matter 1.6 standard restriction provider accepts entries only for Wi-Fi
+Network Management (`0x0451`), Thread Border Router Management (`0x0452`),
+and Thread Network Directory (`0x0453`) on non-root endpoints. The host rejects
+entries for other clusters or endpoint 0 without replacing the installed list.
+
 The Interaction Model checks ordinary ACL privilege first. A permitted read
 blocked by the host list returns `AccessRestricted` (`0x9D`). Other fabrics and
 standard global attributes, including `FeatureMap`, remain readable according

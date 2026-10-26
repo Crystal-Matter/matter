@@ -1459,7 +1459,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
   host-configured, fabric-specific Access Restriction List for attribute reads.
   A restriction on one fabric does not affect another fabric or standard global
-  attributes. The policy is transient and ManagedDevice remains unadvertised;
+  attributes. Accept only the three Matter 1.6 network infrastructure management
+  clusters on non-root endpoints. The policy is transient and ManagedDevice
+  remains unadvertised;
   writes, commands, events, persistence, and the restriction review flow are
   still required before enabling the full feature.
 

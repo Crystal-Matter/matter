@@ -23,8 +23,12 @@ module Matter
       # ManagedDevice is not advertised yet. Hosts can install a transient ARL
       # for read enforcement; write, invoke, event and review flows still need
       # implementation before the complete feature may be enabled.
-      GLOBAL_ATTRIBUTE_ID_START = 0xFFF8_u32
-      GLOBAL_ATTRIBUTE_ID_END   = 0xFFFD_u32
+      GLOBAL_ATTRIBUTE_ID_START               = 0xFFF8_u32
+      GLOBAL_ATTRIBUTE_ID_END                 = 0xFFFD_u32
+      ARL_ROOT_ENDPOINT_ID                    =      0_u16
+      ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID  = 0x0451_u32
+      ARL_THREAD_BORDER_ROUTER_CLUSTER_ID     = 0x0452_u32
+      ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID = 0x0453_u32
 
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
@@ -267,7 +271,7 @@ module Matter
       # remove that fabric's restrictions. This is not an advertised MNGD wire
       # attribute and hosts must reinstall it after restart.
       def configure_access_restrictions(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : Nil
-        if fabric_index == 0 || entries.any?(&.restrictions.empty?)
+        if fabric_index == 0 || entries.any? { |entry| entry.restrictions.empty? || !restriction_target_allowed?(entry.endpoint, entry.cluster) }
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
         if entries.empty?
@@ -281,12 +285,22 @@ module Matter
 
       def attribute_read_restricted?(fabric_index : UInt8, endpoint : UInt16,
                                      cluster : UInt32, attribute : UInt32) : Bool
+        return false unless restriction_target_allowed?(endpoint, cluster)
         return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
         (@access_restrictions[fabric_index]? || [] of AccessRestrictionEntry).any? do |entry|
           entry.endpoint == endpoint && entry.cluster == cluster && entry.restrictions.any? do |restriction|
             restriction.type.attribute_access_forbidden? && (restriction.id.nil? || restriction.id == attribute)
           end
         end
+      end
+
+      # Matter 1.6's standard ARL exception checker permits only network
+      # infrastructure management clusters outside the root endpoint.
+      private def restriction_target_allowed?(endpoint : UInt16, cluster : UInt32) : Bool
+        endpoint != ARL_ROOT_ENDPOINT_ID && cluster.in?(
+          ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID,
+          ARL_THREAD_BORDER_ROUTER_CLUSTER_ID,
+          ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID)
       end
 
       # A Groupcast listener's auxiliary ACL is derived from Membership. Keep
