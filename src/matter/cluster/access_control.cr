@@ -351,7 +351,8 @@ module Matter
       @restriction_policy_revisions = {} of UInt8 => UInt64
       # A host callback can yield while an approval's policy is provisional.
       # Reject another mutation on that fabric until it commits or rolls back.
-      @restriction_policy_transactions = Set(UInt8).new
+      @restriction_policy_transactions = {} of UInt8 => UInt64
+      @next_restriction_policy_transaction = 0_u64
       @review_fabrics = {} of UInt64 => UInt8
       @review_generations = {} of UInt64 => UInt64
       @review_fabric_identities = {} of UInt64 => String
@@ -467,9 +468,8 @@ module Matter
            entries.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
-        unless @restriction_policy_transactions.add?(fabric_index)
-          raise Matter::ConfigurationError.new("Access restriction update already in progress for fabric")
-        end
+        transaction = start_restriction_policy_transaction(fabric_index) ||
+                      raise Matter::ConfigurationError.new("Access restriction update already in progress for fabric")
         begin
           fabric_identity = if !entries.empty?
                               @review_fabric_identity.try do |provider|
@@ -508,7 +508,7 @@ module Matter
           end
           notify_changed(ATTR_ARL) if @feature_map.managed_device?
         ensure
-          @restriction_policy_transactions.delete(fabric_index)
+          finish_restriction_policy_transaction(fabric_index, transaction)
         end
       end
 
@@ -885,7 +885,7 @@ module Matter
           end
         end
 
-        return false unless @restriction_policy_transactions.add?(fabric_index)
+        transaction = start_restriction_policy_transaction(fabric_index) || return false
         begin
           previous = @access_restrictions[fabric_index]?
           previous_identity = @access_restriction_fabric_identities[fabric_index]?
@@ -926,7 +926,7 @@ module Matter
           end
           true
         ensure
-          @restriction_policy_transactions.delete(fabric_index)
+          finish_restriction_policy_transaction(fabric_index, transaction)
         end
       end
 
@@ -960,6 +960,16 @@ module Matter
         next_revision = restriction_policy_revision(fabric_index) &+ 1_u64
         @restriction_policy_revisions[fabric_index] = next_revision
         next_revision
+      end
+
+      private def start_restriction_policy_transaction(fabric_index : UInt8) : UInt64?
+        return if @restriction_policy_transactions.has_key?(fabric_index)
+        @next_restriction_policy_transaction = @next_restriction_policy_transaction &+ 1_u64
+        @restriction_policy_transactions[fabric_index] = @next_restriction_policy_transaction
+      end
+
+      private def finish_restriction_policy_transaction(fabric_index : UInt8, transaction : UInt64) : Nil
+        @restriction_policy_transactions.delete(fabric_index) if @restriction_policy_transactions[fabric_index]? == transaction
       end
 
       private def restriction_fabric_generation(fabric_index : UInt8) : UInt64
@@ -1674,6 +1684,10 @@ module Matter
       # Helper: Remove all ACL entries for a fabric
       def remove_fabric_acl(fabric_index : UInt8) : Nil
         @restriction_fabric_generations[fabric_index] = restriction_fabric_generation(fabric_index) &+ 1_u64
+        # The old fabric's callback may still be paused. A replacement using
+        # this local index needs a fresh transaction that the old ensure block
+        # cannot release.
+        @restriction_policy_transactions.delete(fabric_index)
         @review_fabrics.select { |_token, index| index == fabric_index }.keys.each do |token|
           cancel_restriction_review(token)
         end

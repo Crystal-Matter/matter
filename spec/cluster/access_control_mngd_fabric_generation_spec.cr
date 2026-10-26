@@ -58,6 +58,60 @@ describe "Managed restriction fabric generation" do
     acl.complete_restriction_review(1_u8, token).should be_false
   end
 
+  it "does not release a replacement fabric's policy transaction when the old callback exits" do
+    acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    old_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeAccessForbidden)
+    new_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeWriteForbidden)
+    acl.configure_access_restrictions(1_u8, [old_policy])
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    token = acl.request_restriction_review(1_u8, [old_policy])
+    callback_started = Channel(Nil).new(1)
+    callback_resume = Channel(Nil).new(1)
+    acl.on_restriction_review_updated do |_fabric, _update|
+      callback_started.send(nil)
+      callback_resume.receive
+      raise Matter::ConfigurationError.new("old callback failed")
+    end
+    old_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.approve_restriction_review(1_u8, token, [] of GenerationAcl::AccessRestrictionEntry)
+      old_outcome.send(nil)
+    rescue ex
+      old_outcome.send(ex)
+    end
+    callback_started.receive
+    acl.remove_fabric_acl(1_u8)
+
+    persist_started = Channel(Nil).new(1)
+    persist_resume = Channel(Nil).new(1)
+    pause_next_persist = true
+    acl.on_persist = -> do
+      if pause_next_persist
+        pause_next_persist = false
+        persist_started.send(nil)
+        persist_resume.receive
+      end
+      nil
+    end
+    new_outcome = Channel(Exception?).new(1)
+    spawn do
+      acl.configure_access_restrictions(1_u8, [new_policy])
+      new_outcome.send(nil)
+    rescue ex
+      new_outcome.send(ex)
+    end
+    persist_started.receive
+    callback_resume.send(nil)
+    old_outcome.receive.should be_a(Matter::ConfigurationError)
+    expect_raises(Matter::ConfigurationError, /already in progress/) do
+      acl.configure_access_restrictions(1_u8, [old_policy])
+    end
+    persist_resume.send(nil)
+    new_outcome.receive.should be_nil
+    acl.arl(1_u8).first.restrictions.should eq(new_policy.restrictions)
+  end
+
   it "does not emit an interim update paused while a fabric index is reused" do
     acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
     acl.on_restriction_review_requested { |_request| }
