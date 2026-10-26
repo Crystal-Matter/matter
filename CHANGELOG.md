@@ -1545,6 +1545,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Return InvalidCommand for a Mode Select ChangeToMode request naming an
   unadvertised mode, as required by the Matter 1.6 command definition.
 
+### Mode Select startup mode
+
+- Apply a persisted StartUpMode when a device powers up, preserve CurrentMode
+  after an OTA restart, and give OnMode precedence when OnOff starts On.
+
 ### OnOff command level effect
 
 - Apply LevelControl OnLevel when a sibling OnOff `On` command turns the device

@@ -115,6 +115,17 @@ module Matter
         InteractionModel::Status.success
       end
 
+      # Apply the mode requested for a power-up after persisted state is restored.
+      # An OnOff StartUpOnOff=On setting takes precedence when OnMode is set;
+      # an OTA restart otherwise retains the previous CurrentMode.
+      def apply_startup_mode(ota_restart : Bool = false, on_mode_override : Bool = false) : Nil
+        if on_mode_override && @feature_map.on_off? && (mode = @on_mode)
+          self.current_mode = mode
+        elsif !ota_restart && (mode = @start_up_mode)
+          self.current_mode = mode
+        end
+      end
+
       private def mode_supported?(mode : UInt8) : Bool
         @supported_modes.any? { |option| option.mode == mode }
       end

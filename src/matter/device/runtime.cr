@@ -32,6 +32,7 @@ require "../cluster/diagnostic_logs"
 require "../cluster/ethernet_network_diagnostics"
 require "../cluster/thread_network_diagnostics"
 require "../cluster/time_synchronization"
+require "../cluster/mode_select"
 
 module Matter
   # A Matter device application.
@@ -490,6 +491,15 @@ module Matter
       end
       @message_handler.clusters.each_value do |cluster|
         cluster.as?(Cluster::ColorControl).try(&.apply_startup_color_temperature(ota_restart: ota_restart))
+      end
+      @message_handler.clusters.each_value do |cluster|
+        next unless mode = cluster.as?(Cluster::ModeSelect)
+        on_off = @node.get_cluster(mode.endpoint_id.number, Cluster::OnOff)
+        on_mode_override = on_off.try do |on_off_cluster|
+          on_off_cluster.feature_map.lighting? &&
+            on_off_cluster.start_up_on_off == Cluster::OnOff::StartUpOnOff::On
+        end || false
+        mode.apply_startup_mode(ota_restart: ota_restart, on_mode_override: on_mode_override)
       end
       before_start
       @node.get_cluster(Node::ROOT_ENDPOINT_ID, Cluster::TimeSynchronization).try do |time_sync|
