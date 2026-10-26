@@ -68,6 +68,8 @@ end
 Handwritten devices may instead pass `on_restriction_review_requested:` and
 `on_restriction_review_updated:` procs to `Device#initialize`. Both callbacks
 are required; volatile storage, including `Storage::Memory`, is rejected.
+Durable file and SQL backends are accepted even when they have no local file
+path, as with PostgreSQL.
 The host owns the consent decision and installs only policy it explicitly
 approves. Callbacks may run again after a crash with the **same token**; host
 side effects must be idempotent by token.
@@ -92,6 +94,8 @@ Pending requests retain their token, deadline, and fabric identity across
 restart. Runtime installs callbacks after restoring Access Control and pruning
 orphaned or replaced fabric reviews and their retained events. Unexpired requests are replayed
 with the original token, while expired requests produce their fallback update.
+If a request callback makes an immediate approval or denial, that decision is
+applied after the request's initial durable marker is cleared.
 If the host request callback fails before the token is returned, the library
 persists a compensating cancellation so restart does not replay that request
 when the rollback save succeeds.

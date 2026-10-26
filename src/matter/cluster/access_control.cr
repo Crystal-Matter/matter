@@ -340,6 +340,7 @@ module Matter
       @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
       @next_restriction_review_token = 0_u64
       @review_requests_in_progress = [] of UInt64
+      @deferred_restriction_review_decisions = {} of UInt64 => Proc(Bool)
       @review_completions_in_progress = [] of UInt64
       @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
       @review_callbacks_needing_replay = Set(UInt64).new
@@ -605,6 +606,7 @@ module Matter
           callback.call(request)
           ensure_current_restriction_review!(fabric_index, token, generation)
         rescue ex
+          @deferred_restriction_review_decisions.delete(token)
           unless current_restriction_review?(fabric_index, token, generation)
             @on_persist.try(&.call)
             raise Matter::ConfigurationError.new("Restriction review fabric was removed", ex)
@@ -625,7 +627,19 @@ module Matter
           raise ex
         end
         @review_requests_in_progress.delete(token)
-        @on_persist.try(&.call)
+        begin
+          @on_persist.try(&.call)
+        rescue ex
+          @deferred_restriction_review_decisions.delete(token)
+          raise ex
+        end
+        if decision = @deferred_restriction_review_decisions.delete(token)
+          ensure_current_restriction_review!(fabric_index, token, generation)
+          unless decision.call
+            raise Matter::ConfigurationError.new("Deferred restriction review decision failed")
+          end
+          return token
+        end
         unless current_restriction_review?(fabric_index, token, generation)
           @on_persist.try(&.call)
           raise Matter::ConfigurationError.new("Restriction review fabric was removed")
@@ -640,7 +654,29 @@ module Matter
       def complete_restriction_review(fabric_index : UInt8, token : UInt64,
                                       instruction : String? = nil,
                                       arl_request_flow_url : String? = nil) : Bool
+        if @review_requests_in_progress.includes?(token)
+          validate_restriction_review_update!(instruction, arl_request_flow_url)
+          return defer_restriction_review_decision(fabric_index, token) do
+            finish_restriction_review(fabric_index, token, instruction, arl_request_flow_url)
+          end
+        end
         finish_restriction_review(fabric_index, token, instruction, arl_request_flow_url)
+      end
+
+      private def defer_restriction_review_decision(fabric_index : UInt8, token : UInt64,
+                                                    &decision : -> Bool) : Bool
+        return false unless current_restriction_review?(fabric_index, token)
+        return false if @deferred_restriction_review_decisions.has_key?(token)
+        @deferred_restriction_review_decisions[token] = decision
+        true
+      end
+
+      private def validate_restriction_review_update!(instruction : String?,
+                                                      arl_request_flow_url : String?) : Nil
+        if instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
+           arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
+          raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
+        end
       end
 
       private def finish_restriction_review(fabric_index : UInt8, token : UInt64,
@@ -652,10 +688,7 @@ module Matter
           return false unless delivery[0] == fabric_index
           return deliver_completed_restriction_review(token)
         end
-        if instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
-           arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
-          raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
-        end
+        validate_restriction_review_update!(instruction, arl_request_flow_url)
         request = @pending_restriction_reviews[token]?
         return false unless request && request.fabric_index == fabric_index && current_restriction_review?(fabric_index, token)
         generation = @review_generations[token]
@@ -817,6 +850,15 @@ module Matter
         if replacement.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
           raise Matter::ConfigurationError.new("Invalid approved access restriction configuration")
         end
+        if @review_requests_in_progress.includes?(token)
+          validate_restriction_review_update!(instruction, arl_request_flow_url)
+          snapshot = replacement.map do |entry|
+            AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+          end
+          return defer_restriction_review_decision(fabric_index, token) do
+            approve_restriction_review(fabric_index, token, snapshot, instruction, arl_request_flow_url)
+          end
+        end
 
         previous = @access_restrictions[fabric_index]?
         previous_identity = @access_restriction_fabric_identities[fabric_index]?
@@ -901,6 +943,7 @@ module Matter
         @pending_restriction_review_deadlines.delete(token)
         @reviews_needing_replay.delete(token)
         @review_requests_in_progress.delete(token)
+        @deferred_restriction_review_decisions.delete(token)
         @review_completions_in_progress.delete(token)
         @reviews_awaiting_delivery.delete(token)
         @review_callbacks_needing_replay.delete(token)
@@ -1400,6 +1443,7 @@ module Matter
           @review_generations[token] = restriction_fabric_generation(delivery[0])
         end
         @review_requests_in_progress.clear
+        @deferred_restriction_review_decisions.clear
         @review_completions_in_progress = completion_tokens.dup
         @reviews_awaiting_delivery = outbox
         @review_callbacks_needing_replay = outbox.keys.to_set

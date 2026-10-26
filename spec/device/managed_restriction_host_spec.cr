@@ -56,6 +56,12 @@ private class ManagedPolicyFailingYaml < Matter::Storage::YamlFile
   end
 end
 
+private class ManagedNilPathDurableStore < Matter::Storage::Memory
+  def durable? : Bool
+    true
+  end
+end
+
 private def managed_spec_fabric(index : UInt8) : Matter::Fabric
   Matter::Fabric.new(fabric_id: 0xA001_u64, fabric_index: index, node_id: 0xB001_u64,
     root_public_key: Random::Secure.random_bytes(65),
@@ -92,6 +98,19 @@ describe "Device managed restriction host" do
       ManagedRestrictionSpecDevice.new(port: 0, on_restriction_review_requested: requested,
         on_restriction_review_updated: updated)
     end
+  end
+
+  it "accepts a durable backend with no local filesystem path" do
+    require_udp_sockets!
+    requested = ->(_request : HostAcl::RestrictionReviewRequest) { nil }
+    updated = ->(_fabric : UInt8, _update : HostAcl::FabricRestrictionReviewUpdate) { nil }
+    backend = ManagedNilPathDurableStore.new
+    backend.path.should be_nil
+    device = ManagedRestrictionSpecDevice.new(storage: backend, port: 0,
+      on_restriction_review_requested: requested, on_restriction_review_updated: updated)
+    device.access_control.feature_map.managed_device?.should be_true
+  ensure
+    device.try(&.release)
   end
 
   it "accepts callback keywords with durable storage and rejects an absent fabric atomically" do

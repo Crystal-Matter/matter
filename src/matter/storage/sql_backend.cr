@@ -54,6 +54,10 @@ module Matter
       def initialize(@database_url : String)
       end
 
+      def durable? : Bool
+        true
+      end
+
       protected abstract def bind(index : Int32) : String
 
       # Driver exceptions need not inherit DB::Error. Keep their recognition in

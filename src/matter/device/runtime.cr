@@ -207,7 +207,7 @@ module Matter
       if @managed_review_requested.nil? != @managed_review_updated.nil?
         raise ConfigurationError.new("ManagedDevice requires both restriction review callbacks")
       end
-      if @managed_review_requested && storage.path.nil?
+      if @managed_review_requested && !storage.durable?
         raise ConfigurationError.new("ManagedDevice restriction reviews require durable storage")
       end
       @groupcast_sender_enabled = groupcast_sender

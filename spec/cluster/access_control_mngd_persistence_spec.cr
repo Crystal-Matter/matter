@@ -34,6 +34,50 @@ private def stored_callbacks(acl : StoredAcl, requested : Array(StoredAcl::Restr
 end
 
 describe "Access Control managed restriction persistence" do
+  it "allows an inline host approval and saves a restartable completed token" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    updates = [] of UInt64
+    acl.on_restriction_review_updated { |_fabric, update| updates << update.token }
+    acl.on_restriction_review_requested do |request|
+      acl.approve_restriction_review(request.fabric_index, request.token, [stored_entry]).should be_true
+    end
+    token = acl.request_restriction_review(1_u8, [] of StoredAcl::AccessRestrictionEntry)
+    updates.should eq([token])
+    acl.arl(1_u8).size.should eq(1)
+
+    restored = stored_cluster
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.arl(1_u8).size.should eq(1)
+    restored.complete_restriction_review(1_u8, token).should be_false
+  end
+
+  it "allows an inline host denial without leaving an unfinished request marker" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    updates = [] of UInt64
+    acl.on_restriction_review_updated { |_fabric, update| updates << update.token }
+    acl.on_restriction_review_requested do |request|
+      acl.deny_restriction_review(request.fabric_index, request.token).should be_true
+    end
+    token = acl.request_restriction_review(1_u8, [] of StoredAcl::AccessRestrictionEntry)
+    updates.should eq([token])
+
+    restored = stored_cluster
+    restored.on_persist = -> { nil }
+    restored.restore_state(saved)
+    restored.complete_restriction_review(1_u8, token).should be_false
+  end
+
   it "restores each fabric's ARL and replays a pending review with its original token" do
     original = stored_cluster
     original.configure_access_restrictions(1_u8, [stored_entry])
