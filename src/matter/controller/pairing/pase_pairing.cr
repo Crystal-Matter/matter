@@ -53,6 +53,10 @@ module Matter
 
           pbkdf_resp_bytes = pbkdf_resp.message.payload.to_slice
           resp = Session::Pase::Definitions::PbkdfParamResponse.from_slice(pbkdf_resp_bytes)
+          if mrp = resp.mrp_parameters
+            client.transport.configure_mrp_peer(peer, 0_u16,
+              mrp.idle_retransmit_timeout_ms, mrp.active_retransmit_timeout_ms)
+          end
 
           pbkdf_params = resp.pbkdf_parameters
           raise Matter::ProtocolError.new("PASE: PBKDF parameters missing in response") unless pbkdf_params
@@ -119,7 +123,7 @@ module Matter
           decryption_key = session_keys[16, 16]
           attestation_challenge = session_keys[32, 16]
 
-          Session::SecureContext.new(
+          session = Session::SecureContext.new(
             session_id: initiator_session_id,
             peer_session_id: responder_session_id,
             session_type: Session::SessionType::Unicast,
@@ -128,6 +132,11 @@ module Matter
             attestation_challenge: attestation_challenge,
             initiator: true
           )
+          if mrp = resp.mrp_parameters
+            session.peer_mrp_idle_interval_ms = mrp.idle_retransmit_timeout_ms
+            session.peer_mrp_active_interval_ms = mrp.active_retransmit_timeout_ms
+          end
+          session
         end
       end
     end

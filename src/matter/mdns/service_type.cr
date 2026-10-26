@@ -141,6 +141,9 @@ module Matter
       property pairing_hint : UInt16?
       property pairing_instruction : String?
       property joint_fabric_role : JointFabricRole?
+      property session_idle_interval : UInt32?
+      property session_active_interval : UInt32?
+      property session_active_threshold : UInt16?
 
       def initialize(
         @device_name : String,
@@ -152,6 +155,9 @@ module Matter
         @pairing_hint : UInt16? = nil,
         @pairing_instruction : String? = nil,
         @joint_fabric_role : JointFabricRole? = nil,
+        @session_idle_interval : UInt32? = nil,
+        @session_active_interval : UInt32? = nil,
+        @session_active_threshold : UInt16? = nil,
       )
       end
 
@@ -177,6 +183,16 @@ module Matter
           records["JF"] = role.value.to_s
         end
 
+        if sii = @session_idle_interval
+          records["SII"] = sii.to_s
+        end
+        if sai = @session_active_interval
+          records["SAI"] = sai.to_s
+        end
+        if sat = @session_active_threshold
+          records["SAT"] = sat.to_s
+        end
+
         records
       end
     end
@@ -191,8 +207,9 @@ module Matter
       property node_id : UInt64
       # Session intervals are optional - only set for ICD (sleepy) devices
       # For always-on devices, leave these nil to avoid advertising ICD capability
-      property session_idle_interval : UInt32?   # milliseconds (SII)
-      property session_active_interval : UInt32? # milliseconds (SAI)
+      property session_idle_interval : UInt32?    # milliseconds (SII)
+      property session_active_interval : UInt32?  # milliseconds (SAI)
+      property session_active_threshold : UInt16? # milliseconds (SAT)
       property? tcp_supported : Bool
 
       def initialize(
@@ -200,6 +217,7 @@ module Matter
         @node_id : UInt64,
         @session_idle_interval : UInt32? = nil,
         @session_active_interval : UInt32? = nil,
+        @session_active_threshold : UInt16? = nil,
         @tcp_supported : Bool = false,
       )
       end
@@ -214,6 +232,9 @@ module Matter
         end
         if sai = @session_active_interval
           records["SAI"] = sai.to_s
+        end
+        if sat = @session_active_threshold
+          records["SAT"] = sat.to_s
         end
 
         if @tcp_supported

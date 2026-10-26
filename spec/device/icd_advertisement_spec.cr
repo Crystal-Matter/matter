@@ -14,6 +14,10 @@ private class AlwaysOnIcdSpecDevice < Matter::Device
   def operational_info_for_spec(fabric : Matter::Fabric) : Matter::MDNS::OperationalInfo
     operational_info_for(fabric)
   end
+
+  def commissioning_info_for_spec : Matter::MDNS::CommissioningInfo
+    commissioning_info
+  end
 end
 
 private def icd_spec_fabric : Matter::Fabric
@@ -76,18 +80,26 @@ describe Matter::Device do
     end
   end
 
-  it "advertises SII/SAI only for explicit ICD operation" do
+  it "advertises MRP retry intervals from polling cadence, not active-mode wake duration" do
     fabric = icd_spec_fabric
     always_on = AlwaysOnIcdSpecDevice.new(port: 0)
     always_on.operational_info_for_spec(fabric).to_txt_records.has_key?("SII").should be_false
 
     config = Matter::Cluster::IcdManagement::Configuration.new(
       feature_map: Matter::Cluster::IcdManagement::Feature::CheckInProtocolSupport,
-      idle_mode_duration: 60_u32, active_mode_duration: 3_000_u32)
+      idle_mode_duration: 60_u32, active_mode_duration: 3_000_u32,
+      slow_polling_interval_ms: 2_000_u32, fast_polling_interval_ms: 50_u32,
+      active_mode_threshold: 5_000_u16)
     icd_device = AlwaysOnIcdSpecDevice.new(port: 0, icd_configuration: config)
     txt = icd_device.operational_info_for_spec(fabric).to_txt_records
-    txt["SII"].should eq("60000")
-    txt["SAI"].should eq("3000")
+    txt["SII"].should eq("2500")
+    txt["SAI"].should eq("350")
+    txt["SAT"].should eq("5000")
+    commissioning_txt = icd_device.commissioning_info_for_spec.to_txt_records
+    commissioning_txt["SII"].should eq("2500")
+    commissioning_txt["SAI"].should eq("350")
+    commissioning_txt["SAT"].should eq("5000")
+    icd_device.icd_management.as(Matter::Cluster::IcdManagement).mrp_active_interval_ms.should eq(350_u32)
   ensure
     if always_on
       always_on.message_handler.close
@@ -98,6 +110,32 @@ describe Matter::Device do
       icd_device.message_handler.close
       icd_device.persistence.close
       icd_device.transport.close
+    end
+  end
+
+  it "omits SII while retaining SAI and SAT in LIT mode" do
+    features = Matter::Cluster::IcdManagement::Feature::CheckInProtocolSupport |
+               Matter::Cluster::IcdManagement::Feature::UserActiveModeTrigger |
+               Matter::Cluster::IcdManagement::Feature::LongIdleTimeSupport |
+               Matter::Cluster::IcdManagement::Feature::DynamicSitLitSupport
+    config = Matter::Cluster::IcdManagement::Configuration.new(
+      feature_map: features, idle_mode_duration: 60_u32,
+      active_mode_threshold: 5_000_u16, fast_polling_interval_ms: 50_u32)
+    device = AlwaysOnIcdSpecDevice.new(port: 0, icd_configuration: config)
+    device.icd_management.as(Matter::Cluster::IcdManagement).force_operating_mode(
+      Matter::Cluster::IcdManagement::OperatingMode::Lit)
+
+    [device.commissioning_info_for_spec.to_txt_records,
+     device.operational_info_for_spec(icd_spec_fabric).to_txt_records].each do |txt|
+      txt.has_key?("SII").should be_false
+      txt["SAI"].should eq("350")
+      txt["SAT"].should eq("5000")
+    end
+  ensure
+    if device
+      device.message_handler.close
+      device.persistence.close
+      device.transport.close
     end
   end
 end

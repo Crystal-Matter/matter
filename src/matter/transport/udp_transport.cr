@@ -40,15 +40,18 @@ module Matter
       # message counter.
       MIN_PACKET_SIZE = 8
 
-      # Matter 1.6 MRP defaults for an active peer. Keep at most four copies
-      # after the original send, as the official SDK does.
+      # Matter 1.6 Core §4.13.1 defaults. Keep at most four copies after the
+      # original send, as the official SDK does.
+      MRP_IDLE_RETRY_INTERVAL   = 500.milliseconds
       MRP_ACTIVE_RETRY_INTERVAL = 300.milliseconds
+      MRP_ACTIVE_THRESHOLD      = 4.seconds
       MRP_MAX_RETRANSMISSIONS   = 4
       MRP_SWEEP_INTERVAL        = 25.milliseconds
       MRP_BACKOFF_MARGIN        =  1.1
       MRP_BACKOFF_BASE          =  1.6
       MRP_BACKOFF_JITTER        = 0.25
       MRP_PENDING_LIMIT         =  256
+      MRP_UNSECURED_CONFIG_TTL  = 10.minutes
 
       private class PendingReliableMessage
         getter packet : Bytes
@@ -65,6 +68,9 @@ module Matter
       end
 
       @pending_reliable : Hash(Tuple(UInt16, UInt16, UInt32), PendingReliableMessage)
+      @mrp_peer_parameters : Hash(Tuple(UInt16, Socket::IPAddress), Tuple(Time::Span, Time::Span, Time::Span))
+      @mrp_unsecured_configured_at : Hash(Socket::IPAddress, Time::Instant)
+      @mrp_peer_last_active : Hash(Tuple(UInt16, Socket::IPAddress), Time::Instant)
       @reliable_mutex : Mutex
       @reliable_fiber : Fiber?
 
@@ -158,6 +164,9 @@ module Matter
         @observer_mutex = Mutex.new
         @next_observer_id = 0
         @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
+        @mrp_peer_parameters = {} of Tuple(UInt16, Socket::IPAddress) => Tuple(Time::Span, Time::Span, Time::Span)
+        @mrp_unsecured_configured_at = {} of Socket::IPAddress => Time::Instant
+        @mrp_peer_last_active = {} of Tuple(UInt16, Socket::IPAddress) => Time::Instant
         @reliable_mutex = Mutex.new
         @reliable_fiber = nil
         @running = false
@@ -291,8 +300,11 @@ module Matter
           if @pending_reliable.size >= MRP_PENDING_LIMIT && !@pending_reliable.has_key?(key)
             raise Matter::TransportError.new("MRP retransmission table is full")
           end
+          now = Time.instant
+          peer_key = {session_id, canonical_peer(peer_address)}
+          base = mrp_base_interval(peer_key, now)
           @pending_reliable[key] = PendingReliableMessage.new(packet, peer_address,
-            session_id, exchange_id, message_counter, Time.instant + mrp_backoff(0))
+            session_id, exchange_id, message_counter, now + mrp_backoff(base, 0))
         end
         begin
           transmit(packet, peer_address)
@@ -312,7 +324,12 @@ module Matter
           pending = @pending_reliable[key]?
           return false unless pending
           return false if peer && canonical_peer(pending.peer) != canonical_peer(peer)
-          !!@pending_reliable.delete(key)
+          if @pending_reliable.delete(key)
+            @mrp_peer_last_active[{session_id, canonical_peer(pending.peer)}] = Time.instant
+            true
+          else
+            false
+          end
         end
       end
 
@@ -323,19 +340,56 @@ module Matter
       def clear_reliable_session(session_id : UInt16) : Nil
         @reliable_mutex.synchronize do
           @pending_reliable.reject! { |(pending_session_id, _, _), _| pending_session_id == session_id }
+          @mrp_peer_parameters.reject! { |(stored_session_id, _), _| stored_session_id == session_id }
+          @mrp_unsecured_configured_at.clear if session_id == 0_u16
+          @mrp_peer_last_active.reject! { |(stored_session_id, _), _| stored_session_id == session_id }
+        end
+      end
+
+      def configure_mrp_peer(peer : Socket::IPAddress, session_id : UInt16,
+                             idle_interval_ms : UInt32? = nil,
+                             active_interval_ms : UInt32? = nil,
+                             active_threshold_ms : UInt16? = nil) : Nil
+        idle = idle_interval_ms && idle_interval_ms > 0 ? idle_interval_ms.milliseconds : MRP_IDLE_RETRY_INTERVAL
+        active = active_interval_ms && active_interval_ms > 0 ? active_interval_ms.milliseconds : MRP_ACTIVE_RETRY_INTERVAL
+        threshold = active_threshold_ms && active_threshold_ms > 0 ? active_threshold_ms.milliseconds : MRP_ACTIVE_THRESHOLD
+        @reliable_mutex.synchronize do
+          canonical = canonical_peer(peer)
+          @mrp_peer_parameters[{session_id, canonical}] = {idle, active, threshold}
+          @mrp_unsecured_configured_at[canonical] = Time.instant if session_id == 0_u16
+        end
+      end
+
+      def mark_mrp_peer_active(peer : Socket::IPAddress, session_id : UInt16) : Nil
+        @reliable_mutex.synchronize do
+          peer_key = {session_id, canonical_peer(peer)}
+          @mrp_peer_last_active[peer_key] = Time.instant
         end
       end
 
       # Public to permit deterministic clock-based tests without sleeping.
       def retransmit_due(now : Time::Instant = Time.instant) : Nil
         @reliable_mutex.synchronize do
+          @mrp_unsecured_configured_at.reject! do |peer, configured_at|
+            pending_for_peer = @pending_reliable.values.any? do |pending|
+              pending.session_id == 0_u16 && canonical_peer(pending.peer) == peer
+            end
+            if now - configured_at > MRP_UNSECURED_CONFIG_TTL && !pending_for_peer
+              @mrp_peer_parameters.delete({0_u16, peer})
+              true
+            else
+              false
+            end
+          end
+          @mrp_peer_last_active.reject! { |peer_key, last_activity| now - last_activity > (@mrp_peer_parameters[peer_key]?.try(&.[2]) || MRP_ACTIVE_THRESHOLD) }
           @pending_reliable.reject! do |_key, pending|
             next false if pending.next_at > now
             if pending.retransmissions >= MRP_MAX_RETRANSMISSIONS
               true
             else
               pending.retransmissions += 1
-              pending.next_at = now + mrp_backoff(pending.retransmissions)
+              peer_key = {pending.session_id, canonical_peer(pending.peer)}
+              pending.next_at = now + mrp_backoff(mrp_base_interval(peer_key, now), pending.retransmissions)
               begin
                 transmit(pending.packet, pending.peer)
               rescue ex
@@ -349,6 +403,9 @@ module Matter
 
       protected def initialize_reliable_messages : Nil
         @pending_reliable = {} of Tuple(UInt16, UInt16, UInt32) => PendingReliableMessage
+        @mrp_peer_parameters = {} of Tuple(UInt16, Socket::IPAddress) => Tuple(Time::Span, Time::Span, Time::Span)
+        @mrp_unsecured_configured_at = {} of Socket::IPAddress => Time::Instant
+        @mrp_peer_last_active = {} of Tuple(UInt16, Socket::IPAddress) => Time::Instant
         @reliable_mutex = Mutex.new
         @reliable_fiber = nil
       end
@@ -358,7 +415,12 @@ module Matter
       end
 
       protected def clear_reliable : Nil
-        @reliable_mutex.synchronize { @pending_reliable.clear }
+        @reliable_mutex.synchronize do
+          @pending_reliable.clear
+          @mrp_peer_parameters.clear
+          @mrp_unsecured_configured_at.clear
+          @mrp_peer_last_active.clear
+        end
       end
 
       private def reliable_loop : Nil
@@ -370,12 +432,24 @@ module Matter
         Log.error(exception: ex) { "MRP retransmission loop stopped" }
       end
 
-      private def mrp_backoff(retransmissions : Int32) : Time::Span
+      private def mrp_backoff(base_interval : Time::Span, retransmissions : Int32) : Time::Span
         exponent = {retransmissions - 1, 0}.max
-        millis = MRP_ACTIVE_RETRY_INTERVAL.total_milliseconds *
+        millis = base_interval.total_milliseconds *
                  MRP_BACKOFF_MARGIN * (MRP_BACKOFF_BASE ** exponent) *
                  (1.0 + Random.rand * MRP_BACKOFF_JITTER)
         millis.milliseconds
+      end
+
+      private def mrp_base_interval(peer_key : Tuple(UInt16, Socket::IPAddress),
+                                    now : Time::Instant) : Time::Span
+        intervals = @mrp_peer_parameters[peer_key]?
+        threshold = intervals.try(&.[2]) || MRP_ACTIVE_THRESHOLD
+        active = @mrp_peer_last_active[peer_key]?.try { |last| now - last <= threshold } || false
+        if active
+          intervals.try(&.[1]) || MRP_ACTIVE_RETRY_INTERVAL
+        else
+          intervals.try(&.[0]) || MRP_IDLE_RETRY_INTERVAL
+        end
       end
 
       # The one place bytes leave the process. Specs override this to capture
@@ -648,6 +722,7 @@ module Matter
         # For encrypted messages, skip exchange management - the message handler will do this after decryption
         # For unencrypted messages, handle exchanges and acknowledgments here
         if session_id == 0
+          mark_mrp_peer_active(peer_address, 0_u16)
           # Get or create exchange
           exchange = @exchange_manager.get_or_create_exchange(
             exchange_id: message.payload_header.exchange_id,

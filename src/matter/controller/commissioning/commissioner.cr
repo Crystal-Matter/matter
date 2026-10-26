@@ -189,7 +189,14 @@ module Matter
           end
           @store.save(state)
 
-          peer_addr = peer || discover_commissionable(discriminator)
+          peer_addr = if peer
+                        peer
+                      else
+                        discovered_peer, idle, active, threshold = discover_commissionable(discriminator)
+                        @client.transport.configure_mrp_peer(discovered_peer, 0_u16,
+                          idle, active, threshold)
+                        discovered_peer
+                      end
 
           Log.info { "Commissioning: discriminator=#{discriminator} node_id=0x#{node_id.to_s(16)} peer=#{peer_addr}" }
 
@@ -558,7 +565,7 @@ module Matter
           end
         end
 
-        private def discover_commissionable(discriminator : UInt16) : Socket::IPAddress
+        private def discover_commissionable(discriminator : UInt16) : Tuple(Socket::IPAddress, UInt32?, UInt32?, UInt16?)
           scanner = nil.as(Scanner?)
           scanner = Scanner.new
           scanner.start
@@ -577,7 +584,8 @@ module Matter
             if dev
               address = dev.addresses.find(&.family.inet6?) || dev.addresses.first?
               if addr = address
-                return Socket::IPAddress.new(OperationalPeerResolver.address_hint(addr), dev.port)
+                idle, active, threshold = OperationalPeerResolver.mrp_parameters(dev)
+                return {Socket::IPAddress.new(OperationalPeerResolver.address_hint(addr), dev.port), idle, active, threshold}
               end
             end
 

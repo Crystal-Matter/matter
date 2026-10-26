@@ -45,6 +45,22 @@ private def operational_test_device(compressed_fabric_id : UInt64, node_id : UIn
 end
 
 describe Matter::Controller::OperationalPeerResolver do
+  it "reads bounded operational SII, SAI and SAT values" do
+    fabric = operational_test_fabric
+    device = operational_test_device(fabric.compressed_fabric_id, 0x200_u64, "192.0.2.2")
+    device.txt_records["SII"] = "4000"
+    device.txt_records["SAI"] = "300"
+    device.txt_records["SAT"] = "5000"
+    Resolver.mrp_parameters(device).should eq({4000_u32, 300_u32, 5000_u16})
+    device.txt_records["SII"] = "0"
+    device.txt_records["SAI"] = "invalid"
+    device.txt_records["SAT"] = "65536"
+    Resolver.mrp_parameters(device).should eq({nil, nil, nil})
+    device.txt_records["SII"] = "3600001"
+    device.txt_records["SAI"] = "4294967295"
+    Resolver.mrp_parameters(device).should eq({nil, nil, nil})
+  end
+
   it "matches both compressed fabric identity and node ID" do
     fabric = operational_test_fabric
     target = operational_test_device(fabric.compressed_fabric_id, 0x200_u64, "192.0.2.2")

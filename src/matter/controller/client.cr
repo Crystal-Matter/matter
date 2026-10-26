@@ -127,6 +127,12 @@ module Matter
           session.bind_tcp_peer(peer)
         end
         @sessions[session.session_id] = session
+        if peer
+          @transport.configure_mrp_peer(peer, session.session_id,
+            session.peer_mrp_idle_interval_ms, session.peer_mrp_active_interval_ms,
+            session.peer_mrp_active_threshold_ms)
+          @transport.mark_mrp_peer_active(peer, session.session_id)
+        end
       end
 
       def connect_tcp(peer : Socket::IPAddress) : Socket::IPAddress
@@ -408,6 +414,7 @@ module Matter
           return
         end
         decrypted_message = decrypt_message(session, msg)
+        @transport.mark_mrp_peer_active(peer, session.session_id)
         if ack = decrypted_message.payload_header.acknowledged_message_id
           @transport.acknowledge_reliable(session.session_id,
             decrypted_message.payload_header.exchange_id, ack)

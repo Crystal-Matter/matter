@@ -29,9 +29,9 @@ module Matter
         @session_id : UInt16,
         @peer_session_id : UInt16,
         @session_timestamp : Time = Time.utc,
-        @session_idle_interval : UInt32 = 4000_u32,    # 4 seconds
-        @session_active_interval : UInt32 = 500_u32,   # 500ms
-        @session_active_threshold : UInt16 = 4000_u16, # 4000 messages
+        @session_idle_interval : UInt32 = 500_u32,
+        @session_active_interval : UInt32 = 300_u32,
+        @session_active_threshold : UInt16 = 4000_u16,
       )
       end
     end
@@ -70,6 +70,12 @@ module Matter
       # fabric_index: the fabric index for CASE sessions (nil for PASE)
       property? case_session : Bool
       property fabric_index : UInt8?
+
+      # The destination's advertised retransmission intervals (milliseconds).
+      # Nil means the Matter 1.6 default applies.
+      property peer_mrp_idle_interval_ms : UInt32? = nil
+      property peer_mrp_active_interval_ms : UInt32? = nil
+      property peer_mrp_active_threshold_ms : UInt16? = nil
 
       # A TCP session is bound to one live connection token. The record can
       # recognize a legacy saved TCP session, but persistence does not write
@@ -173,6 +179,9 @@ module Matter
         getter fabric_index : UInt8?
         getter peer_subject_ids : Array(UInt64) = [] of UInt64
         getter peer_icac : Bytes? = nil
+        getter peer_mrp_idle_interval_ms : UInt32? = nil
+        getter peer_mrp_active_interval_ms : UInt32? = nil
+        getter peer_mrp_active_threshold_ms : UInt16? = nil
         getter? tcp_session : Bool = false
         getter created_at : Time
         getter last_activity_at : Time
@@ -195,6 +204,9 @@ module Matter
           @last_activity_at : Time,
           @peer_subject_ids : Array(UInt64) = [] of UInt64,
           @peer_icac : Bytes? = nil,
+          @peer_mrp_idle_interval_ms : UInt32? = nil,
+          @peer_mrp_active_interval_ms : UInt32? = nil,
+          @peer_mrp_active_threshold_ms : UInt16? = nil,
           @tcp_session : Bool = false,
         )
         end
@@ -219,6 +231,9 @@ module Matter
           last_activity_at: @last_activity_time,
           peer_subject_ids: @peer_subject_ids,
           peer_icac: @peer_icac,
+          peer_mrp_idle_interval_ms: @peer_mrp_idle_interval_ms,
+          peer_mrp_active_interval_ms: @peer_mrp_active_interval_ms,
+          peer_mrp_active_threshold_ms: @peer_mrp_active_threshold_ms,
           tcp_session: @tcp_session
         )
       end
@@ -243,6 +258,9 @@ module Matter
         context.last_activity_time = record.last_activity_at
         context.peer_subject_ids = record.peer_subject_ids.dup
         context.peer_icac = record.peer_icac.try(&.dup)
+        context.peer_mrp_idle_interval_ms = record.peer_mrp_idle_interval_ms
+        context.peer_mrp_active_interval_ms = record.peer_mrp_active_interval_ms
+        context.peer_mrp_active_threshold_ms = record.peer_mrp_active_threshold_ms
         context.tcp_session = record.tcp_session?
         context
       end

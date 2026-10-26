@@ -11,6 +11,9 @@ module Matter
       # These trigger hints require a non-empty instruction telling a user
       # how to activate the ICD (Matter 1.6 ICD Management §9.16.6.7).
       INSTRUCTION_REQUIRED_TRIGGER_HINTS = 0x0001_AC64_u32
+      MRP_BASE_IDLE_INTERVAL_MS          =         500_u32
+      MRP_BASE_ACTIVE_INTERVAL_MS        =         300_u32
+      MRP_MAX_INTERVAL_MS                =   3_600_000_u32
 
       feature :check_in_protocol_support, bit: 0
       feature :user_active_mode_trigger, bit: 1
@@ -125,6 +128,9 @@ module Matter
         getter idle_mode_duration : UInt32
         getter active_mode_duration : UInt32
         getter active_mode_threshold : UInt16
+        # Polling cadence is separate from the duration the ICD stays awake.
+        getter slow_polling_interval_ms : UInt32
+        getter fast_polling_interval_ms : UInt32
         getter clients_supported_per_fabric : UInt16
         getter maximum_check_in_backoff : UInt32
         getter user_active_mode_trigger_hint : UInt32
@@ -134,6 +140,8 @@ module Matter
                        @idle_mode_duration : UInt32 = 1_u32,
                        @active_mode_duration : UInt32 = 300_u32,
                        @active_mode_threshold : UInt16 = 300_u16,
+                       @slow_polling_interval_ms : UInt32 = 0_u32,
+                       @fast_polling_interval_ms : UInt32 = 0_u32,
                        @clients_supported_per_fabric : UInt16 = 1_u16,
                        maximum_check_in_backoff : UInt32? = nil,
                        @user_active_mode_trigger_hint : UInt32 = 0_u32,
@@ -164,9 +172,12 @@ module Matter
       property on_monitored_subject_covered : Proc(UInt8, UInt64, Bool)?
       property on_persist_counter : Proc(Bool)?
       property on_persist_registration : Proc(Bool)?
+      property on_operating_mode_changed : Proc(Nil)?
       getter idle_mode_duration : UInt32
       getter active_mode_duration : UInt32
       getter active_mode_threshold : UInt16
+      getter slow_polling_interval_ms : UInt32
+      getter fast_polling_interval_ms : UInt32
       getter clients_supported_per_fabric : UInt16
       getter maximum_check_in_backoff : UInt32
       getter user_active_mode_trigger_hint : UInt32
@@ -186,6 +197,8 @@ module Matter
                      @idle_mode_duration : UInt32 = 1_u32,
                      @active_mode_duration : UInt32 = 300_u32,
                      @active_mode_threshold : UInt16 = 300_u16,
+                     @slow_polling_interval_ms : UInt32 = 0_u32,
+                     @fast_polling_interval_ms : UInt32 = 0_u32,
                      @clients_supported_per_fabric : UInt16 = 1_u16,
                      maximum_check_in_backoff : UInt32? = nil,
                      @user_active_mode_trigger_hint : UInt32 = 0_u32,
@@ -198,6 +211,8 @@ module Matter
           @idle_mode_duration = configuration.idle_mode_duration
           @active_mode_duration = configuration.active_mode_duration
           @active_mode_threshold = configuration.active_mode_threshold
+          @slow_polling_interval_ms = configuration.slow_polling_interval_ms
+          @fast_polling_interval_ms = configuration.fast_polling_interval_ms
           @clients_supported_per_fabric = configuration.clients_supported_per_fabric
           @maximum_check_in_backoff = configuration.maximum_check_in_backoff
           @user_active_mode_trigger_hint = configuration.user_active_mode_trigger_hint
@@ -206,6 +221,16 @@ module Matter
         validate_configuration
         @icd_counter = counter_seed || ((Random::Secure.rand(UInt32) >> 4) + 1_u32)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+      end
+
+      # Core MRP base intervals plus the time spent waiting for the radio's
+      # next poll. ActiveModeDuration controls wake time and does not affect MRP.
+      def mrp_idle_interval_ms : UInt32
+        MRP_BASE_IDLE_INTERVAL_MS + @slow_polling_interval_ms
+      end
+
+      def mrp_active_interval_ms : UInt32
+        MRP_BASE_ACTIVE_INTERVAL_MS + @fast_polling_interval_ms
       end
 
       def registered_clients(fabric_index : UInt8? = request_fabric_index) : Array(MonitoringRegistration)
@@ -236,12 +261,14 @@ module Matter
         raise ArgumentError.new("DSLS is not enabled") unless @feature_map.includes?(Feature::DynamicSitLitSupport)
         @forced_operating_mode = mode
         increment_version_and_notify(ATTR_OPERATING_MODE)
+        @on_operating_mode_changed.try(&.call)
       end
 
       def withdraw_forced_operating_mode : Nil
         raise ArgumentError.new("DSLS is not enabled") unless @feature_map.includes?(Feature::DynamicSitLitSupport)
         @forced_operating_mode = nil
         increment_version_and_notify(ATTR_OPERATING_MODE)
+        @on_operating_mode_changed.try(&.call)
       end
 
       def register_client(request : RegisterClientRequest) : RegisterClientResponse | InteractionModel::Status
@@ -269,6 +296,7 @@ module Matter
           @registrations = previous
           return InteractionModel::Status.failure
         end
+        @on_operating_mode_changed.try(&.call)
         RegisterClientResponse.new(@icd_counter)
       end
 
@@ -288,6 +316,7 @@ module Matter
           @registrations = previous
           return InteractionModel::Status.failure
         end
+        @on_operating_mode_changed.try(&.call)
         InteractionModel::Status.success
       end
 
@@ -376,6 +405,8 @@ module Matter
       end
 
       private def validate_configuration : Nil
+        raise ArgumentError.new("ICD MRP idle interval exceeds one hour") if @slow_polling_interval_ms > MRP_MAX_INTERVAL_MS - MRP_BASE_IDLE_INTERVAL_MS
+        raise ArgumentError.new("ICD MRP active interval exceeds one hour") if @fast_polling_interval_ms > MRP_MAX_INTERVAL_MS - MRP_BASE_ACTIVE_INTERVAL_MS
         raise ArgumentError.new("ICD idle duration out of range") unless (1_u32..64_800_u32).includes?(@idle_mode_duration)
         raise ArgumentError.new("ICD active duration exceeds idle duration") if @active_mode_duration > @idle_mode_duration * 1000_u32
         raise ArgumentError.new("ICD registration capacity must be positive") if @clients_supported_per_fabric == 0

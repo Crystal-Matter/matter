@@ -60,8 +60,9 @@ module Matter
         getter responder : Session::Pase::PaseResponder
         getter initiator_session_id : UInt16
         getter responder_session_id : UInt16
+        getter mrp_parameters : Session::Pase::Definitions::MrpParameters?
 
-        def initialize(@responder, @initiator_session_id, @responder_session_id)
+        def initialize(@responder, @initiator_session_id, @responder_session_id, @mrp_parameters)
           super()
         end
       end
@@ -72,8 +73,9 @@ module Matter
         getter fabric : Fabric
         getter initiator_session_id : UInt16
         getter responder_session_id : UInt16
+        getter session_parameters : Session::Case::Definitions::SessionParameter?
 
-        def initialize(@responder, @fabric, @initiator_session_id, @responder_session_id)
+        def initialize(@responder, @fabric, @initiator_session_id, @responder_session_id, @session_parameters)
           super()
         end
       end
@@ -85,9 +87,10 @@ module Matter
         getter new_resumption_id : Bytes
         getter initiator_session_id : UInt16
         getter responder_session_id : UInt16
+        getter session_parameters : Session::Case::Definitions::SessionParameter?
 
         def initialize(@record, @fabric, @initiator_random, @new_resumption_id,
-                       @initiator_session_id, @responder_session_id)
+                       @initiator_session_id, @responder_session_id, @session_parameters)
           super()
         end
       end
@@ -133,6 +136,32 @@ module Matter
       # Called when no fabric matches a Sigma1 destination id, as a last resort
       # for devices that hold their fabric outside the FabricTable.
       property on_get_fabric : Proc(Fabric?)?
+
+      @local_mrp_idle_interval_ms : UInt32? = nil
+      @local_mrp_active_interval_ms : UInt32? = nil
+      @local_mrp_active_threshold_ms : UInt16? = nil
+
+      def configure_local_mrp(idle_interval_ms : UInt32?, active_interval_ms : UInt32?,
+                              active_threshold_ms : UInt16? = nil) : Nil
+        @local_mrp_idle_interval_ms = idle_interval_ms
+        @local_mrp_active_interval_ms = active_interval_ms
+        @local_mrp_active_threshold_ms = active_threshold_ms
+      end
+
+      private def local_pase_mrp_parameters : Session::Pase::Definitions::MrpParameters?
+        return unless @local_mrp_idle_interval_ms || @local_mrp_active_interval_ms
+        Session::Pase::Definitions::MrpParameters.new(
+          idle_retransmit_timeout_ms: @local_mrp_idle_interval_ms,
+          active_retransmit_timeout_ms: @local_mrp_active_interval_ms)
+      end
+
+      private def local_case_session_parameters : Session::Case::Definitions::SessionParameter?
+        return unless @local_mrp_idle_interval_ms || @local_mrp_active_interval_ms || @local_mrp_active_threshold_ms
+        Session::Case::Definitions::SessionParameter.new(
+          session_idle_interval: @local_mrp_idle_interval_ms,
+          session_active_interval: @local_mrp_active_interval_ms,
+          session_active_threshold: @local_mrp_active_threshold_ms)
+      end
 
       @default_setup_pin : UInt32
       @default_iterations : UInt32
@@ -272,6 +301,10 @@ module Matter
 
         initiator_session_id = request.initiator_session_id || return
         initiator_random = request.initiator_random || return
+        if mrp = request.mrp_parameters
+          @sender.configure_unsecured_mrp_peer(peer,
+            mrp.idle_retransmit_timeout_ms, mrp.active_retransmit_timeout_ms)
+        end
         Log.debug { "  Initiator session ID: #{initiator_session_id}, random: #{initiator_random.size} bytes" }
 
         responder_session_id = allocate_responder_session_id
@@ -279,7 +312,8 @@ module Matter
           initiator_random: initiator_random,
           responder_random: Random::Secure.random_bytes(RANDOM_LENGTH),
           responder_session_id: responder_session_id,
-          pbkdf_parameters: request.has_pbkdf_parameters ? nil : Session::Pase::Definitions::PbkdfParametersTLV.new(@iterations, @salt)
+          pbkdf_parameters: request.has_pbkdf_parameters ? nil : Session::Pase::Definitions::PbkdfParametersTLV.new(@iterations, @salt),
+          mrp_parameters: local_pase_mrp_parameters
         ).to_slice
         Log.debug { "PBKDF Response payload (#{response_payload.size} bytes): #{response_payload.hexstring}" }
 
@@ -296,7 +330,8 @@ module Matter
         @pase_handshakes[key] = PaseHandshake.new(
           responder: build_pase_responder(spake_context_hash(request_payload, response_payload)),
           initiator_session_id: initiator_session_id,
-          responder_session_id: responder_session_id
+          responder_session_id: responder_session_id,
+          mrp_parameters: request.mrp_parameters
         )
         Log.debug { "Created PaseResponder with hashed context" }
       end
@@ -403,7 +438,13 @@ module Matter
           initiator: false
         )
         session.bind_tcp_peer(peer) if peer.port == Transport::TcpEnabledTransport::TOKEN_PORT
+        if mrp = handshake.mrp_parameters
+          session.peer_mrp_idle_interval_ms = mrp.idle_retransmit_timeout_ms
+          session.peer_mrp_active_interval_ms = mrp.active_retransmit_timeout_ms
+        end
         @registry.establish_session(session)
+        @sender.configure_mrp_peer(peer, session)
+        @sender.mark_mrp_peer_active(peer, session)
         @pase_handshakes.delete(key)
 
         Log.info do
@@ -430,6 +471,11 @@ module Matter
         Log.info { "Handling CASE Sigma1" }
 
         sigma1 = Session::Case::Definitions::Sigma1.from_slice(msg.payload)
+        if params = sigma1.initiator_session_params
+          @sender.configure_unsecured_mrp_peer(peer,
+            params.session_idle_interval, params.session_active_interval,
+            params.session_active_threshold)
+        end
         Log.info { "  Initiator session ID: #{sigma1.initiator_session_id}" }
         Log.debug { "  Destination ID: #{sigma1.destination_id.hexstring}" }
 
@@ -489,7 +535,8 @@ module Matter
           responder: responder,
           fabric: fabric,
           initiator_session_id: sigma1.initiator_session_id,
-          responder_session_id: sigma2_data[:session_id]
+          responder_session_id: sigma2_data[:session_id],
+          session_parameters: sigma1.initiator_session_params
         )
         @case_resume_handshakes.delete(key)
 
@@ -503,7 +550,8 @@ module Matter
             responder_random: sigma2_data[:random],
             responder_session_id: sigma2_data[:session_id],
             responder_eph_pub_key: sigma2_data[:ephemeral_public_key],
-            encrypted2: sigma2_data[:encrypted_cert]
+            encrypted2: sigma2_data[:encrypted_cert],
+            responder_session_params: local_case_session_parameters
           ).to_slice
         )
         Log.info { "Sent CASE Sigma2" }
@@ -537,7 +585,7 @@ module Matter
         new_id = crypto.random_bytes(Session::Case::RESUMPTION_ID_LENGTH)
         @case_resume_handshakes[key] = CaseResumeHandshake.new(record, fabric,
           sigma1.initiator_random.dup, new_id, sigma1.initiator_session_id,
-          responder_session_id)
+          responder_session_id, sigma1.initiator_session_params)
         @case_handshakes.delete(key)
         @sender.send_secure_channel_response(
           original_msg: msg,
@@ -547,7 +595,8 @@ module Matter
             resumption_id: new_id,
             resume_mic: Session::Case.resume2_mic(crypto, record.shared_secret,
               sigma1.initiator_random, new_id),
-            responder_session_id: responder_session_id
+            responder_session_id: responder_session_id,
+            responder_session_params: local_case_session_parameters
           ).to_slice
         )
         true
@@ -645,7 +694,14 @@ module Matter
         end
 
         session.bind_tcp_peer(peer) if peer.port == Transport::TcpEnabledTransport::TOKEN_PORT
+        if params = handshake.session_parameters
+          session.peer_mrp_idle_interval_ms = params.session_idle_interval
+          session.peer_mrp_active_interval_ms = params.session_active_interval
+          session.peer_mrp_active_threshold_ms = params.session_active_threshold
+        end
         @registry.establish_session(session)
+        @sender.configure_mrp_peer(peer, session)
+        @sender.mark_mrp_peer_active(peer, session)
         @case_handshakes.delete(key)
 
         if id = responder.resumption_id
@@ -730,7 +786,14 @@ module Matter
         session.peer_subject_ids = record.peer_subject_ids.dup
         session.peer_icac = record.peer_icac.try(&.dup)
         session.bind_tcp_peer(key[0]) if key[0].port == Transport::TcpEnabledTransport::TOKEN_PORT
+        if params = handshake.session_parameters
+          session.peer_mrp_idle_interval_ms = params.session_idle_interval
+          session.peer_mrp_active_interval_ms = params.session_active_interval
+          session.peer_mrp_active_threshold_ms = params.session_active_threshold
+        end
         @registry.establish_session(session)
+        @sender.configure_mrp_peer(key[0], session)
+        @sender.mark_mrp_peer_active(key[0], session)
         save_resumption_record(Session::Case::ResumptionStore::Record.new(
           record.fabric_id, record.root_public_key, record.local_node_id,
           record.peer_node_id, handshake.new_resumption_id, record.shared_secret,

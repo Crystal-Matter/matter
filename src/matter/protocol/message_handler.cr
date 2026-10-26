@@ -138,6 +138,12 @@ module Matter
       delegate configure_pase_server, configure_pase_pin, reset_pase_server, to: @secure_channel
       delegate on_get_fabric, :on_get_fabric=, to: @secure_channel
 
+      def configure_local_mrp(idle_interval_ms : UInt32?, active_interval_ms : UInt32?,
+                              active_threshold_ms : UInt16? = nil) : Nil
+        @secure_channel.configure_local_mrp(idle_interval_ms, active_interval_ms,
+          active_threshold_ms)
+      end
+
       def initialize(
         @transport : Transport::PacketTransport,
         setup_pin : UInt32,
@@ -545,6 +551,7 @@ module Matter
             end
 
             msg = decrypt_message(msg, session)
+            @transport.mark_mrp_peer_active(peer, session_id)
             if ack = msg.payload_header.acknowledged_message_id
               @transport.acknowledge_reliable(session_id,
                 msg.payload_header.exchange_id, ack)

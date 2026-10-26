@@ -317,6 +317,8 @@ module Matter
         @groupcast_outbound = GroupcastSender.new(@fabric_table, groupcast, group_keys, sender)
       end
       if icd = icd_management
+        refresh_icd_local_mrp(icd)
+        icd.on_operating_mode_changed = -> { refresh_icd_local_mrp(icd) }
         icd.retain_fabrics(@fabric_table.all_fabrics.map(&.fabric_index))
         # restore_state advances the counter by 1000; commit that advancement
         # before any outbound Check-In can reuse a prior AES-CCM nonce.
@@ -731,13 +733,17 @@ module Matter
     # mDNS info factories (override for ICD, TCP, etc)
     # ------------------------------------------------------------------------
     protected def commissioning_info_for(mode : MDNS::CommissioningMode) : MDNS::CommissioningInfo
+      icd = icd_management
       MDNS::CommissioningInfo.new(
         device_name: device_name,
         vendor_id: vendor_id,
         product_id: product_id,
         discriminator: discriminator,
         device_type: primary_device_type_id,
-        commissioning_mode: mode
+        commissioning_mode: mode,
+        session_idle_interval: icd && icd.operating_mode.sit? ? icd.mrp_idle_interval_ms : nil,
+        session_active_interval: icd.try(&.mrp_active_interval_ms),
+        session_active_threshold: icd.try(&.active_mode_threshold)
       )
     end
 
@@ -745,13 +751,20 @@ module Matter
       commissioning_info_for(MDNS::CommissioningMode::Basic)
     end
 
+    private def refresh_icd_local_mrp(icd : Cluster::IcdManagement) : Nil
+      idle = icd.operating_mode.sit? ? icd.mrp_idle_interval_ms : nil
+      @message_handler.configure_local_mrp(idle, icd.mrp_active_interval_ms,
+        icd.active_mode_threshold)
+    end
+
     protected def operational_info_for(fabric : Fabric) : MDNS::OperationalInfo
       icd = icd_management
       MDNS::OperationalInfo.new(
         compressed_fabric_id: fabric.compressed_fabric_id,
         node_id: fabric.node_id,
-        session_idle_interval: icd && icd.operating_mode.sit? ? icd.idle_mode_duration * 1000_u32 : nil,
-        session_active_interval: icd.try(&.active_mode_duration),
+        session_idle_interval: icd && icd.operating_mode.sit? ? icd.mrp_idle_interval_ms : nil,
+        session_active_interval: icd.try(&.mrp_active_interval_ms),
+        session_active_threshold: icd.try(&.active_mode_threshold),
         tcp_supported: @tcp_enabled
       )
     end
