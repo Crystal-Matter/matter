@@ -25,10 +25,14 @@ Options:
   --keep             Leave the compose environment running after the tests
   --clean            Also remove volumes (crystal cache) when tearing down
   --verbose          Stream every container's output (default: test runner only)
+  --focused          Run only explicitly selected E2E services and spec files
+  --service NAME     Compose service required by a focused spec (repeatable)
   -h, --help         Show this help
 
 Anything after `--` is passed to `crystal spec` for the e2e run, e.g.
   ./test --e2e-only -- e2e/spec/switch_spec.cr
+  ./test --focused --service door-lock-aliro --service door-lock-verified -- \
+    e2e/spec/door_lock_aliro_spec.cr e2e/spec/door_lock_verified_spec.cr
   ./test -- -e "toggles"
 
 Logs from every container are written to tmp/e2e/logs/ after each run.
@@ -41,7 +45,10 @@ BUILD=1
 KEEP=0
 CLEAN=0
 VERBOSE=0
+FOCUSED=0
+SERVICES=()
 SPEC_ARGS=""
+SPEC_FILES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,11 +58,38 @@ while [[ $# -gt 0 ]]; do
     --keep) KEEP=1; shift ;;
     --clean) CLEAN=1; shift ;;
     --verbose) VERBOSE=1; shift ;;
+    --focused) FOCUSED=1; RUN_UNIT=0; shift ;;
+    --service)
+      if [[ $# -lt 2 || "$2" == -* ]]; then
+        echo "ERROR: --service requires a Compose service name" >&2; exit 2
+      fi
+      SERVICES+=("$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
-    --) shift; SPEC_ARGS="$*"; break ;;
+    --)
+      shift
+      SPEC_ARGS="$*"
+      for arg in "$@"; do
+        if [[ "$arg" == e2e/spec/*_spec.cr && -f "$arg" ]]; then
+          SPEC_FILES=$((SPEC_FILES + 1))
+        elif [[ "$FOCUSED" -eq 1 && ( "$arg" == e2e/spec* || "$arg" == spec || "$arg" == spec/* || "$arg" == *.cr ) ]]; then
+          echo "ERROR: focused E2E needs existing e2e/spec/*_spec.cr files" >&2
+          exit 2
+        fi
+      done
+      break ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ "$FOCUSED" -eq 1 ]]; then
+  if [[ "${#SERVICES[@]}" -eq 0 || "$SPEC_FILES" -eq 0 || "$BUILD" -eq 0 || "$RUN_E2E" -eq 0 ]]; then
+    echo "ERROR: --focused requires --service, explicit e2e spec file(s), and an image build" >&2
+    exit 2
+  fi
+elif [[ "${#SERVICES[@]}" -ne 0 ]]; then
+  echo "ERROR: --service requires --focused" >&2
+  exit 2
+fi
 
 # ---------------------------------------------------------------------------
 # docker compose detection (v2 plugin preferred, v1 binary as a fallback)
@@ -67,8 +101,10 @@ fi
 
 if docker compose version >/dev/null 2>&1; then
   compose() { docker compose "$@"; }
+  COMPOSE_V2=1
 elif command -v docker-compose >/dev/null 2>&1; then
   compose() { docker-compose "$@"; }
+  COMPOSE_V2=0
 else
   echo "ERROR: neither 'docker compose' nor 'docker-compose' is available" >&2
   exit 2
@@ -79,7 +115,28 @@ if ! docker info >/dev/null 2>&1; then
   exit 2
 fi
 
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-matter-e2e}"
+if [[ "$FOCUSED" -eq 1 ]]; then
+  if [[ "$COMPOSE_V2" -eq 0 ]]; then
+    echo "ERROR: --focused requires Docker Compose v2" >&2; exit 2
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: --focused needs Python 3 to resolve Compose services" >&2; exit 2
+  fi
+  export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-matter-e2e-focused-$$}"
+  export MATTER_E2E_DEVICE_IMAGE="matter-e2e-focused-device-$$"
+  export MATTER_E2E_TESTS_IMAGE="matter-e2e-focused-tests-$$"
+  export MATTER_E2E_BUILD_JOBS="${MATTER_E2E_BUILD_JOBS:-1}"
+  MATTER_E2E_BINARIES="$(compose config --format json | python3 e2e/focused_services.py "${SERVICES[@]}")" || exit 2
+  if [[ -z "$MATTER_E2E_BINARIES" ]]; then
+    echo "ERROR: --focused needs at least one Crystal device service" >&2; exit 2
+  fi
+  MATTER_E2E_BINARIES="device_validation $MATTER_E2E_BINARIES"
+  export MATTER_E2E_BINARIES
+  echo "==> Focused services: ${SERVICES[*]}"
+  echo "==> Focused binaries: $MATTER_E2E_BINARIES"
+else
+  export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-matter-e2e}"
+fi
 export E2E_RUN_UNIT="$RUN_UNIT"
 export E2E_RUN_E2E="$RUN_E2E"
 export E2E_SPEC_ARGS="$SPEC_ARGS"
@@ -103,6 +160,9 @@ teardown() {
       compose down --remove-orphans --volumes >/dev/null 2>&1 || true
     else
       compose down --remove-orphans >/dev/null 2>&1 || true
+    fi
+    if [[ "$FOCUSED" -eq 1 ]]; then
+      docker image rm "$MATTER_E2E_DEVICE_IMAGE" "$MATTER_E2E_TESTS_IMAGE" >/dev/null 2>&1 || true
     fi
   fi
 
@@ -128,6 +188,16 @@ if [[ "$BUILD" -eq 1 ]]; then
   # Docker's snapshot store even though the compiler cache mount is locked.
   compose build switch
   compose build tests
+fi
+if [[ "$FOCUSED" -eq 1 ]]; then
+  echo "==> Starting selected devices"
+  compose up --no-build --no-deps -d --wait "${SERVICES[@]}"
+  echo "==> Running selected E2E specs"
+  set +e
+  compose run --rm --no-deps tests
+  RESULT=$?
+  set -e
+  exit "$RESULT"
 fi
 # Only stream the test runner's output unless --verbose (legacy docker-compose v1
 # has no --attach, in which case everything is streamed).
