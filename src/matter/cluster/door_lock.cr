@@ -13,7 +13,7 @@ module Matter
     class DoorLock < Base
       Log = ::Log.for("matter.cluster.door_lock")
 
-      cluster 0x0101, revision: 9
+      cluster 0x0101, revision: 10
 
       feature :pin_credential, bit: 0
       feature :rfid_credential, bit: 1

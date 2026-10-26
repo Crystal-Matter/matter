@@ -26,6 +26,14 @@ describe "matter_door_lock example" do
     read_bool(device, "doorlock", "require-pinfor-remote-operation", "RequirePINforRemoteOperation").should be_true
   end
 
+  it "advertises the Matter 1.6 revision without removed Zigbee elements" do
+    read_int(device, "doorlock", "cluster-revision", "ClusterRevision").should eq(10_i64)
+    attributes = expect_success(device.read("doorlock", "attribute-list")).int_list("AttributeList")
+    attributes.should_not contain(0x0034_i64) # Deprecated SecurityLevel
+    commands = expect_success(device.read("doorlock", "accepted-command-list")).int_list("AcceptedCommandList")
+    commands.should_not contain(0x02_i64) # Disallowed Toggle
+  end
+
   it "uses conservative Matter defaults and rejects unenforced credential rules" do
     read_bool(device, "doorlock", "enable-one-touch-locking", "EnableOneTouchLocking").should be_false
     read_bool(device, "doorlock", "enable-inside-status-led", "EnableInsideStatusLED").should be_false
