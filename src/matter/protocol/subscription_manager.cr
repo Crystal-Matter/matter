@@ -87,6 +87,8 @@ module Matter
       @pending_subscriptions : Hash(ExchangeKey, PendingSubscription) = {} of ExchangeKey => PendingSubscription
       @pending_reads : Hash(ExchangeKey, PendingRead) = {} of ExchangeKey => PendingRead
       @pending_invokes : Hash(ExchangeKey, PendingInvoke) = {} of ExchangeKey => PendingInvoke
+      alias AttributeKey = Tuple(UInt16, UInt32, UInt32)
+      @dirty_attributes = {} of UInt32 => Set(AttributeKey)
 
       def initialize(
         @registry : SessionRegistry,
@@ -200,7 +202,8 @@ module Matter
         notify_batched([{endpoint_id, cluster_id, attribute_id}])
       end
 
-      # Reports a batch of changed attributes, one ReportData per subscription.
+      # Queues a batch of changed attributes, coalescing one ReportData per
+      # subscription when its minimum interval permits.
       #
       # Batching matters: controllers (iOS especially) throttle a device that
       # sends a report per attribute during a burst of changes.
@@ -213,7 +216,13 @@ module Matter
           return if subscriptions.empty?
 
           subscriptions.each_value do |subscription|
-            reports = collect_reports(subscription, attributes)
+            dirty = @dirty_attributes.put_if_absent(subscription.subscription_id) { Set(AttributeKey).new }
+            attributes.each do |attribute|
+              dirty << attribute if subscription.matches?(*attribute)
+            end
+            next unless subscription.min_interval_elapsed?
+
+            reports = collect_reports(subscription, dirty.to_a)
             # Every report drains whatever the journal still owes this
             # subscription, so a non-urgent event rides out with the next
             # attribute change rather than waiting for its own report.
@@ -222,6 +231,36 @@ module Matter
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
             send_update(subscription, reports, events)
+            dirty.clear
+          end
+        end
+      end
+
+      # Run before the registry's expiry sweep: a quiet subscriber still needs
+      # a ReportData at MaxInterval, while dirty values wait for MinInterval.
+      def tick(now : Time = Time.utc) : Nil
+        @registry.synchronize do
+          subscriptions = @registry.active_subscriptions
+          @dirty_attributes.reject! { |id, _| !subscriptions.has_key?(id) }
+
+          subscriptions.each_value do |subscription|
+            dirty = @dirty_attributes[subscription.subscription_id]?
+            min_elapsed = subscription.min_interval_elapsed?(now)
+            max_elapsed = now >= subscription.last_report_time + subscription.max_interval.seconds
+            next unless min_elapsed
+            report_due = max_elapsed || dirty.try(&.empty?) == false || subscription.events?
+            next unless report_due
+
+            reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
+            events = pending_events(subscription)
+            next if reports.empty? && events.empty? && !max_elapsed
+
+            if reports.empty? && events.empty?
+              send_update_batch(subscription, reports, events, nil)
+            else
+              send_update(subscription, reports, events)
+            end
+            dirty.try(&.clear)
           end
         end
       end

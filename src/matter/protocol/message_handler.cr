@@ -185,6 +185,7 @@ module Matter
         @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx_initiator.forget_session(id) })
         @registry.add_sweep_hook(-> { @bdx_initiator.sweep })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
+        @registry.add_sweep_hook(-> { @subscriptions.tick })
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
         @router.on_invoke_response_sent = ->(session_identity : UInt64, exchange_id : UInt16) do

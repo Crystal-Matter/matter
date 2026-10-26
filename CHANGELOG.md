@@ -1878,6 +1878,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   statuses. Reject oversized individual items and multi-chunk timed writes
   before sending.
 
+### Subscription reporting intervals
+
+- Keep subscriptions alive with an empty ReportData at their maximum interval
+  when no attributes or events change. Coalesce changed attributes until the
+  minimum interval and deliver pending ordinary events with the next report;
+  urgent events still report immediately.
+
 ### Interaction Model subscriptions
 
 - Honor `SubscribeRequest.KeepSubscriptions`: when false, terminate active and

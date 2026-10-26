@@ -211,7 +211,7 @@ describe "Subscription event reporting" do
     fixture.handler.close
   end
 
-  it "carries damped events out with the next attribute report" do
+  it "carries damped events with a coalesced attribute report after the minimum interval" do
     fixture = event_subscription_fixture([lock_event_path(false)], min_interval: 60_u16)
     subscription = fixture.handler.active_subscriptions[7_u32]
     subscription.attribute_paths << Matter::InteractionModel::AttributePath.new(
@@ -224,6 +224,9 @@ describe "Subscription event reporting" do
     fixture.transport.sent_packets.clear
 
     fixture.handler.notify_subscriptions(ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, Matter::Cluster::DoorLock::ATTR_LOCK_STATE)
+    fixture.transport.sent_packets.should be_empty
+    subscription.last_report_time = Time.utc - 60.seconds
+    fixture.handler.subscriptions.tick
     reported_events(fixture).should eq([fixture.base_event_number + 1])
 
     fixture.handler.close
