@@ -561,7 +561,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preferences, typed charge commands and session events, validated daily
   target schedules, retained charging permission, and physical relay callbacks.
   The synthetic appliance fixture exercises the cluster through chip-tool.
-  Optional SoC, Plug and Charge, RFID, and V2X features remain unavailable.
+  Optional SoC, Plug and Charge, and RFID features remain unavailable.
+- Add an opt-in V2X profile with timed EnableDischarging, independent persistent
+  charge and discharge grants, combined SupplyState, host-approved relay changes,
+  separate expiry timers, and feature-required session counters and event fields.
+  The synthetic appliance fixture exposes V2X on a separate endpoint for
+  official chip-tool coverage.
 
 ### Application Launcher
 
