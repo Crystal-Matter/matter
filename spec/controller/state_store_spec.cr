@@ -24,6 +24,24 @@ private def sample_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::StateStore do
+  it "persists replaced IPK epochs without losing the controller's peers" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = sample_fabric
+    state = Matter::Controller::State.new(fabric: fabric)
+    state.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(0x3333_u64, "127.0.0.1", 5540))
+    store.save(state)
+
+    loaded = store.load
+    rotated = loaded.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+    rotated.ipk_epoch_keys = [fabric.ipk_value, Bytes.new(16, 0xBB_u8), Bytes.new(16, 0xCC_u8)]
+    loaded.replace_fabric(rotated)
+    store.save(loaded)
+
+    restored = store.load
+    restored.fabric.as(Matter::Controller::FabricInfo).ipk_epoch_keys.should eq(rotated.ipk_epoch_keys)
+    restored.nodes.has_key?(0x3333_u64).should be_true
+  end
+
   it "persists controller fabric credentials in SQLite across restart" do
     path = File.join(Dir.tempdir, "matter-controller-#{Random::Secure.hex(6)}.sqlite3")
     begin

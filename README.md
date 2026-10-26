@@ -1204,6 +1204,17 @@ Wait for the Datastore entries to become Committed before the delegated
 controller opens CASE to the device. The ICAC signing key stays with
 `joint_authority`.
 
+When the Anchor updates GroupKeySetID zero, refresh each controller's stored
+IPK epochs over an authenticated Anchor CASE session before retiring its old
+epoch. The controller then selects the second-newest epoch for new CASE and
+can retry retained epochs while devices receive the update:
+
+```crystal
+Matter::Controller::SharedFabric.refresh_ipk_from_anchor(
+  store, fabric, im, anchor_case_session, anchor_peer,
+  datastore_endpoint, anchor_node_id)
+```
+
 ## Intermittently connected devices
 
 Always-on devices do not advertise ICD Management. An application that has a

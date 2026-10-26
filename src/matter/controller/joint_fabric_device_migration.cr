@@ -664,7 +664,8 @@ module Matter
             anchor.root_public_key, anchor.root_cert)
           FabricInfo.new(anchor.fabric_id, node_id, anchor.ipk_value.dup,
             anchor.root_cert.dup, anchor.root_public_key.dup, noc, controller_key.private_key,
-            admin_vendor_id: @admin_vendor_id, intermediate_cert: @icac.dup)
+            admin_vendor_id: @admin_vendor_id, intermediate_cert: @icac.dup,
+            ipk_epoch_keys: anchor.ipk_epoch_keys)
         end
       end
 

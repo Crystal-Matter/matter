@@ -82,6 +82,9 @@ module Matter
       # Raw epoch key (IPK value) provided during AddNOC (16 bytes).
       getter ipk_value : Bytes
 
+      # Optional KeySet-0 epochs, oldest first. Legacy stores use ipk_value.
+      @ipk_epoch_keys : Array(Bytes) = [] of Bytes
+
       # TLV root certificate provided via AddTrustedRootCertificate.
       getter root_cert : Bytes
 
@@ -119,7 +122,25 @@ module Matter
         @admin_vendor_id : UInt16 = DEFAULT_ADMIN_VENDOR_ID,
         @intermediate_cert : Bytes? = nil,
         @intermediate_private_key : Bytes? = nil,
+        ipk_epoch_keys : Array(Bytes)? = nil,
       )
+        self.ipk_epoch_keys = ipk_epoch_keys if ipk_epoch_keys
+      end
+
+      def ipk_epoch_keys : Array(Bytes)
+        @ipk_epoch_keys.empty? ? [@ipk_value] : @ipk_epoch_keys
+      end
+
+      def ipk_epoch_keys=(keys : Array(Bytes)) : Nil
+        raise Matter::ConfigurationError.new("IPK requires one to three epoch keys") unless (1..3).includes?(keys.size)
+        raise Matter::ConfigurationError.new("IPK epoch key must be 16 bytes") unless keys.all?(&.size.==(Fabric::IPK_SIZE))
+        @ipk_epoch_keys = keys.map(&.dup)
+        @ipk_value = @ipk_epoch_keys.first.dup
+      end
+
+      def case_ipk_value : Bytes
+        keys = ipk_epoch_keys
+        keys.size > 1 ? keys[keys.size - 2] : keys.first
       end
 
       # The key pair this fabric issues certificates with
@@ -245,6 +266,23 @@ module Matter
           @other_fabrics[key] = value
           @other_nodes[key] = {} of UInt64 => NodeInfo
         end
+      end
+
+      # Replace credentials for an installed identity without discarding its
+      # peer records or changing the selected fabric.
+      def replace_fabric(value : FabricInfo) : Nil
+        key = fabric_key(value)
+        if active = @fabric
+          if fabric_key(active) == key
+            @fabric = value
+            return
+          end
+        end
+        if @other_fabrics.has_key?(key)
+          @other_fabrics[key] = value
+          return
+        end
+        raise Matter::ConfigurationError.new("Controller identity for fabric 0x#{value.fabric_id.to_s(16)} is not installed")
       end
 
       def select_fabric(fabric_id : UInt64, root_public_key : Bytes? = nil, controller_node_id : UInt64? = nil) : FabricInfo

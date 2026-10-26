@@ -668,6 +668,7 @@ module Matter
       # advertise callbacks are mandatory application boundaries.
       class RotationMigration < Migration
         alias Operation = Proc(Nil)
+        FIRST_IPK_EPOCH_START_TIME = 1_u64
 
         @rotation_journal : Journal? = nil
         @save_rotation_journal : Proc(Journal, Nil)? = nil
@@ -697,6 +698,21 @@ module Matter
           Snapshot.copy!(source, @candidate_store, @candidate_node_id,
             @candidate_old_node_id, @candidate_administrator)
           validate_participants!
+          # The snapshot belongs to the old Anchor fabric. The promoted Anchor
+          # must advertise the IPK of its newly bootstrapped fabric after restart.
+          keys = @bootstrap.fabric.ipk_epoch_keys
+          ipk_key_set = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+            Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+            keys[0].dup, FIRST_IPK_EPOCH_START_TIME,
+            keys[1]?.try(&.dup), keys[1]? ? FIRST_IPK_EPOCH_START_TIME + 1_u64 : nil,
+            keys[2]?.try(&.dup), keys[2]? ? FIRST_IPK_EPOCH_START_TIME + 2_u64 : nil)
+          key_sets = @candidate_store.group_key_set_list
+          if index = key_sets.index(&.group_key_set_id.==(0_u16))
+            key_sets[index] = ipk_key_set
+          else
+            key_sets.unshift(ipk_key_set)
+          end
+          @candidate_store.group_key_set_list = key_sets
           @candidate_store.group_list = @candidate_store.group_list.map do |group|
             group.group_cat_version = @administrator_cat_version if group.group_cat == 0xFFFF_u16 && @administrator_cat_version
             group.group_cat_version = @anchor_cat_version if group.group_cat == 0xFFFE_u16 && @anchor_cat_version

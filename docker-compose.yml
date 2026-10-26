@@ -221,6 +221,20 @@ services:
       MATTER_JFA_PROVISIONED_ANCHOR: "1"
       MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_index_reuse_anchor.bootstrap.yml
 
+  joint-fabric-ipk-anchor:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_ipk_anchor
+      E2E_BINARY: matter_joint_fabric_administrator
+      MATTER_JFA_PROVISIONED_ANCHOR: "1"
+      MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_ipk_anchor.bootstrap.yml
+
+  joint-fabric-ipk-target:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_joint_fabric_ipk_target
+      E2E_BINARY: matter_switch
+
   joint-fabric-lifecycle-target:
     <<: *device
     environment:

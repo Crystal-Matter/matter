@@ -2,6 +2,29 @@ require "./spec_helper"
 require "../src/matter/fabric"
 
 describe Matter::Fabric do
+  it "keeps all IPK epochs for responder CASE and selects the second newest for initiator CASE" do
+    fabric = Matter::Fabric.new(
+      fabric_id: 0x1234_u64,
+      fabric_index: 1_u8,
+      node_id: 0x5678_u64,
+      root_public_key: Random::Secure.random_bytes(65),
+      operational_cert: Bytes[1],
+      operational_key: Matter::Crypto::Key.generate_key_pair,
+      ipk: Bytes.new(16, 0x11_u8)
+    )
+    random = Bytes.new(32, 0xAB_u8)
+    first = fabric.derived_ipk
+    fabric.ipk_epoch_keys = [Bytes.new(16, 0x11_u8), Bytes.new(16, 0x22_u8), Bytes.new(16, 0x33_u8)]
+    selected = fabric.derived_ipk
+    selected.should_not eq(first)
+    fabric.matching_derived_ipk(fabric.compute_destination_id(random), random).should eq(selected)
+    old_destination = fabric.compute_destination_id(random, first)
+    fabric.matching_derived_ipk(old_destination, random).should eq(first)
+    restored = Matter::Fabric.from_document(fabric.to_document)
+    restored.ipk_epoch_keys.should eq(fabric.ipk_epoch_keys)
+    restored.matching_derived_ipk(old_destination, random).should eq(first)
+  end
+
   describe "initialization" do
     it "creates fabric with valid parameters" do
       key = Matter::Crypto::Key.generate_key_pair

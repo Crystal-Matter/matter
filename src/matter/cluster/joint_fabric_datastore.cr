@@ -838,6 +838,9 @@ module Matter
       property joint_fabric_index : UInt8? = nil
       property access_mode : AccessMode = AccessMode::Inactive
       property allow_jcm_pase_group_list : Proc(Bool)? = nil
+      # The host persists the Anchor's active CASE IPK together with this
+      # Datastore change before a KeySet-0 update is acknowledged.
+      property on_ipk_key_set_updated : Proc(JointFabricDatastore, DatastoreGroupKeySetStruct, Nil)? = nil
 
       def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
         if @access_mode.active? && !@joint_fabric_index.nil? && fabric_index.nil? && !request_is_case_session? && attribute_id == ATTR_GROUP_LIST &&
@@ -948,11 +951,15 @@ module Matter
       def update_key_set(request : UpdateKeySetRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         key_set = request.group_key_set
-        return InteractionModel::Status.constraint_error if key_set.group_key_set_id == 0_u16
-        return InteractionModel::Status.constraint_error unless valid_key_set?(key_set)
+        return InteractionModel::Status.constraint_error unless valid_key_set?(key_set, allow_ipk: true)
         index = @group_key_set_list.index { |entry| entry.group_key_set_id == key_set.group_key_set_id }
         return InteractionModel::Status.not_found unless index
         changed = @group_key_set_list[index] != key_set
+        if changed && key_set.group_key_set_id == 0_u16 &&
+           (key_set.epoch_key0.nil? || key_set.epoch_start_time0.nil? || key_set.epoch_start_time0 == 0_u64)
+          return InteractionModel::Status.constraint_error
+        end
+        return update_ipk_key_set(key_set, index) if changed && key_set.group_key_set_id == 0_u16
         entries = @group_key_set_list.dup
         entries[index] = key_set
         self.group_key_set_list = entries
@@ -966,6 +973,41 @@ module Matter
           end
         end
         commit!
+      end
+
+      private def update_ipk_key_set(key_set : DatastoreGroupKeySetStruct,
+                                     index : Int32) : InteractionModel::Status
+        persist = @on_ipk_key_set_updated || return InteractionModel::Status.failure
+        previous_key_sets = @group_key_set_list
+        previous_node_key_sets = @node_key_set_list
+        previous_status = @status
+        previous_version = @data_version
+        entries = @group_key_set_list.dup
+        entries[index] = key_set
+        @group_key_set_list = entries
+        @node_key_set_list = @node_key_set_list.map do |entry|
+          if entry.group_key_set_id == 0_u16 && entry.status_entry.state != DatastoreStateEnum::DeletePending
+            entry.status_entry = status_entry(DatastoreStateEnum::Pending)
+          end
+          entry
+        end
+        @status = status_entry(commit_state)
+        @data_version &+= 1_u32
+        begin
+          persist.call(self, key_set)
+        rescue ex
+          @group_key_set_list = previous_key_sets
+          @node_key_set_list = previous_node_key_sets
+          @status = previous_status
+          @data_version = previous_version
+          Log.error(exception: ex) { "Could not persist updated Anchor IPK" }
+          return InteractionModel::Status.failure
+        end
+        @on_version_changed.try(&.call)
+        notify_changed(ATTR_GROUP_KEY_SET_LIST)
+        notify_changed(ATTR_NODE_KEY_SET_LIST)
+        notify_changed(ATTR_STATUS)
+        InteractionModel::Status.success
       end
 
       def remove_key_set(request : RemoveKeySetRequest) : InteractionModel::Status
@@ -1562,8 +1604,8 @@ module Matter
         true
       end
 
-      private def valid_key_set?(entry : DatastoreGroupKeySetStruct) : Bool
-        return false if entry.group_key_set_id == 0_u16 || entry.group_key_set_id == UInt16::MAX
+      private def valid_key_set?(entry : DatastoreGroupKeySetStruct, allow_ipk : Bool = false) : Bool
+        return false if (entry.group_key_set_id == 0_u16 && !allow_ipk) || entry.group_key_set_id == UInt16::MAX
         return false unless entry.group_key_security_policy == DatastoreGroupKeySecurityPolicyEnum::TrustFirst
         keys = {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}
         times = {entry.epoch_start_time0, entry.epoch_start_time1, entry.epoch_start_time2}
@@ -1766,13 +1808,17 @@ module Matter
       end
 
       private def commit! : InteractionModel::Status
+        self.status = status_entry(commit_state)
+        InteractionModel::Status.success
+      end
+
+      private def commit_state : DatastoreStateEnum
         pending = @node_list.any? { |e| e.commissioning_status_entry.state == DatastoreStateEnum::Pending } ||
                   @endpoint_group_id_list.any? { |e| pending?(e.status_entry) } ||
                   @endpoint_binding_list.any? { |e| pending?(e.status_entry) } ||
                   @node_key_set_list.any? { |e| pending?(e.status_entry) } ||
                   @node_acl_list.any? { |e| pending?(e.status_entry) }
-        self.status = status_entry(pending ? DatastoreStateEnum::Pending : DatastoreStateEnum::Committed)
-        InteractionModel::Status.success
+        pending ? DatastoreStateEnum::Pending : DatastoreStateEnum::Committed
       end
 
       private def pending?(entry : DatastoreStatusEntryStruct) : Bool

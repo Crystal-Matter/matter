@@ -62,7 +62,8 @@ module Matter
           root_public_key: authority.root_public_key.dup,
           controller_noc: noc,
           controller_private_key: controller_key.private_key,
-          admin_vendor_id: authority.admin_vendor_id
+          admin_vendor_id: authority.admin_vendor_id,
+          ipk_epoch_keys: authority.ipk_epoch_keys
         )
       end
 
@@ -103,7 +104,8 @@ module Matter
           authority.root_public_key, authority.root_cert)
         FabricInfo.new(authority.fabric_id, controller_node_id, authority.ipk_value.dup,
           authority.root_cert.dup, authority.root_public_key.dup, noc, controller_key.private_key,
-          admin_vendor_id: authority.admin_vendor_id, intermediate_cert: icac.dup)
+          admin_vendor_id: authority.admin_vendor_id, intermediate_cert: icac.dup,
+          ipk_epoch_keys: authority.ipk_epoch_keys)
       end
 
       # Route controller access through the Anchor Datastore as required by
@@ -260,6 +262,66 @@ module Matter
 
         state.install_fabric(fabric)
         store.save(state)
+      end
+
+      # Learn an Anchor's rotated IPK epochs while an authenticated CASE
+      # session still exists, then durably update this controller identity.
+      # Call after UpdateKeySet(0) or on an authenticated Datastore change.
+      def self.refresh_ipk_from_anchor(store : StateStore, fabric : FabricInfo,
+                                       im : ImClient, session : Session::SecureContext,
+                                       peer : Socket::IPAddress, endpoint : UInt16,
+                                       anchor_node_id : UInt64) : Nil
+        unless session.case_session? && session.peer_node_id.try(&.id) == anchor_node_id
+          raise Matter::AuthenticationError.new("IPK refresh requires CASE with the expected Anchor")
+        end
+        root_report = im.read_attribute(session: session, peer: peer, endpoint_id: endpoint,
+          cluster_id: Datastore::CLUSTER_ID, attribute_id: Datastore::ATTR_ANCHOR_ROOT_CA)
+        root = root_report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+               raise Matter::ProtocolError.new("AnchorRootCA read returned no data")
+        unless Bytes.from_tlv(root.to_slice) == fabric.root_cert
+          raise Matter::AuthenticationError.new("Anchor Datastore root differs from controller fabric")
+        end
+        node_report = im.read_attribute(session: session, peer: peer, endpoint_id: endpoint,
+          cluster_id: Datastore::CLUSTER_ID, attribute_id: Datastore::ATTR_ANCHOR_NODE_ID)
+        node = node_report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+               raise Matter::ProtocolError.new("AnchorNodeID read returned no data")
+        unless UInt64.from_tlv(node.to_slice) == anchor_node_id
+          raise Matter::AuthenticationError.new("Anchor Datastore node differs from CASE peer")
+        end
+        entries = read_datastore_list(Datastore::DatastoreGroupKeySetStruct,
+          im, session, peer, endpoint, Datastore::ATTR_GROUP_KEY_SET_LIST)
+        ipk = entries.find(&.group_key_set_id.==(0_u16)) ||
+              raise Matter::ProtocolError.new("Anchor Datastore has no IPK key set")
+        unless ipk.group_key_security_policy == Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst &&
+               ipk.epoch_key0 && ipk.epoch_start_time0
+          raise Matter::ProtocolError.new("Anchor Datastore IPK key set has no valid first epoch")
+        end
+        pairs = { {ipk.epoch_key0, ipk.epoch_start_time0},
+                 {ipk.epoch_key1, ipk.epoch_start_time1},
+                 {ipk.epoch_key2, ipk.epoch_start_time2} }
+        keys = [] of Bytes
+        previous_time : UInt64? = nil
+        pairs.each do |key, time|
+          if key.nil? != time.nil? || (key && key.size != Fabric::IPK_SIZE)
+            raise Matter::ProtocolError.new("Anchor IPK epoch has invalid key or start time")
+          end
+          next unless key && time
+          if previous_time && time <= previous_time
+            raise Matter::ProtocolError.new("Anchor IPK epoch times are unordered")
+          end
+          keys << key
+          previous_time = time
+        end
+        if keys.empty? || (ipk.epoch_key2 && ipk.epoch_key1.nil?)
+          raise Matter::ProtocolError.new("Anchor IPK epochs are incomplete")
+        end
+
+        state = store.load
+        stored = state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+        stored.ipk_epoch_keys = keys
+        state.replace_fabric(stored)
+        store.save(state)
+        fabric.ipk_epoch_keys = keys
       end
 
       # Grant another controller on this fabric administrator access to a

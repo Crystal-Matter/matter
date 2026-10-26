@@ -321,7 +321,7 @@ module Matter
                           OperationalCredentials.new(
                             issue_device_noc(fabric, node_id, device_pub_key),
                             fabric.intermediate_cert,
-                            fabric.ipk_value,
+                            fabric.case_ipk_value,
                             fabric.controller_node_id,
                             fabric.admin_vendor_id
                           )

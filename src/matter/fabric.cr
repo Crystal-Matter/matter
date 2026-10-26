@@ -71,6 +71,10 @@ module Matter
     # Used to encrypt node IDs in operational discovery for privacy
     property ipk : Bytes
 
+    # Raw epoch keys for IPK KeySet 0, oldest first. An empty list in older
+    # persisted fabrics means the single key stored in `ipk`.
+    @ipk_epoch_keys : Array(Bytes) = [] of Bytes
+
     # Vendor ID for this fabric (identifies the admin/commissioner)
     property vendor_id : UInt16
 
@@ -220,11 +224,36 @@ module Matter
     # Note: The info string "GroupKey v1.0" matches matter.js implementation.
     # Specification: Matter 1.4 § 4.16.2.5.2 (Group Key Derivation)
     def derived_ipk : Bytes
+      keys = ipk_epoch_keys
+      selected = keys.size > 1 ? keys[keys.size - 2] : keys.first
+      derive_ipk(selected)
+    end
+
+    def ipk_epoch_keys : Array(Bytes)
+      @ipk_epoch_keys.empty? ? [@ipk] : @ipk_epoch_keys
+    end
+
+    def ipk_epoch_keys=(keys : Array(Bytes)) : Nil
+      raise Matter::ConfigurationError.new("IPK requires one to three epoch keys") unless (1..3).includes?(keys.size)
+      raise Matter::ConfigurationError.new("IPK epoch key must be 16 bytes") unless keys.all?(&.size.==(IPK_SIZE))
+      @ipk_epoch_keys = keys.map(&.dup)
+      @ipk = @ipk_epoch_keys.first.dup
+    end
+
+    def matching_derived_ipk(destination_id : Bytes, initiator_random : Bytes) : Bytes?
+      ipk_epoch_keys.each do |key|
+        derived = derive_ipk(key)
+        return derived if compute_destination_id(initiator_random, derived) == destination_id
+      end
+      nil
+    end
+
+    private def derive_ipk(epoch_key : Bytes) : Bytes
       # Salt is the compressed fabric ID (8 bytes)
       salt = compressed_fabric_id
 
       # Input key is the raw epoch key stored as @ipk
-      input_key = @ipk
+      input_key = epoch_key
 
       # Info string is "GroupKey v1.0" (matches matter.js GROUP_SECURITY_INFO)
       info = "GroupKey v1.0".to_slice
@@ -257,9 +286,8 @@ module Matter
     #
     # Note: fabricId and nodeId are encoded in Little Endian format per matter.js implementation.
     # This differs from some other Matter protocol encodings that use Big Endian.
-    def compute_destination_id(initiator_random : Bytes) : Bytes
+    def compute_destination_id(initiator_random : Bytes, ipk : Bytes = derived_ipk) : Bytes
       # Use derived IPK as the HMAC key
-      ipk = derived_ipk
 
       # Build the data to HMAC: initiatorRandom || rootPublicKey || fabricId || nodeId
       data = IO::Memory.new
