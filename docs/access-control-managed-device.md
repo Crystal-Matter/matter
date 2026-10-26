@@ -118,6 +118,9 @@ An application-specific consent UI or service and independent managed-device
 interoperability remain host and integration work. The pinned SDK accepts ARL entries by
 allowed endpoint and cluster ID without requiring the target to be installed;
 this implementation follows that rule so policy can precede a dynamic endpoint.
-Legacy pending reviews without a saved fabric identity are cancelled when an
-opted-in device starts, so an old token cannot be delivered to a replacement
-fabric at the same index.
+The saved ARL policy and review records bind to the fabric's FabricID and root
+public key. On startup, an opted-in device erases policy and review records
+whose identity differs from the current occupant of that fabric index. Legacy
+policy or pending reviews without a saved identity are also erased. Cleanup is
+persisted before host callbacks can replay, and a failed cleanup save stops
+startup.

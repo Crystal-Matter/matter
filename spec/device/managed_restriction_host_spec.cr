@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/device"
+require "../../src/matter/cluster/wi_fi_network_management"
 
 private alias HostAcl = Matter::Cluster::AccessControl
 
@@ -44,12 +45,30 @@ private class ManagedRestrictionDslSpecDevice < Matter::Device
   end
 end
 
+private class ManagedPolicyFailingYaml < Matter::Storage::YamlFile
+  property fail_acl_id : String?
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::CLUSTERS && id == @fail_acl_id
+      raise Matter::StorageError.new("Injected managed policy cleanup failure")
+    end
+    super
+  end
+end
+
 private def managed_spec_fabric(index : UInt8) : Matter::Fabric
   Matter::Fabric.new(fabric_id: 0xA001_u64, fabric_index: index, node_id: 0xB001_u64,
     root_public_key: Random::Secure.random_bytes(65),
     operational_cert: Random::Secure.random_bytes(200),
     operational_key: Matter::Crypto::Key.generate_key_pair,
     ipk: Random::Secure.random_bytes(16))
+end
+
+private def managed_spec_restriction_entry : HostAcl::AccessRestrictionEntry
+  HostAcl::AccessRestrictionEntry.new(1_u16, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID, [
+    HostAcl::AccessRestriction.new(HostAcl::AccessRestrictionType::AttributeAccessForbidden,
+      Matter::Cluster::WiFiNetworkManagement::ATTR_SSID),
+  ])
 end
 
 describe "Device managed restriction host" do
@@ -233,6 +252,120 @@ describe "Device managed restriction host" do
   ensure
     first.try(&.release)
     second.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "does not restore old ARL policy onto a replacement fabric with the same index" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-policy-reused-#{Random::Secure.hex(8)}.yml")
+    first = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    first.access_control.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    first.access_control.arl(1_u8).should_not be_empty
+    first.fabric_table.remove_fabric(1_u8).should be_true
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    first.release
+    first = nil
+
+    second = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    second.access_control.arl(1_u8).should be_empty
+  ensure
+    first.try(&.release)
+    second.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "retains ARL policy across restart for the same fabric" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-policy-same-#{Random::Secure.hex(8)}.yml")
+    first = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    first.access_control.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    first.release
+    first = nil
+
+    second = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    second.access_control.arl(1_u8).size.should eq(1)
+  ensure
+    first.try(&.release)
+    second.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "binds host-approved ARL to its fabric identity" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-policy-approved-#{Random::Secure.hex(8)}.yml")
+    first = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    token = first.access_control.request_restriction_review(1_u8, [] of HostAcl::AccessRestrictionEntry)
+    first.access_control.approve_restriction_review(1_u8, token, [managed_spec_restriction_entry]).should be_true
+    first.release
+    first = nil
+
+    second = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    second.access_control.arl(1_u8).size.should eq(1)
+    second.fabric_table.remove_fabric(1_u8).should be_true
+    second.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    second.release
+    second = nil
+
+    third = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    third.access_control.arl(1_u8).should be_empty
+  ensure
+    first.try(&.release)
+    second.try(&.release)
+    third.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "prunes legacy ARL policy without a saved fabric identity" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-policy-legacy-#{Random::Secure.hex(8)}.yml")
+    first = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl = first.access_control
+    acl.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    backend = first.persistence.backend
+    collection = Matter::Storage::Collections::CLUSTERS
+    document = backend.read(collection, acl.persistence_key).as(Matter::Storage::Document)
+    document.delete("access_restriction_fabric_identities")
+    backend.write(collection, acl.persistence_key, document)
+    first.release
+    first = nil
+
+    second = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    second.access_control.arl(1_u8).should be_empty
+  ensure
+    first.try(&.release)
+    second.try(&.release)
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "refuses startup when stale ARL policy cannot be durably pruned" do
+    require_udp_sockets!
+    path = File.join(Dir.tempdir, "matter-managed-policy-failclosed-#{Random::Secure.hex(8)}.yml")
+    first = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl = first.access_control
+    acl.configure_access_restrictions(1_u8, [managed_spec_restriction_entry])
+    first.fabric_table.remove_fabric(1_u8).should be_true
+    first.fabric_table.add_fabric(managed_spec_fabric(1_u8)).should be_true
+    acl_id = acl.persistence_key
+    first.release
+    first = nil
+
+    failing = ManagedPolicyFailingYaml.new(path)
+    failing.fail_acl_id = acl_id
+    expect_raises(Matter::StorageError, /stale managed restriction cleanup/) do
+      ManagedRestrictionDslSpecDevice.new(storage: failing, port: 0)
+    end
+    failing.close
+    second = ManagedRestrictionDslSpecDevice.new(storage: Matter::Storage::YamlFile.new(path), port: 0)
+    second.access_control.arl(1_u8).should be_empty
+  ensure
+    first.try(&.release)
+    second.try(&.release)
+    failing.try { |backend| backend.close if backend.open? }
     File.delete(path) if path && File.exists?(path)
   end
 end

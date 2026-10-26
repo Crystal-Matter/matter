@@ -330,6 +330,7 @@ module Matter
       @extension = [] of ExtensionEntry
       @auxiliary_acl = [] of AccessControlEntry
       @access_restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
+      @access_restriction_fabric_identities = {} of UInt8 => String
       @commissioning_arl = [] of CommissioningAccessRestrictionEntry
       @commissioning_arl_configured = false
       @managed_restrictions_configured = false
@@ -460,14 +461,27 @@ module Matter
            entries.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
+        fabric_identity = if !entries.empty?
+                            @review_fabric_identity.try do |provider|
+                              provider.call(fabric_index) ||
+                                raise Matter::ConfigurationError.new("Access restriction fabric is unavailable")
+                            end
+                          end
         previous = @access_restrictions[fabric_index]?
+        previous_identity = @access_restriction_fabric_identities[fabric_index]?
         @managed_restrictions_configured = true
         previous_version = @data_version
         if entries.empty?
           @access_restrictions.delete(fabric_index)
+          @access_restriction_fabric_identities.delete(fabric_index)
         else
           @access_restrictions[fabric_index] = entries.map do |entry|
             AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+          end
+          if fabric_identity
+            @access_restriction_fabric_identities[fabric_index] = fabric_identity
+          else
+            @access_restriction_fabric_identities.delete(fabric_index)
           end
         end
         increment_version
@@ -478,6 +492,11 @@ module Matter
             @access_restrictions[fabric_index] = previous
           else
             @access_restrictions.delete(fabric_index)
+          end
+          if previous_identity
+            @access_restriction_fabric_identities[fabric_index] = previous_identity
+          else
+            @access_restriction_fabric_identities.delete(fabric_index)
           end
           @data_version = previous_version
           raise ex
@@ -490,12 +509,19 @@ module Matter
         (@access_restrictions.keys + @review_fabrics.values).uniq
       end
 
-      # Called before installing host callbacks after restore. Legacy reviews
-      # without an identity, and reviews for a replaced fabric, are cancelled
-      # so their saved outbox cannot be delivered to a different fabric.
-      def prune_restriction_reviews_for_fabric_identity : Array(UInt8)
-        return [] of UInt8 unless @review_fabric_identity
+      # Called before installing host callbacks after restore. Legacy managed
+      # policy and reviews without an identity, or those for a replaced fabric,
+      # are erased before a new fabric can read ARL or receive an old event.
+      def prune_managed_restrictions_for_fabric_identity : Array(UInt8)
+        identity_provider = @review_fabric_identity || return [] of UInt8
         removed = [] of UInt8
+        @access_restrictions.keys.each do |fabric_index|
+          identity = @access_restriction_fabric_identities[fabric_index]?
+          next if identity && identity_provider.call(fabric_index) == identity
+          @access_restrictions.delete(fabric_index)
+          @access_restriction_fabric_identities.delete(fabric_index)
+          removed << fabric_index
+        end
         @review_fabrics.dup.each do |token, fabric_index|
           next if current_restriction_review?(fabric_index, token)
           cancel_restriction_review(token)
@@ -620,7 +646,8 @@ module Matter
       private def finish_restriction_review(fabric_index : UInt8, token : UInt64,
                                             instruction : String?, arl_request_flow_url : String?,
                                             previous_policy : Array(AccessRestrictionEntry)? = nil,
-                                            previous_policy_version : UInt32? = nil) : Bool
+                                            previous_policy_version : UInt32? = nil,
+                                            previous_policy_identity : String? = nil) : Bool
         if delivery = @reviews_awaiting_delivery[token]?
           return false unless delivery[0] == fabric_index
           return deliver_completed_restriction_review(token)
@@ -654,7 +681,7 @@ module Matter
           @review_completions_in_progress.delete(token)
           @reviews_awaiting_delivery.delete(token)
           if version = previous_policy_version
-            restore_restriction_review_policy(fabric_index, previous_policy, version)
+            restore_restriction_review_policy(fabric_index, previous_policy, version, previous_policy_identity)
           else
             @data_version = previous_version
           end
@@ -792,24 +819,31 @@ module Matter
         end
 
         previous = @access_restrictions[fabric_index]?
+        previous_identity = @access_restriction_fabric_identities[fabric_index]?
         previous_version = @data_version
         if replacement.empty?
           @access_restrictions.delete(fabric_index)
+          @access_restriction_fabric_identities.delete(fabric_index)
         else
           @access_restrictions[fabric_index] = replacement.map do |entry|
             AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+          end
+          if identity = @review_fabric_identities[token]?
+            @access_restriction_fabric_identities[fabric_index] = identity
+          else
+            @access_restriction_fabric_identities.delete(fabric_index)
           end
         end
         increment_version
         begin
           ensure_current_restriction_review!(fabric_index, token, generation)
           unless finish_restriction_review(fabric_index, token, instruction, arl_request_flow_url,
-                   previous, previous_version)
-            restore_restriction_review_policy(fabric_index, previous, previous_version)
+                   previous, previous_version, previous_identity)
+            restore_restriction_review_policy(fabric_index, previous, previous_version, previous_identity)
             return false
           end
         rescue ex
-          restore_restriction_review_policy(fabric_index, previous, previous_version) if @pending_restriction_reviews.has_key?(token) && current_restriction_review?(fabric_index, token, generation)
+          restore_restriction_review_policy(fabric_index, previous, previous_version, previous_identity) if @pending_restriction_reviews.has_key?(token) && current_restriction_review?(fabric_index, token, generation)
           raise ex
         end
         true
@@ -817,11 +851,16 @@ module Matter
 
       private def restore_restriction_review_policy(fabric_index : UInt8,
                                                     previous : Array(AccessRestrictionEntry)?,
-                                                    version : UInt32) : Nil
+                                                    version : UInt32, previous_identity : String?) : Nil
         if previous
           @access_restrictions[fabric_index] = previous
         else
           @access_restrictions.delete(fabric_index)
+        end
+        if previous_identity
+          @access_restriction_fabric_identities[fabric_index] = previous_identity
+        else
+          @access_restriction_fabric_identities.delete(fabric_index)
         end
         @data_version = version
       end
@@ -1116,6 +1155,16 @@ module Matter
         end
       end
 
+      struct PersistedRestrictionFabricIdentity
+        include Storage::Record
+
+        getter fabric_index : UInt8
+        getter fabric_identity : String
+
+        def initialize(@fabric_index : UInt8, @fabric_identity : String)
+        end
+      end
+
       struct PersistedRestrictionReview
         include Storage::Record
 
@@ -1156,6 +1205,7 @@ module Matter
         getter acl : Array(PersistedAclEntry)
         getter extension : Array(PersistedExtensionEntry)
         getter access_restrictions : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry
+        getter access_restriction_fabric_identities : Array(PersistedRestrictionFabricIdentity) = [] of PersistedRestrictionFabricIdentity
         getter commissioning_arl : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry
         getter? commissioning_arl_configured : Bool = false
         getter pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview
@@ -1169,6 +1219,7 @@ module Matter
           @acl : Array(PersistedAclEntry),
           @extension : Array(PersistedExtensionEntry),
           @access_restrictions : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry,
+          @access_restriction_fabric_identities : Array(PersistedRestrictionFabricIdentity) = [] of PersistedRestrictionFabricIdentity,
           @commissioning_arl : Array(PersistedRestrictionEntry) = [] of PersistedRestrictionEntry,
           @commissioning_arl_configured : Bool = false,
           @pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview,
@@ -1199,6 +1250,9 @@ module Matter
           end,
           access_restrictions: @access_restrictions.flat_map do |fabric_index, entries|
             entries.map { |entry| persisted_restriction_entry(entry, fabric_index) }
+          end,
+          access_restriction_fabric_identities: @access_restriction_fabric_identities.map do |fabric_index, identity|
+            PersistedRestrictionFabricIdentity.new(fabric_index, identity)
           end,
           commissioning_arl: @commissioning_arl.map do |entry|
             persisted_restriction_entry(
@@ -1248,6 +1302,15 @@ module Matter
             raise Matter::StorageError.new("Invalid persisted ARL entry")
           end
           (restrictions[fabric_index] ||= [] of AccessRestrictionEntry) << entry
+        end
+        restriction_identities = {} of UInt8 => String
+        state.access_restriction_fabric_identities.each do |stored|
+          if stored.fabric_index == 0 || stored.fabric_index > MAX_VALID_FABRIC_INDEX ||
+             stored.fabric_identity.empty? || restriction_identities.has_key?(stored.fabric_index) ||
+             !restrictions.has_key?(stored.fabric_index)
+            raise Matter::AccessControlRestoreError.new("Invalid access restriction fabric identity")
+          end
+          restriction_identities[stored.fabric_index] = stored.fabric_identity
         end
         commissioning_arl = state.commissioning_arl.map do |stored|
           entry = restored_restriction_entry(stored)
@@ -1319,6 +1382,7 @@ module Matter
         @restriction_review_timers.each_value(&.close)
         @restriction_review_timers.clear
         @access_restrictions = restrictions
+        @access_restriction_fabric_identities = restriction_identities
         @commissioning_arl = commissioning_arl
         @commissioning_arl_configured = state.commissioning_arl_configured?
         @pending_restriction_reviews = pending
@@ -1486,6 +1550,7 @@ module Matter
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
         @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
         @access_restrictions.delete(fabric_index)
+        @access_restriction_fabric_identities.delete(fabric_index)
         increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
         increment_version_and_notify(ATTR_ACL)
         notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?

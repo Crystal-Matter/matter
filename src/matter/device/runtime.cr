@@ -342,11 +342,11 @@ module Matter
 
       # Restore and prune every removed fabric before callbacks can replay a
       # saved review completion or publish a fabric-scoped event.
-      pruned_review_indices = access_control.prune_restriction_reviews_for_fabric_identity
-      unless pruned_review_indices.empty?
-        pruned_review_indices.each { |index| @node.event_journal.remove_fabric(index) }
+      pruned_managed_indices = access_control.prune_managed_restrictions_for_fabric_identity
+      unless pruned_managed_indices.empty?
+        pruned_managed_indices.each { |index| @node.event_journal.remove_fabric(index) }
         unless @persistence.save_cluster(access_control)
-          raise StorageError.new("Could not persist stale restriction review cleanup")
+          raise StorageError.new("Could not persist stale managed restriction cleanup")
         end
       end
       if updated = @managed_review_updated
