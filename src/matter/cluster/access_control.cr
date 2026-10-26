@@ -40,6 +40,16 @@ module Matter
                                                  "commissioning_arl_configured", "pending_restriction_reviews",
                                                  "next_restriction_review_token"}
 
+      # ManagedDevice is not advertised yet. Hosts can install a transient ARL
+      # for read enforcement; write, invoke, event and review flows still need
+      # implementation before the complete feature may be enabled.
+      GLOBAL_ATTRIBUTE_ID_START               = 0xFFF8_u32
+      GLOBAL_ATTRIBUTE_ID_END                 = 0xFFFD_u32
+      ARL_ROOT_ENDPOINT_ID                    =      0_u16
+      ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID  = 0x0451_u32
+      ARL_THREAD_BORDER_ROUTER_CLUSTER_ID     = 0x0452_u32
+      ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID = 0x0453_u32
+
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
       DEFAULT_TARGETS_PER_ENTRY  = 3_u16

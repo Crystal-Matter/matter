@@ -215,6 +215,13 @@ module Matter
                 next
               end
 
+              if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+                status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+                attr_status = InteractionModel::AttributeStatusIB.new(path: concrete_path, status: status_ib)
+                attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
+                next
+              end
+
               cluster.with_request_context do
                 cluster.request_fabric_index = fabric_index
                 cluster.request_session_id = session_id
@@ -252,6 +259,13 @@ module Matter
           if status = attribute_read_status(endpoint_id, cluster_id, attribute_id, clusters,
                is_case_session, fabric_index, peer_subject_ids)
             status_ib = InteractionModel::StatusIB.new(status: status.value)
+            attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+            attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
+            next
+          end
+
+          if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
             attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
             attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
             next

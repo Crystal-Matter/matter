@@ -11,6 +11,30 @@ module Matter
       property configured_networks : Hash(Bytes, Bytes) = {} of Bytes => Bytes
       property connected_network_id : Bytes? = nil
 
+      def checkpoint_configuration : Storage::Document?
+        entries = [] of Storage::Type
+        @configured_networks.each do |id, credentials|
+          entries << Storage::Document{"id" => id.dup, "credentials" => credentials.dup}
+        end
+        Storage::Document{"entries" => entries, "connected" => @connected_network_id.try(&.dup)}
+      end
+
+      def restore_configuration(snapshot : Storage::Document) : Bool
+        entries = snapshot["entries"].as(Array(Storage::Type))
+        restored = {} of Bytes => Bytes
+        entries.each do |entry|
+          document = entry.as(Storage::Document)
+          restored[document["id"].as(Bytes).dup] = document["credentials"].as(Bytes).dup
+        end
+        @configured_networks = restored
+        @connected_network_id = snapshot["connected"].as(Bytes?).try(&.dup)
+        true
+      end
+
+      def commit_configuration : Bool
+        true
+      end
+
       def scan_wifi(ssid : String?) : Array(Cluster::NetworkCommissioning::WiFiInterfaceScanResult)
         results = [] of Cluster::NetworkCommissioning::WiFiInterfaceScanResult
 

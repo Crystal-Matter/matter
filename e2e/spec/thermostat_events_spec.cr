@@ -5,7 +5,7 @@ describe "Matter Thermostat Events interoperability" do
 
   it "commissions and exposes the opt-in TEVT feature at revision nine" do
     device.commission!
-    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(9_i64)
+    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(0x223_i64)
     read_int(device, "thermostat", "thermostat-running-state", "ThermostatRunningState", 1).should eq(0_i64)
   end

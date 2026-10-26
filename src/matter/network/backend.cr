@@ -1,4 +1,5 @@
 require "./credentials"
+require "../storage/document"
 
 module Matter
   module Network
@@ -25,6 +26,25 @@ module Matter
     # The NetworkCommissioning delegates to this backend for all
     # actual network operations.
     abstract class Backend
+      # Return a complete, independent checkpoint of mutable network state.
+      # Nil means tentative network changes are unsupported by this backend.
+      def checkpoint_configuration : Storage::Document?
+        nil
+      end
+
+      # Restore the checkpoint after fail-safe expiry. This must also undo a
+      # previous successful commit if a later commissioning persistence step
+      # failed. Implementations must restore credentials and connection state,
+      # including their durable copy, and return false on failure.
+      def restore_configuration(snapshot : Storage::Document) : Bool
+        false
+      end
+
+      # Make all tentative changes durable on CommissioningComplete.
+      def commit_configuration : Bool
+        false
+      end
+
       # Scan for available WiFi networks
       #
       # @param ssid Optional SSID string for directed scan (nil for broadcast scan)

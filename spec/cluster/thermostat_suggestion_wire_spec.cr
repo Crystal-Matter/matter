@@ -61,9 +61,15 @@ describe "Thermostat guarded suggestion wire" do
     expect_raises(ArgumentError) { build(SuggestWire, feature_map: suggestion_features) }
     hidden = build(SuggestWire)
     (0x53_u32..0x56_u32).each { |id| hidden.get_attribute_metadata(id).should be_nil }
+    hidden.get_attribute_metadata(0x23_u32).should be_nil
+    hidden.get_attribute_metadata(0x24_u32).should be_nil
     hidden.get_command_metadata(0x07_u32).should be_nil
 
     cluster = ready_suggestion_thermostat
+    {0x23_u32, 0x24_u32}.each do |id|
+      metadata = cluster.get_attribute_metadata(id) || raise "missing hold attribute"
+      metadata.write_access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
+    end
     (0x53_u32..0x56_u32).each do |id|
       metadata = cluster.get_attribute_metadata(id) || raise "missing attribute"
       metadata.write_access.should eq(Matter::InteractionModel::EntryPrivilege::View)
@@ -143,6 +149,47 @@ describe "Thermostat guarded suggestion wire" do
     cluster.min_heat_setpoint_limit = 2_000_i16
     read(cluster, 0x55_u32).should be_nil
     read(cluster, 0x56_u32).should be_nil
+  end
+
+  it "keeps the current suggestion visible but does not follow it during an indefinite setpoint hold" do
+    cluster = ready_suggestion_thermostat
+    cluster.activate_preset(SuggestWire::SetActivePresetRequest.new(Bytes[1_u8]))
+      .status.should eq(SuggestCode::Success)
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) : Nil {
+      changed << attribute
+      nil
+    }
+
+    write(cluster, 0x24_u32, nil).status.should eq(SuggestCode::Success)
+    write(cluster, 0x23_u32, 1_u8).status.should eq(SuggestCode::Success)
+    write(cluster, 0x24_u32, 10_u16).status.should eq(SuggestCode::InvalidDataType)
+    write(cluster, 0x23_u32, 2_u8).status.should eq(SuggestCode::ConstraintError)
+    suggestion_im_invoke(cluster, 0x07_u32,
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[2_u8], 1_000_u32, 30_u16))
+    current = SuggestWire::ThermostatSuggestion.from_tlv(read_tlv(cluster, 0x55_u32))
+    current.preset_handle.should eq(Bytes[2_u8])
+    read(cluster, 0x56_u32).should eq(2_u16)
+    read(cluster, 0x4e_u32).should eq(Bytes[1_u8])
+    changed.should contain(0x55_u32)
+    changed.should contain(0x56_u32)
+    changed.should_not contain(0x4e_u32)
+
+    restored = ready_suggestion_thermostat
+    restored.restore_state(cluster.save_state)
+    read(restored, 0x23_u32).should eq(1_u8)
+    read(restored, 0x24_u32).should be_nil
+    read(restored, 0x55_u32).should_not be_nil
+    read(restored, 0x56_u32).should eq(2_u16)
+    read(restored, 0x4e_u32).should eq(Bytes[1_u8])
+
+    changed.clear
+    write(cluster, 0x23_u32, 0_u8).status.should eq(SuggestCode::Success)
+    read(cluster, 0x55_u32).should_not be_nil
+    read(cluster, 0x56_u32).should be_nil
+    read(cluster, 0x4e_u32).should eq(Bytes[2_u8])
+    changed.should contain(0x56_u32)
+    changed.should contain(0x4e_u32)
   end
 
   it "requires Manage privilege for Add and Remove over IM" do

@@ -3,7 +3,7 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Energy EVSE (0x0099), revision 4. Charging Preferences is
-    # mandatory. Optional SoC, Plug and Charge, RFID and V2X are not advertised.
+    # mandatory. V2X is opt-in; SoC, Plug and Charge and RFID are not advertised.
     class EnergyEvse < Base
       cluster 0x0099, revision: 4
 
@@ -13,7 +13,7 @@ module Matter
       feature :rfid, bit: 3
       feature :v2x, bit: 4
 
-      SUPPORTED_FEATURES       = Feature::ChargingPreferences.value
+      SUPPORTED_FEATURES       = Feature::ChargingPreferences.value | Feature::V2x.value
       MAX_TARGET_SCHEDULES     =        7
       MAX_TARGETS_PER_SCHEDULE =       10
       MAX_MINUTE_OF_DAY        = 1439_u16
@@ -125,6 +125,19 @@ module Matter
         end
       end
 
+      struct EnableDischargingRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: false)]
+        getter discharging_enabled_until : UInt32?
+
+        @[TLV::Field(tag: 1)]
+        getter maximum_discharge_current : Int64
+
+        def initialize(@discharging_enabled_until : UInt32?, @maximum_discharge_current : Int64)
+        end
+      end
+
       struct SetTargetsRequest
         include TLV::Serializable
 
@@ -170,8 +183,12 @@ module Matter
         @[TLV::Field(tag: 3)]
         getter session_energy_charged : Int64
 
+        @[TLV::Field(tag: 4, optional: true)]
+        getter session_energy_discharged : Int64?
+
         def initialize(@session_id : UInt32, @state : State,
-                       @session_duration : UInt32, @session_energy_charged : Int64)
+                       @session_duration : UInt32, @session_energy_charged : Int64,
+                       @session_energy_discharged : Int64? = nil)
         end
       end
 
@@ -187,7 +204,11 @@ module Matter
         @[TLV::Field(tag: 2)]
         getter maximum_current : Int64
 
-        def initialize(@session_id : UInt32, @state : State, @maximum_current : Int64)
+        @[TLV::Field(tag: 3, optional: true)]
+        getter maximum_discharge_current : Int64?
+
+        def initialize(@session_id : UInt32, @state : State, @maximum_current : Int64,
+                       @maximum_discharge_current : Int64? = nil)
         end
       end
 
@@ -206,8 +227,12 @@ module Matter
         @[TLV::Field(tag: 4)]
         getter energy_transferred : Int64
 
+        @[TLV::Field(tag: 5, optional: true)]
+        getter energy_discharged : Int64?
+
         def initialize(@session_id : UInt32, @state : State,
-                       @reason : EnergyTransferStoppedReason, @energy_transferred : Int64)
+                       @reason : EnergyTransferStoppedReason, @energy_transferred : Int64,
+                       @energy_discharged : Int64? = nil)
         end
       end
 
@@ -245,10 +270,12 @@ module Matter
       attribute 0x0001, :supply_state, SupplyState, default: SupplyState::Disabled, persist: true
       attribute 0x0002, :fault_state, FaultState, default: FaultState::NoError, persist: true
       attribute 0x0003, :charging_enabled_until, UInt32, nullable: true, persist: true
+      attribute 0x0004, :discharging_enabled_until, UInt32, nullable: true, persist: true, requires: :v2x
       attribute 0x0005, :circuit_capacity, Int64, default: 0_i64,
         persist: true, validate: :validate_capacity!, on_change: :cap_maximum_current
       attribute 0x0006, :minimum_charge_current, Int64, default: 0_i64, persist: true
       attribute 0x0007, :maximum_charge_current, Int64, default: 0_i64, persist: true
+      attribute 0x0008, :maximum_discharge_current, Int64, default: 0_i64, persist: true, requires: :v2x
       attribute 0x0023, :next_charge_start_time, UInt32, nullable: true,
         requires: :charging_preferences
       attribute 0x0024, :next_charge_target_time, UInt32, nullable: true,
@@ -260,10 +287,14 @@ module Matter
       attribute 0x0040, :session_id, UInt32, nullable: true, persist: true
       attribute 0x0041, :session_duration, UInt32, nullable: true, persist: true
       attribute 0x0042, :session_energy_charged, Int64, nullable: true, persist: true
+      attribute 0x0043, :session_energy_discharged, Int64, nullable: true, persist: true,
+        omit_changes: true, requires: :v2x
 
       command 0x01, :disable, access: :operate, timed: true
       command 0x02, :enable_charging, request: EnableChargingRequest,
         access: :operate, timed: true
+      command 0x03, :enable_discharging, request: EnableDischargingRequest,
+        access: :operate, timed: true, requires: :v2x
       command 0x05, :set_targets, request: SetTargetsRequest,
         access: :operate, timed: true, requires: :charging_preferences
       command 0x06, :get_targets, response: GetTargetsResponse, response_id: 0x00,
@@ -278,15 +309,18 @@ module Matter
       event 0x04, :fault, priority: :critical, payload: FaultEvent
 
       alias EnableCallback = Proc(UInt32?, Int64, Int64, InteractionModel::Status)
+      alias DischargeCallback = Proc(UInt32?, Int64, InteractionModel::Status)
       alias DisableCallback = Proc(InteractionModel::Status)
       alias TargetsCallback = Proc(Array(ChargingTargetSchedule), InteractionModel::Status)
 
       property on_enable_charging : EnableCallback? = nil
+      property on_enable_discharging : DischargeCallback? = nil
       property on_disable : DisableCallback? = nil
       property on_targets_changed : TargetsCallback? = nil
 
       @charging_target_schedules : Array(ChargingTargetSchedule)
       @transfer_start_energy : Int64 = 0_i64
+      @transfer_start_discharge_energy : Int64 = 0_i64
       @expiry_generation : UInt64 = 0_u64
       @expiry_timer : ExpiryTimer
 
@@ -297,8 +331,10 @@ module Matter
                      @supply_state : SupplyState = SupplyState::Disabled,
                      @fault_state : FaultState = FaultState::NoError,
                      @charging_enabled_until : UInt32? = DISABLED_UNTIL,
+                     @discharging_enabled_until : UInt32? = DISABLED_UNTIL,
                      @minimum_charge_current : Int64 = 0_i64,
                      @maximum_charge_current : Int64 = 0_i64,
+                     @maximum_discharge_current : Int64 = 0_i64,
                      @next_charge_start_time : UInt32? = nil,
                      @next_charge_target_time : UInt32? = nil,
                      @next_charge_required_energy : Int64? = nil,
@@ -306,6 +342,7 @@ module Matter
                      @session_id : UInt32? = nil,
                      @session_duration : UInt32? = nil,
                      @session_energy_charged : Int64? = nil,
+                     @session_energy_discharged : Int64? = nil,
                      @clock : Proc(Time) = -> { Time.utc },
                      expiry_timer : ExpiryTimer? = nil)
         @expiry_timer = expiry_timer || ->(delay : Time::Span, callback : Proc(Nil)) do
@@ -319,7 +356,8 @@ module Matter
         raise ArgumentError.new("Energy EVSE requires Charging Preferences") unless @feature_map.charging_preferences?
         raise ArgumentError.new("unsupported Energy EVSE feature bits") if (@feature_map.value & ~SUPPORTED_FEATURES) != 0
         validate_capacity!(@circuit_capacity)
-        raise ArgumentError.new("invalid charge current") if @minimum_charge_current < 0 || @maximum_charge_current < 0
+        raise ArgumentError.new("invalid charge current") if @minimum_charge_current < 0 || @maximum_charge_current < 0 ||
+                                                             @maximum_discharge_current < 0
         raise ArgumentError.new("fault state and supply state disagree") if (@fault_state == FaultState::NoError) != (@supply_state != SupplyState::DisabledError)
         @charging_target_schedules = [] of ChargingTargetSchedule
       end
@@ -346,12 +384,16 @@ module Matter
       end
 
       def disable : InteractionModel::Status
-        if @supply_state.charging_enabled?
+        if charging_grant_active? || discharging_grant_active?
           callback = @on_disable || return InteractionModel::Status.invalid_in_state
           status = callback.call
           return status unless status.success?
         end
         self.charging_enabled_until = DISABLED_UNTIL
+        self.discharging_enabled_until = DISABLED_UNTIL if @feature_map.v2x?
+        self.minimum_charge_current = 0_i64
+        self.maximum_charge_current = 0_i64
+        self.maximum_discharge_current = 0_i64 if @feature_map.v2x?
         self.supply_state = SupplyState::Disabled unless @supply_state.disabled_error?
         schedule_expiry
         InteractionModel::Status.success
@@ -363,21 +405,61 @@ module Matter
         return InteractionModel::Status.constraint_error if minimum < 0 || maximum < minimum || minimum > @circuit_capacity
         effective_maximum = {maximum, @circuit_capacity}.min
         should_enable = enabled_now?(request.charging_enabled_until)
+        discharge_active = discharging_grant_active?
         if should_enable
           return InteractionModel::Status.failure unless @fault_state.no_error?
           callback = @on_enable_charging || return InteractionModel::Status.invalid_in_state
           status = callback.call(request.charging_enabled_until, minimum, effective_maximum)
           return status unless status.success?
-        elsif @supply_state.charging_enabled?
-          callback = @on_disable || return InteractionModel::Status.invalid_in_state
-          status = callback.call
-          return status unless status.success?
+        elsif charging_grant_active?
+          if discharge_active
+            callback = @on_enable_discharging || return InteractionModel::Status.invalid_in_state
+            status = callback.call(@discharging_enabled_until, @maximum_discharge_current)
+            return status unless status.success?
+          else
+            callback = @on_disable || return InteractionModel::Status.invalid_in_state
+            status = callback.call
+            return status unless status.success?
+          end
         end
-        self.minimum_charge_current = minimum
-        self.maximum_charge_current = effective_maximum
-        self.charging_enabled_until = request.charging_enabled_until
+        self.minimum_charge_current = should_enable ? minimum : 0_i64
+        self.maximum_charge_current = should_enable ? effective_maximum : 0_i64
+        self.charging_enabled_until = should_enable ? request.charging_enabled_until : DISABLED_UNTIL
         self.supply_state = if @fault_state.no_error?
-                              should_enable ? SupplyState::ChargingEnabled : SupplyState::Disabled
+                              supply_state_for(should_enable, discharge_active)
+                            else
+                              SupplyState::DisabledError
+                            end
+        schedule_expiry
+        InteractionModel::Status.success
+      end
+
+      def enable_discharging(request : EnableDischargingRequest) : InteractionModel::Status
+        maximum = request.maximum_discharge_current
+        return InteractionModel::Status.constraint_error if maximum < 0
+        effective_maximum = {maximum, @circuit_capacity}.min
+        should_enable = enabled_now?(request.discharging_enabled_until)
+        charge_active = charging_grant_active?
+        if should_enable
+          return InteractionModel::Status.failure unless @fault_state.no_error?
+          callback = @on_enable_discharging || return InteractionModel::Status.invalid_in_state
+          status = callback.call(request.discharging_enabled_until, effective_maximum)
+          return status unless status.success?
+        elsif discharging_grant_active?
+          if charge_active
+            callback = @on_enable_charging || return InteractionModel::Status.invalid_in_state
+            status = callback.call(@charging_enabled_until, @minimum_charge_current, @maximum_charge_current)
+            return status unless status.success?
+          else
+            callback = @on_disable || return InteractionModel::Status.invalid_in_state
+            status = callback.call
+            return status unless status.success?
+          end
+        end
+        self.maximum_discharge_current = should_enable ? effective_maximum : 0_i64
+        self.discharging_enabled_until = should_enable ? request.discharging_enabled_until : DISABLED_UNTIL
+        self.supply_state = if @fault_state.no_error?
+                              supply_state_for(charge_active, should_enable)
                             else
                               SupplyState::DisabledError
                             end
@@ -423,18 +505,32 @@ module Matter
         self.session_id = session_id
         self.session_duration = 0_u32
         self.session_energy_charged = 0_i64
+        self.session_energy_discharged = 0_i64 if @feature_map.v2x?
         self.state = State::PluggedInNoDemand
         emit_event(EVENT_EV_CONNECTED, EvConnectedEvent.new(session_id))
       end
 
       def report_transfer_started : Nil
         id = @session_id || raise ArgumentError.new("no EVSE session")
-        raise ArgumentError.new("EVSE charging is disabled") unless @supply_state.charging_enabled?
-        raise ArgumentError.new("EVSE transfer already active") if @state == State::PluggedInCharging
+        raise ArgumentError.new("EVSE charging is disabled") unless charging_grant_active?
+        raise ArgumentError.new("EVSE transfer already active") if transfer_active?
         @transfer_start_energy = @session_energy_charged || 0_i64
         self.state = State::PluggedInCharging
         emit_event(EVENT_ENERGY_TRANSFER_STARTED,
-          EnergyTransferStartedEvent.new(id, State::PluggedInCharging, @maximum_charge_current))
+          EnergyTransferStartedEvent.new(id, State::PluggedInCharging, @maximum_charge_current,
+            @feature_map.v2x? ? (discharging_grant_active? ? @maximum_discharge_current : 0_i64) : nil))
+      end
+
+      def report_discharge_started : Nil
+        raise ArgumentError.new("V2X is not enabled") unless @feature_map.v2x?
+        id = @session_id || raise ArgumentError.new("no EVSE session")
+        raise ArgumentError.new("EVSE discharging is disabled") unless discharging_grant_active?
+        raise ArgumentError.new("EVSE transfer already active") if transfer_active?
+        @transfer_start_discharge_energy = @session_energy_discharged || 0_i64
+        self.state = State::PluggedInDischarging
+        emit_event(EVENT_ENERGY_TRANSFER_STARTED,
+          EnergyTransferStartedEvent.new(id, State::PluggedInDischarging,
+            charging_grant_active? ? @maximum_charge_current : 0_i64, @maximum_discharge_current))
       end
 
       def report_transfer_stopped(reason : EnergyTransferStoppedReason,
@@ -445,18 +541,34 @@ module Matter
         self.session_energy_charged = {(@session_energy_charged || 0_i64), @transfer_start_energy + energy_transferred}.max
         self.state = State::PluggedInNoDemand
         emit_event(EVENT_ENERGY_TRANSFER_STOPPED,
-          EnergyTransferStoppedEvent.new(id, State::PluggedInNoDemand, reason, energy_transferred))
+          EnergyTransferStoppedEvent.new(id, State::PluggedInNoDemand, reason, energy_transferred,
+            @feature_map.v2x? ? 0_i64 : nil))
+      end
+
+      def report_discharge_stopped(reason : EnergyTransferStoppedReason,
+                                   energy_discharged : Int64) : Nil
+        raise ArgumentError.new("V2X is not enabled") unless @feature_map.v2x?
+        id = @session_id || raise ArgumentError.new("no EVSE session")
+        raise ArgumentError.new("EVSE discharge is not active") unless @state == State::PluggedInDischarging
+        raise ArgumentError.new("negative discharged energy") if energy_discharged < 0
+        self.session_energy_discharged = {(@session_energy_discharged || 0_i64),
+                                          @transfer_start_discharge_energy + energy_discharged}.max
+        self.state = State::PluggedInNoDemand
+        emit_event(EVENT_ENERGY_TRANSFER_STOPPED,
+          EnergyTransferStoppedEvent.new(id, State::PluggedInNoDemand, reason, 0_i64, energy_discharged))
       end
 
       def report_ev_disconnected(duration : UInt32) : Nil
         id = @session_id || raise ArgumentError.new("no EVSE session")
         previous_state = @state || State::PluggedInNoDemand
         energy = @session_energy_charged || 0_i64
-        emit_event(EVENT_EV_NOT_DETECTED, EvNotDetectedEvent.new(id, previous_state, duration, energy))
+        emit_event(EVENT_EV_NOT_DETECTED, EvNotDetectedEvent.new(id, previous_state, duration, energy,
+          @feature_map.v2x? ? (@session_energy_discharged || 0_i64) : nil))
         self.state = State::NotPluggedIn
         self.session_id = nil
         self.session_duration = nil
         self.session_energy_charged = nil
+        self.session_energy_discharged = nil if @feature_map.v2x?
       end
 
       def report_fault(fault : FaultState) : Nil
@@ -474,22 +586,35 @@ module Matter
         schedule_expiry
       end
 
-      def update_session(duration : UInt32, energy_charged : Int64) : Nil
+      def update_session(duration : UInt32, energy_charged : Int64,
+                         energy_discharged : Int64? = nil) : Nil
         raise ArgumentError.new("no EVSE session") unless @session_id
         raise ArgumentError.new("negative charged energy") if energy_charged < 0
+        raise ArgumentError.new("negative discharged energy") if energy_discharged && energy_discharged < 0
+        raise ArgumentError.new("V2X is not enabled") if energy_discharged && !@feature_map.v2x?
         raise ArgumentError.new("session duration cannot decrease") if (previous = @session_duration) && duration < previous
         raise ArgumentError.new("charged energy cannot decrease") if (previous = @session_energy_charged) && energy_charged < previous
+        if energy_discharged && (previous = @session_energy_discharged) && energy_discharged < previous
+          raise ArgumentError.new("discharged energy cannot decrease")
+        end
         self.session_duration = duration
         self.session_energy_charged = energy_charged
+        self.session_energy_discharged = energy_discharged if energy_discharged
       end
 
       def expire_charging(now : UInt32 = matter_epoch_seconds) : Nil
         until_time = @charging_enabled_until
-        unless until_time && until_time <= now && @supply_state.charging_enabled?
+        unless until_time && until_time <= now && charging_grant_active?
           schedule_expiry
           return
         end
-        if callback = @on_disable
+        discharge_active = discharging_grant_active?
+        if discharge_active && !@on_enable_discharging
+          report_fault(FaultState::Other)
+          return
+        end
+        callback = discharge_active ? @on_enable_discharging.try { |enable| -> { enable.call(@discharging_enabled_until, @maximum_discharge_current) } } : @on_disable
+        if callback
           status = callback.call
           unless status.success?
             report_fault(FaultState::Other)
@@ -497,19 +622,72 @@ module Matter
           end
         end
         self.charging_enabled_until = DISABLED_UNTIL
-        self.supply_state = SupplyState::Disabled
+        self.minimum_charge_current = 0_i64
+        self.maximum_charge_current = 0_i64
+        self.supply_state = supply_state_for(false, discharge_active)
+        schedule_expiry
+      end
+
+      def expire_discharging(now : UInt32 = matter_epoch_seconds) : Nil
+        return unless @feature_map.v2x?
+        until_time = @discharging_enabled_until
+        unless until_time && until_time <= now && discharging_grant_active?
+          schedule_expiry
+          return
+        end
+        charge_active = charging_grant_active?
+        if charge_active && !@on_enable_charging
+          report_fault(FaultState::Other)
+          return
+        end
+        callback = charge_active ? @on_enable_charging.try { |enable| -> { enable.call(@charging_enabled_until, @minimum_charge_current, @maximum_charge_current) } } : @on_disable
+        if callback
+          status = callback.call
+          unless status.success?
+            report_fault(FaultState::Other)
+            return
+          end
+        end
+        self.discharging_enabled_until = DISABLED_UNTIL
+        self.maximum_discharge_current = 0_i64
+        self.supply_state = supply_state_for(charge_active, false)
         schedule_expiry
       end
 
       private def validate_capacity!(capacity : Int64) : Nil
         raise ArgumentError.new("CircuitCapacity must be nonnegative") if capacity < 0
-        if @supply_state.charging_enabled? && capacity < @maximum_charge_current
+        if charging_grant_active? && capacity < @maximum_charge_current
           raise ArgumentError.new("disable charging before reducing CircuitCapacity")
+        end
+        if discharging_grant_active? && capacity < @maximum_discharge_current
+          raise ArgumentError.new("disable discharging before reducing CircuitCapacity")
         end
       end
 
       private def cap_maximum_current(capacity : Int64) : Nil
         self.maximum_charge_current = capacity if @maximum_charge_current > capacity
+        if @feature_map.v2x? && @maximum_discharge_current > capacity
+          self.maximum_discharge_current = capacity
+        end
+      end
+
+      private def transfer_active? : Bool
+        @state.in?(State::PluggedInCharging, State::PluggedInDischarging)
+      end
+
+      private def charging_grant_active? : Bool
+        @supply_state.in?(SupplyState::ChargingEnabled, SupplyState::Enabled)
+      end
+
+      private def discharging_grant_active? : Bool
+        @supply_state.in?(SupplyState::DischargingEnabled, SupplyState::Enabled)
+      end
+
+      private def supply_state_for(charge : Bool, discharge : Bool) : SupplyState
+        return SupplyState::Enabled if charge && discharge
+        return SupplyState::ChargingEnabled if charge
+        return SupplyState::DischargingEnabled if discharge
+        SupplyState::Disabled
       end
 
       private def enabled_now?(until_time : UInt32?) : Bool
@@ -523,11 +701,22 @@ module Matter
 
       private def schedule_expiry : Nil
         @expiry_generation &+= 1
-        until_time = @charging_enabled_until
-        return unless until_time && @supply_state.charging_enabled?
+        until_times = [] of UInt32
+        if charging_grant_active? && (deadline = @charging_enabled_until)
+          until_times << deadline
+        end
+        if discharging_grant_active? && (deadline = @discharging_enabled_until)
+          until_times << deadline
+        end
+        until_time = until_times.min?
+        return unless until_time
         remaining = until_time.to_i64 - matter_epoch_seconds.to_i64
         if remaining <= 0
-          expire_charging(until_time)
+          if charging_grant_active? && @charging_enabled_until == until_time
+            expire_charging(until_time)
+          elsif discharging_grant_active? && @discharging_enabled_until == until_time
+            expire_discharging(until_time)
+          end
           return
         end
         delay = {remaining, MAX_TIMER_DELAY_SECONDS}.min.seconds
@@ -536,7 +725,8 @@ module Matter
       end
 
       private def expire_if_current(generation : UInt64) : Nil
-        expire_charging if generation == @expiry_generation
+        return unless generation == @expiry_generation
+        schedule_expiry
       end
 
       private def valid_schedules?(schedules : Array(ChargingTargetSchedule)) : Bool
@@ -580,6 +770,7 @@ module Matter
 
       private def after_restore_state : Nil
         expire_charging
+        expire_discharging if @feature_map.v2x?
       end
     end
   end

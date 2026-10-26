@@ -25,7 +25,7 @@ describe "Matter Thermostat Suggestions guarded fixture" do
   it "commissions and exposes TSUGGEST metadata and an empty list" do
     device.commission!
     read_int(device, "timesynchronization", "cluster-revision", "ClusterRevision", 0).should eq(2_i64)
-    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(9_i64)
+    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(0x503_i64)
     read_int(device, "thermostat", "max-thermostat-suggestions", "MaxThermostatSuggestions", 1).should eq(5_i64)
     expect_success(device.read("thermostat", "thermostat-suggestions", 1))
@@ -61,6 +61,30 @@ describe "Matter Thermostat Suggestions guarded fixture" do
     ensure
       expect_success(device.chip("thermostat", "remove-thermostat-suggestion", first, device.node, "1"))
       expect_success(device.chip("thermostat", "remove-thermostat-suggestion", second, device.node, "1"))
+    end
+  end
+
+  it "keeps a selected suggestion visible during an indefinite hold and follows it when released" do
+    set_suggestion_utc(device)
+    expect_success(device.chip("thermostat", "set-active-preset-request", "hex:01", device.node, "1"))
+    expect_success(device.write("thermostat", "temperature-setpoint-hold-duration", "null", 1))
+    expect_success(device.write("thermostat", "temperature-setpoint-hold", 1, 1))
+    id = suggestion_id(expect_success(add_suggestion(device, "hex:02")))
+    begin
+      selected = expect_success(device.read("thermostat", "current-thermostat-suggestion", 1))
+      selected.output.should contain("PresetHandle")
+      selected.output.should contain("02")
+      read_int(device, "thermostat", "thermostat-suggestion-not-following-reason",
+        "ThermostatSuggestionNotFollowingReason", 1).should eq(2_i64)
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output.should contain("01")
+
+      expect_success(device.write("thermostat", "temperature-setpoint-hold", 0, 1))
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output.should contain("02")
+      expect_success(device.read("thermostat", "thermostat-suggestion-not-following-reason", 1))
+        .output.downcase.should contain("null")
+    ensure
+      expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
+      expect_success(device.write("thermostat", "temperature-setpoint-hold", 0, 1))
     end
   end
 

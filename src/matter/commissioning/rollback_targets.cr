@@ -1,3 +1,5 @@
+require "../storage/document"
+
 module Matter
   module Commissioning
     # The live commissioning state a failsafe rollback restores.
@@ -8,7 +10,10 @@ module Matter
     # any cluster: `Cluster::GeneralCommissioning` includes it.
     module RollbackTargets
       # Restore the network configuration captured in `snapshot`.
-      abstract def restore_network_state(snapshot : Hash(String, String)) : Nil
+      abstract def restore_network_state(snapshot : Storage::Document) : Nil
+
+      # Commit provisional network configuration before disarming the fail-safe.
+      abstract def commit_network_state : Nil
 
       # Restore the regulatory configuration captured before SetRegulatoryConfig.
       abstract def restore_regulatory_config(location_type : UInt8, country_code : String) : Nil
@@ -21,7 +26,8 @@ module Matter
     # `Cluster::NetworkCommissioning`. A `RollbackTargets` implementation that
     # does not own the network configuration itself forwards to one of these.
     module NetworkStateStore
-      abstract def restore_network_state(snapshot : Hash(String, String)) : Nil
+      abstract def restore_network_state(snapshot : Storage::Document) : Nil
+      abstract def commit_network_state : Nil
     end
   end
 end

@@ -288,6 +288,11 @@ item below as covered only to the extent of its cited tests.
   B's JFA credentials and endpoint available. The
   Docker two-JFA test migrates a real switch from B201 to A201 and verifies A
   CASE, absence of the B fabric, and NodeList movement in both Datastores.
+  The fixture also injects an interruption after the switch commits
+  CommissioningComplete but before B durably records acknowledgement. It
+  restarts B and checks that recovery waits the advertised cumulative fail-safe
+  bound and verifies both fabrics before continuing. This tests the ambiguous
+  persisted result; it does not drop a UDP packet on the wire.
   The local `migrate-device` command requires explicit device consent and an
   attestation trust configuration. An embedding application sets
   `Device#migration_attestation_trust=` with an `AttestationTrustStore` holding

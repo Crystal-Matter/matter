@@ -78,9 +78,13 @@ Examples.main("Matter Switch Device") do
   ip_addresses = ENV["MATTER_SWITCH_IP_ADDRESS"]?.try do |address|
     [Socket::IPAddress.new(address, Matter::Network::UNSPECIFIED_PORT)]
   end
-  MatterSwitch::Device.new(ip_addresses: ip_addresses,
+  device = MatterSwitch::Device.new(ip_addresses: ip_addresses,
     groupcast_listener: ENV["MATTER_GROUPCAST_LISTENER"]? == "1",
     groupcast_sender: ENV["MATTER_GROUPCAST_SENDER"]? == "1",
     groupcast_per_group: ENV["MATTER_GROUPCAST_PER_GROUP"]? == "1",
     groupcast_max_mcast_addr_count: ENV["MATTER_GROUPCAST_MAX_MCAST_ADDR_COUNT"]?.try(&.to_u16))
+  if max_fail_safe = ENV["MATTER_SWITCH_MAX_CUMULATIVE_FAILSAFE_SECONDS"]?.try(&.to_u16)
+    device.general_commissioning.max_cumulative_failsafe_seconds = max_fail_safe
+  end
+  device
 end

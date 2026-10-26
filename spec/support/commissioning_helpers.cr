@@ -5,12 +5,15 @@ require "../../src/matter/commissioning"
 class RecordingRollbackTarget
   include Matter::Commissioning::RollbackTargets
 
-  getter network_state : Hash(String, String)?
+  getter network_state : Matter::Storage::Document?
   getter regulatory_config : Tuple(UInt8, String)?
   getter windows_closed : Int32 = 0
 
-  def restore_network_state(snapshot : Hash(String, String)) : Nil
+  def restore_network_state(snapshot : Matter::Storage::Document) : Nil
     @network_state = snapshot
+  end
+
+  def commit_network_state : Nil
   end
 
   def restore_regulatory_config(location_type : UInt8, country_code : String) : Nil
@@ -26,8 +29,11 @@ end
 class RaisingRollbackTarget
   include Matter::Commissioning::RollbackTargets
 
-  def restore_network_state(snapshot : Hash(String, String)) : Nil
+  def restore_network_state(snapshot : Matter::Storage::Document) : Nil
     raise Matter::CommissioningError.new("network restore failed")
+  end
+
+  def commit_network_state : Nil
   end
 
   def restore_regulatory_config(location_type : UInt8, country_code : String) : Nil

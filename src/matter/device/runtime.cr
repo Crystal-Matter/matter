@@ -1059,6 +1059,12 @@ module Matter
         backend: @network_backend,
         general_commissioning: general_commissioning
       )
+      general_commissioning.network_state_store = network_commissioning
+      network_commissioning.on_persist_network_state = -> do
+        unless @persistence.save_cluster(network_commissioning)
+          raise StorageError.new("Could not persist Network Commissioning state")
+        end
+      end
       network_commissioning.on_breadcrumb_success = ->(value : UInt64) do
         general_commissioning.breadcrumb = value
         nil

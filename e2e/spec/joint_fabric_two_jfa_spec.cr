@@ -5,6 +5,7 @@ require "../interop/jfa_vvs_dcl_fixture"
 
 private alias JfaRolloutDatastore = Matter::Cluster::JointFabricDatastore
 private alias JfaRollout = Matter::Controller::IpkRollout
+MIGRATION_RECOVERY_MIN_WAIT = 120.seconds
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
@@ -901,6 +902,38 @@ describe "three provisioned Joint Fabric Administrators" do
       raise Matter::TimeoutError.new("B Datastore did not commit the original device") if Time.instant >= b_deadline
       sleep 500.milliseconds
     end
+    # The target commits A's fabric, but B loses the result before recording
+    # durable acknowledgement or a local node record. Recovery must observe
+    # the full advertised fail-safe bound before trusting that fabric.
+    interrupted_migration = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
+        interrupt_after_migration_complete_before_ack: true))
+    interrupted_migration.status.should eq("error")
+    interrupted_migration.error.to_s.should contain("Injected interruption after device CommissioningComplete")
+
+    provisional_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+      migration_peer, anchor_bootstrap.fabric,
+      peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    provisional_fabrics_report = anchor_im.read_attribute(session: provisional_a_session,
+      peer: migration_peer, endpoint_id: 0_u16,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    provisional_fabrics_data = provisional_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    provisional_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(provisional_fabrics_data.to_slice)
+    provisional_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
+    provisional_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_true
+
+    joiner.restart!
+    b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    recovery_started = Time.instant
     migrated = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
@@ -908,6 +941,7 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     migrated.status.should eq("ok"), migrated.error.to_s
+    (Time.instant - recovery_started).should be >= MIGRATION_RECOVERY_MIN_WAIT
     a_target_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
       migration_peer, anchor_bootstrap.fabric,
       peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)

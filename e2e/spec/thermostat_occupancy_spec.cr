@@ -5,7 +5,7 @@ describe "Matter Thermostat Occupancy interoperability" do
 
   it "commissions and exposes the OCC attributes" do
     device.commission!
-    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(9_i64)
+    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(0x207_i64)
     read_int(device, "thermostat", "occupancy", "Occupancy", 1).should eq(0_i64)
     read_int(device, "thermostat", "unoccupied-heating-setpoint", "UnoccupiedHeatingSetpoint", 1).should eq(2000_i64)

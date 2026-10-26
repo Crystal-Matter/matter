@@ -170,6 +170,19 @@ The declarations are:
   Wi-Fi and Thread devices need a `Matter::Network::Backend` passed as `network_backend:` when
   constructed. The backend performs scans, provisioning, removal, and connection; without one,
   wireless commands report an error instead of claiming the network changed.
+  A wireless backend that accepts tentative Network Commissioning changes must
+  implement `checkpoint_configuration`, `restore_configuration`, and
+  `commit_configuration`. Checkpoints and restores must include credentials and
+  connection state. The cluster rejects a mutation before calling the backend
+  when no checkpoint is available. The backend commits on CommissioningComplete
+  and restores the initial checkpoint when the fail-safe expires or is disarmed.
+  Network metadata is saved in device storage after commit; credentials remain
+  the backend's storage responsibility. The host backend and device storage are
+  separate durability boundaries, so implementations should make restore safe
+  to retry if one store fails after the other commits. A failed backend restore
+  is logged and exposed as `GeneralCommissioning#failsafe.network_rollback_failed?`;
+  expiry discards the fail-safe context, so the operator must repair the host
+  network configuration manually.
   Wireless devices can pass `regulatory_location_capability:` at construction to set the fixed
   General Commissioning LocationCapability and its initial RegulatoryConfig together. The default
   is `IndoorOutdoor`; Ethernet-only devices must keep that value.
@@ -667,7 +680,7 @@ With LTNE enabled, `update_local_temperature` feeds the internal measurement
 used by Auto mode while LocalTemperature always reads as TLV null. A direct
 `local_temperature=` call cannot expose a value on an LTNE thermostat. See the
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
-The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster still advertises revision 9; PRES, MSCH, and TSUGGEST remain unavailable in production.
+The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; PRES, MSCH, and TSUGGEST remain unavailable in production.
 
 For host-side preset preparation, `Thermostat#configure_presets` accepts typed
 `PresetType` and `Preset` values. `activate_preset` applies a configured preset's
@@ -702,10 +715,10 @@ stays in the protocol layer.
 Pressure Sensor example: `examples/matter_pressure_sensor_device.cr` exposes Matter 1.6 Pressure Measurement revision 5 with the Extended feature. Configure physical bounds and scale at construction; report new readings through `update_pressure` and `update_scaled_pressure`. Measured readings are not persisted.
 
 The opt-in [Ambient Context Sensing server](docs/ambient-context-sensing.md)
-exposes the provisional Matter 1.6 HumanActivity feature. A host reports
-classified observations, while the cluster maintains HoldTime, the active
-semantic tag, and typed start/end events. The other features remain
-unadvertised.
+exposes provisional Matter 1.6 HumanActivity or the combined
+ObjectCounting+ObjectIdentification profile. A host reports classified
+observations, while the cluster maintains HoldTime, the active semantic tag,
+and typed start/end events. Other feature combinations remain unadvertised.
 
 ## Examples
 

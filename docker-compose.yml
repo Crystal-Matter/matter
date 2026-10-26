@@ -247,6 +247,7 @@ services:
     environment:
       E2E_DEVICE: matter_joint_fabric_migration_target
       E2E_BINARY: matter_switch
+      MATTER_SWITCH_MAX_CUMULATIVE_FAILSAFE_SECONDS: "120"
 
   level-control:
     <<: *device
@@ -336,6 +337,7 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_appliance_modes
+      MATTER_DIAGNOSTICS_TEST_ENABLE_KEY: 000102030405060708090a0b0c0d0e0f
 
   refrigerator-alarm:
     <<: *device
@@ -426,6 +428,11 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_thermostat_occupancy
+
+  thermostat-base-revision:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_thermostat_base_revision
 
   low-power:
     <<: *device
@@ -527,6 +534,11 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_wifi_management
+
+  network-failsafe:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_network_failsafe
 
   wake-on-lan:
     <<: *device
@@ -652,6 +664,7 @@ services:
       air-conditioner: { condition: service_healthy }
       thermostat-presets: { condition: service_healthy }
       thermostat-schedules: { condition: service_healthy }
+      thermostat-base-revision: { condition: service_healthy }
       bridge: { condition: service_healthy }
       bridged-icd: { condition: service_healthy }
       ecosystem-bridge: { condition: service_healthy }

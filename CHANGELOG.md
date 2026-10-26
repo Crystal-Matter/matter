@@ -29,6 +29,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Matter epoch-seconds range, and poll for effective and expiry transitions
   after a clock change without requiring an attribute read. The official
   chip-tool fixture now checks Add before and after root SetUTCTime.
+- Add guarded optional TemperatureSetpointHold and indefinite hold duration
+  attributes. An active hold keeps CurrentThermostatSuggestion visible, reports
+  OngoingHold, and preserves the active preset; releasing it follows the
+  suggestion and reports the reason transition. Production TSUGGEST remains
+  gated while schedule and occupancy arbitration is completed.
 
 ### Thermostat suggestion host state
 
@@ -53,6 +58,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject SetCredential Add requests that provide a UserIndex together with a
   non-null UserStatus or UserType. These fields apply when the lock creates a
   user; adding a credential to a specified user leaves its record unchanged.
+
+### Joint Fabric device migration recovery E2E
+
+- Exercise a successful device CommissioningComplete followed by loss of the
+  joining Administrator's durable acknowledgement and a process restart. The
+  two-JFA fixture uses a bounded fail-safe interval and checks authenticated
+  A/B fabric state before recovery resumes without recommissioning the device.
 
 ### Joint Fabric RemoveAdmin no-effect recovery
 
@@ -82,6 +94,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Identify command access
 
 - Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
+
+### Thermostat base revision 11
+
+- Report Matter 1.6 Thermostat ClusterRevision 11 for supported HEAT, COOL, and
+  HEAT+COOL/AUTO configurations. Verify their FeatureMap, mandatory attributes,
+  and SetpointRaiseLower command with the official chip-tool. PRES, MSCH, and
+  TSUGGEST remain gated in production while their conformance work continues.
 
 ### Thermostat base feature conformance
 
@@ -117,6 +136,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add typed Matter 1.6 ScheduleType, Schedule, and ScheduleTransition TLV models with validated host configuration and durable schedule handle history. Validation covers mode and per-type capacity, transition day/time overlap, per-day limits, preset references, setpoint limits, names, and built-in schedule removal. The MSCH feature remains unavailable to controllers at revision 9 until atomic Schedules writes, activation, and official wire E2E are complete.
 - Prepare Manage-only Schedules atomic writes behind the MSCH gate: secure peer and fabric ownership, bounded timeouts, private list staging, null-handle append, conditional version checks, rollback, commit validation, and durable handle history. MSCH stays unadvertised pending combined Presets/Schedules transactions, active schedule behavior, and official E2E coverage.
 - Prepare combined Presets and Schedules atomic writes behind the MSCH gate. One reservation stages both lists, validates final schedule references against final presets, and either publishes both or discards both. Preset-only writes cannot delete presets still referenced by committed schedules. Production MSCH remains gated pending active schedule behavior and official wire E2E.
+
+### Thermostat setpoint write access
+
+- Require Operate privilege for writes to occupied and unoccupied heating and
+  cooling setpoints, as specified by Matter 1.6.
 
 ### Thermostat setpoint limit reconciliation
 
@@ -213,6 +237,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add opt-in Matter 1.6 Thermostat Events (TEVT) with typed mode, temperature, setpoint, relay-state, and running-mode events. Significant temperature events are rate-limited to one per minute, LTNE suppresses the sensor event, and controller writes remain persistent. The cluster retains revision 9 while the remaining revision 11 features are implemented separately.
 
+### Groups command access control
+
+- Require Manage privilege for AddGroup, RemoveGroup, RemoveAllGroups, and
+  AddGroupIfIdentifying as declared by Matter 1.6. Operate privilege still permits
+  ViewGroup and GetGroupMembership, but cannot change fabric group membership.
+
 ### Groupcast fabric removal
 
 - Clear authenticated group sender replay windows for a removed fabric before
@@ -269,6 +299,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Unlatched`/`Unlocked` states and operation events; report actuator failures.
 - Route `UnlockWithTimeout` through the same host actuator when Unbolting is
   enabled, preserving the command's explicit relock timeout.
+
+### Ethernet Network Diagnostics ResetCounts access
+
+- Require Manage privilege to invoke ResetCounts, as specified by Matter 1.6.
 
 ### General Diagnostics test payload
 
@@ -527,7 +561,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preferences, typed charge commands and session events, validated daily
   target schedules, retained charging permission, and physical relay callbacks.
   The synthetic appliance fixture exercises the cluster through chip-tool.
-  Optional SoC, Plug and Charge, RFID, and V2X features remain unavailable.
+  Optional SoC, Plug and Charge, and RFID features remain unavailable.
+- Add an opt-in V2X profile with timed EnableDischarging, independent persistent
+  charge and discharge grants, combined SupplyState, host-approved relay changes,
+  separate expiry timers, and feature-required session counters and event fields.
+  The synthetic appliance fixture exposes V2X on a separate endpoint for
+  official chip-tool coverage.
 
 ### Application Launcher
 
@@ -1080,6 +1119,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   HoldTime and one active detection. Host observations emit typed start and end
   events; official chip-tool exercises the deterministic example hook. The
   other feature bits remain unavailable.
+
+- Add an opt-in combined ObjectCounting+ObjectIdentification profile with
+  Manage-writable persistent count configuration, conditional count reads,
+  identified-object semantic tags, threshold transitions, and start/end events.
+  The synthetic Aggregator fixture exercises the feature map and count
+  observation over chip-tool. Other feature combinations remain unavailable.
 
 ### Soil Measurement revision 1
 
@@ -1788,6 +1833,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   monotonic ticks, and Stop holds the current level. RemainingTime resets after
   restart instead of restoring a stale countdown.
 
+### Time Format Localization write access
+
+- Require Manage privilege to write HourFormat and CALFMT-gated ActiveCalendarType,
+  as specified by Matter 1.6. View reads remain available.
+
 ### Time synchronization
 
 - Add the Matter 1.6 Time Synchronization base server: nullable UTC before sync,
@@ -1898,6 +1948,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   treats that cluster's presence as an intermittently connected device; the
   cluster class remains available to devices that explicitly implement ICD
   behavior.
+
+### Network Commissioning rollback
+
+- Snapshot the initial network and backend configuration before tentative wire
+  mutations, restore it on fail-safe expiry or disarm, and commit backend changes
+  and persist cluster metadata on CommissioningComplete. Backends without a
+  checkpoint now reject tentative mutations before changing network state.
 
 ### Network Commissioning fail-safe enforcement
 

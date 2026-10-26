@@ -25,6 +25,10 @@ module Matter
       # Fabric of the administrator that armed the current failsafe (nil for PASE)
       getter admin_fabric_index : UInt8?
 
+      # Sticky until the next fresh fail-safe: a backend restore failure means
+      # expiry could not guarantee the prior network configuration.
+      getter? network_rollback_failed : Bool = false
+
       # Hard limit on a single ArmFailSafe request and on the cumulative timer
       property max_cumulative_seconds : UInt16
 
@@ -140,6 +144,7 @@ module Matter
             expiry_callback: -> { handle_expiry }
           )
           @context = context
+          @network_rollback_failed = false
           context.arm(expiry_length_seconds, @max_cumulative_seconds)
           @admin_fabric_index = session_fabric_index
           self.breadcrumb = breadcrumb
@@ -194,6 +199,7 @@ module Matter
         end
 
         Log.info { "Commissioning completed successfully" }
+        @targets.commit_network_state if context.network_state_snapshot
         # Commit credential storage before dropping the fail-safe context.
         # A storage failure must leave a live context that can still expire
         # and roll back; only a durable commit may be acknowledged.
@@ -268,7 +274,7 @@ module Matter
         Log.warn { "Failsafe expired - performing rollback" }
 
         if context = @context
-          context.rollback(@targets)
+          @network_rollback_failed = !context.rollback(@targets)
           @context = nil
           @admin_fabric_index = nil
         end

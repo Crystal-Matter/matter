@@ -11,7 +11,7 @@ end
 describe "Thermostat Occupancy" do
   it "exposes OCC mandatory attributes in production" do
     cluster = build(OccThermostat, feature_map: occupancy_features)
-    cluster.cluster_revision.should eq(9_u16)
+    cluster.cluster_revision.should eq(11_u16)
     [0x02_u32, 0x13_u32, 0x14_u32].each { |id| cluster.get_attribute_metadata(id).should_not be_nil }
     cluster.get_event_metadata(0x02_u32).should_not be_nil
     cluster.occupancy.should eq(1_u8)
