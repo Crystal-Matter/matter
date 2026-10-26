@@ -20,15 +20,15 @@ module Matter
       feature :extension, bit: 0 # EXTS - Extension attribute and its change event
       feature :auxiliary, bit: 2 # AUX - generated, read-only ACL entries
 
-      # ManagedDevice is not advertised yet. Hosts can install a transient ARL
-      # for read enforcement; write, invoke, event and review flows still need
-      # implementation before the complete feature may be enabled.
       GLOBAL_ATTRIBUTE_ID_START               = 0xFFF8_u32
       GLOBAL_ATTRIBUTE_ID_END                 = 0xFFFD_u32
       ARL_ROOT_ENDPOINT_ID                    =      0_u16
       ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID  = 0x0451_u32
       ARL_THREAD_BORDER_ROUTER_CLUSTER_ID     = 0x0452_u32
       ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID = 0x0453_u32
+      MAX_VALID_FABRIC_INDEX                  = UInt8::MAX - 1
+      INVALID_ENDPOINT_ID                     = UInt16::MAX
+      INVALID_DATA_MODEL_ID                   = UInt32::MAX
 
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
@@ -271,7 +271,8 @@ module Matter
       # remove that fabric's restrictions. This is not an advertised MNGD wire
       # attribute and hosts must reinstall it after restart.
       def configure_access_restrictions(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : Nil
-        if fabric_index == 0 || entries.any? { |entry| entry.restrictions.empty? || !restriction_target_allowed?(entry.endpoint, entry.cluster) }
+        if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
+           entries.any? { |entry| invalid_access_restriction_entry?(entry) }
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
         if entries.empty?
@@ -281,6 +282,12 @@ module Matter
             AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
           end
         end
+      end
+
+      private def invalid_access_restriction_entry?(entry : AccessRestrictionEntry) : Bool
+        !restriction_target_allowed?(entry.endpoint, entry.cluster) ||
+          entry.endpoint == INVALID_ENDPOINT_ID || entry.cluster == INVALID_DATA_MODEL_ID ||
+          entry.restrictions.empty? || entry.restrictions.any? { |restriction| restriction.id == INVALID_DATA_MODEL_ID }
       end
 
       def attribute_read_restricted?(fabric_index : UInt8, endpoint : UInt16,

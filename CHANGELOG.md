@@ -1456,6 +1456,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Validate host-installed ARL entries before replacing fabric policy. Reject
+  reserved fabric, endpoint, cluster, and element IDs and entries without
+  restrictions. Standard global attributes stay readable even when named by
+  an explicit restriction.
 - Enforce host-configured `EventForbidden` restrictions on concrete and
   wildcard event reads and active subscription updates. A concrete denied
   event reports `AccessRestricted`; a wildcard silently omits it. Subscription

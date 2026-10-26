@@ -16,6 +16,10 @@ an invocation. `EventForbidden` blocks event reads. These restrictions likewise
 accept `nil` as a wildcard ID.
 Passing an empty list removes that fabric's restrictions. Removing the fabric
 also clears its list.
+Host policy updates reject reserved fabric indexes (0 and 255), the reserved
+endpoint and data model IDs, and entries with no restrictions. Validation
+happens before replacement, so an invalid update leaves the existing policy
+in force.
 
 The Matter 1.6 standard restriction provider accepts entries only for Wi-Fi
 Network Management (`0x0451`), Thread Border Router Management (`0x0452`),
@@ -26,8 +30,9 @@ The Interaction Model checks ordinary ACL privilege first. A permitted read,
 write, or invocation blocked by the host list returns `AccessRestricted`
 (`0x9D`). Other fabrics remain governed by their own policy. Standard global
 attributes, including `FeatureMap`, remain readable according to their
-ordinary ACL privileges. Both concrete and wildcard attribute reads use this
-rule. A concrete restricted event path returns `AccessRestricted`, while a
+ordinary ACL privileges, even when a host entry explicitly names one. Both
+concrete and wildcard attribute reads use this rule. A concrete restricted
+event path returns `AccessRestricted`, while a
 wildcard event path silently omits restricted data. Active subscriptions apply
 the same check to later journal updates and advance past events that cannot be
 reported on that fabric.
