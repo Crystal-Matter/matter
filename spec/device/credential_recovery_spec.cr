@@ -393,13 +393,16 @@ describe "durable fail-safe credential recovery" do
     end
   end
 
-  it "prunes an orphan ACL after a normal RemoveFabric ACL write failure" do
+  it "prunes an orphan ACL after a legacy RemoveFabric ACL write failure" do
     path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
     begin
       backend = FailCredentialYamlFile.new(path)
       first = CredentialRecoveryDevice.new(backend)
       index = add_recovery_fabric(first)
       first.general_commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
+      # Older builds had no FabricTable removal cleanup hook and could fail
+      # after deleting the fabric document.
+      first.fabric_table.on_fabric_removed = nil
       backend.fail_next_cluster_id = first.access_control.persistence_key
       expect_raises(Matter::StorageError) do
         first.operational_credentials.credentials.remove_fabric(index)
@@ -441,6 +444,7 @@ describe "durable fail-safe credential recovery" do
       # Model a removal started by an older build before the durable gate
       # existed; restart must repair its orphaned group documents.
       first.operational_credentials.on_before_fabric_removed = nil
+      first.fabric_table.on_fabric_removed = nil
       backend.fail_next_cluster_id = first.access_control.persistence_key
       expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
         first.operational_credentials.credentials.remove_fabric(index)
@@ -530,6 +534,7 @@ describe "durable fail-safe credential recovery" do
       # Simulate an older build that lost power after deleting the fabric
       # document, before its post-removal scene callback could run.
       first.operational_credentials.on_before_fabric_removed = nil
+      first.fabric_table.on_fabric_removed = nil
       backend.fail_next_cluster_id = first.access_control.persistence_key
       expect_raises(Matter::StorageError, "Injected targeted cluster write failure") do
         first.operational_credentials.credentials.remove_fabric(index)

@@ -54,6 +54,12 @@ module Matter
     # This is the trust anchor for certificate validation
     property root_public_key : Bytes
 
+    # Stable across local index changes, and different for a replacement
+    # fabric even when it receives the same index.
+    def storage_identity : String
+      "#{@fabric_id}:#{@root_public_key.hexstring}"
+    end
+
     # Node Operational Certificate (NOC) - our identity certificate
     # TLV-encoded Matter certificate
     property operational_cert : Bytes

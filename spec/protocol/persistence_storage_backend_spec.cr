@@ -81,6 +81,20 @@ describe Matter::Protocol::Persistence::StorageBackend do
       storage.ids(SESSIONS).should eq(["111"])
     end
 
+    it "saves the current fabric identity on a CASE session document" do
+      storage = Matter::Storage::Memory.new
+      table = Matter::FabricTable.new(storage)
+      table.add_fabric(build_fabric(1_u8))
+      backend = Matter::Protocol::Persistence::StorageBackend.new(storage, table)
+      registry = build_registry(storage)
+      session = case_session(111_u16, 1_u8)
+
+      backend.session_established(registry, session)
+      document = storage.read(SESSIONS, "111").as(Matter::Storage::Document)
+      document["fabric_identity"].should eq(table.get_fabric(1_u8).as(Matter::Fabric).storage_identity)
+      restored_registry(storage, table).sessions.has_key?(111_u16).should be_true
+    end
+
     it "never persists a connection-bound TCP CASE session" do
       storage = Matter::Storage::Memory.new
       registry = build_registry(storage)
@@ -147,6 +161,7 @@ describe Matter::Protocol::Persistence::StorageBackend do
       session = case_session(111_u16, 1_u8)
       session.local_message_counter = 99_u32
       session.peer_message_counter = 7_u32
+      session.fabric_identity = fabric_table.get_fabric(1_u8).as(Matter::Fabric).storage_identity
       storage.write(SESSIONS, "111", session.to_record.to_document)
 
       registry = restored_registry(storage, fabric_table)
@@ -156,6 +171,30 @@ describe Matter::Protocol::Persistence::StorageBackend do
       restored.peer_node_id.should eq(Matter::DataType::NodeId.new(0x1234_u64))
       restored.attestation_challenge.should eq(Bytes.new(16, 3_u8))
       restored.fabric_index.should eq(1_u8)
+    end
+
+    it "rejects a saved CASE session after the fabric index is reused" do
+      storage = Matter::Storage::Memory.new
+      fabric_table = Matter::FabricTable.new(storage)
+      fabric_table.add_fabric(build_fabric(1_u8))
+      session = case_session(111_u16, 1_u8)
+      session.fabric_identity = fabric_table.get_fabric(1_u8).as(Matter::Fabric).storage_identity
+      storage.write(SESSIONS, "111", session.to_record.to_document)
+      fabric_table.remove_fabric(1_u8).should be_true
+      fabric_table.add_fabric(build_fabric(1_u8)).should be_true
+
+      restored_registry(storage, fabric_table).sessions.should be_empty
+      storage.ids(SESSIONS).should be_empty
+    end
+
+    it "fails closed on a legacy CASE session without fabric identity" do
+      storage = Matter::Storage::Memory.new
+      table = Matter::FabricTable.new(storage)
+      table.add_fabric(build_fabric(1_u8))
+      storage.write(SESSIONS, "111", case_session(111_u16, 1_u8).to_record.to_document)
+
+      restored_registry(storage, table).sessions.should be_empty
+      storage.ids(SESSIONS).should be_empty
     end
 
     it "does not restore CASE sessions for missing fabrics (and prunes them)" do
@@ -212,6 +251,7 @@ describe Matter::Protocol::Persistence::StorageBackend do
       fabric_table.add_fabric(build_fabric(1_u8))
 
       session = case_session(111_u16, 1_u8)
+      session.fabric_identity = fabric_table.get_fabric(1_u8).as(Matter::Fabric).storage_identity
       storage.write(SESSIONS, "111", session.to_record.to_document)
       storage.write(SUBSCRIPTIONS, "10", build_subscription(10_u32, session).to_record.to_document)
       storage.write(SUBSCRIPTIONS, "20", build_subscription(20_u32, case_session(222_u16, 1_u8)).to_record.to_document)
