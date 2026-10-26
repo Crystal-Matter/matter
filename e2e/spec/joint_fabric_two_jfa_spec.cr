@@ -981,14 +981,19 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: request_nonce))
     accepted_witness.status.should eq("ok"), accepted_witness.error.to_s
 
-    # B becomes the new Anchor, but the command channel loses the result after
-    # TransferAnchorComplete and before participant follow-up. Restart B with
-    # its persisted FollowingUp journal while A and C still use A's fabric.
+    # A executes TransferAnchorComplete, then B loses the response. Restart B
+    # with its persisted Completing journal while A and C still use A's fabric.
     interrupted_transfer = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
-        interrupt_before_transfer_follow_up: true))
+        interrupt_after_transfer_complete: true))
     interrupted_transfer.status.should eq("error")
-    interrupted_transfer.error.to_s.should contain("Injected interruption before Anchor transfer follow-up")
+    interrupted_transfer.error.to_s.should contain("Injected lost TransferAnchorComplete acknowledgement")
+    inactive_old_store = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_STATUS)
+    inactive_old_store.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_status.as(Matter::InteractionModel::AttributeStatusIB)
+      .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
     third_before_follow_up = jfa_command("matter_joint_fabric_third",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
         anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
@@ -1011,6 +1016,36 @@ describe "three provisioned Joint Fabric Administrators" do
     live_window_owner_data = live_window_owner_report.attribute_data ||
                              raise "Promoted Anchor window owner read failed with IM status #{live_window_owner_report.attribute_status.try(&.status.status)}"
     live_window_owner_data.data.as(TLV::Any).as_u8.should eq(1_u8)
+    joiner.restart!
+    unsafe_complete_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_complete_retry.status.should eq("error")
+    unsafe_complete_retry.error.to_s.should contain("needs authenticated completion reconciliation")
+    completion_nonce = Random::Secure.hex(16)
+    completion_witness = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-completion", 0xA103_u64,
+        nonce: completion_nonce))
+    completion_witness.status.should eq("ok"), completion_witness.error.to_s
+    completion_witness.inspected_transfer_requester_node_id.should eq(0xA103_u64)
+    rejected_completion = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-complete", 0xA104_u64,
+        nonce: completion_nonce))
+    rejected_completion.status.should eq("error")
+    accepted_completion = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-complete", 0xA102_u64,
+        nonce: completion_nonce))
+    accepted_completion.status.should eq("ok"), accepted_completion.error.to_s
+    transferred_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    transferred_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Transferred.value)
+    interrupted_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_before_transfer_follow_up: true))
+    interrupted_follow_up.status.should eq("error")
+    interrupted_follow_up.error.to_s.should contain("Injected interruption before Anchor transfer follow-up")
+    following_up_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    following_up_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::FollowingUp.value)
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
@@ -1041,6 +1076,9 @@ describe "three provisioned Joint Fabric Administrators" do
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
+    completed_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    completed_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed.value)
     assert_joiner_vvs(joiner_client, joiner_peer, joiner_bootstrap.fabric,
       signed_statement, joiner_bootstrap.fabric.intermediate_cert.as(Bytes))
     watch_deadline = Time.instant + 90.seconds

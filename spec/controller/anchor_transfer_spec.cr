@@ -528,6 +528,49 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     end
   end
 
+  it "reconciles a lost Complete response only with a fresh matching old-Anchor witness" do
+    root = Bytes[0x04, 0x11, 0x22]
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64, TransferStage::Completing)
+    saved = 0
+    save = ->(_item : Matter::Controller::AnchorTransfer::Journal) { saved += 1; nil }
+    witness = Matter::Controller::AnchorTransfer::CompletionWitness.new(
+      "fresh-nonce", 0xA102_u64, 0xA100_u64, root, 0xA103_u64, 0xB102_u64, true)
+    reconcile = ->(proof : Matter::Controller::AnchorTransfer::CompletionWitness, nonce : String) {
+      Matter::Controller::AnchorTransfer::Workflow.reconcile_completion_journal!(journal,
+        proof, save, nonce, 0xA102_u64, 0xA100_u64, root, 0xB102_u64)
+    }
+
+    bad = {
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("stale", 0xA102_u64, 0xA100_u64, root, 0xA103_u64, 0xB102_u64, true),
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("fresh-nonce", 0xA104_u64, 0xA100_u64, root, 0xA103_u64, 0xB102_u64, true),
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("fresh-nonce", 0xA102_u64, 0xA101_u64, root, 0xA103_u64, 0xB102_u64, true),
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("fresh-nonce", 0xA102_u64, 0xA100_u64, Bytes[0x04, 0x11, 0x23], 0xA103_u64, 0xB102_u64, true),
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("fresh-nonce", 0xA102_u64, 0xA100_u64, root, 0xA104_u64, 0xB102_u64, true),
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("fresh-nonce", 0xA102_u64, 0xA100_u64, root, 0xA103_u64, 0xB103_u64, true),
+      Matter::Controller::AnchorTransfer::CompletionWitness.new("fresh-nonce", 0xA102_u64, 0xA100_u64, root, 0xA103_u64, 0xB102_u64, false),
+    }
+    bad.each do |proof|
+      expect_raises(Matter::AuthenticationError, /completion witness/) { reconcile.call(proof, "fresh-nonce") }
+    end
+    expect_raises(Matter::AuthenticationError, /completion witness/) { reconcile.call(witness, "") }
+    journal.stage.should eq(TransferStage::Completing)
+    saved.should eq(0)
+
+    failing_save = ->(_item : Matter::Controller::AnchorTransfer::Journal) {
+      raise Matter::StorageError.new("Journal flush failed")
+    }
+    expect_raises(Matter::StorageError, /Journal flush failed/) do
+      Matter::Controller::AnchorTransfer::Workflow.reconcile_completion_journal!(journal,
+        witness, failing_save, "fresh-nonce", 0xA102_u64, 0xA100_u64, root, 0xB102_u64)
+    end
+    journal.stage.should eq(TransferStage::Completing)
+
+    reconcile.call(witness, "fresh-nonce")
+    journal.stage.should eq(TransferStage::Transferred)
+    saved.should eq(1)
+    expect_raises(Matter::ConfigurationError, /not awaiting completion/) { reconcile.call(witness, "fresh-nonce") }
+  end
+
   it "resumes from every persisted stable transfer boundary without replaying prior commands" do
     boundaries = {
       {TransferStage::Requested, ["copy", "rotate", "promote", "complete", "follow-up"]},

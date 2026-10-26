@@ -46,6 +46,25 @@ module Matter
         end
       end
 
+      # A host-supplied witness for an acknowledgement lost after the old
+      # Anchor completed the command. The host must authenticate its source;
+      # this is not a Matter wire message or a readable inactive Datastore.
+      struct CompletionWitness
+        getter nonce : String
+        getter old_anchor_node_id : UInt64
+        getter old_fabric_id : UInt64
+        getter old_root_public_key : Bytes
+        getter requester_node_id : UInt64
+        getter new_anchor_node_id : UInt64
+        getter? transfer_complete : Bool
+
+        def initialize(@nonce : String, @old_anchor_node_id : UInt64,
+                       @old_fabric_id : UInt64, @old_root_public_key : Bytes,
+                       @requester_node_id : UInt64, @new_anchor_node_id : UInt64,
+                       @transfer_complete : Bool)
+        end
+      end
+
       # Applies a datastore snapshot obtained from the old Anchor, including
       # every persisted list. The caller must still fetch that snapshot over
       # an authenticated channel (attribute reads or BDX) before calling this.
@@ -939,6 +958,41 @@ module Matter
                          end
           journal.stage = stable_stage
           save.call(journal)
+          journal
+        end
+
+        # An inactive old Datastore cannot be read after Complete. Accept only
+        # a fresh host-authenticated witness of the exact old and new roles.
+        # A missing or mismatched witness leaves the Completing journal intact.
+        def self.reconcile_completion_journal!(journal : Journal,
+                                               witness : CompletionWitness,
+                                               save : SaveJournal,
+                                               expected_nonce : String,
+                                               old_anchor_node_id : UInt64,
+                                               old_fabric_id : UInt64,
+                                               old_root_public_key : Bytes,
+                                               new_anchor_node_id : UInt64) : Journal
+          unless journal.stage.completing?
+            raise Matter::ConfigurationError.new("Anchor transfer is not awaiting completion reconciliation")
+          end
+          raise Matter::AuthenticationError.new("Old Anchor completion witness has no nonce") if expected_nonce.empty?
+          unless witness.nonce == expected_nonce &&
+                 witness.transfer_complete? &&
+                 witness.old_anchor_node_id == old_anchor_node_id &&
+                 witness.old_fabric_id == old_fabric_id &&
+                 witness.old_root_public_key == old_root_public_key &&
+                 witness.requester_node_id == journal.candidate_node_id &&
+                 witness.new_anchor_node_id == new_anchor_node_id &&
+                 old_anchor_node_id != 0_u64 && new_anchor_node_id != 0_u64
+            raise Matter::AuthenticationError.new("Old Anchor completion witness does not match the pending transfer")
+          end
+          journal.stage = Stage::Transferred
+          begin
+            save.call(journal)
+          rescue ex
+            journal.stage = Stage::Completing
+            raise ex
+          end
           journal
         end
 
