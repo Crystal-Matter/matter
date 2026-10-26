@@ -348,6 +348,8 @@ module Matter
       @restriction_fabric_generations = {} of UInt8 => UInt64
       @review_fabrics = {} of UInt64 => UInt8
       @review_generations = {} of UInt64 => UInt64
+      @review_fabric_identities = {} of UInt64 => String
+      property review_fabric_identity : Proc(UInt8, String?)? = nil
       @on_restriction_review_requested : Proc(RestrictionReviewRequest, Nil)? = nil
       @on_restriction_review_updated : Proc(UInt8, FabricRestrictionReviewUpdate, Nil)? = nil
       property on_persist : Proc(Nil)? = nil
@@ -485,7 +487,22 @@ module Matter
 
       # Include managed state when pruning fabrics absent from the fabric table.
       def restriction_fabric_indexes : Array(UInt8)
-        (@access_restrictions.keys + @pending_restriction_reviews.values.map(&.fabric_index)).uniq
+        (@access_restrictions.keys + @review_fabrics.values).uniq
+      end
+
+      # Called before installing host callbacks after restore. Legacy reviews
+      # without an identity, and reviews for a replaced fabric, are cancelled
+      # so their saved outbox cannot be delivered to a different fabric.
+      def prune_restriction_reviews_for_fabric_identity : Array(UInt8)
+        return [] of UInt8 unless @review_fabric_identity
+        removed = [] of UInt8
+        @review_fabrics.dup.each do |token, fabric_index|
+          next if current_restriction_review?(fabric_index, token)
+          cancel_restriction_review(token)
+          removed << fabric_index
+        end
+        increment_version unless removed.empty?
+        removed.uniq
       end
 
       private def invalid_access_restriction_entry?(entry : AccessRestrictionEntry) : Bool
@@ -535,11 +552,16 @@ module Matter
         unless callback && @on_restriction_review_updated
           raise Matter::ConfigurationError.new("Restriction review callbacks are not configured")
         end
+        fabric_identity = @review_fabric_identity.try do |provider|
+          provider.call(fabric_index) ||
+            raise Matter::ConfigurationError.new("Restriction review fabric is unavailable")
+        end
 
         @next_restriction_review_token += 1_u64
         token = @next_restriction_review_token
         @review_fabrics[token] = fabric_index
         @review_generations[token] = restriction_fabric_generation(fabric_index)
+        @review_fabric_identities[token] = fabric_identity if fabric_identity
         generation = @review_generations[token]
         request = RestrictionReviewRequest.new(fabric_index, token, entries.map do |entry|
           AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
@@ -811,9 +833,14 @@ module Matter
       private def current_restriction_review?(fabric_index : UInt8, token : UInt64,
                                               generation : UInt64? = @review_generations[token]?) : Bool
         return false unless generation
-        @review_fabrics[token]? == fabric_index &&
-          @review_generations[token]? == generation &&
-          generation == restriction_fabric_generation(fabric_index)
+        return false unless @review_fabrics[token]? == fabric_index &&
+                            @review_generations[token]? == generation &&
+                            generation == restriction_fabric_generation(fabric_index)
+        if identity_provider = @review_fabric_identity
+          identity = @review_fabric_identities[token]?
+          return false unless identity && identity_provider.call(fabric_index) == identity
+        end
+        true
       end
 
       private def ensure_current_restriction_review!(fabric_index : UInt8, token : UInt64,
@@ -826,6 +853,21 @@ module Matter
       private def forget_restriction_review(token : UInt64) : Nil
         @review_fabrics.delete(token)
         @review_generations.delete(token)
+        @review_fabric_identities.delete(token)
+      end
+
+      private def cancel_restriction_review(token : UInt64) : Nil
+        @restriction_review_timers.delete(token).try(&.close)
+        @pending_restriction_reviews.delete(token)
+        @pending_restriction_review_deadlines.delete(token)
+        @reviews_needing_replay.delete(token)
+        @review_requests_in_progress.delete(token)
+        @review_completions_in_progress.delete(token)
+        @reviews_awaiting_delivery.delete(token)
+        @review_callbacks_needing_replay.delete(token)
+        @review_delivery_inflight.delete(token)
+        @review_events_emitted.delete(token)
+        forget_restriction_review(token)
       end
 
       private def schedule_restriction_review_timer(fabric_index : UInt8, token : UInt64,
@@ -1081,9 +1123,11 @@ module Matter
         getter fabric_index : UInt8
         getter entries : Array(PersistedRestrictionEntry)
         getter deadline : Time
+        getter fabric_identity : String?
 
         def initialize(@token : UInt64, @fabric_index : UInt8,
-                       @entries : Array(PersistedRestrictionEntry), @deadline : Time)
+                       @entries : Array(PersistedRestrictionEntry), @deadline : Time,
+                       @fabric_identity : String? = nil)
         end
       end
 
@@ -1097,10 +1141,11 @@ module Matter
         getter instruction : String?
         getter arl_request_flow_url : String?
         getter? arl_notification_required : Bool
+        getter fabric_identity : String?
 
         def initialize(@token : UInt64, @fabric_index : UInt8,
                        @instruction : String?, @arl_request_flow_url : String?,
-                       @arl_notification_required : Bool)
+                       @arl_notification_required : Bool, @fabric_identity : String? = nil)
         end
       end
 
@@ -1163,7 +1208,8 @@ module Matter
           pending_restriction_reviews: @pending_restriction_reviews.values.map do |request|
             PersistedRestrictionReview.new(request.token, request.fabric_index,
               request.entries.map { |entry| persisted_restriction_entry(entry) },
-              @pending_restriction_review_deadlines[request.token])
+              @pending_restriction_review_deadlines[request.token],
+              @review_fabric_identities[request.token]?)
           end,
           next_restriction_review_token: @next_restriction_review_token,
           review_requests_in_progress: @review_requests_in_progress.dup,
@@ -1173,7 +1219,7 @@ module Matter
             next unless delivery
             fabric_index, update, notify_arl = delivery
             PersistedReviewCompletion.new(token, fabric_index, update.instruction,
-              update.arl_request_flow_url, notify_arl)
+              update.arl_request_flow_url, notify_arl, @review_fabric_identities[token]?)
           end
         ).to_document
       end
@@ -1212,6 +1258,7 @@ module Matter
         end
         pending = {} of UInt64 => RestrictionReviewRequest
         deadlines = {} of UInt64 => Time
+        identities = {} of UInt64 => String
         state.pending_restriction_reviews.each do |stored|
           entries = stored.entries.map do |persisted|
             entry = restored_restriction_entry(persisted)
@@ -1226,6 +1273,9 @@ module Matter
           end
           pending[stored.token] = RestrictionReviewRequest.new(stored.fabric_index, stored.token, entries)
           deadlines[stored.token] = stored.deadline
+          if identity = stored.fabric_identity
+            identities[stored.token] = identity
+          end
         end
         request_tokens = state.review_requests_in_progress
         if request_tokens.uniq.size != request_tokens.size ||
@@ -1238,6 +1288,7 @@ module Matter
           # half-delivered request to the host.
           pending.delete(token)
           deadlines.delete(token)
+          identities.delete(token)
         end
         outbox = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
         state.review_completion_outbox.each do |stored|
@@ -1252,6 +1303,9 @@ module Matter
                                   FabricRestrictionReviewUpdate.new(stored.token,
                                     stored.instruction, stored.arl_request_flow_url),
                                   stored.arl_notification_required?}
+          if identity = stored.fabric_identity
+            identities[stored.token] = identity
+          end
         end
         completion_tokens = state.review_completions_in_progress
         if completion_tokens.uniq.size != completion_tokens.size ||
@@ -1272,6 +1326,7 @@ module Matter
         @reviews_needing_replay = pending.keys
         @review_fabrics = {} of UInt64 => UInt8
         @review_generations = {} of UInt64 => UInt64
+        @review_fabric_identities = identities
         pending.each do |token, request|
           @review_fabrics[token] = request.fabric_index
           @review_generations[token] = restriction_fabric_generation(request.fabric_index)
@@ -1426,17 +1481,7 @@ module Matter
       def remove_fabric_acl(fabric_index : UInt8) : Nil
         @restriction_fabric_generations[fabric_index] = restriction_fabric_generation(fabric_index) &+ 1_u64
         @review_fabrics.select { |_token, index| index == fabric_index }.keys.each do |token|
-          @restriction_review_timers.delete(token).try(&.close)
-          @pending_restriction_reviews.delete(token)
-          @pending_restriction_review_deadlines.delete(token)
-          @reviews_needing_replay.delete(token)
-          @review_requests_in_progress.delete(token)
-          @review_completions_in_progress.delete(token)
-          @reviews_awaiting_delivery.delete(token)
-          @review_callbacks_needing_replay.delete(token)
-          @review_delivery_inflight.delete(token)
-          @review_events_emitted.delete(token)
-          forget_restriction_review(token)
+          cancel_restriction_review(token)
         end
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
         @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }

@@ -1,8 +1,9 @@
-# Access Control ManagedDevice foundation
+# Access Control ManagedDevice host integration
 
 Matter 1.6 Access Control revision 3 defines the ManagedDevice (MNGD) feature
 for devices whose hosts impose additional access restrictions. Crystal Matter
-does not advertise MNGD yet. The first internal foundation lets a host enforce
+advertises MNGD only when a device configures both review callbacks and a
+durable storage backend. The host API lets a host enforce
 an Access Restriction List (ARL) on attribute reads, writes, command
 invocations, and event reads by CASE clients.
 
@@ -44,8 +45,34 @@ The host policy and fixed commissioning list are saved in the Access Control
 cluster document and restored after restart. Device startup removes saved
 restrictions and reviews for fabric indexes absent from the fabric table before
 CASE can reuse an index. Host policy updates write through to storage; a
-failed save leaves the previous policy in force. The
-internal review lifecycle now accepts a fabric-specific request with a snapshot
+failed save leaves the previous policy in force.
+
+The device DSL can opt in with two instance methods:
+
+```crystal
+class MyDevice < Matter::Device
+  storage yaml: "matter-device.yml"
+  managed_restrictions requested: :review_requested, updated: :review_updated
+
+  private def review_requested(request : Matter::Cluster::AccessControl::RestrictionReviewRequest) : Nil
+    # Queue host consent work keyed by request.token.
+  end
+
+  private def review_updated(fabric : UInt8,
+                             update : Matter::Cluster::AccessControl::FabricRestrictionReviewUpdate) : Nil
+    # Record the correlated result keyed by update.token.
+  end
+end
+```
+
+Handwritten devices may instead pass `on_restriction_review_requested:` and
+`on_restriction_review_updated:` procs to `Device#initialize`. Both callbacks
+are required; volatile storage, including `Storage::Memory`, is rejected.
+The host owns the consent decision and installs only policy it explicitly
+approves. Callbacks may run again after a crash with the **same token**; host
+side effects must be idempotent by token.
+
+The internal review lifecycle accepts a fabric-specific request with a snapshot
 of the requested ARL entries. An empty request list means a generic review.
 The host installs `on_restriction_review_requested` and
 `on_restriction_review_updated` callbacks, then calls
@@ -61,8 +88,9 @@ are bound to the request's fabric and token. The low-level
 changing ARL, for hosts that manage policy separately. The wire update has no
 approval or denial field, so hosts should explain a denial in the optional
 instruction or URL.
-Pending requests retain their token and deadline across restart. When both
-host callbacks are installed after restore, unexpired requests are replayed
+Pending requests retain their token, deadline, and fabric identity across
+restart. Runtime installs callbacks after restoring Access Control and pruning
+orphaned or replaced fabric reviews and their retained events. Unexpired requests are replayed
 with the original token, while expired requests produce their fallback update.
 If the host request callback fails before the token is returned, the library
 persists a compensating cancellation so restart does not replay that request
@@ -74,9 +102,9 @@ fabric cancels its pending reviews. The update fields use the Matter 1.6 TLV
 schema and enforce the 512-byte instruction and 256-byte URL limits.
 
 The Matter 1.6 wire schema is now present behind the MNGD feature gate. The
-default `AccessControl` feature map still omits MNGD, so its attributes,
-command, and event are absent from default metadata and global lists. If a
-host explicitly enables MNGD, `CommissioningARL` is a View-readable fixed
+default `AccessControl` feature map omits MNGD, so its attributes,
+command, and event are absent from default metadata and global lists. With
+callbacks and durable storage configured, `CommissioningARL` is a View-readable fixed
 list configured once during setup, `ARL` is View-readable and fabric scoped,
 and `ReviewFabricRestrictions` requires Administer privilege and a CASE fabric.
 The response carries a review token; completion emits a fabric-sensitive
@@ -87,9 +115,9 @@ and writes, command invocations, and event reads. CASE sessions continue to use
 their fabric's ARL.
 
 An application-specific consent UI or service and independent managed-device
-interoperability remain future work. The pinned SDK accepts ARL entries by
+interoperability remain host and integration work. The pinned SDK accepts ARL entries by
 allowed endpoint and cluster ID without requiring the target to be installed;
 this implementation follows that rule so policy can precede a dynamic endpoint.
-Device
-configurations should leave MNGD disabled until those paths are implemented
-and tested.
+Legacy pending reviews without a saved fabric identity are cancelled when an
+opted-in device starts, so an old token cannot be delivered to a replacement
+fabric at the same index.

@@ -56,6 +56,9 @@ module Matter
   abstract class Device
     include DSL
 
+    alias RestrictionReviewRequested = Proc(Cluster::AccessControl::RestrictionReviewRequest, Nil)
+    alias RestrictionReviewUpdated = Proc(UInt8, Cluster::AccessControl::FabricRestrictionReviewUpdate, Nil)
+
     macro inherited
       # DSL declarations accumulate here (see `dsl.cr`); `dsl_generate`
       # turns them into code once the class body is complete.
@@ -101,10 +104,22 @@ module Matter
     # Check-In client. No stale CASE peer address is reused after sleep.
     property icd_peer_resolver : Proc(UInt8, UInt64, Socket::IPAddress?)? = nil
 
+    # A host owns each consent decision and its resulting ARL. Callbacks may
+    # be replayed after a crash, so the token must make their effects idempotent.
+    protected def default_restriction_review_requested : RestrictionReviewRequested?
+      nil
+    end
+
+    protected def default_restriction_review_updated : RestrictionReviewUpdated?
+      nil
+    end
+
     @shutdown_channel : Channel(Nil) = Channel(Nil).new
     @basic_info : Cluster::BasicInformation? = nil
     @general_commissioning : Cluster::GeneralCommissioning? = nil
     @access_control : Cluster::AccessControl? = nil
+    @managed_review_requested : RestrictionReviewRequested? = nil
+    @managed_review_updated : RestrictionReviewUpdated? = nil
     @operational_credentials : Cluster::OperationalCredentials? = nil
     @administrator_commissioning : Cluster::AdministratorCommissioning? = nil
     @groupcast_outbound : GroupcastSender? = nil
@@ -184,7 +199,17 @@ module Matter
       groupcast_sender : Bool = false,
       groupcast_per_group : Bool = false,
       groupcast_max_mcast_addr_count : UInt16? = nil,
+      on_restriction_review_requested : RestrictionReviewRequested? = nil,
+      on_restriction_review_updated : RestrictionReviewUpdated? = nil,
     )
+      @managed_review_requested = on_restriction_review_requested || default_restriction_review_requested
+      @managed_review_updated = on_restriction_review_updated || default_restriction_review_updated
+      if @managed_review_requested.nil? != @managed_review_updated.nil?
+        raise ConfigurationError.new("ManagedDevice requires both restriction review callbacks")
+      end
+      if @managed_review_requested && storage.path.nil?
+        raise ConfigurationError.new("ManagedDevice restriction reviews require durable storage")
+      end
       @groupcast_sender_enabled = groupcast_sender
       @groupcast_per_group_enabled = groupcast_per_group
       @groupcast_max_mcast_addr_count = groupcast_max_mcast_addr_count ||
@@ -261,6 +286,7 @@ module Matter
       end
       orphan_acl_indices.each do |index|
         access_control.remove_fabric_acl(index)
+        @node.event_journal.remove_fabric(index)
       end
       if !orphan_acl_indices.empty? || @persistence.recovered_added_fabric_index
         unless @persistence.save_cluster(access_control)
@@ -312,6 +338,22 @@ module Matter
             raise StorageError.new("Could not persist recovered Scenes cleanup")
           end
         end
+      end
+
+      # Restore and prune every removed fabric before callbacks can replay a
+      # saved review completion or publish a fabric-scoped event.
+      pruned_review_indices = access_control.prune_restriction_reviews_for_fabric_identity
+      unless pruned_review_indices.empty?
+        pruned_review_indices.each { |index| @node.event_journal.remove_fabric(index) }
+        unless @persistence.save_cluster(access_control)
+          raise StorageError.new("Could not persist stale restriction review cleanup")
+        end
+      end
+      if updated = @managed_review_updated
+        access_control.on_restriction_review_updated { |fabric, update| updated.call(fabric, update) }
+      end
+      if requested = @managed_review_requested
+        access_control.on_restriction_review_requested { |request| requested.call(request) }
       end
 
       @message_handler.refresh_group_memberships
@@ -912,8 +954,17 @@ module Matter
                                 Cluster::GeneralCommissioning.new(endpoint_0,
                                   location_capability: @regulatory_location_capability)
                               end
-      access_control = Cluster::AccessControl.new(endpoint_0,
-        feature_map: @groupcast_listener ? Cluster::AccessControl::Feature::Extension | Cluster::AccessControl::Feature::Auxiliary : Cluster::AccessControl::Feature::Extension)
+      access_control_features = Cluster::AccessControl::Feature::Extension
+      access_control_features |= Cluster::AccessControl::Feature::Auxiliary if @groupcast_listener
+      access_control_features |= Cluster::AccessControl::Feature::ManagedDevice if @managed_review_requested
+      access_control = Cluster::AccessControl.new(endpoint_0, feature_map: access_control_features)
+      if @managed_review_requested
+        access_control.review_fabric_identity = ->(index : UInt8) do
+          @fabric_table.get_fabric(index).try do |fabric|
+            "#{fabric.fabric_id}:#{fabric.root_public_key.hexstring}"
+          end
+        end
+      end
       @general_commissioning = general_commissioning
       @access_control = access_control
       access_control.on_persist = -> do
