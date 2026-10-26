@@ -13,12 +13,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   non-null UserStatus or UserType. These fields apply when the lock creates a
   user; adding a credential to a specified user leaves its record unchanged.
 
+### Joint Fabric RemoveAdmin no-effect recovery
+
+- Journal the outgoing Administrator entry before RemoveAdmin. After an interrupted
+  command, an explicit recovery action can retry only when the durable,
+  fabric-bound Datastore still contains that same entry and retains
+  the original Administrator CAT version. Recovery of a completed
+  RemoveAdmin continues through the existing path.
+
 ### Door Lock credential user type validation
 
 - Enforce Matter 1.6 SetCredential UserType values. Schedule-specific user types
   are configured through SetUser, then receive credentials without a UserType
   in SetCredential. Invalid requests leave user and credential state unchanged.
-
 ### Door Lock credential status validation
 
 - Reject SetCredential requests that set UserStatus to Available. Matter 1.6 allows
