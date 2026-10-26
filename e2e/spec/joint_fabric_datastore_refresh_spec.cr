@@ -3,6 +3,7 @@ require "../../src/matter/controller"
 
 private alias JFD = Matter::Cluster::JointFabricDatastore
 private alias IM = Matter::InteractionModel
+private alias Rollout = Matter::Controller::IpkRollout
 
 private def refresh_datastore_list(type : T.class, im : Matter::Controller::ImClient,
                                    session : Matter::Session::SecureContext, peer : Socket::IPAddress,
@@ -25,6 +26,27 @@ private def refresh_node_status(im : Matter::Controller::ImClient, session : Mat
                                 peer : Socket::IPAddress, node_id : UInt64) : JFD::DatastoreStatusEntryStruct?
   refresh_datastore_list(JFD::DatastoreNodeInformationEntryStruct, im, session, peer,
     JFD::ATTR_NODE_LIST).find(&.node_id.==(node_id)).try(&.commissioning_status_entry)
+end
+
+private def refresh_rollout_snapshot(im : Matter::Controller::ImClient,
+                                     session : Matter::Session::SecureContext,
+                                     peer : Socket::IPAddress, anchor_node_id : UInt64) : JFD
+  snapshot = JFD.new(Matter::DataType::EndpointNumber.new(1_u16))
+  root_report = im.read_attribute(session: session, peer: peer, endpoint_id: 1_u16,
+    cluster_id: JFD::CLUSTER_ID, attribute_id: JFD::ATTR_ANCHOR_ROOT_CA)
+  root_data = root_report.attribute_reports.as(Array(IM::AttributeReportIB))
+    .first.attribute_data.as(IM::AttributeDataIB).data.as(TLV::Any)
+  snapshot.anchor_root_ca = Bytes.from_tlv(root_data.to_slice)
+  snapshot.anchor_node_id = anchor_node_id
+  snapshot.group_key_set_list = refresh_datastore_list(JFD::DatastoreGroupKeySetStruct, im,
+    session, peer, JFD::ATTR_GROUP_KEY_SET_LIST)
+  snapshot.node_list = refresh_datastore_list(JFD::DatastoreNodeInformationEntryStruct, im,
+    session, peer, JFD::ATTR_NODE_LIST)
+  snapshot.node_key_set_list = refresh_datastore_list(JFD::DatastoreNodeKeySetEntryStruct, im,
+    session, peer, JFD::ATTR_NODE_KEY_SET_LIST)
+  snapshot.admin_list = refresh_datastore_list(JFD::DatastoreAdministratorInformationEntryStruct, im,
+    session, peer, JFD::ATTR_ADMIN_LIST)
+  snapshot
 end
 
 private def wait_refresh_status(im : Matter::Controller::ImClient, session : Matter::Session::SecureContext,
@@ -100,6 +122,17 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
       JFD::DatastoreStateEnum::CommitFailed, 150.seconds)
     failed.failure_code.should eq(IM::StatusCode::Failure.value)
 
+    # A future IPK update would evict the target's only epoch. The host-side
+    # guard must refuse it while this real Datastore reports CommitFailed.
+    eviction = JFD::DatastoreGroupKeySetStruct.new(0_u16,
+      JFD::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(16, 0xA6_u8), 2_u64, nil, nil, nil, nil)
+    rollout = refresh_rollout_snapshot(im, anchor_session, anchor_peer, anchor_node_id)
+    expect_raises(Matter::ConfigurationError, /node #{target_node_id}/) do
+      Rollout.preflight_eviction!(rollout, bootstrap.fabric.fabric_id,
+        bootstrap.fabric.root_cert, eviction, [] of Rollout::AdministratorAcknowledgment)
+    end
+
     Matter::Controller::Commissioning::Commissioner.new(store, client,
       timeout: E2E::COMMAND_TIMEOUT,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
@@ -134,6 +167,9 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
     committed = wait_refresh_status(im, anchor_session, anchor_peer, target_node_id,
       JFD::DatastoreStateEnum::Committed, 120.seconds)
     committed.failure_code.should eq(0_u8)
+    rollout = refresh_rollout_snapshot(im, anchor_session, anchor_peer, anchor_node_id)
+    Rollout.preflight_eviction!(rollout, bootstrap.fabric.fabric_id,
+      bootstrap.fabric.root_cert, eviction, [] of Rollout::AdministratorAcknowledgment)
     endpoints = refresh_datastore_list(JFD::DatastoreEndpointEntryStruct, im, anchor_session,
       anchor_peer, JFD::ATTR_NODE_ENDPOINT_LIST)
     endpoints.select(&.node_id.==(target_node_id)).map(&.endpoint_id).should contain(1_u16)

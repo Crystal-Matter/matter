@@ -197,6 +197,21 @@ item below as covered only to the extent of its cited tests.
 - A dedicated Docker RefreshNode test observes an offline node fail propagation,
   then commissions it and confirms live endpoint and ACL reconciliation to
   Committed over CASE.
+- `Controller::IpkRollout.update_key_set_safely` is the host-side path for a
+  KeySet0 update that evicts a retained IPK epoch. Before invoking the cluster
+  command, it checks every ordinary node in `NodeList` has a `Committed`
+  KeySet0 entry in `NodeKeySetList`, and every other Administrator in
+  `AdminList` has acknowledged the exact current KeySet0. An acknowledgment
+  binds the Administrator Node ID, Fabric ID, Anchor root certificate digest,
+  and full KeySet0 digest. Missing, stale, or wrong-fabric acknowledgments
+  block eviction; the host can retry after the offline participant has
+  reconnected and adopted the current key set. The Administrator's trusted
+  host must issue its acknowledgment only after durable local adoption.
+  Matter GKM `KeySetRead` omits key bytes, so an ordinary remote read cannot
+  prove the exact IPK material. The Anchor host must serialize the preflight
+  and update against concurrent direct KeySet0 writes. The wire-level JFDS
+  `UpdateKeySet` command remains available and does not enforce this policy;
+  callers using it directly are responsible for safe rollout.
 - Opt-in controller Datastore registration journals AddPendingNode before the
   device's final CASE, then RefreshNode after acknowledged commissioning. The
   Anchor CASE adapter reads NodeList before retrying a command; known failures
