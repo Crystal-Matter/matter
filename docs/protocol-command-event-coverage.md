@@ -346,8 +346,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0551 | command | 0x0009 | (feature(SNP) and (feature(WMARK) or feature(OSD))) | absent |
 | 0x0551 | command | 0x000A | feature(SNP) | declared; requires `:snapshot` |
 | 0x0551 | command | 0x000C | feature(SNP) | declared; requires `:snapshot` |
-| 0x0552 | command | 0x0000 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
-| 0x0552 | command | 0x0001 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan` |
+| 0x0552 | command | 0x0000 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan`, `:mechanical_tilt`, or `:mechanical_zoom` |
+| 0x0552 | command | 0x0001 | (feature(MPAN) or feature(MTILT) or feature(MZOOM)) | declared; requires `:mechanical_pan`, `:mechanical_tilt`, or `:mechanical_zoom` |
 | 0x0552 | command | 0x0002 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
 | 0x0552 | command | 0x0003 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
 | 0x0552 | command | 0x0004 | feature(MPRESETS) | declared; requires `:mechanical_presets` |

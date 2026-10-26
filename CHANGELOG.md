@@ -348,6 +348,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   official chip-tool E2E. Other tariff feature families remain disabled.
 ### Camera AV Settings User Level Management
 
+- Add mechanical tilt and zoom feature combinations, including presets for
+  mixed pan/tilt/zoom profiles. Position and movement commands enforce the
+  enabled axes and configured bounds. Hosts apply complete movement targets
+  through `on_mptz_move` and report measured positions for persistence.
+
 - Add opt-in DPTZ-only stream viewport control. A same-endpoint VDO source
   supplies active streams and sensor bounds; hosts register move-capable stream
   IDs and apply DPTZSetViewport through a callback. Per-stream viewports track

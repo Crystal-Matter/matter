@@ -145,7 +145,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0510 | Content App Observer Cluster | 1 | 1 | — | Casting Video Client host interprets app-specific messages from authenticated fabric and node; chip-tool E2E |
 | 0x0550 | Zone Management Cluster | 1 | 1 | — | TWODCART/USERDEFINED; per-zone sensitivity and focus zones absent |
 | 0x0551 | Camera AV Stream Management Cluster | 2 | 2 | — | ADO/VDO/SNP allocation slices and host JPEG capture; synthetic chip-tool SNP E2E, media delivery and Camera topology remain |
-| 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | MPAN, gated MPAN+MPRESETS and DPTZ-only viewport control; DPTZRelativeMove, MTILT, MZOOM and Camera topology remain |
+| 0x0552 | Camera AV Settings User Level Management Cluster | 1 | 1 | — | Mechanical pan/tilt/zoom combinations and gated MPRESETS, plus DPTZ-only viewport control; DPTZRelativeMove, digital/mechanical combinations and Camera topology remain |
 | 0x0553 | WebRTC Transport Provider Cluster | 2 | 2 | — | ADO and VDO-only signaling, host Peer interface, and synthetic chip-tool E2E; no decoded video or independently verified SDP/ICE media transport |
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |

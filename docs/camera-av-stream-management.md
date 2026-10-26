@@ -32,6 +32,16 @@ crop. It changes the reported viewport only after host success. Global
 entry. DPTZ entries are persisted, but stale entries are removed when live
 video streams are absent after restart. Physical cropping remains host-owned.
 
+Mechanical PTZ profiles can advertise any combination of MPAN, MTILT, and
+MZOOM. `MPTZPosition` contains exactly the fields for those axes, and the set
+and relative-move commands accept one or more supported fields. The host uses
+`on_mptz_move` to start motion and `report_mptz_position` to publish measured
+pan, tilt, and zoom; the library does not infer completed movement from command
+success. MPAN-only hosts retain `on_pan_move` and `report_pan_position`.
+MPRESETS captures the full measured position and recalls it through the same
+actuator. Limit changes must continue to include both the measured position
+and saved presets.
+
 The host must register `on_audio_allocate` and `on_audio_deallocate` when ADO
 is enabled, and the corresponding `on_video_allocate` and
 `on_video_deallocate` callbacks when VDO is enabled. If no

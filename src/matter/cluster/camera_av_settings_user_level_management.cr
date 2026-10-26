@@ -12,11 +12,18 @@ module Matter
 
       feature :digital_ptz, bit: 0
       feature :mechanical_pan, bit: 1
+      feature :mechanical_tilt, bit: 2
+      feature :mechanical_zoom, bit: 3
       feature :mechanical_presets, bit: 4
 
       PAN_MIN_LIMIT         = -180_i16
       PAN_MAX_LIMIT         =  180_i16
+      TILT_MIN_LIMIT        = -180_i16
+      TILT_MAX_LIMIT        =  180_i16
       ZERO_PAN              =    0_i16
+      ZERO_TILT             =    0_i16
+      MIN_ZOOM              =     1_u8
+      MAX_ZOOM_LIMIT        =   100_u8
       MAX_PRESET_NAME_BYTES =       32
 
       enum PhysicalMovement : UInt8
@@ -28,10 +35,16 @@ module Matter
         include TLV::Serializable
         include Storage::Record
 
-        @[TLV::Field(tag: 0)]
-        getter pan : Int16
+        @[TLV::Field(tag: 0, optional: true)]
+        getter pan : Int16?
 
-        def initialize(@pan : Int16)
+        @[TLV::Field(tag: 1, optional: true)]
+        getter tilt : Int16?
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter zoom : UInt8?
+
+        def initialize(@pan : Int16? = nil, @tilt : Int16? = nil, @zoom : UInt8? = nil)
         end
       end
 
@@ -41,7 +54,13 @@ module Matter
         @[TLV::Field(tag: 0, optional: true)]
         getter pan : Int16?
 
-        def initialize(@pan : Int16? = nil)
+        @[TLV::Field(tag: 1, optional: true)]
+        getter tilt : Int16?
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter zoom : UInt8?
+
+        def initialize(@pan : Int16? = nil, @tilt : Int16? = nil, @zoom : UInt8? = nil)
         end
       end
 
@@ -51,7 +70,13 @@ module Matter
         @[TLV::Field(tag: 0, optional: true)]
         getter pan_delta : Int16?
 
-        def initialize(@pan_delta : Int16? = nil)
+        @[TLV::Field(tag: 1, optional: true)]
+        getter tilt_delta : Int16?
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter zoom_delta : Int8?
+
+        def initialize(@pan_delta : Int16? = nil, @tilt_delta : Int16? = nil, @zoom_delta : Int8? = nil)
         end
       end
 
@@ -133,8 +158,9 @@ module Matter
       end
 
       attribute 0x0000, :mptz_position, MPTZPosition,
-        default: MPTZPosition.new(ZERO_PAN), persist: true,
-        requires: :mechanical_pan, validate: :validate_position!
+        default: MPTZPosition.new, persist: true,
+        requires: [{mechanical_pan: true}, {mechanical_tilt: true}, {mechanical_zoom: true}],
+        validate: :validate_position!
       attribute 0x0001, :max_presets, UInt8, default: 0_u8,
         fixed: true, requires: :mechanical_presets, validate: :validate_max_presets!
       attribute 0x0002, :mptz_presets, Array(MPTZPreset), default: [] of MPTZPreset,
@@ -143,17 +169,24 @@ module Matter
       attribute 0x0003, :dptz_streams, Array(DPTZStream), default: [] of DPTZStream,
         persist: true, persist_default: [] of DPTZStream, requires: :digital_ptz,
         copy_on_assign: true, copy_on_read: true, validate: :validate_dptz_streams!
+      attribute 0x0004, :zoom_max, UInt8, default: MAX_ZOOM_LIMIT,
+        requires: :mechanical_zoom, validate: :validate_zoom_max!
+      attribute 0x0005, :tilt_min, Int16, default: TILT_MIN_LIMIT,
+        requires: :mechanical_tilt, validate: :validate_tilt_min!
+      attribute 0x0006, :tilt_max, Int16, default: TILT_MAX_LIMIT,
+        requires: :mechanical_tilt, validate: :validate_tilt_max!
       attribute 0x0007, :pan_min, Int16, default: PAN_MIN_LIMIT,
         requires: :mechanical_pan, validate: :validate_pan_min!
       attribute 0x0008, :pan_max, Int16, default: PAN_MAX_LIMIT,
         requires: :mechanical_pan, validate: :validate_pan_max!
       attribute 0x0009, :movement_state, PhysicalMovement,
-        default: PhysicalMovement::Idle, requires: :mechanical_pan
+        default: PhysicalMovement::Idle,
+        requires: [{mechanical_pan: true}, {mechanical_tilt: true}, {mechanical_zoom: true}]
 
       command 0x00, :mptz_set_position, request: MPTZSetPositionRequest,
-        access: :operate, requires: :mechanical_pan
+        access: :operate, requires: [{mechanical_pan: true}, {mechanical_tilt: true}, {mechanical_zoom: true}]
       command 0x01, :mptz_relative_move, request: MPTZRelativeMoveRequest,
-        access: :operate, requires: :mechanical_pan
+        access: :operate, requires: [{mechanical_pan: true}, {mechanical_tilt: true}, {mechanical_zoom: true}]
       command 0x02, :mptz_move_to_preset, request: MPTZMoveToPresetRequest,
         access: :operate, requires: :mechanical_presets
       command 0x03, :mptz_save_preset, request: MPTZSavePresetRequest,
@@ -164,6 +197,7 @@ module Matter
         access: :operate, requires: :digital_ptz
 
       @on_pan_move : Proc(Int16, InteractionModel::Status)?
+      @on_mptz_move : Proc(MPTZPosition, InteractionModel::Status)?
       @on_preset_save : Proc(MPTZPreset, InteractionModel::Status)?
       @on_preset_remove : Proc(UInt8, InteractionModel::Status)?
       @on_dptz_set_viewport : Proc(UInt16, CameraAvStreamManagement::Viewport, InteractionModel::Status)?
@@ -173,13 +207,21 @@ module Matter
                      @pan_min : Int16 = PAN_MIN_LIMIT,
                      @pan_max : Int16 = PAN_MAX_LIMIT,
                      initial_pan : Int16 = ZERO_PAN,
+                     @tilt_min : Int16 = TILT_MIN_LIMIT,
+                     @tilt_max : Int16 = TILT_MAX_LIMIT,
+                     initial_tilt : Int16 = ZERO_TILT,
+                     @zoom_max : UInt8 = MAX_ZOOM_LIMIT,
+                     initial_zoom : UInt8 = MIN_ZOOM,
                      @max_presets : UInt8 = 0_u8,
                      video_stream_management : CameraAvStreamManagement? = nil,
                      @feature_map : Feature = Feature::MechanicalPan)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        unless @feature_map.in?(Feature::DigitalPtz, Feature::MechanicalPan,
-                 Feature::MechanicalPan | Feature::MechanicalPresets)
-          raise ArgumentError.new("only DigitalPTZ, MechanicalPan and MPAN+MPRESETS profiles are implemented")
+        mechanical = Feature::MechanicalPan | Feature::MechanicalTilt | Feature::MechanicalZoom
+        if @feature_map.digital_ptz?
+          raise ArgumentError.new("DigitalPTZ combinations are not implemented") unless @feature_map == Feature::DigitalPtz
+        elsif (@feature_map.value & mechanical.value).zero? ||
+              (@feature_map.value & ~(mechanical | Feature::MechanicalPresets).value) != 0
+          raise ArgumentError.new("unsupported mechanical PTZ feature profile")
         end
         if @feature_map.digital_ptz?
           source = video_stream_management || raise ArgumentError.new("DigitalPTZ requires Video stream management")
@@ -197,14 +239,29 @@ module Matter
                (1_i16..PAN_MAX_LIMIT).includes?(@pan_max)
           raise ArgumentError.new("pan limits must be -180..0 and 1..180")
         end
-        validate_pan!(initial_pan)
-        @mptz_position = MPTZPosition.new(initial_pan)
+        unless (TILT_MIN_LIMIT..ZERO_TILT).includes?(@tilt_min) &&
+               (1_i16..TILT_MAX_LIMIT).includes?(@tilt_max)
+          raise ArgumentError.new("tilt limits must be -180..0 and 1..180")
+        end
+        raise ArgumentError.new("ZoomMax must be 2..100") unless @zoom_max.in?(2_u8..MAX_ZOOM_LIMIT)
+        position = MPTZPosition.new(
+          @feature_map.mechanical_pan? ? initial_pan : nil,
+          @feature_map.mechanical_tilt? ? initial_tilt : nil,
+          @feature_map.mechanical_zoom? ? initial_zoom : nil)
+        validate_position!(position)
+        @mptz_position = position
       end
 
       # The callback starts physical movement to target and returns the
       # command status. Report completion with #report_pan_position.
       def on_pan_move(&block : Int16 -> InteractionModel::Status) : Nil
         @on_pan_move = block
+      end
+
+      # Required for any profile with tilt or zoom. The host starts movement
+      # to the complete target and later reports measured position.
+      def on_mptz_move(&block : MPTZPosition -> InteractionModel::Status) : Nil
+        @on_mptz_move = block
       end
 
       # Called before a measured position is saved as a preset.
@@ -233,26 +290,50 @@ module Matter
       end
 
       def mptz_set_position(request : MPTZSetPositionRequest) : InteractionModel::Status
-        pan = request.pan
-        return InteractionModel::Status.constraint_error unless pan
-        move_pan(pan)
+        return InteractionModel::Status.constraint_error if request.pan.nil? && request.tilt.nil? && request.zoom.nil?
+        return InteractionModel::Status.invalid_command if !request.pan.nil? && !@feature_map.mechanical_pan?
+        return InteractionModel::Status.invalid_command if !request.tilt.nil? && !@feature_map.mechanical_tilt?
+        return InteractionModel::Status.invalid_command if !request.zoom.nil? && !@feature_map.mechanical_zoom?
+        target = MPTZPosition.new(request.pan || @mptz_position.pan,
+          request.tilt || @mptz_position.tilt, request.zoom || @mptz_position.zoom)
+        move_mptz(target)
       end
 
       def mptz_relative_move(request : MPTZRelativeMoveRequest) : InteractionModel::Status
-        delta = request.pan_delta
-        return InteractionModel::Status.constraint_error unless delta
-        maximum_delta = @pan_max.to_i32 - @pan_min.to_i32
-        return InteractionModel::Status.constraint_error if delta.to_i32.abs > maximum_delta
-        target = @mptz_position.pan.to_i32 + delta.to_i32
-        return InteractionModel::Status.constraint_error unless (@pan_min.to_i32..@pan_max.to_i32).includes?(target)
-        move_pan(target.to_i16)
+        return InteractionModel::Status.constraint_error if request.pan_delta.nil? && request.tilt_delta.nil? && request.zoom_delta.nil?
+        return InteractionModel::Status.invalid_command if !request.pan_delta.nil? && !@feature_map.mechanical_pan?
+        return InteractionModel::Status.invalid_command if !request.tilt_delta.nil? && !@feature_map.mechanical_tilt?
+        return InteractionModel::Status.invalid_command if !request.zoom_delta.nil? && !@feature_map.mechanical_zoom?
+        if delta = request.pan_delta
+          return InteractionModel::Status.constraint_error if delta.to_i32.abs > @pan_max.to_i32 - @pan_min.to_i32
+        end
+        if delta = request.tilt_delta
+          return InteractionModel::Status.constraint_error if delta.to_i32.abs > @tilt_max.to_i32 - @tilt_min.to_i32
+        end
+        if delta = request.zoom_delta
+          return InteractionModel::Status.constraint_error if delta.to_i32.abs > @zoom_max.to_i32 - MIN_ZOOM
+        end
+        pan = @mptz_position.pan.try(&.to_i32) || ZERO_PAN.to_i32
+        tilt = @mptz_position.tilt.try(&.to_i32) || ZERO_TILT.to_i32
+        zoom = @mptz_position.zoom.try(&.to_i32) || MIN_ZOOM.to_i32
+        pan += request.pan_delta.try(&.to_i32) || 0
+        tilt += request.tilt_delta.try(&.to_i32) || 0
+        zoom += request.zoom_delta.try(&.to_i32) || 0
+        return InteractionModel::Status.constraint_error if @feature_map.mechanical_pan? && !(@pan_min.to_i32..@pan_max.to_i32).includes?(pan)
+        return InteractionModel::Status.constraint_error if @feature_map.mechanical_tilt? && !(@tilt_min.to_i32..@tilt_max.to_i32).includes?(tilt)
+        return InteractionModel::Status.constraint_error if @feature_map.mechanical_zoom? && !(MIN_ZOOM.to_i32..@zoom_max.to_i32).includes?(zoom)
+        target = MPTZPosition.new(
+          @feature_map.mechanical_pan? ? pan.to_i16 : nil,
+          @feature_map.mechanical_tilt? ? tilt.to_i16 : nil,
+          @feature_map.mechanical_zoom? ? zoom.to_u8 : nil)
+        move_mptz(target)
       end
 
       def mptz_move_to_preset(request : MPTZMoveToPresetRequest) : InteractionModel::Status
         return InteractionModel::Status.constraint_error unless valid_preset_id?(request.preset_id)
         preset = @mptz_presets.find(&.preset_id.==(request.preset_id))
         return InteractionModel::Status.not_found unless preset
-        move_pan(preset.settings.pan)
+        move_mptz(preset.settings)
       end
 
       def mptz_save_preset(request : MPTZSavePresetRequest) : InteractionModel::Status
@@ -314,17 +395,22 @@ module Matter
       # Call when the actuator has measured a new position. The final report
       # is persisted and resets MovementState to Idle.
       def report_pan_position(pan : Int16, moving : Bool = false) : Nil
-        validate_pan!(pan)
-        self.mptz_position = MPTZPosition.new(pan)
+        report_mptz_position(MPTZPosition.new(pan, @mptz_position.tilt, @mptz_position.zoom), moving)
+      end
+
+      def report_mptz_position(position : MPTZPosition, moving : Bool = false) : Nil
+        validate_position!(position)
+        self.mptz_position = position
         self.movement_state = moving ? PhysicalMovement::Moving : PhysicalMovement::Idle
       end
 
-      private def move_pan(target : Int16) : InteractionModel::Status
-        return InteractionModel::Status.constraint_error unless valid_pan?(target)
-        actuator = @on_pan_move
-        return InteractionModel::Status.invalid_in_state unless actuator
+      private def move_mptz(target : MPTZPosition) : InteractionModel::Status
+        return InteractionModel::Status.constraint_error unless valid_position?(target)
+        actuator = @on_mptz_move
+        pan_actuator = @on_pan_move if @feature_map.mechanical_pan? && !@feature_map.mechanical_tilt? && !@feature_map.mechanical_zoom?
+        return InteractionModel::Status.invalid_in_state unless actuator || pan_actuator
         self.movement_state = PhysicalMovement::Moving
-        status = actuator.call(target)
+        status = actuator ? actuator.call(target) : pan_actuator.as(Proc(Int16, InteractionModel::Status)).call(target.pan.as(Int16))
         self.movement_state = PhysicalMovement::Idle unless status.success?
         status
       rescue ex
@@ -334,6 +420,16 @@ module Matter
 
       private def valid_pan?(pan : Int16) : Bool
         (@pan_min..@pan_max).includes?(pan)
+      end
+
+      private def valid_position?(position : MPTZPosition) : Bool
+        return false if @feature_map.mechanical_pan? == position.pan.nil?
+        return false if @feature_map.mechanical_tilt? == position.tilt.nil?
+        return false if @feature_map.mechanical_zoom? == position.zoom.nil?
+        return false if (pan = position.pan) && !valid_pan?(pan)
+        return false if (tilt = position.tilt) && !(@tilt_min..@tilt_max).includes?(tilt)
+        return false if (zoom = position.zoom) && !(MIN_ZOOM..@zoom_max).includes?(zoom)
+        true
       end
 
       private def valid_preset_id?(id : UInt8) : Bool
@@ -375,7 +471,7 @@ module Matter
           presets.map(&.preset_id).to_set.size == presets.size &&
           presets.all? do |preset|
             valid_preset_id?(preset.preset_id) &&
-              preset.name.bytesize <= MAX_PRESET_NAME_BYTES && valid_pan?(preset.settings.pan)
+              preset.name.bytesize <= MAX_PRESET_NAME_BYTES && valid_position?(preset.settings)
           end
       end
 
@@ -387,28 +483,57 @@ module Matter
         raise ArgumentError.new("MaxPresets is fixed after construction") unless value == @max_presets
       end
 
-      private def validate_pan!(pan : Int16) : Nil
-        raise ArgumentError.new("pan position is outside PanMin/PanMax") unless valid_pan?(pan)
-      end
-
       private def validate_position!(position : MPTZPosition) : Nil
-        validate_pan!(position.pan)
+        raise ArgumentError.new("MPTZ position is outside feature limits") unless valid_position?(position)
       end
 
       private def validate_pan_min!(value : Int16) : Nil
-        unless (PAN_MIN_LIMIT..ZERO_PAN).includes?(value) && value <= @mptz_position.pan
+        pan = @mptz_position.pan || ZERO_PAN
+        unless (PAN_MIN_LIMIT..ZERO_PAN).includes?(value) && value <= pan &&
+               @mptz_presets.all? { |preset| (saved_pan = preset.settings.pan) && value <= saved_pan }
           raise ArgumentError.new("PanMin must be -180..0 and include MPTZPosition")
         end
       end
 
       private def validate_pan_max!(value : Int16) : Nil
-        unless (1_i16..PAN_MAX_LIMIT).includes?(value) && value >= @mptz_position.pan
+        pan = @mptz_position.pan || ZERO_PAN
+        unless (1_i16..PAN_MAX_LIMIT).includes?(value) && value >= pan &&
+               @mptz_presets.all? { |preset| (saved_pan = preset.settings.pan) && value >= saved_pan }
           raise ArgumentError.new("PanMax must be 1..180 and include MPTZPosition")
         end
       end
 
+      private def validate_tilt_min!(value : Int16) : Nil
+        tilt = @mptz_position.tilt || ZERO_TILT
+        unless (TILT_MIN_LIMIT..ZERO_TILT).includes?(value) && value <= tilt &&
+               @mptz_presets.all? { |preset| (saved_tilt = preset.settings.tilt) && value <= saved_tilt }
+          raise ArgumentError.new("TiltMin must be -180..0 and include MPTZPosition and presets")
+        end
+      end
+
+      private def validate_tilt_max!(value : Int16) : Nil
+        tilt = @mptz_position.tilt || ZERO_TILT
+        unless (1_i16..TILT_MAX_LIMIT).includes?(value) && value >= tilt &&
+               @mptz_presets.all? { |preset| (saved_tilt = preset.settings.tilt) && value >= saved_tilt }
+          raise ArgumentError.new("TiltMax must be 1..180 and include MPTZPosition and presets")
+        end
+      end
+
+      private def validate_zoom_max!(value : UInt8) : Nil
+        zoom = @mptz_position.zoom || MIN_ZOOM
+        unless (2_u8..MAX_ZOOM_LIMIT).includes?(value) && value >= zoom &&
+               @mptz_presets.all? { |preset| (saved_zoom = preset.settings.zoom) && value >= saved_zoom }
+          raise ArgumentError.new("ZoomMax must be 2..100 and include MPTZPosition and presets")
+        end
+      end
+
       private def after_restore_state : Nil
-        self.mptz_position = MPTZPosition.new(ZERO_PAN) unless valid_pan?(@mptz_position.pan)
+        unless valid_position?(@mptz_position)
+          self.mptz_position = MPTZPosition.new(
+            @feature_map.mechanical_pan? ? ZERO_PAN : nil,
+            @feature_map.mechanical_tilt? ? ZERO_TILT : nil,
+            @feature_map.mechanical_zoom? ? MIN_ZOOM : nil)
+        end
         self.mptz_presets = [] of MPTZPreset unless valid_presets?(@mptz_presets)
         unless valid_dptz_streams?(@dptz_streams)
           source = @video_stream_management
