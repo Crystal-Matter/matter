@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat minimum deadband legacy writes
+
+- Accept valid legacy MinSetpointDeadBand writes while retaining the configured
+  value and DataVersion, as required by Matter 1.6.
+
 ### Thermostat control sequence writes
 
 - Accept legacy ControlSequenceOfOperation writes while preserving the fixed
