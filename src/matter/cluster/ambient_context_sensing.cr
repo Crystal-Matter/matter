@@ -179,8 +179,7 @@ module Matter
         requires: {object_counting: true, object_identification: true},
         validate: :validate_object_count_config!, on_change: :recompute_object_count
       attribute 0x0007, :object_count, UInt16, nullable: true, default: nil,
-        requires: {object_counting: true, object_identification: true},
-        present_if: :object_count
+        requires: {object_counting: true, object_identification: true}
       attribute 0x0008, :simultaneous_detection_limit, UInt8,
         default: SINGLE_DETECTION_LIMIT, writable: true, write_access: :operate,
         min: SINGLE_DETECTION_LIMIT, max: MAX_SIMULTANEOUS_DETECTIONS,
@@ -246,7 +245,7 @@ module Matter
         else
           validate_supported_object_tags!(supported_object_tags)
           @supported_object_tags = supported_object_tags.dup
-          @object_count_config = object_count_config || ObjectCountConfig.new(supported_object_tags[1], 1_u16)
+          @object_count_config = object_count_config || default_object_count_config
           validate_object_count_config!(@object_count_config)
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
         end
@@ -382,6 +381,18 @@ module Matter
         config.object_count_threshold > 0_u16 &&
           config.counting_object != SemanticTag.identified_object(IdentifiedObject::Unknown) &&
           @supported_object_tags.includes?(config.counting_object)
+      end
+
+      private def default_object_count_config : ObjectCountConfig
+        unknown = SemanticTag.identified_object(IdentifiedObject::Unknown)
+        tag = @supported_object_tags.find! { |candidate| candidate != unknown }
+        ObjectCountConfig.new(tag, 1_u16)
+      end
+
+      private def after_restore_state : Nil
+        if @feature_map.object_counting? && !valid_object_count_config?(@object_count_config)
+          @object_count_config = default_object_count_config
+        end
       end
 
       private def validate_object_count_config!(config : ObjectCountConfig) : Nil

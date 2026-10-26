@@ -134,7 +134,7 @@ describe "Ambient Context Sensing OC+OI profile" do
     read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(6_u32)
     [Ambient::ATTR_OBJECT_IDENTIFIED, Ambient::ATTR_AMBIENT_CONTEXT_TYPE,
      Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED, Ambient::ATTR_OBJECT_COUNT_REACHED,
-     Ambient::ATTR_OBJECT_COUNT_CONFIG].each do |id|
+     Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ATTR_OBJECT_COUNT].each do |id|
       attribute_ids(cluster).should contain(id)
     end
     attribute_ids(cluster).should_not contain(Ambient::ATTR_HUMAN_ACTIVITY_DETECTED)
@@ -142,6 +142,7 @@ describe "Ambient Context Sensing OC+OI profile" do
     config_metadata.write_access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
     read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
     read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
 
     write(cluster, Ambient::ATTR_OBJECT_COUNT_CONFIG, Ambient::ObjectCountConfig.new(dog, 3_u16)).status
       .should eq(Matter::InteractionModel::StatusCode::Success)
@@ -159,6 +160,12 @@ describe "Ambient Context Sensing OC+OI profile" do
     restored.restore_state(source)
     restored.object_count_config.counting_object.should eq(dog)
     restored.object_count_config.object_count_threshold.should eq(3_u16)
+
+    config_document = source["object_count_config"].as(Matter::Storage::Document)
+    config_document["object_count_threshold"] = 0_i64
+    restored.restore_state(source)
+    restored.object_count_config.counting_object.should eq(person)
+    restored.object_count_config.object_count_threshold.should eq(1_u16)
   end
 
   it "reports object detection and threshold transitions with conditional event fields" do
@@ -174,7 +181,8 @@ describe "Ambient Context Sensing OC+OI profile" do
     cluster.observe_object_count(person, 1_u16)
     read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_true
     read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
-    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_COUNT)
+    attribute_ids(cluster).should contain(Ambient::ATTR_OBJECT_COUNT)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
     start = Ambient::AmbientContextDetectStartedEvent.from_tlv(events[0][1])
     start.ambient_context_detected.ambient_context_sensed.should eq([person])
     start.object_count_reached.should be_false
@@ -188,14 +196,16 @@ describe "Ambient Context Sensing OC+OI profile" do
     read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(3_u16)
     cluster.object_count_config = Ambient::ObjectCountConfig.new(person, 4_u16)
     read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
-    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_COUNT)
+    attribute_ids(cluster).should contain(Ambient::ATTR_OBJECT_COUNT)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
     cluster.object_count_config = Ambient::ObjectCountConfig.new(person, 2_u16)
     read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_true
     read(cluster, Ambient::ATTR_OBJECT_COUNT).should eq(3_u16)
     cluster.observe_object_count(person, 0_u16)
     read(cluster, Ambient::ATTR_OBJECT_IDENTIFIED).should be_false
     read(cluster, Ambient::ATTR_OBJECT_COUNT_REACHED).should be_false
-    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_COUNT)
+    attribute_ids(cluster).should contain(Ambient::ATTR_OBJECT_COUNT)
+    read(cluster, Ambient::ATTR_OBJECT_COUNT).should be_nil
     events.map(&.[0]).should eq([Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
                                  Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED])
 
@@ -212,6 +222,10 @@ describe "Ambient Context Sensing OC+OI profile" do
   end
 
   it "rejects unsupported object tags and incomplete feature combinations" do
+    reversed = build(Ambient, feature_map: feature_map,
+      supported_object_tags: [person, unknown_object])
+    reversed.object_count_config.counting_object.should eq(person)
+    reversed.object_count_config.object_count_threshold.should eq(1_u16)
     expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::ObjectCounting) }
     expect_raises(ArgumentError) { build(Ambient, feature_map: Ambient::Feature::ObjectIdentification) }
     expect_raises(ArgumentError) do
