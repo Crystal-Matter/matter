@@ -336,8 +336,10 @@ module Matter
             reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
             records, event_cursor = journal_snapshot(subscription)
             events = event_reports(subscription, records, event_cursor)
-            advance_event_cursor(subscription, event_cursor) if events.empty? && reports.empty?
-            next if reports.empty? && events.empty? && !max_elapsed
+            if reports.empty? && events.empty? && !max_elapsed
+              advance_event_cursor(subscription, event_cursor)
+              next
+            end
 
             send_update(subscription, reports, events, event_cursor)
           end

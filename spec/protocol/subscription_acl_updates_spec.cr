@@ -337,6 +337,34 @@ describe "active subscription ACL updates" do
     fixture.handler.close
   end
 
+  it "commits an unrelated event cursor only after an empty heartbeat is acknowledged" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: SubscriptionAcl::CLUSTER_ID,
+      event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+    subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
+    active = fixture.handler.active_subscriptions[1_u32]
+    original_cursor = active.last_event_number
+    active.last_report_time = Time.utc - 61.seconds
+
+    event = fixture.handler.node.event_journal.record(0_u16,
+      Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP,
+      :info, TLV::Any.new(1_u32))
+    fixture.handler.subscriptions.tick
+    fixture.transport.sent_packets.size.should eq(1)
+    message = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    report = Matter::InteractionModel::ReportDataMessage.from_slice(message.payload)
+    report.event_reports.should be_nil
+    active.last_event_number.should eq(original_cursor)
+
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 100_u32, message.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    active.last_event_number.should eq(event.event_number)
+    fixture.handler.close
+  end
+
   it "does not disclose Admin events after View-only priming or ACL revocation" do
     fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
     path = Matter::InteractionModel::EventPath.new(
