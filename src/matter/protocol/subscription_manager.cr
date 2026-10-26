@@ -280,11 +280,14 @@ module Matter
             # Every report drains whatever the journal still owes this
             # subscription, so a non-urgent event rides out with the next
             # attribute change rather than waiting for its own report.
-            events = pending_events(subscription)
+            records = journal_records(subscription)
+            events = event_reports(subscription, records)
+            event_cursor = records.last?.try(&.event_number)
+            subscription.last_event_number = event_cursor if events.empty? && event_cursor && reports.empty?
             next if reports.empty? && events.empty?
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
-            send_update(subscription, reports, events)
+            send_update(subscription, reports, events, event_cursor)
           end
         end
       end
@@ -307,10 +310,13 @@ module Matter
             next unless report_due
 
             reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
-            events = pending_events(subscription)
+            records = journal_records(subscription)
+            events = event_reports(subscription, records)
+            event_cursor = records.last?.try(&.event_number)
+            subscription.last_event_number = event_cursor if events.empty? && event_cursor && reports.empty?
             next if reports.empty? && events.empty? && !max_elapsed
 
-            send_update(subscription, reports, events)
+            send_update(subscription, reports, events, event_cursor)
           end
         end
       end
@@ -331,19 +337,26 @@ module Matter
           now = Time.utc
           subscriptions.each_value do |subscription|
             next unless subscription.events?
+            next if @inflight_updates.has_key?(subscription.subscription_id)
 
             records = journal_records(subscription)
             next if records.empty?
 
-            urgent = records.any?(&.urgent_for?(subscription.event_paths))
+            events = event_reports(subscription, records)
+            if events.empty?
+              subscription.last_event_number = records.last.event_number
+              next
+            end
+            authorized_numbers = events.compact_map(&.event_data).map(&.event_number).to_set
+            urgent = records.any? { |record| authorized_numbers.includes?(record.event_number) && record.urgent_for?(subscription.event_paths) }
             next unless urgent || subscription.min_interval_elapsed?(now)
-            next if @inflight_updates.has_key?(subscription.subscription_id)
 
             Log.debug do
               "Sending event report: subscription_id=#{subscription.subscription_id}, " \
-              "events=#{records.size}, urgent=#{urgent}"
+              "events=#{events.size}, urgent=#{urgent}"
             end
-            send_update(subscription, [] of InteractionModel::AttributeReportIB, event_reports(subscription, records))
+            send_update(subscription, [] of InteractionModel::AttributeReportIB,
+              events, records.last.event_number)
           end
         end
       end
@@ -354,6 +367,7 @@ module Matter
         subscription : ActiveSubscription,
         reports : Array(InteractionModel::AttributeReportIB),
         events : Array(InteractionModel::EventReportIB),
+        event_cursor : UInt64? = nil,
       ) : Nil
         return if @inflight_updates.has_key?(subscription.subscription_id)
         limit = @sender.im_payload_limit(subscription.session, subscription.peer)
@@ -361,7 +375,7 @@ module Matter
           events, max_payload_size: limit)
         dirty = @dirty_attributes[subscription.subscription_id]? || Set(AttributeKey).new
         @dirty_attributes[subscription.subscription_id] = Set(AttributeKey).new
-        cursor = events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
+        cursor = event_cursor || events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
         begin
           exchange_id = @sender.send_report(subscription.session, subscription.peer, chunks.first[0])
           key = {subscription.session.session_id, exchange_id}
@@ -424,12 +438,9 @@ module Matter
       ) : Array(InteractionModel::EventReportIB)
         return [] of InteractionModel::EventReportIB if records.empty?
 
-        records.map { |record| InteractionModel::EventReportIB.new(event_data: IMHandler.build_event_data(record)) }
-      end
-
-      # Everything the journal owes *subscription*, ready to report.
-      private def pending_events(subscription : ActiveSubscription) : Array(InteractionModel::EventReportIB)
-        event_reports(subscription, journal_records(subscription))
+        IMHandler.authorized_event_reports(records, @node.clusters,
+          subscription.session.fabric_index, subscription.session.case_session?,
+          subscription_subjects(subscription))
       end
 
       # The reports *subscription* wants out of *attributes*, read at the
@@ -449,21 +460,24 @@ module Matter
             next
           end
 
-          value = cluster.read_attribute(attribute_id, subscription.session.fabric_index)
-          unless value.is_a?(TLV::Any)
-            Log.warn { "Subscription update skipped: read_attribute returned #{value.class} (endpoint=#{endpoint_id}, cluster=0x#{cluster_id.to_s(16)}, attr=0x#{attribute_id.to_s(16)})" }
-            next
+          path = InteractionModel::AttributePath.new(endpoint: endpoint_id,
+            cluster: cluster_id, attribute: attribute_id)
+          # Use the same ACL and fabric-scoped read path as the priming report.
+          # A wildcard subscription still checks each concrete changed path.
+          IMHandler.read_attributes([path], @node.clusters,
+            subscription.session.fabric_index, subscription.session.case_session?,
+            subscription_subjects(subscription), session_id: subscription.session.session_id.to_u64,
+            local_node_id: subscription.session.local_node_id.try(&.id)).each do |report|
+            reports << report if report.attribute_data
           end
-
-          attribute_data = InteractionModel::AttributeDataIB.new(
-            path: InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id),
-            data: value,
-            data_version: cluster.data_version
-          )
-          reports << InteractionModel::AttributeReportIB.new(attribute_data: attribute_data)
         end
 
         reports
+      end
+
+      private def subscription_subjects(subscription : ActiveSubscription) : Array(UInt64)?
+        subjects = subscription.session.peer_subject_ids
+        subjects.empty? ? nil : subjects
       end
 
       private def send_chunk(pending : PendingChunks, trigger : Codec::MessageCodec::Message, chunk : Bytes) : Nil

@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Subscription access control
+
+- Recheck attribute and event privileges for every active subscription update,
+  including wildcard paths and ACL changes after the initial report. Events
+  suppressed while access is denied are not replayed by a later privilege grant.
+
 ### Joint Fabric keyed group propagation
 
 - Read the target's CurrentFabricIndex before writing its first GroupKeyMap

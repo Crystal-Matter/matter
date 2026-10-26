@@ -52,6 +52,7 @@ private def event_subscription_fixture(
   handler.setup_cluster_notifications
 
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
   handler.sessions[session.session_id] = session
 
   base_event_number = handler.node.event_journal.latest_event_number
