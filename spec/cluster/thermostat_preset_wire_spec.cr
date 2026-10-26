@@ -301,7 +301,7 @@ describe "Thermostat Presets wire preparation" do
     cluster.presets.first.built_in.should be_true
   end
 
-  it "rejects duplicate null names within a scenario" do
+  it "allows multiple unnamed presets within a scenario when capacity permits" do
     cluster = build(WireReadyThermostat, feature_map: wire_preset_features,
       preset_types: [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 2_u8)])
     wire_preset_begin(cluster)
@@ -309,18 +309,53 @@ describe "Thermostat Presets wire preparation" do
       nil, 2700_i16, 1800_i16, nil)
     second = PresetThermostat::Preset.new(nil, PresetThermostat::PresetScenario::Sleep,
       nil, 2600_i16, 1900_i16, nil)
-    wire_preset_write(cluster, [wire_preset_data(cluster, [first, second])]).should eq([PresetCode::ConstraintError])
+    wire_preset_write(cluster, [wire_preset_data(cluster, [first, second])]).should eq([PresetCode::Success])
     cluster.presets.should be_empty
+    wire_preset_read(cluster).map(&.preset_handle).uniq!.size.should eq(2)
   end
 
-  it "requires a null-handle creation to use list append rather than whole-list replacement" do
-    cluster = build(WireReadyThermostat, feature_map: wire_preset_features,
-      preset_types: [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8)])
-    wire_preset_begin(cluster)
+  it "creates null-handle presets in whole-list atomic writes and keeps them private until commit" do
+    types = [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 2_u8)]
+    cluster = build(PredictableHandleThermostat, feature_map: wire_preset_features, preset_types: types)
     creation = PresetThermostat::Preset.new(nil, PresetThermostat::PresetScenario::Sleep,
       nil, 2700_i16, 1800_i16, nil)
-    wire_preset_write(cluster, [wire_preset_data(cluster, [creation])]).should eq([PresetCode::ConstraintError])
-    wire_preset_read(cluster).should be_empty
+    wire_preset_begin(cluster).status_code.should eq(PresetCode::Success)
+    wire_preset_write(cluster, [wire_preset_data(cluster, [creation])]).should eq([PresetCode::Success])
+    wire_preset_read(cluster).first.preset_handle.should eq(Bytes[1_u8])
+    wire_preset_read(cluster, subject: 12_u64).should be_empty
+    cluster.presets.should be_empty
+    wire_preset_actor(cluster)
+    cluster.atomic_request(PresetThermostat::AtomicRequest.new(
+      PresetThermostat::AtomicRequestType::RollbackWrite,
+      [PresetThermostat::ATTR_PRESETS])).as(PresetThermostat::AtomicResponse).status_code.should eq(PresetCode::Success)
+    cluster.presets.should be_empty
+
+    wire_preset_begin(cluster).status_code.should eq(PresetCode::Success)
+    wire_preset_write(cluster, [wire_preset_data(cluster, [creation])]).should eq([PresetCode::Success])
+    wire_preset_read(cluster).first.preset_handle.should eq(Bytes[2_u8])
+    wire_preset_actor(cluster)
+    cluster.atomic_request(PresetThermostat::AtomicRequest.new(
+      PresetThermostat::AtomicRequestType::CommitWrite,
+      [PresetThermostat::ATTR_PRESETS])).as(PresetThermostat::AtomicResponse).status_code.should eq(PresetCode::Success)
+    cluster.presets.first.preset_handle.should eq(Bytes[2_u8])
+    restored = build(PredictableHandleThermostat, feature_map: wire_preset_features, preset_types: types)
+    restored.restore_state(cluster.save_state)
+    restored.presets.first.preset_handle.should eq(Bytes[2_u8])
+  end
+
+  it "returns Busy when another operational peer writes during an atomic reservation" do
+    cluster = build(WireReadyThermostat, feature_map: wire_preset_features,
+      preset_types: [PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8)])
+    wire_preset_begin(cluster).status_code.should eq(PresetCode::Success)
+    wire_preset_write(cluster, [wire_preset_data(cluster, [] of PresetThermostat::Preset)],
+      subject: 12_u64).should eq([PresetCode::Busy])
+    wire_preset_read(cluster, subject: 12_u64).should be_empty
+  end
+
+  it "encodes PresetTypeFeatures as the canonical bitmap16" do
+    type = PresetThermostat::PresetType.new(PresetThermostat::PresetScenario::Sleep, 1_u8,
+      PresetThermostat::PresetTypeFeatures::SupportsNames)
+    type.to_tlv(nil).as_structure[2_u8].value.class.name.should eq("UInt16")
   end
 
   it "discards pending appends on rollback and timeout" do

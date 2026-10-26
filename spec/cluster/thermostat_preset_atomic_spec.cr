@@ -108,8 +108,8 @@ describe "Thermostat preset atomic-write foundation" do
     proposed = [Thermostat::Preset.new(nil, Thermostat::PresetScenario::Sleep,
       nil, 2700_i16, 1800_i16, nil)]
     atomic_write(cluster, proposed, wire_session: 8_u16).should eq(IMCode::Success)
-    atomic_write(cluster, proposed, subject: 12_u64).should eq(IMCode::InvalidInState)
-    atomic_write(cluster, proposed, fabric: 2_u8).should eq(IMCode::InvalidInState)
+    atomic_write(cluster, proposed, subject: 12_u64).should eq(IMCode::Busy)
+    atomic_write(cluster, proposed, fabric: 2_u8).should eq(IMCode::Busy)
     atomic_write(cluster, proposed).should eq(IMCode::Success)
     atomic_actor(cluster, subject: 12_u64)
     atomic_request(cluster, AtomicType::CommitWrite).as(Matter::InteractionModel::Status).status.should eq(IMCode::InvalidInState)

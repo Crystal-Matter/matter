@@ -55,7 +55,7 @@ module Matter
       end
 
       @[Flags]
-      enum PresetTypeFeatures : UInt8
+      enum PresetTypeFeatures : UInt16
         Automatic     = 1
         SupportsNames = 2
       end
@@ -67,7 +67,7 @@ module Matter
         getter preset_scenario : PresetScenario
         @[TLV::Field(tag: 1)]
         getter number_of_presets : UInt8
-        @[TLV::Field(tag: 2)]
+        @[TLV::Field(tag: 2, fixed_size: true)]
         getter preset_type_features : PresetTypeFeatures
 
         def initialize(@preset_scenario : PresetScenario, @number_of_presets : UInt8,
@@ -1119,16 +1119,16 @@ module Matter
         stage_presets(decode(value, Array(Preset)))
       end
 
-      # ListIndex=null is the only wire path that may create a preset with a
-      # null handle. IMHandler calls this after validating the append sequence
-      # and Manage access.
+      # List append and whole-list replacement both generate handles for new
+      # presets. IMHandler calls this after validating the append sequence and
+      # Manage access.
       def append_preset(value : TLV::Any) : InteractionModel::Status
         entry = decode?(value, Preset) || return InteractionModel::Status.invalid_data_type
         expire_preset_write
         pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
-        return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending)
+        return InteractionModel::Status.busy unless atomic_owner?(pending)
 
-        stage_presets((pending.presets || @presets) + [entry], allow_new: true)
+        stage_presets((pending.presets || @presets) + [entry])
       end
 
       def append_schedule(value : TLV::Any) : InteractionModel::Status
@@ -1477,10 +1477,10 @@ module Matter
         Random::Secure.random_bytes(MAX_SCHEDULE_HANDLE_LENGTH)
       end
 
-      private def stage_presets(values : Array(Preset), *, allow_new : Bool = false) : InteractionModel::Status
+      private def stage_presets(values : Array(Preset)) : InteractionModel::Status
         expire_preset_write
         pending = @pending_preset_write || return InteractionModel::Status.invalid_in_state
-        return InteractionModel::Status.invalid_in_state unless atomic_owner?(pending)
+        return InteractionModel::Status.busy unless atomic_owner?(pending)
 
         capacity = @preset_types.sum(&.number_of_presets.to_i)
         return InteractionModel::Status.resource_exhausted if values.size > capacity
@@ -1493,7 +1493,6 @@ module Matter
                          @presets.find { |current| current.preset_handle == handle }
                      end
           return InteractionModel::Status.not_found if handle && !existing
-          return InteractionModel::Status.constraint_error if handle.nil? && !allow_new
           return InteractionModel::Status.constraint_error if handle.nil? && entry.built_in == true
           return InteractionModel::Status.constraint_error if existing && !entry.built_in.nil? && entry.built_in != existing.built_in
           handle ||= new_preset_handle(normalized)
@@ -2148,7 +2147,7 @@ module Matter
         raise ArgumentError.new("too many presets") if values.size > capacity
 
         handles = [] of Bytes
-        names = Set(Tuple(PresetScenario, String?)).new
+        names = Set(Tuple(PresetScenario, String)).new
         values.each do |entry|
           handle = entry.preset_handle || raise ArgumentError.new("configured preset needs a handle")
           unless (0..MAX_PRESET_HANDLE_LENGTH).includes?(handle.size)
@@ -2165,10 +2164,10 @@ module Matter
           if name = entry.name
             raise ArgumentError.new("preset name too long") if name.bytesize > MAX_PRESET_NAME_LENGTH
             raise ArgumentError.new("preset scenario does not support names") unless type.preset_type_features.supports_names?
+            raise ArgumentError.new("duplicate preset name") unless names.add?({entry.preset_scenario, name})
           elsif entry.preset_scenario.user_defined?
             raise ArgumentError.new("user-defined preset requires a name")
           end
-          raise ArgumentError.new("duplicate preset name") unless names.add?({entry.preset_scenario, entry.name})
           raise ArgumentError.new("configured preset needs BuiltIn") if entry.built_in.nil?
           raise ArgumentError.new("preset setpoints are invalid") unless valid_preset_setpoints?(entry)
         end
