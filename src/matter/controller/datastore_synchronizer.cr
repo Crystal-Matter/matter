@@ -7,6 +7,7 @@ require "../cluster/groups"
 require "../cluster/access_control"
 require "../cluster/binding"
 require "../cluster/descriptor"
+require "../cluster/operational_credentials"
 require "./im_client"
 
 module Matter
@@ -25,7 +26,7 @@ module Matter
       def sync_node(store : Store, node_id : UInt64, session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         root_servers = read_list(UInt32, session, peer, 0_u16,
           Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
-        groupcast_target = root_servers.includes?(Cluster::Groupcast::CLUSTER_ID)
+        groupcast_target = groupcast_available?(root_servers, session, peer)
         refreshing = store.node_list.any? { |entry| entry.node_id == node_id && entry.commissioning_status_entry.state == Store::DatastoreStateEnum::Pending }
         if refreshing
           # Reject privileges JFDS cannot represent before changing any local
@@ -246,6 +247,18 @@ module Matter
           Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION, adoption.to_tlv)
       end
 
+      private def groupcast_available?(root_servers : Array(UInt32), session : Session::SecureContext,
+                                       peer : Socket::IPAddress) : Bool
+        return false unless root_servers.includes?(Cluster::Groupcast::CLUSTER_ID)
+        read_list(Cluster::GroupKeyManagement::GroupcastAdoptionStruct, session, peer,
+          0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+          Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION)
+        true
+      rescue ex : Matter::ClusterError
+        return false if ex.status == InteractionModel::StatusCode::UnsupportedAttribute
+        raise ex
+      end
+
       private def sync_groupcast(store : Store, entry : Store::DatastoreEndpointGroupIDEntryStruct,
                                  session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         memberships = read_list(Cluster::Groupcast::MembershipStruct, session, peer,
@@ -280,13 +293,31 @@ module Matter
         return unless key_set_id || deleting
 
         mappings = read_list(Cluster::GroupKeyManagement::GroupKeyMapStruct, session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
+        fabric_index = read_target_fabric_index(session, peer)
+        if mappings.any? { |mapping| mapping.fabric_index != fabric_index }
+          raise Matter::ProtocolError.new("Target GroupKeyMap contains another fabric's entry")
+        end
         mappings.reject! { |mapping| mapping.group_id == entry.group_id }
         if !deleting || store.endpoint_group_id_list.any? { |other| other.node_id == entry.node_id && other.group_id == entry.group_id && other.endpoint_id != entry.endpoint_id && other.status_entry.state != Store::DatastoreStateEnum::DeletePending }
           if key_set_id
-            mappings << Cluster::GroupKeyManagement::GroupKeyMapStruct.new(entry.group_id, key_set_id, mappings.first?.try(&.fabric_index) || 0_u8)
+            mappings << Cluster::GroupKeyManagement::GroupKeyMapStruct.new(entry.group_id, key_set_id, fabric_index)
           end
         end
         write_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP, mappings.to_tlv)
+      end
+
+      private def read_target_fabric_index(session : Session::SecureContext, peer : Socket::IPAddress) : UInt8
+        response = @im.read_attribute(session, peer, 0_u16,
+          Cluster::OperationalCredentials::CLUSTER_ID,
+          Cluster::OperationalCredentials::ATTR_CURRENT_FABRIC_INDEX)
+        data = response.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
+        if !data && (status = response.attribute_reports.try(&.compact_map(&.attribute_status)).try(&.first?).try(&.status))
+          raise Matter::ClusterError.from_wire("Target CurrentFabricIndex read failed", status.status, status.cluster_status)
+        end
+        raise Matter::ProtocolError.new("Target CurrentFabricIndex read returned no data") unless data
+        index = UInt8.from_tlv(data.to_slice)
+        raise Matter::ProtocolError.new("Target CurrentFabricIndex is undefined") if index == 0_u8
+        index
       end
 
       private def sync_acl(store : Store, entry : Store::DatastoreACLEntryStruct,

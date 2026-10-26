@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric keyed group propagation
+
+- Read the target's CurrentFabricIndex before writing its first GroupKeyMap
+  entry; the controller's local fabric index is not the device's index. Use
+  legacy Groups when a target advertises Groupcast but does not implement GKM
+  GroupcastAdoption. The official SDK groupcast recipient E2E now provisions
+  its initial key set and group through the Datastore synchronizer.
+
 ### Thermostat suggestion guarded wire preparation
 
 - Declare Matter 1.6 TSUGGEST attributes and Manage Add/Remove commands behind

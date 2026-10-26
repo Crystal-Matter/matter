@@ -46,6 +46,10 @@ item below as covered only to the extent of its cited tests.
   1.6 schemas and cluster handlers. Datastore entries track Pending,
   Committed, DeletePending, and CommitFailed. The controller synchronizer
   applies key sets, groups, ACLs, and bindings to nodes and records outcomes.
+  For legacy keyed groups, it reads the target's CurrentFabricIndex under CASE
+  before writing GroupKeyMap, including when the map is empty. An advertised
+  Groupcast server without GKM GroupcastAdoption uses legacy Groups commands.
+  The official SDK group recipient E2E covers first key set and group delivery.
   RefreshNode rejects a target ProxyView ACL, which the Matter 1.6 Datastore
   privilege enum cannot represent, before changing local Datastore lists; the
   node remains Pending for an operator to resolve the incompatible ACL.
