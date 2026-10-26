@@ -284,6 +284,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Route `UnlockWithTimeout` through the same host actuator when Unbolting is
   enabled, preserving the command's explicit relock timeout.
 
+### Ethernet Network Diagnostics ResetCounts access
+
+- Require Manage privilege to invoke ResetCounts, as specified by Matter 1.6.
+
 ### General Diagnostics test payload
 
 - Add opt-in Matter 1.6 DataModelTest with a nonzero 16-byte enable key,
