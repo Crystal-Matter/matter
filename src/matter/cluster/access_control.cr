@@ -29,6 +29,10 @@ module Matter
       MAX_VALID_FABRIC_INDEX                  = UInt8::MAX - 1
       INVALID_ENDPOINT_ID                     = UInt16::MAX
       INVALID_DATA_MODEL_ID                   = UInt32::MAX
+      REVIEW_EVENT_DEADLINE                   = 1.hour
+      DEFAULT_REVIEW_TIMEOUT                  = 59.minutes
+      REVIEW_INSTRUCTION_LIMIT                = 512
+      REVIEW_URL_LIMIT                        = 256
 
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
@@ -86,6 +90,41 @@ module Matter
         getter restrictions : Array(AccessRestriction)
 
         def initialize(@endpoint : UInt16, @cluster : UInt32, @restrictions : Array(AccessRestriction))
+        end
+      end
+
+      # A host service receives a snapshot of the requested restrictions and
+      # later reports its decision using the token. An empty list requests a
+      # generic review of every restriction on the fabric.
+      struct RestrictionReviewRequest
+        getter fabric_index : UInt8
+        getter token : UInt64
+
+        def initialize(@fabric_index : UInt8, @token : UInt64, @entries : Array(AccessRestrictionEntry))
+        end
+
+        def entries : Array(AccessRestrictionEntry)
+          @entries.map do |entry|
+            AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+          end
+        end
+      end
+
+      # Matter 1.6 FabricRestrictionReviewUpdate fields. The host callback is
+      # the only delivery path until MNGD wire support is complete.
+      struct FabricRestrictionReviewUpdate
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter token : UInt64
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter instruction : String?
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter arl_request_flow_url : String?
+
+        def initialize(@token : UInt64, @instruction : String? = nil, @arl_request_flow_url : String? = nil)
         end
       end
 
@@ -223,6 +262,11 @@ module Matter
       @extension = [] of ExtensionEntry
       @auxiliary_acl = [] of AccessControlEntry
       @access_restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
+      @pending_restriction_reviews = {} of UInt64 => RestrictionReviewRequest
+      @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
+      @next_restriction_review_token = 0_u64
+      @on_restriction_review_requested : Proc(RestrictionReviewRequest, Nil)? = nil
+      @on_restriction_review_updated : Proc(UInt8, FabricRestrictionReviewUpdate, Nil)? = nil
       @acl_before_write = [] of AccessControlEntry
       @extension_before_write = [] of ExtensionEntry
 
@@ -248,7 +292,11 @@ module Matter
         end
       end
 
-      def initialize(endpoint_id : DataType::EndpointNumber, @feature_map : Feature = Feature::Extension)
+      def initialize(endpoint_id : DataType::EndpointNumber, @feature_map : Feature = Feature::Extension,
+                     @review_timeout : Time::Span = DEFAULT_REVIEW_TIMEOUT)
+        unless @review_timeout > 0.seconds && @review_timeout <= REVIEW_EVENT_DEADLINE
+          raise Matter::ConfigurationError.new("Restriction review timeout must be within one hour")
+        end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
@@ -288,6 +336,80 @@ module Matter
         !restriction_target_allowed?(entry.endpoint, entry.cluster) ||
           entry.endpoint == INVALID_ENDPOINT_ID || entry.cluster == INVALID_DATA_MODEL_ID ||
           entry.restrictions.empty? || entry.restrictions.any? { |restriction| restriction.id == INVALID_DATA_MODEL_ID }
+      end
+
+      def on_restriction_review_requested(&block : RestrictionReviewRequest -> Nil) : Nil
+        @on_restriction_review_requested = block
+      end
+
+      def on_restriction_review_updated(&block : UInt8, FabricRestrictionReviewUpdate -> Nil) : Nil
+        @on_restriction_review_updated = block
+      end
+
+      # Internal host lifecycle for a future ReviewFabricRestrictions command.
+      # MNGD remains disabled, so this does not expose a wire command or event.
+      def request_restriction_review(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : UInt64
+        if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
+           entries.any? { |entry| invalid_access_restriction_entry?(entry) }
+          raise Matter::ConfigurationError.new("Invalid restriction review request")
+        end
+        callback = @on_restriction_review_requested
+        unless callback && @on_restriction_review_updated
+          raise Matter::ConfigurationError.new("Restriction review callbacks are not configured")
+        end
+
+        @next_restriction_review_token += 1_u64
+        token = @next_restriction_review_token
+        request = RestrictionReviewRequest.new(fabric_index, token, entries.map do |entry|
+          AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+        end)
+        @pending_restriction_reviews[token] = request
+        timer = ::Channel(Nil).new
+        @restriction_review_timers[token] = timer
+        spawn do
+          select
+          when timer.receive?
+          when timeout(@review_timeout)
+            complete_restriction_review(fabric_index, token)
+          end
+        rescue ex
+          Log.error(exception: ex) { "Restriction review deadline update failed" }
+        end
+        begin
+          callback.call(request)
+        rescue ex
+          @pending_restriction_reviews.delete(token)
+          @restriction_review_timers.delete(token).try(&.close)
+          Log.error(exception: ex) { "Host restriction review request failed" }
+          raise ex
+        end
+        token
+      end
+
+      # A host may update its ARL independently before completing the review.
+      # A completion only reports the correlated outcome; it never edits ARL.
+      def complete_restriction_review(fabric_index : UInt8, token : UInt64,
+                                      instruction : String? = nil,
+                                      arl_request_flow_url : String? = nil) : Bool
+        if instruction.try(&.bytesize).try { |size| size > REVIEW_INSTRUCTION_LIMIT } ||
+           arl_request_flow_url.try(&.bytesize).try { |size| size > REVIEW_URL_LIMIT }
+          raise Matter::ConfigurationError.new("Restriction review update exceeds Matter field limit")
+        end
+        request = @pending_restriction_reviews[token]?
+        return false unless request && request.fabric_index == fabric_index
+        callback = @on_restriction_review_updated ||
+                   raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
+        update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
+        @pending_restriction_reviews.delete(token)
+        begin
+          callback.call(fabric_index, update)
+        rescue ex
+          @pending_restriction_reviews[token] = request
+          Log.error(exception: ex) { "Host restriction review update failed" }
+          raise ex
+        end
+        @restriction_review_timers.delete(token).try(&.close)
+        true
       end
 
       def attribute_read_restricted?(fabric_index : UInt8, endpoint : UInt16,
@@ -558,6 +680,10 @@ module Matter
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
         @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
         @access_restrictions.delete(fabric_index)
+        @pending_restriction_reviews.each do |token, request|
+          @restriction_review_timers.delete(token).try(&.close) if request.fabric_index == fabric_index
+        end
+        @pending_restriction_reviews.reject! { |_, request| request.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_ACL)
         notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?
       end

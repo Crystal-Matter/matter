@@ -1456,6 +1456,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Add an internal, fabric-scoped restriction review lifecycle with a
+  correlating token, host request/update callbacks, bounded instruction and
+  URL fields, a 59-minute fallback update, and cancellation on fabric removal.
+  MNGD wire command, attributes, and event remain disabled.
 - Validate host-installed ARL entries before replacing fabric policy. Reject
   reserved fabric, endpoint, cluster, and element IDs and entries without
   restrictions. Standard global attributes stay readable even when named by

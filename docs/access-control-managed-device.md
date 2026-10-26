@@ -38,9 +38,23 @@ the same check to later journal updates and advance past events that cannot be
 reported on that fabric.
 
 The host policy is memory-only and must be installed again after restart. The
-MNGD wire attributes `CommissioningARL` and `ARL`,
+internal review lifecycle now accepts a fabric-specific request with a snapshot
+of the requested ARL entries. An empty request list means a generic review.
+The host installs `on_restriction_review_requested` and
+`on_restriction_review_updated` callbacks, then calls
+`request_restriction_review`. The returned token correlates a subsequent
+`complete_restriction_review` call and update payload. A host may adjust its
+ARL independently before completion; the review method never changes policy.
+If the host has not completed a request after 59 minutes, the library invokes
+the update callback with that token and no optional instructions. Removing a
+fabric cancels its pending reviews. The update fields use the Matter 1.6 TLV
+schema and enforce the 512-byte instruction and 256-byte URL limits.
+
+The MNGD wire attributes `CommissioningARL` and `ARL`,
 `ReviewFabricRestrictions` command and response, and
-`FabricRestrictionReviewUpdate` event are not exposed. Persistent policy, the
-restriction review lifecycle, and validation of which endpoint/cluster pairs
-may carry restrictions remain future work. MNGD must remain disabled until
-those paths are implemented and tested.
+`FabricRestrictionReviewUpdate` event are still not exposed. The update
+callback must be connected to a fabric-sensitive event when the wire feature
+is implemented. Persistent policy, completion delivery across restart, and
+validation of which endpoint/cluster pairs may carry restrictions remain
+future work. MNGD must remain disabled until those paths are implemented and
+tested.
