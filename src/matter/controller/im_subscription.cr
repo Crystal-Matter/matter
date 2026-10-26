@@ -2,10 +2,10 @@ require "./im_client"
 
 module Matter
   module Controller
-    # A dedicated CASE client owns one attribute/event subscription. The
+    # A CASE client can own multiple attribute/event subscriptions. The
     # controller acknowledges each ReportData at the Interaction Model layer
-    # and checks the subscription id on every subsequent report. Call
-    # #next_report before MaxInterval elapses.
+    # and routes subsequent reports by subscription id. Call #next_report
+    # before MaxInterval elapses.
     class AttributeSubscription
       alias Report = InteractionModel::ReportDataMessage
       MAX_REPORT_CHUNKS = ImClient::MAX_READ_REPORT_CHUNKS
@@ -15,6 +15,9 @@ module Matter
       getter max_interval : UInt16
       getter initial_reports : Array(Report)
       getter last_report_at : Time::Instant
+      @closed = false
+      @handshaking = true
+      @initial_exchange_id = 0_u16
 
       def initialize(@client : Client, @session : Session::SecureContext,
                      @peer : Socket::IPAddress, paths : Array(InteractionModel::AttributePath),
@@ -37,15 +40,24 @@ module Matter
           data_version_filters: data_version_filters,
           is_fabric_filtered: true,
           interaction_model_revision: InteractionModel::INTERACTION_MODEL_REVISION)
-        exchange_id = @client.send_encrypted_request(@session, @peer,
-          Client::PROTOCOL_INTERACTION_MODEL,
-          InteractionModel::MessageType::SubscribeRequest.value,
-          request.to_slice)
+        exchange_id = @client.next_exchange_id
         @initial_reports = [] of Report
         @subscription_id = 0_u32
         @max_interval = 0_u16
         @last_report_at = Time.instant
-        receive_initial(exchange_id)
+        @initial_exchange_id = exchange_id
+        @client.begin_subscription_handshake(@session.session_id, exchange_id)
+        begin
+          @client.send_encrypted_request(@session, @peer,
+            Client::PROTOCOL_INTERACTION_MODEL,
+            InteractionModel::MessageType::SubscribeRequest.value,
+            request.to_slice, exchange_id: exchange_id)
+          receive_initial(exchange_id)
+          @handshaking = false
+          @client.register_subscription(@session.session_id, @subscription_id)
+        ensure
+          @client.end_subscription_handshake(@session.session_id, exchange_id)
+        end
       end
 
       def initialize(client : Client, session : Session::SecureContext,
@@ -60,6 +72,7 @@ module Matter
       # A timeout is a recovery signal: the caller must establish a new CASE
       # session and subscription before trusting a replacement Anchor.
       def next_report(timeout_span : Time::Span = (@max_interval.to_i + 5).seconds) : Array(Report)
+        assert_open!
         first = receive_relevant(timeout_span)
         collect_report(first)
       end
@@ -68,6 +81,7 @@ module Matter
       # Only the negotiated MaxInterval plus a bounded grace period signals a
       # stale stream that requires CASE and subscription renewal.
       def poll_report(timeout_span : Time::Span) : Array(Report)?
+        assert_open!
         assert_live!
         remaining = expiry_at - Time.instant
         first = begin
@@ -97,6 +111,16 @@ module Matter
           received = receive_relevant(@timeout)
         end
         reports
+      end
+
+      def close : Nil
+        return if @closed
+        @closed = true
+        @client.unregister_subscription(@session.session_id, @subscription_id)
+      end
+
+      private def assert_open! : Nil
+        raise Matter::ConfigurationError.new("Subscription is closed") if @closed
       end
 
       private def expiry_at : Time::Instant
@@ -177,7 +201,10 @@ module Matter
         loop do
           remaining = deadline - Time.instant
           raise Matter::TimeoutError.new("Datastore subscription timed out") if remaining <= 0.seconds
-          received = @client.receive_message(remaining) ||
+          received = @client.wait_for_subscription_message(@session.session_id,
+            @subscription_id == 0_u32 ? nil : @subscription_id,
+            @handshaking ? @initial_exchange_id : nil,
+            remaining) ||
                      raise Matter::TimeoutError.new("Datastore subscription timed out")
           message = received.message
           # Client only delivers encrypted messages after validating the
