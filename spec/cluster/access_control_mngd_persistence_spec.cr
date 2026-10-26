@@ -173,6 +173,28 @@ describe "Access Control managed restriction persistence" do
     updates.should be_empty
   end
 
+  it "blocks restart when a rejected host request cannot be durably cancelled" do
+    original = stored_cluster
+    saved = original.save_state.as(Matter::Storage::Document)
+    saves = 0
+    original.on_persist = -> do
+      saves += 1
+      raise Matter::StorageError.new("cancellation failed") if saves > 1
+      saved = original.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    original.on_restriction_review_requested do |_request|
+      raise Matter::ConfigurationError.new("host rejected request")
+    end
+    original.on_restriction_review_updated { |_fabric, _update| }
+    expect_raises(Matter::StorageError) do
+      original.request_restriction_review(1_u8, [stored_entry])
+    end
+    expect_raises(Matter::AccessControlRestoreError) do
+      stored_cluster.restore_state(saved)
+    end
+  end
+
   it "rejects missing or malformed managed fields instead of clearing restrictions" do
     original = stored_cluster
     original.configure_access_restrictions(1_u8, [stored_entry])

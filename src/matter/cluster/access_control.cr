@@ -336,7 +336,8 @@ module Matter
       @reviews_needing_replay = [] of UInt64
       @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
       @next_restriction_review_token = 0_u64
-      @review_completion_in_progress : UInt64? = nil
+      @review_requests_in_progress = [] of UInt64
+      @review_completions_in_progress = [] of UInt64
       @on_restriction_review_requested : Proc(RestrictionReviewRequest, Nil)? = nil
       @on_restriction_review_updated : Proc(UInt8, FabricRestrictionReviewUpdate, Nil)? = nil
       property on_persist : Proc(Nil)? = nil
@@ -529,26 +530,27 @@ module Matter
         @pending_restriction_review_deadlines[token] = deadline
         schedule_restriction_review_timer(fabric_index, token, @review_timeout)
         increment_version
-        persisted = false
+        @review_requests_in_progress << token
         begin
           @on_persist.try(&.call)
-          persisted = true
           callback.call(request)
         rescue ex
           @pending_restriction_reviews.delete(token)
           @pending_restriction_review_deadlines.delete(token)
           @restriction_review_timers.delete(token).try(&.close)
+          @review_requests_in_progress.delete(token)
           increment_version
-          if persisted
-            begin
-              @on_persist.try(&.call)
-            rescue error
-              Log.error(exception: error) { "Could not durably cancel failed host restriction review #{token}" }
-            end
+          begin
+            @on_persist.try(&.call)
+          rescue error
+            Log.error(exception: error) { "Could not durably cancel failed host restriction review #{token}" }
+            raise Matter::StorageError.new("Could not durably cancel failed host restriction review #{token}", error)
           end
           Log.error(exception: ex) { "Host restriction review request failed" }
           raise ex
         end
+        @review_requests_in_progress.delete(token)
+        @on_persist.try(&.call)
         token
       end
 
@@ -578,13 +580,13 @@ module Matter
         previous_version = @data_version
         @pending_restriction_reviews.delete(token)
         increment_version
-        @review_completion_in_progress = token
+        @review_completions_in_progress << token
         begin
           @on_persist.try(&.call)
           callback.call(fabric_index, update)
         rescue ex
           @pending_restriction_reviews[token] = request
-          @review_completion_in_progress = nil
+          @review_completions_in_progress.delete(token)
           if version = previous_policy_version
             restore_restriction_review_policy(fabric_index, previous_policy, version)
           else
@@ -599,7 +601,7 @@ module Matter
           Log.error(exception: ex) { "Host restriction review update failed" }
           raise ex
         end
-        @review_completion_in_progress = nil
+        @review_completions_in_progress.delete(token)
         # A failed final write may have reached the backend. The previous
         # durable document retains the intent marker and refuses restart.
         @on_persist.try(&.call)
@@ -937,7 +939,8 @@ module Matter
         getter? commissioning_arl_configured : Bool = false
         getter pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview
         getter next_restriction_review_token : UInt64 = 0_u64
-        getter review_completion_in_progress : UInt64? = nil
+        getter review_requests_in_progress : Array(UInt64) = [] of UInt64
+        getter review_completions_in_progress : Array(UInt64) = [] of UInt64
 
         def initialize(
           @data_version : UInt32,
@@ -948,7 +951,8 @@ module Matter
           @commissioning_arl_configured : Bool = false,
           @pending_restriction_reviews : Array(PersistedRestrictionReview) = [] of PersistedRestrictionReview,
           @next_restriction_review_token : UInt64 = 0_u64,
-          @review_completion_in_progress : UInt64? = nil,
+          @review_requests_in_progress : Array(UInt64) = [] of UInt64,
+          @review_completions_in_progress : Array(UInt64) = [] of UInt64,
         )
         end
       end
@@ -984,7 +988,8 @@ module Matter
               @pending_restriction_review_deadlines[request.token])
           end,
           next_restriction_review_token: @next_restriction_review_token,
-          review_completion_in_progress: @review_completion_in_progress
+          review_requests_in_progress: @review_requests_in_progress.dup,
+          review_completions_in_progress: @review_completions_in_progress.dup
         ).to_document
       end
 
@@ -1002,8 +1007,8 @@ module Matter
           raise Matter::AccessControlRestoreError.new("Missing managed restriction state fields")
         end
         state = PersistedState.from_document(document)
-        if state.review_completion_in_progress
-          raise Matter::AccessControlRestoreError.new("Unfinished restriction review decision")
+        unless state.review_requests_in_progress.empty? && state.review_completions_in_progress.empty?
+          raise Matter::AccessControlRestoreError.new("Unfinished restriction review operation")
         end
         restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
         state.access_restrictions.each do |stored|
