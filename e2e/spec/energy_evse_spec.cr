@@ -40,4 +40,23 @@ describe "Matter 1.6 Energy EVSE interoperability" do
     expect_success(device.invoke("energyevse", "get-targets", endpoint: 1, options: timed))
       .output.should contain("0 entries")
   end
+
+  it "exposes opt-in V2X only on the bidirectional EVSE endpoint" do
+    read_int(device, "energyevse", "feature-map", "FeatureMap", 3).should eq(17_i64)
+    read_int(device, "energyevse", "maximum-discharge-current", "MaximumDischargeCurrent", 3).should eq(0_i64)
+    expect_success(device.invoke("energyevse", "enable-charging", ["null", "6000", "16000"],
+      endpoint: 3, options: timed))
+    expect_failure(device.invoke("energyevse", "enable-discharging", ["null", "10000"], endpoint: 3),
+      "NEEDS_TIMED_INTERACTION")
+    expect_success(device.invoke("energyevse", "enable-discharging", ["null", "10000"],
+      endpoint: 3, options: timed))
+    read_int(device, "energyevse", "supply-state", "SupplyState", 3).should eq(5_i64)
+    read_int(device, "energyevse", "maximum-charge-current", "MaximumChargeCurrent", 3).should eq(16_000_i64)
+    read_int(device, "energyevse", "maximum-discharge-current", "MaximumDischargeCurrent", 3).should eq(10_000_i64)
+    device.restart!
+    read_int(device, "energyevse", "supply-state", "SupplyState", 3).should eq(5_i64)
+    expect_success(device.invoke("energyevse", "disable", endpoint: 3, options: timed))
+    read_int(device, "energyevse", "supply-state", "SupplyState", 3).should eq(0_i64)
+    read_int(device, "energyevse", "feature-map", "FeatureMap", 1).should eq(1_i64)
+  end
 end

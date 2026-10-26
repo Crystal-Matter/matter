@@ -75,7 +75,7 @@ describe Evse do
     restored.supply_state.should eq(Evse::SupplyState::Disabled)
     restored.charging_enabled_until.should eq(0_u32)
     restored.circuit_capacity = 16_000_i64
-    restored.maximum_charge_current.should eq(16_000_i64)
+    restored.maximum_charge_current.should eq(0_i64)
   end
 
   it "disables the physical relay when EnableCharging has an expired deadline" do

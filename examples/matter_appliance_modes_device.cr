@@ -75,12 +75,22 @@ module MatterApplianceModes
         add_more_time: true
     end
 
+    # Synthetic bidirectional EVSE for the opt-in V2X wire tests.
+    endpoint 3, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Evse, circuit_capacity: 32_000_i64,
+        feature_map: Evse::Feature::ChargingPreferences | Evse::Feature::V2x
+    end
+
     protected def before_start : Nil
       evse = node.get_cluster!(1_u16, Evse)
       evse.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) do
         Status.success
       end
       evse.on_disable = -> { Status.success }
+      v2x = node.get_cluster!(3_u16, Evse)
+      v2x.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) { Status.success }
+      v2x.on_enable_discharging = ->(_until : UInt32?, _maximum : Int64) { Status.success }
+      v2x.on_disable = -> { Status.success }
       control = node.get_cluster!(1_u16, MicrowaveOvenControl)
       control.on_set_cooking_parameters do |_mode, _seconds, _power, _start|
         Status.success
