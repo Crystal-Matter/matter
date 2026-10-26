@@ -287,9 +287,31 @@ module Matter
                                      cluster : UInt32, attribute : UInt32) : Bool
         return false unless restriction_target_allowed?(endpoint, cluster)
         return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
+        restricted_by?(fabric_index, endpoint, cluster, attribute) do |restriction|
+          restriction.type.attribute_access_forbidden?
+        end
+      end
+
+      def attribute_write_restricted?(fabric_index : UInt8, endpoint : UInt16,
+                                      cluster : UInt32, attribute : UInt32) : Bool
+        return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
+        restricted_by?(fabric_index, endpoint, cluster, attribute) do |restriction|
+          restriction.type.attribute_access_forbidden? || restriction.type.attribute_write_forbidden?
+        end
+      end
+
+      def command_restricted?(fabric_index : UInt8, endpoint : UInt16,
+                              cluster : UInt32, command : UInt32) : Bool
+        restricted_by?(fabric_index, endpoint, cluster, command) do |restriction|
+          restriction.type.command_forbidden?
+        end
+      end
+
+      private def restricted_by?(fabric_index : UInt8, endpoint : UInt16,
+                                 cluster : UInt32, id : UInt32, & : AccessRestriction -> Bool) : Bool
         (@access_restrictions[fabric_index]? || [] of AccessRestrictionEntry).any? do |entry|
           entry.endpoint == endpoint && entry.cluster == cluster && entry.restrictions.any? do |restriction|
-            restriction.type.attribute_access_forbidden? && (restriction.id.nil? || restriction.id == attribute)
+            yield(restriction) && (restriction.id.nil? || restriction.id == id)
           end
         end
       end
