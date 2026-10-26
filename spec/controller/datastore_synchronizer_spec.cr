@@ -259,6 +259,38 @@ describe Matter::Controller::DatastoreSynchronizer do
     client.try(&.close)
   end
 
+  it "leaves a refreshing node and its Datastore records pending when the target has an unrepresentable ACL" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.parts_list = [2_u16]
+    im.server_lists[0_u16] = [Matter::Cluster::AccessControl::CLUSTER_ID]
+    im.acl_entries = [Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::ProxyView,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      [0x200_u64], nil)]
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    store.node_list = [Datastore::DatastoreNodeInformationEntryStruct.new(0x100_u64, "Node", committed)]
+    store.record_endpoint(0x100_u64, 1_u16, "Original endpoint")
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [0x200_u64], nil)
+    store.node_acl_list = [Datastore::DatastoreACLEntryStruct.new(0x100_u64, 7_u16, acl, committed)]
+    store.refresh_node(Datastore::RefreshNodeRequest.new(0x100_u64)).success?.should be_true
+
+    expect_raises(Matter::ProtocolError, /ProxyView/) do
+      Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+        Socket::IPAddress.new("127.0.0.1", 5540))
+    end
+    store.node_list.first.commissioning_status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+    store.node_endpoint_list.map(&.endpoint_id).should eq([1_u16])
+    store.node_acl_list.size.should eq(1)
+    store.node_acl_list.first.acl_entry.should eq(acl)
+    im.writes.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
   it "replaces a changed ACL instead of leaving stale access after restart" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)

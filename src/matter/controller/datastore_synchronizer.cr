@@ -28,6 +28,12 @@ module Matter
         groupcast_target = root_servers.includes?(Cluster::Groupcast::CLUSTER_ID)
         refreshing = store.node_list.any? { |entry| entry.node_id == node_id && entry.commissioning_status_entry.state == Store::DatastoreStateEnum::Pending }
         if refreshing
+          # Reject privileges JFDS cannot represent before changing any local
+          # Datastore lists; pending ACL writes may require a later reread.
+          if root_servers.includes?(Cluster::AccessControl::CLUSTER_ID)
+            validate_representable_acls!(read_list(Cluster::AccessControl::AccessControlEntry,
+              session, peer, 0_u16, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL), node_id)
+          end
           endpoint_ids = read_list(UInt16, session, peer, 0_u16, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_PARTS_LIST)
           status = store.reconcile_node_endpoints(node_id, endpoint_ids)
           raise Matter::ProtocolError.new("Datastore endpoint reconciliation failed") unless status.success?
@@ -113,12 +119,10 @@ module Matter
           ensure_reconciled!(store.reconcile_node_key_sets(node_id, ids))
         end
         if root_servers.includes?(Cluster::AccessControl::CLUSTER_ID)
-          acls = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, 0_u16,
-            Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL).compact_map do |entry|
-            if entry.privilege == Cluster::AccessControl::AccessControlEntryPrivilege::ProxyView
-              Log.warn { "Ignoring ProxyView ACL that Joint Fabric Datastore cannot encode for node 0x#{node_id.to_s(16)}" }
-              next
-            end
+          target_acls = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, 0_u16,
+            Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL)
+          validate_representable_acls!(target_acls, node_id)
+          acls = target_acls.map do |entry|
             Store::DatastoreAccessControlEntryStruct.new(
               Store::DatastoreAccessControlEntryPrivilegeEnum.from_value(entry.privilege.value),
               Store::DatastoreAccessControlEntryAuthModeEnum.from_value(entry.auth_mode.value),
@@ -127,6 +131,12 @@ module Matter
             )
           end
           ensure_reconciled!(store.reconcile_node_acls(node_id, acls))
+        end
+      end
+
+      private def validate_representable_acls!(acls : Array(Cluster::AccessControl::AccessControlEntry), node_id : UInt64) : Nil
+        if acls.any?(&.privilege.==(Cluster::AccessControl::AccessControlEntryPrivilege::ProxyView))
+          raise Matter::ProtocolError.new("Joint Fabric Datastore cannot encode ProxyView ACL for node 0x#{node_id.to_s(16)}")
         end
       end
 
