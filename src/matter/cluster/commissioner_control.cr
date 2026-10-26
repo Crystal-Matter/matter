@@ -293,7 +293,13 @@ module Matter
       def discard_pending_commissions(session_identity : UInt64? = nil, exchange_id : UInt16? = nil) : Nil
         @approval_mutex.synchronize do
           @pending_commissions.reject! do |entry|
-            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+            next false unless entry.session_identity == session_identity && entry.exchange_id == exchange_id
+
+            # The response send failed. Permit this approval to prepare a fresh
+            # response, but never revive a replaced request.
+            current = @approvals[approval_key(entry.approval)]?
+            current.consumed = false if current && current.request == entry.approval
+            true
           end
         end
       end

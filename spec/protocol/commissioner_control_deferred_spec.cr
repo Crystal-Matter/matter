@@ -2,7 +2,8 @@ require "../spec_helper"
 require "../../src/matter/protocol/message_handler"
 
 private alias ReverseControl = Matter::Cluster::CommissionerControl
-private REVERSE_PEER = Socket::IPAddress.new("127.0.0.1", 5540)
+private REVERSE_PEER            = Socket::IPAddress.new("127.0.0.1", 5540)
+private REVERSE_OPEN_COMMAND_ID = 0x02_u32
 
 private class ReverseFailingTransport < Matter::Spec::CaptureTransport
   property? fail_next : Bool = false
@@ -48,6 +49,19 @@ end
 private def reverse_window : ReverseControl::ReverseOpenCommissioningWindowResponse
   ReverseControl::ReverseOpenCommissioningWindowResponse.new(
     180_u16, Bytes.new(97, 0_u8), 3840_u16, 1000_u32, Bytes.new(16, 0_u8))
+end
+
+private def reverse_response(wire : Bytes, session : Matter::Session::SecureContext) : Matter::InteractionModel::InvokeResponseMessage
+  packet = Matter::Codec::MessageCodec::Base.decode_packet(wire)
+  header = wire[0, wire.size - packet.payload.size]
+  nonce = Matter::Session::SecureMessage.build_nonce(
+    session.local_node_id.as(Matter::DataType::NodeId).id,
+    packet.header.message_id, header[Matter::Codec::MessageCodec::SECURITY_FLAGS_OFFSET])
+  plaintext = Matter::Crypto::StandardCrypto.new.decrypt(session.encryption_key,
+    packet.payload, nonce, header)
+  payload = Matter::Codec::MessageCodec::Base.decode_payload(
+    Matter::Codec::MessageCodec::Packet.new(packet.header, plaintext)).payload
+  Matter::InteractionModel::InvokeResponseMessage.from_slice(payload)
 end
 
 describe "reverse commissioning response handoff" do
@@ -118,16 +132,16 @@ describe "reverse commissioning response handoff" do
     handler.close
   end
 
-  it "discards deferred work when the matching InvokeResponse send fails" do
+  it "retries an unsent reverse-window response without starting commissioning early or twice" do
     handler, transport, session, control = reverse_fixture
-    started = Channel(Nil).new(1)
+    started = Channel(Int32).new(1)
     control.configure_host(
       ->(approval : ReverseControl::ApprovalRequest) do
         control.resolve_approval(approval, Matter::InteractionModel::StatusCode::Success)
         nil
       end,
       ->(_approval : ReverseControl::ApprovalRequest, _request : ReverseControl::CommissionNodeRequest) do
-        ReverseControl::PreparedWindow.new(reverse_window, -> { started.send(nil); nil })
+        ReverseControl::PreparedWindow.new(reverse_window, -> { started.send(transport.sent_packets.size); nil })
           .as(ReverseControl::PreparedWindow?)
       end)
     reverse_invoke(handler, session, ReverseControl::CMD_REQUEST_COMMISSIONING_APPROVAL,
@@ -138,14 +152,34 @@ describe "reverse commissioning response handoff" do
       ReverseControl::CommissionNodeRequest.new(9_u64).to_slice,
       2_u32, 111_u16)
     control.take_pending_commissions(session.object_id.to_u64, 111_u16).should be_empty
-    # The failed ciphertext must not be replayable from the MRP cache.
+    # The failed ciphertext must not be replayable from the MRP cache, and an
+    # approval is not consumed until the reverse-window response is sent.
     reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
       ReverseControl::CommissionNodeRequest.new(9_u64).to_slice,
-      2_u32, 111_u16)
-    transport.sent_packets.size.should eq(1)
+      3_u32, 112_u16)
+    transport.sent_packets.size.should eq(2)
+    response = reverse_response(transport.sent_packets.last[0], session)
+    response.invoke_responses.first.command_status.should be_nil
+    data = response.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+    data.command_path.command.should eq(REVERSE_OPEN_COMMAND_ID)
+    window = ReverseControl::ReverseOpenCommissioningWindowResponse.from_tlv(data.command_fields.as(TLV::Any))
+    window.discriminator.should eq(reverse_window.discriminator)
+    select
+    when sent_count = started.receive
+      sent_count.should eq(2)
+    when timeout(1.second)
+      fail "successful retry did not start reverse commissioning"
+    end
+
+    reverse_invoke(handler, session, ReverseControl::CMD_COMMISSION_NODE,
+      ReverseControl::CommissionNodeRequest.new(9_u64).to_slice,
+      4_u32, 113_u16)
+    repeat = reverse_response(transport.sent_packets.last[0], session)
+    repeat.invoke_responses.first.command_status.as(Matter::InteractionModel::CommandStatusIB)
+      .status.status.should eq(Matter::InteractionModel::StatusCode::Failure.value)
     select
     when started.receive
-      fail "failed send started reverse commissioning"
+      fail "an already delivered response restarted reverse commissioning"
     when timeout(20.milliseconds)
     end
     handler.close

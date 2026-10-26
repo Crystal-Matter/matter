@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Commissioner Control response retry
+
+- Allow a previously approved `CommissionNode` request to retry when its
+  reverse-window response failed before transport delivery. The deferred
+  commissioning task still starts only after a successful response send.
+
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and
