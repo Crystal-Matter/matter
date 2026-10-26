@@ -448,4 +448,54 @@ describe "Access Control managed restriction persistence" do
     acl.complete_restriction_review(1_u8, token).should be_false
     changed.should eq([StoredAcl::ATTR_ARL])
   end
+
+  it "cancels an unanswered review request after a crash during its first save" do
+    original = stored_cluster
+    requested = [] of StoredAcl::RestrictionReviewRequest
+    updated = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(original, requested, updated)
+    snapshots = [] of Matter::Storage::Document
+    original.on_persist = -> { snapshots << original.save_state.as(Matter::Storage::Document); nil }
+    token = original.request_restriction_review(1_u8, [stored_entry])
+    snapshots.size.should eq(2)
+
+    restored = stored_cluster
+    cleaned = [] of Matter::Storage::Document
+    restored.on_persist = -> { cleaned << restored.save_state.as(Matter::Storage::Document); nil }
+    restored.restore_state(snapshots.first)
+    replayed = [] of StoredAcl::RestrictionReviewRequest
+    restored_updates = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(restored, replayed, restored_updates)
+    replayed.should be_empty
+    restored.complete_restriction_review(1_u8, token).should be_false
+    cleaned.size.should eq(1)
+    restored.request_restriction_review(1_u8, [stored_entry]).should be > token
+  end
+
+  it "replays a durable completion after a crash before its host update" do
+    original = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    requested = [] of StoredAcl::RestrictionReviewRequest
+    updated = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    stored_callbacks(original, requested, updated)
+    token = original.request_restriction_review(1_u8, [stored_entry])
+    snapshots = [] of Matter::Storage::Document
+    original.on_persist = -> { snapshots << original.save_state.as(Matter::Storage::Document); nil }
+    original.approve_restriction_review(1_u8, token, [stored_entry], "Approved").should be_true
+    snapshots.size.should eq(2)
+
+    restored = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    restored.on_persist = -> { snapshots << restored.save_state.as(Matter::Storage::Document); nil }
+    restored.restore_state(snapshots.first)
+    restored.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    resumed_requests = [] of StoredAcl::RestrictionReviewRequest
+    resumed_updates = [] of Tuple(UInt8, StoredAcl::FabricRestrictionReviewUpdate)
+    events = [] of UInt32
+    restored.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) { events << id; nil }
+    stored_callbacks(restored, resumed_requests, resumed_updates)
+    resumed_requests.should be_empty
+    resumed_updates.map(&.[1].token).should eq([token])
+    resumed_updates.map(&.[1].instruction).should eq(["Approved"])
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+    restored.complete_restriction_review(1_u8, token).should be_false
+  end
 end
