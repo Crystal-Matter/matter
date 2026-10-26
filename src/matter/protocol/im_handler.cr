@@ -22,6 +22,19 @@ module Matter
         property replacement_data_version : UInt32?
       end
 
+      # A concrete path can miss because its endpoint does not exist or because
+      # that endpoint does not host the requested cluster. Matter reports those
+      # as distinct Interaction Model statuses.
+      private def self.missing_path_status(
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        endpoint_id : UInt16,
+      ) : InteractionModel::StatusCode
+        clusters.each_key do |key|
+          return InteractionModel::StatusCode::UnsupportedCluster if key[0] == endpoint_id
+        end
+        InteractionModel::StatusCode::UnsupportedEndpoint
+      end
+
       private def self.access_control_cluster(clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base)) : Cluster::AccessControl?
         clusters[{0_u16, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
       end
@@ -198,8 +211,7 @@ module Matter
           # Find cluster
           cluster = clusters[{endpoint_id, cluster_id}]?
           unless cluster
-            # Cluster not found on this endpoint - return UnsupportedCluster status
-            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedCluster.value)
+            status_ib = InteractionModel::StatusIB.new(status: missing_path_status(clusters, endpoint_id).value)
             attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
             attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
             next
@@ -337,7 +349,7 @@ module Matter
         event_id = path.event.as(UInt32)
 
         cluster = clusters[{endpoint_id, cluster_id}]?
-        return event_status(path, InteractionModel::StatusCode::UnsupportedCluster) unless cluster
+        return event_status(path, missing_path_status(clusters, endpoint_id)) unless cluster
 
         metadata = cluster.get_event_metadata(event_id)
         return event_status(path, InteractionModel::StatusCode::UnsupportedEvent) unless metadata
@@ -484,8 +496,7 @@ module Matter
           # Find cluster
           cluster = clusters[{endpoint_id, cluster_id}]?
           unless cluster
-            # Cluster not found on this endpoint - return UnsupportedCluster status
-            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedCluster.value)
+            status_ib = InteractionModel::StatusIB.new(status: missing_path_status(clusters, endpoint_id).value)
             write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
             next
           end
@@ -887,9 +898,8 @@ module Matter
           cluster = clusters[{endpoint_id, path.cluster}]?
 
           unless cluster
-            # Cluster not found on this endpoint - return UnsupportedCluster status
             Log.warn { "Cluster not found: endpoint=#{endpoint_id}, cluster=0x#{path.cluster.to_s(16)}" }
-            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedCluster.value)
+            status_ib = InteractionModel::StatusIB.new(status: missing_path_status(clusters, endpoint_id).value)
             cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
             invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
             next
