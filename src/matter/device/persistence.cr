@@ -129,7 +129,12 @@ module Matter
 
       private def restore_cluster(cluster : Cluster::Base) : Bool
         document = @backend.read(CLUSTERS, cluster.persistence_key)
-        return false unless document
+        unless document
+          if cluster.fail_closed_restore? && !@fabric_table.empty?
+            raise AccessControlRestoreError.new("Missing critical cluster state #{cluster.persistence_key} with existing fabrics")
+          end
+          return false
+        end
 
         cluster.restore_state(document)
         Log.debug { "Restored state for cluster #{cluster.name} (#{cluster.persistence_key})" }

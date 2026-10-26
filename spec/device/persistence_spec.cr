@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/device/persistence"
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/access_control"
 
 # Counts file flushes so a spec can pin "one write for many mutations".
 private class CountingYamlFile < Matter::Storage::YamlFile
@@ -45,6 +46,20 @@ end
 
 describe Matter::Device::Persistence do
   describe "clusters" do
+    it "requires a saved Access Control document once a fabric exists" do
+      storage = Matter::Storage::Memory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      acl = Matter::Cluster::AccessControl.new(endpoint(0))
+      persistence.restore_clusters([acl] of Matter::Cluster::Base).should eq(0)
+
+      persistence.save_cluster(acl).should be_true
+      persistence.fabric_table.add_fabric(build_fabric(1_u8))
+      storage.delete(CLUSTERS, acl.persistence_key)
+      expect_raises(Matter::AccessControlRestoreError) do
+        persistence.restore_clusters([Matter::Cluster::AccessControl.new(endpoint(0))] of Matter::Cluster::Base)
+      end
+      persistence.close
+    end
     it "saves a dirty cluster after the debounce without a shutdown" do
       storage = Matter::Storage::Memory.new
       persistence = Matter::Device::Persistence.new(storage)

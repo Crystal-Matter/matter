@@ -270,4 +270,73 @@ describe "Access Control managed restriction persistence" do
     replayed.map(&.token).should eq([token])
     events.should be_empty
   end
+
+  it "keeps a durable decision when an event observer raises after journaling" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_persist = -> do
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    events = [] of UInt32
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) do
+      events << id
+      raise Matter::StorageError.new("observer failed")
+    end
+    acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry).should be_true
+    events.should eq([StoredAcl::EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE])
+    restored = stored_cluster
+    restored.restore_state(saved)
+    restored.deny_restriction_review(1_u8, token).should be_false
+  end
+
+  it "blocks restart if compensation cannot save after a host callback failure" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| raise Matter::ConfigurationError.new("host failed") }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    saves = 0
+    acl.on_persist = -> do
+      saves += 1
+      raise Matter::StorageError.new("compensation failed") if saves > 1
+      saved = acl.save_state.as(Matter::Storage::Document)
+      nil
+    end
+    expect_raises(Matter::StorageError) do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+    end
+    acl.arl(1_u8).first.restrictions.should eq(stored_entry.restrictions)
+    expect_raises(Matter::AccessControlRestoreError) do
+      stored_cluster.restore_state(saved)
+    end
+  end
+
+  it "keeps host-approved policy when the final write reports an ambiguous failure" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
+    acl.configure_access_restrictions(1_u8, [stored_entry])
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    saved = acl.save_state.as(Matter::Storage::Document)
+    saves = 0
+    acl.on_persist = -> do
+      saves += 1
+      saved = acl.save_state.as(Matter::Storage::Document)
+      raise Matter::StorageError.new("write acknowledged late") if saves == 2
+      nil
+    end
+    expect_raises(Matter::StorageError) do
+      acl.approve_restriction_review(1_u8, token, [] of StoredAcl::AccessRestrictionEntry)
+    end
+    acl.arl(1_u8).should be_empty
+    restored = stored_cluster
+    restored.restore_state(saved)
+    restored.arl(1_u8).should be_empty
+    restored.deny_restriction_review(1_u8, token).should be_false
+  end
 end
