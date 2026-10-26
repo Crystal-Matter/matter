@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/cluster/network_commissioning"
 require "tlv"
+require "../support/network_commissioning_failsafe"
 
 describe Matter::Cluster::NetworkCommissioning do
   describe "protocol-level TLV command handling" do
@@ -10,6 +11,7 @@ describe Matter::Cluster::NetworkCommissioning do
         network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
         backend: backend
       )
+      arm_network_commissioning(cluster)
 
       # Use TLV::Serializable struct for request
       request_bytes = Matter::Cluster::NetworkCommissioning::Tlv::ScanAvailableNetworksRequest.new.to_tlv(nil)
@@ -30,6 +32,7 @@ describe Matter::Cluster::NetworkCommissioning do
         network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
         backend: backend
       )
+      arm_network_commissioning(cluster)
 
       # Use TLV::Serializable struct for request
       request_bytes = Matter::Cluster::NetworkCommissioning::Tlv::AddOrUpdateWiFiNetworkRequest.new(
@@ -52,6 +55,7 @@ describe Matter::Cluster::NetworkCommissioning do
         network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
         backend: backend
       )
+      arm_network_commissioning(cluster)
       request_bytes = Matter::Cluster::NetworkCommissioning::Tlv::AddOrUpdateWiFiNetworkRequest.new(
         ssid: Bytes.new(33, 0x41_u8),
         credentials: "password".to_slice
@@ -71,6 +75,7 @@ describe Matter::Cluster::NetworkCommissioning do
         network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
         backend: backend
       )
+      arm_network_commissioning(cluster)
 
       # First add a network
       add_req = Matter::Cluster::NetworkCommissioning::AddOrUpdateWiFiNetworkRequest.new(

@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/cluster/network_commissioning"
 require "tlv"
+require "../support/network_commissioning_failsafe"
 
 private class EmptyScanBackend < Matter::Network::TestBackend
   def scan_wifi(ssid : String?) : Array(Matter::Cluster::NetworkCommissioning::WiFiInterfaceScanResult)
@@ -20,6 +21,7 @@ describe Matter::Cluster::NetworkCommissioning do
     cluster = build(Matter::Cluster::NetworkCommissioning,
       network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
       backend: EmptyScanBackend.new)
+    arm_network_commissioning(cluster)
     request = Matter::Cluster::NetworkCommissioning::Tlv::ScanAvailableNetworksRequest.new.to_tlv(nil)
 
     result = invoke(cluster, Matter::Cluster::NetworkCommissioning::CMD_SCAN_NETWORKS, request)
@@ -37,6 +39,7 @@ describe Matter::Cluster::NetworkCommissioning do
     cluster = build(Matter::Cluster::NetworkCommissioning,
       network_type: Matter::Cluster::NetworkCommissioning::NetworkType::Thread,
       backend: EmptyScanBackend.new)
+    arm_network_commissioning(cluster)
     request = Matter::Cluster::NetworkCommissioning::Tlv::ScanAvailableNetworksRequest.new.to_tlv(nil)
 
     result = invoke(cluster, Matter::Cluster::NetworkCommissioning::CMD_SCAN_NETWORKS, request)
@@ -53,6 +56,7 @@ describe Matter::Cluster::NetworkCommissioning do
   it "keeps the WI-required list present when the scan backend is unavailable" do
     cluster = build(Matter::Cluster::NetworkCommissioning,
       network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi)
+    arm_network_commissioning(cluster)
     request = Matter::Cluster::NetworkCommissioning::Tlv::ScanAvailableNetworksRequest.new.to_tlv(nil)
 
     result = invoke(cluster, Matter::Cluster::NetworkCommissioning::CMD_SCAN_NETWORKS, request)

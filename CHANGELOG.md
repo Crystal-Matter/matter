@@ -1827,6 +1827,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cluster class remains available to devices that explicitly implement ICD
   behavior.
 
+### Network Commissioning fail-safe enforcement
+
+- Network Commissioning wire commands now require an active fail-safe owned by
+  the invoking fabric (or PASE commissioner), returning IM FailsafeRequired when
+  unarmed and rejecting another fabric before touching the network backend.
+
 ### Network commissioning
 
 - Apply Network Commissioning command Breadcrumb values to General Commissioning

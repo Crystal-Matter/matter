@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/cluster/network_commissioning"
+require "../support/network_commissioning_failsafe"
 require "tlv"
 
 describe Matter::Cluster::NetworkCommissioning do
@@ -97,6 +98,7 @@ describe Matter::Cluster::NetworkCommissioning do
       network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
       backend: Matter::Network::TestBackend.new
     )
+    arm_network_commissioning(cluster)
     breadcrumbs = [] of UInt64
     cluster.on_breadcrumb_success = ->(value : UInt64) { breadcrumbs << value; nil }
     request = Matter::Cluster::NetworkCommissioning::Tlv::AddOrUpdateWiFiNetworkRequest.new(
