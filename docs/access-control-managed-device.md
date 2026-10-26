@@ -119,11 +119,12 @@ and writes, command invocations, and event reads. CASE sessions continue to use
 their fabric's ARL.
 
 The synthetic `matter_managed_restrictions` example opts in with durable YAML
-storage and denies each review from its host callback. Its official chip-tool
-E2E commissions the device, checks the MNGD attributes and command metadata,
-invokes `ReviewFabricRestrictions`, correlates the host callback token with
-`FabricRestrictionReviewUpdate`, and verifies that the empty ARL survives a
-restart. It exercises the wire and persistence path without a real consent UI.
+storage. Its host callback denies empty reviews and approves reviews containing
+an ARL entry. Its official chip-tool E2E commissions the device, checks the
+MNGD attributes and command metadata, correlates both review tokens with
+`FabricRestrictionReviewUpdate`, then confirms an approved Wi-Fi SSID restriction
+returns `ACCESS_RESTRICTED` before and after restart. This exercises the wire,
+enforcement, and persistence paths with a synthetic host decision.
 
 An application-specific consent UI or service and independent managed-device
 interoperability remain host and integration work. The pinned SDK accepts ARL entries by

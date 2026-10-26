@@ -5,6 +5,11 @@ require "./support/main"
 # token-correlated decision before changing an Access Restriction List.
 module MatterManagedRestrictions
   alias AccessControl = Matter::Cluster::AccessControl
+  alias WiFiManagement = Matter::Cluster::WiFiNetworkManagement
+
+  TEST_SSID       = "Managed Wi-Fi"
+  TEST_PASSPHRASE = "correct horse"
+  TEST_SURROGATE  = 42_u64
 
   class Device < Matter::Device
     include Examples::Console
@@ -19,13 +24,29 @@ module MatterManagedRestrictions
     storage yaml: "matter_managed_restrictions_storage.yml"
     managed_restrictions requested: :review_requested, updated: :review_updated
 
+    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster WiFiManagement
+    end
+
+    protected def before_start : Nil
+      node.endpoint!(1_u16).get_cluster!(WiFiManagement)
+        .update_credentials(TEST_SSID.to_slice, TEST_PASSPHRASE.to_slice, TEST_SURROGATE)
+      super
+    end
+
     private def review_requested(request : AccessControl::RestrictionReviewRequest) : Nil
       if path = ENV["MATTER_MNGD_REVIEW_PATH"]?
         File.write(path, request.token.to_s)
       end
-      unless access_control.deny_restriction_review(request.fabric_index, request.token,
-               instruction: "Synthetic host denial")
-        raise Matter::ConfigurationError.new("Could not deny synthetic restriction review")
+      accepted = if request.entries.empty?
+                   access_control.deny_restriction_review(request.fabric_index, request.token,
+                     instruction: "Synthetic host denial")
+                 else
+                   access_control.approve_restriction_review(request.fabric_index, request.token,
+                     request.entries, instruction: "Synthetic host approval")
+                 end
+      unless accepted
+        raise Matter::ConfigurationError.new("Could not complete synthetic restriction review")
       end
       nil
     end

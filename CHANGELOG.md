@@ -1548,7 +1548,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Add a synthetic durable MNGD device and commissioned official chip-tool E2E
   for feature advertisement, CommissioningARL/ARL reads, token-correlated
-  ReviewFabricRestrictions and completion event, and restart persistence.
+  ReviewFabricRestrictions denial and approval, completion events, enforced
+  Wi-Fi SSID restrictions, and restart persistence.
 - Add explicit opt-in host approval and denial for pending restriction reviews.
   Approval atomically saves the host supplied replacement ARL with review
   completion; denial retains the current ARL. Hosts may also emit interim
