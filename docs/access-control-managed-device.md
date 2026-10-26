@@ -50,11 +50,17 @@ the update callback with that token and no optional instructions. Removing a
 fabric cancels its pending reviews. The update fields use the Matter 1.6 TLV
 schema and enforce the 512-byte instruction and 256-byte URL limits.
 
-The MNGD wire attributes `CommissioningARL` and `ARL`,
-`ReviewFabricRestrictions` command and response, and
-`FabricRestrictionReviewUpdate` event are still not exposed. The update
-callback must be connected to a fabric-sensitive event when the wire feature
-is implemented. Persistent policy, completion delivery across restart, and
-validation of which endpoint/cluster pairs may carry restrictions remain
-future work. MNGD must remain disabled until those paths are implemented and
-tested.
+The Matter 1.6 wire schema is now present behind the MNGD feature gate. The
+default `AccessControl` feature map still omits MNGD, so its attributes,
+command, and event are absent from default metadata and global lists. If a
+host explicitly enables MNGD, `CommissioningARL` is a View-readable fixed
+list configured once during setup, `ARL` is View-readable and fabric scoped,
+and `ReviewFabricRestrictions` requires Administer privilege and a CASE fabric.
+The response carries a review token; completion emits a fabric-sensitive
+`FabricRestrictionReviewUpdate` event. Malformed wire requests fail before
+the host callback runs.
+
+Persistent ARL policy, completion delivery across restart, semantic validation
+of allowed endpoint/cluster targets, and independent managed-device
+interoperability remain future work. Device configurations should leave MNGD
+disabled until those paths are implemented and tested.

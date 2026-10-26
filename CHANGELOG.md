@@ -1456,6 +1456,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Define the gated Matter 1.6 MNGD wire structs, View-readable
+  `CommissioningARL` and fabric-scoped `ARL`, Administer-only review command,
+  and fabric-sensitive completion event. The default feature map omits MNGD;
+  policy persistence and allowed-target validation remain pending.
 - Add an internal, fabric-scoped restriction review lifecycle with a
   correlating token, host request/update callbacks, bounded instruction and
   URL fields, a 59-minute fallback update, and cancellation on fabric removal.

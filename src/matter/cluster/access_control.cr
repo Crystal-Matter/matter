@@ -17,9 +17,11 @@ module Matter
 
       cluster 0x001F, revision: 3, persist_state: false
 
-      feature :extension, bit: 0 # EXTS - Extension attribute and its change event
-      feature :auxiliary, bit: 2 # AUX - generated, read-only ACL entries
+      feature :extension, bit: 0      # EXTS - Extension attribute and its change event
+      feature :managed_device, bit: 1 # MNGD - gated wire schema, disabled by default
+      feature :auxiliary, bit: 2      # AUX - generated, read-only ACL entries
 
+      # ManagedDevice remains disabled in the default feature map.
       GLOBAL_ATTRIBUTE_ID_START               = 0xFFF8_u32
       GLOBAL_ATTRIBUTE_ID_END                 = 0xFFFD_u32
       ARL_ROOT_ENDPOINT_ID                    =      0_u16
@@ -77,7 +79,12 @@ module Matter
       end
 
       struct AccessRestriction
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
         getter type : AccessRestrictionType
+
+        @[TLV::Field(tag: 1, optional: false)]
         getter id : UInt32?
 
         def initialize(@type : AccessRestrictionType, @id : UInt32?)
@@ -85,11 +92,58 @@ module Matter
       end
 
       struct AccessRestrictionEntry
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
         getter endpoint : UInt16
+
+        @[TLV::Field(tag: 1)]
         getter cluster : UInt32
+
+        @[TLV::Field(tag: 2)]
+        getter restrictions : Array(AccessRestriction)
+
+        @[TLV::Field(tag: 254, optional: true)]
+        getter fabric_index : UInt8?
+
+        def initialize(@endpoint : UInt16, @cluster : UInt32, @restrictions : Array(AccessRestriction),
+                       @fabric_index : UInt8? = nil)
+        end
+      end
+
+      struct CommissioningAccessRestrictionEntry
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter endpoint : UInt16
+
+        @[TLV::Field(tag: 1)]
+        getter cluster : UInt32
+
+        @[TLV::Field(tag: 2)]
         getter restrictions : Array(AccessRestriction)
 
         def initialize(@endpoint : UInt16, @cluster : UInt32, @restrictions : Array(AccessRestriction))
+        end
+      end
+
+      struct ReviewFabricRestrictionsRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter arl : Array(CommissioningAccessRestrictionEntry)
+
+        def initialize(@arl : Array(CommissioningAccessRestrictionEntry))
+        end
+      end
+
+      struct ReviewFabricRestrictionsResponse
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter token : UInt64
+
+        def initialize(@token : UInt64)
         end
       end
 
@@ -110,8 +164,8 @@ module Matter
         end
       end
 
-      # Matter 1.6 FabricRestrictionReviewUpdate fields. The host callback is
-      # the only delivery path until MNGD wire support is complete.
+      # Matter 1.6 FabricRestrictionReviewUpdate fields. With MNGD enabled,
+      # the update is also emitted as a fabric-sensitive cluster event.
       struct FabricRestrictionReviewUpdate
         include TLV::Serializable
 
@@ -250,11 +304,21 @@ module Matter
       attribute 0x0002, :subjects_per_access_control_entry, UInt16, default: DEFAULT_SUBJECTS_PER_ENTRY, fixed: true
       attribute 0x0003, :targets_per_access_control_entry, UInt16, default: DEFAULT_TARGETS_PER_ENTRY, fixed: true
       attribute 0x0004, :access_control_entries_per_fabric, UInt16, default: DEFAULT_ENTRIES_PER_FABRIC, fixed: true
+      attribute 0x0005, :commissioning_arl, Array(CommissioningAccessRestrictionEntry),
+        computed: true, fixed: true, requires: :managed_device
+      attribute 0x0006, :arl, Array(AccessRestrictionEntry),
+        computed: true, fabric_scoped: true, requires: :managed_device
       attribute 0x0007, :auxiliary_acl, Array(AccessControlEntry), computed: true,
         read_access: :administer, fabric_scoped: true, omit_changes: true, requires: :auxiliary
 
+      command 0x00, :review_fabric_restrictions, request: ReviewFabricRestrictionsRequest,
+        response: ReviewFabricRestrictionsResponse, response_id: 0x01,
+        access: :administer, requires: :managed_device
+
       event 0x00, :access_control_entry_changed, priority: :info, access: :administer
       event 0x01, :access_control_extension_changed, priority: :info, access: :administer, requires: :extension
+      event 0x02, :fabric_restriction_review_update, priority: :info, access: :administer,
+        requires: :managed_device, payload: FabricRestrictionReviewUpdate
       event 0x03, :auxiliary_access_updated, priority: :info, access: :administer,
         requires: :auxiliary, payload: AuxiliaryAccessUpdatedEvent
 
@@ -262,6 +326,8 @@ module Matter
       @extension = [] of ExtensionEntry
       @auxiliary_acl = [] of AccessControlEntry
       @access_restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
+      @commissioning_arl = [] of CommissioningAccessRestrictionEntry
+      @commissioning_arl_configured = false
       @pending_restriction_reviews = {} of UInt64 => RestrictionReviewRequest
       @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
       @next_restriction_review_token = 0_u64
@@ -315,12 +381,48 @@ module Matter
         @auxiliary_acl.select { |entry| entry.fabric_index == fabric_index }
       end
 
+      def commissioning_arl : Array(CommissioningAccessRestrictionEntry)
+        @commissioning_arl.map do |entry|
+          CommissioningAccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+        end
+      end
+
+      # The host supplies the fixed restrictions a commissioner can inspect
+      # before joining a fabric. Call this during host setup.
+      def configure_commissioning_access_restrictions(entries : Array(CommissioningAccessRestrictionEntry)) : Nil
+        if @commissioning_arl_configured
+          raise Matter::ConfigurationError.new("Commissioning ARL is fixed after host setup")
+        end
+        if entries.any? do |entry|
+             invalid_access_restriction_entry?(
+               AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions))
+           end
+          raise Matter::ConfigurationError.new("Invalid commissioning access restriction configuration")
+        end
+        @commissioning_arl = entries.map do |entry|
+          CommissioningAccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+        end
+        @commissioning_arl_configured = true
+      end
+
+      def arl(fabric_index : UInt8? = nil) : Array(AccessRestrictionEntry)
+        if index = fabric_index
+          entries = [] of AccessRestrictionEntry
+          (@access_restrictions[index]? || [] of AccessRestrictionEntry).each do |entry|
+            entries << AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup, index)
+          end
+          entries
+        else
+          [] of AccessRestrictionEntry
+        end
+      end
+
       # A host-owned policy replaces one fabric's transient ARL. Empty entries
       # remove that fabric's restrictions. This is not an advertised MNGD wire
       # attribute and hosts must reinstall it after restart.
       def configure_access_restrictions(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : Nil
         if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
-           entries.any? { |entry| invalid_access_restriction_entry?(entry) }
+           entries.any? { |entry| invalid_fabric_access_restriction_entry?(entry, fabric_index) }
           raise Matter::ConfigurationError.new("Invalid access restriction configuration")
         end
         if entries.empty?
@@ -330,6 +432,7 @@ module Matter
             AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
           end
         end
+        increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
       end
 
       private def invalid_access_restriction_entry?(entry : AccessRestrictionEntry) : Bool
@@ -338,12 +441,31 @@ module Matter
           entry.restrictions.empty? || entry.restrictions.any? { |restriction| restriction.id == INVALID_DATA_MODEL_ID }
       end
 
+      private def invalid_fabric_access_restriction_entry?(entry : AccessRestrictionEntry, fabric_index : UInt8) : Bool
+        return true if invalid_access_restriction_entry?(entry)
+        entry.fabric_index.try { |index| index != fabric_index } || false
+      end
+
       def on_restriction_review_requested(&block : RestrictionReviewRequest -> Nil) : Nil
         @on_restriction_review_requested = block
       end
 
       def on_restriction_review_updated(&block : UInt8, FabricRestrictionReviewUpdate -> Nil) : Nil
         @on_restriction_review_updated = block
+      end
+
+      def review_fabric_restrictions(request : ReviewFabricRestrictionsRequest) : ReviewFabricRestrictionsResponse | InteractionModel::Status
+        fabric_index = @request_fabric_index
+        return InteractionModel::Status.unsupported_access unless @request_is_case_session && fabric_index
+        entries = request.arl.map do |entry|
+          AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions)
+        end
+        return InteractionModel::Status.constraint_error if entries.any? { |entry| invalid_access_restriction_entry?(entry) }
+        token = request_restriction_review(fabric_index, entries)
+        ReviewFabricRestrictionsResponse.new(token)
+      rescue ex : Matter::ConfigurationError
+        Log.warn(exception: ex) { "Restriction review host is unavailable" }
+        InteractionModel::Status.failure
       end
 
       # Internal host lifecycle for a future ReviewFabricRestrictions command.
@@ -403,6 +525,7 @@ module Matter
         @pending_restriction_reviews.delete(token)
         begin
           callback.call(fabric_index, update)
+          emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
         rescue ex
           @pending_restriction_reviews[token] = request
           Log.error(exception: ex) { "Host restriction review update failed" }
@@ -680,6 +803,7 @@ module Matter
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
         @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
         @access_restrictions.delete(fabric_index)
+        increment_version_and_notify(ATTR_ARL) if @feature_map.managed_device?
         @pending_restriction_reviews.each do |token, request|
           @restriction_review_timers.delete(token).try(&.close) if request.fabric_index == fabric_index
         end
