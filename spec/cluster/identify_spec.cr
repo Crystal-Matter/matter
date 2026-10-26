@@ -105,10 +105,12 @@ describe Matter::Cluster::Identify do
       identify_cmd = commands.find { |cmd| cmd.id.id == Matter::Cluster::Identify::CMD_IDENTIFY }
       identify_cmd.should_not be_nil
       identify_cmd.as(Matter::Cluster::CommandMetadata).name.should eq("identify")
+      identify_cmd.as(Matter::Cluster::CommandMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
 
       trigger_effect_cmd = commands.find { |cmd| cmd.id.id == Matter::Cluster::Identify::CMD_TRIGGER_EFFECT }
       trigger_effect_cmd.should_not be_nil
       trigger_effect_cmd.as(Matter::Cluster::CommandMetadata).name.should eq("triggerEffect")
+      trigger_effect_cmd.as(Matter::Cluster::CommandMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
     end
 
     it "executes Identify command" do

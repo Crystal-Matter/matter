@@ -31,6 +31,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while preserving the mode, DataVersion, and event stream. The Thermostat Events
   example includes a heating-only endpoint for official chip-tool coverage.
 
+### Identify command access
+
+- Require Manage privilege for Identify and TriggerEffect commands as specified in Matter 1.6.
+
 ### Thermostat minimum deadband legacy writes
 
 - Accept valid legacy MinSetpointDeadBand writes while retaining the configured

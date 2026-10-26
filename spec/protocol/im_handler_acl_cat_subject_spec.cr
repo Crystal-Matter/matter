@@ -2,6 +2,7 @@ require "../spec_helper"
 
 require "../../src/matter/cluster/access_control"
 require "../../src/matter/cluster/descriptor"
+require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/datatype/case_authenticated_tag"
 require "../../src/matter/datatype/node_id"
@@ -74,6 +75,58 @@ describe "IMHandler ACL CAT subjects" do
       fabric_filtered: false
     )
     descriptor.request_fabric_filtered?.should be_false
+  end
+end
+
+describe "IMHandler Identify command ACL" do
+  it "requires Manage for Identify and TriggerEffect on a CASE fabric" do
+    acl = Matter::Cluster::AccessControl.new(endpoint(0))
+    identify = Matter::Cluster::Identify.new(endpoint(1))
+    clusters = {} of Tuple(UInt16, UInt32) => Matter::Cluster::Base
+    clusters[{0_u16, Matter::Cluster::AccessControl::CLUSTER_ID}] = acl
+    clusters[{1_u16, Matter::Cluster::Identify::CLUSTER_ID}] = identify
+
+    subject = 0x1234_u64
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      privilege: Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Operate,
+      auth_mode: Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      subjects: [subject], targets: nil, fabric_index: 1_u8
+    )
+
+    triggered = false
+    identify.on_trigger_effect { |_, _| triggered = true }
+    commands = [
+      Matter::InteractionModel::CommandDataIBTlv.new(
+        Matter::InteractionModel::CommandPath.new(1_u16,
+          Matter::Cluster::Identify::CLUSTER_ID, Matter::Cluster::Identify::CMD_IDENTIFY),
+        Matter::Cluster::Identify::Request.new(5_u16).to_tlv(nil)),
+      Matter::InteractionModel::CommandDataIBTlv.new(
+        Matter::InteractionModel::CommandPath.new(1_u16,
+          Matter::Cluster::Identify::CLUSTER_ID, Matter::Cluster::Identify::CMD_TRIGGER_EFFECT),
+        Matter::Cluster::Identify::TriggerEffectRequest.new(
+          Matter::Cluster::Identify::EffectIdentifier::Blink,
+          Matter::Cluster::Identify::EffectVariant::Default).to_tlv(nil)),
+    ]
+
+    denied = Matter::Protocol::IMHandler.invoke_commands(commands, clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: [subject])
+    denied.map { |response| response.command_status.as(Matter::InteractionModel::CommandStatusIB).status.status }
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value] * 2)
+    identify.identify_time.should eq(0_u16)
+    triggered.should be_false
+
+    acl.acl.clear
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      privilege: Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Manage,
+      auth_mode: Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      subjects: [subject], targets: nil, fabric_index: 1_u8
+    )
+    allowed = Matter::Protocol::IMHandler.invoke_commands(commands, clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: [subject])
+    allowed.map { |response| response.command_status.as(Matter::InteractionModel::CommandStatusIB).status.status }
+      .should eq([Matter::InteractionModel::StatusCode::Success.value] * 2)
+    identify.identify_time.should eq(5_u16)
+    triggered.should be_true
   end
 end
 
