@@ -51,12 +51,23 @@ describe "Matter 1.6 Content Control interoperability" do
     expect_success(device.invoke("contentcontrol", "remove-block-content-time-window", ["[0]"]))
     expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(0_i64)
     expect_success(device.invoke("mediaplayback", "pause")).int("status").should eq(0_i64)
+    # Playback accounting ticks once per second. A tick can land between two
+    # chip-tool reads even after Pause has returned.
+    tick_granularity_seconds = 1_i64
+    before_daily_change_at = Time.instant
     before_daily_change = read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1)
     expect_success(device.invoke("contentcontrol", "set-screen-daily-time", ["120"]))
     read_int(device, "contentcontrol", "screen-daily-time", "ScreenDailyTime", 1).should eq(120_i64)
-    read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1).should eq(before_daily_change)
+    after_daily_change = read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1)
+    elapsed_seconds = (Time.instant - before_daily_change_at).total_seconds.ceil.to_i64 + tick_granularity_seconds
+    after_daily_change.should be <= before_daily_change
+    after_daily_change.should be >= before_daily_change - elapsed_seconds
+    before_restart_at = Time.instant
     device.restart!
     read_int(device, "contentcontrol", "screen-daily-time", "ScreenDailyTime", 1).should eq(120_i64)
-    read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1).should eq(before_daily_change)
+    after_restart = read_int(device, "contentcontrol", "remaining-screen-time", "RemainingScreenTime", 1)
+    restart_elapsed_seconds = (Time.instant - before_restart_at).total_seconds.ceil.to_i64 + tick_granularity_seconds
+    after_restart.should be <= after_daily_change
+    after_restart.should be >= after_daily_change - restart_elapsed_seconds
   end
 end
