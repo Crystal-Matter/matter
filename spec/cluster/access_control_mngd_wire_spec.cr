@@ -1,16 +1,16 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
-require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 require "../../src/matter/protocol/im_handler"
 
 private alias MngdAcl = Matter::Cluster::AccessControl
-private alias MngdOnOff = Matter::Cluster::OnOff
+private alias MngdWifi = Matter::Cluster::WiFiNetworkManagement
 private MNGD_SUBJECT = 0x1234_u64
 
 private def mngd_entry
-  MngdAcl::AccessRestrictionEntry.new(1_u16, MngdOnOff::CLUSTER_ID, [
+  MngdAcl::AccessRestrictionEntry.new(1_u16, MngdWifi::CLUSTER_ID, [
     MngdAcl::AccessRestriction.new(MngdAcl::AccessRestrictionType::AttributeAccessForbidden,
-      MngdOnOff::ATTR_ON_OFF),
+      MngdWifi::ATTR_SSID),
   ])
 end
 
@@ -46,16 +46,16 @@ describe "Access Control MNGD wire schema" do
   end
 
   it "encodes nullable restriction IDs and the fabric index with Matter 1.6 TLV tags" do
-    entry = MngdAcl::AccessRestrictionEntry.new(1_u16, MngdOnOff::CLUSTER_ID, [
+    entry = MngdAcl::AccessRestrictionEntry.new(1_u16, MngdWifi::CLUSTER_ID, [
       MngdAcl::AccessRestriction.new(MngdAcl::AccessRestrictionType::CommandForbidden, nil),
     ], 2_u8)
     decoded = MngdAcl::AccessRestrictionEntry.from_tlv(entry.to_tlv(nil))
     decoded.endpoint.should eq(1_u16)
-    decoded.cluster.should eq(MngdOnOff::CLUSTER_ID)
+    decoded.cluster.should eq(MngdWifi::CLUSTER_ID)
     decoded.restrictions.first.id.should be_nil
     decoded.fabric_index.should eq(2_u8)
     request = MngdAcl::ReviewFabricRestrictionsRequest.new([
-      MngdAcl::CommissioningAccessRestrictionEntry.new(1_u16, MngdOnOff::CLUSTER_ID,
+      MngdAcl::CommissioningAccessRestrictionEntry.new(1_u16, MngdWifi::CLUSTER_ID,
         entry.restrictions),
     ])
     MngdAcl::ReviewFabricRestrictionsRequest.from_tlv(request.to_tlv(nil)).arl.size.should eq(1)
@@ -70,7 +70,7 @@ describe "Access Control MNGD wire schema" do
   it "exposes read-only View attributes, fabric-scoped ARL and Administer-only review" do
     acl = MngdAcl.new(endpoint(0), MngdAcl::Feature::ManagedDevice)
     acl.configure_commissioning_access_restrictions([
-      MngdAcl::CommissioningAccessRestrictionEntry.new(1_u16, MngdOnOff::CLUSTER_ID,
+      MngdAcl::CommissioningAccessRestrictionEntry.new(1_u16, MngdWifi::CLUSTER_ID,
         mngd_entry.restrictions),
     ])
     expect_raises(Matter::ConfigurationError) do
@@ -133,7 +133,7 @@ describe "Access Control MNGD wire schema" do
     mngd_invoke(acl, 1_u8, malformed).command_status.try(&.status.status)
       .should eq(Matter::InteractionModel::StatusCode::InvalidCommand.value)
     invalid = MngdAcl::ReviewFabricRestrictionsRequest.new([
-      MngdAcl::CommissioningAccessRestrictionEntry.new(1_u16, MngdOnOff::CLUSTER_ID,
+      MngdAcl::CommissioningAccessRestrictionEntry.new(1_u16, MngdWifi::CLUSTER_ID,
         [] of MngdAcl::AccessRestriction),
     ])
     mngd_invoke(acl, 1_u8, invalid.to_tlv(nil)).command_status.try(&.status.status)

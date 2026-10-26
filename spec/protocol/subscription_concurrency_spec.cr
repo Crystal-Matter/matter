@@ -36,6 +36,7 @@ describe "Protocol concurrency" do
     handler.clusters[{1_u16, Matter::Cluster::OnOff::CLUSTER_ID}] = on_off
 
     session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+    session.peer_subject_ids = [0x2222_u64]
     handler.sessions[session.session_id] = session
 
     path = Matter::InteractionModel::AttributePath.new(

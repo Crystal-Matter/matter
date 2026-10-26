@@ -1457,16 +1457,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Access Control managed restriction foundation
 
 - Recheck ACL and ARL on active attribute subscription reports after policy
-  changes. Enforce CommissioningARL on PASE reads, writes, commands, and events when
-  MNGD is explicitly enabled; require root endpoint for review commands.
+  changes. Enforce CommissioningARL on PASE reads, writes, commands, and events
+  when MNGD is explicitly enabled; require root endpoint for review commands.
   Persist a compensating cancellation when a host review callback fails before
-  returning its token.
+  returning its token. Restriction targets are limited to the three network
+  infrastructure management clusters on non-root endpoints.
 - Persist per-fabric ARL, fixed CommissioningARL, and pending review requests
   with their tokens and deadlines in the Access Control document. Replay
   unexpired host reviews after restart, complete expired reviews, and prune
   orphaned managed state before fabric index reuse. Host policy saves now
   write through and roll back in-memory changes if storage fails. MNGD remains
-  unadvertised while host consent and semantic target validation are pending.
+  unadvertised while host consent and installed-target validation are pending.
 - Define the gated Matter 1.6 MNGD wire structs, View-readable
   `CommissioningARL` and fabric-scoped `ARL`, Administer-only review command,
   and fabric-sensitive completion event. The default feature map omits MNGD;

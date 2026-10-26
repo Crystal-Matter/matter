@@ -1,14 +1,14 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
-require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 
 private alias ReviewAcl = Matter::Cluster::AccessControl
-private alias ReviewOnOff = Matter::Cluster::OnOff
+private alias ReviewWifi = Matter::Cluster::WiFiNetworkManagement
 
 private def review_entry
-  ReviewAcl::AccessRestrictionEntry.new(1_u16, ReviewOnOff::CLUSTER_ID, [
+  ReviewAcl::AccessRestrictionEntry.new(1_u16, ReviewWifi::CLUSTER_ID, [
     ReviewAcl::AccessRestriction.new(
-      ReviewAcl::AccessRestrictionType::AttributeAccessForbidden, ReviewOnOff::ATTR_ON_OFF),
+      ReviewAcl::AccessRestrictionType::AttributeAccessForbidden, ReviewWifi::ATTR_SSID),
   ])
 end
 
@@ -52,7 +52,7 @@ describe "host-managed restriction review lifecycle" do
 
     expect_raises(Matter::ConfigurationError) do
       acl.request_restriction_review(1_u8, [
-        ReviewAcl::AccessRestrictionEntry.new(1_u16, ReviewOnOff::CLUSTER_ID,
+        ReviewAcl::AccessRestrictionEntry.new(1_u16, ReviewWifi::CLUSTER_ID,
           [] of ReviewAcl::AccessRestriction),
       ])
     end

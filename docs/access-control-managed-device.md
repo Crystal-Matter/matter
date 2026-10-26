@@ -56,10 +56,11 @@ Pending requests retain their token and deadline across restart. When both
 host callbacks are installed after restore, unexpired requests are replayed
 with the original token, while expired requests produce their fallback update.
 If the host request callback fails before the token is returned, the library
-persists a compensating cancellation so restart does not replay that request.
+persists a compensating cancellation so restart does not replay that request
+when the rollback save succeeds.
 Completion delivery is at least once if storage fails after an update callback
-or event. If the host has not completed a request after 59 minutes, the library invokes
-the update callback with that token and no optional instructions. Removing a
+or event. If the host has not completed a request after 59 minutes, the library
+invokes the update callback with that token and no optional instructions. Removing a
 fabric cancels its pending reviews. The update fields use the Matter 1.6 TLV
 schema and enforce the 512-byte instruction and 256-byte URL limits.
 
@@ -73,10 +74,10 @@ The response carries a review token; completion emits a fabric-sensitive
 `FabricRestrictionReviewUpdate` event. Malformed wire requests fail before
 the host callback runs. The command is accepted only on the root endpoint.
 With MNGD explicitly enabled, CommissioningARL restricts PASE attribute reads
-and writes, command invocations, and event reads. CASE sessions continue to use their
-fabric's ARL.
+and writes, command invocations, and event reads. CASE sessions continue to use
+their fabric's ARL.
 
-Host consent handling, semantic validation of allowed endpoint/cluster targets,
+Host consent handling, validation that target clusters are actually installed,
 and independent managed-device interoperability remain future work. Device
 configurations should leave MNGD disabled until those paths are implemented
 and tested.

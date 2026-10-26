@@ -1,14 +1,14 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
-require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 
 private alias StoredAcl = Matter::Cluster::AccessControl
-private alias StoredOnOff = Matter::Cluster::OnOff
+private alias StoredWifi = Matter::Cluster::WiFiNetworkManagement
 
 private def stored_entry : StoredAcl::AccessRestrictionEntry
-  StoredAcl::AccessRestrictionEntry.new(1_u16, StoredOnOff::CLUSTER_ID, [
+  StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
     StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::AttributeAccessForbidden,
-      StoredOnOff::ATTR_ON_OFF),
+      StoredWifi::ATTR_SSID),
   ])
 end
 
@@ -27,13 +27,13 @@ describe "Access Control managed restriction persistence" do
     original = stored_cluster
     original.configure_access_restrictions(1_u8, [stored_entry])
     original.configure_access_restrictions(2_u8, [
-      StoredAcl::AccessRestrictionEntry.new(1_u16, StoredOnOff::CLUSTER_ID, [
+      StoredAcl::AccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID, [
         StoredAcl::AccessRestriction.new(StoredAcl::AccessRestrictionType::CommandForbidden,
-          StoredOnOff::CMD_ON),
+          StoredWifi::CMD_NETWORK_PASSPHRASE_REQUEST),
       ]),
     ])
     original.configure_commissioning_access_restrictions([
-      StoredAcl::CommissioningAccessRestrictionEntry.new(1_u16, StoredOnOff::CLUSTER_ID,
+      StoredAcl::CommissioningAccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID,
         stored_entry.restrictions),
     ])
     initial_requests = [] of StoredAcl::RestrictionReviewRequest
@@ -44,7 +44,7 @@ describe "Access Control managed restriction persistence" do
 
     restored = stored_cluster
     restored.restore_state(document)
-    restored.arl(1_u8).first.restrictions.first.id.should eq(StoredOnOff::ATTR_ON_OFF)
+    restored.arl(1_u8).first.restrictions.first.id.should eq(StoredWifi::ATTR_SSID)
     restored.arl(2_u8).first.restrictions.first.type.should eq(StoredAcl::AccessRestrictionType::CommandForbidden)
     restored.commissioning_arl.size.should eq(1)
     expect_raises(Matter::ConfigurationError) do
@@ -114,7 +114,7 @@ describe "Access Control managed restriction persistence" do
     acl.data_version.should eq(before_version)
     expect_raises(Matter::StorageError) do
       acl.configure_commissioning_access_restrictions([
-        StoredAcl::CommissioningAccessRestrictionEntry.new(1_u16, StoredOnOff::CLUSTER_ID,
+        StoredAcl::CommissioningAccessRestrictionEntry.new(1_u16, StoredWifi::CLUSTER_ID,
           stored_entry.restrictions),
       ])
     end
