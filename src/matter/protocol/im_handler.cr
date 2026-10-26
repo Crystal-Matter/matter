@@ -103,7 +103,8 @@ module Matter
                       Cluster::Base::GLOBAL_CLUSTER_REVISION].includes?(attribute_id)
           return false unless declared
           current = read_attributes([path], clusters, session.fabric_index,
-            session.case_session?, peer_subject_ids)
+            session.case_session?, peer_subject_ids, session_id: session.session_id.to_u64,
+            local_node_id: session.local_node_id.try(&.id))
           return false unless current.any?(&.attribute_data)
         end
 
