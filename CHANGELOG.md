@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Door Lock credential status validation
+
+- Reject SetCredential requests that set UserStatus to Available. Matter 1.6 allows
+  only OccupiedEnabled or OccupiedDisabled in this command, and rejected requests
+  leave the user and credential records unchanged.
+
 ### Thermostat minimum deadband legacy writes
 
 - Accept valid legacy MinSetpointDeadBand writes while retaining the configured
