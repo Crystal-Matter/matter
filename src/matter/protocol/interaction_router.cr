@@ -456,7 +456,8 @@ module Matter
           peer_subject_ids(session),
           fabric_filtered,
           session.session_id.to_u64,
-          data_version_filters
+          data_version_filters,
+          session.local_node_id.try(&.id)
         )
       end
 

@@ -114,6 +114,7 @@ module Matter
         fabric_filtered : Bool = true,
         session_id : UInt64? = nil,
         data_version_filters : Array(InteractionModel::DataVersionFilterIB)? = nil,
+        local_node_id : UInt64? = nil,
       ) : Array(InteractionModel::AttributeReportIB)
         attribute_reports = [] of InteractionModel::AttributeReportIB
         requests = attribute_requests || [] of InteractionModel::AttributePath
@@ -170,7 +171,8 @@ module Matter
             expanded_paths.each do |(endpoint_id, cluster_id, attribute_id)|
               cluster = clusters[{endpoint_id, cluster_id}]
               next unless cluster
-              next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id, cluster.data_version)
+              next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id,
+                        cluster.data_version, local_node_id)
 
               concrete_path = InteractionModel::AttributePath.new(
                 endpoint: endpoint_id,
@@ -217,7 +219,8 @@ module Matter
             next
           end
 
-          next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id, cluster.data_version)
+          next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id,
+                    cluster.data_version, local_node_id)
 
           required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
           unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
@@ -250,10 +253,11 @@ module Matter
         endpoint_id : UInt16,
         cluster_id : UInt32,
         version : UInt32,
+        local_node_id : UInt64?,
       ) : Bool
         return false unless filters
         filters.any? do |filter|
-          filter.path.node.nil? && filter.path.endpoint == endpoint_id &&
+          (filter.path.node.nil? || filter.path.node == local_node_id) && filter.path.endpoint == endpoint_id &&
             filter.path.cluster == cluster_id && filter.data_version == version
         end
       end

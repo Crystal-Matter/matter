@@ -1880,6 +1880,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reports; stale versions continue to return data, including on wildcard reads.
 - Let controller reads and subscriptions supply data version filters, with a
   convenient version argument for a single attribute read.
+- Apply a matching DataVersionFilterIB when its ClusterPath names the local node,
+  while ignoring filters for another node. Read and subscription priming reports
+  use the authenticated session's local node identity.
 
 ### Conditional Interaction Model writes
 
