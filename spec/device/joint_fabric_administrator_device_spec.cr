@@ -80,14 +80,72 @@ end
 
 class InterruptedJfaCommitYaml < Matter::Storage::YamlFile
   property? fail_next_cluster_write = false
+  property? fail_next_flush = false
+  property fail_cluster_id : String?
+
+  protected def flush : Nil
+    if @fail_next_flush
+      @fail_next_flush = false
+      raise Matter::StorageError.new("Interrupted joined completion flush")
+    end
+    super
+  end
 
   def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
-    if @fail_next_cluster_write && collection == Matter::Storage::Collections::CLUSTERS
+    if @fail_next_cluster_write && collection == Matter::Storage::Collections::CLUSTERS &&
+       (@fail_cluster_id.nil? || @fail_cluster_id == id)
       @fail_next_cluster_write = false
       raise Matter::StorageError.new("Interrupted cluster write")
     end
     super
   end
+end
+
+private class PendingJfaCompletionService < Matter::Commissioning::JointFabricAdministratorService
+  def stage_for_spec(cluster : Matter::Cluster::JointFabricAdministrator, certificate : Bytes) : Nil
+    @administrator_cluster = cluster
+    @cross_signed_icac = certificate
+    @icac_pending_commit = true
+  end
+end
+
+private def stage_joined_jfa_completion(backend : Matter::Storage::Backend,
+                                        *, terms_required : Bool = false) : Tuple(InspectableJointFabricAdministratorDevice, PendingJfaCompletionService)
+  device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+    ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0,
+    tc_min_required_version: terms_required ? 2_u16 : nil,
+    tc_required_acknowledgements: 0b0110_u16)
+  device.prepare_for_start
+  device.general_commissioning.arm_failsafe(
+    Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64), 1_u8, true
+  ).error_code.ok?.should be_true
+  Matter::Commissioning::CredentialJournal.begin_add(backend, 1_u8)
+  crypto = Matter::Crypto::StandardCrypto.new
+  root_key = crypto.create_key_pair
+  icac_key = crypto.create_key_pair
+  fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64,
+    root_key: root_key, icac_key: icac_key)
+  device.fabric_table.add_fabric(fabric).should be_true
+  device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
+    MatterJointFabricAdministrator::Device::IcacKeyState.new(icac_key.private_key, icac_key.public_key).to_document)
+
+  administrator = device.joint_fabric_administrator
+  administrator.begin_provisional_administrator_fabric_index(1_u8)
+  device.persistence.save_cluster(administrator).should be_true
+  root = fabric.root_cert || raise Matter::ConfigurationError.new("Test root missing")
+  cross_signed = Matter::Crypto::MatterCertificate::Builder.intermediate(
+    icac_key.public_key, fabric.fabric_id, 2_u64, root_key, 1_u64, Bytes[4_u8], crypto)
+  service = PendingJfaCompletionService.new(
+    icac_key, root, fabric.fabric_id,
+    -> { true }, ->(_index : UInt8) { true },
+    ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+    ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil },
+    persist_icac: ->(certificate : Bytes?) {
+      device.persist_icac_commit_for_spec(certificate.as(Bytes))
+    })
+  service.stage_for_spec(administrator, cross_signed)
+  administrator.service = service
+  {device, service}
 end
 
 class InterruptedJfaCommitSqlite < Matter::Storage::Sqlite
@@ -143,6 +201,144 @@ private class FailingJfaMemory < Matter::Storage::Memory
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "rolls back both joined fabric and JFA identity when their shared completion flush fails" do
+    path = File.join(Dir.tempdir, "matter-jfa-completion-#{Random::Secure.hex(6)}.yml")
+    backend = InterruptedJfaCommitYaml.new(path)
+    device = stage_joined_jfa_completion(backend)[0]
+    backend.fail_next_cluster_write = true
+
+    expect_raises(Matter::StorageError, "Interrupted cluster write") do
+      device.general_commissioning.commissioning_complete(1_u8, true)
+    end
+    device.general_commissioning.failsafe_armed?.should be_true
+    backend.close
+
+    restarted = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restarted.fabric_table.get_fabric(1_u8).should be_nil
+    restarted.joint_fabric_administrator.administrator_fabric_index.should be_nil
+    restarted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).should be_nil
+  ensure
+    restarted.try(&.shutdown!)
+    device.try(&.shutdown!) if backend.try(&.open?)
+    File.delete?(path) if path
+  end
+
+  it "retries a failed joined completion and commits terms, fabric, and JFA identity together" do
+    path = File.join(Dir.tempdir, "matter-jfa-completion-retry-#{Random::Secure.hex(6)}.yml")
+    backend = InterruptedJfaCommitYaml.new(path)
+    device, service = stage_joined_jfa_completion(backend, terms_required: true)
+    pending_icac = service.cross_signed_icac.as(Bytes)
+    device.general_commissioning.set_tc_acknowledgements(
+      Matter::Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(2_u16, 0b0110_u16)
+    ).error_code.ok?.should be_true
+    committed_terms_before = device.general_commissioning.save_state
+    backend.fail_cluster_id = device.joint_fabric_administrator.persistence_key
+    backend.fail_next_cluster_write = true
+
+    expect_raises(Matter::StorageError, "Interrupted cluster write") do
+      device.general_commissioning.commissioning_complete(1_u8, true)
+    end
+    device.general_commissioning.failsafe_armed?.should be_true
+    device.general_commissioning.save_state.should eq(committed_terms_before)
+    device.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should_not be_nil
+    service.cross_signed_icac.should eq(pending_icac)
+
+    device.general_commissioning.commissioning_complete(1_u8, true).error_code.ok?.should be_true
+    backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should be_nil
+    device.general_commissioning.tc_accepted_version.should eq(2_u16)
+    backend.close
+
+    restarted = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0,
+      tc_min_required_version: 2_u16, tc_required_acknowledgements: 0b0110_u16)
+    restarted.fabric_table.get_fabric(1_u8).should_not be_nil
+    restarted.general_commissioning.tc_accepted_version.should eq(2_u16)
+    restarted.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    icac_document = restarted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT) ||
+                    raise Matter::StorageError.new("Committed ICAC missing")
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(icac_document)
+      .certificate.should eq(pending_icac)
+  ensure
+    restarted.try(&.shutdown!)
+    device.try(&.shutdown!) if backend.try(&.open?)
+    File.delete?(path) if path
+  end
+
+  it "keeps joined credentials provisional after the shared file flush fails" do
+    path = File.join(Dir.tempdir, "matter-jfa-completion-flush-#{Random::Secure.hex(6)}.yml")
+    backend = InterruptedJfaCommitYaml.new(path)
+    device, service = stage_joined_jfa_completion(backend)
+    pending_icac = service.cross_signed_icac.as(Bytes)
+    backend.fail_next_flush = true
+
+    expect_raises(Matter::StorageError, "Interrupted joined completion flush") do
+      device.general_commissioning.commissioning_complete(1_u8, true)
+    end
+    device.general_commissioning.failsafe_armed?.should be_true
+    backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should_not be_nil
+    backend.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).should be_nil
+    service.cross_signed_icac.should eq(pending_icac)
+    device.general_commissioning.commissioning_complete(1_u8, true).error_code.ok?.should be_true
+    backend.close
+
+    restarted = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restarted.fabric_table.get_fabric(1_u8).should_not be_nil
+    restarted.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    icac_document = restarted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT) ||
+                    raise Matter::StorageError.new("Committed ICAC missing")
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(icac_document)
+      .certificate.should eq(pending_icac)
+  ensure
+    restarted.try(&.shutdown!)
+    device.try(&.shutdown!) if backend.try(&.open?)
+    File.delete?(path) if path
+  end
+
+  it "rolls back a joined completion on SQLite and can commit it on retry" do
+    {false, true}.each do |retry_completion|
+      path = File.join(Dir.tempdir, "matter-jfa-completion-#{Random::Secure.hex(6)}.sqlite3")
+      backend = InterruptedJfaCommitSqlite.new(path)
+      device, service = stage_joined_jfa_completion(backend)
+      pending_icac = service.cross_signed_icac.as(Bytes)
+      backend.fail_next_cluster_write = true
+
+      expect_raises(Matter::StorageError, "Interrupted cluster write") do
+        device.general_commissioning.commissioning_complete(1_u8, true)
+      end
+      device.general_commissioning.failsafe_armed?.should be_true
+      backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+        Matter::Commissioning::CredentialJournal::ID).should_not be_nil
+      if retry_completion
+        device.general_commissioning.commissioning_complete(1_u8, true).error_code.ok?.should be_true
+      end
+      backend.close
+
+      restarted = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Sqlite.new(path),
+        ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+      if retry_completion
+        restarted.fabric_table.get_fabric(1_u8).should_not be_nil
+        restarted.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+        icac_document = restarted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT) ||
+                        raise Matter::StorageError.new("Committed ICAC missing")
+        MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(icac_document)
+          .certificate.should eq(pending_icac)
+      else
+        restarted.fabric_table.get_fabric(1_u8).should be_nil
+        restarted.joint_fabric_administrator.administrator_fabric_index.should be_nil
+        restarted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT).should be_nil
+      end
+      restarted.shutdown!
+      backend.destroy!
+    end
+  end
+
   it "rolls a partial ICAC commit back on SQLite and restores a durable pair after a crash" do
     path = File.join(Dir.tempdir, "matter-jfa-atomic-commit-#{Random::Secure.hex(6)}.sqlite3")
     backend = InterruptedJfaCommitSqlite.new(path)

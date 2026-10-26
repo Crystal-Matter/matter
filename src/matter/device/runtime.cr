@@ -101,6 +101,12 @@ module Matter
     # Check-In client. No stale CASE peer address is reused after sleep.
     property icd_peer_resolver : Proc(UInt8, UInt64, Socket::IPAddress?)? = nil
 
+    # Application credential documents that must be committed with the NOC
+    # journal clear are written inside the same backend transaction. The second
+    # callback changes only live state after that transaction succeeds.
+    property commissioning_commit_write : Proc(Storage::Backend, Nil)? = nil
+    property commissioning_commit_complete : Proc(Nil)? = nil
+
     @shutdown_channel : Channel(Nil) = Channel(Nil).new
     @basic_info : Cluster::BasicInformation? = nil
     @general_commissioning : Cluster::GeneralCommissioning? = nil
@@ -923,43 +929,23 @@ module Matter
       general_commissioning.on_failsafe_armed = -> { operational_credentials.on_failsafe_armed }
       general_commissioning.on_failsafe_expired = -> { operational_credentials.on_failsafe_expired }
       general_commissioning.on_failsafe_success = -> do
-        if tc_state = general_commissioning.pending_tc_commit_state
-          # A successful CommissioningComplete must not durably retain the NOC
-          # while losing the user's acknowledged terms in the debounce window.
-          # File backends flush this transaction with one atomic rename.
-          key = general_commissioning.persistence_key
-          backend = @persistence.backend
-          previous_tc = backend.read(Storage::Collections::CLUSTERS, key)
-          previous_journal = backend.read(Commissioning::CredentialJournal::COLLECTION,
-            Commissioning::CredentialJournal::ID)
-          general_commissioning.with_pending_tc_commit do
-            begin
-              backend.transaction do
-                backend.write(Storage::Collections::CLUSTERS, key, tc_state)
-                Commissioning::CredentialJournal.clear(backend)
-              end
-            rescue ex
-              # TreeBackend coalesces writes but does not roll back its tree
-              # when the file flush fails. Restore both documents before a
-              # later write could accidentally persist an unacknowledged TC.
-              backend.transaction do
-                restore_stored_document(Storage::Collections::CLUSTERS, key, previous_tc)
-                restore_stored_document(Commissioning::CredentialJournal::COLLECTION,
-                  Commissioning::CredentialJournal::ID, previous_journal)
-              end
-              raise ex
-            end
-
-            # Only after the file flush succeeded do the two services drop
-            # their provisional in-memory state. A debounced writer sees the
-            # pending document until this transition is complete.
-            general_commissioning.commit_tc_acceptance(publish: false)
-            operational_credentials.on_failsafe_success
+        tc_state = general_commissioning.pending_tc_commit_state
+        backend = @persistence.backend
+        general_commissioning.with_pending_tc_commit do
+          # The NOC undo record, accepted terms, and application credentials
+          # become durable at one commit point. Keep every live provisional
+          # state intact if any write or the file flush fails.
+          backend.transaction do
+            backend.write(Storage::Collections::CLUSTERS,
+              general_commissioning.persistence_key, tc_state) if tc_state
+            @commissioning_commit_write.try(&.call(backend))
+            Commissioning::CredentialJournal.clear(backend)
           end
-          general_commissioning.publish_tc_commit
-        else
-          operational_credentials.on_failsafe_success
+          general_commissioning.commit_tc_acceptance(publish: false) if tc_state
         end
+        @commissioning_commit_complete.try(&.call)
+        operational_credentials.on_failsafe_success(journal_cleared: true)
+        general_commissioning.publish_tc_commit if tc_state
       end
 
       # Ensure attestation signatures can access the PASE session's attestation_challenge.

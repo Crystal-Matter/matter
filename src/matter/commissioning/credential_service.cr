@@ -740,8 +740,8 @@ module Matter
       # CommissioningComplete is acknowledged only after the durable undo
       # record is removed. A crash before this point rolls back on restart;
       # a crash after it preserves the committed identity.
-      def commit_pending : Nil
-        CredentialJournal.clear(@fabric_table.backend)
+      def commit_pending(journal_cleared : Bool = false) : Nil
+        CredentialJournal.clear(@fabric_table.backend) unless journal_cleared
         reset_pending
       end
 
