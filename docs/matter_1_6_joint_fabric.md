@@ -144,7 +144,8 @@ item below as covered only to the extent of its cited tests.
   and resumes CAT/NOC rotation only after checked reconciliation.
   An explicit no-effect recovery path also checks B's durable Datastore after
   an interruption before RemoveAdmin: the outgoing Administrator must still
-  appear, the Datastore version must match the journaled pre-command value,
+  have the journaled entry, including its ICAC, even if unrelated Datastore
+  changes advanced the cluster-wide DataVersion,
   and the Administrator CAT must remain unchanged. The three-Administrator
   Docker extension for this path is pending execution. B and C remain
   registered while B is also restarted after lost Anchor and participant rotation

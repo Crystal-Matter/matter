@@ -35,7 +35,7 @@ module Matter
         property fabric_id : UInt64?
         property root_public_key : Bytes?
         property anchor_node_id : UInt64?
-        property datastore_version_before_remove : UInt32?
+        property outgoing_admin_entry : Bytes?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
@@ -44,7 +44,7 @@ module Matter
                        @fabric_id : UInt64? = nil,
                        @root_public_key : Bytes? = nil,
                        @anchor_node_id : UInt64? = nil,
-                       @datastore_version_before_remove : UInt32? = nil)
+                       @outgoing_admin_entry : Bytes? = nil)
         end
       end
 
@@ -151,7 +151,9 @@ module Matter
             advance(Stage::FabricRemoved)
           end
           if @journal.stage.fabric_removed?
-            @journal.datastore_version_before_remove = @datastore.data_version
+            administrator = @datastore.admin_list.find(&.node_id.==(@journal.outgoing_node_id)) ||
+                            raise Matter::CommissioningError.new("Outgoing Administrator is absent before RemoveAdmin")
+            @journal.outgoing_admin_entry = administrator.to_slice
             advance(Stage::RemovingDatastore)
             @port.remove_datastore_admin!
             advance(Stage::DatastoreRemoved)
@@ -265,13 +267,14 @@ module Matter
           unless datastore.status.state.committed?
             raise Matter::CommissioningError.new("Anchor Datastore is not committed")
           end
-          unless datastore.admin_list.count(&.node_id.==(journal.outgoing_node_id)) == 1
+          matching_admins = datastore.admin_list.select(&.node_id.==(journal.outgoing_node_id))
+          unless matching_admins.size == 1
             raise Matter::CommissioningError.new("Outgoing Administrator is not uniquely present")
           end
           target_version = journal.administrator_cat_version
           current_version = datastore.group_list.find(&.group_cat.==(0xFFFF_u16)).try(&.group_cat_version)
           unless target_version && target_version > 0_u16 && current_version == target_version - 1_u16 &&
-                 journal.datastore_version_before_remove == datastore.data_version &&
+                 journal.outgoing_admin_entry == matching_admins.first.to_slice &&
                  journal.rotated_nodes.empty? && journal.active_node_id.nil?
             raise Matter::CommissioningError.new("Anchor Datastore differs from the pre-removal snapshot")
           end

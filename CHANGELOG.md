@@ -15,10 +15,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Joint Fabric RemoveAdmin no-effect recovery
 
-- Journal the Anchor Datastore version before RemoveAdmin. After an interrupted
+- Journal the outgoing Administrator entry before RemoveAdmin. After an interrupted
   command, an explicit recovery action can retry only when the durable,
-  fabric-bound Datastore still contains the outgoing Administrator and retains
-  the original data and Administrator CAT versions. Recovery of a completed
+  fabric-bound Datastore still contains that same entry and retains
+  the original Administrator CAT version. Recovery of a completed
   RemoveAdmin continues through the existing path.
 
 ### Door Lock credential user type validation

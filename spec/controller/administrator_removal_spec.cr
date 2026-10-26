@@ -52,12 +52,12 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
       RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
       administrator_cat_version: 2_u16, fabric_id: 0x1111_u64,
       root_public_key: Bytes[1, 2, 3], anchor_node_id: 0x100_u64,
-      datastore_version_before_remove: 7_u32)
+      outgoing_admin_entry: Bytes[7, 8])
     restored = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
     restored.fabric_id.should eq(0x1111_u64)
     restored.root_public_key.should eq(Bytes[1, 2, 3])
     restored.anchor_node_id.should eq(0x100_u64)
-    restored.datastore_version_before_remove.should eq(7_u32)
+    restored.outgoing_admin_entry.should eq(Bytes[7, 8])
     restored.active_node_id.should eq(0x200_u64)
     restored.stage.should eq(RemovalStage::RotatingParticipant)
   end
@@ -194,7 +194,7 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
       RemovalStage::RemovingDatastore, administrator_cat_version: 2_u16,
       fabric_id: 0x1111_u64, root_public_key: Bytes[1, 2], anchor_node_id: 0x100_u64,
-      datastore_version_before_remove: original.data_version)
+      outgoing_admin_entry: original.admin_list.find!(&.node_id.==(0x300_u64)).to_slice)
     path = File.join(Dir.tempdir, "matter-jfa-remove-admin-#{Random::Secure.hex(6)}.yml")
     backend = Matter::Storage::YamlFile.new(path)
     backend.open
@@ -206,6 +206,12 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     datastore.restore_state(reopened.read(Matter::Storage::Collections::CLUSTERS,
       "anchor-datastore").as(Matter::Storage::Document))
+    datastore.data_version &+= 1
+    reopened.write(Matter::Storage::Collections::CLUSTERS, "anchor-datastore",
+      datastore.save_state.as(Matter::Storage::Document))
+    datastore.restore_state(reopened.read(Matter::Storage::Collections::CLUSTERS,
+      "anchor-datastore").as(Matter::Storage::Document))
+    datastore.data_version.should eq(original.data_version &+ 1_u32)
     restored = Matter::Controller::AdministratorRemoval::Journal.from_document(
       reopened.read(Matter::Storage::Collections::APP, "removal").as(Matter::Storage::Document))
     saved = [] of RemovalStage
@@ -236,11 +242,20 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
 
     altered = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     altered.restore_state(persisted)
-    altered.data_version &+= 1
+    replaced_admin = altered.admin_list.first
+    replaced_admin.icac = Bytes[9]
+    altered.admin_list = [replaced_admin, altered.admin_list[1]]
     expect_raises(Matter::CommissioningError) do
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(pending, altered, save)
     end
     pending.stage.should eq(RemovalStage::RemovingDatastore)
+
+    legacy = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
+    legacy.outgoing_admin_entry = nil
+    expect_raises(Matter::CommissioningError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(legacy, datastore, save)
+    end
+    legacy.stage.should eq(RemovalStage::RemovingDatastore)
 
     absent = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     absent.restore_state(persisted)
@@ -286,6 +301,7 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
 
         expect_raises(Matter::TransportError, /interrupted/) { workflow.run }
         stored.stage.should eq(uncertain)
+        stored.outgoing_admin_entry.should_not be_nil if command == "RemoveAdmin"
         restarted = Matter::Controller::AdministratorRemoval::Workflow.new(
           removal_datastore, 0x100_u64, [0x200_u64], port,
           -> { true }, -> { true }, save,
