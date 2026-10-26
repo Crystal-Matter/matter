@@ -237,7 +237,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nullable auto-selection uses TLV FieldState; optional overlay controls and
   real media remain open.
 
+- Add the gated SNP+WMARK profile: allocation carries the mandatory watermark
+  flag, stream records persist it, and Manage-privileged SnapshotStreamModify
+  commits a change after host callback success. The host must render the
+  watermark into image bytes; VDO+WMARK and OSD remain gated.
+
+- Extend the gated snapshot overlay profile to SNP+OSD, including combined
+  SNP+WMARK+OSD streams. Allocation and persisted stream records carry both
+  conditional flags; SnapshotStreamModify commits changes atomically after
+  the host applies the requested overlay state. VDO overlays remain gated.
+
 ### Camera AV Stream Management video
+
+- Add gated VDO+WMARK and VDO+OSD allocation and VideoStreamModify. Conditional
+  flags appear in allocated video streams; changes commit after a host callback
+  succeeds. Live video allocations still reset on restart because the host must
+  reopen encoders and transports. Overlay rendering remains host-owned.
 
 - Add opt-in Matter 1.6 revision 2 VDO capability and allocation/deallocation
   support with typed payloads, encoder/pixel-rate limits, shared audio/video
