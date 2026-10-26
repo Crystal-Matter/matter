@@ -9,6 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Focused E2E harness tests
+        run: |
+          python3 -m unittest e2e/test_focused_services.py -v
+          bash -n test
+          sh -n e2e/build-devices.sh
+          docker compose config --quiet
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
         with:

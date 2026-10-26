@@ -1469,6 +1469,22 @@ device) runs inside docker compose, so the only requirement is Docker with compo
 MATTER_E2E_BUILD_JOBS=1 ./test --e2e-only  # limit Crystal image builds on memory-constrained hosts
 ```
 
+For a local run of one or a few specs, select every Compose service those specs
+use. `--focused` builds only the selected device binaries (plus the small
+`device_validation` helper), starts only those services, and skips unit specs.
+It uses a separate Compose project and compiles one binary at a time by default.
+For example, the Aliro and verified Door Lock specs each need their own fixture:
+
+```shell
+./test --focused --service door-lock-aliro --service door-lock-verified -- \
+  e2e/spec/door_lock_aliro_spec.cr e2e/spec/door_lock_verified_spec.cr
+```
+
+List secondary services explicitly for specs that use peers (for example,
+`--service joint-fabric-anchor --service joint-fabric-joiner`). Service names
+come from `docker-compose.yml`; shared services resolve to their actual binary.
+The full `./test` invocation and CI still compile and start every device.
+
 * `docker-compose.yml` starts one container per `examples/matter_*_device.cr` and a
   `tests` container built from the official [chip-tool](https://github.com/matter-js/matter.js-chip)
   image with crystal added.
