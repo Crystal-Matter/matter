@@ -21,6 +21,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscriptions from older stores advance the counter past their saved cursor,
   so events remain visible after a process restart without reusing numbers.
 
+### Joint Fabric completion durability
+
+- Commit a joining Administrator's cross-signed ICAC, AdministratorFabricIndex,
+  accepted Terms and Conditions, and NOC journal clear in one storage
+  transaction. Failed writes and file flushes leave the live fail-safe
+  provisional for retry or rollback.
+
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and
