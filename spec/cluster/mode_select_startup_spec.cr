@@ -85,8 +85,21 @@ describe "Mode Select Matter 1.6 startup behavior" do
     device.mode_select.on_mode = 2_u8
     device.on_off_cluster.start_up_on_off = Matter::Cluster::OnOff::StartUpOnOff::On
     device.start
+    device.on_off_cluster.on?.should be_true
     device.mode_select.current_mode.should eq(2_u8)
+    device.shutdown!
+
+    ota = StartupModeDevice.new(backend, port: 0,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)])
+    ota.on_off_cluster.on_off = false
+    ota.mode_select.current_mode = 1_u8
+    ota.persistence.save_cluster(ota.on_off_cluster).should be_true
+    ota.persistence.save_cluster(ota.mode_select).should be_true
+    ota.start(ota_restart: true)
+    ota.on_off_cluster.on?.should be_false
+    ota.mode_select.current_mode.should eq(1_u8)
   ensure
     device.try(&.shutdown!)
+    ota.try(&.shutdown!)
   end
 end

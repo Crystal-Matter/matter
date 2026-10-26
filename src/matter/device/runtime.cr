@@ -483,9 +483,12 @@ module Matter
 
     # Starts mDNS and the configured transport and syncs advertisements for the current fabric set.
     # Returns immediately after starting - use `await_shutdown` to block until shutdown.
-    # Pass `ota_restart: true` when resuming after an OTA update so Level
-    # Control retains its pre-update CurrentLevel (Matter 1.6 §1.6.6.15).
+    # Pass `ota_restart: true` when resuming after an OTA update so lighting
+    # and mode clusters retain their pre-update state.
     def start(ota_restart : Bool = false) : Nil
+      @message_handler.clusters.each_value do |cluster|
+        cluster.as?(Cluster::OnOff).try(&.apply_startup_on_off(ota_restart: ota_restart))
+      end
       @message_handler.clusters.each_value do |cluster|
         cluster.as?(Cluster::LevelControl).try(&.apply_startup_level(ota_restart: ota_restart))
       end
@@ -497,7 +500,8 @@ module Matter
         on_off = @node.get_cluster(mode.endpoint_id.number, Cluster::OnOff)
         on_mode_override = on_off.try do |on_off_cluster|
           on_off_cluster.feature_map.lighting? &&
-            on_off_cluster.start_up_on_off == Cluster::OnOff::StartUpOnOff::On
+            on_off_cluster.start_up_on_off == Cluster::OnOff::StartUpOnOff::On &&
+            on_off_cluster.on?
         end || false
         mode.apply_startup_mode(ota_restart: ota_restart, on_mode_override: on_mode_override)
       end
