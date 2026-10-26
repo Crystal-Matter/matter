@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 24
+- Feature or complex conditional IDs absent from Crystal: 11
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -268,7 +268,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0104 | event | 0x0001 | not(feature(IS)) | declared; requires `{instantaneous: false}` |
 | 0x0104 | event | 0x0002 | feature(MO) | declared; requires `:manually_operable` |
 | 0x0105 | command | 0x0001 | feature(PS) | declared; requires `:positioning` |
-| 0x0201 | command | 0x0005 | feature(MSCH) | absent |
+| 0x0201 | command | 0x0005 | feature(MSCH) | declared; requires `:matter_schedules` |
 | 0x0201 | command | 0x0006 | feature(PRES) | declared; requires `:presets` |
 | 0x0201 | command | 0x0007 | feature(TSUGGEST) | absent |
 | 0x0201 | command | 0x0008 | feature(TSUGGEST) | absent |
@@ -278,7 +278,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0201 | event | 0x0003 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0004 | feature(TEVT) | declared; requires `:events` |
 | 0x0201 | event | 0x0005 | (feature(TEVT) and feature(AUTO)) | declared; requires `{events: true, automode: true}` |
-| 0x0201 | event | 0x0006 | (feature(TEVT) and feature(MSCH)) | absent |
+| 0x0201 | event | 0x0006 | (feature(TEVT) and feature(MSCH)) | declared; requires `{events: true, matter_schedules: true}` |
 | 0x0201 | event | 0x0007 | (feature(TEVT) and feature(PRES)) | declared; requires `{events: true, presets: true}` |
 | 0x0202 | command | 0x0000 | feature(STEP) | declared; requires `:step` |
 | 0x0300 | command | 0x0000 | feature(HS) | declared; requires `:hue_saturation` |
@@ -320,8 +320,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050B | command | 0x0001 | feature(NU) | declared; requires `:name_updates` |
 | 0x050F | command | 0x0000 | feature(PM) | declared; requires `:pin_management` |
 | 0x050F | command | 0x0001 | feature(PM) | declared; requires `:pin_management` |
-| 0x050F | command | 0x0005 | feature(ST) | absent |
-| 0x050F | command | 0x0006 | feature(ST) | absent |
+| 0x050F | command | 0x0005 | feature(ST) | declared; requires `:screen_time` |
+| 0x050F | command | 0x0006 | feature(ST) | declared; requires `:screen_time` |
 | 0x050F | command | 0x0007 | feature(BU) | declared; requires `:block_unrated` |
 | 0x050F | command | 0x0008 | feature(BU) | declared; requires `:block_unrated` |
 | 0x050F | command | 0x0009 | feature(OCR) | declared; requires `:on_demand_content_rating` |
@@ -332,7 +332,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050F | command | 0x000E | feature(BA) | declared; requires `:block_applications` |
 | 0x050F | command | 0x000F | feature(BTW) | declared; requires `:block_content_time_window` |
 | 0x050F | command | 0x0010 | feature(BTW) | declared; requires `:block_content_time_window` |
-| 0x050F | event | 0x0000 | feature(ST) | absent |
+| 0x050F | event | 0x0000 | feature(ST) | declared; requires `:screen_time` |
 | 0x050F | event | 0x0001 | feature(BTW) | declared; requires `:block_content_time_window` |
 | 0x0550 | command | 0x0000 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
 | 0x0550 | command | 0x0002 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |

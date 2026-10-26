@@ -8,6 +8,7 @@ The current server accepts these optional feature bits:
 
 | Feature | Bit | State and commands |
 | --- | ---: | --- |
+| ScreenTime | 0 | Daily and remaining seconds, AddBonusTime, SetScreenDailyTime, RemainingScreenTimeExpired event |
 | PINManagement | 1 | Timed UpdatePIN and ResetPIN; reset returns a fresh six-digit PIN |
 | BlockUnrated | 2 | BlockUnrated, BlockUnratedContent, UnblockUnratedContent |
 | OnDemandContentRating | 3 | Ordered ratings and threshold, SetOnDemandRatingThreshold |
@@ -16,9 +17,7 @@ The current server accepts these optional feature bits:
 | BlockApplications | 6 | App identities, AddBlockApplications, RemoveBlockApplications |
 | BlockContentTimeWindow | 7 | Indexed weekly windows, SetBlockContentTimeWindow, RemoveBlockContentTimeWindow, EnteringBlockContentTimeWindow event |
 
-`ScreenTime` is rejected at construction; its daily usage accounting and event
-behavior remains unsupported. PIN
-management has no associated event. PIN changes persist as a salted one-way
+PIN management has no associated event. PIN changes persist as a salted one-way
 verifier with cluster state; only an administrator can reset and retrieve a new
 PIN. Old cluster documents without PIN state start with a fresh unknown PIN,
 which an administrator can replace with `ResetPIN`.
@@ -37,6 +36,29 @@ playing content again after a policy change and stop any newly blocked item.
 `examples/matter_content_control_device.cr` demonstrates this contract with
 an unrated synthetic program and the Media Playback cluster. Configuration
 persists through the device's selected `Storage::Document` backend.
+
+For `ScreenTime`, set `screen_daily_time` in seconds (0 to 86400) or use
+`SetScreenDailyTime`. The remaining balance starts at the daily limit, then
+decreases while Content Control is enabled and the host reports active
+playback through `tick_screen_time(playing)`. The host calls this at least once
+per second and installs `on_policy_changed` to stop playback when the balance
+reaches zero. The tick uses a monotonic clock for elapsed viewing time and a
+local calendar date for daily rollover. It apportions a tick across midnight,
+persists the balance and date, and keeps the current day's balance when
+`SetScreenDailyTime` changes the limit; the new limit takes effect on the next
+day. A backward local date does not refill spent time. `AddBonusTime` adds at
+most the remaining seconds of the current calendar day and never raises the
+balance above 86400. A missing local clock rejects bonus requests. The exact
+midnight cutoff follows the host's local timezone, including its daylight
+saving rules.
+
+An Operate caller of `AddBonusTime` supplies the current PIN; a Manage or
+Administer caller may omit it and any supplied PIN is ignored. Without
+PINManagement, Operate calls fail with `InvalidPINCode` because this server has
+no separate out-of-band PIN facility. The Interaction Model resolves each
+caller's ACL privilege for that invocation only. Host code invoking the
+cluster directly does not get Manage bypass unless it explicitly supplies
+request privilege context.
 
 For `BlockContentTimeWindow`, each indexed entry covers one or more days and
 one or more same-day periods. Day masks cannot overlap across entries. The host

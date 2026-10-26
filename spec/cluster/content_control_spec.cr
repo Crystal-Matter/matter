@@ -137,7 +137,6 @@ describe Control do
   end
 
   it "rejects optional feature bits whose behavior is not implemented yet" do
-    expect_raises(ArgumentError) { build(Control, feature_map: Control::Feature::ScreenTime) }
     expect_raises(ArgumentError) do
       build(Control, feature_map: Control::Feature::OnDemandContentRating,
         on_demand_ratings: [Control::RatingName.new("G")])
@@ -145,6 +144,141 @@ describe Control do
     expect_raises(ArgumentError) do
       build(Control, block_application_list: [Control::AppInfo.new(0xFFF1_u16, "radio")])
     end
+  end
+
+  it "accounts ScreenTime during enabled playback, expires once, and restores its balance" do
+    cluster = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 30_u32)
+    attribute_ids(cluster).should contain(Control::ATTR_SCREEN_DAILY_TIME)
+    attribute_ids(cluster).should contain(Control::ATTR_REMAINING_SCREEN_TIME)
+    accepted_command_ids(cluster).should contain(Control::CMD_ADD_BONUS_TIME)
+    accepted_command_ids(cluster).should contain(Control::CMD_SET_SCREEN_DAILY_TIME)
+    cluster.get_command_metadata(Control::CMD_ADD_BONUS_TIME).as(Matter::Cluster::CommandMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Operate)
+    cluster.get_command_metadata(Control::CMD_SET_SCREEN_DAILY_TIME).as(Matter::Cluster::CommandMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
+    event = cluster.get_event_metadata(Control::EVENT_REMAINING_SCREEN_TIME_EXPIRED).as(Matter::Cluster::EventMetadata)
+    event.access.should eq(Matter::InteractionModel::EntryPrivilege::View)
+    event.priority.should eq(Matter::InteractionModel::EventPriority::Info)
+    [Control::ATTR_SCREEN_DAILY_TIME, Control::ATTR_REMAINING_SCREEN_TIME].each do |id|
+      metadata = cluster.get_attribute_metadata(id).as(Matter::Cluster::AttributeMetadata)
+      metadata.writable?.should be_false
+      metadata.max.should eq(86_400_i64)
+    end
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
+    events = [] of UInt32
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      events << id
+    end
+    now = Time.local(2026, 10, 26, 10, 0, 0)
+    tick = Time.instant
+    cluster.tick_screen_time(true, now, tick)
+    cluster.tick_screen_time(true, now + 5.seconds, tick + 5.seconds)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
+    expect_success(invoke(cluster, Control::CMD_ENABLE))
+    cluster.tick_screen_time(true, now + 10.seconds, tick + 10.seconds)
+    cluster.tick_screen_time(false, now + 20.seconds, tick + 20.seconds)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(20_u32)
+    cluster.tick_screen_time(false, now + 25.seconds, tick + 25.seconds)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(20_u32)
+    cluster.tick_screen_time(true, now + 26.seconds, tick + 26.seconds)
+    cluster.tick_screen_time(true, now + 46.seconds, tick + 46.seconds)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(0_u32)
+    cluster.playback_allowed?.should be_false
+    events.should eq([Control::EVENT_REMAINING_SCREEN_TIME_EXPIRED])
+    cluster.tick_screen_time(true, now + 50.seconds, tick + 50.seconds)
+    events.size.should eq(1)
+
+    restored = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 30_u32)
+    restored.local_time_provider = -> : Time? { now + 55.seconds }
+    restored.restore_state(Matter::Storage.deep_copy(cluster.save_state))
+    read(restored, Control::ATTR_REMAINING_SCREEN_TIME).should eq(0_u32)
+    restored.local_time_provider = -> : Time? { now + 1.day }
+    read(restored, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
+    restored.playback_allowed?.should be_true
+
+    [-1_i64, 86_401_i64, 86_401_u64, "invalid"].each do |invalid_value|
+      invalid = Matter::Storage.deep_copy(cluster.save_state)
+      invalid[Control::PERSISTED_SCREEN_REMAINING_KEY] = invalid_value
+      rejected = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 30_u32)
+      rejected.restore_state(invalid)
+      read(rejected, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
+    end
+
+    legacy = cluster.save_state
+    legacy.delete(Control::PERSISTED_SCREEN_DAY_KEY)
+    legacy.delete(Control::PERSISTED_SCREEN_REMAINING_KEY)
+    upgraded = build(Control, feature_map: Control::Feature::ScreenTime)
+    upgraded.restore_state(legacy)
+    read(upgraded, Control::ATTR_REMAINING_SCREEN_TIME).should eq(30_u32)
+  end
+
+  it "enforces ScreenTime command bounds, daily rollover, and PIN policy" do
+    cluster = build(Control, feature_map: Control::Feature::ScreenTime | Control::Feature::PinManagement,
+      screen_daily_time: 60_u32)
+    now = Time.local(2026, 10, 26, 23, 59, 0)
+    cluster.local_time_provider = -> : Time? { now }
+    pin = invoke_response(cluster, Control::CMD_RESET_PIN, nil, Control::ResetPinResponse).pin_code
+    expect_status(invoke(cluster, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new("000000", 10_u32)), IMCode::Failure).cluster_status.should eq(0x02_u8)
+    expect_success(invoke(cluster, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new(pin, 10_u32)))
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(70_u32)
+    expect_status(invoke(cluster, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new(pin, 61_u32)), IMCode::ConstraintError)
+    expect_status(invoke(cluster, Control::CMD_SET_SCREEN_DAILY_TIME,
+      Control::SetScreenDailyTimeRequest.new(86_401_u32)), IMCode::ConstraintError)
+    expect_success(invoke(cluster, Control::CMD_SET_SCREEN_DAILY_TIME,
+      Control::SetScreenDailyTimeRequest.new(120_u32)))
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(70_u32)
+    cluster.local_time_provider = -> : Time? { now + 1.minute }
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(120_u32)
+    expect_success(invoke(cluster, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new(pin)))
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(420_u32)
+    without_pin = build(Control, feature_map: Control::Feature::ScreenTime)
+    expect_status(invoke(without_pin, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new("123456", 5_u32)), IMCode::Failure).cluster_status.should eq(0x02_u8)
+  end
+
+  it "splits watched time at midnight and keeps fractional seconds" do
+    start = Time.local(2026, 10, 26, 23, 59, 58)
+    cluster = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 10_u32)
+    cluster.local_time_provider = -> : Time? { start }
+    expect_success(invoke(cluster, Control::CMD_ENABLE))
+    instant = Time.instant
+    cluster.tick_screen_time(true, start, instant)
+    cluster.tick_screen_time(true, start + 500.milliseconds, instant + 500.milliseconds)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(10_u32)
+    cluster.tick_screen_time(true, start + 1.second, instant + 1.second)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(9_u32)
+    cluster.tick_screen_time(true, start + 4.seconds, instant + 4.seconds)
+    cluster.local_time_provider = -> : Time? { start + 4.seconds }
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(8_u32)
+    cluster.tick_screen_time(true, start + 5.seconds, instant + 5.seconds)
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(7_u32)
+    cluster.local_time_provider = -> : Time? { start }
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(7_u32)
+
+    other = build(Control, feature_map: Control::Feature::ScreenTime, screen_daily_time: 10_u32)
+    other.local_time_provider = -> : Time? { start }
+    expect_success(invoke(other, Control::CMD_ENABLE))
+    other.tick_screen_time(true, start, instant)
+    other.local_time_provider = -> : Time? { start + 4.seconds }
+    read(other, Control::ATTR_REMAINING_SCREEN_TIME).should eq(10_u32)
+    other.tick_screen_time(true, start + 4.seconds, instant + 4.seconds)
+    read(other, Control::ATTR_REMAINING_SCREEN_TIME).should eq(8_u32)
+  end
+
+  it "uses the actual local midnight for the bonus cap across daylight saving" do
+    location = Time::Location.load("Australia/Sydney")
+    now = Time.local(2026, 10, 4, 1, 0, 0, location: location)
+    cluster = build(Control, feature_map: Control::Feature::ScreenTime)
+    cluster.local_time_provider = -> : Time? { now }
+    cluster.request_command_privilege = Matter::InteractionModel::EntryPrivilege::Manage
+    expect_status(invoke(cluster, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new(nil, 80_000_u32)), IMCode::ConstraintError)
+    cluster.request_command_privilege = Matter::InteractionModel::EntryPrivilege::Manage
+    expect_success(invoke(cluster, Control::CMD_ADD_BONUS_TIME,
+      Control::AddBonusTimeRequest.new(nil, 79_200_u32)))
+    read(cluster, Control::ATTR_REMAINING_SCREEN_TIME).should eq(79_200_u32)
   end
 
   it "manages indexed content time windows atomically and persists them" do

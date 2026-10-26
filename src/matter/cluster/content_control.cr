@@ -17,21 +17,25 @@ module Matter
       feature :block_applications, bit: 6
       feature :block_content_time_window, bit: 7
 
-      MAX_RATING_BYTES             =  8
-      MAX_RATING_DESCRIPTION_BYTES = 64
-      PIN_LENGTH                   =  6
-      PIN_RANGE                    = 0...1_000_000
-      PIN_SALT_BYTES               =      16
-      PIN_VERIFIER_BYTES           =      32
-      PIN_DERIVATION_ITERATIONS    =  65_536
-      MAX_TIME_WINDOWS             =       7
-      MAX_HOUR                     =   23_u8
-      MAX_MINUTE                   =   59_u8
-      DAY_OF_WEEK_MASK             = 0x7F_u8
-      MINUTES_PER_HOUR             =      60
-      PERSISTED_PIN_SALT_KEY       = "pin_salt"
-      PERSISTED_PIN_VERIFIER_KEY   = "pin_verifier"
-      SUPPORTED_FEATURES           = 0xFE_u32
+      MAX_RATING_BYTES               =  8
+      MAX_RATING_DESCRIPTION_BYTES   = 64
+      PIN_LENGTH                     =  6
+      PIN_RANGE                      = 0...1_000_000
+      PIN_SALT_BYTES                 =      16
+      PIN_VERIFIER_BYTES             =      32
+      PIN_DERIVATION_ITERATIONS      =  65_536
+      MAX_TIME_WINDOWS               =       7
+      MAX_HOUR                       =   23_u8
+      MAX_MINUTE                     =   59_u8
+      DAY_OF_WEEK_MASK               = 0x7F_u8
+      MINUTES_PER_HOUR               =      60
+      PERSISTED_PIN_SALT_KEY         = "pin_salt"
+      PERSISTED_PIN_VERIFIER_KEY     = "pin_verifier"
+      PERSISTED_SCREEN_DAY_KEY       = "screen_day"
+      PERSISTED_SCREEN_REMAINING_KEY = "screen_remaining"
+      MAX_SCREEN_SECONDS             = 86_400_u32
+      DEFAULT_BONUS_SECONDS          =    300_u32
+      SUPPORTED_FEATURES             =   0xFF_u32
 
       enum StatusCode : UInt8
         InvalidPINCode            = 0x02
@@ -159,6 +163,29 @@ module Matter
         end
       end
 
+      struct AddBonusTimeRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter pin_code : String?
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter bonus_time : UInt32?
+
+        def initialize(@pin_code : String? = nil, @bonus_time : UInt32? = nil)
+        end
+      end
+
+      struct SetScreenDailyTimeRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter screen_time : UInt32
+
+        def initialize(@screen_time : UInt32)
+        end
+      end
+
       struct SetRatingRequest
         include TLV::Serializable
 
@@ -236,6 +263,10 @@ module Matter
       attribute 0x0004, :scheduled_content_rating_threshold, String,
         default: "", persist: true, requires: :scheduled_content_rating,
         on_change: :policy_changed
+      attribute 0x0005, :screen_daily_time, UInt32,
+        default: 0_u32, persist: true, max: MAX_SCREEN_SECONDS, requires: :screen_time
+      attribute 0x0006, :remaining_screen_time, UInt32,
+        computed: true, max: MAX_SCREEN_SECONDS, requires: :screen_time
       attribute 0x0007, :block_unrated, Bool, default: false, persist: true,
         requires: :block_unrated, on_change: :policy_changed
       attribute 0x0008, :block_channel_list, Array(BlockChannel),
@@ -255,6 +286,10 @@ module Matter
         requires: :pin_management
       command 0x03, :enable, access: :manage, timed: true
       command 0x04, :disable, access: :manage, timed: true
+      command 0x05, :add_bonus_time, request: AddBonusTimeRequest,
+        access: :operate, requires: :screen_time
+      command 0x06, :set_screen_daily_time, request: SetScreenDailyTimeRequest,
+        access: :manage, requires: :screen_time, handler: :handle_set_screen_daily_time
       command 0x07, :block_unrated_content, access: :manage,
         requires: :block_unrated
       command 0x08, :unblock_unrated_content, access: :manage,
@@ -276,6 +311,8 @@ module Matter
       command 0x10, :remove_block_content_time_window, request: RemoveTimeWindowsRequest,
         access: :manage, requires: :block_content_time_window
 
+      event 0x00, :remaining_screen_time_expired, priority: :info,
+        requires: :screen_time, payload: EmptyEvent
       event 0x01, :entering_block_content_time_window, priority: :info,
         requires: :block_content_time_window, payload: EmptyEvent
 
@@ -287,6 +324,7 @@ module Matter
                      @scheduled_content_ratings : Array(RatingName) = [] of RatingName,
                      @scheduled_content_rating_threshold : String = "",
                      @block_unrated : Bool = false,
+                     @screen_daily_time : UInt32 = 0_u32,
                      @block_channel_list : Array(BlockChannel) = [] of BlockChannel,
                      @block_application_list : Array(AppInfo) = [] of AppInfo,
                      @block_content_time_window : Array(TimeWindow) = [] of TimeWindow)
@@ -305,6 +343,8 @@ module Matter
           raise ArgumentError.new("scheduled ratings require ScheduledContentRating")
         end
         raise ArgumentError.new("BlockUnrated feature is required") if @block_unrated && !@feature_map.block_unrated?
+        raise ArgumentError.new("invalid ScreenDailyTime") if @screen_daily_time > MAX_SCREEN_SECONDS
+        raise ArgumentError.new("ScreenTime feature is required") if @screen_daily_time > 0 && !@feature_map.screen_time?
         raise ArgumentError.new("BlockChannels feature is required") if !@block_channel_list.empty? && !@feature_map.block_channels?
         raise ArgumentError.new("BlockApplications feature is required") if !@block_application_list.empty? && !@feature_map.block_applications?
         raise ArgumentError.new("BlockContentTimeWindow feature is required") if !@block_content_time_window.empty? && !@feature_map.block_content_time_window?
@@ -319,6 +359,7 @@ module Matter
         @block_channel_list = @block_channel_list.dup
         @block_application_list = @block_application_list.dup
         @block_content_time_window = @block_content_time_window.dup
+        @remaining_screen_time = @screen_daily_time
       end
 
       @validate_channel : Proc(BlockChannel, Bool)?
@@ -328,6 +369,13 @@ module Matter
       @pin_verifier : Bytes?
       @local_time_provider : Proc(Time?) = -> : Time? { Time.local }
       @last_active_time_period : Tuple(Int32, Int32, Int32, UInt16, Int32)?
+      @remaining_screen_time : UInt32 = 0_u32
+      @screen_day : String?
+      @last_screen_tick : Time::Instant?
+      @last_screen_local_time : Time?
+      @last_screen_playing : Bool = false
+      @last_screen_enabled : Bool = false
+      @screen_fraction : Time::Span = Time::Span.zero
 
       def local_time_provider=(@local_time_provider : Proc(Time?)) : Nil
       end
@@ -350,6 +398,7 @@ module Matter
       def playback_allowed?(rating : String? = nil, scheduled : Bool = false,
                             channel : BlockChannel? = nil, application : AppInfo? = nil) : Bool
         return true unless enabled?
+        return false if @feature_map.screen_time? && remaining_screen_time.zero?
         return false if @feature_map.block_content_time_window? && time_window_blocked?(@local_time_provider.call)
         if application && @feature_map.block_applications?
           return false if @block_application_list.any? { |blocked| same_app?(blocked, application) }
@@ -439,6 +488,72 @@ module Matter
           @on_policy_changed.try(&.call)
         end
         @last_active_time_period = active_period
+      end
+
+      # The media host reports its current playback state at least once per
+      # second. Monotonic time measures watched duration; local time identifies
+      # the calendar day and splits a tick that crosses midnight.
+      def tick_screen_time(playing : Bool, local_time : Time? = @local_time_provider.call,
+                           instant : Time::Instant = Time.instant) : Nil
+        return unless @feature_map.screen_time?
+        if previous = @last_screen_tick
+          elapsed = instant - previous
+          if elapsed > Time::Span.zero && @last_screen_playing && @last_screen_enabled
+            if local_time && (last_local = @last_screen_local_time) && day_key(local_time) > day_key(last_local)
+              current_day_elapsed = local_time - local_time.at_beginning_of_day
+              current_day_elapsed = elapsed if current_day_elapsed > elapsed
+              consume_screen_time(elapsed - current_day_elapsed) unless @screen_day == day_key(local_time)
+              reset_screen_day(local_time)
+              consume_screen_time(current_day_elapsed)
+            else
+              reset_screen_day(local_time)
+              consume_screen_time(elapsed)
+            end
+          else
+            reset_screen_day(local_time)
+          end
+        else
+          reset_screen_day(local_time)
+        end
+        @last_screen_tick = instant
+        @last_screen_local_time = local_time
+        @last_screen_playing = playing
+        @last_screen_enabled = enabled?
+      end
+
+      def remaining_screen_time : UInt32
+        reset_screen_day(@local_time_provider.call)
+        @remaining_screen_time
+      end
+
+      def screen_daily_time=(value : UInt32) : Nil
+        raise ArgumentError.new("invalid ScreenDailyTime") if value > MAX_SCREEN_SECONDS
+        previous_def(value)
+      end
+
+      def add_bonus_time(request : AddBonusTimeRequest) : InteractionModel::Status
+        local_time = @local_time_provider.call
+        return InteractionModel::Status.invalid_in_state unless local_time
+        reset_screen_day(local_time)
+        privilege = request_command_privilege
+        unless privilege && privilege >= InteractionModel::EntryPrivilege::Manage
+          pin = request.pin_code
+          return InteractionModel::Status.cluster_failure(StatusCode::InvalidPINCode) unless pin && valid_pin?(pin) && pin_matches?(pin)
+        end
+        bonus = request.bonus_time || DEFAULT_BONUS_SECONDS
+        return InteractionModel::Status.constraint_error if bonus > MAX_SCREEN_SECONDS - @remaining_screen_time
+        next_midnight = local_time.at_beginning_of_day.shift(days: 1)
+        seconds_left_today = (next_midnight - local_time).total_seconds.floor.to_i64
+        return InteractionModel::Status.constraint_error if bonus.to_i64 > seconds_left_today
+        set_remaining_screen_time(@remaining_screen_time + bonus)
+        InteractionModel::Status.success
+      end
+
+      def handle_set_screen_daily_time(request : SetScreenDailyTimeRequest) : InteractionModel::Status
+        return InteractionModel::Status.constraint_error if request.screen_time > MAX_SCREEN_SECONDS
+        reset_screen_day(@local_time_provider.call)
+        self.screen_daily_time = request.screen_time
+        InteractionModel::Status.success
       end
 
       def enable : InteractionModel::Status
@@ -579,22 +694,79 @@ module Matter
           document[PERSISTED_PIN_SALT_KEY] = salt.dup
           document[PERSISTED_PIN_VERIFIER_KEY] = verifier.dup
         end
+        if @feature_map.screen_time? && (day = @screen_day)
+          document[PERSISTED_SCREEN_DAY_KEY] = day
+          document[PERSISTED_SCREEN_REMAINING_KEY] = @remaining_screen_time.to_u64
+        end
       end
 
       private def restore_persisted_extension(document : Storage::Document) : Nil
-        return unless @feature_map.pin_management?
-        salt_value = document[PERSISTED_PIN_SALT_KEY]?
-        verifier_value = document[PERSISTED_PIN_VERIFIER_KEY]?
-        # Documents written before PM existed have neither key. Keep a new,
-        # unknown PIN, which an administrator can replace with ResetPIN.
-        return if salt_value.nil? && verifier_value.nil?
-        salt = salt_value.as?(Bytes)
-        verifier = verifier_value.as?(Bytes)
-        unless salt && salt.size == PIN_SALT_BYTES && verifier && verifier.size == PIN_VERIFIER_BYTES
-          raise StorageError.new("Invalid persisted Content Control PIN verifier")
+        if @feature_map.pin_management?
+          salt_value = document[PERSISTED_PIN_SALT_KEY]?
+          verifier_value = document[PERSISTED_PIN_VERIFIER_KEY]?
+          # Documents written before PM existed have neither key. Keep a new,
+          # unknown PIN, which an administrator can replace with ResetPIN.
+          unless salt_value.nil? && verifier_value.nil?
+            salt = salt_value.as?(Bytes)
+            verifier = verifier_value.as?(Bytes)
+            unless salt && salt.size == PIN_SALT_BYTES && verifier && verifier.size == PIN_VERIFIER_BYTES
+              raise StorageError.new("Invalid persisted Content Control PIN verifier")
+            end
+            @pin_salt = salt.dup
+            @pin_verifier = verifier.dup
+          end
         end
-        @pin_salt = salt.dup
-        @pin_verifier = verifier.dup
+        if @feature_map.screen_time?
+          day_value = document[PERSISTED_SCREEN_DAY_KEY]?
+          remaining_value = document[PERSISTED_SCREEN_REMAINING_KEY]?
+          if day_value || remaining_value
+            day = day_value.as?(String)
+            remaining = remaining_value.as?(Int64 | UInt64)
+            unless day && day.matches?(/\A\d{4}-\d{2}-\d{2}\z/) && remaining && remaining.to_i128.in?(0_i128..MAX_SCREEN_SECONDS.to_i128)
+              raise StorageError.new("Invalid persisted Content Control ScreenTime state")
+            end
+            @screen_day = day
+            @remaining_screen_time = remaining.to_u32
+          else
+            # A document saved before ScreenTime state existed starts a fresh
+            # daily balance after its persisted ScreenDailyTime is restored.
+            @screen_day = nil
+          end
+        end
+      end
+
+      private def day_key(time : Time) : String
+        "#{time.year.to_s.rjust(4, '0')}-#{time.month.to_s.rjust(2, '0')}-#{time.day.to_s.rjust(2, '0')}"
+      end
+
+      private def reset_screen_day(time : Time?) : Nil
+        return unless @feature_map.screen_time? && time
+        current = day_key(time)
+        return if (previous_day = @screen_day) && current <= previous_day
+        @screen_day = current
+        @screen_fraction = Time::Span.zero
+        set_remaining_screen_time(@screen_daily_time)
+      end
+
+      private def consume_screen_time(duration : Time::Span) : Nil
+        return if duration <= Time::Span.zero || @remaining_screen_time.zero?
+        @screen_fraction += duration
+        seconds = @screen_fraction.total_seconds.floor.to_i64
+        return if seconds <= 0
+        @screen_fraction -= seconds.seconds
+        spent = Math.min(seconds, @remaining_screen_time.to_i64).to_u32
+        set_remaining_screen_time(@remaining_screen_time - spent)
+      end
+
+      private def set_remaining_screen_time(value : UInt32) : Nil
+        previous = @remaining_screen_time
+        return if previous == value
+        @remaining_screen_time = value
+        increment_version
+        if previous > 0 && value.zero?
+          emit_remaining_screen_time_expired(EmptyEvent.new)
+        end
+        @on_policy_changed.try(&.call)
       end
 
       private def valid_pin?(pin : String) : Bool

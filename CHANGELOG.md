@@ -58,6 +58,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Accept legacy ControlSequenceOfOperation writes while preserving the fixed
   operating capability and DataVersion, as required by Matter 1.6.
 
+### Content Control ScreenTime
+
+- Implement Matter 1.6 ScreenTime daily and remaining balance, bonus and limit commands, expiry event, durable local-day accounting, media host tick, and ACL-sensitive PIN enforcement. The synthetic player exercises the wire commands and persistence through official chip-tool E2E.
+
 ### Content Control time windows
 
 - Implement Matter 1.6 BlockContentTimeWindow configuration and persistence, local-time playback blocking, and the entry event. The synthetic video player now exercises the feature with official chip-tool E2E coverage.
