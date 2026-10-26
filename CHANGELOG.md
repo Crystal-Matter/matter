@@ -17,6 +17,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Recheck each queued ReportData chunk before sending it. If access is revoked
   between acknowledgements, abort the read or subscription transaction with
   UnsupportedAccess instead of releasing previously encoded attribute or event data.
+- Persist the next event number before publishing each journal record. Restored
+  subscriptions from older stores advance the counter past their saved cursor,
+  so events remain visible after a process restart without reusing numbers.
 
 ### Joint Fabric keyed group propagation
 
