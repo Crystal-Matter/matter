@@ -141,8 +141,13 @@ item below as covered only to the extent of its cited tests.
   acknowledgement, verifies the persisted journal blocks replay,
   and reconciles the result. It also restarts B after a lost RemoveAdmin
   acknowledgement, checks the removal in B's persisted AdminList over CASE,
-  and resumes CAT/NOC rotation only after checked reconciliation. B and C
-  remain registered while B is also restarted after lost Anchor and participant rotation
+  and resumes CAT/NOC rotation only after checked reconciliation.
+  An explicit no-effect recovery path also checks B's durable Datastore after
+  an interruption before RemoveAdmin: the outgoing Administrator must still
+  appear, the Datastore version must match the journaled pre-command value,
+  and the Administrator CAT must remain unchanged. The three-Administrator
+  Docker extension for this path is pending execution. B and C remain
+  registered while B is also restarted after lost Anchor and participant rotation
   acknowledgements. Recovery uses fresh CASE and a host-supplied 32-byte
   nonce in SignVIDVerificationRequest to prove possession of the target's
   current NOC. It checks the complete NOC chain against the local root,

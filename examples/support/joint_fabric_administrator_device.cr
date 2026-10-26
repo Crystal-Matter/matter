@@ -154,6 +154,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_remove_fabric : Bool
       # Older command-channel YAML files predate these test-only fault hooks.
       getter? interrupt_after_remove_admin : Bool = false
+      getter? interrupt_before_remove_admin : Bool = false
       getter? interrupt_before_transfer_follow_up : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
@@ -174,6 +175,7 @@ module MatterJointFabricAdministrator
                      @anchor_node_id : UInt64? = nil, @peer_address : String? = nil,
                      @peer_port : Int32? = nil,
                      @interrupt_after_remove_admin : Bool = false,
+                     @interrupt_before_remove_admin : Bool = false,
                      @interrupt_before_transfer_follow_up : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
@@ -226,7 +228,8 @@ module MatterJointFabricAdministrator
                      @interrupt_after_remove_fabric : Bool = false,
                      @interrupt_after_remove_admin : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
-                     @interrupt_after_participant_rotation : Bool = false)
+                     @interrupt_after_participant_rotation : Bool = false,
+                     @interrupt_before_remove_admin : Bool = false)
       end
 
       def remove_outgoing_fabric! : Nil
@@ -237,6 +240,9 @@ module MatterJointFabricAdministrator
       end
 
       def remove_datastore_admin! : Nil
+        if @interrupt_before_remove_admin
+          raise Matter::TransportError.new("Injected interruption before RemoveAdmin")
+        end
         @delegate.remove_datastore_admin!
         if @interrupt_after_remove_admin
           raise Matter::TransportError.new("Injected lost RemoveAdmin acknowledgement")
@@ -1640,7 +1646,8 @@ module MatterJointFabricAdministrator
                                      interrupt_after_remove_fabric : Bool = false,
                                      interrupt_after_remove_admin : Bool = false,
                                      interrupt_after_anchor_rotation : Bool = false,
-                                     interrupt_after_participant_rotation : Bool = false) : Nil
+                                     interrupt_after_participant_rotation : Bool = false,
+                                     interrupt_before_remove_admin : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Another Joint Fabric operation is running") if @removal_in_progress || @transfer_in_progress
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -1765,11 +1772,11 @@ module MatterJointFabricAdministrator
             tighten_administrator_acl(im, refreshed_session, peer, admin_version)
             nil
           })
-        effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin ||
+        effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin || interrupt_before_remove_admin ||
                             interrupt_after_anchor_rotation || interrupt_after_participant_rotation
                            InterruptedRemovalPort.new(port, interrupt_after_remove_fabric,
                              interrupt_after_remove_admin, interrupt_after_anchor_rotation,
-                             interrupt_after_participant_rotation)
+                             interrupt_after_participant_rotation, interrupt_before_remove_admin)
                          else
                            port
                          end
@@ -1913,6 +1920,39 @@ module MatterJointFabricAdministrator
         raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
       end
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(journal, datastore,
+        ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+          persistence.write_app_document(document_name, state.to_document)
+          persistence.flush
+          nil
+        })
+    end
+
+    private def reconcile_datastore_no_effect(outgoing_node_id : UInt64) : Nil
+      raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+      datastore = joint_fabric_datastore
+      unless datastore.anchor_node_id == own_fabric.node_id &&
+             datastore.joint_fabric_index == own_fabric.fabric_index
+        raise Matter::AuthenticationError.new("Datastore belongs to another Anchor")
+      end
+      document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+      document = persistence.app_document(document_name) ||
+                 raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+      journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      unless journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id &&
+             journal.outgoing_node_id == outgoing_node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
+      end
+      persisted = persistence.backend.read(Matter::Storage::Collections::CLUSTERS, datastore.persistence_key) ||
+                  raise Matter::StorageError.new("Anchor Datastore has no durable record")
+      durable_datastore = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+      durable_datastore.restore_state(persisted)
+      unless datastore.save_state == durable_datastore.save_state
+        raise Matter::CommissioningError.new("Anchor Datastore differs from its durable record")
+      end
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(journal, durable_datastore,
         ->(state : Matter::Controller::AdministratorRemoval::Journal) {
           persistence.write_app_document(document_name, state.to_document)
           persistence.flush
@@ -2123,7 +2163,7 @@ module MatterJointFabricAdministrator
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
               request.interrupt_after_remove_admin?, request.interrupt_after_anchor_rotation?,
-              request.interrupt_after_participant_rotation?)
+              request.interrupt_after_participant_rotation?, request.interrupt_before_remove_admin?)
             CommandResult.new("ok")
           when "inspect-fabric"
             fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Fabric ID is required")
@@ -2168,6 +2208,9 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok")
           when "reconcile-datastore-removed"
             reconcile_datastore_removed(request.node_id)
+            CommandResult.new("ok")
+          when "reconcile-datastore-no-effect"
+            reconcile_datastore_no_effect(request.node_id)
             CommandResult.new("ok")
           when "reconcile-anchor-rotated"
             reconcile_removal_rotation(request.node_id, request.nonce, true)

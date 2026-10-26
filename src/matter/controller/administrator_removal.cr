@@ -35,6 +35,7 @@ module Matter
         property fabric_id : UInt64?
         property root_public_key : Bytes?
         property anchor_node_id : UInt64?
+        property datastore_version_before_remove : UInt32?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
@@ -42,7 +43,8 @@ module Matter
                        @administrator_cat_version : UInt16? = nil,
                        @fabric_id : UInt64? = nil,
                        @root_public_key : Bytes? = nil,
-                       @anchor_node_id : UInt64? = nil)
+                       @anchor_node_id : UInt64? = nil,
+                       @datastore_version_before_remove : UInt32? = nil)
         end
       end
 
@@ -149,6 +151,7 @@ module Matter
             advance(Stage::FabricRemoved)
           end
           if @journal.stage.fabric_removed?
+            @journal.datastore_version_before_remove = @datastore.data_version
             advance(Stage::RemovingDatastore)
             @port.remove_datastore_admin!
             advance(Stage::DatastoreRemoved)
@@ -246,6 +249,33 @@ module Matter
             raise Matter::CommissioningError.new("Anchor Datastore still lists outgoing Administrator")
           end
           reconcile_journal!(journal, Stage::DatastoreRemoved, save)
+        end
+
+        # A persisted RemovingDatastore journal can be rewound only when the
+        # restored Anchor Datastore proves that RemoveAdmin had no effect.
+        def self.reconcile_datastore_no_effect!(journal : Journal, datastore : Datastore,
+                                                save : SaveJournal) : Journal
+          unless journal.stage.removing_datastore? && journal.outgoing_node_id != 0_u64 &&
+                 journal.fabric_id && journal.root_public_key && journal.anchor_node_id
+            raise Matter::ConfigurationError.new("Administrator removal is not awaiting bound Datastore reconciliation")
+          end
+          unless datastore.anchor_node_id == journal.anchor_node_id
+            raise Matter::AuthenticationError.new("Removal Datastore belongs to another Anchor")
+          end
+          unless datastore.status.state.committed?
+            raise Matter::CommissioningError.new("Anchor Datastore is not committed")
+          end
+          unless datastore.admin_list.count(&.node_id.==(journal.outgoing_node_id)) == 1
+            raise Matter::CommissioningError.new("Outgoing Administrator is not uniquely present")
+          end
+          target_version = journal.administrator_cat_version
+          current_version = datastore.group_list.find(&.group_cat.==(0xFFFF_u16)).try(&.group_cat_version)
+          unless target_version && target_version > 0_u16 && current_version == target_version - 1_u16 &&
+                 journal.datastore_version_before_remove == datastore.data_version &&
+                 journal.rotated_nodes.empty? && journal.active_node_id.nil?
+            raise Matter::CommissioningError.new("Anchor Datastore differs from the pre-removal snapshot")
+          end
+          reconcile_journal!(journal, Stage::FabricRemoved, save)
         end
 
         private def advance(stage : Stage) : Nil

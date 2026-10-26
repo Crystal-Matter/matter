@@ -614,6 +614,7 @@ describe MatterJointFabricAdministrator::Device do
       fabric_id: 0xA100_u64, root_public_key: Bytes[1_u8], nonce: "legacy-command")
     document = request.to_document
     document.delete("interrupt_after_remove_admin")
+    document.delete("interrupt_before_remove_admin")
     backend = Matter::Storage::YamlFile.new(path)
     backend.open
     backend.write(MatterJointFabricAdministrator::Device::COMMAND_RPC_COLLECTION, "request", document)
@@ -627,6 +628,7 @@ describe MatterJointFabricAdministrator::Device do
     restored.operation.should eq("inspect-fabric")
     restored.node_id.should eq(0xA102_u64)
     restored.interrupt_after_remove_admin?.should be_false
+    restored.interrupt_before_remove_admin?.should be_false
   ensure
     backend.try(&.close) if backend.try(&.open?)
     reopened.try(&.close) if reopened.try(&.open?)

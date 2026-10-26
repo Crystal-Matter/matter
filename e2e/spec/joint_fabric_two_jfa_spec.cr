@@ -1168,6 +1168,44 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-fabric-removed", 0xA102_u64,
         nonce: proof_nonce))
     reconciled.status.should eq("ok"), reconciled.error.to_s
+    # The next RemoveAdmin attempt is interrupted before the Datastore changes.
+    no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+        interrupt_before_remove_admin: true))
+    no_effect.status.should eq("error")
+    no_effect.error.to_s.should contain("Injected interruption before RemoveAdmin")
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    no_effect_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    no_effect_retry.status.should eq("error")
+    no_effect_retry.error.to_s.should contain("needs reconciliation")
+    promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    present_report = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+    present_data = present_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+      .from_tlv(present_data.to_slice).map(&.node_id).should contain(0xA102_u64)
+    unchanged_groups = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+    unchanged_data = unchanged_groups.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+      .from_tlv(unchanged_data.to_slice).find!(&.group_cat.==(0xFFFF_u16)).group_cat_version
+      .should eq(before_removal_cat_version)
+    incorrect_outcome = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-datastore-removed", 0xA102_u64))
+    incorrect_outcome.status.should eq("error")
+    no_effect_reconciled = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-datastore-no-effect", 0xA102_u64))
+    no_effect_reconciled.status.should eq("ok"), no_effect_reconciled.error.to_s
     # RemoveAdmin commits to the new Anchor Datastore, but the simulated
     # acknowledgement is lost before the journal advances. Restart B at this
     # second uncertain boundary and prove the AdminList change survived.

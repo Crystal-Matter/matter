@@ -51,11 +51,13 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
       RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
       administrator_cat_version: 2_u16, fabric_id: 0x1111_u64,
-      root_public_key: Bytes[1, 2, 3], anchor_node_id: 0x100_u64)
+      root_public_key: Bytes[1, 2, 3], anchor_node_id: 0x100_u64,
+      datastore_version_before_remove: 7_u32)
     restored = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
     restored.fabric_id.should eq(0x1111_u64)
     restored.root_public_key.should eq(Bytes[1, 2, 3])
     restored.anchor_node_id.should eq(0x100_u64)
+    restored.datastore_version_before_remove.should eq(7_u32)
     restored.active_node_id.should eq(0x200_u64)
     restored.stage.should eq(RemovalStage::RotatingParticipant)
   end
@@ -184,6 +186,81 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     resumed.run
     resumed.journal.stage.should eq(RemovalStage::Completed)
     port.events.should eq(["Anchor UpdateNOC", "Participant 200 UpdateNOC"])
+  end
+
+  it "retries a no-effect RemoveAdmin only after a restored Datastore proves its old state" do
+    original = removal_datastore
+    persisted = original.save_state.as(Matter::Storage::Document)
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RemovingDatastore, administrator_cat_version: 2_u16,
+      fabric_id: 0x1111_u64, root_public_key: Bytes[1, 2], anchor_node_id: 0x100_u64,
+      datastore_version_before_remove: original.data_version)
+    path = File.join(Dir.tempdir, "matter-jfa-remove-admin-#{Random::Secure.hex(6)}.yml")
+    backend = Matter::Storage::YamlFile.new(path)
+    backend.open
+    backend.write(Matter::Storage::Collections::CLUSTERS, "anchor-datastore", persisted)
+    backend.write(Matter::Storage::Collections::APP, "removal", journal.to_document)
+    backend.close
+    reopened = Matter::Storage::YamlFile.new(path)
+    reopened.open
+    datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    datastore.restore_state(reopened.read(Matter::Storage::Collections::CLUSTERS,
+      "anchor-datastore").as(Matter::Storage::Document))
+    restored = Matter::Controller::AdministratorRemoval::Journal.from_document(
+      reopened.read(Matter::Storage::Collections::APP, "removal").as(Matter::Storage::Document))
+    saved = [] of RemovalStage
+    save = ->(item : Matter::Controller::AdministratorRemoval::Journal) { saved << item.stage; nil }
+
+    reconciled = Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(restored, datastore, save)
+    reconciled.stage.should eq(RemovalStage::FabricRemoved)
+    saved.should eq([RemovalStage::FabricRemoved])
+    datastore.admin_list.map(&.node_id).should contain(0x300_u64)
+    datastore.group_list.find!(&.group_cat.==(0xFFFF_u16)).group_cat_version.should eq(1_u16)
+    port = FakeAdministratorRemovalPort.new
+    resumed = Matter::Controller::AdministratorRemoval::Workflow.new(datastore, 0x100_u64,
+      [0x200_u64], port, -> { true }, -> { true }, save,
+      Matter::Controller::AdministratorRemoval::Journal.from_document(reconciled.to_document))
+    resumed.run
+    port.events.should eq(["RemoveAdmin", "Anchor UpdateNOC", "Participant 200 UpdateNOC"])
+
+    wrong_cat = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    wrong_cat.restore_state(persisted)
+    changed_group = wrong_cat.group_list.first
+    changed_group.group_cat_version = 2_u16
+    wrong_cat.group_list = [changed_group]
+    pending = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
+    expect_raises(Matter::CommissioningError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(pending, wrong_cat, save)
+    end
+    pending.stage.should eq(RemovalStage::RemovingDatastore)
+
+    altered = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    altered.restore_state(persisted)
+    altered.data_version &+= 1
+    expect_raises(Matter::CommissioningError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(pending, altered, save)
+    end
+    pending.stage.should eq(RemovalStage::RemovingDatastore)
+
+    absent = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    absent.restore_state(persisted)
+    absent.admin_list = absent.admin_list.reject(&.node_id.==(0x300_u64))
+    expect_raises(Matter::CommissioningError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(pending, absent, save)
+    end
+    pending.stage.should eq(RemovalStage::RemovingDatastore)
+
+    wrong_anchor = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    wrong_anchor.restore_state(persisted)
+    wrong_anchor.anchor_node_id = 0x999_u64
+    expect_raises(Matter::AuthenticationError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(pending, wrong_anchor, save)
+    end
+    pending.stage.should eq(RemovalStage::RemovingDatastore)
+  ensure
+    backend.try(&.close) if backend.try(&.open?)
+    reopened.try(&.close) if reopened.try(&.open?)
+    File.delete?(path) if path
   end
 
   it "recovers each interrupted removal command from a persisted journal" do
