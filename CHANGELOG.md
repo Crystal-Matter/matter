@@ -348,6 +348,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   official chip-tool E2E. Other tariff feature families remain disabled.
 ### Camera AV Settings User Level Management
 
+- Complete the optional DPTZ command profile with relative per-stream viewport
+  moves and support combined digital and mechanical PTZ features. Pixel shifts,
+  percentage crop changes, clipping, and aspect ratio checks are admitted by
+  the existing host viewport callback.
+
 - Add mechanical tilt and zoom feature combinations, including presets for
   mixed pan/tilt/zoom profiles. Position and movement commands enforce the
   enabled axes and configured bounds. Hosts apply complete movement targets

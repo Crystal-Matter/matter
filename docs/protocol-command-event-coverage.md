@@ -352,6 +352,7 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0552 | command | 0x0003 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
 | 0x0552 | command | 0x0004 | feature(MPRESETS) | declared; requires `:mechanical_presets` |
 | 0x0552 | command | 0x0005 | feature(DPTZ) | declared; requires `:digital_ptz` |
+| 0x0552 | command | 0x0006 | optional feature(DPTZ) | declared; requires `:digital_ptz` |
 | 0x0556 | event | 0x0000 | revision(current) >= revision(2) | declared; requires `—` |
 
 Regenerate from official connectedhomeip `v1.6.0.0` canonical XML:

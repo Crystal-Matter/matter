@@ -30,17 +30,59 @@ private def allocate_dptz_video(av : DptzAv) : UInt16
 end
 
 describe "Camera AV Settings DPTZ" do
-  it "advertises only DPTZStreams and mandatory SetViewport when bound to same-endpoint VDO" do
+  it "advertises the complete DPTZ command profile when bound to same-endpoint VDO" do
     av = dptz_av_camera
     camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
     camera.feature_map.value.should eq(1_u32)
     camera.attributes.map(&.id.id).should eq([DptzCamera::ATTR_DPTZ_STREAMS])
-    camera.commands.map(&.id.id).should eq([DptzCamera::CMD_DPTZ_SET_VIEWPORT])
+    camera.commands.map(&.id.id).should eq([DptzCamera::CMD_DPTZ_SET_VIEWPORT, 0x06_u32])
     camera.commands.first.access.should eq(Matter::InteractionModel::EntryPrivilege::Operate)
     read_tlv(camera, DptzCamera::ATTR_DPTZ_STREAMS).as_list.should be_empty
     expect_raises(ArgumentError) { build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz) }
     expect_raises(ArgumentError) { build(DptzCamera, 2, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av) }
     expect_raises(ArgumentError) { camera.feature_map = DptzCamera::Feature::MechanicalPan }
+  end
+
+  it "combines DPTZ with mechanical axes and presets without leaking gated fields" do
+    av = dptz_av_camera
+    features = DptzCamera::Feature::DigitalPtz | DptzCamera::Feature::MechanicalPan |
+               DptzCamera::Feature::MechanicalPresets
+    camera = build(DptzCamera, feature_map: features, max_presets: 1_u8,
+      video_stream_management: av)
+    camera.attributes.map(&.id.id).should eq([
+      DptzCamera::ATTR_MPTZ_POSITION, DptzCamera::ATTR_MAX_PRESETS,
+      DptzCamera::ATTR_MPTZ_PRESETS, DptzCamera::ATTR_DPTZ_STREAMS,
+      DptzCamera::ATTR_PAN_MIN, DptzCamera::ATTR_PAN_MAX,
+      DptzCamera::ATTR_MOVEMENT_STATE,
+    ])
+    camera.commands.map(&.id.id).should eq([
+      DptzCamera::CMD_MPTZ_SET_POSITION, DptzCamera::CMD_MPTZ_RELATIVE_MOVE,
+      DptzCamera::CMD_MPTZ_MOVE_TO_PRESET, DptzCamera::CMD_MPTZ_SAVE_PRESET,
+      DptzCamera::CMD_MPTZ_REMOVE_PRESET, DptzCamera::CMD_DPTZ_SET_VIEWPORT,
+      0x06_u32,
+    ])
+    id = allocate_dptz_video(av)
+    expect_success(camera.register_dptz_stream(id))
+    camera.on_pan_move { |_target| DptzStatus.success }
+    expect_success(invoke(camera, DptzCamera::CMD_MPTZ_SET_POSITION,
+      DptzCamera::MPTZSetPositionRequest.new(15_i16)))
+    camera.on_dptz_set_viewport { |_stream_id, _viewport| DptzStatus.success }
+    expect_success(invoke(camera, DptzCamera::CMD_DPTZ_SET_VIEWPORT,
+      DptzCamera::DPTZSetViewportRequest.new(id,
+        DptzAv::Viewport.new(0_u16, 0_u16, 960_u16, 540_u16))))
+    camera.mptz_position.pan.should eq(0_i16)
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(0_u16, 0_u16, 960_u16, 540_u16))
+    tilt_zoom = build(DptzCamera,
+      feature_map: DptzCamera::Feature::DigitalPtz | DptzCamera::Feature::MechanicalTilt |
+                   DptzCamera::Feature::MechanicalZoom,
+      video_stream_management: av)
+    tilt_zoom.attributes.map(&.id.id).should contain(DptzCamera::ATTR_TILT_MIN)
+    tilt_zoom.attributes.map(&.id.id).should contain(DptzCamera::ATTR_ZOOM_MAX)
+    tilt_zoom.attributes.map(&.id.id).should_not contain(DptzCamera::ATTR_PAN_MIN)
+    expect_raises(ArgumentError) do
+      build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz |
+                                     DptzCamera::Feature::MechanicalPresets, max_presets: 1_u8, video_stream_management: av)
+    end
   end
 
   it "tracks move-capable streams and applies an aspect-matched viewport after host success" do
@@ -102,5 +144,72 @@ describe "Camera AV Settings DPTZ" do
     camera.dptz_streams.size.should eq(1)
     av.restore_state(av.save_state.as(Matter::Storage::Document))
     camera.dptz_streams.should be_empty
+  end
+
+  it "moves a per-stream viewport in model X/Y directions and scales its area by percentage" do
+    av = dptz_av_camera
+    camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    id = allocate_dptz_video(av)
+    expect_success(camera.register_dptz_stream(id))
+    applied = [] of DptzAv::Viewport
+    camera.on_dptz_set_viewport do |_stream_id, viewport|
+      applied << viewport
+      DptzStatus.success
+    end
+    start = DptzAv::Viewport.new(480_u16, 270_u16, 1440_u16, 810_u16)
+    expect_success(invoke(camera, DptzCamera::CMD_DPTZ_SET_VIEWPORT,
+      DptzCamera::DPTZSetViewportRequest.new(id, start)))
+    request = DptzCamera::DPTZRelativeMoveRequest.new(id, 100_i16, 100_i16)
+    request.to_tlv.as_structure.keys.should eq([0_u8, 1_u8, 2_u8])
+    expect_success(invoke(camera, DptzCamera::CMD_DPTZ_RELATIVE_MOVE, request))
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(580_u16, 170_u16, 1540_u16, 710_u16))
+    expect_success(invoke(camera, DptzCamera::CMD_DPTZ_RELATIVE_MOVE,
+      DptzCamera::DPTZRelativeMoveRequest.new(id, nil, nil, 50_i8)))
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(820_u16, 305_u16, 1300_u16, 575_u16))
+    expect_success(invoke(camera, DptzCamera::CMD_DPTZ_RELATIVE_MOVE,
+      DptzCamera::DPTZRelativeMoveRequest.new(id, nil, nil, -100_i8)))
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(580_u16, 170_u16, 1540_u16, 710_u16))
+    applied.last.should eq(camera.dptz_streams.first.viewport)
+
+    rebound = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    rebound.restore_state(camera.save_state.as(Matter::Storage::Document))
+    rebound.dptz_streams.first.viewport.should eq(camera.dptz_streams.first.viewport)
+  end
+
+  it "validates relative fields, clips sensor and minimum bounds, and commits only after host admission" do
+    av = dptz_av_camera
+    camera = build(DptzCamera, feature_map: DptzCamera::Feature::DigitalPtz, video_stream_management: av)
+    id = allocate_dptz_video(av)
+    expect_success(camera.register_dptz_stream(id))
+    command = DptzCamera::CMD_DPTZ_RELATIVE_MOVE
+    missing_id = TLV::Any.new({1_u8 => TLV::Any.new(100_i16)} of TLV::TagId => TLV::Any)
+    expect_status(invoke(camera, command, missing_id), DptzCode::InvalidCommand)
+    mistyped_delta = TLV::Any.new({
+      0_u8 => TLV::Any.new(id),
+      2_u8 => TLV::Any.new("down"),
+    } of TLV::TagId => TLV::Any)
+    expect_status(invoke(camera, command, mistyped_delta), DptzCode::InvalidCommand)
+    expect_status(invoke(camera, command,
+      DptzCamera::DPTZRelativeMoveRequest.new(id + 1_u16, nil, nil, 50_i8)), DptzCode::NotFound)
+    expect_status(invoke(camera, command,
+      DptzCamera::DPTZRelativeMoveRequest.new(id)), DptzCode::ConstraintError)
+    [101_i8, -101_i8, Int8::MIN].each do |bad_zoom|
+      expect_status(invoke(camera, command,
+        DptzCamera::DPTZRelativeMoveRequest.new(id, nil, nil, bad_zoom)), DptzCode::ConstraintError)
+    end
+    zoom_in = DptzCamera::DPTZRelativeMoveRequest.new(id, nil, nil, 100_i8)
+    expect_status(invoke(camera, command, zoom_in), DptzCode::InvalidInState)
+    camera.on_dptz_set_viewport { |_stream_id, _viewport| DptzStatus.failure }
+    expect_status(invoke(camera, command, zoom_in), DptzCode::Failure)
+    camera.dptz_streams.first.viewport.should eq(av.viewport)
+    camera.on_dptz_set_viewport { |_stream_id, _viewport| DptzStatus.success }
+    expect_success(invoke(camera, command, zoom_in))
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(880_u16, 495_u16, 1040_u16, 585_u16))
+    expect_success(invoke(camera, command,
+      DptzCamera::DPTZRelativeMoveRequest.new(id, Int16::MIN, Int16::MAX)))
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(0_u16, 0_u16, 160_u16, 90_u16))
+    expect_success(invoke(camera, command,
+      DptzCamera::DPTZRelativeMoveRequest.new(id, nil, nil, -100_i8)))
+    camera.dptz_streams.first.viewport.should eq(DptzAv::Viewport.new(0_u16, 0_u16, 320_u16, 180_u16))
   end
 end

@@ -21,7 +21,7 @@ an ID and a reference count. `VideoStreamDeallocate` invokes
 does not need microphone capabilities. VDO does not enable watermark, OSD,
 snapshot, or image-control commands.
 
-The optional DPTZ-only profile of Camera AV Settings User Level Management
+The optional DPTZ profile of Camera AV Settings User Level Management
 binds to the VDO cluster on the same endpoint. After `VideoStreamAllocate`
 returns, call `register_dptz_stream(id)` only for streams that support digital
 movement. Their initial viewport is the VDO cluster's global `Viewport`.
@@ -30,7 +30,12 @@ stream aspect ratio, then calls `on_dptz_set_viewport` for the host to apply the
 crop. It changes the reported viewport only after host success. Global
 `Viewport` writes update every DPTZ entry; final video release removes that
 entry. DPTZ entries are persisted, but stale entries are removed when live
-video streams are absent after restart. Physical cropping remains host-owned.
+video streams are absent after restart. `DPTZRelativeMove` moves X to the right
+and Y up, and treats ZoomDelta as the percentage by which crop dimensions
+shrink. It clips the result to sensor bounds and the minimum crop size, while
+preserving the stream aspect ratio. The same host callback admits the result.
+DPTZ can be combined with mechanical axes and presets. Physical cropping
+remains host-owned.
 
 Mechanical PTZ profiles can advertise any combination of MPAN, MTILT, and
 MZOOM. `MPTZPosition` contains exactly the fields for those axes, and the set

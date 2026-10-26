@@ -159,6 +159,26 @@ module Matter
         end
       end
 
+      struct DPTZRelativeMoveRequest
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter video_stream_id : UInt16
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter delta_x : Int16?
+
+        @[TLV::Field(tag: 2, optional: true)]
+        getter delta_y : Int16?
+
+        @[TLV::Field(tag: 3, optional: true)]
+        getter zoom_delta : Int8?
+
+        def initialize(@video_stream_id : UInt16, @delta_x : Int16? = nil,
+                       @delta_y : Int16? = nil, @zoom_delta : Int8? = nil)
+        end
+      end
+
       attribute 0x0000, :mptz_position, MPTZPosition,
         default: MPTZPosition.new, persist: true,
         requires: [{mechanical_pan: true}, {mechanical_tilt: true}, {mechanical_zoom: true}],
@@ -197,6 +217,8 @@ module Matter
         access: :operate, requires: :mechanical_presets
       command 0x05, :dptz_set_viewport, request: DPTZSetViewportRequest,
         access: :operate, requires: :digital_ptz
+      command 0x06, :dptz_relative_move, request: DPTZRelativeMoveRequest,
+        access: :operate, requires: :digital_ptz
 
       @on_pan_move : Proc(Int16, InteractionModel::Status)?
       @on_mptz_move : Proc(MPTZPosition, InteractionModel::Status)?
@@ -219,12 +241,10 @@ module Matter
                      @feature_map : Feature = Feature::MechanicalPan)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         mechanical = Feature::MechanicalPan | Feature::MechanicalTilt | Feature::MechanicalZoom
-        if @feature_map.digital_ptz?
-          raise ArgumentError.new("DigitalPTZ combinations are not implemented") unless @feature_map == Feature::DigitalPtz
-        elsif (@feature_map.value & mechanical.value).zero? ||
-              (@feature_map.value & ~(mechanical | Feature::MechanicalPresets).value) != 0
-          raise ArgumentError.new("unsupported mechanical PTZ feature profile")
-        end
+        supported = mechanical | Feature::DigitalPtz | Feature::MechanicalPresets
+        raise ArgumentError.new("unsupported PTZ feature profile") if (@feature_map.value & ~supported.value) != 0 ||
+                                                                      (@feature_map.value & (mechanical | Feature::DigitalPtz).value).zero? ||
+                                                                      (@feature_map.mechanical_presets? && (@feature_map.value & mechanical.value).zero?)
         if @feature_map.digital_ptz?
           source = video_stream_management || raise ArgumentError.new("DigitalPTZ requires Video stream management")
           unless source.endpoint_id == endpoint_id && source.feature_map.video?
@@ -398,6 +418,47 @@ module Matter
         InteractionModel::Status.success
       end
 
+      def dptz_relative_move(request : DPTZRelativeMoveRequest) : InteractionModel::Status
+        source = @video_stream_management || return InteractionModel::Status.invalid_in_state
+        index = @dptz_streams.index(&.video_stream_id.==(request.video_stream_id))
+        return InteractionModel::Status.not_found unless index
+        stream = source.allocated_video_streams.find(&.video_stream_id.==(request.video_stream_id))
+        return InteractionModel::Status.not_found unless stream
+        return InteractionModel::Status.constraint_error if request.delta_x.nil? && request.delta_y.nil? && request.zoom_delta.nil?
+        zoom_delta = request.zoom_delta || 0_i8
+        return InteractionModel::Status.constraint_error unless zoom_delta.in?(-100_i8..100_i8)
+
+        current = @dptz_streams[index].viewport
+        width = current.x2.to_i32 - current.x1
+        height = current.y2.to_i32 - current.y1
+        resolution = stream.max_resolution
+        divisor = greatest_common_divisor(resolution.width.to_i32, resolution.height.to_i32)
+        ratio_width = resolution.width.to_i32 // divisor
+        ratio_height = resolution.height.to_i32 // divisor
+        return InteractionModel::Status.constraint_error unless width.to_i64 * ratio_height == height.to_i64 * ratio_width
+
+        sensor = source.video_sensor_params
+        minimum = source.min_viewport_resolution
+        min_units = {divide_round_up(minimum.width.to_i32, ratio_width),
+                     divide_round_up(minimum.height.to_i32, ratio_height)}.max
+        max_units = {sensor.sensor_width.to_i32 // ratio_width,
+                     sensor.sensor_height.to_i32 // ratio_height}.min
+        return InteractionModel::Status.constraint_error if min_units > max_units
+        current_units = width // ratio_width
+        units = ((current_units * (PERCENT_SCALE - zoom_delta.to_i32) + PERCENT_ROUNDING) // PERCENT_SCALE)
+          .clamp(min_units, max_units)
+        next_width = units * ratio_width
+        next_height = units * ratio_height
+        x1 = ((current.x1.to_i32 + current.x2 - next_width) // 2 + (request.delta_x || 0_i16))
+          .clamp(0, sensor.sensor_width.to_i32 - next_width)
+        # Matter's DeltaY is positive up, opposite increasing sensor Y.
+        y1 = ((current.y1.to_i32 + current.y2 - next_height) // 2 - (request.delta_y || 0_i16))
+          .clamp(0, sensor.sensor_height.to_i32 - next_height)
+        viewport = CameraAvStreamManagement::Viewport.new(x1.to_u16, y1.to_u16,
+          (x1 + next_width).to_u16, (y1 + next_height).to_u16)
+        dptz_set_viewport(DPTZSetViewportRequest.new(request.video_stream_id, viewport))
+      end
+
       # Call when the actuator has measured a new position. The final report
       # is persisted and resets MovementState to Idle.
       def report_pan_position(pan : Int16, moving : Bool = false) : Nil
@@ -429,6 +490,17 @@ module Matter
 
       private def valid_pan?(pan : Int16) : Bool
         (@pan_min..@pan_max).includes?(pan)
+      end
+
+      private def greatest_common_divisor(a : Int32, b : Int32) : Int32
+        until b.zero?
+          a, b = b, a % b
+        end
+        a
+      end
+
+      private def divide_round_up(value : Int32, divisor : Int32) : Int32
+        (value + divisor - 1) // divisor
       end
 
       private def valid_position?(position : MPTZPosition) : Bool

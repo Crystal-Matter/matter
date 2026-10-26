@@ -402,9 +402,9 @@ use `on_pan_move` and `report_pan_position`; hosts with tilt or zoom use
 Measured positions persist across restart. The optional MPRESETS feature adds
 a bounded, persisted list and move/save/remove commands. Register
 `on_preset_save` and `on_preset_remove` to admit changes. An opt-in
-DPTZ-only profile binds to same-endpoint VDO stream management. The host marks
+DPTZ profile binds to same-endpoint VDO stream management. The host marks
 allocated streams as move-capable and applies viewport changes through a callback.
-DPTZRelativeMove and combined digital/mechanical profiles remain gated. A synthetic
+DPTZRelativeMove and combined digital/mechanical profiles are supported. A synthetic
 camera fixture is in `examples/matter_camera_pan_device.cr`.
 The fixture uses an Aggregator endpoint for interoperability testing; it is
 not a conformant Camera device. The required Camera endpoint topology remains absent.
