@@ -993,7 +993,8 @@ module Matter
         endpoint_0,
         network_type: commissioning_network_type,
         feature_map: commissioning_network_feature_map,
-        backend: @network_backend
+        backend: @network_backend,
+        general_commissioning: general_commissioning
       )
       network_commissioning.on_breadcrumb_success = ->(value : UInt64) do
         general_commissioning.breadcrumb = value

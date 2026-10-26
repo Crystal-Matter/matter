@@ -1,4 +1,5 @@
 require "./cluster"
+require "./general_commissioning"
 require "./network_commissioning/types"
 require "../commissioning"
 require "../network/backend"
@@ -313,6 +314,10 @@ module Matter
       # so a successful network command can update it atomically.
       property on_breadcrumb_success : Proc(UInt64, Nil)?
 
+      # The wire command path consults the live commissioning fail-safe.
+      # A standalone cluster without one fails closed.
+      property general_commissioning : GeneralCommissioning?
+
       # Additional state for connected network tracking
       @connected_network_index : Int32?
 
@@ -325,6 +330,7 @@ module Matter
         @scan_max_time_seconds : UInt8 = DEFAULT_SCAN_MAX_TIME_SECONDS,
         @connect_max_time_seconds : UInt8 = DEFAULT_CONNECT_MAX_TIME_SECONDS,
         @backend : Network::Backend? = nil,
+        @general_commissioning : GeneralCommissioning? = nil,
       )
         # Allow 'features' parameter as alias for 'feature_map' for compatibility
         @feature_map = features if features
@@ -759,6 +765,12 @@ module Matter
       # Wire status answered when a request field violates its length constraint.
       OUT_OF_RANGE_STATUS = Tlv::StatusCode.new(NetworkCommissioningStatus::OutOfRange.value)
 
+      private def network_command_failsafe_status : InteractionModel::Status?
+        context = @general_commissioning.try(&.failsafe_context)
+        return InteractionModel::Status.failsafe_required unless context && context.armed?
+        InteractionModel::Status.unsupported_access unless context.matches_fabric?(request_fabric_index)
+      end
+
       # A request DTO rejected a field (oversized ssid / credentials / dataset /
       # network_id): answer `OutOfRange` with the validation message instead of
       # failing the whole command.
@@ -770,7 +782,10 @@ module Matter
         )
       end
 
-      def scan_networks(tlv_req : Tlv::ScanAvailableNetworksRequest) : Tlv::ScanNetworksResponse
+      def scan_networks(tlv_req : Tlv::ScanAvailableNetworksRequest) : Tlv::ScanNetworksResponse | InteractionModel::Status
+        if status = network_command_failsafe_status
+          return status
+        end
         # Parse TLV request
 
         # Convert to simple struct
@@ -844,7 +859,10 @@ module Matter
         )
       end
 
-      def add_or_update_wifi_network(tlv_req : Tlv::AddOrUpdateWiFiNetworkRequest) : Tlv::NetworkConfigurationResponse
+      def add_or_update_wifi_network(tlv_req : Tlv::AddOrUpdateWiFiNetworkRequest) : Tlv::NetworkConfigurationResponse | InteractionModel::Status
+        if status = network_command_failsafe_status
+          return status
+        end
         # Parse TLV request
 
         # Convert to simple struct
@@ -869,7 +887,10 @@ module Matter
         )
       end
 
-      def add_or_update_thread_network(tlv_req : Tlv::AddOrUpdateThreadNetworkRequest) : Tlv::NetworkConfigurationResponse
+      def add_or_update_thread_network(tlv_req : Tlv::AddOrUpdateThreadNetworkRequest) : Tlv::NetworkConfigurationResponse | InteractionModel::Status
+        if status = network_command_failsafe_status
+          return status
+        end
         # Parse TLV request
 
         # Convert to simple struct
@@ -893,7 +914,10 @@ module Matter
         )
       end
 
-      def remove_network(tlv_req : Tlv::RemoveNetworkRequest) : Tlv::NetworkConfigurationResponse
+      def remove_network(tlv_req : Tlv::RemoveNetworkRequest) : Tlv::NetworkConfigurationResponse | InteractionModel::Status
+        if status = network_command_failsafe_status
+          return status
+        end
         # Parse TLV request
 
         # Convert to simple struct
@@ -917,7 +941,10 @@ module Matter
         )
       end
 
-      def connect_network(tlv_req : Tlv::ConnectNetworkRequest) : Tlv::ConnectNetworkResponse
+      def connect_network(tlv_req : Tlv::ConnectNetworkRequest) : Tlv::ConnectNetworkResponse | InteractionModel::Status
+        if status = network_command_failsafe_status
+          return status
+        end
         # Parse TLV request
 
         # Convert to simple struct
@@ -945,7 +972,10 @@ module Matter
         )
       end
 
-      def reorder_network(tlv_req : Tlv::ReorderNetworkRequest) : Tlv::NetworkConfigurationResponse
+      def reorder_network(tlv_req : Tlv::ReorderNetworkRequest) : Tlv::NetworkConfigurationResponse | InteractionModel::Status
+        if status = network_command_failsafe_status
+          return status
+        end
         # Parse TLV request
 
         # Convert to simple struct
