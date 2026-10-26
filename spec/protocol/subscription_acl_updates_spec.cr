@@ -81,7 +81,7 @@ private def subscription_acl_viewport_path(wildcard : Bool = false) : Matter::In
     attribute: wildcard ? nil : SubscriptionCamera::ATTR_VIEWPORT)
 end
 
-private def subscription_acl_report(bytes : Bytes, session : Matter::Session::SecureContext) : Matter::InteractionModel::ReportDataMessage
+private def subscription_acl_message(bytes : Bytes, session : Matter::Session::SecureContext) : Matter::Codec::MessageCodec::Message
   packet = Matter::Codec::MessageCodec::Base.decode_packet(bytes)
   header = bytes[0, bytes.size - packet.payload.size]
   nonce = Matter::Session::SecureMessage.build_nonce(
@@ -90,9 +90,41 @@ private def subscription_acl_report(bytes : Bytes, session : Matter::Session::Se
     header[Matter::Codec::MessageCodec::SECURITY_FLAGS_OFFSET])
   plaintext = Matter::Crypto::StandardCrypto.new.decrypt(
     session.encryption_key, packet.payload, nonce, header)
-  payload = Matter::Codec::MessageCodec::Base.decode_payload(
-    Matter::Codec::MessageCodec::Packet.new(packet.header, plaintext)).payload
-  Matter::InteractionModel::ReportDataMessage.from_slice(payload)
+  Matter::Codec::MessageCodec::Base.decode_payload(
+    Matter::Codec::MessageCodec::Packet.new(packet.header, plaintext))
+end
+
+private def subscription_acl_report(bytes : Bytes, session : Matter::Session::SecureContext) : Matter::InteractionModel::ReportDataMessage
+  Matter::InteractionModel::ReportDataMessage.from_slice(subscription_acl_message(bytes, session).payload)
+end
+
+private def subscription_acl_seed_events(fixture : SubscriptionAclFixture) : Matter::InteractionModel::EventPath
+  path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+    cluster: SubscriptionAcl::CLUSTER_ID,
+    event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+  40.times do
+    fixture.handler.node.event_journal.record(0_u16, SubscriptionAcl::CLUSTER_ID,
+      SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info,
+      TLV::Any.new("sensitive event payload" * 4), fabric_index: 1_u8)
+  end
+  path
+end
+
+private def subscription_acl_ack_first_report(fixture : SubscriptionAclFixture, counter : UInt32 = 100_u32) : Nil
+  first = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+  subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    .more_chunked_messages.should be_true
+  fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+    fixture.session, counter, first.payload_header.exchange_id),
+    Socket::IPAddress.new("127.0.0.1", 5540))
+end
+
+private def subscription_acl_rejected_chunk(fixture : SubscriptionAclFixture) : Nil
+  fixture.transport.sent_packets.size.should eq(2)
+  second = subscription_acl_message(fixture.transport.sent_packets.last[0], fixture.session)
+  second.payload_header.message_type.should eq(Matter::InteractionModel::MessageType::StatusResponse.value)
+  Matter::InteractionModel::StatusResponseMessage.from_slice(second.payload).status
+    .should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
 end
 
 describe "active subscription ACL updates" do
@@ -161,6 +193,55 @@ describe "active subscription ACL updates" do
     fixture.handler.subscriptions.notify(1_u16, SubscriptionCamera::CLUSTER_ID,
       SubscriptionCamera::ATTR_VIEWPORT)
     fixture.transport.sent_packets.should be_empty
+    fixture.handler.close
+  end
+
+  it "stops queued subscription event chunks after Administer is revoked" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: SubscriptionAcl::CLUSTER_ID,
+      event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+    subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
+    subscription_acl_seed_events(fixture)
+    fixture.handler.subscriptions.notify_events
+    fixture.transport.sent_packets.size.should eq(1)
+
+    subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::View)
+    subscription_acl_ack_first_report(fixture)
+    subscription_acl_rejected_chunk(fixture)
+    fixture.handler.active_subscriptions.should be_empty
+    fixture.handler.close
+  end
+
+  it "stops queued SubscribeRequest priming chunks after Administer is revoked" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    path = subscription_acl_seed_events(fixture)
+    request = Matter::InteractionModel::SubscribeRequestMessage.new(
+      event_requests: [path], min_interval_floor: 0_u16, max_interval_ceiling: 60_u16)
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      fixture.session, Matter::InteractionModel::MessageType::SubscribeRequest.value,
+      request.to_slice, 3_u32, 31_u16), Socket::IPAddress.new("127.0.0.1", 5540))
+    fixture.transport.sent_packets.size.should eq(1)
+
+    subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::View)
+    subscription_acl_ack_first_report(fixture)
+    subscription_acl_rejected_chunk(fixture)
+    fixture.handler.active_subscriptions.should be_empty
+    fixture.handler.close
+  end
+
+  it "stops queued ReadRequest event chunks after Administer is revoked" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    path = subscription_acl_seed_events(fixture)
+    request = Matter::InteractionModel::ReadRequestMessage.new(event_requests: [path])
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      fixture.session, Matter::InteractionModel::MessageType::ReadRequest.value,
+      request.to_slice, 3_u32, 31_u16), Socket::IPAddress.new("127.0.0.1", 5540))
+    fixture.transport.sent_packets.size.should eq(1)
+
+    subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::View)
+    subscription_acl_ack_first_report(fixture)
+    subscription_acl_rejected_chunk(fixture)
     fixture.handler.close
   end
 

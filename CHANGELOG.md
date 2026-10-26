@@ -14,6 +14,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   suppressed while access is denied are not replayed by a later privilege grant.
   Preserve the SubscribeRequest fabric-filter choice through updates and
   subscription restoration.
+- Recheck each queued ReportData chunk before sending it. If access is revoked
+  between acknowledgements, abort the read or subscription transaction with
+  UnsupportedAccess instead of releasing previously encoded attribute or event data.
 
 ### Joint Fabric keyed group propagation
 

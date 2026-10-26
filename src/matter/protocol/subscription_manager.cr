@@ -167,9 +167,16 @@ module Matter
               return true
             end
 
-            if chunk = pending.next_chunk
+            if chunk = pending.remaining_chunks.first?
+              unless report_chunk_authorized?(pending.session, chunk)
+                @pending_subscriptions.delete(key)
+                send_access_revoked(trigger, pending)
+                Log.warn { "Subscription #{pending.subscription_id} aborted: access revoked before priming chunk" }
+                return true
+              end
               Log.debug { "Subscription #{pending.subscription_id}: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
               send_chunk(pending, trigger, chunk)
+              pending.next_chunk
             else
               @pending_subscriptions.delete(key)
               complete_subscription(pending, trigger, exchange_id)
@@ -194,6 +201,15 @@ module Matter
             end
 
             if chunk = pending.remaining_chunks.first?
+              unless report_chunk_authorized?(pending.session, chunk)
+                @pending_updates.delete(key)
+                @inflight_updates.delete(pending.subscription_id)
+                @dirty_attributes.delete(pending.subscription_id)
+                @registry.remove_subscription(pending.subscription_id)
+                send_access_revoked(trigger, pending)
+                Log.warn { "Subscription #{pending.subscription_id} terminated: access revoked before update chunk" }
+                return true
+              end
               send_chunk(pending, trigger, chunk)
               pending.next_chunk
               pending.last_progress_at = Time.monotonic
@@ -218,9 +234,16 @@ module Matter
               return true
             end
 
-            if chunk = pending.next_chunk
+            if chunk = pending.remaining_chunks.first?
+              unless report_chunk_authorized?(pending.session, chunk)
+                @pending_reads.delete(key)
+                send_access_revoked(trigger, pending)
+                Log.warn { "Read response aborted: access revoked before chunk (exchange=#{exchange_id})" }
+                return true
+              end
               Log.debug { "Read response: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
               send_chunk(pending, trigger, chunk)
+              pending.next_chunk
             end
             @pending_reads.delete(key) unless pending.more_chunks?
 
@@ -490,6 +513,22 @@ module Matter
           session: pending.session,
           message_type: pending.is_a?(PendingInvoke) ? InteractionModel::MessageType::InvokeResponse.value : InteractionModel::MessageType::ReportData.value,
           payload: chunk,
+          cache_for_mrp: true
+        )
+      end
+
+      private def report_chunk_authorized?(session : Session::SecureContext, chunk : Bytes) : Bool
+        IMHandler.report_chunk_authorized?(chunk, @node.clusters, session)
+      end
+
+      private def send_access_revoked(trigger : Codec::MessageCodec::Message, pending : PendingChunks) : Nil
+        @sender.send_im_response(
+          original_msg: trigger,
+          peer: pending.peer,
+          session: pending.session,
+          message_type: InteractionModel::MessageType::StatusResponse.value,
+          payload: InteractionModel::StatusResponseMessage.new(
+            status: InteractionModel::StatusCode::UnsupportedAccess.value).to_slice,
           cache_for_mrp: true
         )
       end
