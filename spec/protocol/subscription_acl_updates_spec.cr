@@ -2,10 +2,12 @@ require "../spec_helper"
 require "../../src/matter/cluster/access_control"
 require "../../src/matter/cluster/camera_av_stream_management"
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 require "../../src/matter/protocol/message_handler"
 
 private alias SubscriptionAcl = Matter::Cluster::AccessControl
 private alias SubscriptionCamera = Matter::Cluster::CameraAvStreamManagement
+private alias SubscriptionWiFi = Matter::Cluster::WiFiNetworkManagement
 private alias SubscriptionIM = Matter::Protocol::IMHandler
 
 private class FabricAwareSubscriptionOnOff < Matter::Cluster::OnOff
@@ -163,8 +165,8 @@ describe "active subscription ACL updates" do
   end
 
   it "does not disclose a Manage viewport after View-only priming, including a wildcard path" do
-    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
     [false, true].each do |wildcard|
+      fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
       path = subscription_acl_viewport_path(wildcard)
       priming = SubscriptionIM.read_attributes([path], fixture.handler.node.clusters,
         fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
@@ -175,9 +177,17 @@ describe "active subscription ACL updates" do
       fixture.camera.viewport = SubscriptionCamera::Viewport.new(0_u16, 0_u16, 1280_u16, 720_u16)
       fixture.handler.subscriptions.notify(1_u16, SubscriptionCamera::CLUSTER_ID,
         SubscriptionCamera::ATTR_VIEWPORT)
-      fixture.transport.sent_packets.should be_empty
+      if wildcard
+        fixture.transport.sent_packets.should be_empty
+      else
+        reports = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+          .attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        reports.compact_map(&.attribute_data).should be_empty
+        reports.compact_map(&.attribute_status).map(&.status.status)
+          .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+      end
+      fixture.handler.close
     end
-    fixture.handler.close
   end
 
   it "stops viewport updates when Manage privilege is revoked after priming" do
@@ -192,7 +202,11 @@ describe "active subscription ACL updates" do
     fixture.camera.viewport = SubscriptionCamera::Viewport.new(0_u16, 0_u16, 1280_u16, 720_u16)
     fixture.handler.subscriptions.notify(1_u16, SubscriptionCamera::CLUSTER_ID,
       SubscriptionCamera::ATTR_VIEWPORT)
-    fixture.transport.sent_packets.should be_empty
+    reports = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+      .attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    reports.compact_map(&.attribute_data).should be_empty
+    reports.compact_map(&.attribute_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
     fixture.handler.close
   end
 
@@ -224,6 +238,49 @@ describe "active subscription ACL updates" do
     fixture.transport.sent_packets.size.should eq(1)
 
     subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::View)
+    subscription_acl_ack_first_report(fixture)
+    subscription_acl_rejected_chunk(fixture)
+    fixture.handler.active_subscriptions.should be_empty
+    fixture.handler.close
+  end
+
+  it "stops a queued priming attribute chunk when its fabric gains an ARL restriction" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    wifi = build(SubscriptionWiFi, 1_u16)
+    wifi.update_credentials("Test Wi-Fi".to_slice, "correct horse".to_slice, 1_u64)
+    fixture.handler.node.clusters[{1_u16, SubscriptionWiFi::CLUSTER_ID}] = wifi
+
+    public_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: SubscriptionWiFi::CLUSTER_ID,
+      attribute: Matter::Cluster::Base::GLOBAL_FEATURE_MAP)
+    sensitive_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: SubscriptionWiFi::CLUSTER_ID, attribute: SubscriptionWiFi::ATTR_SSID)
+    public_report = SubscriptionIM.read_attributes([public_path], fixture.handler.node.clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
+    sensitive_report = SubscriptionIM.read_attributes([sensitive_path], fixture.handler.node.clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
+    sensitive_report.first.attribute_data.should_not be_nil
+
+    first_chunk = Matter::InteractionModel::ReportDataMessage.new(
+      subscription_id: 42_u32, attribute_reports: public_report, more_chunked_messages: true)
+    queued_chunk = Matter::InteractionModel::ReportDataMessage.new(
+      subscription_id: 42_u32, attribute_reports: sensitive_report)
+    exchange_id = fixture.handler.sender.send_report(fixture.session,
+      Socket::IPAddress.new("127.0.0.1", 5540), first_chunk.to_slice)
+    fixture.handler.subscriptions.await_subscription(exchange_id,
+      Matter::Protocol::SubscriptionManager::PendingSubscription.new(
+        subscription_id: 42_u32, min_interval: 0_u16, max_interval: 60_u16,
+        attribute_paths: [public_path, sensitive_path],
+        peer: Socket::IPAddress.new("127.0.0.1", 5540), session: fixture.session,
+        remaining_chunks: [queued_chunk.to_slice]))
+
+    fixture.acl.configure_access_restrictions(1_u8, [
+      SubscriptionAcl::AccessRestrictionEntry.new(1_u16, SubscriptionWiFi::CLUSTER_ID, [
+        SubscriptionAcl::AccessRestriction.new(
+          SubscriptionAcl::AccessRestrictionType::AttributeAccessForbidden,
+          SubscriptionWiFi::ATTR_SSID),
+      ]),
+    ])
     subscription_acl_ack_first_report(fixture)
     subscription_acl_rejected_chunk(fixture)
     fixture.handler.active_subscriptions.should be_empty
@@ -267,7 +324,17 @@ describe "active subscription ACL updates" do
       SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info, TLV::Any.new("secret"),
       fabric_index: 1_u8)
     fixture.handler.subscriptions.notify_events
-    fixture.transport.sent_packets.should be_empty
+    report = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_data).should be_empty
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+    first = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 100_u32, first.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    fixture.transport.sent_packets.clear
 
     subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::Administer)
     # An event suppressed while access was denied must not replay on a later grant.
@@ -279,14 +346,19 @@ describe "active subscription ACL updates" do
     priming = SubscriptionIM.read_events([path], fixture.handler.node.event_journal,
       fixture.handler.node.clusters, fabric_index: 1_u8, is_case_session: true,
       peer_subject_ids: fixture.session.peer_subject_ids)
-    priming.any? { |report| !report.event_data.nil? }.should be_true
+    priming.any? { |entry| !entry.event_data.nil? }.should be_true
     subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
     subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::View)
     fixture.handler.node.event_journal.record(0_u16, SubscriptionAcl::CLUSTER_ID,
       SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info, TLV::Any.new("revoked"),
       fabric_index: 1_u8)
     fixture.handler.subscriptions.notify_events
-    fixture.transport.sent_packets.should be_empty
+    report = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_data).should be_empty
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
     fixture.handler.close
   end
 end
