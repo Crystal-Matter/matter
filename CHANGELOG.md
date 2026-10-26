@@ -29,6 +29,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Matter epoch-seconds range, and poll for effective and expiry transitions
   after a clock change without requiring an attribute read. The official
   chip-tool fixture now checks Add before and after root SetUTCTime.
+- Add guarded optional TemperatureSetpointHold and indefinite hold duration
+  attributes. An active hold keeps CurrentThermostatSuggestion visible, reports
+  OngoingHold, and preserves the active preset; releasing it follows the
+  suggestion and reports the reason transition. Production TSUGGEST remains
+  gated while schedule and occupancy arbitration is completed.
 
 ### Thermostat suggestion host state
 
