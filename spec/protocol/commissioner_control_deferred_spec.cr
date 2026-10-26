@@ -87,7 +87,8 @@ end
 
 private def reverse_chunked_invoke(handler : Matter::Protocol::MessageHandler,
                                    session : Matter::Session::SecureContext,
-                                   request_id : UInt64, exchange : UInt16) : Nil
+                                   request_id : UInt64, exchange : UInt16,
+                                   counter : UInt32 = 2_u32) : Nil
   padding = Array.new(CHUNK_PADDING_COMMANDS) do
     path = Matter::InteractionModel::CommandPath.new(0_u16, ReverseChunkPadding::CLUSTER_ID,
       ReverseChunkPadding::CMD_PAD)
@@ -100,7 +101,7 @@ private def reverse_chunked_invoke(handler : Matter::Protocol::MessageHandler,
   request = Matter::InteractionModel::InvokeRequestMessage.new(padding)
   inbound = Matter::Spec::ProtocolMessages.from_peer(session,
     Matter::InteractionModel::MessageType::InvokeRequest.value,
-    request.to_slice, 2_u32, exchange)
+    request.to_slice, counter, exchange)
   handler.handle_message(inbound, REVERSE_PEER)
 end
 
@@ -202,6 +203,76 @@ describe "reverse commissioning response handoff" do
     select
     when started.receive
       fail "failed response chunk started reverse commissioning"
+    when timeout(20.milliseconds)
+    end
+    handler.close
+  end
+
+  it "does not release an old commission through a replacement encrypted session" do
+    handler, transport, session, control, started = reverse_chunked_fixture(80_u64, 126_u16, 127_u16)
+    reverse_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+    sent_count = transport.sent_packets.size
+
+    replacement = Matter::Spec::ProtocolMessages.case_session(session.session_id)
+    handler.sessions[session.session_id] = replacement
+    handler.handle_message(Matter::Spec::ProtocolMessages.status_response(replacement, 3_u32, 127_u16), REVERSE_PEER)
+
+    transport.sent_packets.size.should eq(sent_count + 1)
+    Matter::Spec::ProtocolMessages.decode_message_type(transport.sent_packets.last[0], replacement)
+      .should_not eq(Matter::InteractionModel::MessageType::InvokeResponse.value)
+    control.take_pending_commissions(session.object_id.to_u64, 127_u16).should be_empty
+    select
+    when started.receive
+      fail "replacement session released an old commission"
+    when timeout(20.milliseconds)
+    end
+    handler.close
+  end
+
+  it "discards a stalled commission after the invoke chunk acknowledgement timeout" do
+    handler, transport, session, control, started = reverse_chunked_fixture(81_u64, 128_u16, 129_u16)
+    reverse_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+    sent_count = transport.sent_packets.size
+
+    handler.subscriptions.tick(monotonic_now: Time.monotonic + 31.seconds)
+    control.take_pending_commissions(session.object_id.to_u64, 129_u16).should be_empty
+    handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, 3_u32, 129_u16), REVERSE_PEER)
+    transport.sent_packets.size.should eq(sent_count + 1)
+    Matter::Spec::ProtocolMessages.decode_message_type(transport.sent_packets.last[0], session)
+      .should_not eq(Matter::InteractionModel::MessageType::InvokeResponse.value)
+    select
+    when started.receive
+      fail "timed out invoke released a commission"
+    when timeout(20.milliseconds)
+    end
+    handler.close
+  end
+
+  it "keeps new deferred work when a chunked invoke replaces the same session and exchange" do
+    handler, transport, session, _, started = reverse_chunked_fixture(82_u64, 130_u16, 131_u16)
+    reverse_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+
+    reverse_invoke(handler, session, ReverseControl::CMD_REQUEST_COMMISSIONING_APPROVAL,
+      ReverseControl::RequestCommissioningApprovalRequest.new(83_u64, 0xFFF1_u16, 1_u16).to_slice,
+      3_u32, 132_u16)
+    reverse_chunked_invoke(handler, session, 83_u64, 131_u16, 4_u32)
+
+    response = reverse_response(transport.sent_packets.last[0], session)
+    response.more_chunked_messages.should be_true
+    counter = 5_u32
+    while response.more_chunked_messages == true
+      handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, counter, 131_u16), REVERSE_PEER)
+      counter += 1_u32
+      response = reverse_response(transport.sent_packets.last[0], session)
+    end
+    select
+    when started.receive
+    when timeout(1.second)
+      fail "replacement invoke's deferred commission was discarded"
+    end
+    select
+    when started.receive
+      fail "displaced invoke also started commissioning"
     when timeout(20.milliseconds)
     end
     handler.close

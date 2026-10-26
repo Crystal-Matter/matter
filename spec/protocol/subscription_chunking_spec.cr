@@ -220,4 +220,44 @@ describe "Invoke response chunk ladder" do
     sent_message_types(fixture).should eq([Matter::InteractionModel::MessageType::InvokeResponse.value])
     fixture.handler.close
   end
+
+  it "fails a pending invoke once when its secure session is removed" do
+    fixture = pending_subscription_fixture
+    failures = 0
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]], on_failed: -> { failures += 1; nil }))
+
+    fixture.handler.delete_session(fixture.session.session_id)
+    fixture.handler.subscriptions.tick(monotonic_now: Time.monotonic + 31.seconds)
+    failures.should eq(1)
+    fixture.handler.close
+  end
+
+  it "fails a stalled invoke only once after its acknowledgement deadline" do
+    fixture = pending_subscription_fixture
+    failures = 0
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]], on_failed: -> { failures += 1; nil }))
+
+    fixture.handler.subscriptions.tick(monotonic_now: Time.monotonic + 31.seconds)
+    fixture.handler.subscriptions.tick(monotonic_now: Time.monotonic + 62.seconds)
+    failures.should eq(1)
+    fixture.handler.close
+  end
+
+  it "fails an invoke displaced on the same session and exchange" do
+    fixture = pending_subscription_fixture
+    failures = 0
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]], on_failed: -> { failures += 1; nil }))
+    fixture.handler.subscriptions.await_invoke(EXCHANGE_ID &+ 1_u16,
+      Matter::Protocol::SubscriptionManager::PendingInvoke.new(
+        PEER, fixture.session, [Bytes[0x18]]))
+
+    failures.should eq(1)
+    fixture.handler.close
+  end
 end

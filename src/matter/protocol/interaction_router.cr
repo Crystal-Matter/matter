@@ -385,6 +385,8 @@ module Matter
 
         return unless timed_interaction_satisfied?(request.timed_request, original_msg, peer, session)
 
+        @subscriptions.abandon_invoke(original_msg.payload_header.exchange_id, session.session_id)
+
         Log.info { "InvokeRequest: #{request.invoke_requests.size} command(s) requested" }
 
         invoke_responses = IMHandler.invoke_commands(

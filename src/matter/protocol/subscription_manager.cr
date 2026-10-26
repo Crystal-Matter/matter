@@ -53,13 +53,26 @@ module Matter
 
       # An InvokeRequest whose command responses span multiple messages.
       class PendingInvoke < PendingChunks
-        getter on_sent : Proc(Nil)?
-        getter on_failed : Proc(Nil)?
+        property last_progress_at : Time::Span
+        @finished = false
 
         def initialize(peer : Socket::IPAddress, session : Session::SecureContext,
                        remaining_chunks : Array(Bytes), @on_sent : Proc(Nil)? = nil,
                        @on_failed : Proc(Nil)? = nil)
           super(peer, session, remaining_chunks)
+          @last_progress_at = Time.monotonic
+        end
+
+        def sent : Nil
+          return if @finished
+          @finished = true
+          @on_sent.try(&.call)
+        end
+
+        def failed : Nil
+          return if @finished
+          @finished = true
+          @on_failed.try(&.call)
         end
       end
 
@@ -153,7 +166,34 @@ module Matter
       end
 
       def await_invoke(exchange_id : UInt16, pending : PendingInvoke) : Nil
-        @registry.synchronize { @pending_invokes[{pending.session.session_id, exchange_id}] = pending }
+        @registry.synchronize do
+          key = {pending.session.session_id, exchange_id}
+          @pending_invokes[key]?.try(&.failed)
+          @pending_invokes[key] = pending
+        end
+      end
+
+      # A new request may queue deferred work while running its commands.
+      # Fail any displaced response before those commands run, so its failure
+      # callback cannot erase the new request's work on the same exchange.
+      def abandon_invoke(exchange_id : UInt16, session_id : UInt16) : Nil
+        @registry.synchronize do
+          if pending = @pending_invokes.delete({session_id, exchange_id})
+            pending.failed
+          end
+        end
+      end
+
+      # Session IDs are reusable. A pending invoke belongs to the exact secure
+      # context that sent its first response chunk, not a later holder of its ID.
+      def forget_invoke_session(session_id : UInt16) : Nil
+        @registry.synchronize do
+          @pending_invokes.reject! do |key, pending|
+            next false unless key[0] == session_id
+            pending.failed
+            true
+          end
+        end
       end
 
       # Advances the chunked exchange *exchange_id*, returning whether it was
@@ -234,13 +274,19 @@ module Matter
           end
 
           if pending = @pending_invokes[key]?
+            unless @registry.sessions[key[0]]?.same?(pending.session) &&
+                   trigger.packet_header.session_id == pending.session.session_id
+              @pending_invokes.delete(key)
+              pending.failed
+              return false
+            end
             # InvokeResponse chunking requires an IM Status.Success. A transport
             # MRP acknowledgement only confirms datagram delivery.
             return false unless trigger.payload_header.protocol_id == ProtocolId::InteractionModel.value &&
                                 trigger.payload_header.message_type == InteractionModel::MessageType::StatusResponse.value
             unless success
               @pending_invokes.delete(key)
-              pending.on_failed.try(&.call)
+              pending.failed
               Log.warn { "Invoke response aborted: peer rejected a chunk (exchange=#{exchange_id})" }
               return true
             end
@@ -250,15 +296,16 @@ module Matter
               begin
                 send_chunk(pending, trigger, chunk)
                 pending.next_chunk
+                pending.last_progress_at = Time.monotonic
               rescue ex
                 @pending_invokes.delete(key)
-                pending.on_failed.try(&.call)
+                pending.failed
                 raise ex
               end
             end
             unless pending.more_chunks?
               @pending_invokes.delete(key)
-              pending.on_sent.try(&.call)
+              pending.sent
             end
 
             return true
@@ -312,6 +359,11 @@ module Matter
       # a ReportData at MaxInterval, while dirty values wait for MinInterval.
       def tick(now : Time = Time.utc, monotonic_now : Time::Span = Time.monotonic) : Nil
         @registry.synchronize do
+          @pending_invokes.reject! do |_key, pending|
+            next false if monotonic_now - pending.last_progress_at < REPORT_STATUS_TIMEOUT
+            pending.failed
+            true
+          end
           subscriptions = @registry.active_subscriptions
           prune_inflight_updates(subscriptions, monotonic_now)
           @dirty_attributes.reject! { |id, _| !subscriptions.has_key?(id) }
