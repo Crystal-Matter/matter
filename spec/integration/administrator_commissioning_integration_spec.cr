@@ -254,6 +254,7 @@ module Matter
 
         # Step 4: Add NOC (simulated) - transition to CASE
         new_fabric_index = 2_u8
+        general_comm.record_added_fabric(new_fabric_index)
         rearm_request = Cluster::GeneralCommissioning::ArmFailSafeRequest.new(
           expiry_length_seconds: 5_u16,
           breadcrumb: 150_u64
