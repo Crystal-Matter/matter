@@ -22,33 +22,33 @@ describe "Matter 1.6 Camera AV Settings mechanical and digital PTZ interoperabil
 
   it "commissions and advertises the combined PTZ profile" do
     device.commission!
-    ptz_read(device, "0xfffc").output.should contain("15")
-    ptz_read(device, "0x4").output.should contain("20")
-    ptz_read(device, "0x5").output.should contain("-45")
-    ptz_read(device, "0x6").output.should contain("45")
-    ptz_read(device, "0x3").output.should contain("1920")
+    ptz_read(device, "0xfffc").int("FeatureMap").should eq(15_i64)
+    ptz_read(device, "0x4").int("ZoomMax").should eq(20_i64)
+    ptz_read(device, "0x5").int("TiltMin").should eq(-45_i64)
+    ptz_read(device, "0x6").int("TiltMax").should eq(45_i64)
+    ptz_read(device, "0x3").int("X2").should eq(1920_i64)
   end
 
   it "sets mechanical axes, moves relatively, and persists measured position" do
     expect_success(ptz_command(device, "0x0", %({"0":"s:12","1":"s:-8","2":"u:4"})))
-    ptz_read(device, "0x0").output.should contain("12")
-    ptz_read(device, "0x0").output.should contain("-8")
+    ptz_read(device, "0x0").int("Pan").should eq(12_i64)
+    ptz_read(device, "0x0").int("Tilt").should eq(-8_i64)
     expect_success(ptz_command(device, "0x1", %({"1":"s:5","2":"s:3"})))
-    ptz_read(device, "0x0").output.should contain("-3")
-    ptz_read(device, "0x0").output.should contain("7")
+    ptz_read(device, "0x0").int("Tilt").should eq(-3_i64)
+    ptz_read(device, "0x0").int("Zoom").should eq(7_i64)
     expect_failure(ptz_command(device, "0x0", %({"1":"s:46"})), "CONSTRAINT_ERROR")
     device.restart!
-    ptz_read(device, "0x0").output.should contain("-3")
-    ptz_read(device, "0x0").output.should contain("7")
+    ptz_read(device, "0x0").int("Tilt").should eq(-3_i64)
+    ptz_read(device, "0x0").int("Zoom").should eq(7_i64)
   end
 
   it "moves a registered video crop through both digital PTZ commands" do
     stream_id = ptz_stream_id(device)
     expect_success(ptz_command(device, "0x5",
       %({"0":"u:#{stream_id}","1":{"0":"u:0","1":"u:0","2":"u:960","3":"u:540"}})))
-    ptz_read(device, "0x3").output.should contain("960")
+    ptz_read(device, "0x3").int("X2").should eq(960_i64)
     expect_success(ptz_command(device, "0x6", %({"0":"u:#{stream_id}","1":"s:10","2":"s:10"})))
-    ptz_read(device, "0x3").output.should contain("X2: 970")
+    ptz_read(device, "0x3").int("X2").should eq(970_i64)
     expect_failure(ptz_command(device, "0x5",
       %({"0":"u:#{stream_id}","1":{"0":"u:0","1":"u:0","2":"u:100","3":"u:100"}})),
       "CONSTRAINT_ERROR")
