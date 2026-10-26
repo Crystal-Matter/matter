@@ -1276,6 +1276,7 @@ module Matter
                                   bindings : Array(DatastoreBindingTargetStruct)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
+        return InteractionModel::Status.constraint_error unless bindings.all? { |binding| valid_binding_target?(binding) }
         entries = @endpoint_binding_list.reject do |entry|
           entry.node_id == node_id && entry.endpoint_id == endpoint_id &&
             entry.status_entry.state == DatastoreStateEnum::Committed && !bindings.includes?(entry.binding)
@@ -1370,9 +1371,7 @@ module Matter
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
         binding = request.binding
-        return InteractionModel::Status.constraint_error if binding.node.nil? == binding.group.nil?
-        return InteractionModel::Status.constraint_error if binding.node && binding.endpoint.nil?
-        return InteractionModel::Status.constraint_error if binding.group == 0_u16 || (binding.group && binding.endpoint)
+        return InteractionModel::Status.constraint_error unless valid_binding_target?(binding)
         return InteractionModel::Status.resource_exhausted if @endpoint_binding_list.size >= MAX_NODE_ENTRIES
         id = next_list_id(all_list_ids)
         return InteractionModel::Status.resource_exhausted unless id
@@ -1552,6 +1551,15 @@ module Matter
 
       private def valid_name?(name : String) : Bool
         name.bytesize <= MAX_FRIENDLY_NAME_BYTES
+      end
+
+      private def valid_binding_target?(binding : DatastoreBindingTargetStruct) : Bool
+        node = binding.node
+        group = binding.group
+        return false if node.nil? == group.nil?
+        return false if node && (binding.endpoint.nil? || !DataType::NodeId.valid_joint_fabric?(node))
+        return false if group && (group == 0_u16 || binding.endpoint)
+        true
       end
 
       private def valid_key_set?(entry : DatastoreGroupKeySetStruct) : Bool

@@ -76,6 +76,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pending duration and deadline, and only report a confirmed active promise.
   Ordinary bridged lights keep the feature disabled.
 
+### Joint Fabric binding target validation
+
+- Reject zero and reserved Node IDs in Datastore Binding targets before staging
+  an Administrator request or reconciling a device's Binding list.
+
 ### Joint Fabric control isolation
 
 - Require the CASE fabric to match the JFA endpoint's AdministratorFabricIndex
