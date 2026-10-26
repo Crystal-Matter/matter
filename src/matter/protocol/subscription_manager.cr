@@ -305,10 +305,9 @@ module Matter
             # Every report drains whatever the journal still owes this
             # subscription, so a non-urgent event rides out with the next
             # attribute change rather than waiting for its own report.
-            records = journal_records(subscription)
-            events = event_reports(subscription, records)
-            event_cursor = records.last?.try(&.event_number)
-            subscription.last_event_number = event_cursor if events.empty? && event_cursor && reports.empty?
+            records, event_cursor = journal_snapshot(subscription)
+            events = event_reports(subscription, records, event_cursor)
+            advance_event_cursor(subscription, event_cursor) if events.empty? && reports.empty?
             next if reports.empty? && events.empty?
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
@@ -335,10 +334,9 @@ module Matter
             next unless report_due
 
             reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
-            records = journal_records(subscription)
-            events = event_reports(subscription, records)
-            event_cursor = records.last?.try(&.event_number)
-            subscription.last_event_number = event_cursor if events.empty? && event_cursor && reports.empty?
+            records, event_cursor = journal_snapshot(subscription)
+            events = event_reports(subscription, records, event_cursor)
+            advance_event_cursor(subscription, event_cursor) if events.empty? && reports.empty?
             next if reports.empty? && events.empty? && !max_elapsed
 
             send_update(subscription, reports, events, event_cursor)
@@ -364,12 +362,12 @@ module Matter
             next unless subscription.events?
             next if @inflight_updates.has_key?(subscription.subscription_id)
 
-            records = journal_records(subscription)
-            next if records.empty?
+            records, event_cursor = journal_snapshot(subscription)
+            next unless event_cursor
 
-            events = event_reports(subscription, records)
+            events = event_reports(subscription, records, event_cursor)
             if events.empty?
-              subscription.last_event_number = records.last.event_number
+              advance_event_cursor(subscription, event_cursor)
               next
             end
             authorized_numbers = events.compact_map(&.event_data).map(&.event_number).to_set
@@ -381,7 +379,7 @@ module Matter
               "events=#{events.size}, urgent=#{urgent}"
             end
             send_update(subscription, [] of InteractionModel::AttributeReportIB,
-              events, records.last.event_number)
+              events, event_cursor)
           end
         end
       end
@@ -451,16 +449,23 @@ module Matter
         end
       end
 
-      # The journal records *subscription* has not reported yet, in event
-      # number order.
-      private def journal_records(subscription : ActiveSubscription) : Array(EventJournal::Record)
-        return [] of EventJournal::Record unless subscription.events?
+      # Snapshot the global journal high watermark before selecting requested
+      # records. Unrelated events still trigger concrete denied-path statuses,
+      # while a new record written after this snapshot remains for the next
+      # report rather than being skipped when the cursor commits.
+      private def journal_snapshot(subscription : ActiveSubscription) : Tuple(Array(EventJournal::Record), UInt64?)
+        empty = [] of EventJournal::Record
+        return {empty, nil} unless subscription.events?
 
-        @node.event_journal.query(
+        scanned_through = @node.event_journal.latest_event_number
+        return {empty, nil} if scanned_through <= subscription.last_event_number
+
+        records = @node.event_journal.query(
           subscription.event_paths,
           after: subscription.last_event_number,
           fabric_index: subscription.session.fabric_index
         )
+        {records.select! { |record| record.event_number <= scanned_through }, scanned_through}
       end
 
       # Turns *records* into reports. A sent report advances the cursor only
@@ -468,14 +473,15 @@ module Matter
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),
+        scanned_through : UInt64?,
       ) : Array(InteractionModel::EventReportIB)
-        return [] of InteractionModel::EventReportIB if records.empty?
+        return [] of InteractionModel::EventReportIB unless scanned_through
 
         reports = IMHandler.authorized_event_reports(records, @node.clusters,
           subscription.session.fabric_index, subscription.session.case_session?,
           subscription_subjects(subscription))
         subscription.event_paths.each do |path|
-          next if path.wildcard? || !records.any?(&.matches?(path))
+          next if path.wildcard?
           if status = IMHandler.event_read_status(path, @node.clusters,
                subscription.session.case_session?, subscription.session.fabric_index,
                subscription_subjects(subscription))

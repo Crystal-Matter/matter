@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
+require "../../src/matter/cluster/basic_information"
 require "../../src/matter/cluster/camera_av_stream_management"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/wi_fi_network_management"
@@ -302,6 +303,40 @@ describe "active subscription ACL updates" do
     fixture.handler.close
   end
 
+  it "reports a concrete denied event path after an unrelated global event and commits its cursor on ACK" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
+    path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: SubscriptionAcl::CLUSTER_ID,
+      event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+    subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
+    active = fixture.handler.active_subscriptions[1_u32]
+    original_cursor = active.last_event_number
+
+    event = fixture.handler.node.event_journal.record(0_u16,
+      Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP,
+      :info, TLV::Any.new(1_u32))
+    fixture.handler.subscriptions.notify_events
+
+    fixture.transport.sent_packets.size.should eq(1)
+    message = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    reports = Matter::InteractionModel::ReportDataMessage.from_slice(message.payload)
+      .event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+    reports.compact_map(&.event_data).should be_empty
+    reports.compact_map(&.event_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+    active.last_event_number.should eq(original_cursor)
+
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 100_u32, message.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    active.last_event_number.should eq(event.event_number)
+    fixture.transport.sent_packets.clear
+    fixture.handler.subscriptions.notify_events
+    fixture.transport.sent_packets.should be_empty
+    fixture.handler.close
+  end
+
   it "does not disclose Admin events after View-only priming or ACL revocation" do
     fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
     path = Matter::InteractionModel::EventPath.new(
@@ -318,7 +353,17 @@ describe "active subscription ACL updates" do
       SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info, TLV::Any.new("other fabric"),
       fabric_index: 2_u8)
     fixture.handler.subscriptions.notify_events
-    fixture.transport.sent_packets.should be_empty
+    report = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_data).should be_empty
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+    first = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 99_u32, first.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    fixture.transport.sent_packets.clear
 
     fixture.handler.node.event_journal.record(0_u16, SubscriptionAcl::CLUSTER_ID,
       SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info, TLV::Any.new("secret"),
