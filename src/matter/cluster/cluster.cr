@@ -225,6 +225,11 @@ module Matter
         0_u32
       end
 
+      # The feature bits advertised in the global FeatureMap attribute.
+      def feature_mask : UInt32
+        dsl_features
+      end
+
       # Get cluster name
       abstract def name : String
 
@@ -243,6 +248,7 @@ module Matter
 
       # Global attribute IDs (mandatory on all clusters)
       GLOBAL_ATTRIBUTE_LIST         = 0xFFFB_u32
+      GLOBAL_EVENT_LIST             = 0xFFFA_u32
       GLOBAL_ACCEPTED_COMMAND_LIST  = 0xFFF9_u32
       GLOBAL_GENERATED_COMMAND_LIST = 0xFFF8_u32
       GLOBAL_FEATURE_MAP            = 0xFFFC_u32
@@ -257,6 +263,8 @@ module Matter
         case attribute_id
         when GLOBAL_ATTRIBUTE_LIST
           return attribute_list_tlv
+        when GLOBAL_EVENT_LIST
+          return event_list_tlv
         when GLOBAL_ACCEPTED_COMMAND_LIST
           return accepted_command_list_tlv
         when GLOBAL_GENERATED_COMMAND_LIST
@@ -298,6 +306,7 @@ module Matter
         attr_ids = attributes.map(&.id.id)
         attr_ids << GLOBAL_GENERATED_COMMAND_LIST
         attr_ids << GLOBAL_ACCEPTED_COMMAND_LIST
+        attr_ids << GLOBAL_EVENT_LIST
         attr_ids << GLOBAL_ATTRIBUTE_LIST
         attr_ids << GLOBAL_FEATURE_MAP
         attr_ids << GLOBAL_CLUSTER_REVISION
@@ -307,6 +316,11 @@ module Matter
           unique_attr_ids << attribute_id
         end
         tlv(unique_attr_ids)
+      end
+
+      # Every cluster exposes EventList, including clusters with no events.
+      protected def event_list_tlv : TLV::Any
+        tlv(events.map(&.id.id))
       end
 
       # Encode AcceptedCommandList - override in subclass for custom handling

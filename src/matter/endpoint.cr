@@ -194,6 +194,11 @@ module Matter
       errors = [] of String
 
       @device_types.each do |device_type|
+        device_type.required_endpoint_device_types.each do |required_id|
+          unless @device_types.any? { |candidate| candidate.device_type_id.id == required_id }
+            errors << "Missing required device type #{DeviceType.name(required_id)} on endpoint for device type #{device_type.name}"
+          end
+        end
         device_type.required_server_clusters.each do |cluster_id|
           unless has_cluster?(cluster_id)
             errors << "Missing required cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
@@ -209,6 +214,36 @@ module Matter
           attribute_ids.each do |attribute_id|
             unless cluster.attributes.any? { |attribute| attribute.id.id == attribute_id }
               errors << "Missing required attribute #{Hex.u16(attribute_id)} in cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
+            end
+          end
+        end
+        device_type.required_server_features.each do |cluster_id, mask|
+          next unless cluster = get_cluster(cluster_id)
+          missing = mask & ~cluster.feature_mask
+          unless missing.zero?
+            errors << "Missing required feature #{Hex.u32(missing)} in cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
+          end
+        end
+        device_type.forbidden_server_features.each do |cluster_id, mask|
+          next unless cluster = get_cluster(cluster_id)
+          present = mask & cluster.feature_mask
+          unless present.zero?
+            errors << "Forbidden feature #{Hex.u32(present)} in cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
+          end
+        end
+        device_type.required_server_events.each do |cluster_id, event_ids|
+          next unless cluster = get_cluster(cluster_id)
+          event_ids.each do |event_id|
+            unless cluster.events.any? { |event| event.id.id == event_id }
+              errors << "Missing required event #{Hex.u16(event_id)} in cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
+            end
+          end
+        end
+        device_type.forbidden_server_attributes.each do |cluster_id, attribute_ids|
+          next unless cluster = get_cluster(cluster_id)
+          attribute_ids.each do |attribute_id|
+            if cluster.attributes.any? { |attribute| attribute.id.id == attribute_id }
+              errors << "Forbidden attribute #{Hex.u16(attribute_id)} in cluster #{Hex.u16(cluster_id)} for device type #{device_type.name}"
             end
           end
         end
