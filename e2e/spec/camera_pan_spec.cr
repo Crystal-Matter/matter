@@ -28,15 +28,17 @@ describe "Matter 1.6 Camera AV Settings MPAN interoperability" do
       "UNSUPPORTED_COMMAND")
   end
 
-  it "sets and moves pan, rejects limits, and persists its reported position" do
+  it "sets and moves pan, clamps targets, rejects invalid deltas, and persists its position" do
     expect_success(camera_command(device, "0x0", 30)).output.should contain("SUCCESS")
     camera_read(device, "0x0").output.should contain("30")
     expect_success(camera_command(device, "0x1", -12)).output.should contain("SUCCESS")
     camera_read(device, "0x0").output.should contain("18")
     expect_failure(camera_command(device, "0x0", 91), "CONSTRAINT_ERROR")
-    expect_failure(camera_command(device, "0x1", -110), "CONSTRAINT_ERROR")
+    expect_failure(camera_command(device, "0x1", -181), "CONSTRAINT_ERROR")
+    expect_success(camera_command(device, "0x1", -110)).output.should contain("SUCCESS")
+    camera_read(device, "0x0").output.should contain("-90")
     device.restart!
-    camera_read(device, "0x0").output.should contain("18")
+    camera_read(device, "0x0").output.should contain("-90")
     camera_read(device, "0x9").output.should contain("0")
   end
 end

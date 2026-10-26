@@ -399,10 +399,30 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   official chip-tool E2E. Other tariff feature families remain disabled.
 ### Camera AV Settings User Level Management
 
+- Complete the optional DPTZ command profile with relative per-stream viewport
+  moves and support combined digital and mechanical PTZ features. Pixel shifts,
+  percentage crop changes, clipping, and aspect ratio checks are admitted by
+  the existing host viewport callback.
+
+- Add mechanical tilt and zoom feature combinations, including presets for
+  mixed pan/tilt/zoom profiles. Position and movement commands enforce the
+  enabled axes and configured bounds. Hosts apply complete movement targets
+  through `on_mptz_move` and report measured positions for persistence.
+
+- Add opt-in DPTZ-only stream viewport control. A same-endpoint VDO source
+  supplies active streams and sensor bounds; hosts register move-capable stream
+  IDs and apply DPTZSetViewport through a callback. Per-stream viewports track
+  global viewport changes and stream release. DPTZRelativeMove remains gated.
+
+- Add opt-in MPAN+MPRESETS with fixed capacity, durable measured-position
+  presets, and move/save/remove commands. Save and remove require host callbacks;
+  moving uses the existing pan actuator. DPTZ, tilt, and zoom were gated in
+  this initial preset slice.
+
 - Add the Matter 1.6 revision 1 MechanicalPan server with typed pan position
   and commands, validated host limits, an actuator callback, movement reporting,
   durable measured position, a synthetic fixture, and official chip-tool E2E.
-  Digital PTZ, tilt, zoom, and presets remain unavailable.
+  Digital PTZ, tilt, zoom, and presets initially remain unavailable.
   The fixture is an Aggregator and does not implement a complete Camera device.
 
 ### Joint Fabric DCL signer trust

@@ -395,11 +395,16 @@ physical playback. Controllers can write `SelectedChime` and `Enabled`; both
 survive restart. A successful playback request emits `ChimeStartedPlaying`.
 See `examples/matter_chime_device.cr` for a synthetic doorbell.
 
-`Cluster::CameraAvSettingsUserLevelManagement` implements the Matter 1.6
-MechanicalPan (MPAN) feature. Configure pan limits, register
-`on_pan_move` to start the physical actuator, and call `report_pan_position`
-with measured movement and completion. The measured position persists across
-restart. Digital PTZ, tilt, zoom, and presets are not exposed. A synthetic
+`Cluster::CameraAvSettingsUserLevelManagement` implements Matter 1.6 mechanical
+pan, tilt, and zoom features in configurable combinations. MPAN-only hosts can
+use `on_pan_move` and `report_pan_position`; hosts with tilt or zoom use
+`on_mptz_move` and `report_mptz_position` for complete targets and measurements.
+Measured positions persist across restart. The optional MPRESETS feature adds
+a bounded, persisted list and move/save/remove commands. Register
+`on_preset_save` and `on_preset_remove` to admit changes. An opt-in
+DPTZ profile binds to same-endpoint VDO stream management. The host marks
+allocated streams as move-capable and applies viewport changes through a callback.
+DPTZRelativeMove and combined digital/mechanical profiles are supported. A synthetic
 camera fixture is in `examples/matter_camera_pan_device.cr`.
 The fixture uses an Aggregator endpoint for interoperability testing; it is
 not a conformant Camera device. The required Camera endpoint topology remains absent.

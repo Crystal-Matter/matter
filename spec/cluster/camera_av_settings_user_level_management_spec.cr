@@ -76,9 +76,10 @@ describe CameraSettings do
     expect_success(invoke(cluster, relative, CameraSettings::MPTZRelativeMoveRequest.new(-15_i16)))
     targets.should eq([10_i16, -5_i16])
     expect_status(invoke(cluster, relative, CameraSettings::MPTZRelativeMoveRequest.new), CameraCode::ConstraintError)
-    expect_status(invoke(cluster, relative, CameraSettings::MPTZRelativeMoveRequest.new(30_i16)), CameraCode::ConstraintError)
+    expect_success(invoke(cluster, relative, CameraSettings::MPTZRelativeMoveRequest.new(30_i16)))
+    targets.last.should eq(20_i16)
     expect_status(invoke(cluster, relative, CameraSettings::MPTZRelativeMoveRequest.new(41_i16)), CameraCode::ConstraintError)
-    targets.should eq([10_i16, -5_i16])
+    targets.should eq([10_i16, -5_i16, 20_i16])
   end
 
   it "restores idle on a host failure and persists measured pan across restart" do
