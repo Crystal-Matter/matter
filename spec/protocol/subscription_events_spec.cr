@@ -86,9 +86,41 @@ private def decrypt(packet_bytes : Bytes, session : Matter::Session::SecureConte
 end
 
 private def reported_events(fixture : EventSubscriptionFixture) : Array(UInt64)
-  fixture.transport.sent_packets.flat_map do |packet_bytes, _|
+  fixture.transport.sent_packets.select do |packet_bytes, _|
+    Matter::Spec::ProtocolMessages.decode_message_type(packet_bytes, fixture.session) ==
+      Matter::InteractionModel::MessageType::ReportData.value
+  end.flat_map do |packet_bytes, _|
     message = Matter::InteractionModel::ReportDataMessage.from_slice(decrypt(packet_bytes, fixture.session))
     (message.event_reports || [] of Matter::InteractionModel::EventReportIB).compact_map(&.event_data).map(&.event_number)
+  end
+end
+
+private def acknowledge_event_reports(fixture : EventSubscriptionFixture,
+                                      from_index : Int32 = 0, first_counter : UInt32 = 100_u32) : Nil
+  index = from_index
+  counter = first_counter
+  loop do
+    packets = fixture.transport.sent_packets.select do |packet_bytes, _|
+      Matter::Spec::ProtocolMessages.decode_message_type(packet_bytes, fixture.session) ==
+        Matter::InteractionModel::MessageType::ReportData.value
+    end
+    break if index >= packets.size
+    packet_bytes = packets[index][0]
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(packet_bytes)
+    header_bytes = packet_bytes[0, packet_bytes.size - packet.payload.size]
+    nonce = Matter::Session::SecureMessage.build_nonce(
+      fixture.session.local_node_id.as(Matter::DataType::NodeId).id,
+      packet.header.message_id,
+      header_bytes[Matter::Codec::MessageCodec::SECURITY_FLAGS_OFFSET])
+    plaintext = Matter::Crypto::StandardCrypto.new.decrypt(
+      fixture.session.encryption_key, packet.payload, nonce, header_bytes)
+    message = Matter::Codec::MessageCodec::Base.decode_payload(
+      Matter::Codec::MessageCodec::Packet.new(packet.header, plaintext))
+    fixture.handler.handle_message(
+      Matter::Spec::ProtocolMessages.status_response(fixture.session, counter,
+        message.payload_header.exchange_id), PEER)
+    index += 1
+    counter += 1
   end
 end
 
@@ -112,6 +144,7 @@ describe "Subscription event reporting" do
     end
 
     fixture.handler.subscriptions.notify_events
+    acknowledge_event_reports(fixture)
 
     expected = (fixture.base_event_number + 1_u64..fixture.base_event_number + count.to_u64).to_a
     reported_events(fixture).should eq(expected)
@@ -129,16 +162,17 @@ describe "Subscription event reporting" do
         ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
         TLV::Any.new("event payload" * 4, nil))
     end
+    fixture.handler.subscriptions.notify_events
     transport.fail_on_send = 2
-
-    expect_raises(Matter::TransportError) { fixture.handler.subscriptions.notify_events }
+    acknowledge_event_reports(fixture)
     delivered = reported_events(fixture)
     delivered.should_not be_empty
-    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(delivered.last)
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number)
 
     transport.fail_on_send = nil
-    fixture.handler.subscriptions.notify_events
+    acknowledge_event_reports(fixture, first_counter: 200_u32)
     reported_events(fixture).should eq((fixture.base_event_number + 1_u64..fixture.base_event_number + 40_u64).to_a)
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 40_u64)
     fixture.handler.close
   end
 
@@ -148,9 +182,13 @@ describe "Subscription event reporting" do
       ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
       TLV::Any.new("Z" * 1500, nil))
     fixture.handler.subscriptions.notify_events
+    acknowledge_event_reports(fixture)
 
-    report = Matter::InteractionModel::ReportDataMessage.from_slice(
-      decrypt(fixture.transport.sent_packets.last[0], fixture.session))
+    report_packet = fixture.transport.sent_packets.find do |packet_bytes, _|
+      Matter::Spec::ProtocolMessages.decode_message_type(packet_bytes, fixture.session) ==
+        Matter::InteractionModel::MessageType::ReportData.value
+    end.as(Tuple(Bytes, Socket::IPAddress))[0]
+    report = Matter::InteractionModel::ReportDataMessage.from_slice(decrypt(report_packet, fixture.session))
     report.event_reports.as(Array(Matter::InteractionModel::EventReportIB)).first.event_status
       .as(Matter::InteractionModel::EventStatusIB).status.status.should eq(
       Matter::InteractionModel::StatusCode::ResourceExhausted.value)
@@ -160,6 +198,7 @@ describe "Subscription event reporting" do
       ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
       TLV::Any.new("small", nil))
     fixture.handler.subscriptions.notify_events
+    acknowledge_event_reports(fixture, from_index: 1)
     reported_events(fixture).should eq([fixture.base_event_number + 2_u64])
     fixture.handler.close
   end
@@ -170,6 +209,7 @@ describe "Subscription event reporting" do
     first = fixture.base_event_number + 1
     fixture.lock.lock(pin: fixture.lock.default_pin_code)
     reported_events(fixture).should eq([first])
+    acknowledge_event_reports(fixture)
     fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(first)
 
     fixture.transport.sent_packets.clear

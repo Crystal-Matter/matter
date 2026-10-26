@@ -970,8 +970,8 @@ module Matter
           Log.debug { "  Acknowledging message ID: #{ack_msg_id}" }
         end
 
-        # iOS acknowledges intermediate ReportData chunks with a bare MRP ACK
-        # rather than a StatusResponse; both drive the same ladder.
+        # iOS acknowledges priming/read chunks with a bare MRP ACK. Active
+        # subscription update ladders require an IM StatusResponse.
         @subscriptions.advance(msg.payload_header.exchange_id, msg)
       end
     end

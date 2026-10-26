@@ -15,8 +15,32 @@ private class OversizedSubscriptionOnOff < Matter::Cluster::OnOff
   end
 end
 
+private class LargeListSubscriptionOnOff < Matter::Cluster::OnOff
+  def values : Array(String)
+    Array.new(20) { |index| "#{index}:" + "A" * 100 }
+  end
+
+  def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : Matter::InteractionModel::Status | TLV::Any
+    return TLV::Any.from_slice(values.to_tlv) if attribute_id == ATTR_ON_OFF
+    super
+  end
+end
+
+private def subscription_report(packet_bytes : Bytes, session : Matter::Session::SecureContext)
+  packet = Matter::Codec::MessageCodec::Base.decode_packet(packet_bytes)
+  header_bytes = packet_bytes[0, packet_bytes.size - packet.payload.size]
+  nonce = Matter::Session::SecureMessage.build_nonce(
+    session.local_node_id.as(Matter::DataType::NodeId).id,
+    packet.header.message_id,
+    header_bytes[Matter::Codec::MessageCodec::SECURITY_FLAGS_OFFSET])
+  plaintext = Matter::Crypto::StandardCrypto.new.decrypt(session.encryption_key, packet.payload, nonce, header_bytes)
+  message = Matter::Codec::MessageCodec::Base.decode_payload(
+    Matter::Codec::MessageCodec::Packet.new(packet.header, plaintext))
+  {message, Matter::InteractionModel::ReportDataMessage.from_slice(message.payload.to_slice)}
+end
+
 describe "Subscription report exchange regression" do
-  it "omits an oversized UDP update without advancing its subscription timestamp" do
+  it "reports ResourceExhausted for an indivisible oversized UDP attribute" do
     transport = Matter::Spec::CaptureTransport.new_for_spec
     handler = Matter::Protocol::MessageHandler.new(
       transport: transport, setup_pin: 20202021_u32, discriminator: 3840_u16,
@@ -42,8 +66,98 @@ describe "Subscription report exchange regression" do
     handler.notify_subscriptions(1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
       Matter::Cluster::OnOff::ATTR_ON_OFF)
 
-    transport.sent_packets.should be_empty
-    subscription.last_report_time.should eq(before)
+    transport.sent_packets.size.should eq(1)
+    _message, report = subscription_report(transport.sent_packets.first[0], session)
+    report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first.attribute_status
+      .as(Matter::InteractionModel::AttributeStatusIB).status.status.should eq(
+      Matter::InteractionModel::StatusCode::ResourceExhausted.value)
+    subscription.last_report_time.should be >= before
+    handler.close
+  end
+
+  it "chunks a large active list update on one exchange after IM status acknowledgements" do
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    handler = Matter::Protocol::MessageHandler.new(
+      transport: transport, setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
+    cluster = LargeListSubscriptionOnOff.new(endpoint(1))
+    handler.clusters[{1_u16, Matter::Cluster::OnOff::CLUSTER_ID}] = cluster
+    session = Matter::Spec::ProtocolMessages.case_session(21_u16)
+    handler.sessions[session.session_id] = session
+    subscription = Matter::Protocol::ActiveSubscription.new(
+      subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
+      peer: Socket::IPAddress.new("127.0.0.1", 5540), session: session,
+      attribute_paths: [Matter::InteractionModel::AttributePath.new(
+        endpoint: 1_u16, cluster: Matter::Cluster::OnOff::CLUSTER_ID,
+        attribute: Matter::Cluster::OnOff::ATTR_ON_OFF)], exchange_id: 1_u16)
+    handler.active_subscriptions[subscription.subscription_id] = subscription
+    handler.sender.next_exchange_id = 0xBEEF_u16
+    peer = subscription.peer
+
+    handler.notify_subscriptions(1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
+      Matter::Cluster::OnOff::ATTR_ON_OFF)
+    transport.sent_packets.size.should eq(1)
+    first, first_report = subscription_report(transport.sent_packets.first[0], session)
+    first.payload_header.exchange_id.should eq(0xBEEF_u16)
+    first_report.more_chunked_messages.should be_true
+
+    # Transport delivery alone does not acknowledge an Interaction Model report.
+    handler.handle_message(Matter::Spec::ProtocolMessages.standalone_ack(session, 5_u32, 0xBEEF_u16), peer)
+    handler.notify_subscriptions(1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
+      Matter::Cluster::OnOff::ATTR_ON_OFF)
+    transport.sent_packets.size.should eq(1)
+
+    reports = [first_report]
+    counter = 6_u32
+    while reports.last.more_chunked_messages
+      handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, counter, 0xBEEF_u16), peer)
+      counter += 1
+      next_message, next_report = subscription_report(transport.sent_packets.last[0], session)
+      next_message.payload_header.exchange_id.should eq(0xBEEF_u16)
+      reports << next_report
+    end
+    reports.size.should be > 1
+    data = reports.flat_map do |report|
+      report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).compact_map(&.attribute_data)
+    end
+    restored = data.first.data.as_list.map(&.value.as(String)) + data[1..].map(&.data.value.as(String))
+    restored.should eq(cluster.values)
+    # A second change notified during the in-flight transaction is retained.
+    handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, counter, 0xBEEF_u16), peer)
+    handler.subscriptions.tick
+    reports_sent = transport.sent_packets.select do |packet_bytes, _|
+      Matter::Spec::ProtocolMessages.decode_message_type(packet_bytes, session) ==
+        Matter::InteractionModel::MessageType::ReportData.value
+    end
+    reports_sent.size.should be > reports.size
+    next_message, _next_report = subscription_report(reports_sent.last[0], session)
+    next_message.payload_header.exchange_id.should_not eq(0xBEEF_u16)
+    handler.close
+  end
+
+  it "terminates an active subscription after a rejected ReportData" do
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    handler = Matter::Protocol::MessageHandler.new(
+      transport: transport, setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
+    cluster = Matter::Cluster::OnOff.new(endpoint(1))
+    handler.clusters[{1_u16, Matter::Cluster::OnOff::CLUSTER_ID}] = cluster
+    session = Matter::Spec::ProtocolMessages.case_session(21_u16)
+    handler.sessions[session.session_id] = session
+    subscription = Matter::Protocol::ActiveSubscription.new(
+      subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
+      peer: Socket::IPAddress.new("127.0.0.1", 5540), session: session,
+      attribute_paths: [Matter::InteractionModel::AttributePath.new(
+        endpoint: 1_u16, cluster: Matter::Cluster::OnOff::CLUSTER_ID,
+        attribute: Matter::Cluster::OnOff::ATTR_ON_OFF)], exchange_id: 1_u16)
+    handler.active_subscriptions[subscription.subscription_id] = subscription
+    handler.sender.next_exchange_id = 0xBEEF_u16
+    handler.notify_subscriptions(1_u16, Matter::Cluster::OnOff::CLUSTER_ID,
+      Matter::Cluster::OnOff::ATTR_ON_OFF)
+
+    handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, 5_u32, 0xBEEF_u16,
+      status: Matter::InteractionModel::StatusCode::InvalidSubscription.value), subscription.peer)
+    handler.active_subscriptions.should be_empty
     handler.close
   end
 

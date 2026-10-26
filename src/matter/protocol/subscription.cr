@@ -9,8 +9,8 @@ module Matter
     # A subscription that has completed its handshake and is receiving reports.
     #
     # Created once the controller has acknowledged the priming ReportData and
-    # the SubscribeResponse has gone out; from then on every matching attribute
-    # change produces a report on a fresh exchange.
+    # the SubscribeResponse has gone out; matching changes queue for serialized
+    # Report transactions on device-initiated exchanges.
     class ActiveSubscription
       property subscription_id : UInt32
       property min_interval : UInt16
