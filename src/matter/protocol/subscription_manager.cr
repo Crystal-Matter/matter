@@ -217,9 +217,7 @@ module Matter
               @pending_updates.delete(key)
               @inflight_updates.delete(pending.subscription_id)
               if subscription = @registry.active_subscriptions[pending.subscription_id]?
-                if cursor = pending.event_cursor
-                  subscription.last_event_number = cursor
-                end
+                advance_event_cursor(subscription, pending.event_cursor)
                 subscription.last_report_time = Time.utc
               end
               @sender.send_encrypted_ack(trigger, pending.peer, pending.session) if trigger.payload_header.requires_acknowledge?
@@ -305,10 +303,9 @@ module Matter
             # Every report drains whatever the journal still owes this
             # subscription, so a non-urgent event rides out with the next
             # attribute change rather than waiting for its own report.
-            records = journal_records(subscription)
-            events = event_reports(subscription, records)
-            event_cursor = records.last?.try(&.event_number)
-            subscription.last_event_number = event_cursor if events.empty? && event_cursor && reports.empty?
+            records, event_cursor = journal_snapshot(subscription)
+            events = event_reports(subscription, records, event_cursor)
+            advance_event_cursor(subscription, event_cursor) if events.empty? && reports.empty?
             next if reports.empty? && events.empty?
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
@@ -335,11 +332,12 @@ module Matter
             next unless report_due
 
             reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
-            records = journal_records(subscription)
-            events = event_reports(subscription, records)
-            event_cursor = records.last?.try(&.event_number)
-            subscription.last_event_number = event_cursor if events.empty? && event_cursor && reports.empty?
-            next if reports.empty? && events.empty? && !max_elapsed
+            records, event_cursor = journal_snapshot(subscription)
+            events = event_reports(subscription, records, event_cursor)
+            if reports.empty? && events.empty? && !max_elapsed
+              advance_event_cursor(subscription, event_cursor)
+              next
+            end
 
             send_update(subscription, reports, events, event_cursor)
           end
@@ -364,12 +362,12 @@ module Matter
             next unless subscription.events?
             next if @inflight_updates.has_key?(subscription.subscription_id)
 
-            records = journal_records(subscription)
-            next if records.empty?
+            records, event_cursor = journal_snapshot(subscription)
+            next unless event_cursor
 
-            events = event_reports(subscription, records)
+            events = event_reports(subscription, records, event_cursor)
             if events.empty?
-              subscription.last_event_number = records.last.event_number
+              advance_event_cursor(subscription, event_cursor)
               next
             end
             authorized_numbers = events.compact_map(&.event_data).map(&.event_number).to_set
@@ -381,7 +379,7 @@ module Matter
               "events=#{events.size}, urgent=#{urgent}"
             end
             send_update(subscription, [] of InteractionModel::AttributeReportIB,
-              events, records.last.event_number)
+              events, event_cursor)
           end
         end
       end
@@ -414,6 +412,11 @@ module Matter
         subscription.last_report_time = Time.utc
       end
 
+      private def advance_event_cursor(subscription : ActiveSubscription, scanned_through : UInt64?) : Nil
+        return unless scanned_through
+        subscription.last_event_number = scanned_through if scanned_through > subscription.last_event_number
+      end
+
       private def prune_inflight_updates(subscriptions : Hash(UInt32, ActiveSubscription),
                                          monotonic_now : Time::Span = Time.monotonic) : Nil
         @inflight_updates.reject! do |subscription_id, key|
@@ -444,30 +447,37 @@ module Matter
         end
       end
 
-      # The journal records *subscription* has not reported yet, in event
-      # number order.
-      private def journal_records(subscription : ActiveSubscription) : Array(EventJournal::Record)
-        return [] of EventJournal::Record unless subscription.events?
+      # Snapshot the global high watermark before selecting requested records.
+      # A newer unrelated event can trigger denied concrete path statuses,
+      # while records added after the snapshot stay available for the next report.
+      private def journal_snapshot(subscription : ActiveSubscription) : Tuple(Array(EventJournal::Record), UInt64?)
+        empty = [] of EventJournal::Record
+        return {empty, nil} unless subscription.events?
 
-        @node.event_journal.query(
+        scanned_through = @node.event_journal.latest_event_number
+        return {empty, nil} if scanned_through <= subscription.last_event_number
+
+        records = @node.event_journal.query(
           subscription.event_paths,
           after: subscription.last_event_number,
           fabric_index: subscription.session.fabric_index
         )
+        {records.select! { |record| record.event_number <= scanned_through }, scanned_through}
       end
 
       # Turns *records* into reports. The cursor advances only after sending.
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),
+        scanned_through : UInt64?,
       ) : Array(InteractionModel::EventReportIB)
-        return [] of InteractionModel::EventReportIB if records.empty?
+        return [] of InteractionModel::EventReportIB unless scanned_through
 
         reports = IMHandler.authorized_event_reports(records, @node.clusters,
           subscription.session.fabric_index, subscription.session.case_session?,
           subscription_subjects(subscription))
         subscription.event_paths.each do |path|
-          next if path.wildcard? || !records.any?(&.matches?(path))
+          next if path.wildcard?
           if status = IMHandler.concrete_event_status(path, @node.clusters,
                subscription.session.case_session?, subscription.session.fabric_index,
                subscription_subjects(subscription))

@@ -1,10 +1,12 @@
 require "../spec_helper"
 require "../../src/matter/cluster/access_control"
+require "../../src/matter/cluster/basic_information"
 require "../../src/matter/cluster/camera_av_stream_management"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/protocol/message_handler"
 
 private alias SubscriptionAcl = Matter::Cluster::AccessControl
+private alias SubscriptionBasic = Matter::Cluster::BasicInformation
 private alias SubscriptionCamera = Matter::Cluster::CameraAvStreamManagement
 private alias SubscriptionIM = Matter::Protocol::IMHandler
 
@@ -135,6 +137,77 @@ private def subscription_acl_rejected_chunk(fixture : SubscriptionAclFixture) : 
 end
 
 describe "active subscription ACL updates" do
+  it "commits an unrelated event cursor only after an empty max-interval heartbeat is acknowledged" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
+    wildcard_path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: SubscriptionAcl::CLUSTER_ID)
+    subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [wildcard_path])
+    subscription = fixture.handler.active_subscriptions[1_u32]
+    initial_cursor = subscription.last_event_number
+    subscription.last_report_time = Time.utc - 61.seconds
+
+    unrelated = fixture.handler.node.event_journal.record(0_u16,
+      SubscriptionBasic::CLUSTER_ID, SubscriptionBasic::EVENT_SHUT_DOWN,
+      :critical, TLV::Any.new("unrelated event"))
+    fixture.handler.subscriptions.tick
+    fixture.transport.sent_packets.size.should eq(1)
+    report = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    (report.event_reports || [] of Matter::InteractionModel::EventReportIB).should be_empty
+    subscription.last_event_number.should eq(initial_cursor)
+
+    first = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 100_u32, first.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    subscription.last_event_number.should eq(unrelated.event_number)
+    fixture.handler.close
+  end
+
+  it "reports denied concrete event paths after an unrelated global event and acknowledges the cursor" do
+    [:notify, :tick, :batch].each do |trigger|
+      fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
+      path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+        cluster: SubscriptionAcl::CLUSTER_ID,
+        event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+      subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
+      initial_cursor = fixture.handler.active_subscriptions[1_u32].last_event_number
+      fixture.handler.subscriptions.notify_events
+      fixture.transport.sent_packets.should be_empty
+
+      unrelated = fixture.handler.node.event_journal.record(0_u16,
+        SubscriptionBasic::CLUSTER_ID, SubscriptionBasic::EVENT_SHUT_DOWN,
+        :critical, TLV::Any.new("unrelated event"))
+      case trigger
+      when :notify
+        fixture.handler.subscriptions.notify_events
+      when :tick
+        fixture.handler.subscriptions.tick
+      when :batch
+        fixture.handler.subscriptions.notify(1_u16, SubscriptionCamera::CLUSTER_ID,
+          SubscriptionCamera::ATTR_VIEWPORT)
+      end
+
+      fixture.transport.sent_packets.size.should eq(1)
+      report = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+      events = report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      events.compact_map(&.event_data).should be_empty
+      events.compact_map(&.event_status).map(&.status.status)
+        .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+      events.compact_map(&.event_status).map(&.path).should eq([path])
+      fixture.handler.active_subscriptions[1_u32].last_event_number.should eq(initial_cursor)
+
+      first = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+      fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+        fixture.session, 100_u32, first.payload_header.exchange_id),
+        Socket::IPAddress.new("127.0.0.1", 5540))
+      fixture.handler.active_subscriptions[1_u32].last_event_number.should eq(unrelated.event_number)
+      fixture.transport.sent_packets.clear
+      fixture.handler.subscriptions.notify_events
+      fixture.transport.sent_packets.should be_empty
+      fixture.handler.close
+    end
+  end
+
   it "reports a denied concrete attribute without leaking its value and omits wildcard denials" do
     [false, true].each do |wildcard|
       fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
@@ -338,7 +411,17 @@ describe "active subscription ACL updates" do
       SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info, TLV::Any.new("other fabric"),
       fabric_index: 2_u8)
     fixture.handler.subscriptions.notify_events
-    fixture.transport.sent_packets.should be_empty
+    report = subscription_acl_report(fixture.transport.sent_packets.first[0], fixture.session)
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_data).should be_empty
+    report.event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+      .compact_map(&.event_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+    first = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 99_u32, first.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    fixture.transport.sent_packets.clear
 
     fixture.handler.node.event_journal.record(0_u16, SubscriptionAcl::CLUSTER_ID,
       SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED, :info, TLV::Any.new("secret"),
