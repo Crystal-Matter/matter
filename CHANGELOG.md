@@ -19,6 +19,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   only OccupiedEnabled or OccupiedDisabled in this command, and rejected requests
   leave the user and credential records unchanged.
 
+### Thermostat SystemMode control sequence
+
+- Reject SystemMode writes that conflict with the fixed ControlSequenceOfOperation,
+  while preserving the mode, DataVersion, and event stream. The Thermostat Events
+  example includes a heating-only endpoint for official chip-tool coverage.
+
 ### Thermostat minimum deadband legacy writes
 
 - Accept valid legacy MinSetpointDeadBand writes while retaining the configured

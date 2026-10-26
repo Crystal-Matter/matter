@@ -16,6 +16,14 @@ describe "Matter Thermostat Events interoperability" do
     read_int(device, "thermostat", "min-setpoint-dead-band", "MinSetpointDeadBand", 1).should eq(original)
   end
 
+  it "rejects a cooling SystemMode when the fixed control sequence is heating only" do
+    read_int(device, "thermostat", "control-sequence-of-operation", "ControlSequenceOfOperation", 2).should eq(2_i64)
+    expect_failure(device.write("thermostat", "system-mode", 3, 2), "CONSTRAINT_ERROR")
+    read_int(device, "thermostat", "system-mode", "SystemMode", 2).should eq(0_i64)
+    expect_success(device.write("thermostat", "system-mode", 4, 2))
+    read_int(device, "thermostat", "system-mode", "SystemMode", 2).should eq(4_i64)
+  end
+
   it "reports typed mode, relay and setpoint events and restores controller writes" do
     expect_success(device.write("thermostat", "system-mode", 1, 1))
     expect_success(device.chip("thermostat", "read-event", "system-mode-change", device.node, "1"))
