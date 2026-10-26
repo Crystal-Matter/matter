@@ -162,7 +162,13 @@ module Matter
       # identifying.
       def tick : Nil
         return unless identifying?
-        self.identify_time = @identify_time - 1
+        next_time = @identify_time - 1_u16
+        if next_time.zero?
+          self.identify_time = next_time
+        else
+          @identify_time = next_time
+          increment_version
+        end
         sync_identify_callbacks
       end
 
