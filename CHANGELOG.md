@@ -19,7 +19,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Bind guarded suggestions to the root Time Synchronization UTC clock when the
   host supplies no clock, reject Add while UTC is unavailable or outside the
   Matter epoch-seconds range, and poll for effective and expiry transitions
-  after a clock change without requiring an attribute read.
+  after a clock change without requiring an attribute read. The official
+  chip-tool fixture now checks Add before and after root SetUTCTime.
 
 ### Thermostat suggestion host state
 
