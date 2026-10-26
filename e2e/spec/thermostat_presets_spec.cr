@@ -28,4 +28,27 @@ describe "Matter Thermostat Presets guarded fixture" do
     expect_success(device.chip("thermostat", "read-event", "active-preset-change", device.node, "1"))
       .output.should contain("CurrentPresetHandle")
   end
+
+  it "creates a null-handle preset in a whole-list write and persists its generated handle" do
+    existing = %({"presetHandle":"hex:01","presetScenario":3,"coolingSetpoint":2700,"heatingSetpoint":1900,"builtIn":true})
+    addition = %({"presetHandle":null,"presetScenario":3,"coolingSetpoint":2600,"heatingSetpoint":1800,"builtIn":false})
+    expect_success(device.chip("thermostat", "atomic-request", "0", "[80]",
+      device.node, "1", "--Timeout", "60000"))
+    expect_success(device.write("thermostat", "presets", "[#{existing},#{addition}]", 1))
+    pending = expect_success(device.read("thermostat", "presets", 1))
+    pending.output.should contain("HeatingSetpoint: 1800")
+    pending.output.should_not contain("PresetHandle: NULL")
+    expect_success(device.chip("thermostat", "atomic-request", "2", "[80]", device.node, "1"))
+    expect_success(device.read("thermostat", "presets", 1)).output.should_not contain("HeatingSetpoint: 1800")
+
+    expect_success(device.chip("thermostat", "atomic-request", "0", "[80]",
+      device.node, "1", "--Timeout", "60000"))
+    expect_success(device.write("thermostat", "presets", "[#{existing},#{addition}]", 1))
+    expect_success(device.chip("thermostat", "atomic-request", "1", "[80]", device.node, "1"))
+    committed = expect_success(device.read("thermostat", "presets", 1))
+    committed.output.should contain("HeatingSetpoint: 1800")
+    committed.output.should_not contain("PresetHandle: NULL")
+    device.restart!
+    expect_success(device.read("thermostat", "presets", 1)).output.should contain("HeatingSetpoint: 1800")
+  end
 end
