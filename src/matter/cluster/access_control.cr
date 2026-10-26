@@ -20,6 +20,16 @@ module Matter
       feature :extension, bit: 0 # EXTS - Extension attribute and its change event
       feature :auxiliary, bit: 2 # AUX - generated, read-only ACL entries
 
+      # ManagedDevice is not advertised yet. Hosts can install a transient ARL
+      # for read enforcement; write, invoke, event and review flows still need
+      # implementation before the complete feature may be enabled.
+      GLOBAL_ATTRIBUTE_ID_START               = 0xFFF8_u32
+      GLOBAL_ATTRIBUTE_ID_END                 = 0xFFFD_u32
+      ARL_ROOT_ENDPOINT_ID                    =      0_u16
+      ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID  = 0x0451_u32
+      ARL_THREAD_BORDER_ROUTER_CLUSTER_ID     = 0x0452_u32
+      ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID = 0x0453_u32
+
       # Minimum table limits the specification requires (Matter Core §9.10.5)
       DEFAULT_SUBJECTS_PER_ENTRY = 4_u16
       DEFAULT_TARGETS_PER_ENTRY  = 3_u16
@@ -53,6 +63,30 @@ module Matter
         Changed = 0
         Added   = 1
         Removed = 2
+      end
+
+      enum AccessRestrictionType : UInt8
+        AttributeAccessForbidden = 0
+        AttributeWriteForbidden  = 1
+        CommandForbidden         = 2
+        EventForbidden           = 3
+      end
+
+      struct AccessRestriction
+        getter type : AccessRestrictionType
+        getter id : UInt32?
+
+        def initialize(@type : AccessRestrictionType, @id : UInt32?)
+        end
+      end
+
+      struct AccessRestrictionEntry
+        getter endpoint : UInt16
+        getter cluster : UInt32
+        getter restrictions : Array(AccessRestriction)
+
+        def initialize(@endpoint : UInt16, @cluster : UInt32, @restrictions : Array(AccessRestriction))
+        end
       end
 
       struct Target
@@ -188,6 +222,7 @@ module Matter
       @acl = [] of AccessControlEntry
       @extension = [] of ExtensionEntry
       @auxiliary_acl = [] of AccessControlEntry
+      @access_restrictions = {} of UInt8 => Array(AccessRestrictionEntry)
       @acl_before_write = [] of AccessControlEntry
       @extension_before_write = [] of ExtensionEntry
 
@@ -230,6 +265,42 @@ module Matter
       def auxiliary_acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)
         return [] of AccessControlEntry unless fabric_index
         @auxiliary_acl.select { |entry| entry.fabric_index == fabric_index }
+      end
+
+      # A host-owned policy replaces one fabric's transient ARL. Empty entries
+      # remove that fabric's restrictions. This is not an advertised MNGD wire
+      # attribute and hosts must reinstall it after restart.
+      def configure_access_restrictions(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : Nil
+        if fabric_index == 0 || entries.any? { |entry| entry.restrictions.empty? || !restriction_target_allowed?(entry.endpoint, entry.cluster) }
+          raise Matter::ConfigurationError.new("Invalid access restriction configuration")
+        end
+        if entries.empty?
+          @access_restrictions.delete(fabric_index)
+        else
+          @access_restrictions[fabric_index] = entries.map do |entry|
+            AccessRestrictionEntry.new(entry.endpoint, entry.cluster, entry.restrictions.dup)
+          end
+        end
+      end
+
+      def attribute_read_restricted?(fabric_index : UInt8, endpoint : UInt16,
+                                     cluster : UInt32, attribute : UInt32) : Bool
+        return false unless restriction_target_allowed?(endpoint, cluster)
+        return false if GLOBAL_ATTRIBUTE_ID_START <= attribute <= GLOBAL_ATTRIBUTE_ID_END
+        (@access_restrictions[fabric_index]? || [] of AccessRestrictionEntry).any? do |entry|
+          entry.endpoint == endpoint && entry.cluster == cluster && entry.restrictions.any? do |restriction|
+            restriction.type.attribute_access_forbidden? && (restriction.id.nil? || restriction.id == attribute)
+          end
+        end
+      end
+
+      # Matter 1.6's standard ARL exception checker permits only network
+      # infrastructure management clusters outside the root endpoint.
+      private def restriction_target_allowed?(endpoint : UInt16, cluster : UInt32) : Bool
+        endpoint != ARL_ROOT_ENDPOINT_ID && cluster.in?(
+          ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID,
+          ARL_THREAD_BORDER_ROUTER_CLUSTER_ID,
+          ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID)
       end
 
       # A Groupcast listener's auxiliary ACL is derived from Membership. Keep
@@ -450,6 +521,7 @@ module Matter
       def remove_fabric_acl(fabric_index : UInt8) : Nil
         @acl.reject! { |entry| entry.fabric_index == fabric_index }
         @auxiliary_acl.reject! { |entry| entry.fabric_index == fabric_index }
+        @access_restrictions.delete(fabric_index)
         increment_version_and_notify(ATTR_ACL)
         notify_changed(ATTR_AUXILIARY_ACL) if @feature_map.auxiliary?
       end
