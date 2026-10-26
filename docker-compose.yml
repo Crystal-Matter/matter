@@ -113,6 +113,7 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_tcp_large_payload
+      MATTER_SUBSCRIPTION_UPDATE_HOOK_PATH: /e2e/logs/matter_tcp_large_payload.trigger
 
   tls-certificates:
     <<: *device
