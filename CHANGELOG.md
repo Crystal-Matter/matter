@@ -1835,6 +1835,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cluster class remains available to devices that explicitly implement ICD
   behavior.
 
+### Network Commissioning rollback
+
+- Snapshot the initial network and backend configuration before tentative wire
+  mutations, restore it on fail-safe expiry or disarm, and commit backend changes
+  and persist cluster metadata on CommissioningComplete. Backends without a
+  checkpoint now reject tentative mutations before changing network state.
+
 ### Network Commissioning fail-safe enforcement
 
 - Network Commissioning wire commands now require an active fail-safe owned by

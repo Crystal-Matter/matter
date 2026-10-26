@@ -510,8 +510,12 @@ module Matter
 
       # Restore the network configuration captured in `snapshot`. A device with
       # no network store attached has nothing to restore.
-      def restore_network_state(snapshot : Hash(String, String)) : Nil
+      def restore_network_state(snapshot : Storage::Document) : Nil
         @network_state_store.try(&.restore_network_state(snapshot))
+      end
+
+      def commit_network_state : Nil
+        @network_state_store.try(&.commit_network_state)
       end
 
       # Restore regulatory config from the snapshot taken before SetRegulatoryConfig

@@ -170,6 +170,19 @@ The declarations are:
   Wi-Fi and Thread devices need a `Matter::Network::Backend` passed as `network_backend:` when
   constructed. The backend performs scans, provisioning, removal, and connection; without one,
   wireless commands report an error instead of claiming the network changed.
+  A wireless backend that accepts tentative Network Commissioning changes must
+  implement `checkpoint_configuration`, `restore_configuration`, and
+  `commit_configuration`. Checkpoints and restores must include credentials and
+  connection state. The cluster rejects a mutation before calling the backend
+  when no checkpoint is available. The backend commits on CommissioningComplete
+  and restores the initial checkpoint when the fail-safe expires or is disarmed.
+  Network metadata is saved in device storage after commit; credentials remain
+  the backend's storage responsibility. The host backend and device storage are
+  separate durability boundaries, so implementations should make restore safe
+  to retry if one store fails after the other commits. A failed backend restore
+  is logged and exposed as `GeneralCommissioning#failsafe.network_rollback_failed?`;
+  expiry discards the fail-safe context, so the operator must repair the host
+  network configuration manually.
   Wireless devices can pass `regulatory_location_capability:` at construction to set the fixed
   General Commissioning LocationCapability and its initial RegulatoryConfig together. The default
   is `IndoorOutdoor`; Ethernet-only devices must keep that value.
