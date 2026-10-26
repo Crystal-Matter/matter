@@ -209,7 +209,7 @@ module Matter
         session : Session::SecureContext,
         peer : Socket::IPAddress,
         payload : Bytes,
-      ) : Nil
+      ) : UInt16
         if payload.size > im_payload_limit(session, peer)
           raise Matter::ProtocolError.new("Subscription update exceeds transport payload limit")
         end
@@ -229,6 +229,7 @@ module Matter
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           exchange_id, counter)
         @on_im_message_sent.try(&.call)
+        exchange_id
       end
 
       # Sends an unencrypted Secure Channel message: the PASE and CASE

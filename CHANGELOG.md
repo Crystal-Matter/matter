@@ -2036,6 +2036,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   statuses. Reject oversized individual items and multi-chunk timed writes
   before sending.
 
+### Active subscription report transactions
+
+- Send large list attributes and event batches as bounded ReportData chunks on
+  one exchange, advancing only after each Interaction Model success status.
+  Keep attribute changes and event cursors pending until the report completes,
+  and terminate subscriptions rejected by a peer or left without a response.
+  Replay unacknowledged changes after CASE renewal. Oversized scalar values
+  report ResourceExhausted instead of disappearing from the update stream.
+
 ### Subscription reporting intervals
 
 - Keep subscriptions alive with an empty ReportData at their maximum interval
