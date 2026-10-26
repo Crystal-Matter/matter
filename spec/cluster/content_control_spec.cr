@@ -138,7 +138,6 @@ describe Control do
 
   it "rejects optional feature bits whose behavior is not implemented yet" do
     expect_raises(ArgumentError) { build(Control, feature_map: Control::Feature::ScreenTime) }
-    expect_raises(ArgumentError) { build(Control, feature_map: Control::Feature::BlockContentTimeWindow) }
     expect_raises(ArgumentError) do
       build(Control, feature_map: Control::Feature::OnDemandContentRating,
         on_demand_ratings: [Control::RatingName.new("G")])
@@ -146,6 +145,85 @@ describe Control do
     expect_raises(ArgumentError) do
       build(Control, block_application_list: [Control::AppInfo.new(0xFFF1_u16, "radio")])
     end
+  end
+
+  it "manages indexed content time windows atomically and persists them" do
+    cluster = build(Control, feature_map: Control::Feature::BlockContentTimeWindow)
+    accepted_command_ids(cluster).should contain(Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW)
+    accepted_command_ids(cluster).should contain(Control::CMD_REMOVE_BLOCK_CONTENT_TIME_WINDOW)
+    attribute_ids(cluster).should contain(Control::ATTR_BLOCK_CONTENT_TIME_WINDOW)
+    cluster.get_command_metadata(Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW).as(Matter::Cluster::CommandMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
+    cluster.get_command_metadata(Control::CMD_REMOVE_BLOCK_CONTENT_TIME_WINDOW).as(Matter::Cluster::CommandMetadata).access.should eq(Matter::InteractionModel::EntryPrivilege::Manage)
+    event = cluster.get_event_metadata(Control::EVENT_ENTERING_BLOCK_CONTENT_TIME_WINDOW).as(Matter::Cluster::EventMetadata)
+    event.access.should eq(Matter::InteractionModel::EntryPrivilege::View)
+    event.priority.should eq(Matter::InteractionModel::EventPriority::Info)
+    build(Control).get_event_metadata(Control::EVENT_ENTERING_BLOCK_CONTENT_TIME_WINDOW).should be_nil
+    monday = Control::TimeWindow.new(nil, 0x02_u8, [Control::TimePeriod.new(9_u8, 0_u8, 10_u8, 30_u8)])
+    expect_success(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(monday)))
+    windows = read_tlv(cluster, Control::ATTR_BLOCK_CONTENT_TIME_WINDOW).as_list.map { |item| Control::TimeWindow.from_tlv(item) }
+    windows.first.time_window_index.should eq(0_u16)
+    expect_status(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(monday)), IMCode::Failure).cluster_status.should eq(0x0A_u8)
+    overlap = Control::TimeWindow.new(nil, 0x03_u8, [Control::TimePeriod.new(11_u8, 0_u8, 12_u8, 0_u8)])
+    expect_status(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(overlap)), IMCode::ConstraintError)
+    bad_period = Control::TimeWindow.new(0_u16, 0x02_u8, [Control::TimePeriod.new(10_u8, 30_u8, 10_u8, 30_u8)])
+    expect_status(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(bad_period)), IMCode::ConstraintError)
+    overlapping_periods = Control::TimeWindow.new(0_u16, 0x02_u8, [
+      Control::TimePeriod.new(9_u8, 0_u8, 10_u8, 30_u8),
+      Control::TimePeriod.new(10_u8, 0_u8, 11_u8, 0_u8),
+    ])
+    expect_status(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(overlapping_periods)), IMCode::ConstraintError)
+    replacement = Control::TimeWindow.new(0_u16, 0x02_u8, [Control::TimePeriod.new(11_u8, 0_u8, 12_u8, 0_u8)])
+    expect_success(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(replacement)))
+    expect_status(invoke(cluster, Control::CMD_REMOVE_BLOCK_CONTENT_TIME_WINDOW,
+      Control::RemoveTimeWindowsRequest.new([0_u16, 99_u16])), IMCode::Failure).cluster_status.should eq(0x0B_u8)
+    read_tlv(cluster, Control::ATTR_BLOCK_CONTENT_TIME_WINDOW).as_list.size.should eq(1)
+    restored = build(Control, feature_map: Control::Feature::BlockContentTimeWindow)
+    restored.restore_state(cluster.save_state)
+    restored.block_content_time_window.first.time_period.first.start_hour.should eq(11_u8)
+    expect_success(invoke(restored, Control::CMD_REMOVE_BLOCK_CONTENT_TIME_WINDOW,
+      Control::RemoveTimeWindowsRequest.new([0_u16])))
+    read_tlv(restored, Control::ATTR_BLOCK_CONTENT_TIME_WINDOW).as_list.should be_empty
+  end
+
+  it "blocks playback and emits one entry event at a local time boundary" do
+    cluster = build(Control, feature_map: Control::Feature::BlockContentTimeWindow)
+    clock = Time.local(2026, 10, 26, 8, 59, 0)
+    cluster.local_time_provider = -> : Time? { clock }
+    events = [] of UInt32
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      events << event
+      nil
+    end
+    policy_calls = 0
+    cluster.on_policy_changed { policy_calls += 1 }
+    monday = Control::TimeWindow.new(nil, 0x02_u8, [
+      Control::TimePeriod.new(9_u8, 0_u8, 10_u8, 0_u8),
+      Control::TimePeriod.new(10_u8, 1_u8, 10_u8, 30_u8),
+    ])
+    expect_success(invoke(cluster, Control::CMD_SET_BLOCK_CONTENT_TIME_WINDOW, Control::SetTimeWindowRequest.new(monday)))
+    expect_success(invoke(cluster, Control::CMD_ENABLE))
+    cluster.tick_block_content_time_window
+    cluster.playback_allowed?.should be_true
+    cluster.local_time_provider = -> : Time? { nil }
+    cluster.tick_block_content_time_window
+    cluster.playback_allowed?.should be_false
+    events.should be_empty
+    cluster.local_time_provider = -> : Time? { clock }
+    clock = Time.local(2026, 10, 26, 9, 0, 0)
+    cluster.tick_block_content_time_window
+    cluster.playback_allowed?.should be_false
+    events.should eq([Control::EVENT_ENTERING_BLOCK_CONTENT_TIME_WINDOW])
+    cluster.tick_block_content_time_window
+    events.size.should eq(1)
+    policy_calls.should eq(3)
+    clock = Time.local(2026, 10, 26, 10, 1, 0)
+    cluster.tick_block_content_time_window
+    events.size.should eq(2)
+    policy_calls.should eq(4)
+    cluster.playback_allowed?.should be_false
+    clock = Time.local(2026, 10, 26, 10, 31, 0)
+    cluster.tick_block_content_time_window
+    cluster.playback_allowed?.should be_true
   end
 
   it "updates and resets a private PIN with timed Manage and Administer access" do

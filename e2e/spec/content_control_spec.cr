@@ -8,7 +8,7 @@ describe "Matter 1.6 Content Control interoperability" do
     device.commission!
     expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList").should contain(0x050F_i64)
     read_int(device, "contentcontrol", "cluster-revision", "ClusterRevision", 1).should eq(1_i64)
-    read_int(device, "contentcontrol", "feature-map", "FeatureMap", 1).should eq(14_i64)
+    read_int(device, "contentcontrol", "feature-map", "FeatureMap", 1).should eq(142_i64)
     expect_failure(device.invoke("contentcontrol", "reset-pin"), "NEEDS_TIMED_INTERACTION")
     reset = expect_success(device.invoke("contentcontrol", "reset-pin", options: timed))
     pin = reset.output.match(/\bPINCode:\s*['\"]?(\d{6})\b/).try(&.[1]) || ""
@@ -32,5 +32,17 @@ describe "Matter 1.6 Content Control interoperability" do
     expect_success(device.read("contentcontrol", "on-demand-rating-threshold")).value("OnDemandRatingThreshold").should eq("PG")
     expect_success(device.invoke("contentcontrol", "disable", options: timed))
     expect_success(device.read("contentcontrol", "enabled")).bool("Enabled").should be_false
+
+    expect_success(device.invoke("contentcontrol", "unblock-unrated-content"))
+    all_day = %({"timeWindowIndex":null,"dayOfWeek":127,"timePeriod":[{"startHour":0,"startMinute":0,"endHour":23,"endMinute":59}]})
+    expect_success(device.invoke("contentcontrol", "set-block-content-time-window", [all_day]))
+    expect_success(device.read("contentcontrol", "block-content-time-window")).output.should contain("DayOfWeek: 127")
+    expect_success(device.invoke("contentcontrol", "enable", options: timed))
+    expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(2_i64)
+    device.restart!
+    expect_success(device.read("contentcontrol", "block-content-time-window")).output.should contain("DayOfWeek: 127")
+    expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(2_i64)
+    expect_success(device.invoke("contentcontrol", "remove-block-content-time-window", ["[0]"]))
+    expect_success(device.invoke("mediaplayback", "play")).int("status").should eq(0_i64)
   end
 end

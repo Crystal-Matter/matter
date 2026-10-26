@@ -330,10 +330,10 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x050F | command | 0x000C | feature(BC) | declared; requires `:block_channels` |
 | 0x050F | command | 0x000D | feature(BA) | declared; requires `:block_applications` |
 | 0x050F | command | 0x000E | feature(BA) | declared; requires `:block_applications` |
-| 0x050F | command | 0x000F | feature(BTW) | absent |
-| 0x050F | command | 0x0010 | feature(BTW) | absent |
+| 0x050F | command | 0x000F | feature(BTW) | declared; requires `:block_content_time_window` |
+| 0x050F | command | 0x0010 | feature(BTW) | declared; requires `:block_content_time_window` |
 | 0x050F | event | 0x0000 | feature(ST) | absent |
-| 0x050F | event | 0x0001 | feature(BTW) | absent |
+| 0x050F | event | 0x0001 | feature(BTW) | declared; requires `:block_content_time_window` |
 | 0x0550 | command | 0x0000 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
 | 0x0550 | command | 0x0002 | (feature(TWODCART) and feature(USERDEFINED)) | declared; requires `{two_d_cartesian_zone: true, user_defined: true}` |
 | 0x0550 | command | 0x0003 | feature(USERDEFINED) | declared; requires `:user_defined` |
