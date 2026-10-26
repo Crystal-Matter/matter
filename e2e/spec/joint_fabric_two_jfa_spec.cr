@@ -1071,11 +1071,51 @@ describe "three provisioned Joint Fabric Administrators" do
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     transfer_anchor_noc = Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
       .from_tlv(noc_before_resume_data.to_slice).first.noc
-    # The resumed command must perform only pending follow-up, not rotate B's
-    # credentials or recopy the frozen Datastore.
+    # A finishes follow-up, then B crashes before it reaches C. The journal
+    # must skip A after restart and finish C without rotating B again.
+    interrupted_participants = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_first_transfer_follow_up: true))
+    interrupted_participants.status.should eq("error")
+    interrupted_participants.error.to_s.should contain("Injected interruption after first Anchor participant follow-up")
+    a_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
+    a_follow_up.inspected_follow_up_stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
+    c_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    c_follow_up.inspected_follow_up_stage.should be_nil
+    first_done = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA102_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    first_done.fabric_present.should be_false
+    first_new_fabric = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA102_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    first_new_fabric.fabric_present.should be_true
+    third_pending = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    third_pending.fabric_present.should be_true
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_first_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
+    persisted_first_follow_up.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
+    # The resumed command must perform only pending C follow-up, not replay A,
+    # rotate B's credentials, or recopy the frozen Datastore.
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
+    completed_third_follow_up = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    completed_third_follow_up.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
     completed_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     completed_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed.value)

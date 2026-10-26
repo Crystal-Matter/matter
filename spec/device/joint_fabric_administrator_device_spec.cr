@@ -647,6 +647,18 @@ describe MatterJointFabricAdministrator::Device do
       .interrupt_before_transfer_follow_up?.should be_false
   end
 
+  it "round-trips the first participant follow-up interruption flag and defaults old commands to false" do
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+      interrupt_after_first_transfer_follow_up: true)
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(request.to_document)
+      .interrupt_after_first_transfer_follow_up?.should be_true
+
+    old_document = request.to_document
+    old_document.delete("interrupt_after_first_transfer_follow_up")
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
+      .interrupt_after_first_transfer_follow_up?.should be_false
+  end
+
   it "round-trips the transfer request interruption flag and defaults old commands to false" do
     request = MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
       interrupt_after_transfer_request: true)

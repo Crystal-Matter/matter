@@ -140,7 +140,9 @@ item below as covered only to the extent of its cited tests.
   transfers the Anchor from A to B, and removes A. It interrupts B after
   TransferAnchorComplete, restarts it with a persisted FollowingUp journal,
   and verifies participant follow-up without changing B's NOC or the
-  Administrator CAT version again. It also restarts B after a lost RemoveFabric
+  Administrator CAT version again. It also interrupts after A completes its
+  individual follow-up while C is still pending, restarts B, and verifies
+  that only C's follow-up runs on resume. It also restarts B after a lost RemoveFabric
   acknowledgement, verifies the persisted journal blocks replay,
   and reconciles the result. It also restarts B after a lost RemoveAdmin
   acknowledgement, checks the removal in B's persisted AdminList over CASE,

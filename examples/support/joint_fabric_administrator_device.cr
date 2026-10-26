@@ -156,6 +156,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_remove_admin : Bool = false
       getter? interrupt_before_remove_admin : Bool = false
       getter? interrupt_before_transfer_follow_up : Bool = false
+      getter? interrupt_after_first_transfer_follow_up : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
@@ -178,6 +179,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_remove_admin : Bool = false,
                      @interrupt_before_remove_admin : Bool = false,
                      @interrupt_before_transfer_follow_up : Bool = false,
+                     @interrupt_after_first_transfer_follow_up : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
@@ -206,6 +208,7 @@ module MatterJointFabricAdministrator
       getter inspected_transfer_complete : Bool?
       getter inspected_new_anchor_node_id : UInt64?
       getter inspected_transfer_stage : UInt8?
+      getter inspected_follow_up_stage : UInt8?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -225,7 +228,8 @@ module MatterJointFabricAdministrator
                      @inspected_transfer_frozen : Bool? = nil,
                      @inspected_transfer_complete : Bool? = nil,
                      @inspected_new_anchor_node_id : UInt64? = nil,
-                     @inspected_transfer_stage : UInt8? = nil)
+                     @inspected_transfer_stage : UInt8? = nil,
+                     @inspected_follow_up_stage : UInt8? = nil)
       end
     end
 
@@ -1495,6 +1499,7 @@ module MatterJointFabricAdministrator
     # old Anchor to freeze; network operations after that point are journaled.
     private def transfer_anchor_from(old_anchor_node_id : UInt64,
                                      interrupt_before_follow_up : Bool = false,
+                                     interrupt_after_first_follow_up : Bool = false,
                                      interrupt_after_request : Bool = false,
                                      interrupt_after_complete : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
@@ -1546,7 +1551,8 @@ module MatterJointFabricAdministrator
           if interrupt_before_follow_up
             raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
           end
-          follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, own_client, own_im)
+          follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, own_client, own_im,
+            interrupt_after_first_follow_up)
           journal.stage = Matter::Controller::AnchorTransfer::Stage::Completed
           persistence.write_app_document(APP_TRANSFER_DOCUMENT, journal.to_document)
           persistence.flush
@@ -1629,7 +1635,8 @@ module MatterJointFabricAdministrator
             if interrupt_before_follow_up
               raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
             end
-            follow_up_administrators(preflight, old_fabric, scanner, own_client, own_im)
+            follow_up_administrators(preflight, old_fabric, scanner, own_client, own_im,
+              interrupt_after_first_follow_up)
             nil
           })
         port = Matter::Controller::AnchorTransfer::ImPort.new(old_im, old_session, old_peer, old_endpoint)
@@ -1689,11 +1696,13 @@ module MatterJointFabricAdministrator
     private def follow_up_administrators(source : Datastore, old_fabric : Matter::Fabric,
                                          scanner : Matter::Controller::Scanner,
                                          client : Matter::Controller::Client,
-                                         im : Matter::Controller::ImClient) : Nil
+                                         im : Matter::Controller::ImClient,
+                                         interrupt_after_first : Bool = false) : Nil
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric disappeared")
       controller_store = @controller_store || raise Matter::ConfigurationError.new("Candidate controller identity disappeared")
       identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
       scanner.query_operational
+      followed_up = 0
       source.admin_list.each do |admin|
         # The frozen source lists our old Joint Fabric Node ID; a restored
         # promoted Datastore instead lists our new Anchor Node ID.
@@ -1736,6 +1745,10 @@ module MatterJointFabricAdministrator
             nil
           })
         runner.run
+        followed_up += 1
+        if interrupt_after_first && followed_up == 1
+          raise Matter::TransportError.new("Injected interruption after first Anchor participant follow-up")
+        end
       end
     end
 
@@ -2336,7 +2349,8 @@ module MatterJointFabricAdministrator
           case request.operation
           when "transfer-anchor"
             transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?,
-              request.interrupt_after_transfer_request?, request.interrupt_after_transfer_complete?)
+              request.interrupt_after_first_transfer_follow_up?, request.interrupt_after_transfer_request?,
+              request.interrupt_after_transfer_complete?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
@@ -2391,6 +2405,12 @@ module MatterJointFabricAdministrator
                        raise Matter::ConfigurationError.new("Anchor transfer journal is absent")
             journal = Matter::Controller::AnchorTransfer::Journal.from_document(document)
             CommandResult.new("ok", inspected_transfer_stage: journal.stage.value)
+          when "inspect-follow-up-stage"
+            document = persistence.app_document("#{APP_FOLLOW_UP_PREFIX}#{request.node_id.to_s(16)}")
+            stage = document.try do |entry|
+              Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.from_document(entry).stage.value
+            end
+            CommandResult.new("ok", inspected_follow_up_stage: stage)
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
             CommandResult.new("ok")
