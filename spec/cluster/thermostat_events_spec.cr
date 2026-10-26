@@ -23,7 +23,7 @@ describe "Thermostat Events feature" do
     features = Thermostat::Feature::Heating | Thermostat::Feature::Cooling |
                Thermostat::Feature::Automode | Thermostat::Feature::Events
     cluster = build(Thermostat, feature_map: features)
-    cluster.cluster_revision.should eq(9_u16)
+    cluster.cluster_revision.should eq(11_u16)
     cluster.feature_map.value.should eq(0x223_u32)
     cluster.events.map(&.id.id).should eq([0_u32, 1_u32, 3_u32, 4_u32, 5_u32])
     cluster.read_attribute(Thermostat::ATTR_THERMOSTAT_RUNNING_STATE, nil).as(TLV::Any).value.should eq(0_u64)

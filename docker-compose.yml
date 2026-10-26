@@ -426,6 +426,11 @@ services:
     environment:
       E2E_DEVICE: matter_thermostat_occupancy
 
+  thermostat-base-revision:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_thermostat_base_revision
+
   low-power:
     <<: *device
     environment:
@@ -651,6 +656,7 @@ services:
       air-conditioner: { condition: service_healthy }
       thermostat-presets: { condition: service_healthy }
       thermostat-schedules: { condition: service_healthy }
+      thermostat-base-revision: { condition: service_healthy }
       bridge: { condition: service_healthy }
       bridged-icd: { condition: service_healthy }
       ecosystem-bridge: { condition: service_healthy }

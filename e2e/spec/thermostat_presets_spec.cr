@@ -5,7 +5,7 @@ describe "Matter Thermostat Presets guarded fixture" do
 
   it "commissions and exposes the guarded PRES metadata and configured list" do
     device.commission!
-    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(9_i64)
+    read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(0x303_i64)
     read_int(device, "thermostat", "number-of-presets", "NumberOfPresets", 1).should eq(2_i64)
     expect_success(device.read("thermostat", "preset-types", 1)).output.should contain("PresetScenario")
