@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Groupcast duplicate key status
+
+- Return `AlreadyExists` when JoinGroup supplies a key for a KeySetID already
+  installed on that fabric, matching the Matter 1.6 Groupcast test expectation.
+
 ### Diagnostic Logs BDX response ordering
 
 - Send BDX SendInit before the RetrieveLogsResponse. Return Success only after
