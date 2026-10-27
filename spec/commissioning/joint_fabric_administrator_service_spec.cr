@@ -217,6 +217,40 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
   end
 
+  it "checks VID verification on the accessing fabric rather than AdministratorFabricIndex" do
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0001_u64]
+    cluster.request_peer_icac = anchor_icac
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 2_u8
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+
+    {2_u8, 1_u8}.each do |verified_fabric|
+      checked_fabrics = [] of UInt8
+      service = Matter::Commissioning::JointFabricAdministratorService.new(
+        icac_key, root, fabric_id,
+        -> { true }, ->(index : UInt8) { checked_fabrics << index; index == verified_fabric },
+        ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+        ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+        verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+        failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
+      )
+      service.announce_joint_fabric_administrator(cluster,
+        Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16))
+      result = service.icaccsr_request(cluster)
+      if verified_fabric == 2_u8
+        result.as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+          Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+      else
+        result.should eq(Matter::InteractionModel::Status.cluster_failure(
+          Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+      end
+      checked_fabrics.should eq([2_u8])
+    end
+  end
+
   it "requires an authenticated Administrator CAT before transferring the Anchor" do
     started = false
     consented = false
