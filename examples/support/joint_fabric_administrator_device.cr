@@ -2243,8 +2243,20 @@ module MatterJointFabricAdministrator
           own_fabric.node_id, prior_version, nonce.hexbytes, old_noc,
           anchor_cat_version: anchor_version)
 
-        # The CASE proof crosses an asynchronous transport. Recheck the local
-        # commit/rollback state immediately before changing the journal.
+        finalize_anchor_rotation_no_effect!(journal, datastore, own_fabric, old_noc, document_name)
+      ensure
+        client.close
+      end
+    end
+
+    private def finalize_anchor_rotation_no_effect!(journal : Matter::Controller::AdministratorRemoval::Journal,
+                                                    datastore : Datastore, own_fabric : Matter::Fabric,
+                                                    old_noc : Bytes, document_name : String) : Nil
+      # Inbound CASE commands run under this same reentrant registry lock. Keep
+      # ArmFailSafe/UpdateNOC/CommissioningComplete outside the final state
+      # check and the potentially yielding durable journal write. The remote
+      # CASE proof has already returned before acquiring the lock.
+      @message_handler.registry.synchronize do
         current = verify_durable_anchor_old_credential!(own_fabric)
         unless current.operational_cert == old_noc
           raise Matter::AuthenticationError.new("Anchor NOC changed during no-effect inspection")
@@ -2257,8 +2269,6 @@ module MatterJointFabricAdministrator
             persistence.flush
             nil
           })
-      ensure
-        client.close
       end
     end
 
