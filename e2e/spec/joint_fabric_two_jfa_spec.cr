@@ -1086,11 +1086,127 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     reconciled_registration.status.should eq("ok"), reconciled_registration.error.to_s
-    migrated = jfa_command("matter_joint_fabric_joiner",
+    interrupted_fabric_removal = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
+        interrupt_after_migration_old_fabric_removed: true))
+    interrupted_fabric_removal.status.should eq("error")
+    interrupted_fabric_removal.error.to_s.should contain("Injected interruption after device RemoveFabric")
+    joiner.restart!
+    b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    fabric_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64))
+    fabric_removal_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldFabric.value)
+    blocked_fabric_replay = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    blocked_fabric_replay.status.should eq("error")
+    blocked_fabric_replay.error.to_s.should contain("needs authenticated reconciliation")
+    a_nodes_before_removal_reconcile = jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
+    a_nodes_before_removal_reconcile.any? do |entry|
+      entry.node_id == 0xA201_u64 && entry.commissioning_status_entry.state.committed?
+    end.should be_true
+    jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16).any?(&.node_id.==(0xB201_u64)).should be_true
+    a_target_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+      migration_peer, anchor_bootstrap.fabric,
+      peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    removed_fabrics_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    removed_fabrics_data = removed_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    removed_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(removed_fabrics_data.to_slice)
+    removed_fabrics.any?(&.fabric_id.==(anchor_bootstrap.fabric.fabric_id)).should be_true
+    removed_fabrics.any?(&.fabric_id.==(joiner_bootstrap.fabric.fabric_id)).should be_false
+    # Removing the Anchor entry makes the completed postcondition false. B
+    # must retain the uncertain journal and its own NodeList entry.
+    removed_anchor_entry = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
+      fields: Matter::Cluster::JointFabricDatastore::RemoveNodeRequest.new(0xA201_u64).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(removed_anchor_entry)
+    rejected_fabric_reconcile = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    rejected_fabric_reconcile.status.should eq("error")
+    rejected_fabric_reconcile.error.to_s.should contain("Anchor Datastore has not committed")
+    jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16).any?(&.node_id.==(0xB201_u64)).should be_true
+    restored_anchor_entry = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      command_id: Matter::Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE,
+      fields: Matter::Cluster::JointFabricDatastore::AddPendingNodeRequest.new(0xA201_u64, "Migrated device").to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(restored_anchor_entry)
+    restored_anchor_deadline = Time.instant + 90.seconds
+    until jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16).any? do |entry|
+            entry.node_id == 0xA201_u64 && entry.commissioning_status_entry.state.committed?
+          end
+      raise Matter::TimeoutError.new("Restored Anchor registration did not recommit") if Time.instant >= restored_anchor_deadline
+      sleep 500.milliseconds
+    end
+    reconciled_fabric_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    reconciled_fabric_removal.status.should eq("ok"), reconciled_fabric_removal.error.to_s
+    interrupted_old_node_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
+        interrupt_after_migration_old_node_removed: true))
+    interrupted_old_node_removal.status.should eq("error")
+    interrupted_old_node_removal.error.to_s.should contain("Injected interruption after Datastore RemoveNode")
+    joiner.restart!
+    b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    node_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64))
+    node_removal_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldNode.value)
+    jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16).any?(&.node_id.==(0xB201_u64)).should be_false
+    blocked_node_replay = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    blocked_node_replay.status.should eq("error")
+    blocked_node_replay.error.to_s.should contain("needs authenticated reconciliation")
+    reconciled_node_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    reconciled_node_removal.status.should eq("ok"), reconciled_node_removal.error.to_s
+    migrated = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     migrated.status.should eq("ok"), migrated.error.to_s
     a_target_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
