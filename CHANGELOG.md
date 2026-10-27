@@ -52,8 +52,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Identify and conditional Groups membership
 
-- Count down IdentifyTime from a monotonic clock, report each elapsed change, and
-  stop the host identify effect when the endpoint is removed or replaced. A
+- Count down IdentifyTime from a monotonic clock and advance its data version for
+  each elapsed second. Intermediate countdown values stay quiet for subscriptions;
+  expiration, client changes, and Identify commands report attribute changes.
+  Stop the host identify effect when the endpoint is removed or replaced. A
   repeated Identify command refreshes the full requested interval.
 - Honor the Identify state for Groups AddGroupIfIdentifying. When the endpoint
   is not identifying, return Success without changing group membership or
