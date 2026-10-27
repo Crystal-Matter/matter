@@ -87,7 +87,9 @@ module Matter
     @next_event_number : UInt64 = FIRST_EVENT_NUMBER
     @buffers : Hash(InteractionModel::EventPriority, Deque(Record))
 
-    def initialize
+    def initialize(@on_next_event_number : Proc(UInt64, Nil)? = nil,
+                   @next_event_number : UInt64 = FIRST_EVENT_NUMBER)
+      raise Matter::ConfigurationError.new("Event number must start above zero") if @next_event_number == 0_u64
       @buffers = {
         InteractionModel::EventPriority::Debug    => Deque(Record).new(DEBUG_CAPACITY),
         InteractionModel::EventPriority::Info     => Deque(Record).new(INFO_CAPACITY),
@@ -115,6 +117,11 @@ module Matter
       epoch_timestamp_ms : UInt64? = nil,
     ) : Record
       @mutex.synchronize do
+        next_number = @next_event_number + 1_u64
+        # Persist the next number before this event can be reported. A failed
+        # write must leave the journal unchanged so a restart cannot reuse an
+        # event number that was visible to a controller.
+        @on_next_event_number.try(&.call(next_number))
         entry = Record.new(
           event_number: @next_event_number,
           endpoint: endpoint,
@@ -125,7 +132,7 @@ module Matter
           fabric_index: fabric_index,
           data: data
         )
-        @next_event_number &+= 1
+        @next_event_number = next_number
 
         buffer = @buffers[priority]
         buffer.shift if buffer.size >= EventJournal.capacity(priority)
@@ -192,6 +199,16 @@ module Matter
     # The number the next journaled event will be given.
     def next_event_number : UInt64
       @mutex.synchronize { @next_event_number }
+    end
+
+    # Legacy stores may hold a subscription cursor but no journal counter.
+    # Move past the largest restored cursor before emitting new events.
+    def advance_next_event_number(next_number : UInt64) : Nil
+      @mutex.synchronize do
+        return if next_number <= @next_event_number
+        @on_next_event_number.try(&.call(next_number))
+        @next_event_number = next_number
+      end
     end
 
     # The number of records retained across every priority.

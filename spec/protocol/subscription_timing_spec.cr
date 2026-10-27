@@ -17,6 +17,7 @@ private def subscription_timing_fixture(min_interval : UInt16, max_interval : UI
   handler.setup_cluster_notifications
 
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
   handler.sessions[session.session_id] = session
   subscription = Matter::Protocol::ActiveSubscription.new(
     subscription_id: 7_u32,
@@ -107,6 +108,7 @@ describe "Subscription reporting intervals" do
     transport.sent_packets.size.should eq(1)
 
     renewed = Matter::Spec::ProtocolMessages.case_session(2_u16)
+    renewed.peer_subject_ids = [renewed.peer_node_id.as(Matter::DataType::NodeId).id]
     handler.sessions[renewed.session_id] = renewed
     subscription.session = renewed
     handler.subscriptions.tick
