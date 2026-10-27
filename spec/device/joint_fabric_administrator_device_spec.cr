@@ -50,9 +50,35 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def verify_durable_transfer_datastore_for_spec(source : Matter::Cluster::JointFabricDatastore,
                                                  candidate_old_node_id : UInt64, own_fabric : Matter::Fabric,
                                                  bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
-                                                 admin_version : UInt16, anchor_version : UInt16) : Nil
+                                                 admin_version : UInt16, anchor_version : UInt16,
+                                                 promoted : Bool = true) : Nil
     verify_durable_transfer_datastore!(source, candidate_old_node_id, own_fabric, bootstrap,
-      admin_version, anchor_version)
+      admin_version, anchor_version, promoted: promoted)
+  end
+
+  def verify_transfer_datastore_equivalent_for_spec(actual : Matter::Cluster::JointFabricDatastore,
+                                                    expected : Matter::Cluster::JointFabricDatastore) : Nil
+    verify_transfer_datastore_equivalent!(actual, expected, "Datastore mismatch")
+  end
+
+  def verify_unpromoted_transfer_bindings_and_roles_for_spec(old_fabric : Matter::Fabric,
+                                                             own_fabric : Matter::Fabric) : Nil
+    verify_unpromoted_transfer_bindings_and_roles!(old_fabric, own_fabric)
+  end
+
+  def verify_unpromoted_candidate_credential_for_spec(journal : Matter::Controller::AnchorTransfer::Journal,
+                                                      fabric : Matter::Fabric,
+                                                      bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap) : Nil
+    verify_unpromoted_candidate_credential!(journal, fabric, bootstrap)
+  end
+
+  def verify_durable_transfer_copy_for_spec(journal : Matter::Controller::AnchorTransfer::Journal,
+                                            source : Matter::Cluster::JointFabricDatastore,
+                                            old_anchor_node_id : UInt64, old_fabric : Matter::Fabric,
+                                            own_fabric : Matter::Fabric,
+                                            bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap) : Nil
+    verify_durable_transfer_copy!(journal, source, old_anchor_node_id, old_fabric, own_fabric,
+      bootstrap, 2_u16, 2_u16)
   end
 
   def anchor_friendly_name_for_attachment_for_spec(datastore : Matter::Cluster::JointFabricDatastore,
@@ -258,7 +284,8 @@ end
 private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64,
                                   root_key : Matter::Crypto::Key = Matter::Crypto::StandardCrypto.new.create_key_pair,
                                   icac_key : Matter::Crypto::Key = Matter::Crypto::StandardCrypto.new.create_key_pair,
-                                  root_cert : Bytes? = nil) : Matter::Fabric
+                                  root_cert : Bytes? = nil,
+                                  fabric_index : UInt8 = 1_u8) : Matter::Fabric
   crypto = Matter::Crypto::StandardCrypto.new
   noc_key = crypto.create_key_pair
   root = root_cert || Matter::Crypto::MatterCertificate::Builder.root(root_key, 1_u64, Bytes[1], crypto)
@@ -268,9 +295,92 @@ private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64,
     noc_key.public_key, fabric_id, node_id, icac_key, 1_u64, Bytes[3], crypto,
     issuer_icac_id: 2_u64, issuer_certificate: icac,
     case_authenticated_tag: 0xFFFE_0001_u32)
-  Matter::Fabric.new(fabric_id, 1_u8, node_id, root_key.public_key, noc, noc_key,
+  Matter::Fabric.new(fabric_id, fabric_index, node_id, root_key.public_key, noc, noc_key,
     Bytes.new(16, 0xA5_u8), intermediate_cert: icac, root_cert: root,
     cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0001_u32)])
+end
+
+describe "Joint Fabric participant cross-sign commit witness" do
+  it "requires the exact nonce, ICAC, fabric, node, endpoint and clear provisional state" do
+    fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB102_u64)
+    node_id = 0xA104_u64
+    endpoint = MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID
+    participant_index = 2_u8
+    nonce = "a" * MatterJointFabricAdministrator::Device::ROTATION_NONCE_HEX_LENGTH
+    icac = Bytes[1_u8, 2_u8, 3_u8]
+    result = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_fabric_id: fabric.fabric_id,
+      inspected_root_public_key: fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: participant_index,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: true,
+      inspected_credential_journal_clear: true)
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_true
+    MatterJointFabricAdministrator::Device::CommandResult.from_document(result.to_document)
+      .proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_true
+    result.proves_committed_cross_sign?("b" * nonce.size, icac, fabric, node_id, endpoint, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, Bytes[9_u8], fabric, node_id, endpoint, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id + 1_u64, endpoint, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint + 1_u16, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index + 1_u8).should be_false
+    other = jfa_reuse_test_fabric(0xB200_u64, fabric.node_id)
+    result.proves_committed_cross_sign?(nonce, icac, other, node_id, endpoint, participant_index).should be_false
+    other_root = jfa_reuse_test_fabric(fabric.fabric_id, fabric.node_id)
+    result.proves_committed_cross_sign?(nonce, icac, other_root, node_id, endpoint, participant_index).should be_false
+    provisional = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_fabric_id: fabric.fabric_id,
+      inspected_root_public_key: fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: participant_index,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: false,
+      inspected_credential_journal_clear: true)
+    provisional.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_false
+    incomplete = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_fabric_id: fabric.fabric_id,
+      inspected_root_public_key: fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: participant_index,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: true,
+      inspected_credential_journal_clear: false)
+    incomplete.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_false
+  end
+end
+
+describe "Joint Fabric Administrator saved candidate credential evidence" do
+  it "rejects legacy journals and a same-CAT candidate NOC replacement" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    root_key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    icac_key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB102_u64, root_key, icac_key)
+    bootstrap_fabric = Matter::Controller::FabricInfo.new(fabric.fabric_id, fabric.node_id,
+      fabric.ipk, fabric.root_cert.as(Bytes), fabric.root_public_key,
+      fabric.operational_cert, fabric.operational_private_key,
+      admin_vendor_id: fabric.vendor_id, intermediate_cert: fabric.intermediate_cert)
+    bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(bootstrap_fabric, Bytes[1_u8])
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64,
+      Matter::Controller::AnchorTransfer::Stage::Copying)
+    expect_raises(Matter::AuthenticationError, /saved pre-transfer credentials/) do
+      device.verify_unpromoted_candidate_credential_for_spec(journal, fabric, bootstrap)
+    end
+    journal.capture_candidate_credential!(fabric)
+    device.verify_unpromoted_candidate_credential_for_spec(journal, fabric, bootstrap)
+
+    replacement = jfa_reuse_test_fabric(fabric.fabric_id, fabric.node_id, root_key, icac_key,
+      root_cert: fabric.root_cert)
+    fabric.operational_cert = replacement.operational_cert
+    expect_raises(Matter::AuthenticationError, /saved pre-transfer credentials/) do
+      device.verify_unpromoted_candidate_credential_for_spec(journal, fabric, bootstrap)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
 end
 
 describe "Joint Fabric Administrator promotion reconciliation evidence" do
@@ -406,6 +516,174 @@ describe "Joint Fabric Administrator promotion reconciliation evidence" do
       MatterJointFabricAdministrator::Device::JointFabricRoleState.new(true, true).to_document)
     expect_raises(Matter::AuthenticationError, /did not finish promotion/) do
       device.verify_promotion_roles_for_spec
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+end
+
+describe "Joint Fabric Administrator Copying reconciliation evidence" do
+  it "rejects a live candidate snapshot that differs from its saved copy" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    saved = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    live = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32,
+      Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    saved.status = status
+    live.status = status
+    device.verify_transfer_datastore_equivalent_for_spec(live, saved)
+    live.friendly_name = "Changed only in memory"
+    expect_raises(Matter::AuthenticationError, /Datastore mismatch: name/) do
+      device.verify_transfer_datastore_equivalent_for_spec(live, saved)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects a changed frozen source or unexpected Copying journal state" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    own_fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB103_u64, fabric_index: 2_u8)
+    identity = Matter::Controller::FabricInfo.new(own_fabric.fabric_id, own_fabric.node_id,
+      own_fabric.ipk, own_fabric.root_cert.as(Bytes), own_fabric.root_public_key,
+      own_fabric.operational_cert, own_fabric.operational_private_key,
+      admin_vendor_id: own_fabric.vendor_id, intermediate_cert: own_fabric.intermediate_cert)
+    bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(identity, Bytes[1_u8])
+    source = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    source.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32,
+      Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    source.anchor_root_ca = old_fabric.root_cert.as(Bytes)
+    source.anchor_node_id = 0xA102_u64
+    journal = Matter::Controller::AnchorTransfer::Journal.new(old_fabric.node_id,
+      Matter::Controller::AnchorTransfer::Stage::Copying)
+    expect_raises(Matter::AuthenticationError, /expected frozen transfer/) do
+      device.verify_durable_transfer_copy_for_spec(journal, source, 0xA102_u64,
+        old_fabric, own_fabric, bootstrap)
+    end
+    source.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 1_u32,
+      Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    source.anchor_root_ca = Bytes[1_u8]
+    expect_raises(Matter::AuthenticationError, /expected frozen transfer/) do
+      device.verify_durable_transfer_copy_for_spec(journal, source, 0xA102_u64,
+        old_fabric, own_fabric, bootstrap)
+    end
+    source.anchor_root_ca = old_fabric.root_cert.as(Bytes)
+    journal.rotated_administrator_node_ids << old_fabric.node_id
+    expect_raises(Matter::AuthenticationError, /expected frozen transfer/) do
+      device.verify_durable_transfer_copy_for_spec(journal, source, 0xA102_u64,
+        old_fabric, own_fabric, bootstrap)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects a changed durable copy, IPK, or source list" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    own_fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB103_u64, fabric_index: 2_u8)
+    identity = Matter::Controller::FabricInfo.new(own_fabric.fabric_id, own_fabric.node_id,
+      own_fabric.ipk, own_fabric.root_cert.as(Bytes), own_fabric.root_public_key,
+      own_fabric.operational_cert, own_fabric.operational_private_key,
+      admin_vendor_id: own_fabric.vendor_id, intermediate_cert: own_fabric.intermediate_cert)
+    bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(identity, Bytes[1_u8])
+    source = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    source.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 1_u32,
+      Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    source.anchor_root_ca = old_fabric.root_cert.as(Bytes)
+    source.anchor_node_id = 0xA102_u64
+    source.friendly_name = "Original Anchor"
+    source.admin_list = [Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      old_fabric.node_id, "Old Candidate", old_fabric.vendor_id, old_fabric.intermediate_cert.as(Bytes))]
+    copied = device.joint_fabric_datastore
+    new_admin = Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      own_fabric.node_id, MatterJointFabricAdministrator::Device::DEFAULT_ANCHOR_FRIENDLY_NAME,
+      own_fabric.vendor_id, own_fabric.intermediate_cert.as(Bytes))
+    Matter::Controller::AnchorTransfer::Snapshot.copy!(source, copied, own_fabric.node_id,
+      old_fabric.node_id, new_admin)
+    copied.group_key_set_list = [Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct.new(
+      Matter::Cluster::JointFabricDatastore::IPK_KEY_SET_ID,
+      Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      own_fabric.ipk_epoch_keys[0].dup,
+      Matter::Controller::AnchorTransfer::RotationMigration::FIRST_IPK_EPOCH_START_TIME,
+      nil, nil, nil, nil)]
+    device.persistence.save_cluster(copied).should be_true
+    device.verify_durable_transfer_datastore_for_spec(source, old_fabric.node_id, own_fabric,
+      bootstrap, 2_u16, 2_u16, promoted: false)
+
+    source.friendly_name = "Changed source"
+    expect_raises(Matter::AuthenticationError, /name/) do
+      device.verify_durable_transfer_datastore_for_spec(source, old_fabric.node_id, own_fabric,
+        bootstrap, 2_u16, 2_u16, promoted: false)
+    end
+    source.friendly_name = "Original Anchor"
+    copied.group_key_set_list = [] of Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct
+    device.persistence.save_cluster(copied).should be_true
+    expect_raises(Matter::AuthenticationError, /key sets/) do
+      device.verify_durable_transfer_datastore_for_spec(source, old_fabric.node_id, own_fabric,
+        bootstrap, 2_u16, 2_u16, promoted: false)
+    end
+    copied.anchor_root_ca = Bytes[1_u8]
+    device.persistence.save_cluster(copied).should be_true
+    expect_raises(Matter::AuthenticationError, /root/) do
+      device.verify_durable_transfer_datastore_for_spec(source, old_fabric.node_id, own_fabric,
+        bootstrap, 2_u16, 2_u16, promoted: false)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects mismatched copied fabric bindings, endpoint indices, and roles" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    own_fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB103_u64, fabric_index: 2_u8)
+    old_binding = MatterJointFabricAdministrator::Device::FabricBindingState.new(
+      old_fabric.fabric_index, old_fabric.fabric_id, old_fabric.root_public_key)
+    new_binding = MatterJointFabricAdministrator::Device::FabricBindingState.new(
+      own_fabric.fabric_index, own_fabric.fabric_id, own_fabric.root_public_key)
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT,
+      old_binding.to_document)
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_BINDING_DOCUMENT,
+      new_binding.to_document)
+    device.joint_fabric_administrator.administrator_fabric_index = old_fabric.fabric_index
+    device.bootstrap_joint_fabric_administrator.administrator_fabric_index = own_fabric.fabric_index
+    device.persistence.save_cluster(device.joint_fabric_administrator).should be_true
+    device.persistence.save_cluster(device.bootstrap_joint_fabric_administrator).should be_true
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ROLE_DOCUMENT,
+      MatterJointFabricAdministrator::Device::JointFabricRoleState.new(false).to_document)
+    device.verify_unpromoted_transfer_bindings_and_roles_for_spec(old_fabric, own_fabric)
+
+    wrong_binding = MatterJointFabricAdministrator::Device::FabricBindingState.new(
+      own_fabric.fabric_index, own_fabric.fabric_id, Bytes[1_u8])
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_BINDING_DOCUMENT,
+      wrong_binding.to_document)
+    expect_raises(Matter::AuthenticationError, /bindings differ/) do
+      device.verify_unpromoted_transfer_bindings_and_roles_for_spec(old_fabric, own_fabric)
+    end
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_BINDING_DOCUMENT,
+      new_binding.to_document)
+    device.bootstrap_joint_fabric_administrator.administrator_fabric_index = old_fabric.fabric_index
+    device.persistence.save_cluster(device.bootstrap_joint_fabric_administrator).should be_true
+    expect_raises(Matter::AuthenticationError, /endpoints changed/) do
+      device.verify_unpromoted_transfer_bindings_and_roles_for_spec(old_fabric, own_fabric)
+    end
+    device.bootstrap_joint_fabric_administrator.administrator_fabric_index = own_fabric.fabric_index
+    device.persistence.save_cluster(device.bootstrap_joint_fabric_administrator).should be_true
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ROLE_DOCUMENT,
+      MatterJointFabricAdministrator::Device::JointFabricRoleState.new(true).to_document)
+    expect_raises(Matter::AuthenticationError, /roles changed/) do
+      device.verify_unpromoted_transfer_bindings_and_roles_for_spec(old_fabric, own_fabric)
     end
   ensure
     device.try(&.shutdown!)
@@ -1372,6 +1650,18 @@ describe MatterJointFabricAdministrator::Device do
     old_document.delete("interrupt_after_first_transfer_follow_up")
     MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
       .interrupt_after_first_transfer_follow_up?.should be_false
+  end
+
+  it "round-trips the committed participant cross-sign interruption flag" do
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+      interrupt_before_next_transfer_cross_sign_journal: true)
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(request.to_document)
+      .interrupt_before_next_transfer_cross_sign_journal?.should be_true
+
+    old_document = request.to_document
+    old_document.delete("interrupt_before_next_transfer_cross_sign_journal")
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
+      .interrupt_before_next_transfer_cross_sign_journal?.should be_false
   end
 
   it "round-trips the transfer request interruption flag and defaults old commands to false" do

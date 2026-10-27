@@ -467,6 +467,30 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     restored = Matter::Controller::AnchorTransfer::Journal.from_document(legacy)
     restored.rotated_administrator_node_ids.should be_empty
     restored.active_rotation_node_id.should be_nil
+    restored.candidate_operational_cert.should be_nil
+  end
+
+  it "saves candidate credential evidence before requesting the old Anchor freeze" do
+    key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    fabric = Matter::Fabric.new(0xB100_u64, 1_u8, 0xB102_u64, key.public_key,
+      Bytes[1_u8], key, Bytes.new(Matter::Fabric::IPK_SIZE, 0xA5_u8),
+      intermediate_cert: Bytes[2_u8])
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64)
+    journal.capture_candidate_credential!(fabric)
+    loaded = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    loaded.candidate_credential_matches?(fabric).should be_true
+
+    port = FakeAnchorPort.new
+    migration = FakeAnchorMigration.new
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(committed_anchor_store,
+      port, migration, -> { true },
+      ->(state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Requesting journal flush failed") if state.stage.requesting?
+        nil
+      }, journal)
+    expect_raises(Matter::StorageError, /Requesting journal flush failed/) { workflow.run }
+    journal.stage.should eq(TransferStage::Ready)
+    port.calls.should be_empty
   end
 
   it "orders the accepted transfer and saves every boundary" do
@@ -544,6 +568,99 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     journal.rotated_administrator_node_ids.should be_empty
   end
 
+  it "persists a completed Administrator rotation and resumable stage atomically" do
+    store = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x100_u64
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    save = ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      durable = Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true }, save, journal)
+
+    expect_raises(Matter::ConfigurationError, /Invalid completed/) do
+      workflow.reconcile_completed_rotation!(0x300_u64)
+    end
+    durable.active_rotation_node_id.should eq(0x100_u64)
+    workflow.reconcile_completed_rotation!(0x100_u64)
+    durable.stage.should eq(TransferStage::Copied)
+    durable.active_rotation_node_id.should be_nil
+    durable.rotated_administrator_node_ids.should eq([0x100_u64])
+    expect_raises(Matter::ConfigurationError, /Invalid completed/) do
+      workflow.reconcile_completed_rotation!(0x100_u64)
+    end
+  end
+
+  it "accepts only a unique durable prefix before the active Administrator rotation" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x100_u64
+    journal.rotated_administrator_node_ids << 0x300_u64
+    verifier = Matter::Controller::AnchorTransfer::Workflow
+    verifier.verify_rotation_prefix!(journal, [0x300_u64, 0x100_u64], 0x100_u64)
+    [[0x100_u64, 0x300_u64], [0x400_u64, 0x100_u64], [0x300_u64, 0x300_u64, 0x100_u64],
+     [0x300_u64, 0x400_u64]].each do |ordered|
+      expect_raises(Matter::AuthenticationError, /frozen order/) do
+        verifier.verify_rotation_prefix!(journal, ordered, 0x100_u64)
+      end
+    end
+    journal.rotated_administrator_node_ids << 0x400_u64
+    expect_raises(Matter::AuthenticationError, /frozen order/) do
+      verifier.verify_rotation_prefix!(journal, [0x300_u64, 0x100_u64], 0x100_u64)
+    end
+  end
+
+  it "keeps the active rotation unresolved when atomic reconciliation cannot be saved" do
+    store = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x100_u64
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) do
+      workflow.reconcile_completed_rotation!(0x100_u64)
+    end
+    journal.stage.should eq(TransferStage::Rotating)
+    journal.active_rotation_node_id.should eq(0x100_u64)
+    journal.rotated_administrator_node_ids.should be_empty
+  end
+
+  it "keeps the second Administrator active unless its exact ordered proof can be saved" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0xA104_u64
+    journal.rotated_administrator_node_ids << 0xA102_u64
+    ordered = [0xA102_u64, 0xA104_u64]
+    Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal, ordered, 0xA104_u64)
+    expect_raises(Matter::AuthenticationError, /frozen order/) do
+      Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal, ordered, 0xA102_u64)
+    end
+    journal.rotated_administrator_node_ids << 0xA102_u64
+    expect_raises(Matter::AuthenticationError, /frozen order/) do
+      Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal, ordered, 0xA104_u64)
+    end
+    journal.rotated_administrator_node_ids.pop
+
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(committed_anchor_store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Second rotation journal flush failed")
+      }, journal)
+    expect_raises(Matter::StorageError, /Second rotation journal flush failed/) do
+      workflow.reconcile_completed_rotation!(0xA104_u64)
+    end
+    journal.stage.should eq(TransferStage::Rotating)
+    journal.active_rotation_node_id.should eq(0xA104_u64)
+    journal.rotated_administrator_node_ids.should eq([0xA102_u64])
+    durable.stage.should eq(TransferStage::Rotating)
+    durable.active_rotation_node_id.should eq(0xA104_u64)
+    durable.rotated_administrator_node_ids.should eq([0xA102_u64])
+  end
+
   it "blocks request when an individual entry is pending or consent is absent" do
     store = committed_anchor_store
     pending = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
@@ -584,6 +701,23 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     workflow.run
     port.calls.should eq(["request", "complete"])
     workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
+  end
+
+  it "keeps Copying unresolved when the proved Copied journal save fails" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Copying)
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(committed_anchor_store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Copied journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Copied journal flush failed/) do
+      workflow.reconcile!(TransferStage::Copied)
+    end
+    journal.stage.should eq(TransferStage::Copying)
+    durable.stage.should eq(TransferStage::Copying)
+    expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
   end
 
   it "recovers every interrupted transfer command from a persisted journal" do
@@ -1223,6 +1357,44 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
     committed.should eq(icac)
     runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigned)
     runner.journal.pending_icac.should be_nil
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
+  it "keeps CrossSigning when the reconciled Administrator record cannot be saved" do
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16)
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    peer_key = Matter::Crypto::Key.generate_key_pair
+    crypto = Matter::Crypto::StandardCrypto.new
+    icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      peer_key.public_key, bootstrap.fabric.fabric_id, 3_u64,
+      bootstrap.fabric.certificate_authority_key, 1_u64, Bytes[1], crypto)
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(
+      0x300_u64, Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning, icac)
+    saved = false
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      bootstrap.fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, peer_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        saved = true
+        nil
+      }, journal, consent: -> { true },
+      on_committed_icac: ->(_node_id : UInt64, _certificate : Bytes) {
+        raise Matter::StorageError.new("Administrator record save failed")
+      })
+
+    expect_raises(Matter::StorageError, /Administrator record save failed/) do
+      runner.reconcile_cross_sign!(true)
+    end
+    saved.should be_false
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    runner.journal.pending_icac.should eq(icac)
   ensure
     im.try(&.close)
     client.try(&.close)

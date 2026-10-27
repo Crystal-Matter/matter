@@ -219,6 +219,17 @@ item below as covered only to the extent of its cited tests.
   must inspect that Administrator's NOC/CAT and reconcile the rotation before
   resuming; completed rotations are skipped. A three-Administrator spec covers
   interruption during the second rotation.
+  A candidate interrupted in `Copying` can reconcile a Datastore copy only
+  when its journal contains the exact pre-transfer NOC, ICAC, fabric identity,
+  and CATs and its durable Datastore, IPK, bindings, and role match the frozen
+  old Anchor snapshot. Older journals without that credential snapshot remain
+  blocked. A candidate interrupted in `Rotating` proves the selected old
+  Anchor or second Administrator's committed NOC with fresh CASE and a signed
+  host nonce. Recovery checks the exact new fabric, Node ID, Administrator CAT,
+  active target, and already completed rotation prefix before saving the
+  reconciled stage. The official three-Administrator scenario restarts at each
+  of these boundaries and verifies that recovery does not repeat a committed
+  copy or credential rotation.
   A candidate restart after a lost TransferAnchorRequest acknowledgement reads
   the old Anchor's Datastore over CASE. A still-Committed snapshot permits a
   retry. A frozen DeletePending snapshot alone cannot identify which
@@ -355,6 +366,19 @@ its root and Anchor Node ID, the authenticated requester on that fabric, and
 the mapped new Anchor Node ID. An embedding host must provide an equivalently
 authenticated and durable witness channel before it can reconcile
 `Completing`; when the channel or witness is unavailable, recovery fails closed.
+
+The three-JFA Docker scenario also interrupts C's follow-up after C durably
+commits its cross-signed ICAC and B flushes that ICAC into its Administrator
+list, but before B records `CrossSigned`. B restarts at `CrossSigning` and
+blocks an ordinary retry. The example's explicit reconciliation obtains a
+fresh nonce-bound result from C's private, host-authenticated command channel.
+C checks its durable B-fabric credential, committed ICAC, JFA endpoint binding,
+role, and cleared fail-safe and credential journal. B checks its durable
+Administrator record and promoted Anchor identity, then authenticates C over
+CASE and compares the result with the pending ICAC and B fabric before saving
+`CrossSigned`. A nonce supplies freshness but does not authenticate the host
+channel. An independent JFA without an equivalent trusted host witness must
+remain at `CrossSigning` rather than infer commitment from Matter wire reads.
 
 ## Official certification scenario mirrors
 
@@ -552,8 +576,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    CAT versions with raw durable Datastore, fabric bindings, endpoint ownership,
    and explicit role records while A remains frozen over CASE. Partial promotion
    stays blocked so B's UpdateNOC is never replayed. The test also restarts
-   before participant follow-up; it checks the copied
-   Administrator entries and C's new-fabric NOC across those restarts. It also covers A removal,
+   before participant follow-up and after C's committed ICAC but before B's
+   `CrossSigned` save; it checks the copied Administrator entries, authenticated
+   C commit witness, and C's new-fabric NOC across those restarts. It also covers A removal,
    B restart after lost RemoveFabric, RemoveAdmin, Anchor rotation, and
    participant rotation acknowledgements, and B/C registration. Recovery of
    an old-CAT observation remains deliberately blocked until the fail-safe

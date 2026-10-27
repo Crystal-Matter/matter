@@ -7,6 +7,21 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Anchor transfer restart recovery
+
+- Reconcile a committed Anchor Datastore copy after a restart only when the
+  saved pre-transfer credentials and the candidate's durable Datastore, IPK,
+  bindings, and role match the frozen source snapshot.
+- Reconcile lost acknowledgements for the old Anchor's and second
+  Administrator's credential rotations using fresh CASE, a signed nonce, and
+  the journaled target and completed rotation order. The official
+  three-Administrator E2E exercises each interruption without replaying a
+  committed rotation.
+- Reconcile a participant's committed cross-signed ICAC after a lost journal
+  acknowledgement using a fresh witness from the trusted participant host.
+  The candidate checks the exact pending ICAC, fabric identities, and prior
+  rotation state before advancing its journal without repeating AddICAC.
+
 ### Joint Fabric journal recovery
 
 - Keep Anchor transfer and Administrator removal journals at their last saved

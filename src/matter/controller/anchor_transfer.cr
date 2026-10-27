@@ -42,8 +42,42 @@ module Matter
         property stage : Stage
         property active_rotation_node_id : UInt64? = nil
         property rotated_administrator_node_ids = [] of UInt64
+        getter candidate_fabric_id : UInt64? = nil
+        getter candidate_root_public_key : Bytes? = nil
+        getter candidate_operational_node_id : UInt64? = nil
+        getter candidate_operational_cert : Bytes? = nil
+        getter candidate_intermediate_cert : Bytes? = nil
+        getter candidate_cat_values : Array(UInt32)? = nil
 
         def initialize(@candidate_node_id : UInt64, @stage : Stage = Stage::Ready)
+        end
+
+        # Capture the candidate device credential before the Requesting save.
+        # The first persisted stage therefore contains evidence of the NOC
+        # that must still be present at Copying and before A's rotation.
+        def capture_candidate_credential!(fabric : Fabric) : Nil
+          if @candidate_operational_cert
+            unless candidate_credential_matches?(fabric)
+              raise Matter::AuthenticationError.new("Candidate credential differs from transfer journal")
+            end
+            return
+          end
+          raise Matter::ConfigurationError.new("Candidate ICAC is absent") unless fabric.intermediate_cert
+          @candidate_fabric_id = fabric.fabric_id
+          @candidate_root_public_key = fabric.root_public_key.dup
+          @candidate_operational_node_id = fabric.node_id
+          @candidate_operational_cert = fabric.operational_cert.dup
+          @candidate_intermediate_cert = fabric.intermediate_cert.try(&.dup)
+          @candidate_cat_values = fabric.cats.map(&.value)
+        end
+
+        def candidate_credential_matches?(fabric : Fabric) : Bool
+          @candidate_fabric_id == fabric.fabric_id &&
+            @candidate_root_public_key == fabric.root_public_key &&
+            @candidate_operational_node_id == fabric.node_id &&
+            @candidate_operational_cert == fabric.operational_cert &&
+            @candidate_intermediate_cert == fabric.intermediate_cert &&
+            @candidate_cat_values == fabric.cats.map(&.value)
         end
 
         # Keep the live journal at its last saved state if storage fails. The
@@ -890,6 +924,20 @@ module Matter
 
         getter journal : Journal
 
+        # Durable completed entries must be the exact prefix of the frozen
+        # Administrator order before the active target. Reordered, duplicate,
+        # or unknown IDs cannot authorize a lost-ack rotation recovery.
+        def self.verify_rotation_prefix!(journal : Journal, ordered_node_ids : Array(UInt64),
+                                         active_node_id : UInt64) : Nil
+          prefix = ordered_node_ids.take_while { |node_id| node_id != active_node_id }
+          unless journal.stage.rotating? && journal.active_rotation_node_id == active_node_id &&
+                 ordered_node_ids.includes?(active_node_id) &&
+                 ordered_node_ids.uniq.size == ordered_node_ids.size &&
+                 journal.rotated_administrator_node_ids == prefix
+            raise Matter::AuthenticationError.new("Administrator rotation journal differs from frozen order")
+          end
+        end
+
         def initialize(@source : Datastore, @port : Port, @migration : Migration,
                        @consent : Consent, @save : SaveJournal,
                        @journal : Journal)
@@ -1053,6 +1101,21 @@ module Matter
               updated.rotated_administrator_node_ids << node_id
             end
             updated.active_rotation_node_id = nil
+          end
+        end
+
+        # The caller has authenticated the completed rotation. Save both the
+        # resolved node and resumable stage together so a crash cannot leave
+        # an unresumable half-reconciled journal.
+        def reconcile_completed_rotation!(node_id : UInt64) : Nil
+          if !@journal.stage.rotating? || @journal.active_rotation_node_id != node_id ||
+             @journal.rotated_administrator_node_ids.includes?(node_id)
+            raise Matter::ConfigurationError.new("Invalid completed Administrator rotation reconciliation")
+          end
+          @journal.persist_change!(@save) do |updated|
+            updated.rotated_administrator_node_ids << node_id
+            updated.active_rotation_node_id = nil
+            updated.stage = Stage::Copied
           end
         end
 
