@@ -1,5 +1,6 @@
 require "../protocol/bdx/transfer"
 require "../protocol/message_type"
+require "../codec/message_codec"
 require "../session/pase/definitions"
 require "./client"
 
@@ -165,7 +166,7 @@ module Matter
         header = rec.message.payload_header
         if header.protocol_id == Protocol::ProtocolId::SecureChannel.value
           report = Session::Pase::Definitions::StatusReport.from_bytes(rec.message.payload)
-          unless report.protocol_id == Protocol::ProtocolId::Bdx.value && report.vendor_id == 0
+          unless report.protocol_id == Protocol::ProtocolId::Bdx.value && report.vendor_id == Codec::MessageCodec::COMMON_VENDOR_ID
             raise Matter::ProtocolError.new("Unexpected status report during BDX transfer")
           end
           code = Protocol::Bdx::Transfer::StatusCode.from_value?(report.protocol_status) ||

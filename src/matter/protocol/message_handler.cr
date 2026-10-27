@@ -932,7 +932,7 @@ module Matter
           if session && msg.payload_header.message_type == SecureChannelMessageType::StatusReport.value
             begin
               report = Session::Pase::Definitions::StatusReport.from_bytes(msg.payload)
-              if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == 0
+              if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == Codec::MessageCodec::COMMON_VENDOR_ID
                 @bdx_initiator.abort(session.session_id, msg.payload_header.exchange_id)
                 @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true) if msg.payload_header.requires_acknowledge?
                 return BdxAbort.new(session, msg.payload_header.exchange_id)
