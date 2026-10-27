@@ -70,6 +70,9 @@ module Matter
         if status == WindowStatus::BasicWindowOpen
           raise ArgumentError.new("Basic Commissioning window state requires the Basic Commissioning feature")
         end
+        if status == WindowStatus::WindowNotOpen && (admin_fabric_index || admin_vendor_id)
+          raise ArgumentError.new("closed commissioning window cannot retain administrator identity")
+        end
         self.window_status = status
         self.admin_fabric_index = admin_fabric_index
         self.admin_vendor_id = admin_vendor_id
