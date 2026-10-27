@@ -97,7 +97,7 @@ module Matter
         endpoint_ids.uniq.each do |endpoint_id|
           servers = endpoint_id == Node::ROOT_ENDPOINT_ID ? root_servers : read_list(UInt32, session, peer, endpoint_id, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
           if groupcast_target
-            group_ids = groupcast_memberships.select { |member| member.endpoints.includes?(endpoint_id) }.map(&.group_id)
+            group_ids = groupcast_memberships.select(&.endpoints.includes?(endpoint_id)).map(&.group_id)
             ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, group_ids))
           elsif servers.includes?(Cluster::Groups::CLUSTER_ID)
             request = Cluster::Groups::GetGroupMembershipRequest.new([] of DataType::GroupId)
