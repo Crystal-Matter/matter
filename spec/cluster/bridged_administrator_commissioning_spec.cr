@@ -1,11 +1,11 @@
 require "../spec_helper"
 require "../../src/matter/cluster/bridged_administrator_commissioning"
 
-describe Matter::Cluster::BridgedAdministratorCommissioning do
-  alias Admin = Matter::Cluster::BridgedAdministratorCommissioning
-  alias RootAdmin = Matter::Cluster::AdministratorCommissioning
-  alias Status = Matter::InteractionModel::Status
+private alias Admin = Matter::Cluster::BridgedAdministratorCommissioning
+private alias RootAdmin = Matter::Cluster::AdministratorCommissioning
+private alias Status = Matter::InteractionModel::Status
 
+describe Matter::Cluster::BridgedAdministratorCommissioning do
   it "forwards mandatory timed commands with the remote target and authenticated caller fabric" do
     calls = [] of String
     open = ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, request : RootAdmin::OpenCommissioningWindowRequest) do

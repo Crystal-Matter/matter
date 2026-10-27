@@ -4,11 +4,11 @@ require "../../src/matter/cluster/bridged_administrator_commissioning"
 require "../../src/matter/cluster/ecosystem_information"
 require "../../src/matter/cluster/bridged_device_basic_information"
 
-describe "FabricSynchronizedNode Bridged Node composition" do
-  alias Admin = Matter::Cluster::BridgedAdministratorCommissioning
-  alias RootAdmin = Matter::Cluster::AdministratorCommissioning
-  alias Status = Matter::InteractionModel::Status
+private alias Admin = Matter::Cluster::BridgedAdministratorCommissioning
+private alias RootAdmin = Matter::Cluster::AdministratorCommissioning
+private alias Status = Matter::InteractionModel::Status
 
+describe "FabricSynchronizedNode Bridged Node composition" do
   it "uses Bridged Node revision three and keeps ordinary bridges free of synchronized clusters" do
     definition = Matter::DeviceType.for(Matter::DeviceType::BRIDGED_NODE)
     definition.revision.should eq(3_u16)
