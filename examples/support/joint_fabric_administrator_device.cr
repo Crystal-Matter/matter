@@ -3969,6 +3969,10 @@ module MatterJointFabricAdministrator
                     Matter::Controller::JointFabricDeviceMigration::Stage::Complete
                   when Matter::Controller::JointFabricDeviceMigration::Stage::RollingBack
                     Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::Complete
+                    Matter::Controller::JointFabricDeviceMigration::Stage::Complete
+                  when Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack
+                    Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack
                   else
                     raise Matter::ConfigurationError.new("Migration journal does not need reconciliation")
                   end
