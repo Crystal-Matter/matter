@@ -331,7 +331,10 @@ item below as covered only to the extent of its cited tests.
   uncertain until its postcondition is met or an operator repairs the device
   and Datastore state. Completion reconciliation checks both A's committed
   NodeList entry and B's absent device fabric and NodeList entry, guarding
-  against split ownership. Rollback is available before B removal. An
+  against split ownership. After that authenticated proof, it deletes the
+  stale B device record from the controller store before journaling Complete;
+  a failed local save leaves the removal stage pending for reconciliation.
+  Rollback is available before B removal. An
   interrupted rollback can be resumed explicitly: authenticated reads check
   whether each A NodeList and device fabric removal took effect before issuing
   only the remaining command. Once both removals are proven, it deletes the
