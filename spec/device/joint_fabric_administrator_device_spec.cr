@@ -286,7 +286,7 @@ describe MatterJointFabricAdministrator::Device do
     end
   end
 
-  it "clears a copied joined Datastore when its fabric index is reused by another identity" do
+  it "clears copied joined Datastore state and its transfer journal when a fabric index is reused" do
     previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
@@ -318,6 +318,7 @@ describe MatterJointFabricAdministrator::Device do
     restored.prepare_for_start
     restored.joint_fabric_datastore.admin_list.map(&.node_id).should_not contain(0xA104_u64)
     restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT).should be_nil
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_DOCUMENT).should be_nil
   ensure
     first.try(&.shutdown!)
     restored.try(&.shutdown!)
@@ -331,6 +332,26 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+  end
+
+  it "clears a stale transfer journal when the joined fabric binding and Datastore are absent" do
+    backend = Matter::Storage::Memory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_DOCUMENT,
+      Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64,
+        Matter::Controller::AnchorTransfer::Stage::Copied).to_document)
+    first.persistence.flush
+    first.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT).should be_nil
+    first.joint_fabric_datastore.anchor_root_ca.should be_empty
+
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.prepare_for_start
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_DOCUMENT).should be_nil
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
   end
 
   it "serializes the final old-NOC journal write against inbound ArmFailSafe" do

@@ -508,6 +508,8 @@ module MatterJointFabricAdministrator
         APP_BOOTSTRAP_BINDING_DOCUMENT, APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_ROLE_DOCUMENT, APP_BOOTSTRAP_ICAC_DOCUMENT} }.each do |administrator, datastore, endpoint_id, document_name, other_document_name, role_document, icac_document|
         next if persistence.app_document(document_name)
 
+        persistence.delete_app_document(APP_TRANSFER_DOCUMENT) if endpoint_id == ANCHOR_JFA_ENDPOINT_ID
+
         # Legacy stores without an authenticated binding cannot distinguish a
         # new FabricID under the same root at a reused index. A partially
         # erased store may lack the JFA index while retaining JFD lists.
@@ -625,6 +627,7 @@ module MatterJointFabricAdministrator
         @anchor_role = false
         persistence.delete_app_document(APP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_ICAC_DOCUMENT)
+        persistence.delete_app_document(APP_TRANSFER_DOCUMENT)
         persistence.delete_app_document(APP_KEY_DOCUMENT) unless bootstrap_joint_fabric_datastore.joint_fabric_index
         persistence.delete_app_document(APP_FABRIC_BINDING_DOCUMENT)
       end
