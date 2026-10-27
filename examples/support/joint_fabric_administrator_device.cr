@@ -49,7 +49,14 @@ module MatterJointFabricAdministrator
     BOOTSTRAP_JFA_ENDPOINT_ID    =   2_u16
     UNCOMPRESSED_P256_POINT_TAG  = 0x04_u8
     ROTATION_NONCE_HEX_LENGTH    = Matter::Controller::VidVerification::CHALLENGE_SIZE * 2
+    PARTICIPANT_WITNESS_TIMEOUT  = 30.seconds
     DEFAULT_ANCHOR_FRIENDLY_NAME = "Crystal Anchor"
+
+    def self.require_host_serialized_participant_recovery! : Nil
+      unless ENV["MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY"]? == "1"
+        raise Matter::ConfigurationError.new("Participant no-effect recovery needs a host-serialized credential window")
+      end
+    end
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -181,6 +188,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_anchor_rotation : Bool = false
       getter? interrupt_before_anchor_noc : Bool = false
       getter? interrupt_after_participant_rotation : Bool = false
+      getter? interrupt_before_participant_noc : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
       getter test_friendly_name : String? = nil
@@ -217,6 +225,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_anchor_rotation : Bool = false,
                      @interrupt_before_anchor_noc : Bool = false,
                      @interrupt_after_participant_rotation : Bool = false,
+                     @interrupt_before_participant_noc : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil,
                      @test_friendly_name : String? = nil)
@@ -247,6 +256,7 @@ module MatterJointFabricAdministrator
       getter inspected_follow_up_stage : UInt8?
       getter inspected_failsafe_clear : Bool?
       getter inspected_credential_journal_clear : Bool?
+      getter inspected_operational_credential : Bytes?
       getter inspected_jfa_endpoint_id : UInt16?
       getter nonce : String?
       getter certificate : Bytes?
@@ -272,6 +282,7 @@ module MatterJointFabricAdministrator
                      @inspected_follow_up_stage : UInt8? = nil,
                      @inspected_failsafe_clear : Bool? = nil,
                      @inspected_credential_journal_clear : Bool? = nil,
+                     @inspected_operational_credential : Bytes? = nil,
                      @inspected_jfa_endpoint_id : UInt16? = nil)
       end
 
@@ -291,6 +302,21 @@ module MatterJointFabricAdministrator
           @inspected_jfa_endpoint_id == expected_endpoint_id &&
           @inspected_failsafe_clear == true && @inspected_credential_journal_clear == true
       end
+
+      def proves_participant_rotation_no_effect?(expected_nonce : String,
+                                                 expected_credential : Bytes,
+                                                 expected_fabric : Matter::Fabric,
+                                                 expected_node_id : UInt64,
+                                                 expected_fabric_index : UInt8) : Bool
+        @status == "ok" && @nonce == expected_nonce &&
+          @inspected_operational_credential == expected_credential &&
+          @inspected_fabric_id == expected_fabric.fabric_id &&
+          @inspected_root_public_key == expected_fabric.root_public_key &&
+          @inspected_node_id == expected_node_id &&
+          @inspected_administrator_fabric_index == expected_fabric_index &&
+          @inspected_jfa_endpoint_id == ANCHOR_JFA_ENDPOINT_ID &&
+          @inspected_failsafe_clear == true && @inspected_credential_journal_clear == true
+      end
     end
 
     # Exercises the journal boundary where the remote RemoveFabric completed
@@ -301,7 +327,8 @@ module MatterJointFabricAdministrator
                      @interrupt_after_remove_admin : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
                      @interrupt_after_participant_rotation : Bool = false,
-                     @interrupt_before_remove_admin : Bool = false)
+                     @interrupt_before_remove_admin : Bool = false,
+                     @interrupt_before_participant_noc : Bool = false)
       end
 
       def remove_outgoing_fabric! : Nil
@@ -329,6 +356,9 @@ module MatterJointFabricAdministrator
       end
 
       def rotate_participant!(node_id : UInt64) : Nil
+        if @interrupt_before_participant_noc
+          raise Matter::TransportError.new("Injected interruption before participant UpdateNOC")
+        end
         @delegate.rotate_participant!(node_id)
         if @interrupt_after_participant_rotation
           raise Matter::TransportError.new("Injected lost participant rotation acknowledgement")
@@ -2377,7 +2407,8 @@ module MatterJointFabricAdministrator
                                      interrupt_after_anchor_rotation : Bool = false,
                                      interrupt_after_participant_rotation : Bool = false,
                                      interrupt_before_remove_admin : Bool = false,
-                                     interrupt_before_anchor_noc : Bool = false) : Nil
+                                     interrupt_before_anchor_noc : Bool = false,
+                                     interrupt_before_participant_noc : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Another Joint Fabric operation is running") if @removal_in_progress || @transfer_in_progress
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -2518,10 +2549,12 @@ module MatterJointFabricAdministrator
             nil
           })
         effective_port = if interrupt_after_remove_fabric || interrupt_after_remove_admin || interrupt_before_remove_admin ||
-                            interrupt_after_anchor_rotation || interrupt_after_participant_rotation
+                            interrupt_after_anchor_rotation || interrupt_after_participant_rotation ||
+                            interrupt_before_participant_noc
                            InterruptedRemovalPort.new(port, interrupt_after_remove_fabric,
                              interrupt_after_remove_admin, interrupt_after_anchor_rotation,
-                             interrupt_after_participant_rotation, interrupt_before_remove_admin)
+                             interrupt_after_participant_rotation, interrupt_before_remove_admin,
+                             interrupt_before_participant_noc)
                          else
                            port
                          end
@@ -2531,7 +2564,19 @@ module MatterJointFabricAdministrator
             persistence.write_app_document(document_name, state.to_document)
             persistence.flush
             nil
-          }, journal)
+          }, journal, ->(node_id : UInt64) {
+          prior_version = journal.prior_administrator_cat_version ||
+                          raise Matter::ConfigurationError.new("Removal journal lacks the prior Administrator CAT")
+          active_identity = controller_store.load.fabric_for(own_fabric.fabric_id,
+            own_fabric.root_public_key, own_fabric.node_id)
+          peer = resolve_transfer_peer(scanner, active_identity.compressed_fabric_id, node_id)
+          session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
+            active_identity, peer_node_id: node_id)
+          Matter::Controller::AdministratorRemoval::RotationInspection.capture_pre_rotation_credential!(
+            im, session, peer, own_fabric.root_cert.as(Bytes), own_fabric.fabric_id,
+            own_fabric.root_public_key, node_id, prior_version,
+            Matter::Crypto::StandardCrypto.new.random_bytes(Matter::Controller::VidVerification::CHALLENGE_SIZE))
+        })
         workflow.run
       ensure
         @removal_in_progress = false
@@ -2911,6 +2956,163 @@ module MatterJointFabricAdministrator
       end
     end
 
+    # This result is valid only over a host-authenticated private channel.
+    # The nonce provides freshness; Matter wire attributes cannot report a
+    # participant's fail-safe and credential undo journal state.
+    private def inspect_participant_rotation_no_effect(node_id : UInt64, fabric_id : UInt64?,
+                                                       root_public_key : Bytes?, nonce : String?) : CommandResult
+      validate_recovery_nonce!(nonce)
+      matches = fabric_table.all_fabrics.select do |candidate|
+        candidate.node_id == node_id && candidate.fabric_id == fabric_id &&
+          candidate.root_public_key == root_public_key
+      end
+      if matches.size != 1 || @anchor_role || !@joint_fabric_provisioned
+        raise Matter::AuthenticationError.new("Participant does not own the selected joined fabric")
+      end
+      fabric = matches.first
+      durable = verify_durable_anchor_old_credential!(fabric)
+      binding_document = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT) ||
+                         raise Matter::StorageError.new("Participant fabric binding is absent")
+      role_document = persistence.app_document(APP_ROLE_DOCUMENT) ||
+                      raise Matter::StorageError.new("Participant role is absent")
+      role = JointFabricRoleState.from_document(role_document)
+      administrator = durable_transfer_administrator(ANCHOR_JFA_ENDPOINT_ID)
+      if role.anchor? || role.transfer_complete? ||
+         !FabricBindingState.from_document(binding_document).matches?(durable) ||
+         joint_fabric_administrator.administrator_fabric_index != durable.fabric_index ||
+         administrator.administrator_fabric_index != durable.fabric_index ||
+         joint_fabric_datastore.joint_fabric_index != durable.fabric_index
+        raise Matter::AuthenticationError.new("Participant endpoint or role differs from durable fabric")
+      end
+      credential = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(
+        durable.operational_cert, durable.intermediate_cert, durable.fabric_index).to_slice
+      CommandResult.new("ok", nonce: nonce, inspected_fabric_id: durable.fabric_id,
+        inspected_root_public_key: durable.root_public_key, inspected_node_id: durable.node_id,
+        inspected_administrator_fabric_index: durable.fabric_index,
+        inspected_jfa_endpoint_id: ANCHOR_JFA_ENDPOINT_ID,
+        inspected_operational_credential: credential,
+        inspected_failsafe_clear: true, inspected_credential_journal_clear: true)
+    end
+
+    private def reconcile_participant_rotation_no_effect(outgoing_node_id : UInt64,
+                                                         nonce : String?) : Nil
+      raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
+      self.class.require_host_serialized_participant_recovery!
+      validate_recovery_nonce!(nonce)
+      proof_path = ENV["MATTER_JFA_FOLLOW_UP_INSPECTION_PATH"]? ||
+                   raise Matter::ConfigurationError.new("Participant inspection channel is unavailable")
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+      root_certificate = own_fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
+      datastore = joint_fabric_datastore
+      document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+      document = persistence.app_document(document_name) ||
+                 raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+      journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      target_node_id = journal.active_node_id ||
+                       raise Matter::ConfigurationError.new("Participant rotation has no active Node ID")
+      credential = journal.participant_pre_rotation_credential ||
+                   raise Matter::ConfigurationError.new("Participant rotation lacks a pre-rotation credential")
+      prior_version = journal.prior_administrator_cat_version ||
+                      raise Matter::ConfigurationError.new("Removal journal has no prior CAT version")
+      unless journal.stage.rotating_participant? && journal.outgoing_node_id == outgoing_node_id &&
+             journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another participant rotation")
+      end
+      verify_durable_anchor_old_credential!(own_fabric)
+      verify_durable_anchor_rotation_datastore!(datastore)
+      backend = Matter::Storage::YamlFile.new(proof_path)
+      backend.open
+      proof = begin
+        result = backend.read(COMMAND_RPC_COLLECTION, "result") ||
+                 raise Matter::ConfigurationError.new("Participant inspection result is absent")
+        CommandResult.from_document(result)
+      ensure
+        backend.close if backend.open?
+      end
+      scanner = Matter::Controller::Scanner.new
+      controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
+      identity = controller_store.load.fabric_for(own_fabric.fabric_id,
+        own_fabric.root_public_key, own_fabric.node_id)
+      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      begin
+        scanner.start
+        scanner.query_operational
+        peer = resolve_transfer_peer(scanner, identity.compressed_fabric_id, target_node_id)
+        session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, identity,
+          peer_node_id: target_node_id)
+        im = Matter::Controller::ImClient.new(client)
+        participant_index = remote_fabric_index(im, session, peer, own_fabric)
+        unless proof.proves_participant_rotation_no_effect?(nonce.as(String), credential,
+                 own_fabric, target_node_id, participant_index)
+          raise Matter::AuthenticationError.new("Participant no-effect witness differs from pending rotation")
+        end
+        Matter::Controller::AdministratorRemoval::RotationInspection.verify_participant_no_effect!(
+          im, session, peer, root_certificate, own_fabric.fabric_id, own_fabric.root_public_key,
+          target_node_id, prior_version, nonce.as(String).hexbytes, credential)
+        # Re-inspect C after the CASE proof with a nonce generated by B. The
+        # trusted host must prevent new C credential mutations until B's
+        # journal transition is durable; this second read narrows the window
+        # and rejects replay of the caller's earlier witness.
+        fresh_nonce = Matter::Crypto::StandardCrypto.new.random_bytes(
+          Matter::Controller::VidVerification::CHALLENGE_SIZE).hexstring
+        fresh_proof = request_fresh_participant_witness!(proof_path, target_node_id,
+          own_fabric, fresh_nonce)
+        unless fresh_proof.proves_participant_rotation_no_effect?(fresh_nonce,
+                 credential, own_fabric, target_node_id, participant_index)
+          raise Matter::AuthenticationError.new("Fresh participant witness differs from pending rotation")
+        end
+        @message_handler.registry.synchronize do
+          verify_durable_anchor_old_credential!(own_fabric)
+          verify_durable_anchor_rotation_datastore!(datastore)
+          Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+            journal, datastore, own_fabric.fabric_index,
+            fresh_proof.inspected_operational_credential.as(Bytes),
+            ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+              persistence.write_app_document(document_name, state.to_document)
+              persistence.flush
+              nil
+            })
+        end
+      ensure
+        client.close
+        scanner.close
+      end
+    end
+
+    private def request_fresh_participant_witness!(proof_path : String,
+                                                   target_node_id : UInt64,
+                                                   fabric : Matter::Fabric,
+                                                   nonce : String) : CommandResult
+      File.delete?(proof_path)
+      backend = Matter::Storage::YamlFile.new(proof_path)
+      backend.open
+      begin
+        request = CommandRequest.new("inspect-participant-rotation-no-effect",
+          target_node_id, fabric.fabric_id, fabric.root_public_key, nonce)
+        backend.write(COMMAND_RPC_COLLECTION, "request", request.to_document)
+      ensure
+        backend.close if backend.open?
+      end
+      deadline = Time.instant + PARTICIPANT_WITNESS_TIMEOUT
+      loop do
+        result_store = Matter::Storage::YamlFile.new(proof_path)
+        result_store.open
+        result = begin
+          document = result_store.read(COMMAND_RPC_COLLECTION, "result")
+          document.try { |value| CommandResult.from_document(value) }
+        ensure
+          result_store.close if result_store.open?
+        end
+        return result if result && result.status != "in-progress"
+        if Time.instant >= deadline
+          raise Matter::TimeoutError.new("Fresh participant no-effect witness timed out")
+        end
+        sleep 200.milliseconds
+      end
+    end
+
     # The nonce is supplied by the host performing recovery. A fresh CASE
     # session and signed OperationalCredentials response bind the observed NOC
     # to that nonce, the target Node ID, and this journal's fabric and CAT.
@@ -3123,7 +3325,7 @@ module MatterJointFabricAdministrator
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
               request.interrupt_after_remove_admin?, request.interrupt_after_anchor_rotation?,
               request.interrupt_after_participant_rotation?, request.interrupt_before_remove_admin?,
-              request.interrupt_before_anchor_noc?)
+              request.interrupt_before_anchor_noc?, request.interrupt_before_participant_noc?)
             CommandResult.new("ok")
           when "inspect-fabric"
             fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Fabric ID is required")
@@ -3162,6 +3364,9 @@ module MatterJointFabricAdministrator
               nonce: request.nonce)
           when "inspect-cross-sign-commit"
             inspect_cross_sign_commit(request.node_id, request.fabric_id,
+              request.root_public_key, request.nonce)
+          when "inspect-participant-rotation-no-effect"
+            inspect_participant_rotation_no_effect(request.node_id, request.fabric_id,
               request.root_public_key, request.nonce)
           when "inspect-new-anchor"
             CommandResult.new("ok", nonce: request.nonce,
@@ -3229,6 +3434,9 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok", nonce: request.nonce)
           when "reconcile-participant-rotated"
             reconcile_removal_rotation(request.node_id, request.nonce, false)
+            CommandResult.new("ok", nonce: request.nonce)
+          when "reconcile-participant-rotation-no-effect"
+            reconcile_participant_rotation_no_effect(request.node_id, request.nonce)
             CommandResult.new("ok", nonce: request.nonce)
           when "finalize-commissioning"
             certificate = finalize_commissioning(request)

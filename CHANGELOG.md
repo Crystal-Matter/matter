@@ -21,6 +21,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   acknowledgement using a fresh witness from the trusted participant host.
   The candidate checks the exact pending ICAC, fabric identities, and prior
   rotation state before advancing its journal without repeating AddICAC.
+- Reconcile a participant Administrator CAT rotation that did not start after
+  removal only when its pre-rotation credential was journaled, the participant
+  host confirms durable old credentials with a clear fail-safe and credential
+  journal, and fresh CASE and private-channel proofs match the frozen fabric
+  and Administrator order. The host must explicitly serialize credential
+  changes during recovery; otherwise the journal stays blocked.
 
 ### Joint Fabric journal recovery
 

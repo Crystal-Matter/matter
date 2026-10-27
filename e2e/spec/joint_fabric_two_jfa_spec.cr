@@ -267,6 +267,18 @@ describe "three provisioned Joint Fabric Administrators" do
   third = E2E::Device["matter_joint_fabric_third"]
   migration_target = E2E::Device["matter_joint_fabric_migration_target"]
 
+  it "rejects participant no-effect recovery without the trusted host opt-in" do
+    previous = ENV["MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY"]?
+    begin
+      ENV.delete("MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY")
+      expect_raises(Matter::ConfigurationError, /host-serialized credential window/) do
+        MatterJointFabricAdministrator::Device.require_host_serialized_participant_recovery!
+      end
+    ensure
+      ENV["MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY"] = previous if previous
+    end
+  end
+
   it "joint-commissions two Administrators, transfers Anchor, and removes one" do
     anchor_bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0xA100_u64, 0xA101_u64, 0xFFF1_u16)
@@ -1894,6 +1906,68 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-anchor-rotated", 0xA102_u64,
         nonce: anchor_rotation_nonce))
     reconciled_anchor_rotation.status.should eq("ok"), reconciled_anchor_rotation.error.to_s
+
+    # B persists C as the active rotation target, but crashes before C's
+    # UpdateNOC. A signed old-NOC read alone cannot establish no effect while
+    # C may still hold a provisional credential under its fail-safe.
+    c_before_removal_rotation = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    interrupted_before_participant_noc = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+        interrupt_before_participant_noc: true))
+    interrupted_before_participant_noc.status.should eq("error")
+    interrupted_before_participant_noc.error.to_s.should contain("Injected interruption before participant UpdateNOC")
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64)
+      .noc.should eq(c_before_removal_rotation.noc)
+    blocked_participant_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    blocked_participant_retry.status.should eq("error")
+    blocked_participant_retry.error.to_s.should contain("needs reconciliation")
+    premature_participant_completion = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotated", 0xA102_u64,
+        nonce: Random::Secure.hex(32)))
+    premature_participant_completion.status.should eq("error")
+    no_effect_nonce = Random::Secure.hex(32)
+    unwitnessed_participant_no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
+        nonce: no_effect_nonce))
+    unwitnessed_participant_no_effect.status.should eq("error")
+    wrong_fabric_participant_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-rotation-no-effect", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        nonce: no_effect_nonce))
+    wrong_fabric_participant_witness.status.should eq("error")
+    participant_no_effect_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-rotation-no-effect", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        nonce: no_effect_nonce))
+    participant_no_effect_witness.status.should eq("ok"), participant_no_effect_witness.error.to_s
+    stale_participant_nonce = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
+        nonce: Random::Secure.hex(32)))
+    stale_participant_nonce.status.should eq("error")
+    reconciled_participant_no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
+        nonce: no_effect_nonce))
+    reconciled_participant_no_effect.status.should eq("ok"), reconciled_participant_no_effect.error.to_s
+    witness_store = Matter::Storage::YamlFile.new(File.join(E2E::LOG_DIR,
+      "matter_joint_fabric_third.command.yml"))
+    witness_store.open
+    fresh_witness = begin
+      document = witness_store.read(MatterJointFabricAdministrator::Device::COMMAND_RPC_COLLECTION, "result")
+      MatterJointFabricAdministrator::Device::CommandResult.from_document(document.as(Matter::Storage::Document))
+    ensure
+      witness_store.close if witness_store.open?
+    end
+    fresh_witness.status.should eq("ok")
+    fresh_witness.nonce.should_not eq(no_effect_nonce)
+    fresh_witness.inspected_failsafe_clear.should be_true
+    fresh_witness.inspected_credential_journal_clear.should be_true
 
     interrupted_participant_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,

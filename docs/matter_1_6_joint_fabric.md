@@ -201,6 +201,26 @@ item below as covered only to the extent of its cited tests.
   could still commit a provisional rotation. The three-Administrator Docker
   scenario exercises this no-effect command after restarting the Anchor at
   the Datastore-to-UpdateNOC boundary, then retries the rotation.
+  A `RotatingParticipant` interruption before C's UpdateNOC can likewise
+  reconcile no effect only when the journal saved C's exact pre-rotation
+  NOCStruct before the command. The promoted Anchor checks its frozen
+  AdminList, CAT version, participant order, and durable Datastore, then
+  obtains C's private host witness of the durable old credential, endpoint
+  binding and role, and cleared fail-safe and credential undo journal. B
+  separately authenticates C over CASE and verifies a fresh signed challenge
+  against that exact NOCStruct. Immediately before B rewinds the journal, B
+  requests another C witness with its own fresh nonce. The private channel
+  must authenticate C and the host must serialize all C credential mutations
+  throughout witness collection, CASE proof, durable B journal save, and
+  retry. The example requires explicit
+  `MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY=1` as the host's assertion of
+  that guarantee. The flag does not acquire a lock or fence C's inbound
+  credential commands; without actual host serialization the command must
+  remain blocked. A nonce provides freshness, not channel
+  authentication or serialization. Legacy journals without the credential
+  snapshot and independent participants without an equivalent host witness
+  fail closed. The three-Administrator Docker scenario covers a B/C restart
+  at this boundary and the checked retry.
   Before A's authorized removal, B rejects an unconsented
   request to remove C and the test checks that C's fabric, B's AdminList, and
   the Administrator CAT version are unchanged. The former
@@ -581,8 +601,8 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    C commit witness, and C's new-fabric NOC across those restarts. It also covers A removal,
    B restart after lost RemoveFabric, RemoveAdmin, Anchor rotation, and
    participant rotation acknowledgements, and B/C registration. Recovery of
-   an old-CAT observation remains deliberately blocked until the fail-safe
-   outcome can be established by the host.
+   an old-CAT observation remains blocked unless the host establishes the
+   fail-safe outcome through the durable private witness path described above.
 3. Deploy production PAA/CD signers and a trusted CRL distribution source
    through the JFA example's explicit injection point. The bundled
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
