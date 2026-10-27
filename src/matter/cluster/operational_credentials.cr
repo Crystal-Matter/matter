@@ -258,7 +258,7 @@ module Matter
 
       def initialize(
         @fabric_table : FabricTable,
-        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
         @access_control_cluster : AccessControl? = nil,
         @general_commissioning_cluster : GeneralCommissioning? = nil,
       )
@@ -272,7 +272,7 @@ module Matter
       )
         initialize(
           fabric_table,
-          DataType::EndpointNumber.new(0_u16),
+          DataType::EndpointNumber::ROOT,
           access_control_cluster
         )
       end

@@ -189,6 +189,11 @@ module Matter
         #   N bytes: protocolData (optional)
         struct StatusReport
           SECURE_CHANNEL_PROTOCOL_ID = 0_u16
+          GENERAL_STATUS_SUCCESS     = 0_u16
+          GENERAL_STATUS_FAILURE     = 1_u16
+          PROTOCOL_STATUS_SUCCESS    = 0_u16
+          CASE_NO_SHARED_ROOT        = 1_u16
+          NO_VENDOR_ID               = 0_u16
 
           # General status code (SUCCESS = 0)
           property general_status : UInt16
@@ -206,10 +211,10 @@ module Matter
           property protocol_data : Bytes?
 
           def initialize(
-            @general_status : UInt16 = 0_u16, # 0 = SUCCESS
+            @general_status : UInt16 = GENERAL_STATUS_SUCCESS,
             @protocol_id : UInt16 = SECURE_CHANNEL_PROTOCOL_ID,
-            @vendor_id : UInt16 = 0_u16,       # 0 = no vendor
-            @protocol_status : UInt16 = 0_u16, # 0 = SUCCESS
+            @vendor_id : UInt16 = NO_VENDOR_ID,
+            @protocol_status : UInt16 = PROTOCOL_STATUS_SUCCESS,
             @protocol_data : Bytes? = nil,
           )
           end

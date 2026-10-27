@@ -30,7 +30,7 @@ module Matter
       # on the receiving devices through GroupKeyManagement.
       def install_epoch_key(fabric_id : UInt64, root_public_key : Bytes,
                             group_id : UInt16, epoch_key : Bytes) : Nil
-        raise Matter::ConfigurationError.new("Group ID zero is reserved") if group_id == 0_u16
+        raise Matter::ConfigurationError.new("Group ID zero is reserved") if group_id == DataType::GroupId::RESERVED.id
         state = @store.load
         fabric = state.fabrics.find do |entry|
           entry.fabric_id == fabric_id && entry.root_public_key == root_public_key

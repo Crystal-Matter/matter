@@ -13,6 +13,7 @@ module Matter
 
       MIN_PROVISIONED    =      5_u8
       MAX_PROVISIONED    =    254_u8
+      MIN_ENDPOINT_ID    =     0_u16
       MAX_ENDPOINT_ID    = 65534_u16
       MIN_HOSTNAME_BYTES =         4
       MAX_HOSTNAME_BYTES =       253
@@ -61,9 +62,9 @@ module Matter
 
       getter max_provisioned : UInt8
 
-      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
                      @max_provisioned : UInt8 = MIN_PROVISIONED)
-        raise ConfigurationError.new("TLS Client Management is node-scoped and requires endpoint 0") unless endpoint_id.number.zero?
+        raise ConfigurationError.new("TLS Client Management is node-scoped and requires endpoint 0") unless endpoint_id == DataType::EndpointNumber::ROOT
         unless @max_provisioned.in?(MIN_PROVISIONED..MAX_PROVISIONED)
           raise ConfigurationError.new("TLS endpoint capacity must be in 5..254")
         end
@@ -199,14 +200,14 @@ module Matter
       end
 
       private def next_id(fabric : UInt8) : UInt16?
-        start = @next_endpoint_id[fabric]? || 0_u16
+        start = @next_endpoint_id[fabric]? || MIN_ENDPOINT_ID
         candidate = start
         loop do
           unless endpoint(fabric, candidate)
-            @next_endpoint_id[fabric] = candidate == MAX_ENDPOINT_ID ? 0_u16 : candidate + 1_u16
+            @next_endpoint_id[fabric] = candidate == MAX_ENDPOINT_ID ? MIN_ENDPOINT_ID : candidate + 1_u16
             return candidate
           end
-          candidate = candidate == MAX_ENDPOINT_ID ? 0_u16 : candidate + 1_u16
+          candidate = candidate == MAX_ENDPOINT_ID ? MIN_ENDPOINT_ID : candidate + 1_u16
           return if candidate == start
         end
       end

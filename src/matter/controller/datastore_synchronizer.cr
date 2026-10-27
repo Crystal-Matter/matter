@@ -322,7 +322,7 @@ module Matter
         end
         raise Matter::ProtocolError.new("Target CurrentFabricIndex read returned no data") unless data
         index = UInt8.from_tlv(data.to_slice)
-        raise Matter::ProtocolError.new("Target CurrentFabricIndex is undefined") if index == 0_u8
+        raise Matter::ProtocolError.new("Target CurrentFabricIndex is undefined") if index == DataType::NO_FABRIC
         index
       end
 

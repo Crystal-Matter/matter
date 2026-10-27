@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Named protocol identifiers
+
+- Use named root endpoint, reserved group, IPK key-set, and unsecured session
+  identifiers throughout production paths.
+
 ### Interaction Model writes
 
 - Honor `SuppressResponse` on unicast writes while acknowledging reliable

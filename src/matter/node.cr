@@ -16,7 +16,7 @@ module Matter
   # can never come up unwired.
   class Node
     # The root endpoint, which every node has and no node may remove.
-    ROOT_ENDPOINT_ID = 0_u16
+    ROOT_ENDPOINT_ID = DataType::EndpointNumber::ROOT.number
 
     # Endpoint numbers handed out to dynamically added endpoints start here.
     FIRST_DYNAMIC_ENDPOINT_ID = 1_u16

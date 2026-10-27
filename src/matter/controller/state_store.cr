@@ -163,7 +163,7 @@ module Matter
             state.commissioner_node_id = fabric.controller_node_id
             dirty = true
           end
-        elsif state.commissioner_node_id == 0_u64
+        elsif state.commissioner_node_id == DataType::NodeId::UNSPECIFIED
           state.commissioner_node_id = random_nonzero_u64
           dirty = true
         end
@@ -174,7 +174,7 @@ module Matter
       private def random_nonzero_u64 : UInt64
         loop do
           id = Random::Secure.rand(UInt64)
-          return id unless id == 0_u64
+          return id unless id == DataType::NodeId::UNSPECIFIED
         end
       end
     end

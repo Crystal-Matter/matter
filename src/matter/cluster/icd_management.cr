@@ -195,7 +195,7 @@ module Matter
       @active_until : Time::Instant? = nil
       @forced_operating_mode : OperatingMode? = nil
 
-      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
                      @feature_map : Feature = Feature::None,
                      @idle_mode_duration : UInt32 = 1_u32,
                      @active_mode_duration : UInt32 = 300_u32,

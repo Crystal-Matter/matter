@@ -52,8 +52,8 @@ module Matter
         @[TLV::Field(tag: 9)]
         property image_digest : Bytes
 
-        def initialize(@vendor_id : UInt16 = 0_u16,
-                       @product_id : UInt16 = 0_u16,
+        def initialize(@vendor_id : UInt16 = UNSPECIFIED_VENDOR_ID,
+                       @product_id : UInt16 = UNSPECIFIED_PRODUCT_ID,
                        @software_version : UInt32 = 0_u32,
                        @software_version_string : String = "",
                        @payload_size : UInt64 = 0_u64,

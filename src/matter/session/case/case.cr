@@ -1,5 +1,6 @@
 require "log"
 
+require "../../codec/message_codec"
 require "../../crypto/crypto"
 require "../../crypto/certificate"
 require "../../crypto/ecdh"
@@ -519,7 +520,7 @@ module Matter
           # SecureChannel supplies an ID checked against all established and
           # pending sessions. Standalone callers still need a nonzero ID.
           session_id = responder_session_id || draw_nonzero_session_id
-          raise Matter::ProtocolError.new("CASE responder session ID must be nonzero") if session_id == 0_u16
+          raise Matter::ProtocolError.new("CASE responder session ID must be nonzero") if session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
 
           # Build the Sigma2 TLV message for later use in session key derivation
           sigma2_msg = Definitions::Sigma2.new(
@@ -548,7 +549,7 @@ module Matter
         private def draw_nonzero_session_id : UInt16
           SESSION_ID_ALLOCATION_ATTEMPTS.times do
             candidate = @crypto.random_uint16
-            return candidate unless candidate == 0_u16
+            return candidate unless candidate == Codec::MessageCodec::UNSECURED_SESSION_ID
           end
           raise Matter::ProtocolError.new("Could not allocate a nonzero CASE responder session ID")
         end
