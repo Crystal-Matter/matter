@@ -214,6 +214,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_participant_rewind_save : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
+      getter? interrupt_after_migration_anchor_node_removed : Bool = false
       getter? interrupt_after_migration_old_fabric_removed : Bool = false
       getter? interrupt_after_migration_old_node_removed : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
@@ -264,6 +265,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_participant_rewind_save : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
+                     @interrupt_after_migration_anchor_node_removed : Bool = false,
                      @interrupt_after_migration_old_fabric_removed : Bool = false,
                      @interrupt_after_migration_old_node_removed : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil,
@@ -299,6 +301,7 @@ module MatterJointFabricAdministrator
       getter inspected_jfa_endpoint_id : UInt16?
       getter inspected_recovery_lease_id : String?
       getter inspected_migration_stage : UInt8?
+      getter inspected_controller_migration_node_present : Bool?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -326,7 +329,8 @@ module MatterJointFabricAdministrator
                      @inspected_operational_credential : Bytes? = nil,
                      @inspected_jfa_endpoint_id : UInt16? = nil,
                      @inspected_recovery_lease_id : String? = nil,
-                     @inspected_migration_stage : UInt8? = nil)
+                     @inspected_migration_stage : UInt8? = nil,
+                     @inspected_controller_migration_node_present : Bool? = nil)
       end
 
       # The private host channel carrying this record must authenticate the
@@ -3776,6 +3780,8 @@ module MatterJointFabricAdministrator
           when "inspect-device-migration-stage"
             stage = inspect_device_migration_stage(request)
             CommandResult.new("ok", inspected_migration_stage: stage.value)
+          when "inspect-controller-migration-node"
+            CommandResult.new("ok", inspected_controller_migration_node_present: inspect_controller_migration_node(request))
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
             CommandResult.new("ok")
@@ -3916,6 +3922,11 @@ module MatterJointFabricAdministrator
             raise Matter::TransportError.new("Injected interruption after Anchor AddPendingNode committed")
           end
         },
+        anchor_node_removed: -> {
+          if request.interrupt_after_migration_anchor_node_removed?
+            raise Matter::TransportError.new("Injected interruption after Anchor RemoveNode")
+          end
+        },
         old_fabric_removed: -> {
           if request.interrupt_after_migration_old_fabric_removed?
             raise Matter::TransportError.new("Injected interruption after device RemoveFabric")
@@ -3984,6 +3995,18 @@ module MatterJointFabricAdministrator
         request.node_id, joined_device_fabric.fabric_id, joined_device_fabric.root_public_key,
         anchor_node_id) || raise Matter::ConfigurationError.new("Device migration journal is absent")
       journal.stage
+    end
+
+    private def inspect_controller_migration_node(request : CommandRequest) : Bool
+      require_migration_consent!(request.node_id)
+      anchor_fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Anchor fabric ID is required")
+      anchor_root = request.root_public_key || raise Matter::ConfigurationError.new("Anchor root public key is required")
+      anchor_node_id = request.anchor_node_id || raise Matter::ConfigurationError.new("Anchor device Node ID is required")
+      joined = fabric_table.all_fabrics.find do |fabric|
+        fabric.fabric_id == anchor_fabric_id && fabric.root_public_key == anchor_root
+      end || raise Matter::ConfigurationError.new("Joined Anchor fabric is not installed")
+      store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
+      store.load.nodes_for(anchor_fabric_id, anchor_root, joined.node_id).has_key?(anchor_node_id)
     end
 
     private def require_migration_consent!(node_id : UInt64) : Nil
