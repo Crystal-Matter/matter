@@ -52,6 +52,11 @@ module Matter
       property on_failsafe_expired : Proc(Nil)?
       property on_failsafe_success : Proc(Nil)?
 
+      # Invoked before a host or command arms, re-arms, or disarms a failsafe.
+      # The separate timer hook covers device-side arming without a commissioner.
+      property on_before_arm : Proc(UInt16, UInt8?, Bool, Nil)?
+      property on_before_arm_timer : Proc(UInt16, Nil)?
+
       # Invoked with the breadcrumb the commissioner's progress moved to
       property on_breadcrumb_changed : Proc(UInt64, Nil)?
 
@@ -88,6 +93,7 @@ module Matter
         session_fabric_index : UInt8?,
         pase_session : Bool,
       ) : Outcome
+        @on_before_arm.try(&.call(expiry_length_seconds, session_fabric_index, pase_session))
         Log.info { "ArmFailSafe: expiry=#{expiry_length_seconds}s, breadcrumb=#{breadcrumb}, fabric=#{session_fabric_index || "PASE"}" }
 
         if expiry_length_seconds > 0 && expiry_length_seconds > @max_cumulative_seconds
@@ -218,6 +224,7 @@ module Matter
       # if none is armed. Used by tests and by device-side flows that need the
       # failsafe running without a commissioner.
       def arm_timer(expiry_seconds : UInt16) : Nil
+        @on_before_arm_timer.try(&.call(expiry_seconds))
         context = @context || begin
           created = FailsafeContext.new(
             associated_fabric_index: nil,

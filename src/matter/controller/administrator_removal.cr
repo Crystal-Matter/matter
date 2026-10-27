@@ -41,6 +41,7 @@ module Matter
         property remaining_admin_entries : Array(Bytes)?
         property anchor_pre_rotation_noc : Bytes?
         property participant_pre_rotation_credential : Bytes?
+        property participant_recovery_lease_id : String?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
@@ -53,7 +54,8 @@ module Matter
                        @outgoing_admin_entry : Bytes? = nil,
                        @remaining_admin_entries : Array(Bytes)? = nil,
                        @anchor_pre_rotation_noc : Bytes? = nil,
-                       @participant_pre_rotation_credential : Bytes? = nil)
+                       @participant_pre_rotation_credential : Bytes? = nil,
+                       @participant_recovery_lease_id : String? = nil)
         end
 
         # A save callback may fail after touching its input. Every mutable
@@ -70,7 +72,8 @@ module Matter
             outgoing_admin_entry: @outgoing_admin_entry.try(&.dup),
             remaining_admin_entries: @remaining_admin_entries.try { |entries| entries.map(&.dup) },
             anchor_pre_rotation_noc: @anchor_pre_rotation_noc.try(&.dup),
-            participant_pre_rotation_credential: @participant_pre_rotation_credential.try(&.dup))
+            participant_pre_rotation_credential: @participant_pre_rotation_credential.try(&.dup),
+            participant_recovery_lease_id: @participant_recovery_lease_id)
         end
       end
 
@@ -202,6 +205,9 @@ module Matter
             advance(Stage::AnchorRotated)
           end
           if @journal.stage.anchor_rotated?
+            if @journal.participant_recovery_lease_id
+              raise Matter::CommissioningError.new("Participant recovery fence needs durable release before retry")
+            end
             @remaining_nodes.each do |node_id|
               next if @journal.rotated_nodes.includes?(node_id)
               pending = @journal.detached_copy
@@ -215,6 +221,7 @@ module Matter
               completed.rotated_nodes << node_id
               completed.active_node_id = nil
               completed.participant_pre_rotation_credential = nil
+              completed.participant_recovery_lease_id = nil
               completed.stage = Stage::AnchorRotated
               @save.call(completed)
               @journal = completed
@@ -285,6 +292,7 @@ module Matter
             end
             updated.active_node_id = nil
             updated.participant_pre_rotation_credential = nil
+            updated.participant_recovery_lease_id = nil
           end
           updated.stage = stable_stage
           save.call(updated)
@@ -468,7 +476,7 @@ module Matter
           updated = journal.detached_copy
           updated.stage = Stage::AnchorRotated
           updated.active_node_id = nil
-          updated.participant_pre_rotation_credential = nil
+          updated.participant_pre_rotation_credential = nil unless updated.participant_recovery_lease_id
           save.call(updated)
           updated
         end

@@ -94,6 +94,22 @@ private def administrator_noc(client : Matter::Controller::Client,
   Array(Matter::Cluster::OperationalCredentials::Tlv::NOC).from_tlv(data.to_slice).first
 end
 
+private def expect_participant_recovery_fence_busy(client : Matter::Controller::Client,
+                                                   peer : Socket::IPAddress,
+                                                   fabric : Matter::Controller::FabricInfo,
+                                                   node_id : UInt64) : Nil
+  session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, fabric,
+    peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
+  response = Matter::Controller::ImClient.new(client, E2E::COMMAND_TIMEOUT).invoke(
+    session: session, peer: peer,
+    endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+    cluster_id: Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+    command_id: Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
+    fields: Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64).to_slice)
+  response.invoke_responses.first.command_status.as(Matter::InteractionModel::CommandStatusIB)
+    .status.status.should eq(Matter::InteractionModel::StatusCode::Busy.value)
+end
+
 private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
                              session : Matter::Session::SecureContext,
                              peer : Socket::IPAddress, node_id : UInt64,
@@ -266,18 +282,6 @@ describe "three provisioned Joint Fabric Administrators" do
   joiner = E2E::Device["matter_joint_fabric_joiner"]
   third = E2E::Device["matter_joint_fabric_third"]
   migration_target = E2E::Device["matter_joint_fabric_migration_target"]
-
-  it "rejects participant no-effect recovery without the trusted host opt-in" do
-    previous = ENV["MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY"]?
-    begin
-      ENV.delete("MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY")
-      expect_raises(Matter::ConfigurationError, /host-serialized credential window/) do
-        MatterJointFabricAdministrator::Device.require_host_serialized_participant_recovery!
-      end
-    ensure
-      ENV["MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY"] = previous if previous
-    end
-  end
 
   it "joint-commissions two Administrators, transfers Anchor, and removes one" do
     anchor_bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
@@ -1951,21 +1955,73 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
         nonce: Random::Secure.hex(32)))
     stale_participant_nonce.status.should eq("error")
+    interrupted_participant_rewind = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
+        nonce: no_effect_nonce, interrupt_before_participant_rewind_save: true))
+    interrupted_participant_rewind.status.should eq("error")
+    interrupted_participant_rewind.error.to_s.should contain("Injected interruption before participant rewind save")
+    held_participant_fence = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-recovery-fence", 0xA104_u64))
+    held_participant_fence.status.should eq("ok"), held_participant_fence.error.to_s
+    held_participant_fence.inspected_recovery_lease_id.should_not be_nil
+    # C persisted the lease before its final witness. Another administrator's
+    # CASE command cannot arm C's fail-safe while B has not saved its rewind.
+    expect_participant_recovery_fence_busy(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64)
+      .noc.should eq(c_before_removal_rotation.noc)
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    expect_participant_recovery_fence_busy(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    restarted_participant_fence = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-recovery-fence", 0xA104_u64))
+    restarted_participant_fence.status.should eq("ok"), restarted_participant_fence.error.to_s
+    restarted_participant_fence.inspected_recovery_lease_id.should eq(held_participant_fence.inspected_recovery_lease_id)
+    administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64)
+      .noc.should eq(c_before_removal_rotation.noc)
+    fenced_participant_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    fenced_participant_retry.status.should eq("error")
+    fenced_participant_retry.error.to_s.should contain("needs reconciliation")
+    # The rewind document can also be durable when B loses the save
+    # acknowledgement. C must stay fenced until B resumes its journaled
+    # release after another B/C restart.
+    lost_participant_rewind_ack = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
+        nonce: no_effect_nonce, interrupt_after_participant_rewind_save: true))
+    lost_participant_rewind_ack.status.should eq("error")
+    lost_participant_rewind_ack.error.to_s.should contain("Injected lost participant rewind save acknowledgement")
+    expect_participant_recovery_fence_busy(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    expect_participant_recovery_fence_busy(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    ambiguous_save_fence = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-recovery-fence", 0xA104_u64))
+    ambiguous_save_fence.inspected_recovery_lease_id.should eq(held_participant_fence.inspected_recovery_lease_id)
     reconciled_participant_no_effect = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotation-no-effect", 0xA102_u64,
         nonce: no_effect_nonce))
     reconciled_participant_no_effect.status.should eq("ok"), reconciled_participant_no_effect.error.to_s
-    witness_store = Matter::Storage::YamlFile.new(File.join(E2E::LOG_DIR,
-      "matter_joint_fabric_third.command.yml"))
-    witness_store.open
-    fresh_witness = begin
-      document = witness_store.read(MatterJointFabricAdministrator::Device::COMMAND_RPC_COLLECTION, "result")
-      MatterJointFabricAdministrator::Device::CommandResult.from_document(document.as(Matter::Storage::Document))
-    ensure
-      witness_store.close if witness_store.open?
-    end
+    released_participant_fence = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-recovery-fence", 0xA104_u64))
+    released_participant_fence.status.should eq("ok"), released_participant_fence.error.to_s
+    released_participant_fence.inspected_recovery_lease_id.should be_nil
+    fresh_witness_nonce = Random::Secure.hex(32)
+    fresh_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-participant-rotation-no-effect", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        nonce: fresh_witness_nonce))
     fresh_witness.status.should eq("ok")
-    fresh_witness.nonce.should_not eq(no_effect_nonce)
+    fresh_witness.nonce.should eq(fresh_witness_nonce)
     fresh_witness.inspected_failsafe_clear.should be_true
     fresh_witness.inspected_credential_journal_clear.should be_true
 

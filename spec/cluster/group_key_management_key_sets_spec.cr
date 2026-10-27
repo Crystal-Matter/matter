@@ -2,6 +2,24 @@ require "../support/group_key_management_helpers"
 
 module Matter::Cluster
   describe GroupKeyManagement do
+    it "rejects a direct IPK key-set write before mutation when a recovery fence is held" do
+      cluster = build(GroupKeyManagement, 0)
+      cluster.on_before_key_set_change = ->(_fabric_index : UInt8, _key_set_id : UInt16) do
+        raise Matter::ClusterError.new("Participant recovery fence is held",
+          Matter::InteractionModel::StatusCode::Busy)
+      end
+      ipk = Cluster.create_key_set(id: GroupKeyManagement::IPK_KEY_SET_ID,
+        time0: 0_u64)
+      expect_raises(Matter::ClusterError, /recovery fence/) do
+        cluster.handle_key_set_write(GroupKeyManagement::KeySetWriteRequest.new(ipk),
+          1_u8, allow_zero_ipk_start_time: true)
+      end
+      expect_raises(Matter::ClusterError, /recovery fence/) do
+        cluster.restore_ipk_key_set_after_failed_write(1_u8, ipk, cluster.data_version)
+      end
+      cluster.get_key_set(GroupKeyManagement::IPK_KEY_SET_ID, 1_u8).should be_nil
+    end
+
     describe "initialization" do
       it "advertises Matter 1.6 revision 3 without provisional Groupcast" do
         cluster = build(GroupKeyManagement, 0)

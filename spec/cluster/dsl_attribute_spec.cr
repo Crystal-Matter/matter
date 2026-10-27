@@ -17,6 +17,16 @@ private def command_metadata(cluster : Widget, command_id : UInt32) : Matter::Cl
 end
 
 describe Matter::Cluster::DSL do
+  it "rejects a write at the cluster boundary before changing state" do
+    cluster = widget
+    cluster.on_before_write = ->(_attribute : UInt32) {
+      raise Matter::ClusterError.new("Participant recovery lease", StatusCode::Busy)
+    }
+
+    write(cluster, Widget::ATTR_LEVEL, 20_u8).status.should eq(StatusCode::Busy)
+    cluster.level.should eq(10_u8)
+  end
+
   describe "attribute" do
     it "generates the id constants" do
       Widget::ATTR_ENABLED.should eq(0x0000_u32)

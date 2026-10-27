@@ -25,8 +25,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   removal only when its pre-rotation credential was journaled, the participant
   host confirms durable old credentials with a clear fail-safe and credential
   journal, and fresh CASE and private-channel proofs match the frozen fabric
-  and Administrator order. The host must explicitly serialize credential
-  changes during recovery; otherwise the journal stays blocked.
+  and Administrator order. The participant persists a recovery lease before
+  its final witness, blocks Matter credential mutations until the Anchor
+  durably rewinds its journal, and restores the lease across restart. The
+  Anchor resumes release from its journal after a lost save acknowledgement.
 
 ### Joint Fabric journal recovery
 

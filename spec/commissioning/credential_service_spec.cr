@@ -53,6 +53,44 @@ end
 
 module Matter::Commissioning
   describe CredentialService do
+    it "rejects a direct CSR before pending credentials change" do
+      service = credential_service(RecordingCredentialTarget.new)
+      service.on_before_credential_change = ->(_mutation : CredentialService::CredentialMutation) {
+        raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+      }
+
+      expect_raises(Matter::ClusterError) do
+        service.create_csr(Bytes.new(CSR_NONCE_SIZE, 0_u8), TEST_SESSION, false, true)
+      end
+      service.pending.csr_exists?(TEST_SESSION).should be_false
+      service.fabric_table.backend.read(CredentialJournal::COLLECTION, CredentialJournal::ID).should be_nil
+    end
+
+    it "rejects direct fabric removal before creating a removal journal" do
+      service, index = commissioned_service
+      backend = service.fabric_table.backend
+      service.on_before_credential_change = ->(_mutation : CredentialService::CredentialMutation) {
+        raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+      }
+
+      expect_raises(Matter::ClusterError) { service.remove_fabric(index) }
+      service.fabric_table.get_fabric(index).should_not be_nil
+      backend.read(FabricRemovalJournal::COLLECTION, FabricRemovalJournal::ID).should be_nil
+    end
+
+    it "rejects direct root restoration while a recovery lease is held" do
+      target = RecordingCredentialTarget.new
+      service = credential_service(target)
+      service.on_before_credential_change = ->(_mutation : CredentialService::CredentialMutation) {
+        raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+      }
+
+      expect_raises(Matter::ClusterError) do
+        service.restore_root_cert(CommissioningCertificates.root_certificate)
+      end
+      target.trusted_root_certificates.should be_empty
+    end
+
     describe "#create_csr" do
       it "generates a CSR and remembers the session it belongs to" do
         service = credential_service(RecordingCredentialTarget.new)

@@ -21,6 +21,12 @@ module Matter
   class FabricTable
     Log = ::Log.for("matter.fabric_table")
 
+    enum FabricMutation
+      Add
+      Update
+      Remove
+    end
+
     # Every fabric is one document in this collection, keyed by fabric index.
     COLLECTION = Storage::Collections::FABRICS
 
@@ -45,6 +51,9 @@ module Matter
     getter backend : Storage::Backend
 
     property on_fabric_removed : Proc(Fabric, Nil)?
+
+    # Called before any public fabric-table mutation, including persistence.
+    property on_before_fabric_change : Proc(FabricMutation, UInt8, Nil)?
 
     # Security cleanup registered by the device runtime and SecureChannel.
     # Host observers may replace `on_fabric_removed` without replacing guards.
@@ -77,6 +86,7 @@ module Matter
 
     # Add a new fabric to the table
     def add_fabric(fabric : Fabric) : Bool
+      @on_before_fabric_change.try(&.call(FabricMutation::Add, fabric.fabric_index))
       # Check if we're at capacity
       if @fabrics.size >= @max_fabrics
         return false
@@ -143,6 +153,7 @@ module Matter
 
     # Update an existing fabric
     def update_fabric(fabric : Fabric) : Bool
+      @on_before_fabric_change.try(&.call(FabricMutation::Update, fabric.fabric_index))
       # Fabric must already exist
       return false unless @fabrics.has_key?(fabric.fabric_index)
       return false if quarantined?(fabric.fabric_index)
@@ -155,6 +166,7 @@ module Matter
 
     # Remove a fabric by fabric_index
     def remove_fabric(fabric_index : UInt8) : Bool
+      @on_before_fabric_change.try(&.call(FabricMutation::Remove, fabric_index))
       fabric = @fabrics[fabric_index]?
       return false unless fabric
       return false if identity_changed?(fabric_index)

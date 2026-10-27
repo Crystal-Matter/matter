@@ -181,7 +181,6 @@ services:
       MATTER_JFA_CONSENTED_REMOVALS: a102
       MATTER_JFA_OUTGOING_INSPECTION_PATH: /e2e/logs/matter_joint_fabric_anchor.command.yml
       MATTER_JFA_FOLLOW_UP_INSPECTION_PATH: /e2e/logs/matter_joint_fabric_third.command.yml
-      MATTER_JFA_SERIALIZED_PARTICIPANT_RECOVERY: "1"
 
   joint-fabric-third:
     <<: *device

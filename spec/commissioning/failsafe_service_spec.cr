@@ -5,6 +5,27 @@ module Matter::Commissioning
   # The service on its own: no cluster, no wire, just the state machine.
   describe FailsafeService do
     describe "#arm" do
+      it "rejects an arm before creating a failsafe context" do
+        service = FailsafeService.new(RecordingRollbackTarget.new)
+        service.on_before_arm = ->(_expiry : UInt16, _fabric : UInt8?, _pase : Bool) {
+          raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+        }
+
+        expect_raises(Matter::ClusterError) { service.arm(60_u16, 0_u64, 1_u8, pase_session: false) }
+        service.context.should be_nil
+        service.armed?.should be_false
+      end
+
+      it "rejects device-side timer arming before creating a context" do
+        service = FailsafeService.new(RecordingRollbackTarget.new)
+        service.on_before_arm_timer = ->(_expiry : UInt16) {
+          raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+        }
+
+        expect_raises(Matter::ClusterError) { service.arm_timer(60_u16) }
+        service.context.should be_nil
+      end
+
       it "arms a failsafe for a PASE commissioner" do
         service = FailsafeService.new(RecordingRollbackTarget.new)
 

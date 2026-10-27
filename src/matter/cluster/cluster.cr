@@ -156,6 +156,11 @@ module Matter
       # Parameters: endpoint_id, cluster_id, attribute_id
       property on_attribute_changed : Proc(UInt16, UInt32, UInt32, Nil)?
 
+      # Called before dispatch, while the authenticated request context is set.
+      # Raising ClusterError rejects the operation before cluster state changes.
+      property on_before_command : Proc(UInt32, Nil)?
+      property on_before_write : Proc(UInt32, Nil)?
+
       # Called from `increment_version` after every data version bump; the
       # persistence layer uses it to mark this cluster dirty.
       property on_version_changed : Proc(Nil)?
@@ -342,6 +347,7 @@ module Matter
       # codec or argument failure is the peer's fault (`InvalidDataType`) and
       # anything else is a bug reported as `Failure`.
       def write_attribute(attribute_id : UInt32, value : TLV::Any) : InteractionModel::Status
+        @on_before_write.try(&.call(attribute_id))
         handle_write_attribute(attribute_id, value)
       rescue ex : Matter::ClusterError
         Log.warn(exception: ex) { "#{self.class.name}: write attribute 0x#{attribute_id.to_s(16)} rejected" }
@@ -449,6 +455,7 @@ module Matter
         @request_fabric_index = fabric_index
 
         # Command implementations override this
+        @on_before_command.try(&.call(command_id))
         handle_command(command_id, fields)
       rescue ex : Matter::ClusterError
         Log.warn(exception: ex) { "#{self.class.name}: command 0x#{command_id.to_s(16)} rejected" }

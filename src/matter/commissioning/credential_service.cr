@@ -117,6 +117,15 @@ module Matter
     class CredentialService
       Log = ::Log.for("matter.commissioning.credential_service")
 
+      enum CredentialMutation
+        CreateCsr
+        AddTrustedRootCertificate
+        AddNoc
+        UpdateNoc
+        UpdateFabricLabel
+        RemoveFabric
+      end
+
       private struct NocUpdateSnapshot
         getter fabric_index : UInt8
         getter noc : Bytes
@@ -213,6 +222,10 @@ module Matter
       # A fabric's operational identity changed via UpdateNOC or rollback.
       property on_fabric_updated : Proc(Fabric, Nil)?
 
+      # Rejects public credential changes before pending state or an undo
+      # journal is written. Startup and expiry rollback remain available.
+      property on_before_credential_change : Proc(CredentialMutation, Nil)?
+
       @attestation_key : Crypto::Key?
       @pending_noc_key : Crypto::Key?
       @pending_added_fabric_index : UInt8?
@@ -279,6 +292,7 @@ module Matter
         is_for_update_noc : Bool,
         pase_session : Bool,
       ) : Tuple(Bytes, Bytes)?
+        @on_before_credential_change.try(&.call(CredentialMutation::CreateCsr))
         return unless failsafe_armed?
 
         # An UpdateNOC needs the fabric of a CASE session to update
@@ -304,6 +318,7 @@ module Matter
 
       # Store the root certificate the NOC of this commissioning will chain to
       def add_trusted_root_certificate(root_certificate : Bytes) : NocOutcome
+        @on_before_credential_change.try(&.call(CredentialMutation::AddTrustedRootCertificate))
         Log.debug { "Received AddTrustedRootCertificate: #{root_certificate.size} bytes" }
         Log.trace { "Root cert hex (first #{CERTIFICATE_LOG_PREFIX}): #{certificate_prefix(root_certificate, CERTIFICATE_LOG_PREFIX)}" }
 
@@ -354,6 +369,7 @@ module Matter
 
       # Restore a root certificate from persisted fabric data at startup
       def restore_root_cert(root_cert : Bytes) : Nil
+        @on_before_credential_change.try(&.call(CredentialMutation::AddTrustedRootCertificate))
         certificates = @target.trusted_root_certificates
         certificates << root_cert unless certificates.includes?(root_cert)
       end
@@ -371,6 +387,7 @@ module Matter
         admin_vendor_id : UInt16,
         session_id : UInt64,
       ) : NocOutcome
+        @on_before_credential_change.try(&.call(CredentialMutation::AddNoc))
         unless failsafe_armed?
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failsafe not armed")
         end
@@ -501,6 +518,7 @@ module Matter
         session_fabric_index : UInt8,
         session_id : UInt64,
       ) : NocOutcome
+        @on_before_credential_change.try(&.call(CredentialMutation::UpdateNoc))
         unless failsafe_armed?
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failsafe not armed")
         end
@@ -581,6 +599,7 @@ module Matter
 
       # Name the accessing fabric, which must be unique across the device
       def update_fabric_label(label : String, fabric_index : UInt8?) : NocOutcome
+        @on_before_credential_change.try(&.call(CredentialMutation::UpdateFabricLabel))
         unless fabric_index
           return NocOutcome.new(NocStatus::InvalidFabricIndex, debug_text: "Invalid fabric index")
         end
@@ -610,6 +629,7 @@ module Matter
 
       # Leave a fabric, dropping every piece of data scoped to it
       def remove_fabric(fabric_index : UInt8) : NocOutcome
+        @on_before_credential_change.try(&.call(CredentialMutation::RemoveFabric))
         Log.debug { "RemoveFabric: fabric_index=#{fabric_index}" }
 
         if fabric_index == DataType::NO_FABRIC

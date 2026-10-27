@@ -252,6 +252,36 @@ class InterruptedJfaCommitSqlite < Matter::Storage::Sqlite
   end
 end
 
+describe "Joint Fabric participant recovery command fence" do
+  it "permits only the authenticated read-only VID signature while a lease is restored" do
+    backend = Matter::Storage::Memory.new
+    backend.open
+    fence = MatterJointFabricAdministrator::Device::ParticipantRecoveryFence.new(
+      "ab" * Matter::Controller::VidVerification::CHALLENGE_SIZE,
+      0xA102_u64, 0xA101_u64, 0xA104_u64, 0x1111_u64,
+      Bytes[1], Bytes[2])
+    backend.write(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_PARTICIPANT_RECOVERY_FENCE,
+      fence.to_document)
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.prepare_for_start
+    credentials = device.operational_credentials
+    hook = credentials.on_before_command ||
+           raise Matter::ConfigurationError.new("Missing participant recovery command guard")
+    credentials.request_is_case_session = true
+    credentials.request_fabric_index = 1_u8
+    hook.call(Matter::Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST)
+    expect_raises(Matter::ClusterError) do
+      hook.call(Matter::Cluster::OperationalCredentials::CMD_UPDATE_NOC)
+    end
+    credentials.request_is_case_session = false
+    expect_raises(Matter::ClusterError) do
+      hook.call(Matter::Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST)
+    end
+  end
+end
+
 describe "Joint Fabric Administrator Anchor transfer persistence" do
   it "stops promotion when the candidate Datastore save fails" do
     path = File.join(Dir.tempdir, "matter-jfa-promotion-save-#{Random::Secure.hex(6)}.yml")

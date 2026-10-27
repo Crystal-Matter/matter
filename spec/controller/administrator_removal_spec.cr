@@ -424,6 +424,38 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     port.events.should eq(["Participant 200 UpdateNOC"])
   end
 
+  it "retains a participant recovery fence across a no-effect rewind and restart" do
+    datastore = removal_datastore
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    datastore.group_list = [Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct.new(
+      1_u64, "Administrators", nil, Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 2_u16,
+      Matter::Cluster::JointFabricDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer)]
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
+      administrator_cat_version: 2_u16, prior_administrator_cat_version: 1_u16,
+      fabric_id: 0x1111_u64, root_public_key: removal_root_public_key(datastore),
+      anchor_node_id: 0x100_u64,
+      remaining_admin_entries: removal_remaining_admin_entries(datastore),
+      participant_pre_rotation_credential: Bytes[1, 2, 3],
+      participant_recovery_lease_id: "fenced-recovery")
+    saved = nil.as(Matter::Controller::AdministratorRemoval::Journal?)
+    rewound = Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+      journal, datastore, 1_u8, Bytes[1, 2, 3],
+      ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+        saved = Matter::Controller::AdministratorRemoval::Journal.from_document(state.to_document)
+        nil
+      })
+    rewound.participant_recovery_lease_id.should eq("fenced-recovery")
+    saved.as(Matter::Controller::AdministratorRemoval::Journal)
+      .participant_recovery_lease_id.should eq("fenced-recovery")
+    port = FakeAdministratorRemovalPort.new
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true },
+      ->(_state : Matter::Controller::AdministratorRemoval::Journal) { nil }, rewound)
+    expect_raises(Matter::CommissioningError, /needs durable release/) { workflow.run }
+    port.events.should be_empty
+  end
+
   it "reconciles a persisted RemoveFabric journal without an operational session" do
     journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
       Matter::Controller::AdministratorRemoval::Stage::RemovingFabric)

@@ -227,12 +227,21 @@ module Examples
       confirmation = gets
       return unless confirmation && confirmation.strip.downcase == CONFIRMATION
 
+      begin
+        before_factory_reset
+      rescue ex : Matter::Error
+        puts "Factory reset stopped: #{ex.message}"
+        return
+      end
       puts "Performing factory reset..."
       shutdown!
       persistence.reset!
       puts "Factory reset complete."
       puts "Please restart the application."
       exit(0)
+    end
+
+    protected def before_factory_reset : Nil
     end
 
     # ------------------------------------------------------------------------

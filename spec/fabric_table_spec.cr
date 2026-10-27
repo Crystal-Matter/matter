@@ -57,6 +57,19 @@ private def round_trips_through(backend : Matter::Storage::Backend) : Nil
 end
 
 describe Matter::FabricTable do
+  it "rejects public fabric mutations before writing storage" do
+    storage = Matter::Storage::Memory.new
+    table = Matter::FabricTable.new(storage)
+    fabric = build_fabric(1_u8)
+    table.on_before_fabric_change = ->(_mutation : Matter::FabricTable::FabricMutation, _index : UInt8) {
+      raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+    }
+
+    expect_raises(Matter::ClusterError) { table.add_fabric(fabric) }
+    table.size.should eq(0)
+    storage.read(Matter::FabricTable::COLLECTION, fabric.fabric_index.to_s).should be_nil
+  end
+
   describe "initialization" do
     it "creates empty fabric table" do
       storage = Matter::Storage::Memory.new

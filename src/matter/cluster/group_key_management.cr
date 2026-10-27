@@ -374,6 +374,9 @@ module Matter
       # Key: fabricIndex, Value: GroupKeySetStruct (with actual keys stored)
       @key_sets : Hash(UInt8, Hash(UInt16, GroupKeySetStruct))
       property on_ipk_key_set_write : Proc(UInt8, GroupKeySetStruct, Nil)? = nil
+      # Applications that expose a credential recovery fence can reject direct
+      # key-set API calls before they mutate the IPK or operational group keys.
+      property on_before_key_set_change : Proc(UInt8, UInt16, Nil)?
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
@@ -499,6 +502,7 @@ module Matter
                                allow_zero_ipk_start_time : Bool = false,
                                notify_version_change : Bool = true) : Nil
         key_set = cmd.group_key_set
+        @on_before_key_set_change.try(&.call(fabric_index, key_set.group_key_set_id))
 
         # Validate the key set structure
         key_set.validate!(allow_zero_ipk_start_time: allow_zero_ipk_start_time)
@@ -573,6 +577,7 @@ module Matter
       # - Removes any group key map entries referencing this key set
       # - Returns error if key set not found
       def handle_key_set_remove(cmd : KeySetRemoveRequest, fabric_index : UInt8) : Nil
+        @on_before_key_set_change.try(&.call(fabric_index, cmd.group_key_set_id))
         # IPK Protection: Cannot remove key set 0 (Identity Protection Key)
         if cmd.group_key_set_id == IPK_KEY_SET_ID
           raise Matter::ClusterError.new("Cannot remove key set 0 (IPK)", InteractionModel::StatusCode::ConstraintError)
@@ -766,6 +771,7 @@ module Matter
 
       # Remove all groups for a fabric (fabric removal).
       def remove_fabric(fabric_index : UInt8) : Nil
+        @on_before_key_set_change.try(&.call(fabric_index, IPK_KEY_SET_ID))
         @key_sets.delete(fabric_index)
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index }
         @group_table.reject! { |entry| entry.fabric_index == fabric_index }
@@ -789,6 +795,7 @@ module Matter
       def restore_ipk_key_set_after_failed_write(fabric_index : UInt8,
                                                  previous : GroupKeySetStruct?,
                                                  previous_version : UInt32) : Nil
+        @on_before_key_set_change.try(&.call(fabric_index, IPK_KEY_SET_ID))
         sets = @key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new
         if previous
           sets[IPK_KEY_SET_ID] = previous
