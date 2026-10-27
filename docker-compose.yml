@@ -556,6 +556,20 @@ services:
     environment:
       E2E_DEVICE: matter_commissioner_control
 
+  reverse-commissioning:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_reverse_commissioning
+      MATTER_REVERSE_CONTROLLER_STATE: /e2e/logs/reverse-controller.yml
+      MATTER_REVERSE_TEST_CONSENT: "1"
+      MATTER_REVERSE_CRYSTAL_TARGET: "1"
+      MATTER_REVERSE_WINDOW_PATH: /e2e/logs/reverse-window.json
+
+  reverse-target:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_reverse_target
+
   wifi-management:
     <<: *device
     environment:
@@ -703,6 +717,8 @@ services:
       bridged-icd: { condition: service_healthy }
       ecosystem-bridge: { condition: service_healthy }
       commissioner-control: { condition: service_healthy }
+      reverse-commissioning: { condition: service_healthy }
+      reverse-target: { condition: service_healthy }
       wifi-management: { condition: service_healthy }
       thread-border-router: { condition: service_healthy }
       thread-directory: { condition: service_healthy }

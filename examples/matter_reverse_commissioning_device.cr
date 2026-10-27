@@ -2,8 +2,8 @@ require "./support/console"
 require "./support/main"
 require "../src/matter/controller"
 
-# Opt-in SDK v1.6 reverse-commissioning fixture. Approval is restricted to the
-# test bridge identity and requires explicit local consent from the harness.
+# Opt-in reverse-commissioning fixture for the SDK bridge or Crystal target.
+# Approval is restricted to one test identity and requires explicit consent.
 module MatterReverseCommissioning
   DEVICE_ENDPOINT_ID = 1_u16
 
@@ -12,18 +12,21 @@ module MatterReverseCommissioning
 
     alias Control = Matter::Cluster::CommissionerControl
 
-    TEST_VENDOR_ID         = 0xFFF1_u16
-    TEST_BRIDGE_PRODUCT_ID = 0x8001_u16
-    TEST_DEVICE_PRODUCT_ID = 0x1234_u16
-    SOURCE_BRIDGE_NODE_ID  = 0xA103_u64
-    APPROVAL_DELAY         = 100.milliseconds
-    WINDOW_TIMEOUT         =  180_u16
-    ITERATIONS             = 1000_u32
-    SALT_LENGTH            =       32
-    COMMISSION_TIMEOUT     = 90.seconds
-    SDK_ROOT_ENV           = "MATTER_REVERSE_SDK_ROOT"
-    SDK_PAA_CERT           = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
-    SDK_CD_CERT_GLOB       = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+    TEST_VENDOR_ID                 = 0xFFF1_u16
+    TEST_BRIDGE_PRODUCT_ID         = 0x8001_u16
+    TEST_DEVICE_PRODUCT_ID         = 0x1234_u16
+    TEST_CRYSTAL_TARGET_PRODUCT_ID = 0x1235_u16
+    SOURCE_FABRIC_ID               = 0xA100_u64
+    SOURCE_CONTROLLER_ID           = 0xA101_u64
+    SOURCE_BRIDGE_NODE_ID          = 0xA103_u64
+    APPROVAL_DELAY                 = 100.milliseconds
+    WINDOW_TIMEOUT                 =  180_u16
+    ITERATIONS                     = 1000_u32
+    SALT_LENGTH                    =       32
+    COMMISSION_TIMEOUT             = 90.seconds
+    SDK_ROOT_ENV                   = "MATTER_REVERSE_SDK_ROOT"
+    SDK_PAA_CERT                   = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
+    SDK_CD_CERT_GLOB               = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
 
     identity vendor: "Spider-Gazelle", product: "Reverse Commissioning Aggregator",
       vendor_id: TEST_VENDOR_ID,
@@ -40,7 +43,7 @@ module MatterReverseCommissioning
     end
 
     def console_notes : Array(String)
-      ["Opt-in SDK reverse-commissioning fixture; no production approval policy"]
+      ["Opt-in reverse-commissioning fixture; no production approval policy"]
     end
 
     # The SDK example PAI chains to its VID FFF1 test PAA, and the bridge uses
@@ -65,17 +68,46 @@ module MatterReverseCommissioning
       trust
     end
 
+    private def crystal_target? : Bool
+      ENV["MATTER_REVERSE_CRYSTAL_TARGET"]? == "1"
+    end
+
+    private def prepare_crystal_source(path : String) : Nil
+      return unless crystal_target?
+      store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
+      return if store.load.fabric
+      bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+        SOURCE_FABRIC_ID, SOURCE_CONTROLLER_ID, TEST_VENDOR_ID)
+      store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
+        commissioner_node_id: SOURCE_CONTROLLER_ID))
+    end
+
+    private def publish_test_window(window : Control::ReverseOpenCommissioningWindowResponse) : Nil
+      return unless crystal_target?
+      path = ENV["MATTER_REVERSE_WINDOW_PATH"]? ||
+             raise Matter::ConfigurationError.new("Missing Crystal reverse-window handoff path")
+      File.write(path, {
+        "commissioning_timeout" => window.commissioning_timeout.to_i64,
+        "verifier"              => window.pake_passcode_verifier.hexstring,
+        "discriminator"         => window.discriminator.to_i64,
+        "iterations"            => window.iterations.to_i64,
+        "salt"                  => window.salt.hexstring,
+      }.to_json)
+    end
+
     protected def before_start : Nil
       state_path = ENV["MATTER_REVERSE_CONTROLLER_STATE"]? ||
                    raise Matter::ConfigurationError.new("Missing reverse-commissioning controller state")
+      prepare_crystal_source(state_path)
       consent = ENV["MATTER_REVERSE_TEST_CONSENT"]? == "1"
+      expected_product = crystal_target? ? TEST_CRYSTAL_TARGET_PRODUCT_ID : TEST_BRIDGE_PRODUCT_ID
       control = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(Control)
       control.configure_host(
         ->(approval : Control::ApprovalRequest) do
           spawn do
             sleep APPROVAL_DELAY
             approved = consent && approval.vendor_id == TEST_VENDOR_ID &&
-                       approval.product_id == TEST_BRIDGE_PRODUCT_ID
+                       approval.product_id == expected_product
             status = approved ? Matter::InteractionModel::StatusCode::Success : Matter::InteractionModel::StatusCode::Failure
             control.resolve_approval(approval, status)
             puts "Reverse commissioning approval #{approved ? "granted" : "denied"}: request=#{approval.request_id} VID=0x#{approval.vendor_id.to_s(16)} PID=0x#{approval.product_id.to_s(16)}"
@@ -91,6 +123,7 @@ module MatterReverseCommissioning
             Matter::Crypto::StandardCrypto.new, pbkdf, pin)
           window = Control::ReverseOpenCommissioningWindowResponse.new(
             WINDOW_TIMEOUT, verifier, discriminator, ITERATIONS, salt)
+          publish_test_window(window)
           task = -> do
             puts "Reverse commissioning response sent: request=#{approval.request_id}"
             client = Matter::Controller::Client.new
@@ -99,7 +132,7 @@ module MatterReverseCommissioning
               commissioner = Matter::Controller::Commissioning::Commissioner.new(store, client,
                 timeout: COMMISSION_TIMEOUT,
                 attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-                  sdk_attestation_trust))
+                  crystal_target? ? Matter::Controller::AttestationTrustStore.matter_test_fixture : sdk_attestation_trust))
               code = Matter::SetupPayload.generate_manual_code(discriminator, pin)
               commissioner.pairing_code(SOURCE_BRIDGE_NODE_ID, code,
                 expected_identity: {approval.vendor_id, approval.product_id})
