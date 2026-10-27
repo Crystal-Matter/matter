@@ -39,10 +39,12 @@ module MatterJointFabricAdministrator
     ANCHOR_CAT_ID                         = Matter::Cluster::JointFabricDatastore::ANCHOR_CAT
     ADMINISTRATOR_CAT_SUBJECT_PREFIX      = Matter::DataType::NodeId::CAT_PREFIX |
                                             (ADMINISTRATOR_CAT_ID.to_u64 << Matter::DataType::CaseAuthenticatedTag::IDENTITY_SHIFT)
-    DEFAULT_OPERATIONAL_PORT =  5540
-    ADMIN_GROUP_ID           = 1_u16
-    ANCHOR_GROUP_ID          = 2_u16
-    ANCHOR_IPK_KEY_SET_ID    = 0_u16
+    DEFAULT_OPERATIONAL_PORT  =  5540
+    ADMIN_GROUP_ID            = 1_u16
+    ANCHOR_GROUP_ID           = 2_u16
+    ANCHOR_IPK_KEY_SET_ID     = 0_u16
+    ANCHOR_JFA_ENDPOINT_ID    = 1_u16
+    BOOTSTRAP_JFA_ENDPOINT_ID = 2_u16
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -312,7 +314,7 @@ module MatterJointFabricAdministrator
     storage yaml: "matter_joint_fabric_administrator_storage.yml"
     network :ethernet
 
-    endpoint 1, device_type: Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR do
+    endpoint ANCHOR_JFA_ENDPOINT_ID, device_type: Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR do
       cluster Admin, as: :joint_fabric_administrator
       cluster Datastore, as: :joint_fabric_datastore
     end
@@ -320,7 +322,7 @@ module MatterJointFabricAdministrator
     # A joining Administrator retains its bootstrap fabric's Datastore while
     # endpoint 1 is rebound to the joined Anchor fabric. The two instances
     # enforce their own CASE fabric indices.
-    endpoint 2, device_type: Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR do
+    endpoint BOOTSTRAP_JFA_ENDPOINT_ID, device_type: Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR do
       cluster Admin, as: :bootstrap_joint_fabric_administrator
       cluster Datastore, as: :bootstrap_joint_fabric_datastore
     end
@@ -2110,7 +2112,8 @@ module MatterJointFabricAdministrator
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
       datastore = joint_fabric_datastore
-      unless datastore.anchor_node_id == own_fabric.node_id
+      unless datastore.anchor_node_id == own_fabric.node_id &&
+             datastore.joint_fabric_index == own_fabric.fabric_index
         raise Matter::AuthenticationError.new("Datastore belongs to another Anchor")
       end
       document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
@@ -2119,10 +2122,19 @@ module MatterJointFabricAdministrator
       journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
       unless journal.fabric_id == own_fabric.fabric_id &&
              journal.root_public_key == own_fabric.root_public_key &&
-             journal.anchor_node_id == own_fabric.node_id
+             journal.anchor_node_id == own_fabric.node_id &&
+             journal.outgoing_node_id == outgoing_node_id
         raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
       end
+      persisted = persistence.backend.read(Matter::Storage::Collections::CLUSTERS, datastore.persistence_key) ||
+                  raise Matter::StorageError.new("Anchor Datastore has no durable record")
+      durable_datastore = Datastore.new(Matter::DataType::EndpointNumber.new(ANCHOR_JFA_ENDPOINT_ID))
+      durable_datastore.restore_state(persisted)
+      unless datastore.save_state == durable_datastore.save_state
+        raise Matter::CommissioningError.new("Anchor Datastore differs from its durable record")
+      end
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_removed!(journal, datastore,
+        own_fabric.fabric_index,
         ->(state : Matter::Controller::AdministratorRemoval::Journal) {
           persistence.write_app_document(document_name, state.to_document)
           persistence.flush
@@ -2150,12 +2162,14 @@ module MatterJointFabricAdministrator
       end
       persisted = persistence.backend.read(Matter::Storage::Collections::CLUSTERS, datastore.persistence_key) ||
                   raise Matter::StorageError.new("Anchor Datastore has no durable record")
-      durable_datastore = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+      durable_datastore = Datastore.new(Matter::DataType::EndpointNumber.new(ANCHOR_JFA_ENDPOINT_ID))
       durable_datastore.restore_state(persisted)
       unless datastore.save_state == durable_datastore.save_state
         raise Matter::CommissioningError.new("Anchor Datastore differs from its durable record")
       end
+      durable_datastore.joint_fabric_index = own_fabric.fabric_index
       Matter::Controller::AdministratorRemoval::Workflow.reconcile_datastore_no_effect!(journal, durable_datastore,
+        own_fabric.fabric_index,
         ->(state : Matter::Controller::AdministratorRemoval::Journal) {
           persistence.write_app_document(document_name, state.to_document)
           persistence.flush
