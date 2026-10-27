@@ -25,6 +25,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exact single-command MRP retransmission can now recover without re-running
   unrelated commands.
 
+### Pump Configuration and Control profiles
+
+- Support Matter 1.6 pressure, compensated pressure, flow, temperature,
+  automatic, and local pump profiles alongside the existing constant-speed
+  default. Validate advertised modes and fixed limits before accepting writes
+  or host-reported operation. Add opt-in fault events with standard IDs and
+  priorities, and exercise a flow pump endpoint with the official controller.
+
 ### Subscription access control
 
 - Recheck attribute and event privileges for every active subscription update,

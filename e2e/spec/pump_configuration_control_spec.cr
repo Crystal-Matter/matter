@@ -21,4 +21,17 @@ describe "Matter 1.6 Pump Configuration and Control interoperability" do
     device.restart!
     read_int(device, "pumpconfigurationandcontrol", "operation-mode", "OperationMode", 1).should eq(1_i64)
   end
+
+  it "commissions a flow pump with automatic and local operation" do
+    read_int(device, "pumpconfigurationandcontrol", "feature-map", "FeatureMap", 2).should eq(100_i64)
+    read_int(device, "pumpconfigurationandcontrol", "min-const-flow", "MinConstFlow", 2).should eq(20_i64)
+    read_int(device, "pumpconfigurationandcontrol", "control-mode", "ControlMode", 2).should eq(3_i64)
+    expect_failure(device.write("pumpconfigurationandcontrol", "control-mode", 0, 2), "CONSTRAINT_ERROR")
+    expect_failure(device.write("pumpconfigurationandcontrol", "operation-mode", 1, 2), "CONSTRAINT_ERROR")
+    expect_success(device.write("pumpconfigurationandcontrol", "control-mode", 7, 2))
+    expect_success(device.write("pumpconfigurationandcontrol", "operation-mode", 3, 2))
+    device.restart!
+    read_int(device, "pumpconfigurationandcontrol", "control-mode", "ControlMode", 2).should eq(7_i64)
+    read_int(device, "pumpconfigurationandcontrol", "operation-mode", "OperationMode", 2).should eq(3_i64)
+  end
 end

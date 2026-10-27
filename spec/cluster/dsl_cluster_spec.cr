@@ -4,6 +4,12 @@ private alias Widget = DslSpec::Widget
 private alias Privilege = Matter::InteractionModel::EntryPrivilege
 private alias StatusCode = Matter::InteractionModel::StatusCode
 
+private class PositionalEventWidget < Matter::Cluster::Base
+  cluster 0xFFF1_FC50, revision: 1
+
+  event 0x00, :managed, :info, nil, :manage
+end
+
 private def widget(feature_map : Widget::Feature = Widget::Feature::None) : Widget
   build(Widget, feature_map: feature_map)
 end
@@ -166,6 +172,10 @@ describe Matter::Cluster::DSL do
   end
 
   describe "event" do
+    it "preserves positional access arguments when adding presence gating" do
+      build(PositionalEventWidget).events.first.access.should eq(Privilege::Manage)
+    end
+
     it "generates the id constants and metadata" do
       Widget::EVENT_TRIPPED.should eq(0x00_u32)
       Widget::EVENT_NOTED.should eq(0x01_u32)
