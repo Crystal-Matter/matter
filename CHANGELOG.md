@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Diagnostic Logs BDX response ordering
+
+- Send BDX SendInit before the RetrieveLogsResponse. Return Success only after
+  SendAccept, or Denied if negotiation fails, and report Busy while a log
+  transfer is active. Preserve encrypted Invoke replay and wait for the final
+  response chunk before sending BDX data.
+- Exercise the transfer and refusal paths with the official chip-tool in E2E.
+
 ### Diagnostic Logs response bounds
 
 - Enforce the Matter 1.6 32-byte file-designator limit and return Interaction

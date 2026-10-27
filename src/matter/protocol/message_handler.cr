@@ -3,6 +3,7 @@ require "../cluster/general_diagnostics"
 require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
 require "../cluster/commissioner_control"
+require "../cluster/diagnostic_logs"
 require "../cluster/group_key_management"
 require "../cluster/groupcast"
 require "../cluster/low_power"
@@ -52,12 +53,13 @@ module Matter
       # Network receive must remain free while a cluster handler performs a
       # controller exchange through the same socket. One worker preserves the
       # device's inbound message ordering.
-      INBOUND_QUEUE_LIMIT        = 256
-      BDX_QUEUE_LIMIT            =  16
-      BDX_WORKER_LIMIT           = Bdx::Responder::MAX_ACTIVE_TRANSFERS
-      BDX_SHUTDOWN_GRACE         = 100.milliseconds
-      UNSENT_INVOKE_RETRY_WINDOW = 10.seconds
-      MAX_UNSENT_INVOKE_RETRIES  = 64
+      INBOUND_QUEUE_LIMIT           = 256
+      BDX_QUEUE_LIMIT               =  16
+      BDX_WORKER_LIMIT              = Bdx::Responder::MAX_ACTIVE_TRANSFERS
+      BDX_SHUTDOWN_GRACE            = 100.milliseconds
+      UNSENT_INVOKE_RETRY_WINDOW    = 10.seconds
+      MAX_UNSENT_INVOKE_RETRIES     = 64
+      DEFERRED_LOG_RESPONSE_TIMEOUT = 5.minutes
       @inbound_messages : Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress))
       @inbound_done : Channel(Nil)
 
@@ -69,6 +71,15 @@ module Matter
       private record UnsentInvokeRetry, session : Session::SecureContext,
         exchange_id : UInt16, payload : Bytes, expires_at : Time::Instant
       @unsent_invoke_retries = {} of Tuple(UInt64, UInt32) => UnsentInvokeRetry
+      private record DeferredLogResponse, prepared : InteractionRouter::PreparedInvoke,
+        expires_at : Time::Instant
+      @deferred_log_responses = {} of Tuple(UInt64, UInt16) => DeferredLogResponse
+      private record DeferredBdxBlock,
+        accept : Codec::MessageCodec::Message,
+        peer : Socket::IPAddress,
+        session : Session::SecureContext,
+        message : Bdx::Transfer::Message
+      @deferred_bdx_blocks = {} of Tuple(UInt64, UInt16) => DeferredBdxBlock
 
       private class BdxLane
         getter session : Session::SecureContext
@@ -202,6 +213,8 @@ module Matter
         @registry.add_session_cleanup_hook(->(id : UInt16) { queue_bdx_session_cleanup(id) })
         @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx_initiator.forget_session(id) })
         @registry.add_sweep_hook(-> { @bdx_initiator.sweep })
+        @registry.add_session_cleanup_hook(->(id : UInt16) { forget_deferred_log_responses(id) })
+        @registry.add_sweep_hook(-> { expire_deferred_log_responses })
         @registry.add_sweep_hook(-> { @unsent_invoke_retries.reject! { |_, retry| retry.expires_at < Time.instant } })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @registry.add_session_cleanup_hook(->(id : UInt16) { @subscriptions.forget_invoke_session(id) })
@@ -215,11 +228,17 @@ module Matter
           @unsent_invoke_retries.reject! do |key, retry_entry|
             key[0] == session_identity && retry_entry.exchange_id == exchange_id
           end
+          abandon_deferred_log_response(session_identity, exchange_id)
+          abandon_deferred_bdx_block(session_identity, exchange_id)
+        end
+        @router.on_invoke_response_prepared = ->(prepared : InteractionRouter::PreparedInvoke) do
+          defer_log_response(prepared)
         end
         @router.on_invoke_response_sent = ->(session_identity : UInt64, exchange_id : UInt16) do
           start_pending_commissions(session_identity, exchange_id)
           start_pending_sleeps(session_identity, exchange_id)
           @bdx_initiator.start_pending
+          flush_deferred_bdx_block(session_identity, exchange_id)
         end
         @router.on_invoke_response_failed = ->(session : Session::SecureContext, request : Codec::MessageCodec::Message) do
           @bdx_initiator.discard_pending
@@ -238,11 +257,13 @@ module Matter
                 now + UNSENT_INVOKE_RETRY_WINDOW)
           end
           discard_pending_sleeps(session_identity, exchange_id)
+          abandon_deferred_bdx_block(session_identity, exchange_id)
         end
         @router.on_invoke_response_abandoned = ->(session_identity : UInt64, exchange_id : UInt16) do
           @bdx_initiator.discard_pending
           discard_pending_commissions(session_identity, exchange_id)
           discard_pending_sleeps(session_identity, exchange_id)
+          abandon_deferred_bdx_block(session_identity, exchange_id)
         end
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
@@ -343,6 +364,8 @@ module Matter
         end
         @registry.synchronize do
           @bdx_initiator.close
+          @deferred_log_responses.clear
+          @deferred_bdx_blocks.clear
         end
         @registry.close
       end
@@ -358,6 +381,130 @@ module Matter
                               session.fabric_index == fabric_index &&
                               session.peer_node_id.try(&.id) == peer_node_id
           @bdx_initiator.queue(session, peer, designator, content)
+        end
+      end
+
+      def queue_diagnostic_log_transfer(session_id : UInt16, fabric_index : UInt8,
+                                        peer_node_id : UInt64, peer : Socket::IPAddress,
+                                        designator : Bytes, content : Bytes) : Cluster::DiagnosticLogs::TransferStartResult
+        @registry.synchronize do
+          session = @registry.sessions[session_id]?
+          unless session && session.case_session? &&
+                 session.fabric_index == fabric_index &&
+                 session.peer_node_id.try(&.id) == peer_node_id
+            return Cluster::DiagnosticLogs::TransferStartResult::Unavailable
+          end
+          return Cluster::DiagnosticLogs::TransferStartResult::Busy if @bdx_initiator.busy?
+          if @bdx_initiator.queue(session, peer, designator, content)
+            Cluster::DiagnosticLogs::TransferStartResult::Queued
+          else
+            Cluster::DiagnosticLogs::TransferStartResult::Unavailable
+          end
+        end
+      end
+
+      private def defer_log_response(prepared : InteractionRouter::PreparedInvoke) : Bool
+        session = prepared.session
+        return false unless @bdx_initiator.pending_for?(session)
+
+        # Validate the whole response before opening a second exchange. While
+        # BDX negotiates, a standalone ACK answers retransmitted Invokes.
+        IMHandler.encode_chunked_invoke_response(prepared.responses,
+          suppress_response: prepared.suppress_response,
+          max_payload_size: @sender.im_payload_limit(session, prepared.peer))
+        @sender.send_encrypted_ack(prepared.original_msg, prepared.peer, session,
+          cache_for_mrp: true)
+        exchange_id = @bdx_initiator.start_pending_for(session) ||
+                      raise Matter::ProtocolError.new("Queued Diagnostic Logs transfer disappeared")
+        key = {session.object_id.to_u64, exchange_id}
+        @deferred_log_responses[key] = DeferredLogResponse.new(prepared,
+          Time.instant + DEFERRED_LOG_RESPONSE_TIMEOUT)
+        true
+      rescue ex
+        @bdx_initiator.discard_pending
+        Log.warn(exception: ex) { "Could not initiate deferred Diagnostic Logs transfer" }
+        @router.send_prepared_invoke(denied_log_response(prepared))
+        true
+      end
+
+      private def denied_log_response(prepared : InteractionRouter::PreparedInvoke) : InteractionRouter::PreparedInvoke
+        replaced = false
+        responses = prepared.responses.map do |response|
+          data = response.command_data
+          if data && data.command_path.cluster == Cluster::DiagnosticLogs::CLUSTER_ID &&
+             data.command_path.command == Cluster::DiagnosticLogs::CMD_RETRIEVE_LOGS_REQUEST_RESPONSE &&
+             !replaced && (fields = data.command_fields)
+            payload = Cluster::DiagnosticLogs::RetrieveLogsResponse.from_tlv(fields)
+            if payload.status.success? && payload.log_content.empty?
+              replaced = true
+              denied = Cluster::DiagnosticLogs::RetrieveLogsResponse.new(
+                Cluster::DiagnosticLogs::LogsStatus::Denied, Bytes.empty)
+              next InteractionModel::InvokeResponseIB.new(command_data: InteractionModel::CommandDataIBTlv.new(
+                data.command_path, denied.to_tlv(nil)))
+            end
+          end
+          response
+        end
+        InteractionRouter::PreparedInvoke.new(prepared.original_msg, prepared.peer,
+          prepared.session, responses, prepared.suppress_response)
+      end
+
+      private def take_deferred_log_response(session : Session::SecureContext,
+                                             exchange_id : UInt16) : DeferredLogResponse?
+        @deferred_log_responses.delete({session.object_id.to_u64, exchange_id})
+      end
+
+      private def abandon_deferred_log_response(session_identity : UInt64,
+                                                invoke_exchange_id : UInt16) : Nil
+        @deferred_log_responses.reject! do |key, deferred|
+          plan = deferred.prepared
+          next false unless key[0] == session_identity &&
+                            plan.original_msg.payload_header.exchange_id == invoke_exchange_id
+          @bdx_initiator.abort(plan.session.session_id, key[1])
+          true
+        end
+      end
+
+      private def forget_deferred_log_responses(session_id : UInt16) : Nil
+        @deferred_log_responses.reject! { |_, deferred| deferred.prepared.session.session_id == session_id }
+        @deferred_bdx_blocks.reject! { |_, deferred| deferred.session.session_id == session_id }
+      end
+
+      private def flush_deferred_bdx_block(session_identity : UInt64,
+                                           invoke_exchange_id : UInt16) : Nil
+        pending = @deferred_bdx_blocks.delete({session_identity, invoke_exchange_id})
+        return unless pending
+        return unless @registry.sessions[pending.session.session_id]?.same?(pending.session)
+        @sender.send_bdx_response(pending.accept, pending.peer, pending.session,
+          pending.message.opcode.value, pending.message.to_slice)
+      rescue ex
+        @bdx_initiator.abort(pending.session.session_id, pending.accept.payload_header.exchange_id) if pending
+        Log.warn(exception: ex) { "Failed to send Diagnostic Logs BDX block after InvokeResponse" }
+      end
+
+      private def abandon_deferred_bdx_block(session_identity : UInt64,
+                                             invoke_exchange_id : UInt16) : Nil
+        if pending = @deferred_bdx_blocks.delete({session_identity, invoke_exchange_id})
+          @bdx_initiator.abort(pending.session.session_id, pending.accept.payload_header.exchange_id)
+        end
+      end
+
+      private def abandon_deferred_bdx_exchange(session : Session::SecureContext,
+                                                bdx_exchange_id : UInt16) : Nil
+        @deferred_bdx_blocks.reject! do |_, pending|
+          pending.session.same?(session) &&
+            pending.accept.payload_header.exchange_id == bdx_exchange_id
+        end
+      end
+
+      private def expire_deferred_log_responses(now : Time::Instant = Time.instant) : Nil
+        @deferred_log_responses.reject! do |key, deferred|
+          next false if deferred.expires_at > now
+          @bdx_initiator.abort(deferred.prepared.session.session_id, key[1])
+          if @registry.sessions[deferred.prepared.session.session_id]?.same?(deferred.prepared.session)
+            @router.send_prepared_invoke(denied_log_response(deferred.prepared))
+          end
+          true
         end
       end
 
@@ -947,8 +1094,11 @@ module Matter
             begin
               report = Session::Pase::Definitions::StatusReport.from_bytes(msg.payload)
               if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == 0
+                deferred = take_deferred_log_response(session, msg.payload_header.exchange_id)
                 @bdx_initiator.abort(session.session_id, msg.payload_header.exchange_id)
+                abandon_deferred_bdx_exchange(session, msg.payload_header.exchange_id)
                 @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true) if msg.payload_header.requires_acknowledge?
+                @router.send_prepared_invoke(denied_log_response(deferred.prepared)) if deferred
                 return BdxAbort.new(session, msg.payload_header.exchange_id)
               end
             rescue ex : IO::EOFError
@@ -986,8 +1136,24 @@ module Matter
           if @bdx_initiator.handles?(session.session_id, msg.payload_header.exchange_id)
             status, response = @bdx_initiator.receive(session, msg.payload_header.exchange_id, opcode,
               msg.payload, msg.payload_header.initiator_message?)
+            if !status && opcode.send_accept?
+              if deferred = take_deferred_log_response(session, msg.payload_header.exchange_id)
+                if response
+                  original = deferred.prepared.original_msg
+                  origin = {session.object_id.to_u64, original.payload_header.exchange_id}
+                  @deferred_bdx_blocks[origin] = DeferredBdxBlock.new(msg, peer, session, response)
+                end
+                @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true)
+                @router.send_prepared_invoke(deferred.prepared)
+                return
+              end
+            end
             if status
               @sender.send_bdx_status(msg, peer, session, status)
+              abandon_deferred_bdx_exchange(session, msg.payload_header.exchange_id)
+              if deferred = take_deferred_log_response(session, msg.payload_header.exchange_id)
+                @router.send_prepared_invoke(denied_log_response(deferred.prepared))
+              end
             elsif response
               @sender.send_bdx_response(msg, peer, session, response.opcode.value,
                 response.to_slice)

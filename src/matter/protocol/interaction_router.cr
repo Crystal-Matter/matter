@@ -22,10 +22,18 @@ module Matter
     class InteractionRouter
       Log = ::Log.for("matter.protocol.interaction_router")
 
+      record PreparedInvoke,
+        original_msg : Codec::MessageCodec::Message,
+        peer : Socket::IPAddress,
+        session : Session::SecureContext,
+        responses : Array(InteractionModel::InvokeResponseIB),
+        suppress_response : Bool
+
       property on_invoke_response_sent : Proc(UInt64, UInt16, Nil)?
       property on_invoke_response_failed : Proc(Session::SecureContext, Codec::MessageCodec::Message, Nil)?
       property on_invoke_response_abandoned : Proc(UInt64, UInt16, Nil)?
       property on_invoke_request_accepted : Proc(UInt64, UInt16, Nil)?
+      property on_invoke_response_prepared : Proc(PreparedInvoke, Bool)?
 
       WRITE_CHUNK_TIMEOUT = 60.seconds
 
@@ -418,8 +426,26 @@ module Matter
           return
         end
 
-        chunks = IMHandler.encode_chunked_invoke_response(invoke_responses,
-          suppress_response: request.suppress_response || false,
+        prepared = PreparedInvoke.new(original_msg, peer, session,
+          invoke_responses, request.suppress_response || false)
+        return if @on_invoke_response_prepared.try(&.call(prepared)) == true
+
+        send_prepared_invoke(prepared)
+      rescue ex
+        @on_invoke_response_failed.try(&.call(session, original_msg))
+        Log.error(exception: ex) do
+          "Error handling InvokeRequest: peer=#{peer.address}:#{peer.port} session_id=#{session.session_id} " \
+          "exchange=#{original_msg.payload_header.exchange_id} msg_id=#{original_msg.packet_header.message_id} " \
+          "payload_hex=#{decrypted.hexstring}"
+        end
+      end
+
+      def send_prepared_invoke(prepared : PreparedInvoke) : Nil
+        original_msg = prepared.original_msg
+        peer = prepared.peer
+        session = prepared.session
+        chunks = IMHandler.encode_chunked_invoke_response(prepared.responses,
+          suppress_response: prepared.suppress_response,
           max_payload_size: @sender.im_payload_limit(session, peer))
         @sender.send_im_response(
           original_msg: original_msg,
@@ -441,11 +467,11 @@ module Matter
         end
         Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
-        @on_invoke_response_failed.try(&.call(session, original_msg))
+        @on_invoke_response_failed.try(&.call(prepared.session, prepared.original_msg))
         Log.error(exception: ex) do
-          "Error handling InvokeRequest: peer=#{peer.address}:#{peer.port} session_id=#{session.session_id} " \
-          "exchange=#{original_msg.payload_header.exchange_id} msg_id=#{original_msg.packet_header.message_id} " \
-          "payload_hex=#{decrypted.hexstring}"
+          "Could not send InvokeResponse: peer=#{prepared.peer.address}:#{prepared.peer.port} " \
+          "session_id=#{prepared.session.session_id} exchange=#{prepared.original_msg.payload_header.exchange_id} " \
+          "msg_id=#{prepared.original_msg.packet_header.message_id}"
         end
       end
 

@@ -34,6 +34,7 @@ services:
         MATTER_E2E_BINARIES: ${MATTER_E2E_BINARIES:-}
     environment:
       E2E_DEVICE: matter_switch
+      MATTER_SWITCH_E2E_DIAGNOSTIC_LOG: "1"
 
   shared-switch:
     <<: *device
