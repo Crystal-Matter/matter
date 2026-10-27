@@ -246,6 +246,17 @@ module Matter
         @unsecured_counter_initialized = true
       end
 
+      # Reserve a bounded sequence before network I/O so a restarted or
+      # concurrent client cannot reuse an unsecured counter already assigned.
+      def reserve_unsecured_message_counters(count : UInt32) : UInt32
+        if count == 0_u32 || count >= UNSECURED_COUNTER_HALF_RANGE
+          raise Matter::ConfigurationError.new("Unsecured counter reservation must be within the serial half-range")
+        end
+        start = @unsecured_message_counter
+        self.unsecured_message_counter = @unsecured_message_counter &+ count
+        start
+      end
+
       def initialize(
         @fabric : FabricInfo? = nil,
         @nodes : Hash(UInt64, NodeInfo) = {} of UInt64 => NodeInfo,

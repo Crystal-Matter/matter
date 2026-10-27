@@ -15,9 +15,13 @@ module Matter
       private class LoadConflict < Matter::StorageError
       end
 
-      COLLECTION            = "controller"
-      DOCUMENT_ID           = "state"
-      LOAD_CONFLICT_RETRIES = 8
+      class ConflictError < Matter::StorageError
+      end
+
+      COLLECTION                           = "controller"
+      DOCUMENT_ID                          = "state"
+      LOAD_CONFLICT_RETRIES                = 8
+      COUNTER_RESERVATION_CONFLICT_RETRIES = 8
 
       getter backend : Storage::Backend
 
@@ -75,14 +79,14 @@ module Matter
         @backend.transaction do
           previous = @backend.read(COLLECTION, DOCUMENT_ID)
           if state.storage_loaded? && previous != state.storage_snapshot
-            raise Matter::StorageError.new("Controller state changed since load; reload before saving")
+            raise ConflictError.new("Controller state changed since load; reload before saving")
           end
           prior_state = previous ? State.from_document(previous) : State.new
           purge_orphaned_credentials(prior_state)
           document = state.to_document
           expected = state.storage_loaded? ? state.storage_snapshot : previous
           unless @backend.compare_and_swap(COLLECTION, DOCUMENT_ID, expected, document)
-            raise Matter::StorageError.new("Controller state changed since load; reload before saving")
+            raise ConflictError.new("Controller state changed since load; reload before saving")
           end
           remaining = state.fabrics
           resume_store = Session::Case::ResumptionStore.new(@backend)
@@ -118,6 +122,20 @@ module Matter
           save(state)
         end
         result
+      end
+
+      # A SQL adapter may lose a cross-instance compare-and-swap race. Retry
+      # only that conflict after reloading the new high watermark.
+      def reserve_unsecured_message_counters(count : UInt32) : UInt32
+        attempts = 0
+        loop do
+          begin
+            return update { |state| state.reserve_unsecured_message_counters(count) }
+          rescue ConflictError
+            attempts += 1
+            raise if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
+          end
+        end
       end
 
       # Older saves could durably remove a fabric before deleting its separate

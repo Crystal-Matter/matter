@@ -515,6 +515,12 @@ the marker are treated as initialized to reject stale counters after a possible
 wrap to zero. A value saved once from a loaded snapshot must be reloaded before
 another save; freshly constructed `State` values remain an explicit full-state
 replacement path for bootstrap and recovery callers.
+Datastore network delivery reserves all possible unsecured CASE counters in a
+short atomic controller-state update before constructing its client. The
+reservation covers Sigma1 and Sigma3 (or the resumption StatusReport) for each
+configured IPK candidate. The client refuses sends beyond its reservation,
+and unused counters stay spent after a crash. A competing SQL writer causes a
+bounded reload and retry before any network packet is sent.
 SQL storage uses a conditional row update (or insert if absent) so independent
 SQLite/PostgreSQL adapters cannot both commit a stale state document. File
 backends serialize through their own in-process backend instance; independent

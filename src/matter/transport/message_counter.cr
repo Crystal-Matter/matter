@@ -19,16 +19,28 @@ module Matter
       @received_window = Set(UInt32).new
       @max_received : UInt32? = nil
       @restored_floor : UInt32? = nil
+      @remaining_messages : UInt32? = nil
 
       def initialize(@counter : UInt32 = 0_u32, @rollover : Bool = true)
       end
 
       def next : UInt32
+        remaining = @remaining_messages
+        if remaining == 0_u32
+          raise Matter::SessionError.new("Reserved message counter range is exhausted")
+        end
         if @counter >= @maximum
           raise Matter::SessionError.new("Message counter overflow - session must be renegotiated") unless @rollover
-          return @counter = 0_u32
+          @counter = 0_u32
+        else
+          @counter += 1
         end
-        @counter += 1
+        @remaining_messages = remaining - 1_u32 if remaining
+        @counter
+      end
+
+      def limit_messages(count : UInt32) : Nil
+        @remaining_messages = count
       end
 
       def peek(message_id : UInt32) : CheckResult
@@ -63,6 +75,7 @@ module Matter
 
       def reset(value : UInt32 = 0_u32) : Nil
         @counter = value
+        @remaining_messages = nil
         @received_window.clear
         @max_received = nil
         @restored_floor = nil

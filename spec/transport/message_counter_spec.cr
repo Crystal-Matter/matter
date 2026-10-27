@@ -3,6 +3,15 @@ require "../../src/matter/transport/message_counter"
 
 describe Matter::Transport::MessageCounter do
   describe "#next" do
+    it "refuses to emit a counter outside a reserved range even at wrap" do
+      counter = Matter::Transport::MessageCounter.new(UInt32::MAX - 1_u32)
+      counter.limit_messages(2_u32)
+
+      counter.next.should eq(UInt32::MAX)
+      counter.next.should eq(0_u32)
+      expect_raises(Matter::SessionError) { counter.next }
+    end
+
     it "generates sequential message IDs" do
       counter = Matter::Transport::MessageCounter.new(0_u32)
 
