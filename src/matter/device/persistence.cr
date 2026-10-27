@@ -34,12 +34,14 @@ module Matter
       DEVICE   = Storage::Collections::DEVICE
       APP      = Storage::Collections::APP
 
-      IDENTITY_ID             = "identity"
-      HOSTNAME_KEY            = "commissioning_hostname"
-      SERIAL_NUMBER_KEY       = "serial_number"
-      UNIQUE_ID_KEY           = "unique_id"
-      RESTORE_SENTINEL_PREFIX = "critical_cluster_"
-      RESTORE_SENTINEL_KEY    = "required"
+      IDENTITY_ID              = "identity"
+      HOSTNAME_KEY             = "commissioning_hostname"
+      SERIAL_NUMBER_KEY        = "serial_number"
+      UNIQUE_ID_KEY            = "unique_id"
+      REBOOT_COUNT_KEY         = "reboot_count"
+      REBOOT_COUNT_PRESENT_KEY = "reboot_count_present"
+      RESTORE_SENTINEL_PREFIX  = "critical_cluster_"
+      RESTORE_SENTINEL_KEY     = "required"
 
       # Generated hostnames are 16 uppercase hex digits followed by this suffix;
       # `update_hostname` may store any other `.local` name.
@@ -211,6 +213,44 @@ module Matter
       # The stored unique id, generating and storing one when missing.
       def unique_id : String
         load_or_create(UNIQUE_ID_KEY, "unique id") { generate_unique_id }
+      end
+
+      # RebootCount belongs to device identity rather than cluster state:
+      # changing the optional General Diagnostics FeatureMap cannot discard it.
+      # A missing key is an older store or a fresh device and starts at zero.
+      # The marker distinguishes that migration from losing a saved counter.
+      # Invalid or missing saved data stops startup instead of resetting it.
+      def advance_reboot_count : UInt16
+        # An in-memory backend cannot retain a count across process boots.
+        # Keep its existing transient-device behavior, including when identity
+        # storage is deliberately unavailable to a test host.
+        return 0_u16 unless @backend.durable?
+
+        count = 0_u16
+        @backend.transaction do
+          document = identity
+          marker = document[REBOOT_COUNT_PRESENT_KEY]?
+          unless marker.nil? || marker == true
+            raise StorageError.new("Invalid General Diagnostics RebootCount marker")
+          end
+          if stored = document[REBOOT_COUNT_KEY]?
+            value = stored.as?(Int64)
+            unless value && (0_i64..UInt16::MAX.to_i64).includes?(value)
+              raise StorageError.new("Invalid persisted General Diagnostics RebootCount")
+            end
+            count = value < UInt16::MAX ? (value + 1_i64).to_u16 : UInt16::MAX
+          elsif marker == true
+            raise StorageError.new("Missing persisted General Diagnostics RebootCount")
+          end
+          document[REBOOT_COUNT_KEY] = count.to_i64
+          document[REBOOT_COUNT_PRESENT_KEY] = true
+          @backend.write(DEVICE, IDENTITY_ID, document)
+        end
+        count
+      rescue ex : StorageError
+        raise ex
+      rescue ex
+        raise StorageError.new("Could not persist General Diagnostics RebootCount", ex)
       end
 
       private def load_or_create(key : String, what : String, & : -> String) : String

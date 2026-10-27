@@ -278,6 +278,8 @@ module Matter
 
       # Restore cluster state (scenes, groups, etc.) and track changes
       @persistence.restore_clusters(@message_handler.clusters.values)
+      general_diagnostics = @node.get_cluster!(Node::ROOT_ENDPOINT_ID, Cluster::GeneralDiagnostics)
+      general_diagnostics.reboot_count = @persistence.advance_reboot_count
       # FabricTable is also a public host API. Register security cleanup as an
       # internal guard so a host observer cannot replace it.
       @fabric_table.register_removal_guard do |fabric|
