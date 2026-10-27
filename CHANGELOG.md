@@ -13,6 +13,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   armed fail-safe even when its certificate is rejected. A new fail-safe period
   permits another attempt.
 
+### Controller invoke response validation
+
+- Verify every InvokeResponse status matches the invoked command path and
+  every command-data response belongs to its endpoint and cluster, including
+  later chunks. Keep distinct response command IDs valid while rejecting
+  unrelated or malformed response entries before Joint Fabric workflows use them.
+  Label oversized response failures with the original request path.
+
 ### End-to-end CASE read resilience
 
 - Retry an idempotent chip-tool attribute read once when CASE session setup
@@ -69,7 +77,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   committed state restoration now use the production class. The official
   chip-tool fixture verifies rollback, commit, activation, timed updates, and
   restart behavior without a conformance-only subclass gate.
-
 ### Controller write response validation
 
 - Verify that every WriteResponse status belongs to a requested attribute path,

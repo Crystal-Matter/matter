@@ -420,7 +420,8 @@ module Matter
 
         chunks = IMHandler.encode_chunked_invoke_response(invoke_responses,
           suppress_response: request.suppress_response || false,
-          max_payload_size: @sender.im_payload_limit(session, peer))
+          max_payload_size: @sender.im_payload_limit(session, peer),
+          request_paths: request.invoke_requests.map(&.command_path))
         @sender.send_im_response(
           original_msg: original_msg,
           peer: peer,

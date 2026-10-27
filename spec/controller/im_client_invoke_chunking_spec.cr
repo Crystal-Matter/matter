@@ -34,6 +34,33 @@ private class ChunkedInvokeClient < Matter::Controller::Client
 end
 
 describe Matter::Controller::ImClient do
+  it "accepts ResourceExhausted for an oversized response with a distinct response command ID" do
+    require_udp_sockets!
+    client = ChunkedInvokeClient.new
+    session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    request_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+      Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE)
+    response_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+      Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(response_path, TLV::Any.new("B" * 1300, nil))
+    client.response_chunks = Matter::Protocol::IMHandler.encode_chunked_invoke_response([
+      Matter::InteractionModel::InvokeResponseIB.new(command_data: data),
+    ], request_paths: [request_path])
+
+    result = Matter::Controller::ImClient.new(client).invoke(session, peer, 0_u16,
+      Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+      Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE)
+
+    status = result.invoke_responses.first.command_status
+    status.try(&.command_path).should eq request_path
+    status.try(&.status.status).should eq Matter::InteractionModel::StatusCode::ResourceExhausted.value
+  ensure
+    client.try(&.close)
+  end
+
   it "acknowledges and combines chunked InvokeResponse messages" do
     require_udp_sockets!
     client = ChunkedInvokeClient.new
