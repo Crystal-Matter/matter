@@ -360,6 +360,49 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.data_version.should eq(version)
   end
 
+  it "checks update targets before invalid payloads and leaves datastore state unchanged" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    endpoint_id = 1_u16
+    key_set_id = 10_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+    key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(Datastore::EPOCH_KEY_BYTES, 1_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key_set)).success?.should be_true
+    invalid_name = "x" * (Datastore::MAX_FRIENDLY_NAME_BYTES + 1)
+    invalid_key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      nil, nil, nil, nil, nil, nil)
+    missing_invalid_key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id + 1_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      nil, nil, nil, nil, nil, nil)
+    before = cluster.save_state
+    version = cluster.data_version
+    not_found = Matter::InteractionModel::StatusCode::NotFound
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+
+    cluster.update_node(Datastore::UpdateNodeRequest.new(node_id + 1_u64, invalid_name))
+      .status.should eq(not_found)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(missing_invalid_key_set))
+      .status.should eq(not_found)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, node_id + 1_u64, invalid_name))
+      .status.should eq(not_found)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id + 1_u16, node_id, invalid_name))
+      .status.should eq(not_found)
+
+    cluster.update_node(Datastore::UpdateNodeRequest.new(node_id, invalid_name))
+      .status.should eq(constraint)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(invalid_key_set))
+      .status.should eq(constraint)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, node_id, invalid_name))
+      .status.should eq(constraint)
+
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+  end
+
   it "uses target snapshots to prune stale committed records while preserving pending work" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
