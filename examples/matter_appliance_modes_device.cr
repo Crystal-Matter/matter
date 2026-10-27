@@ -86,6 +86,12 @@ module MatterApplianceModes
         feature_map: Evse::Feature::ChargingPreferences | Evse::Feature::V2x
     end
 
+    # Synthetic EV SoC telemetry for the opt-in feature's wire tests.
+    endpoint 4, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Evse, circuit_capacity: 32_000_i64,
+        feature_map: Evse::Feature::ChargingPreferences | Evse::Feature::SocReporting
+    end
+
     protected def before_start : Nil
       evse = node.get_cluster!(1_u16, Evse)
       evse.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) do
@@ -96,6 +102,8 @@ module MatterApplianceModes
       v2x.on_enable_charging = ->(_until : UInt32?, _minimum : Int64, _maximum : Int64) { Status.success }
       v2x.on_enable_discharging = ->(_until : UInt32?, _maximum : Int64) { Status.success }
       v2x.on_disable = -> { Status.success }
+      soc = node.get_cluster!(4_u16, Evse)
+      soc.report_soc(72_u8, 60_000_000_i64)
       diagnostics = node.get_cluster!(0_u16, Matter::Cluster::GeneralDiagnostics)
       diagnostics.on_test_event_trigger = ->(trigger : UInt64) do
         if trigger == 0x0099_0000_0000_0002_u64 # EV plugged in

@@ -60,6 +60,28 @@ describe "Matter 1.6 Energy EVSE interoperability" do
     read_int(device, "energyevse", "feature-map", "FeatureMap", 1).should eq(1_i64)
   end
 
+  it "reports opt-in SoC telemetry and retains SoC charging targets across restart" do
+    expect_failure(device.chip("any", "read-by-id", "0x99", "0x30", device.node, "1"),
+      "UNSUPPORTED_ATTRIBUTE")
+    expect_failure(device.chip("any", "read-by-id", "0x99", "0x31", device.node, "1"),
+      "UNSUPPORTED_ATTRIBUTE")
+    read_int(device, "energyevse", "feature-map", "FeatureMap", 4).should eq(3_i64)
+    read_int(device, "energyevse", "state-of-charge", "StateOfCharge", 4).should eq(72_i64)
+    read_int(device, "energyevse", "battery-capacity", "BatteryCapacity", 4).should eq(60_000_000_i64)
+    missing_soc = %([{"dayOfWeekForSequence":2,"chargingTargets":[{"targetTimeMinutesPastMidnight":480,"addedEnergy":12000}]}])
+    expect_failure(device.invoke("energyevse", "set-targets", [missing_soc], endpoint: 4, options: timed),
+      "INVALID_COMMAND")
+    schedule = %([{"dayOfWeekForSequence":2,"chargingTargets":[{"targetTimeMinutesPastMidnight":480,"targetSoC":80}]}])
+    expect_success(device.invoke("energyevse", "set-targets", [schedule], endpoint: 4, options: timed))
+    expect_success(device.invoke("energyevse", "get-targets", endpoint: 4, options: timed))
+      .output.should contain("80")
+    device.restart!
+    read_int(device, "energyevse", "state-of-charge", "StateOfCharge", 4).should eq(72_i64)
+    expect_success(device.invoke("energyevse", "get-targets", endpoint: 4, options: timed))
+      .output.should contain("80")
+    expect_success(device.invoke("energyevse", "clear-targets", endpoint: 4, options: timed))
+  end
+
   it "reports V2X charge and discharge session events through chip-tool" do
     key = "hex:000102030405060708090a0b0c0d0e0f"
     trigger = ->(id : UInt64) do
