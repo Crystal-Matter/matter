@@ -27,12 +27,73 @@ private class PausedControllerPostgres < Matter::Storage::Postgres
   end
 end
 
+private class PausedControllerLoadPostgres < Matter::Storage::Postgres
+  @pause_once = true
+
+  def initialize(url : String, @ready : Channel(Nil), @release : Channel(Nil))
+    super(url)
+  end
+
+  def compare_and_swap(collection : String, id : String,
+                       expected : Matter::Storage::Document?, document : Matter::Storage::Document) : Bool
+    if @pause_once && collection == Matter::Controller::StateStore::COLLECTION &&
+       id == Matter::Controller::StateStore::DOCUMENT_ID
+      @pause_once = false
+      @ready.send(nil)
+      @release.receive
+    end
+    super
+  end
+end
+
 if url = ENV["MATTER_TEST_POSTGRES_URL"]?
   raise "PostgreSQL integration tests require a dedicated *_test database" unless URI.parse(url).path.ends_with?("_test")
 
   BackendContract.run("Postgres", ".postgres") { |_path| fresh_postgres(url) }
 
   describe Matter::Storage::Postgres do
+    it "retries clean and normalized loads without purging newly owned CASE credentials" do
+      [false, true].each do |needs_normalization|
+        seed = fresh_postgres(url)
+        initial_id = needs_normalization ? Matter::DataType::NodeId::UNSPECIFIED : 0x7777_u64
+        Matter::Controller::StateStore.new(seed).save(
+          Matter::Controller::State.new(commissioner_node_id: initial_id))
+        seed.close
+
+        ready = Channel(Nil).new
+        release = Channel(Nil).new
+        paused_backend = PausedControllerLoadPostgres.new(url, ready, release).tap(&.open)
+        paused_store = Matter::Controller::StateStore.new(paused_backend)
+        result = Channel(Matter::Controller::State | Exception).new
+        spawn do
+          result.send(paused_store.load)
+        rescue ex
+          result.send(ex)
+        end
+        ready.receive
+
+        fabric = Matter::Controller::FabricInfo.new(
+          fabric_id: 0x1111_u64, controller_node_id: 0x2222_u64,
+          ipk_value: Bytes.new(16, 0xAA_u8), root_cert: Bytes.empty,
+          root_public_key: Bytes.new(65, 0xBB_u8), controller_noc: Bytes.empty,
+          controller_private_key: Bytes.empty)
+        writer = Matter::Storage::Postgres.new(url).tap(&.open)
+        Matter::Controller::StateStore.new(writer).save(Matter::Controller::State.new(fabric: fabric))
+        credential_id = Bytes.new(16, 0x11_u8)
+        Matter::Session::Case::ResumptionStore.new(writer).save(
+          Matter::Session::Case::ResumptionStore::Record.new(fabric.fabric_id,
+            fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
+            credential_id, Bytes.new(32, 0x22_u8), [0x3333_u64],
+            role: Matter::Session::Case::Role::Initiator))
+        release.send(nil)
+
+        result.receive.as(Matter::Controller::State).fabric.as(Matter::Controller::FabricInfo).fabric_id.should eq(fabric.fabric_id)
+        Matter::Session::Case::ResumptionStore.new(writer).find_by_id(credential_id).should_not be_nil
+        paused_backend.close
+        writer.destroy!
+      end
+    end
+
     it "rejects one of two independent controller writes that read the same SQL row" do
       seed = fresh_postgres(url)
       seed_store = Matter::Controller::StateStore.new(seed)
@@ -65,6 +126,9 @@ if url = ENV["MATTER_TEST_POSTGRES_URL"]?
       2.times { release.send(nil) }
       results = 2.times.map { finished.receive }
       results.count(&.nil?).should eq(1)
+      unless results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") } == 1
+        raise "Unexpected competing-writer results: #{results.map { |result| result.try { |error| {error.class.name, error.message} } }}"
+      end
       results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") }.should eq(1)
       first_backend.close
       second_backend.close
@@ -102,6 +166,9 @@ if url = ENV["MATTER_TEST_POSTGRES_URL"]?
       2.times { release.send(nil) }
       results = 2.times.map { finished.receive }
       results.count(&.nil?).should eq(1)
+      unless results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") } == 1
+        raise "Unexpected competing-insert results: #{results.map { |result| result.try { |error| {error.class.name, error.message} } }}"
+      end
       results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") }.should eq(1)
       first_backend.close
       second_backend.close

@@ -482,17 +482,18 @@ Controller::GroupInvoker       fabric-scoped one-way group Invoke with durable c
 Controller::StateStore         the fabric, its certificates and known nodes, over Storage::Backend
 ```
 
-`StateStore` removes a controller fabric and its CASE resumption and ICD
-Check-In records in one backend transaction. On load it removes credentials
-orphaned by older, partially completed removals. A Joint Fabric Administrator
-can share a backend between its controller and device roles; device CASE
-resumptions are preserved while the device FabricTable still owns their full
-fabric and local Node ID. New CASE records store their initiator or responder
+`StateStore` removes a controller fabric and its initiator CASE resumption and
+ICD Check-In records in one backend transaction. On load it removes initiator
+credentials orphaned by older, partially completed removals. A Joint Fabric
+Administrator can share a backend between its controller and device roles;
+controller cleanup always preserves responder and roleless CASE records because
+the device writer does not share the controller-state transaction guard. Device
+cleanup owns those records. New CASE records store their initiator or responder
 role, which also separates lookups when both roles use the same fabric and
-local Node ID. Older CASE records do not identify their role, so either role
-falls back to full CASE. A legacy record matching both roles remains until
-neither role owns that identity. Undecodable credential documents are retained
-and logged so a damaged record cannot block controller state recovery.
+local Node ID. Older CASE records do not identify their role and fall back to
+full CASE; retaining an old ambiguous record can leave an unused secret until
+device cleanup. Undecodable credential documents are retained and logged so a
+damaged record cannot block controller state recovery.
 
 Each loaded controller `State` remembers the exact document it read. A later
 `save` rejects that state if another writer has changed the document, avoiding
@@ -500,6 +501,10 @@ silent loss of Datastore registrations, nodes, or counters. Use `StateStore#upda
 for short read-modify-write operations; it runs them in one backend transaction.
 The update block receives a mutable `State` reference, and the store saves
 that same object after the block, including scalar and nested changes.
+Every load conditionally writes the controller-state row before cleaning up
+orphaned controller credentials. The row stays locked through cleanup on SQL;
+if a concurrent controller writer wins first, load rolls back cleanup and
+retries from a fresh document.
 Network requests must finish before the update block, which reads fresh state.
 An update advancing the unsecured message counter uses serial arithmetic so a
 slower client cannot move the durable counter backward, including at UInt32

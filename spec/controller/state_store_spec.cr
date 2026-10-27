@@ -46,12 +46,13 @@ private class FailingControllerSqlite < Matter::Storage::Sqlite
 end
 
 private def seed_controller_credentials(backend : Matter::Storage::Backend,
-                                        fabric : Matter::Controller::FabricInfo) : Bytes
+                                        fabric : Matter::Controller::FabricInfo,
+                                        role : Matter::Session::Case::Role? = Matter::Session::Case::Role::Initiator) : Bytes
   id = Bytes.new(16, 0x11_u8)
   Matter::Session::Case::ResumptionStore.new(backend).save(
     Matter::Session::Case::ResumptionStore::Record.new(fabric.fabric_id,
       fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
-      id, Bytes.new(32, 0x22_u8), [0x3333_u64]))
+      id, Bytes.new(32, 0x22_u8), [0x3333_u64], role: role))
   Matter::Controller::IcdPeerStore.new(backend).save(
     Matter::Controller::IcdPeerStore::Record.new(fabric.fabric_id,
       fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
@@ -230,7 +231,8 @@ describe Matter::Controller::StateStore do
     id = Bytes.new(16, 0x11_u8)
     resume_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
-      0x3333_u64, id, Bytes.new(32, 0x22_u8), [0x3333_u64]))
+      0x3333_u64, id, Bytes.new(32, 0x22_u8), [0x3333_u64],
+      role: Matter::Session::Case::Role::Initiator))
 
     state = store.load
     state.remove_fabric(fabric.fabric_id, fabric.root_public_key,
@@ -313,7 +315,7 @@ describe Matter::Controller::StateStore do
       operational_key: Matter::Crypto::Key.generate_key_pair,
       ipk: fabric.ipk_value)
     backend.write(Matter::Storage::Collections::FABRICS, "1", device_fabric.to_document)
-    id = seed_controller_credentials(backend, fabric)
+    id = seed_controller_credentials(backend, fabric, role: nil)
     store = Matter::Controller::StateStore.new(backend)
 
     store.load.fabric.should be_nil
@@ -325,6 +327,22 @@ describe Matter::Controller::StateStore do
     state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
     store.save(state)
     resume_store.find_by_id(id).should_not be_nil
+  end
+
+  it "does not infer roleless CASE ownership from controller state alone" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    id = seed_controller_credentials(backend, fabric, role: nil)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.load
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should_not be_nil
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    state = store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+    store.save(state)
+
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should_not be_nil
   end
 
   it "keeps ambiguous device secrets when a device fabric document is unreadable" do
