@@ -167,6 +167,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_remove_admin : Bool = false
       getter? interrupt_before_transfer_follow_up : Bool = false
       getter? interrupt_after_first_transfer_follow_up : Bool = false
+      getter? interrupt_after_next_transfer_cross_sign : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
@@ -192,6 +193,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_remove_admin : Bool = false,
                      @interrupt_before_transfer_follow_up : Bool = false,
                      @interrupt_after_first_transfer_follow_up : Bool = false,
+                     @interrupt_after_next_transfer_cross_sign : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
@@ -1523,7 +1525,8 @@ module MatterJointFabricAdministrator
                                      interrupt_before_follow_up : Bool = false,
                                      interrupt_after_first_follow_up : Bool = false,
                                      interrupt_after_request : Bool = false,
-                                     interrupt_after_complete : Bool = false) : Nil
+                                     interrupt_after_complete : Bool = false,
+                                     interrupt_after_next_cross_sign : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
@@ -1574,7 +1577,7 @@ module MatterJointFabricAdministrator
             raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
           end
           follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, own_client, own_im,
-            interrupt_after_first_follow_up)
+            interrupt_after_first_follow_up, interrupt_after_next_cross_sign)
           journal.stage = Matter::Controller::AnchorTransfer::Stage::Completed
           persistence.write_app_document(APP_TRANSFER_DOCUMENT, journal.to_document)
           persistence.flush
@@ -1658,7 +1661,7 @@ module MatterJointFabricAdministrator
               raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
             end
             follow_up_administrators(preflight, old_fabric, scanner, own_client, own_im,
-              interrupt_after_first_follow_up)
+              interrupt_after_first_follow_up, interrupt_after_next_cross_sign)
             nil
           })
         port = Matter::Controller::AnchorTransfer::ImPort.new(old_im, old_session, old_peer, old_endpoint)
@@ -1719,7 +1722,8 @@ module MatterJointFabricAdministrator
                                          scanner : Matter::Controller::Scanner,
                                          client : Matter::Controller::Client,
                                          im : Matter::Controller::ImClient,
-                                         interrupt_after_first : Bool = false) : Nil
+                                         interrupt_after_first : Bool = false,
+                                         interrupt_after_next_cross_sign : Bool = false) : Nil
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric disappeared")
       controller_store = @controller_store || raise Matter::ConfigurationError.new("Candidate controller identity disappeared")
       identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
@@ -1749,6 +1753,11 @@ module MatterJointFabricAdministrator
           ->(state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
             persistence.write_app_document(document_name, state.to_document)
             persistence.flush
+            # Test-only lost acknowledgement after a durable CrossSigned save.
+            # The next command has no fault flag and resumes at RemovingOld.
+            if interrupt_after_next_cross_sign && state.stage.cross_signed?
+              raise Matter::TransportError.new("Injected interruption after durable Anchor participant cross-sign")
+            end
             nil
           }, journal, consent: -> { true },
           on_committed_icac: ->(node_id : UInt64, certificate : Bytes) {
@@ -2516,7 +2525,7 @@ module MatterJointFabricAdministrator
           when "transfer-anchor"
             transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?,
               request.interrupt_after_first_transfer_follow_up?, request.interrupt_after_transfer_request?,
-              request.interrupt_after_transfer_complete?)
+              request.interrupt_after_transfer_complete?, request.interrupt_after_next_transfer_cross_sign?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
