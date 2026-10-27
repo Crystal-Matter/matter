@@ -100,6 +100,7 @@ module Matter
         abstract def verify_no_effect!(stage : Stage) : Nil
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
         abstract def resume_rollback! : Nil
+        abstract def finalize_rollback! : Nil
         abstract def validate_journal!(journal : Journal) : Nil
       end
 
@@ -360,6 +361,17 @@ module Matter
             assert_noc_success!(response, "Anchor RemoveFabric")
           end
           verify_postcondition!(Stage::RolledBack)
+        end
+
+        # The controller's A node record was saved during commissioning. Keep
+        # it until authenticated reads prove that both remote removals took
+        # effect; if this save fails, the RollingBack journal can retry it.
+        def finalize_rollback! : Nil
+          verify_postcondition!(Stage::RolledBack)
+          state = @store.load
+          nodes = state.nodes_for(@anchor_fabric.fabric_id,
+            @anchor_fabric.root_public_key, @anchor_fabric.controller_node_id)
+          @store.save(state) if nodes.delete(@anchor_node_id)
         end
 
         # These are read-only postconditions for explicit journal
@@ -905,6 +917,7 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
+          @port.finalize_rollback! if stage.rolled_back?
           updated = @journal
           updated.stage = stage
           @save.call(updated)

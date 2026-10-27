@@ -63,6 +63,10 @@ private class MigrationPort < Migration::Port
     call("resume-rollback")
   end
 
+  def finalize_rollback! : Nil
+    call("finalize-rollback")
+  end
+
   def validate_journal!(journal : Migration::Journal) : Nil
   end
 
@@ -86,6 +90,14 @@ private class MigrationRecoveryNetworkPort < Migration::NetworkPort
 
   private def verify_handoff_baseline! : Nil
     raise Matter::AuthenticationError.new("B ownership verification failed") unless old_verified?
+  end
+end
+
+private class MigrationRollbackNetworkPort < Migration::NetworkPort
+  property? remote_rolled_back : Bool = false
+
+  def verify_postcondition!(stage : Migration::Stage) : Nil
+    raise Matter::CommissioningError.new("Remote rollback is incomplete") unless stage.rolled_back? && remote_rolled_back?
   end
 end
 
@@ -465,7 +477,7 @@ describe Migration do
     port.fail_at = nil
     runner.reconcile!(Migration::Stage::RolledBack)
     runner.journal.stage.should eq(Migration::Stage::RolledBack)
-    port.calls.should eq(["rollback-true", "reconcile-RolledBack"])
+    port.calls.should eq(["rollback-true", "reconcile-RolledBack", "finalize-rollback"])
     saved.map(&.stage).should eq([Migration::Stage::RollingBack, Migration::Stage::RolledBack])
   end
 
@@ -491,7 +503,28 @@ describe Migration do
     port.fail_at = nil
     restarted.resume_rollback!
     restarted.journal.stage.should eq(Migration::Stage::RolledBack)
-    port.calls.should eq(["rollback-true", "resume-rollback", "resume-rollback"])
+    port.calls.should eq(["rollback-true", "resume-rollback", "resume-rollback", "finalize-rollback"])
+  end
+
+  it "keeps rollback uncertain when controller cleanup fails after remote removal" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    port = MigrationPort.new
+    port.fail_at = "finalize-rollback"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AnchorNodeAdded)
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    expect_raises(Matter::TransportError) { runner.rollback! }
+    stored = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    stored.stage.should eq(Migration::Stage::RollingBack)
+    restarted = Migration::Workflow.new(stored, port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    port.fail_at = nil
+    restarted.reconcile!(Migration::Stage::RolledBack)
+    restarted.journal.stage.should eq(Migration::Stage::RolledBack)
+    port.calls.should eq(["rollback-true", "finalize-rollback", "reconcile-RolledBack", "finalize-rollback"])
   end
 
   it "refreshes an uncertain pending Anchor registration without repeating AddPendingNode" do
@@ -596,6 +629,50 @@ describe Migration do
       port.verify_postcondition!(Migration::Stage::Complete)
     end
     port.close
+  end
+
+  it "removes a stale Anchor controller node only after authenticated rollback proof" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xB001_u64, 0xB101_u64, 0xFFF2_u16, crypto: crypto).fabric
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0xA001_u64, 0xA101_u64, 0xFFF1_u16, crypto: crypto)
+    joined = joined_identity(bootstrap, 0xA103_u64, Matter::Crypto::Key.generate_key_pair)
+    b_icac = old_fabric.intermediate_cert.as(Bytes)
+    signed = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      Matter::Crypto::MatterCertificate.public_key_from_tlv(b_icac),
+      joined.fabric_id, 0xB101_u64, bootstrap.fabric.certificate_authority_key,
+      1_u64, Bytes[2], crypto)
+    issuer = Migration.cross_signed_issuer(old_fabric, joined, signed,
+      old_fabric.intermediate_private_key.as(Bytes))
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    state = store.load
+    state.install_fabric(joined)
+    state.record_node(joined.fabric_id, Matter::Controller::NodeInfo.new(
+      node_id: 0xA201_u64, address: "127.0.0.1", port: 5540),
+      joined.root_public_key, joined.controller_node_id)
+    store.save(state)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    verifier = Matter::Controller::DeviceAttestationVerifier.new(
+      Matter::Controller::AttestationTrustStore.matter_test_fixture)
+    port = MigrationRollbackNetworkPort.new(store, old_fabric, joined, issuer,
+      0xB201_u64, 0xA201_u64, peer, 0xB101_u64, peer, 1_u16,
+      0xA101_u64, peer, 1_u16, "Existing device", 0xFFFF_0001_u32,
+      verifier, timeout: 1.millisecond)
+    begin
+      expect_raises(Matter::CommissioningError, /Remote rollback is incomplete/) do
+        port.finalize_rollback!
+      end
+      store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+        joined.controller_node_id).has_key?(0xA201_u64).should be_true
+      port.remote_rolled_back = true
+      port.finalize_rollback!
+      store.load.nodes_for(joined.fabric_id, joined.root_public_key,
+        joined.controller_node_id).has_key?(0xA201_u64).should be_false
+      port.finalize_rollback!
+    ensure
+      port.close
+    end
   end
 
   it "restores a missing controller node only after durable acknowledgement and A CASE proof" do
