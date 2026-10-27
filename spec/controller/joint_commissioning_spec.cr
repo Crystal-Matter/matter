@@ -25,17 +25,6 @@ private class JointRecoveryPort < Matter::Controller::JointCommissioning::Recove
   end
 end
 
-private class JointRetryDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
-  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
-  end
-
-  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
-  end
-
-  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
-  end
-end
-
 private class JointDescriptorIm < Matter::Controller::ImClient
   def initialize(client : Matter::Controller::Client)
     super(client)
@@ -587,7 +576,7 @@ describe Matter::Controller::JointCommissioning do
     workflow.try(&.close)
   end
 
-  it "preserves a Datastore retry stage advanced during a deferred handoff wait" do
+  it "preserves a Datastore journal advance during a deferred handoff wait" do
     joint = Matter::Controller::JointCommissioning
     fabric = joint.bootstrap_anchor_fabric(0x456A_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
@@ -637,8 +626,11 @@ describe Matter::Controller::JointCommissioning do
       end
     end
     entered.receive
-    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, JointRetryDelivery.new)
-    registrar.retry_pending_once
+    store.update do |current|
+      entry = current.pending_datastore_nodes.first
+      entry.stage = Matter::Controller::PendingDatastoreNode::Stage::Registered
+      current.pending_datastore_nodes[0] = entry
+    end
     store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
     release.send(nil)
     if error = finished.receive
