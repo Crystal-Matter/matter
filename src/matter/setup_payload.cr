@@ -15,8 +15,12 @@ module Matter
   # The 11-digit code is computed as: (discriminator << 27) | PIN
   # Then the Verhoeff check digit is appended.
   module SetupPayload
-    TEST_VENDOR_ID_MINIMUM           = 0xFFF1_u16
-    TEST_VENDOR_ID_EXCLUSIVE_MAXIMUM = 0xFFF4_u16
+    TEST_VENDOR_ID_MINIMUM                     = 0xFFF1_u16
+    TEST_VENDOR_ID_EXCLUSIVE_MAXIMUM           = 0xFFF4_u16
+    SHORT_DISCRIMINATOR_UNSPECIFIED_BITS_MASK  = 0x00FF_u16
+    MANUAL_CODE_DISCRIMINATOR_MIDDLE_BITS_MASK =      0x300
+    MANUAL_CODE_DISCRIMINATOR_DIGIT_MASK       =       0x03
+    MANUAL_CODE_PASSCODE_LOW_BITS_MASK         =     0x3fff
 
     # Verhoeff check digit algorithm
     # Used by Matter for manual pairing code validation
@@ -161,7 +165,8 @@ module Matter
       # - discriminator & 0x300 isolates bits 8-9 of discriminator
       # - << 6 shifts left by 6 positions
       # - passcode & 0x3fff gets bottom 14 bits of passcode
-      part2 = ((discriminator & 0x300) << 6) | (pin & 0x3fff)
+      part2 = ((discriminator & MANUAL_CODE_DISCRIMINATOR_MIDDLE_BITS_MASK) << 6) |
+              (pin & MANUAL_CODE_PASSCODE_LOW_BITS_MASK)
       result += part2.to_s.rjust(5, '0')
 
       # Digits 7-10: Top bits of passcode (passcode >> 14)
@@ -215,11 +220,12 @@ module Matter
       # Extract short discriminator (4 bits)
       # Top 2 bits from digit 1 (bits 0-1, since bit 2 is vendor/product flag)
       # Bottom 2 bits from high bits of digits_2_6
-      short_discriminator = ((digit1 & 0x03) << 2) | ((digits_2_6 >> 14) & 0x3)
+      short_discriminator = ((digit1 & MANUAL_CODE_DISCRIMINATOR_DIGIT_MASK) << 2) |
+                            ((digits_2_6 >> 14) & MANUAL_CODE_DISCRIMINATOR_DIGIT_MASK)
 
       # Extract passcode (27 bits)
       # Bottom 14 bits from digits_2_6, top 14 bits from digits_7_10
-      passcode = (digits_2_6 & 0x3fff) | (digits_7_10 << 14)
+      passcode = (digits_2_6 & MANUAL_CODE_PASSCODE_LOW_BITS_MASK) | (digits_7_10 << 14)
 
       # Convert short discriminator (4 bits) back to full discriminator (12 bits)
       # The short discriminator is the top 4 bits (bits 8-11) of the full discriminator

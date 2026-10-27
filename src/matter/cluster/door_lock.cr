@@ -75,7 +75,8 @@ module Matter
       MAX_EXPIRING_USER_TIMEOUT  = 2880_u16
 
       # Every bit of LocalProgrammingFeatures set
-      ALL_LOCAL_PROGRAMMING_FEATURES = 0x0F_u8
+      ALL_LOCAL_PROGRAMMING_FEATURES        = 0x0F_u8
+      LEGACY_ALL_LOCAL_PROGRAMMING_FEATURES = 0xFF_u8
 
       # CredentialRulesSupport with the Single rule
       CREDENTIAL_RULE_SINGLE = 0x01_u8
@@ -593,9 +594,9 @@ module Matter
         if raw_mask = document["local_programming_features"]?
           invalid = case raw_mask
                     when Int64
-                      raw_mask < 0 || (raw_mask > ALL_LOCAL_PROGRAMMING_FEATURES && raw_mask != 0xFF_i64)
+                      raw_mask < 0 || (raw_mask > ALL_LOCAL_PROGRAMMING_FEATURES && raw_mask != LEGACY_ALL_LOCAL_PROGRAMMING_FEATURES.to_i64)
                     when UInt64
-                      raw_mask > ALL_LOCAL_PROGRAMMING_FEATURES && raw_mask != 0xFF_u64
+                      raw_mask > ALL_LOCAL_PROGRAMMING_FEATURES && raw_mask != LEGACY_ALL_LOCAL_PROGRAMMING_FEATURES.to_u64
                     else
                       false # PersistedState has already validated the field type.
                     end
@@ -721,7 +722,7 @@ module Matter
       end
 
       private def after_restore_state : Nil
-        if @local_programming_features == 0xFF_u8
+        if @local_programming_features == LEGACY_ALL_LOCAL_PROGRAMMING_FEATURES
           @local_programming_features = ALL_LOCAL_PROGRAMMING_FEATURES
           increment_version_and_notify(ATTR_LOCAL_PROGRAMMING_FEATURES)
         end
