@@ -74,4 +74,30 @@ describe Matter::Cluster::UserLabel do
     restored.label_list[0].label.should eq("a")
     restored.label_list[0].value.should eq("b")
   end
+
+  it "rejects an initial label or value beyond the Matter LabelStruct limit" do
+    max = Matter::Cluster::UserLabel::LABEL_MAX_LENGTH
+    build(Matter::Cluster::UserLabel, label_list: [Matter::Cluster::LabelStruct.new("l" * max, "v" * max)])
+    expect_raises(ArgumentError) do
+      build(Matter::Cluster::UserLabel, label_list: [Matter::Cluster::LabelStruct.new("l" * (max + 1), "v")])
+    end
+    expect_raises(ArgumentError) do
+      build(Matter::Cluster::UserLabel, label_list: [Matter::Cluster::LabelStruct.new("l", "v" * (max + 1))])
+    end
+  end
+
+  it "does not report a LabelList mutated beyond the field limit" do
+    cluster = build(Matter::Cluster::UserLabel)
+    cluster.label_list << Matter::Cluster::LabelStruct.new("l", "v" * (Matter::Cluster::LabelStruct::MAX_LENGTH + 1))
+
+    read_status(cluster, Matter::Cluster::UserLabel::ATTR_LABEL_LIST).status
+      .should eq(Matter::InteractionModel::StatusCode::Failure)
+
+    cluster.label_list[0] = Matter::Cluster::LabelStruct.new("l" * (Matter::Cluster::LabelStruct::MAX_LENGTH + 1), "v")
+    read_status(cluster, Matter::Cluster::UserLabel::ATTR_LABEL_LIST).status
+      .should eq(Matter::InteractionModel::StatusCode::Failure)
+
+    cluster.label_list[0] = Matter::Cluster::LabelStruct.new("l", "v")
+    read_tlv(cluster, Matter::Cluster::UserLabel::ATTR_LABEL_LIST).as_list.size.should eq(1)
+  end
 end

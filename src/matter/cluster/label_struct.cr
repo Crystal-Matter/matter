@@ -8,6 +8,9 @@ module Matter
       include TLV::Serializable
       include Storage::Record
 
+      # Matter Label base cluster constrains both fields to 16 UTF-8 bytes.
+      MAX_LENGTH = 16
+
       @[TLV::Field(tag: 0)]
       property label : String
 
@@ -15,6 +18,10 @@ module Matter
       property value : String
 
       def initialize(@label : String, @value : String)
+      end
+
+      def valid_lengths? : Bool
+        @label.bytesize <= MAX_LENGTH && @value.bytesize <= MAX_LENGTH
       end
     end
   end

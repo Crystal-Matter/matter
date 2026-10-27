@@ -16,6 +16,7 @@ module Matter
       MAX_ICE_USERNAME_LENGTH   =        508
       MAX_ICE_CREDENTIAL_LENGTH =        512
       MAX_ACTIVE_SESSIONS       =         32
+      MAX_PENDING_SIGNALING     =        128
       OFFER_TIMEOUT             = 30.seconds
 
       enum EndReason : UInt8
@@ -311,6 +312,11 @@ module Matter
       @sessions = [] of Session
       @offer_deadlines = {} of UInt16 => Time::Instant
       @next_session_id = 0_u16
+      private record PendingSignaling, session_identity : UInt64, exchange_id : UInt16,
+        fabric_index : UInt8, peer_node_id : UInt64, session_id : UInt16,
+        sequence : UInt64, task : Proc(Nil)
+      @pending_signaling = [] of PendingSignaling
+      @pending_signaling_sequence = 0_u64
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @streams : CameraAvStreamManagement, @peer : Peer)
@@ -354,7 +360,7 @@ module Matter
         schedule_offer_timeout
         changed
         begin
-          status = @peer.solicit_offer(session, request)
+          status = peer_status { @peer.solicit_offer(session, request) }
         rescue ex
           remove_session(session, EndReason::UnknownReason)
           raise ex
@@ -379,7 +385,7 @@ module Matter
           return InteractionModel::Status.constraint_error if (endpoint = request.originating_endpoint_id) && endpoint != session.peer_endpoint_id
           return InteractionModel::Status.constraint_error if request.audio_streams || !request.audio_stream_id_state.absent? ||
                                                               request.video_streams || !request.video_stream_id_state.absent?
-          status = @peer.accept_offer(session, request)
+          status = peer_status { @peer.accept_offer(session, request) }
           return status unless status.success?
           @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
           schedule_offer_timeout
@@ -403,7 +409,7 @@ module Matter
         schedule_offer_timeout
         changed
         begin
-          status = @peer.accept_offer(session, request)
+          status = peer_status { @peer.accept_offer(session, request) }
         rescue ex
           remove_session(session, EndReason::UnknownReason)
           raise ex
@@ -422,7 +428,7 @@ module Matter
         session = owned_session(request.web_rtc_session_id, fabric, node) || return InteractionModel::Status.not_found
         return InteractionModel::Status.constraint_error if request.sdp.empty?
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
-        status = @peer.accept_answer(session, request.sdp)
+        status = peer_status { @peer.accept_answer(session, request.sdp) }
         @offer_deadlines.delete(session.id) if status.success?
         status
       end
@@ -433,7 +439,7 @@ module Matter
         return InteractionModel::Status.constraint_error if request.ice_candidates.empty?
         return InteractionModel::Status.constraint_error if request.ice_candidates.any? { |candidate| candidate.sdp_mid == "" }
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
-        @peer.add_ice_candidates(session, request.ice_candidates)
+        peer_status { @peer.add_ice_candidates(session, request.ice_candidates) }
       end
 
       def end_session(request : EndSessionRequest) : InteractionModel::Status
@@ -449,6 +455,72 @@ module Matter
         end
       end
 
+      # A host media engine may fail after the command handler has returned.
+      # Scope cleanup to the authenticated session owner so a delayed callback
+      # cannot tear down another fabric's or peer's connection.
+      def end_host_session(fabric_index : UInt8, peer_node_id : UInt64,
+                           session_id : UInt16, reason : EndReason = EndReason::UnknownReason) : Bool
+        removed = with_request_context do
+          session = @sessions.find do |entry|
+            entry.fabric_index == fabric_index && entry.peer_node_id == peer_node_id && entry.id == session_id
+          end
+          return false unless session
+          remove_session_state(session)
+          session
+        end
+        finish_session_removal(removed, reason)
+        true
+      end
+
+      # A media Peer can prepare an outbound Requestor command while handling
+      # the Provider command, but must wait until its final InvokeResponse has
+      # been transmitted. The protocol layer drains this queue at that point.
+      def defer_signaling(session : Session, &task : -> Nil) : Bool
+        with_request_context do
+          identity = request_session_identity
+          exchange = request_exchange_id
+          return false unless request_command_active? && request_is_case_session? &&
+                              identity && exchange &&
+                              request_fabric_index == session.fabric_index &&
+                              request_peer_node_id == session.peer_node_id &&
+                              session_active?(session) &&
+                              @pending_signaling.size < MAX_PENDING_SIGNALING
+          @pending_signaling_sequence += 1_u64
+          @pending_signaling << PendingSignaling.new(identity, exchange,
+            session.fabric_index, session.peer_node_id, session.id,
+            @pending_signaling_sequence, task)
+          true
+        end
+      end
+
+      def take_pending_signaling(session_identity : UInt64, exchange_id : UInt16) : Array(Proc(Nil))
+        with_request_context do
+          selected = @pending_signaling.select do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+          @pending_signaling.reject! do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+          selected.select { |entry| session_active?(entry.fabric_index, entry.peer_node_id, entry.session_id) }
+            .map do |entry|
+              -> : Nil do
+                active = with_request_context do
+                  session_active?(entry.fabric_index, entry.peer_node_id, entry.session_id)
+                end
+                entry.task.call if active
+              end
+            end
+        end
+      end
+
+      def discard_pending_signaling(session_identity : UInt64, exchange_id : UInt16) : Nil
+        with_request_context do
+          @pending_signaling.reject! do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+        end
+      end
+
       def end_private_sessions : Nil
         @sessions.reject { |session| delivery_allowed?(session) }.each do |session|
           remove_session(session, EndReason::PrivacyMode)
@@ -460,6 +532,25 @@ module Matter
         fabric = request_fabric_index
         node = request_peer_node_id
         {fabric, node} if fabric && node
+      end
+
+      # A Peer may enqueue outbound signaling before discovering it cannot
+      # accept the command. Keep tasks from earlier successful commands on the
+      # same InvokeRequest while dropping only this callback's additions.
+      private def peer_status(& : -> InteractionModel::Status) : InteractionModel::Status
+        before = @pending_signaling_sequence
+        begin
+          status = yield
+        rescue ex
+          discard_pending_after(before)
+          raise ex
+        end
+        discard_pending_after(before) unless status.success?
+        status
+      end
+
+      private def discard_pending_after(sequence : UInt64) : Nil
+        @pending_signaling.reject! { |entry| entry.sequence > sequence }
       end
 
       private def selected_audio_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
@@ -579,13 +670,36 @@ module Matter
       end
 
       private def remove_session(session : Session, reason : EndReason) : Nil
+        remove_session_state(session)
+        finish_session_removal(session, reason)
+      end
+
+      private def remove_session_state(session : Session) : Nil
         @sessions.delete(session)
+        @pending_signaling.reject! do |entry|
+          entry.fabric_index == session.fabric_index && entry.peer_node_id == session.peer_node_id &&
+            entry.session_id == session.id
+        end
         @offer_deadlines.delete(session.id)
-        changed
+        increment_version
+      end
+
+      private def finish_session_removal(session : Session, reason : EndReason) : Nil
+        notify_changed(ATTR_CURRENT_SESSIONS)
         begin
           @peer.end_session(session, reason)
         rescue ex
           Log.error(exception: ex) { "WebRTC peer cleanup failed for session #{session.id}" }
+        end
+      end
+
+      private def session_active?(session : Session) : Bool
+        session_active?(session.fabric_index, session.peer_node_id, session.id)
+      end
+
+      private def session_active?(fabric_index : UInt8, peer_node_id : UInt64, id : UInt16) : Bool
+        @sessions.any? do |session|
+          session.fabric_index == fabric_index && session.peer_node_id == peer_node_id && session.id == id
         end
       end
 

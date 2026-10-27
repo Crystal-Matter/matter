@@ -7,6 +7,66 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Interaction Model writes
+
+- Honor `SuppressResponse` on unicast writes while acknowledging reliable
+  requests and replaying the cached acknowledgement on retransmission.
+- Reject non-final write chunks that request response suppression, as required
+  by the Matter 1.6 WriteRequest message encoding.
+
+### Fan Control Step
+
+- Step discrete MultiSpeed fans in speed units, including wrap to speed 1 or
+  SpeedMax when LowestOff is false, as required by Matter 1.6 TC_FAN_3_5.
+
+### Mode Select scenes
+
+- Store and recall `CurrentMode` through Scenes Management extension fields,
+  accepting only advertised modes during scene recall.
+
+### LabelStruct bounds
+
+- Reject oversized Fixed Label and User Label entries supplied at construction.
+  Fail closed on LabelList reads if a caller later mutates either list beyond
+  the Matter 1.6 field limit.
+
+### Thread Network Directory
+
+- Reject a non-null empty PreferredExtendedPanID write with `ConstraintError`,
+  preserving the selected network until it is explicitly cleared with null.
+
+### Groupcast duplicate key status
+
+- Return `AlreadyExists` when JoinGroup supplies a key for a KeySetID already
+  installed on that fabric, matching the Matter 1.6 Groupcast test expectation.
+
+### Diagnostic Logs BDX response ordering
+
+- Send BDX SendInit before the RetrieveLogsResponse. Return Success only after
+  SendAccept, or Denied if negotiation fails, and report Busy while a log
+  transfer is active. Preserve encrypted Invoke replay and wait for the final
+  response chunk before sending BDX data.
+- Exercise the transfer and refusal paths with the official chip-tool in E2E.
+
+### Camera response-safe signaling
+
+- Let a WebRTC Provider media peer queue outbound Requestor signaling while
+  handling a CASE command. The queue dispatches only after the final encrypted
+  InvokeResponse chunk is sent, and is discarded on response failure, chunk
+  rejection, timeout, session removal, or fabric removal. A new Invoke on the
+  same exchange abandons the old response before command dispatch, and host
+  cleanup notifies CurrentSessions after releasing the Provider lock. Scope
+  pending outbound BDX to its live CASE session and originating exchange.
+  A fabric-bound CASE Requestor sink still requires a host media engine; no
+  decoded media is claimed.
+
+### Camera host signaling path
+
+- Add an opt-in Requestor signaling sink that binds Provider session metadata
+  to a host-resolved CASE peer and forwards SDP/ICE/End commands. On outbound
+  failure, tear down only the matching Provider session and notify the host
+  media peer. Real WebRTC media remains host work.
+
 ### Joint Fabric Administrator AddICAC attempts
 
 - Count an authenticated AddICAC invocation as the fabric's sole attempt in an

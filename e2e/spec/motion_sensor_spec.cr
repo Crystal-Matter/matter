@@ -10,7 +10,7 @@ describe "matter_motion_sensor example" do
 
   it "is an occupancy sensor" do
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x0107_i64
-    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Motion Sensor"]
+    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Motion"]
   end
 
   it "reads occupancy and the PIR sensor type" do

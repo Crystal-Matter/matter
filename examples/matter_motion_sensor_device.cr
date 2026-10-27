@@ -39,7 +39,7 @@ module MatterMotionSensor
         hold_time: 60_u16,
         as: :occupancy
       cluster Matter::Cluster::Identify, identify_type: :visible_led
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Motion Sensor")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Motion")]
     end
 
     on(:occupancy, :occupancy_changed) do |_old_value, new_value|

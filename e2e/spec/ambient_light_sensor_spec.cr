@@ -10,7 +10,7 @@ describe "matter_ambient_light_sensor example" do
 
   it "is a light sensor" do
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x0106_i64
-    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Ambient Light Sensor"]
+    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example AmbLight"]
   end
 
   it "reads the measured illuminance (25..1500 lux encoded as 10000*log10(lux)+1)" do
