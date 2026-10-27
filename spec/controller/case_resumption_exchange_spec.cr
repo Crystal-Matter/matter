@@ -158,6 +158,14 @@ describe "controller and device CASE resumption exchange" do
       1000_u32, Bytes.new(32, 0x01_u8))
     controller_backend = Matter::Storage::Memory.new
     controller_store = Matter::Session::Case::ResumptionStore.new(controller_backend)
+    legacy_id = Bytes.new(16, 0x77_u8)
+    legacy_secret = Bytes.new(32, 0x88_u8)
+    controller_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric_id, authority.root_public_key, controller_node, device_node,
+      legacy_id, legacy_secret, [device_node]))
+    channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric_id, authority.root_public_key, device_node, controller_node,
+      legacy_id, legacy_secret, [controller_node]))
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     client = ResumeExchangeClient.new(channel, capture, peer)
     # A dual-stack UDP socket may report the IPv4 peer as IPv4-mapped IPv6.
@@ -165,8 +173,11 @@ describe "controller and device CASE resumption exchange" do
 
     pairing = Matter::Controller::Pairing::CasePairing.new(crypto, controller_store)
     first_session = pairing.pair(client, peer, controller_fabric, device_node)
+    # Legacy records have no persisted CASE role, so both peers take full CASE.
     client.sent_types.should eq([0x30_u8, 0x32_u8])
     first_session.case_session?.should be_true
+    controller_store.find_by_id(legacy_id).should be_nil
+    channel.resumption_store.find_by_id(legacy_id).should be_nil
     previous = controller_store.find_by_peer(fabric_id, authority.root_public_key,
       controller_node, device_node).as(Matter::Session::Case::ResumptionStore::Record)
     channel.resumption_store.find_by_id(previous.resumption_id).should_not be_nil

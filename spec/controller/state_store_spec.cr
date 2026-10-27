@@ -23,6 +23,93 @@ private def sample_fabric : Matter::Controller::FabricInfo
   )
 end
 
+private class FailingControllerYamlFile < Matter::Storage::YamlFile
+  property? fail_credential_delete = false
+
+  def delete(collection : String, id : String) : Nil
+    if @fail_credential_delete && collection == Matter::Session::Case::ResumptionStore::COLLECTION
+      raise Matter::StorageError.new("injected controller credential deletion failure")
+    end
+    super
+  end
+end
+
+private class FailingControllerSqlite < Matter::Storage::Sqlite
+  property? fail_credential_delete = false
+
+  def delete(collection : String, id : String) : Nil
+    if @fail_credential_delete && collection == Matter::Session::Case::ResumptionStore::COLLECTION
+      raise Matter::StorageError.new("injected controller credential deletion failure")
+    end
+    super
+  end
+end
+
+private def seed_controller_credentials(backend : Matter::Storage::Backend,
+                                        fabric : Matter::Controller::FabricInfo) : Bytes
+  id = Bytes.new(16, 0x11_u8)
+  Matter::Session::Case::ResumptionStore.new(backend).save(
+    Matter::Session::Case::ResumptionStore::Record.new(fabric.fabric_id,
+      fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
+      id, Bytes.new(32, 0x22_u8), [0x3333_u64]))
+  Matter::Controller::IcdPeerStore.new(backend).save(
+    Matter::Controller::IcdPeerStore::Record.new(fabric.fabric_id,
+      fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
+      Bytes.new(16, 0x55_u8), 10_u32, 11_u32))
+  id
+end
+
+private def assert_atomic_controller_removal(backend : Matter::Storage::Backend,
+                                             reopen : Proc(Matter::Storage::Backend)) : Nil
+  fabric = sample_fabric
+  store = Matter::Controller::StateStore.new(backend)
+  store.save(Matter::Controller::State.new(fabric: fabric))
+  id = seed_controller_credentials(backend, fabric)
+  state = store.load
+  state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+
+  expect_raises(Matter::StorageError, /injected controller credential deletion/) { store.save(state) }
+  backend.close
+
+  recovered = reopen.call
+  recovered_store = Matter::Controller::StateStore.new(recovered)
+  recovered_store.load.fabric_for(fabric.fabric_id, fabric.root_public_key,
+    fabric.controller_node_id).should eq(fabric)
+  Matter::Session::Case::ResumptionStore.new(recovered).find_by_id(id).should_not be_nil
+  Matter::Controller::IcdPeerStore.new(recovered).find_peer(fabric.fabric_id,
+    fabric.root_public_key, fabric.controller_node_id, 0x3333_u64).should_not be_nil
+
+  retry_state = recovered_store.load
+  retry_state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+  recovered_store.save(retry_state)
+  recovered.close
+
+  completed = reopen.call
+  completed_store = Matter::Controller::StateStore.new(completed)
+  completed_store.load.fabric.should be_nil
+  Matter::Session::Case::ResumptionStore.new(completed).find_by_id(id).should be_nil
+  Matter::Controller::IcdPeerStore.new(completed).find_peer(fabric.fabric_id,
+    fabric.root_public_key, fabric.controller_node_id, 0x3333_u64).should be_nil
+
+  # A pre-fix crash could have committed the removed state before deleting
+  # either secret. Loading that legacy state must repair its orphan records.
+  seed_controller_credentials(completed, fabric)
+  completed.close
+  legacy = reopen.call
+  legacy_store = Matter::Controller::StateStore.new(legacy)
+  legacy_store.load.fabric.should be_nil
+  Matter::Session::Case::ResumptionStore.new(legacy).find_by_id(id).should be_nil
+  Matter::Controller::IcdPeerStore.new(legacy).find_peer(fabric.fabric_id,
+    fabric.root_public_key, fabric.controller_node_id, 0x3333_u64).should be_nil
+
+  legacy_store.save(Matter::Controller::State.new(fabric: fabric))
+  Matter::Session::Case::ResumptionStore.new(legacy).find_by_peer(fabric.fabric_id,
+    fabric.root_public_key, fabric.controller_node_id, 0x3333_u64).should be_nil
+  Matter::Controller::IcdPeerStore.new(legacy).find_peer(fabric.fabric_id,
+    fabric.root_public_key, fabric.controller_node_id, 0x3333_u64).should be_nil
+  legacy.close
+end
+
 describe Matter::Controller::StateStore do
   it "persists replaced IPK epochs without losing the controller's peers" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
@@ -95,6 +182,130 @@ describe Matter::Controller::StateStore do
     store.save(state)
 
     resume_store.find_by_id(id).should be_nil
+  end
+
+  it "rolls back a YAML controller removal if credential cleanup fails and repairs legacy orphans" do
+    with_temp_file do |path|
+      backend = FailingControllerYamlFile.new(path)
+      backend.fail_credential_delete = true
+      assert_atomic_controller_removal(backend,
+        -> { Matter::Storage::YamlFile.new(path).as(Matter::Storage::Backend) })
+    end
+  end
+
+  it "rolls back a SQLite controller removal if credential cleanup fails and repairs legacy orphans" do
+    path = File.join(Dir.tempdir, "matter-controller-#{Random::Secure.hex(6)}.sqlite3")
+    begin
+      backend = FailingControllerSqlite.new(path)
+      backend.fail_credential_delete = true
+      assert_atomic_controller_removal(backend,
+        -> { Matter::Storage::Sqlite.new(path).as(Matter::Storage::Backend) })
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "retains device CASE resumptions when a JFA shares its backend with the controller" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    device_fabric = Matter::Fabric.new(fabric_id: fabric.fabric_id,
+      fabric_index: 1_u8, node_id: fabric.controller_node_id,
+      root_public_key: fabric.root_public_key,
+      operational_cert: fabric.controller_noc,
+      operational_key: Matter::Crypto::Key.generate_key_pair,
+      ipk: fabric.ipk_value)
+    backend.write(Matter::Storage::Collections::FABRICS, "1", device_fabric.to_document)
+    resume_store = Matter::Session::Case::ResumptionStore.new(backend)
+    responder_id = Bytes.new(16, 0x22_u8)
+    initiator_id = Bytes.new(16, 0x33_u8)
+    resume_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+      0x3333_u64, responder_id, Bytes.new(32, 0x22_u8), [0x3333_u64],
+      role: Matter::Session::Case::Role::Responder))
+    Matter::Controller::IcdPeerStore.new(backend).save(
+      Matter::Controller::IcdPeerStore::Record.new(fabric.fabric_id,
+        fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
+        Bytes.new(16, 0x55_u8), 10_u32, 11_u32))
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.load.fabric.should be_nil
+    resume_store.find_by_id(responder_id, Matter::Session::Case::Role::Responder).should_not be_nil
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    resume_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+      0x3333_u64, initiator_id, Bytes.new(32, 0x44_u8), [0x3333_u64],
+      role: Matter::Session::Case::Role::Initiator))
+    resume_store.find_by_id(initiator_id, Matter::Session::Case::Role::Initiator).should_not be_nil
+    resume_store.find_by_id(responder_id, Matter::Session::Case::Role::Responder).should_not be_nil
+    state = store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+    store.save(state)
+
+    resume_store.find_by_id(initiator_id).should be_nil
+    resume_store.find_by_id(responder_id, Matter::Session::Case::Role::Responder).should_not be_nil
+    Matter::Controller::IcdPeerStore.new(backend).find_peer(fabric.fabric_id,
+      fabric.root_public_key, fabric.controller_node_id, 0x3333_u64).should be_nil
+  end
+
+  it "preserves an ambiguous legacy CASE record if a device has the same fabric identity" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    device_fabric = Matter::Fabric.new(fabric_id: fabric.fabric_id,
+      fabric_index: 1_u8, node_id: fabric.controller_node_id,
+      root_public_key: fabric.root_public_key,
+      operational_cert: fabric.controller_noc,
+      operational_key: Matter::Crypto::Key.generate_key_pair,
+      ipk: fabric.ipk_value)
+    backend.write(Matter::Storage::Collections::FABRICS, "1", device_fabric.to_document)
+    id = seed_controller_credentials(backend, fabric)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.load.fabric.should be_nil
+    resume_store = Matter::Session::Case::ResumptionStore.new(backend)
+    resume_store.find_by_id(id).should_not be_nil
+    resume_store.find_by_id(id, Matter::Session::Case::Role::Responder).should be_nil
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    state = store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+    store.save(state)
+    resume_store.find_by_id(id).should_not be_nil
+  end
+
+  it "keeps ambiguous device secrets when a device fabric document is unreadable" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    backend.write(Matter::Storage::Collections::FABRICS, "1",
+      Matter::Storage::Document{"fabric_id" => fabric.fabric_id})
+    store = Matter::Controller::StateStore.new(backend)
+    resume_store = Matter::Session::Case::ResumptionStore.new(backend)
+    id = Bytes.new(16, 0x44_u8)
+    resume_store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+      0x3333_u64, id, Bytes.new(32, 0x55_u8), [0x3333_u64],
+      role: Matter::Session::Case::Role::Responder))
+
+    store.load.fabric.should be_nil
+    resume_store.find_by_id(id, Matter::Session::Case::Role::Responder).should_not be_nil
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    resume_store.find_by_id(id, Matter::Session::Case::Role::Responder).should_not be_nil
+  end
+
+  it "continues controller state operations past malformed credential documents" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    store = Matter::Controller::StateStore.new(backend)
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    malformed = Matter::Storage::Document{"invalid" => true}
+    backend.write(Matter::Session::Case::ResumptionStore::COLLECTION, "broken", malformed)
+    backend.write(Matter::Controller::IcdPeerStore::COLLECTION, "broken", malformed)
+
+    store.load.fabric.should_not be_nil
+    state = store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+    store.save(state)
+    store.load.fabric.should be_nil
+    backend.read(Matter::Session::Case::ResumptionStore::COLLECTION, "broken").should_not be_nil
+    backend.read(Matter::Controller::IcdPeerStore::COLLECTION, "broken").should_not be_nil
   end
 
   it "matches the device's operational discovery fabric identifier" do

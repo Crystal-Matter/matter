@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/protocol/secure_channel"
 require "../../src/matter/session/case/resumption_store"
+require "../../src/matter/controller/state_store"
 
 private CASE_RESUME_PEER            = Socket::IPAddress.new("127.0.0.1", 5540)
 private CASE_RESUME_OTHER_PEER      = Socket::IPAddress.new("127.0.0.2", 5540)
@@ -78,7 +79,8 @@ describe "device CASE resumption" do
     secret = Bytes.new(32, 0x22_u8)
     fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fixture.fabric.fabric_id, fixture.fabric.root_public_key, fixture.fabric.node_id,
-      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE]))
+      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE],
+      role: Matter::Session::Case::Role::Responder))
 
     fixture.channel.handle(resumed_sigma1(fixture.fabric, id, secret), CASE_RESUME_PEER).should be_true
     response = case_resume_response(fixture)
@@ -93,7 +95,8 @@ describe "device CASE resumption" do
     secret = Bytes.new(32, 0x22_u8)
     fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fixture.fabric.fabric_id, fixture.fabric.root_public_key, fixture.fabric.node_id,
-      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE]))
+      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE],
+      role: Matter::Session::Case::Role::Responder))
 
     fixture.channel.handle(resumed_sigma1(fixture.fabric, id, secret), CASE_RESUME_PEER)
     response = case_resume_response(fixture)
@@ -130,7 +133,8 @@ describe "device CASE resumption" do
     secret = Bytes.new(32, 0x22_u8)
     fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fixture.fabric.fabric_id, fixture.fabric.root_public_key, fixture.fabric.node_id,
-      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE]))
+      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE],
+      role: Matter::Session::Case::Role::Responder))
 
     fixture.channel.handle(resumed_sigma1(fixture.fabric, id, secret, bad_mic: true), CASE_RESUME_PEER)
     case_resume_response(fixture).payload_header.message_type
@@ -145,7 +149,8 @@ describe "device CASE resumption" do
     fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fixture.fabric.fabric_id, Bytes.new(65, 0x99_u8), fixture.fabric.node_id,
       CASE_RESUME_CONTROLLER_NODE + 1_u64, id, secret,
-      [CASE_RESUME_CONTROLLER_NODE + 1_u64]))
+      [CASE_RESUME_CONTROLLER_NODE + 1_u64],
+      role: Matter::Session::Case::Role::Responder))
 
     fixture.channel.handle(resumed_sigma1(fixture.fabric, id, secret), CASE_RESUME_PEER)
     case_resume_response(fixture).payload_header.message_type
@@ -159,9 +164,34 @@ describe "device CASE resumption" do
     fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fixture.fabric.fabric_id, fixture.fabric.root_public_key, fixture.fabric.node_id,
       CASE_RESUME_CONTROLLER_NODE, id, Bytes.new(32, 0x22_u8),
-      [CASE_RESUME_CONTROLLER_NODE]))
+      [CASE_RESUME_CONTROLLER_NODE], role: Matter::Session::Case::Role::Responder))
     fixture.table.remove_fabric(fixture.fabric.fabric_index).should be_true
     fixture.channel.resumption_store.find_by_id(id).should be_nil
+  end
+
+  it "preserves an ambiguous legacy record when device removal leaves the same controller identity" do
+    fixture = case_resume_fixture
+    fabric = fixture.fabric
+    controller_fabric = Matter::Controller::FabricInfo.new(fabric.fabric_id,
+      fabric.node_id, fabric.ipk, Bytes[0x15_u8], fabric.root_public_key,
+      fabric.operational_cert, Bytes.new(32, 0x11_u8))
+    Matter::Controller::StateStore.new(fixture.table.backend).save(
+      Matter::Controller::State.new(fabric: controller_fabric))
+    legacy_id = Bytes.new(16, 0x41_u8)
+    responder_id = Bytes.new(16, 0x42_u8)
+    store = fixture.channel.resumption_store
+    store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.node_id,
+      CASE_RESUME_CONTROLLER_NODE, legacy_id, Bytes.new(32, 0x33_u8),
+      [CASE_RESUME_CONTROLLER_NODE]))
+    store.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.node_id,
+      CASE_RESUME_CONTROLLER_NODE + 1_u64, responder_id, Bytes.new(32, 0x34_u8),
+      [CASE_RESUME_CONTROLLER_NODE + 1_u64], role: Matter::Session::Case::Role::Responder))
+
+    fixture.table.remove_fabric(fabric.fabric_index).should be_true
+    store.find_by_id(legacy_id).should_not be_nil
+    store.find_by_id(responder_id).should be_nil
   end
 
   it "bounds pending resumed handshakes across peers" do
@@ -170,7 +200,8 @@ describe "device CASE resumption" do
     secret = Bytes.new(32, 0x22_u8)
     fixture.channel.resumption_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fixture.fabric.fabric_id, fixture.fabric.root_public_key, fixture.fabric.node_id,
-      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE]))
+      CASE_RESUME_CONTROLLER_NODE, id, secret, [CASE_RESUME_CONTROLLER_NODE],
+      role: Matter::Session::Case::Role::Responder))
     sigma1 = resumed_sigma1(fixture.fabric, id, secret)
 
     (Matter::Protocol::SecureChannel::MAX_HANDSHAKES_IN_FLIGHT + 1).times do |index|

@@ -482,6 +482,18 @@ Controller::GroupInvoker       fabric-scoped one-way group Invoke with durable c
 Controller::StateStore         the fabric, its certificates and known nodes, over Storage::Backend
 ```
 
+`StateStore` removes a controller fabric and its CASE resumption and ICD
+Check-In records in one backend transaction. On load it removes credentials
+orphaned by older, partially completed removals. A Joint Fabric Administrator
+can share a backend between its controller and device roles; device CASE
+resumptions are preserved while the device FabricTable still owns their full
+fabric and local Node ID. New CASE records store their initiator or responder
+role, which also separates lookups when both roles use the same fabric and
+local Node ID. Older CASE records do not identify their role, so either role
+falls back to full CASE. A legacy record matching both roles remains until
+neither role owns that identity. Undecodable credential documents are retained
+and logged so a damaged record cannot block controller state recovery.
+
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.
 
