@@ -45,6 +45,17 @@ module Matter
 
         def initialize(@candidate_node_id : UInt64, @stage : Stage = Stage::Ready)
         end
+
+        # Keep the live journal at its last saved state if storage fails. The
+        # migration object and workflow both retain this same Journal instance.
+        def persist_change!(save : Proc(Journal, Nil), &) : Nil
+          updated = self.class.from_document(to_document)
+          yield updated
+          save.call(updated)
+          @stage = updated.stage
+          @active_rotation_node_id = updated.active_rotation_node_id
+          @rotated_administrator_node_ids = updated.rotated_administrator_node_ids.dup
+        end
       end
 
       # A host-supplied witness for an acknowledgement lost after the old
@@ -797,15 +808,17 @@ module Matter
               if journal.active_rotation_node_id
                 raise Matter::CommissioningError.new("Administrator rotation needs reconciliation before retry")
               end
-              journal.active_rotation_node_id = node_id
-              save_rotation_journal.call(journal)
+              journal.persist_change!(save_rotation_journal) do |pending|
+                pending.active_rotation_node_id = node_id
+              end
             end
             administrator.transition!
             @persist.call
             if journal = @rotation_journal
-              journal.rotated_administrator_node_ids << node_id
-              journal.active_rotation_node_id = nil
-              save_rotation_journal.call(journal)
+              journal.persist_change!(save_rotation_journal) do |completed|
+                completed.rotated_administrator_node_ids << node_id
+                completed.active_rotation_node_id = nil
+              end
             end
           end
         end
@@ -975,8 +988,9 @@ module Matter
                          else
                            raise Matter::CommissioningError.new("Old Anchor Datastore cannot reconcile TransferAnchorRequest")
                          end
-          journal.stage = stable_stage
-          save.call(journal)
+          journal.persist_change!(save) do |updated|
+            updated.stage = stable_stage
+          end
           journal
         end
 
@@ -1005,12 +1019,8 @@ module Matter
                  old_anchor_node_id != DataType::NodeId::UNSPECIFIED && new_anchor_node_id != DataType::NodeId::UNSPECIFIED
             raise Matter::AuthenticationError.new("Old Anchor completion witness does not match the pending transfer")
           end
-          journal.stage = Stage::Transferred
-          begin
-            save.call(journal)
-          rescue ex
-            journal.stage = Stage::Completing
-            raise ex
+          journal.persist_change!(save) do |updated|
+            updated.stage = Stage::Transferred
           end
           journal
         end
@@ -1021,16 +1031,18 @@ module Matter
           unless @journal.stage.rotating? && @journal.active_rotation_node_id == node_id
             raise Matter::ConfigurationError.new("Invalid Administrator rotation reconciliation")
           end
-          if completed && !@journal.rotated_administrator_node_ids.includes?(node_id)
-            @journal.rotated_administrator_node_ids << node_id
+          @journal.persist_change!(@save) do |updated|
+            if completed && !updated.rotated_administrator_node_ids.includes?(node_id)
+              updated.rotated_administrator_node_ids << node_id
+            end
+            updated.active_rotation_node_id = nil
           end
-          @journal.active_rotation_node_id = nil
-          @save.call(@journal)
         end
 
         private def advance(stage : Stage) : Nil
-          @journal.stage = stage
-          @save.call(@journal)
+          @journal.persist_change!(@save) do |updated|
+            updated.stage = stage
+          end
         end
 
         private def in_progress?(stage : Stage) : Bool

@@ -500,6 +500,50 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     port.calls.size.should eq(2)
   end
 
+  it "keeps a failed post-request journal write uncertain before datastore copy" do
+    store = committed_anchor_store
+    port = FakeAnchorPort.new
+    migration = FakeAnchorMigration.new
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64)
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    failed = false
+    save = ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      if state.stage.requested? && !failed
+        failed = true
+        raise Matter::StorageError.new("Journal flush failed")
+      end
+      durable = Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store, port,
+      migration, -> { true }, save, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) { workflow.run }
+    durable.stage.should eq(TransferStage::Requesting)
+    expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
+    port.calls.should eq(["request"])
+    migration.calls.should be_empty
+  end
+
+  it "retains an uncertain Administrator rotation if reconciliation cannot be saved" do
+    store = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64,
+      TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x300_u64
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(state : Matter::Controller::AnchorTransfer::Journal) {
+        state.rotated_administrator_node_ids << 0x400_u64
+        raise Matter::StorageError.new("Journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) do
+      workflow.reconcile_rotation!(0x300_u64, completed: true)
+    end
+    journal.active_rotation_node_id.should eq(0x300_u64)
+    journal.rotated_administrator_node_ids.should be_empty
+  end
+
   it "blocks request when an individual entry is pending or consent is absent" do
     store = committed_anchor_store
     pending = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(

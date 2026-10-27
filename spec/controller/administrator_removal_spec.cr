@@ -90,6 +90,101 @@ private class FakeAdministratorRemovalPort < Matter::Controller::AdministratorRe
 end
 
 describe Matter::Controller::AdministratorRemoval::Workflow do
+  it "keeps a failed post-RemoveFabric journal write uncertain before any next command" do
+    datastore = removal_datastore
+    port = FakeAdministratorRemovalPort.new
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      administrator_cat_version: 2_u16)
+    durable = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
+    failed = false
+    save = ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+      if state.stage.fabric_removed? && !failed
+        failed = true
+        raise Matter::StorageError.new("Journal flush failed")
+      end
+      durable = Matter::Controller::AdministratorRemoval::Journal.from_document(state.to_document)
+      nil
+    }
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true }, save, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) { workflow.run }
+    durable.stage.should eq(RemovalStage::RemovingFabric)
+    expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
+    port.events.should eq(["RemoveFabric"])
+  end
+
+  it "does not publish a preflight snapshot when the first journal write fails" do
+    datastore = removal_datastore
+    port = FakeAdministratorRemovalPort.new
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      administrator_cat_version: 2_u16)
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true },
+      ->(_state : Matter::Controller::AdministratorRemoval::Journal) {
+        raise Matter::StorageError.new("Journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) { workflow.run }
+    workflow.journal.stage.should eq(RemovalStage::Ready)
+    workflow.journal.prior_administrator_cat_version.should be_nil
+    workflow.journal.outgoing_admin_entry.should be_nil
+    workflow.journal.remaining_admin_entries.should be_nil
+    port.events.should be_empty
+  end
+
+  it "keeps participant rotation uncertain when its completion write fails" do
+    datastore = removal_datastore
+    remaining_entries = removal_remaining_admin_entries(datastore)
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    port = FakeAdministratorRemovalPort.new
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::AnchorRotated, remaining_admin_entries: remaining_entries)
+    save = ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+      if state.stage.anchor_rotated? && state.rotated_nodes.includes?(0x200_u64)
+        raise Matter::StorageError.new("Journal flush failed")
+      end
+      nil
+    }
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true }, save, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) { workflow.run }
+    workflow.journal.stage.should eq(RemovalStage::RotatingParticipant)
+    workflow.journal.active_node_id.should eq(0x200_u64)
+    workflow.journal.rotated_nodes.should be_empty
+    expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
+    port.events.should eq(["Participant 200 UpdateNOC"])
+  end
+
+  it "does not publish a failed reconciliation of participant rotation" do
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
+      root_public_key: Bytes[1], outgoing_admin_entry: Bytes[2],
+      remaining_admin_entries: [Bytes[3]], anchor_pre_rotation_noc: Bytes[4])
+    save = ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+      state.rotated_nodes << 0x400_u64
+      state.root_public_key.as(Bytes)[0] = 9_u8
+      state.outgoing_admin_entry.as(Bytes)[0] = 9_u8
+      state.remaining_admin_entries.as(Array(Bytes)).first[0] = 9_u8
+      state.anchor_pre_rotation_noc.as(Bytes)[0] = 9_u8
+      raise Matter::StorageError.new("Journal flush failed")
+    }
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_journal!(journal,
+        RemovalStage::AnchorRotated, save, rotated_node_id: 0x200_u64,
+        participant_completed: true)
+    end
+    journal.stage.should eq(RemovalStage::RotatingParticipant)
+    journal.active_node_id.should eq(0x200_u64)
+    journal.rotated_nodes.should be_empty
+    journal.root_public_key.should eq(Bytes[1])
+    journal.outgoing_admin_entry.should eq(Bytes[2])
+    journal.remaining_admin_entries.should eq([Bytes[3]])
+    journal.anchor_pre_rotation_noc.should eq(Bytes[4])
+  end
+
   it "rewinds an unstarted Anchor NOC rotation only with the journaled committed Datastore" do
     datastore = removal_datastore
     datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
