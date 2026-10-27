@@ -1,6 +1,7 @@
 require "../spec_helper"
 
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/access_control"
 require "../../src/matter/protocol/message_handler"
 
 private PEER        = Socket::IPAddress.new("127.0.0.1", 5540)
@@ -52,6 +53,7 @@ private def event_subscription_fixture(
   handler.setup_cluster_notifications
 
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
   handler.sessions[session.session_id] = session
 
   base_event_number = handler.node.event_journal.latest_event_number
@@ -134,6 +136,41 @@ private def lock_event_path(urgent : Bool) : Matter::InteractionModel::EventPath
 end
 
 describe "Subscription event reporting" do
+  it "commits a mixed authorized/denied event batch only after its last chunk" do
+    fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new])
+    acl = Matter::Cluster::AccessControl.new(endpoint(0))
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      [fixture.session.peer_node_id.as(Matter::DataType::NodeId).id], nil, 1_u8)
+    fixture.handler.node.clusters[{0_u16, Matter::Cluster::AccessControl::CLUSTER_ID}] = acl
+
+    expected = [] of UInt64
+    40.times do |index|
+      record = fixture.handler.node.event_journal.record(
+        ENDPOINT, Matter::Cluster::DoorLock::CLUSTER_ID, LOCK_EVENT, :critical,
+        TLV::Any.new("event payload" * 4, nil))
+      expected << record.event_number
+      next unless index == 19
+      fixture.handler.node.event_journal.record(0_u16,
+        Matter::Cluster::AccessControl::CLUSTER_ID,
+        Matter::Cluster::AccessControl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED,
+        :info, TLV::Any.new("denied"), fabric_index: 1_u8)
+    end
+    denied_last = fixture.handler.node.event_journal.record(0_u16,
+      Matter::Cluster::AccessControl::CLUSTER_ID,
+      Matter::Cluster::AccessControl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED,
+      :info, TLV::Any.new("denied last"), fabric_index: 1_u8)
+
+    fixture.handler.subscriptions.notify_events
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number)
+    acknowledge_event_reports(fixture)
+    reported_events(fixture).should eq(expected)
+    fixture.transport.sent_packets.size.should be > 1
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(denied_last.event_number)
+    fixture.handler.close
+  end
+
   it "drains a journal batch across bounded subscription updates" do
     fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new])
     count = 40
@@ -328,6 +365,7 @@ describe Matter::Protocol::ActiveSubscription do
     ).to_record.to_document
     legacy.delete("event_paths")
     legacy.delete("last_event_number")
+    legacy.delete("fabric_filtered")
 
     restored = Matter::Protocol::ActiveSubscription.from_record(
       Matter::Protocol::ActiveSubscription::SubscriptionRecord.from_document(legacy), session)
@@ -335,6 +373,7 @@ describe Matter::Protocol::ActiveSubscription do
     restored.event_paths.should be_empty
     restored.last_event_number.should eq(0_u64)
     restored.events?.should be_false
+    restored.fabric_filtered?.should be_true
     restored.attribute_paths.size.should eq(1)
   end
 end

@@ -17,6 +17,27 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the production class to verify atomic list writes, preset activation, events,
   generated handles, rollback, and restart persistence.
 
+### Subscription access control
+
+- Recheck attribute and event privileges for every active subscription update,
+  including wildcard paths and ACL changes after the initial report. Events
+  suppressed while access is denied are not replayed by a later privilege grant.
+  Preserve the SubscribeRequest fabric-filter choice through updates and
+  subscription restoration.
+- Recheck each queued ReportData chunk before sending it. If access is revoked
+  between acknowledgements, abort the read or subscription transaction with
+  UnsupportedAccess instead of releasing previously encoded attribute or event data.
+- Persist the next event number before publishing each journal record. Restored
+  subscriptions from older stores advance the counter past their saved cursor,
+  so events remain visible after a process restart without reusing numbers.
+
+### Joint Fabric completion durability
+
+- Commit a joining Administrator's cross-signed ICAC, AdministratorFabricIndex,
+  accepted Terms and Conditions, and NOC journal clear in one storage
+  transaction. Failed writes and file flushes leave the live fail-safe
+  provisional for retry or rollback.
+
 ### Fabric reuse isolation
 
 - Clean up CASE sessions, subscriptions, access control, retained events, and

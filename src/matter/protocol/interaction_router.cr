@@ -303,7 +303,8 @@ module Matter
           session: session,
           remaining_chunks: remaining_chunks,
           event_paths: event_requests,
-          last_event_number: last_event_number
+          last_event_number: last_event_number,
+          fabric_filtered: request.is_fabric_filtered?
         ))
         Log.debug { "Waiting for StatusResponse on exchange #{exchange_id} (#{remaining_chunks.size} chunks remaining)" }
       rescue ex

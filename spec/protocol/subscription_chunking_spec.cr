@@ -66,7 +66,7 @@ private def pending_subscription_fixture : ChunkFixture
       )],
       peer: PEER,
       session: session,
-      remaining_chunks: [Bytes[0x18]]
+      remaining_chunks: [Matter::InteractionModel::ReportDataMessage.new(subscription_id: 42_u32).to_slice]
     )
   )
 
