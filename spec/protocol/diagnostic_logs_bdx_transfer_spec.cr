@@ -85,7 +85,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
     second = Matter::Spec::ProtocolMessages.case_session(182_u16)
     handler.sessions[second.session_id] = second
     handler.queue_bdx_transfer(second.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[1]).should be_true
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[1], 18_u16).should be_true
 
     unsupported_path = Matter::InteractionModel::CommandPath.new(0_u16,
       Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 99_u32)
@@ -112,7 +112,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
     second = Matter::Spec::ProtocolMessages.case_session(182_u16)
     handler.sessions[second.session_id] = second
     handler.queue_bdx_transfer(second.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[1]).should be_true
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[1], 18_u16).should be_true
 
     unsupported_path = Matter::InteractionModel::CommandPath.new(0_u16,
       Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 99_u32)
@@ -203,8 +203,11 @@ describe "DiagnosticLogs outbound BDX transfer" do
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
-      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content,
-        cluster.request_exchange_id)
+      if exchange_id = cluster.request_exchange_id
+        handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+      else
+        false
+      end
     end
     handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
 
@@ -243,8 +246,11 @@ describe "DiagnosticLogs outbound BDX transfer" do
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
-      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content,
-        cluster.request_exchange_id)
+      if exchange_id = cluster.request_exchange_id
+        handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+      else
+        false
+      end
     end
     handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
 
@@ -298,7 +304,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler, transport, session = diagnostic_bdx_fixture
     contents = Bytes.new(1500) { |index| (index % 251).to_u8 }
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "support-log".to_slice, contents).should be_true
+      DIAGNOSTIC_PEER, "support-log".to_slice, contents, 17_u16).should be_true
     handler.bdx_initiator.start_pending
 
     init_message = diagnostic_bdx_outgoing(transport.sent_packets.last[0], session)
@@ -345,7 +351,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
   it "piggybacks the ReceiverDrive BlockQuery acknowledgement on its Block" do
     handler, transport, session = diagnostic_bdx_fixture
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "support-log".to_slice, Bytes.new(1200, 0x41_u8)).should be_true
+      DIAGNOSTIC_PEER, "support-log".to_slice, Bytes.new(1200, 0x41_u8), 17_u16).should be_true
     handler.bdx_initiator.start_pending
     init = diagnostic_bdx_outgoing(transport.sent_packets.last[0], session)
     exchange = init.payload_header.exchange_id
@@ -374,11 +380,11 @@ describe "DiagnosticLogs outbound BDX transfer" do
   it "rejects a queue request for another fabric or peer and cleans up on session removal" do
     handler, _transport, session = diagnostic_bdx_fixture
     handler.queue_bdx_transfer(session.session_id, 2_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1]).should be_false
+      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1], 17_u16).should be_false
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x9999_u64,
-      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1]).should be_false
+      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1], 17_u16).should be_false
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1]).should be_true
+      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1], 17_u16).should be_true
     handler.delete_session(session.session_id).should be_true
     handler.bdx_initiator.start_pending
     handler.close
@@ -387,7 +393,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
   it "aborts malformed transfer negotiation with a BDX StatusReport" do
     handler, transport, session = diagnostic_bdx_fixture
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1]).should be_true
+      DIAGNOSTIC_PEER, "log".to_slice, Bytes[1], 17_u16).should be_true
     handler.bdx_initiator.start_pending
     init = diagnostic_bdx_outgoing(transport.sent_packets.last[0], session)
     exchange = init.payload_header.exchange_id

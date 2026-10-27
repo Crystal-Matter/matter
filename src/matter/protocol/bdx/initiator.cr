@@ -17,7 +17,7 @@ module Matter
 
         private record Key, session_id : UInt16, exchange_id : UInt16
         private record Pending, session : Session::SecureContext, peer : Socket::IPAddress,
-          designator : Bytes, content : Bytes, origin_exchange_id : UInt16?
+          designator : Bytes, content : Bytes, origin_exchange_id : UInt16
 
         private class Active
           getter session : Session::SecureContext
@@ -43,7 +43,7 @@ module Matter
 
         def queue(session : Session::SecureContext, peer : Socket::IPAddress,
                   designator : Bytes, content : Bytes,
-                  origin_exchange_id : UInt16? = nil) : Bool
+                  origin_exchange_id : UInt16) : Bool
           return false unless session.case_session? && session.fabric_index && session.peer_node_id
           return false if designator.empty? || designator.size > UInt16::MAX ||
                           content.empty? || content.size > MAX_BYTES

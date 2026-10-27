@@ -356,7 +356,7 @@ module Matter
       def queue_bdx_transfer(session_id : UInt16, fabric_index : UInt8,
                              peer_node_id : UInt64, peer : Socket::IPAddress,
                              designator : Bytes, content : Bytes,
-                             origin_exchange_id : UInt16? = nil) : Bool
+                             origin_exchange_id : UInt16) : Bool
         @registry.synchronize do
           session = @registry.sessions[session_id]?
           return false unless session && session.case_session? &&

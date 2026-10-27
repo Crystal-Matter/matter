@@ -68,7 +68,7 @@ end
 
 private def camera_provider_session : Provider::Session
   Provider::Session.new(7_u16, 0x1234_u64, 2_u16,
-    Provider::StreamUsage::LiveView, [1_u16], 1_u8)
+    Provider::StreamUsage::LiveView, [1_u16], nil, 1_u8)
 end
 
 describe Matter::Camera::RequestorSignalingSink do
