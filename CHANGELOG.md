@@ -12,6 +12,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Keep Anchor transfer and Administrator removal journals at their last saved
   stage when a storage write fails, so retries require reconciliation before
   the next protocol command.
+- Preserve each participant follow-up stage and pending cross-signed ICAC when
+  its journal save fails, including during reconciliation.
 
 ### Controller read response validation
 
