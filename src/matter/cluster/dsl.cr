@@ -107,8 +107,9 @@ module Matter
     #   in which case it is left out of the tables. Before a handler runs,
     #   `Base#invoke_command` has set `request_session_id`,
     #   `request_is_case_session?` and `request_fabric_index`.
-    # * `event id, :name, priority:, requires:` — `EVENT_NAME` and the
-    #   `EventMetadata`.
+    # * `event id, :name, priority:, requires:, present_if:` — `EVENT_NAME`
+    #   and the `EventMetadata`. `present_if: :predicate` calls
+    #   `predicate(event_id)` to gate event metadata and emission.
     # * `before_write :name do |value| ... end` — runs on an interaction-model
     #   write after decoding and validation; returning an
     #   `InteractionModel::Status` rejects the write, returning a value of the
@@ -354,13 +355,13 @@ module Matter
         {% end %}
       end
 
-      macro event(id, name, priority = :info, requires = nil, access = :view, payload = nil)
+      macro event(id, name, priority = :info, requires = nil, access = :view, payload = nil, present_if = nil)
         {% unless ::Matter::Cluster::DSL::EVENT_PRIORITIES.includes?(priority) %}
           {% raise "#{@type}: event :#{name.id} priority: must be one of #{::Matter::Cluster::DSL::EVENT_PRIORITIES.join(", ").id}" %}
         {% end %}
         {% raise "#{@type}: event :#{name.id} declared twice" if @type.constant("EVENT_DECLS").any? { |event| event[:name] == name } %}
         {% requires = requires.resolve if requires.is_a?(Path) %}
-        {% @type.constant("EVENT_DECLS") << {id: id, name: name, priority: priority, requires: requires, access: access, payload: payload} %}
+        {% @type.constant("EVENT_DECLS") << {id: id, name: name, priority: priority, requires: requires, present_if: present_if, access: access, payload: payload} %}
 
         EVENT_{{ name.id.upcase }} = {{ (id.is_a?(NumberLiteral) && id.kind == :i32) ? "#{id}_u32".id : "(#{id}).to_u32".id }}
       end
@@ -584,9 +585,16 @@ module Matter
           {% end %}
 
           {% for decl in EVENT_DECLS %}
-            {% if decl[:requires] %}
+            {% if decl[:requires] || decl[:present_if] %}
               private def dsl_event_{{ decl[:name].id }}_supported? : Bool
-                dsl_feature_condition({{ decl[:requires] }})
+                {% if decl[:requires] %}
+                  return false unless dsl_feature_condition({{ decl[:requires] }})
+                {% end %}
+                {% if decl[:present_if] %}
+                  {{ decl[:present_if].id }}(EVENT_{{ decl[:name].id.upcase }})
+                {% else %}
+                  true
+                {% end %}
               end
             {% end %}
           {% end %}
@@ -628,7 +636,7 @@ module Matter
               case event_id
               {% for decl in EVENT_DECLS %}
                 when EVENT_{{ decl[:name].id.upcase }}
-                  {% if decl[:requires] %}dsl_event_{{ decl[:name].id }}_supported?{% else %}true{% end %}
+                  {% if decl[:requires] || decl[:present_if] %}dsl_event_{{ decl[:name].id }}_supported?{% else %}true{% end %}
               {% end %}
               else
                 false
@@ -715,7 +723,7 @@ module Matter
           end
 
           def events : Array(::Matter::Cluster::EventMetadata)
-            {% if EVENT_DECLS.any? { |decl| decl[:requires] } %}
+            {% if EVENT_DECLS.any? { |decl| decl[:requires] || decl[:present_if] } %}
               EVENTS.select { |event| dsl_event_supported?(event.id.id) }
             {% else %}
               EVENTS

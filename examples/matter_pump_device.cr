@@ -1,7 +1,7 @@
 require "./support/console"
 require "./support/main"
 
-# Synthetic constant-speed pump. A hardware host uses on_apply_mode to reject
+# Synthetic speed and flow pumps. A hardware host uses on_apply_mode to reject
 # requests it cannot fulfill, then reports the observed effective mode.
 module MatterPump
   alias Pump = Matter::Cluster::PumpConfigurationControl
@@ -25,8 +25,19 @@ module MatterPump
         max_const_speed: 3_600_u16, as: :pump
     end
 
+    endpoint 2, device_type: Matter::DeviceType::PUMP do
+      cluster Matter::Cluster::Identify, identify_type: :visible_led
+      cluster Matter::Cluster::OnOff
+      cluster Pump, feature_map: Pump::Feature::ConstantFlow | Pump::Feature::Automatic |
+                                 Pump::Feature::LocalOperation, max_flow: 500_u16,
+        min_const_flow: 20_u16, max_const_flow: 500_u16, as: :flow_pump
+    end
+
     protected def before_start : Nil
       pump.on_apply_mode do |_operation, _control|
+        Matter::InteractionModel::Status.success
+      end
+      flow_pump.on_apply_mode do |_operation, _control|
         Matter::InteractionModel::Status.success
       end
       super

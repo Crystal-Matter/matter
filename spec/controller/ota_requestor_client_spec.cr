@@ -198,6 +198,22 @@ describe "OTA Requestor controller download" do
     bdx.designators.size.should eq(1)
   end
 
+  it "does not download a consent-gated offer without an application consent callback" do
+    offer = OtaProviderSpec::QueryImageResponse.available(
+      "bdx://0000000000001234/image", 11_u32, "11.0", Bytes[1, 2, 3, 4, 5, 6, 7, 8])
+    offer.user_consent_needed = true
+    im = OtaImFake.new(offer)
+    bdx = OtaBdxFake.new(ota_controller_image)
+    cluster = OtaRequestorSpec.new
+    client = OtaRequestorClientSpec.new(im, bdx, cluster)
+
+    client.query_and_download(ota_controller_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 0_u16,
+      0xFFF1_u16, 0x8001_u16, 10_u32, IO::Memory.new).should be_nil
+    bdx.designators.should be_empty
+    cluster.update_state.should eq(OtaRequestorSpec::UpdateState::DelayedOnUserConsent)
+  end
+
   it "returns to idle when the application consent callback fails" do
     offer = OtaProviderSpec::QueryImageResponse.available(
       "bdx://0000000000001234/image", 11_u32, "11.0", Bytes[1, 2, 3, 4, 5, 6, 7, 8])

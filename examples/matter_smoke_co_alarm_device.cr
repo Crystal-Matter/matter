@@ -31,6 +31,17 @@ module MatterSmokeCOAlarm
         endpoint_list: [1_u16]
     end
 
+    endpoint 3, device_type: Matter::DeviceType::POWER_SOURCE do
+      cluster Power, feature_map: Power::Feature::Battery | Power::Feature::Rechargeable | Power::Feature::Replaceable,
+        description: "Synthetic backup battery", endpoint_list: [1_u16],
+        bat_charge_level: Power::BatChargeLevel::Ok,
+        bat_replacement_needed: false,
+        bat_replaceability: Power::BatReplaceability::UserReplaceable,
+        bat_replacement_description: "Synthetic rechargeable pack", bat_quantity: 1_u8,
+        bat_charge_state: Power::BatChargeState::IsAtFullCharge,
+        bat_functional_while_charging: true
+    end
+
     protected def before_start : Nil
       alarm = node.get_cluster!(1_u16, Alarm)
       alarm.on_self_test do

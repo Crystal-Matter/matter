@@ -36,11 +36,43 @@ private def diagnostic_bdx_incoming(session : Matter::Session::SecureContext,
 end
 
 describe "DiagnosticLogs outbound BDX transfer" do
+  it "returns the full 1024-byte LogContent limit in one encrypted InvokeResponse" do
+    handler, transport, session = diagnostic_bdx_fixture
+    session.peer_subject_ids = [0x2222_u64]
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    cluster.log("L" * 1100)
+    handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
+
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+      Matter::Cluster::DiagnosticLogs::TransferProtocol::ResponsePayload)
+    path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID,
+      Matter::Cluster::DiagnosticLogs::CMD_RETRIEVE_LOGS_REQUEST)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(path, command.to_tlv(nil)),
+    ])
+    inbound = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 16_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+
+    transport.sent_packets.size.should eq(1)
+    outbound = diagnostic_bdx_outgoing(transport.sent_packets.first[0], session)
+    outbound.payload.size.should be <= Matter::Protocol::IMHandler::MAX_REPORT_PAYLOAD_SIZE
+    response = Matter::InteractionModel::InvokeResponseMessage.from_slice(outbound.payload)
+    data = response.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+    payload = Matter::Cluster::DiagnosticLogs::RetrieveLogsResponse.from_tlv(data.command_fields.as(TLV::Any))
+    payload.status.should eq(Matter::Cluster::DiagnosticLogs::LogsStatus::Success)
+    payload.log_content.size.should eq(Matter::Cluster::DiagnosticLogs::MAX_INLINE_LOG_BYTES)
+    handler.close
+  end
+
   it "sends InvokeResponse before SendInit for a real encrypted RetrieveLogsRequest" do
     handler, transport, session = diagnostic_bdx_fixture
     session.peer_subject_ids = [0x2222_u64]
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
-    cluster.log("B" * 900)
+    cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
       handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content)
     end
@@ -79,7 +111,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler, transport, session = diagnostic_bdx_fixture
     session.peer_subject_ids = [0x2222_u64]
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
-    cluster.log("B" * 900)
+    cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
       handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content)
     end

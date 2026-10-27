@@ -2,7 +2,7 @@ require "./cluster"
 
 module Matter
   module Cluster
-    # Matter 1.6 Pump Configuration and Control (0x0200), Constant Speed profile.
+    # Matter 1.6 Pump Configuration and Control (0x0200).
     # A host callback must accept remote mode requests; only the host reports
     # effective operation and measured telemetry after changing the pump.
     class PumpConfigurationControl < Base
@@ -32,6 +32,26 @@ module Matter
         Local   = 3
       end
 
+      enum Fault : UInt32
+        SupplyVoltageLow          = 0x00
+        SupplyVoltageHigh         = 0x01
+        PowerMissingPhase         = 0x02
+        SystemPressureLow         = 0x03
+        SystemPressureHigh        = 0x04
+        DryRunning                = 0x05
+        MotorTemperatureHigh      = 0x06
+        PumpMotorFatalFailure     = 0x07
+        ElectronicTemperatureHigh = 0x08
+        PumpBlocked               = 0x09
+        SensorFailure             = 0x0A
+        ElectronicNonFatalFailure = 0x0B
+        ElectronicFatalFailure    = 0x0C
+        GeneralFault              = 0x0D
+        Leakage                   = 0x0E
+        AirDetection              = 0x0F
+        TurbineOperation          = 0x10
+      end
+
       @[Flags]
       enum PumpStatus : UInt16
         None              = 0
@@ -46,7 +66,11 @@ module Matter
         RemoteTemperature = 1 << 8
       end
 
-      MAX_LIFETIME_HOURS = 0xFF_FFFF_u32
+      MAX_LIFETIME_HOURS       = 0xFF_FFFF_u32
+      MIN_ABSOLUTE_TEMPERATURE =    -27315_i16
+      REGULATION_FEATURES      = Feature::ConstantPressure | Feature::CompensatedPressure |
+                                 Feature::ConstantFlow | Feature::ConstantSpeed | Feature::ConstantTemperature
+      SUPPORTED_FEATURES = REGULATION_FEATURES | Feature::Automatic | Feature::LocalOperation
 
       attribute 0x0000, :max_pressure, Int16, nullable: true, fixed: true
       attribute 0x0001, :max_speed, UInt16, nullable: true, fixed: true
@@ -76,6 +100,24 @@ module Matter
       attribute 0x0021, :control_mode, ControlMode, default: ControlMode::ConstantSpeed,
         writable: true, write_access: :manage, optional: true
 
+      event 0x00, :supply_voltage_low, priority: :info, present_if: :fault_event_enabled?
+      event 0x01, :supply_voltage_high, priority: :info, present_if: :fault_event_enabled?
+      event 0x02, :power_missing_phase, priority: :info, present_if: :fault_event_enabled?
+      event 0x03, :system_pressure_low, priority: :info, present_if: :fault_event_enabled?
+      event 0x04, :system_pressure_high, priority: :info, present_if: :fault_event_enabled?
+      event 0x05, :dry_running, priority: :critical, present_if: :fault_event_enabled?
+      event 0x06, :motor_temperature_high, priority: :info, present_if: :fault_event_enabled?
+      event 0x07, :pump_motor_fatal_failure, priority: :critical, present_if: :fault_event_enabled?
+      event 0x08, :electronic_temperature_high, priority: :info, present_if: :fault_event_enabled?
+      event 0x09, :pump_blocked, priority: :critical, present_if: :fault_event_enabled?
+      event 0x0A, :sensor_failure, priority: :info, present_if: :fault_event_enabled?
+      event 0x0B, :electronic_non_fatal_failure, priority: :info, present_if: :fault_event_enabled?
+      event 0x0C, :electronic_fatal_failure, priority: :critical, present_if: :fault_event_enabled?
+      event 0x0D, :general_fault, priority: :info, present_if: :fault_event_enabled?
+      event 0x0E, :leakage, priority: :info, present_if: :fault_event_enabled?
+      event 0x0F, :air_detection, priority: :info, present_if: :fault_event_enabled?
+      event 0x10, :turbine_operation, priority: :info, present_if: :fault_event_enabled?
+
       @apply_mode : Proc(OperationMode, ControlMode, InteractionModel::Status)? = nil
 
       def initialize(endpoint_id : DataType::EndpointNumber,
@@ -95,28 +137,34 @@ module Matter
                      @max_const_temp : Int16? = nil,
                      @pump_status : PumpStatus = PumpStatus::None,
                      @effective_operation_mode : OperationMode = OperationMode::Normal,
-                     @effective_control_mode : ControlMode = ControlMode::ConstantSpeed,
+                     effective_control_mode : ControlMode? = nil,
                      @capacity : Int16? = nil,
                      @speed : UInt16? = nil,
                      @lifetime_running_hours : UInt32? = 0_u32,
                      @power : UInt32? = nil,
                      @lifetime_energy_consumed : UInt32? = 0_u32,
                      @operation_mode : OperationMode = OperationMode::Normal,
-                     @control_mode : ControlMode = ControlMode::ConstantSpeed)
+                     control_mode : ControlMode? = nil,
+                     fault_events : Set(Fault) = Set(Fault).new)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        unless @feature_map == Feature::ConstantSpeed
-          raise ArgumentError.new("only the ConstantSpeed pump profile is supported")
-        end
-        if (minimum = @min_const_speed) && (maximum = @max_const_speed) && minimum > maximum
-          raise ArgumentError.new("min_const_speed exceeds max_const_speed")
-        end
-        if (maximum = @max_speed) && (constant_maximum = @max_const_speed) && constant_maximum > maximum
-          raise ArgumentError.new("max_const_speed exceeds max_speed")
-        end
+        raise ArgumentError.new("at least one regulation profile is required") if (@feature_map & REGULATION_FEATURES).none?
+        raise ArgumentError.new("unknown pump feature") unless (@feature_map & SUPPORTED_FEATURES) == @feature_map
+        @control_mode = control_mode || default_control_mode
+        @effective_control_mode = effective_control_mode || @control_mode
+        raise ArgumentError.new("unsupported requested control mode") unless control_supported?(@control_mode)
+        raise ArgumentError.new("unsupported effective control mode") unless control_supported?(@effective_control_mode)
+        raise ArgumentError.new("unsupported operation mode") unless operation_supported?(@operation_mode)
+        raise ArgumentError.new("unsupported effective operation mode") unless operation_supported?(@effective_operation_mode)
+        @fault_events = fault_events.dup
+        validate_fixed_ranges!
       end
 
       def on_apply_mode(&block : OperationMode, ControlMode -> InteractionModel::Status) : Nil
         @apply_mode = block
+      end
+
+      protected def validate_feature_map_change(value : Feature) : Nil
+        raise ArgumentError.new("pump feature profile is fixed after construction") unless value == @feature_map
       end
 
       before_write :operation_mode do |mode|
@@ -134,8 +182,8 @@ module Matter
       # Called by the host after it observes the physical pump state.
       def report_operation(mode : OperationMode, control : ControlMode,
                            speed : UInt16?, capacity : Int16?) : Nil
-        raise ArgumentError.new("unsupported operation mode") if mode.local?
-        raise ArgumentError.new("unsupported control mode") unless control.constant_speed?
+        raise ArgumentError.new("unsupported operation mode") unless operation_supported?(mode)
+        raise ArgumentError.new("unsupported control mode") unless control_supported?(control)
         if (maximum = @max_speed) && speed && speed > maximum
           raise ArgumentError.new("reported speed exceeds max_speed")
         end
@@ -145,12 +193,77 @@ module Matter
         self.capacity = capacity
       end
 
+      # The host reports a detected condition; the event has an empty Matter
+      # payload and its declared severity determines its journal priority.
+      def report_fault(fault : Fault) : Nil
+        raise ArgumentError.new("fault event is not enabled") unless @fault_events.includes?(fault)
+        emit_event(fault.value, TLV::Any.new(TLV::Structure.new))
+      end
+
+      private def fault_event_enabled?(event_id : UInt32) : Bool
+        @fault_events.any? { |fault| fault.value == event_id }
+      end
+
       private def apply_requested_mode(mode : OperationMode, control : ControlMode) : InteractionModel::Status?
-        return InteractionModel::Status.constraint_error if mode.local? || !control.constant_speed?
+        return InteractionModel::Status.constraint_error unless operation_supported?(mode) && control_supported?(control)
         callback = @apply_mode
         return InteractionModel::Status.invalid_in_state unless callback
         status = callback.call(mode, control)
         status.success? ? nil : status
+      end
+
+      private def default_control_mode : ControlMode
+        return ControlMode::ConstantSpeed if @feature_map.includes?(Feature::ConstantSpeed)
+        return ControlMode::ConstantPressure if @feature_map.includes?(Feature::ConstantPressure)
+        return ControlMode::ProportionalPressure if @feature_map.includes?(Feature::CompensatedPressure)
+        return ControlMode::ConstantFlow if @feature_map.includes?(Feature::ConstantFlow)
+        ControlMode::ConstantTemperature
+      end
+
+      private def control_supported?(mode : ControlMode) : Bool
+        feature = case mode
+                  in .constant_speed?        then Feature::ConstantSpeed
+                  in .constant_pressure?     then Feature::ConstantPressure
+                  in .proportional_pressure? then Feature::CompensatedPressure
+                  in .constant_flow?         then Feature::ConstantFlow
+                  in .constant_temperature?  then Feature::ConstantTemperature
+                  in .automatic?             then Feature::Automatic
+                  end
+        @feature_map.includes?(feature)
+      end
+
+      private def operation_supported?(mode : OperationMode) : Bool
+        case mode
+        in .normal?             then true
+        in .minimum?, .maximum? then @feature_map.includes?(Feature::ConstantSpeed)
+        in .local?              then @feature_map.includes?(Feature::LocalOperation)
+        end
+      end
+
+      private def validate_fixed_ranges! : Nil
+        validate_range(@min_const_pressure, @max_const_pressure, "constant pressure")
+        validate_range(@min_comp_pressure, @max_comp_pressure, "compensated pressure")
+        validate_range(@min_const_speed, @max_const_speed, "constant speed")
+        validate_range(@min_const_flow, @max_const_flow, "constant flow")
+        validate_range(@min_const_temp, @max_const_temp, "constant temperature")
+        [@min_const_temp, @max_const_temp].each do |temperature|
+          raise ArgumentError.new("constant temperature below absolute zero") if temperature && temperature < MIN_ABSOLUTE_TEMPERATURE
+        end
+        if (maximum = @max_speed) && (constant_maximum = @max_const_speed) && constant_maximum > maximum
+          raise ArgumentError.new("max_const_speed exceeds max_speed")
+        end
+        if (maximum = @max_flow) && (constant_maximum = @max_const_flow) && constant_maximum > maximum
+          raise ArgumentError.new("max_const_flow exceeds max_flow")
+        end
+        if maximum = @max_pressure
+          [@max_const_pressure, @max_comp_pressure].each do |pressure_maximum|
+            raise ArgumentError.new("pressure profile maximum exceeds max_pressure") if pressure_maximum && pressure_maximum > maximum
+          end
+        end
+      end
+
+      private def validate_range(minimum : T?, maximum : T?, name : String) : Nil forall T
+        raise ArgumentError.new("#{name} minimum exceeds maximum") if minimum && maximum && minimum > maximum
       end
     end
   end

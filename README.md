@@ -268,6 +268,35 @@ it. The application owns the storage, installer, token persistence across a
 reboot, and rollback policy. It must not advertise `UpdatePossible` until
 those paths are ready.
 
+An opt-in `Device::OtaRequestorLifecycle` connects the Requestor cluster to
+those client operations. Require `matter/device/ota_requestor_lifecycle` and
+construct it with an `OtaRequestorClient`, the device storage backend and
+`FabricTable`, a
+fabric-and-Node-ID CASE peer resolver, a fresh seekable sink factory, a platform
+installer, and the running software-version callback. Call `attach` to enable
+AnnounceOTAProvider handling and `UpdatePossible`; `process_default(fabric_index)`
+queries that fabric's configured provider. The service validates the resolver's
+CASE fabric and peer Node ID before any query. A provider delay or withheld
+consent leaves the installer untouched; the host may retry after the client's
+`next_query_at` deadline or a consent decision. A delayed ApplyUpdate keeps the
+staged sink open in memory; call `resume_delayed_apply` after `next_apply_at`
+to continue with the same image. Resolution or provider exchange errors leave
+that sink available for another retry; call `close` on graceful shutdown to
+release it. After immediate provider
+approval, the service stores the token synchronously in `app/ota_requestor_pending`
+before calling the installer. On startup, call `notify_if_applied` once Basic
+Information reports the target version; a failed notification remains pending
+for retry. The service registers a `FabricTable` removal guard and binds pending
+tokens to the fabric's identity, so a reused local index cannot notify an old
+provider. A pending token remains if fabric deletion fails and is cleared when
+the removed or replaced fabric is next checked. The host still owns reboot,
+rollback, scheduling delayed ApplyUpdate responses, and
+image retention across process restarts.
+`VersionApplied` is retried until its durable marker is saved. A storage failure
+after the event reaches a live observer but before that marker is written can
+deliver the event again; observers should deduplicate side effects by software
+version and product ID.
+
 Applications can add the optional `Cluster::OtaProvider` to an endpoint and
 register `on_query_image`, `on_apply_update`, and
 `on_notify_update_applied` callbacks. Each receives the authenticated fabric
@@ -545,6 +574,12 @@ as 32 hex digits for the isolated DMTEST E2E fixture.
 Each `PowerSource` also exposes the Matter 1.6 mandatory `EndpointList`;
 pass the powered endpoint numbers at construction or call
 `update_endpoint_list` when the mapping changes.
+Battery Power Source instances require the host to provide `bat_charge_level`,
+`bat_replacement_needed`, and `bat_replaceability`; Rechargeable also requires
+`bat_charge_state` and `bat_functional_while_charging`, while Replaceable
+requires `bat_replacement_description` and `bat_quantity`. These attributes
+stay advertised and nonnullable for their features. The host remains
+responsible for updating live battery readings.
 
 Boolean State advertises revision 3 and ChangeEvent by default; changing
 `StateValue` through `update_state` or its setter emits a typed StateChange

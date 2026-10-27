@@ -26,10 +26,14 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
     device.commission!
     expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList").should contain(0x0551_i64)
     read_camera_audio_int(device, 0xFFFD_u32).should eq(2_i64)
-    read_camera_audio_int(device, 0xFFFC_u32).should eq(9_i64) # ADO + PRIV
+    read_camera_audio_int(device, 0xFFFC_u32).should eq(25_i64) # ADO + PRIV + SPKR
     read_camera_audio_int(device, 0x0006_u32).should eq(65_536_i64)
     read_camera_audio_int(device, 0x000B_u32).should eq(96_000_i64)
     read_camera_audio(device, 0x0007_u32).output.should contain("48000")
+    read_camera_audio(device, 0x0008_u32).output.should contain("48000")
+    read_camera_audio_int(device, 0x0009_u32).should eq(0_i64)
+    read_camera_audio_int(device, 0x001B_u32).should eq(100_i64)
+    read_camera_audio_int(device, 0x001C_u32).should eq(0_i64)
     read_camera_audio(device, 0x000E_u32).output.should contain("3")
     read_camera_audio(device, 0x0010_u32)
   end
@@ -61,5 +65,15 @@ describe "Matter 1.6 Camera AV Stream Management audio interoperability" do
     read_camera_audio_int(device, 0x001E_u32).should eq(70_i64)
     expect_success(device.read("cameraavstreammanagement", "soft-livestream-privacy-mode-enabled", 1))
       .bool("SoftLivestreamPrivacyModeEnabled").should be_true
+  end
+
+  it "applies speaker mute and volume with bounds and restores both settings" do
+    expect_success(device.write("cameraavstreammanagement", "speaker-muted", "true", 1))
+    expect_success(device.write("cameraavstreammanagement", "speaker-volume-level", 70, 1))
+    expect_failure(device.write("cameraavstreammanagement", "speaker-volume-level", 255, 1), "CONSTRAINT_ERROR")
+    device.restart!
+    expect_success(device.read("cameraavstreammanagement", "speaker-muted", 1))
+      .bool("SpeakerMuted").should be_true
+    read_camera_audio_int(device, 0x001A_u32).should eq(70_i64)
   end
 end

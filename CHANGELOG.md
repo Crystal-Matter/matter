@@ -26,6 +26,27 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the production class to verify atomic list writes, preset activation, events,
   generated handles, rollback, and restart persistence.
 
+### General Diagnostics reboot count
+
+- Persist the mandatory RebootCount and advance it on each restored device boot,
+  saturating at the 16-bit maximum. A failed durable write now stops startup.
+  Omit optional TotalOperationalHours until a lifetime counter is available;
+  the previous per-boot calculation could not satisfy its nonvolatile semantics.
+
+### Power Source required battery attributes
+
+- Require host values for the nonnullable Battery, Rechargeable, and Replaceable
+  feature attributes before constructing a Power Source, and keep its feature
+  profile fixed afterward. The Smoke/CO Alarm fixture now verifies those
+  attributes with the official chip-tool on a synthetic backup battery.
+
+### Diagnostic Logs response bounds
+
+- Enforce the Matter 1.6 32-byte file-designator limit and return Interaction
+  Model errors for missing or oversized BDX designators. Bound inline log
+  content to the specified 1024 bytes, report Exhausted for BDX fallback,
+  and retain the full log for an authenticated BDX transfer.
+
 ### Commissioner Control response retry
 
 - Allow a previously approved `CommissionNode` request to retry when its
@@ -33,6 +54,31 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commissioning task still starts only after a successful response send. An
   exact single-command MRP retransmission can now recover without re-running
   unrelated commands.
+
+### Pump Configuration and Control profiles
+
+- Support Matter 1.6 pressure, compensated pressure, flow, temperature,
+  automatic, and local pump profiles alongside the existing constant-speed
+  default. Validate advertised modes and fixed limits before accepting writes
+  or host-reported operation. Add opt-in fault events with standard IDs and
+  priorities, and exercise a flow pump endpoint with the official controller.
+
+### OTA Requestor host lifecycle
+
+- Add an opt-in device OTA Requestor service that resolves announced or default
+  providers on the correct CASE fabric, stages and validates an image, gates
+  installation on provider approval, and persists the notification token before
+  installation for restart-safe NotifyUpdateApplied retries.
+
+### Zone Management optional profiles
+
+- Support Matter 1.6 `PERZONESENS` and `FOCUSZONES` feature bits on opt-in Zone
+  Management servers. Per-zone trigger sensitivity is required and bounded by
+  `SensitivityMax` when enabled; the global `Sensitivity` attribute is absent.
+  Focus zones require `USERDEFINED` and a host zone-change handler. The default
+  Cartesian user-zone profile and its global sensitivity remain unchanged.
+- Exercise the combined profile with an official chip-tool device fixture,
+  including command validation and state restoration after restart.
 
 ### Messages confirmation profiles
 
@@ -56,6 +102,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Persist the next event number before publishing each journal record. Restored
   subscriptions from older stores advance the counter past their saved cursor,
   so events remain visible after a process restart without reusing numbers.
+
+### Camera speaker controls
+
+- Add the opt-in Matter 1.6 Speaker feature to Camera AV Stream Management
+  with fixed capabilities, two-way-talk metadata, persistent mute and bounded
+  volume settings. A host callback admits changes before they are committed.
+  The synthetic audio fixture checks the official attribute wire format.
 
 ### Joint Fabric completion durability
 

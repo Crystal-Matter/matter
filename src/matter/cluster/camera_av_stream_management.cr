@@ -3,7 +3,7 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Camera AV Stream Management revision 2, Audio, Video,
-    # Snapshot, and opt-in Snapshot Watermark and OSD features.
+    # Snapshot, and opt-in Speaker, Snapshot Watermark and OSD features.
     # The host admits and releases actual media; this class manages only the
     # Matter allocation and settings state, not encoding or transport.
     class CameraAvStreamManagement < Base
@@ -13,6 +13,7 @@ module Matter
       feature :video, bit: 1
       feature :snapshot, bit: 2
       feature :privacy, bit: 3
+      feature :speaker, bit: 4
       feature :watermark, bit: 6
       feature :osd, bit: 7
 
@@ -36,6 +37,12 @@ module Matter
       enum AudioCodec : UInt8
         Opus  = 0
         AacLc = 1
+      end
+
+      enum TwoWayTalkSupport : UInt8
+        NotSupported = 0
+        HalfDuplex   = 1
+        FullDuplex   = 2
       end
 
       enum ImageCodec : UInt8
@@ -654,6 +661,8 @@ module Matter
       attribute 0x0005, :rate_distortion_trade_off_points, Array(RateDistortionPoint), computed: true, fixed: true, requires: :video
       attribute 0x0006, :max_content_buffer_size, UInt32, default: 0_u32, fixed: true
       attribute 0x0007, :microphone_capabilities, AudioCapabilities, computed: true, fixed: true, requires: :audio
+      attribute 0x0008, :speaker_capabilities, AudioCapabilities, computed: true, fixed: true, requires: :speaker
+      attribute 0x0009, :two_way_talk_support, TwoWayTalkSupport, computed: true, fixed: true, requires: :speaker
       attribute 0x000A, :snapshot_capabilities, Array(SnapshotCapability), computed: true, fixed: true, requires: :snapshot
       attribute 0x000B, :max_network_bandwidth, UInt32, default: 0_u32, fixed: true
       attribute 0x000C, :current_frame_rate, UInt16, default: 0_u16, requires: :video
@@ -669,6 +678,12 @@ module Matter
       attribute 0x0015, :hard_privacy_mode_on, Bool, default: false, on_change: :notify_privacy
       attribute 0x0018, :viewport, Viewport, computed: true, writable: true,
         read_access: :manage, write_access: :manage, requires: :video
+      attribute 0x0019, :speaker_muted, Bool, default: false,
+        writable: true, read_access: :manage, write_access: :manage, persist: true, requires: :speaker
+      attribute 0x001A, :speaker_volume_level, UInt8, default: 50_u8,
+        writable: true, read_access: :manage, write_access: :manage, persist: true, requires: :speaker
+      attribute 0x001B, :speaker_max_level, UInt8, default: 100_u8, read_access: :manage, requires: :speaker
+      attribute 0x001C, :speaker_min_level, UInt8, default: 0_u8, read_access: :manage, requires: :speaker
       attribute 0x001D, :microphone_muted, Bool, default: false,
         writable: true, read_access: :manage, write_access: :manage, persist: true,
         requires: :audio, on_change: :notify_microphone
@@ -680,6 +695,20 @@ module Matter
 
       before_write :microphone_volume_level do |level|
         InteractionModel::Status.constraint_error unless level.in?(@microphone_min_level..@microphone_max_level)
+      end
+
+      before_write :speaker_muted do |muted|
+        status = admit_speaker_settings(muted, @speaker_volume_level)
+        status unless status.success?
+      end
+
+      before_write :speaker_volume_level do |level|
+        if level.in?(@speaker_min_level..@speaker_max_level)
+          status = admit_speaker_settings(@speaker_muted, level)
+          status unless status.success?
+        else
+          InteractionModel::Status.constraint_error
+        end
       end
 
       before_write :viewport do |value|
@@ -721,6 +750,7 @@ module Matter
       @allocated_snapshot_streams : Array(SnapshotStream)
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
       @microphone_callback : Proc(Bool, UInt8, Nil)?
+      @speaker_callback : Proc(Bool, UInt8, InteractionModel::Status)?
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
@@ -751,11 +781,27 @@ module Matter
                      @microphone_min_level : UInt8 = 0_u8,
                      @microphone_max_level : UInt8 = 100_u8,
                      @microphone_volume_level : UInt8 = 50_u8,
+                     @speaker_capabilities : AudioCapabilities? = nil,
+                     @two_way_talk_support : TwoWayTalkSupport? = nil,
+                     @speaker_min_level : UInt8 = 0_u8,
+                     @speaker_max_level : UInt8 = 100_u8,
+                     @speaker_volume_level : UInt8 = 50_u8,
                      @feature_map : Feature = Feature::Audio)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Audio, Video or Snapshot feature is required") unless @feature_map.audio? || @feature_map.video? || @feature_map.snapshot?
-        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Watermark | Feature::Osd).value) == 0
+        unless (@feature_map.value & ~(Feature::Audio | Feature::Video | Feature::Snapshot | Feature::Privacy | Feature::Speaker | Feature::Watermark | Feature::Osd).value) == 0
           raise ArgumentError.new("unsupported Camera AV Stream Management feature")
+        end
+        raise ArgumentError.new("Speaker requires Audio") if @feature_map.speaker? && !@feature_map.audio?
+        if @feature_map.speaker?
+          raise ArgumentError.new("Speaker requires capabilities") unless @speaker_capabilities
+          raise ArgumentError.new("Speaker requires two-way talk support") unless @two_way_talk_support
+          unless @two_way_talk_support.in?(TwoWayTalkSupport::NotSupported,
+                   TwoWayTalkSupport::HalfDuplex, TwoWayTalkSupport::FullDuplex)
+            raise ArgumentError.new("unsupported two-way talk support")
+          end
+        elsif @speaker_capabilities || @two_way_talk_support
+          raise ArgumentError.new("Speaker capabilities require Speaker feature")
         end
         if (@feature_map.watermark? || @feature_map.osd?) && !(@feature_map.snapshot? || @feature_map.video?)
           raise ArgumentError.new("Watermark and OSD require Snapshot or Video")
@@ -792,6 +838,10 @@ module Matter
                @microphone_volume_level <= @microphone_max_level && @microphone_max_level <= MAX_VOLUME_LEVEL
           raise ArgumentError.new("invalid microphone volume range")
         end
+        unless @speaker_min_level <= @speaker_volume_level &&
+               @speaker_volume_level <= @speaker_max_level && @speaker_max_level <= MAX_VOLUME_LEVEL
+          raise ArgumentError.new("invalid speaker volume range")
+        end
         usages = supported_stream_usages.dup
         if usages.uniq.size != usages.size || usages.empty? ||
            !usages.all? { |usage| usage.in?(StreamUsage::Internal, StreamUsage::Recording, StreamUsage::Analysis, StreamUsage::LiveView) }
@@ -806,6 +856,14 @@ module Matter
 
       def microphone_capabilities : AudioCapabilities
         @microphone_capabilities || raise ArgumentError.new("Audio feature is disabled")
+      end
+
+      def speaker_capabilities : AudioCapabilities
+        @speaker_capabilities || raise ArgumentError.new("Speaker feature is disabled")
+      end
+
+      def two_way_talk_support : TwoWayTalkSupport
+        @two_way_talk_support || raise ArgumentError.new("Speaker feature is disabled")
       end
 
       def video_sensor_params : VideoSensorParams
@@ -923,6 +981,15 @@ module Matter
       def on_microphone_settings_changed(&block : Bool, UInt8 -> Nil) : Nil
         @microphone_callback = block
         report_microphone_settings
+      end
+
+      # Apply the restored state before accepting controller writes. The host
+      # owns speaker hardware and may reject a requested change atomically.
+      def on_speaker_settings_changed(&block : Bool, UInt8 -> InteractionModel::Status) : Nil
+        raise ArgumentError.new("Speaker feature is disabled") unless @feature_map.speaker?
+        status = block.call(@speaker_muted, @speaker_volume_level)
+        raise ClusterError.new("Speaker host rejected initial settings", status.status) unless status.success?
+        @speaker_callback = block
       end
 
       # Independent consumers can react to delivery restrictions without
@@ -1295,6 +1362,11 @@ module Matter
         report_microphone_settings
       end
 
+      private def admit_speaker_settings(muted : Bool, volume : UInt8) : InteractionModel::Status
+        callback = @speaker_callback || return InteractionModel::Status.invalid_in_state
+        callback.call(muted, volume)
+      end
+
       private def report_microphone_settings : Nil
         @microphone_callback.try(&.call(@microphone_muted, @microphone_volume_level))
         @delivery_observers.each(&.call)
@@ -1355,6 +1427,7 @@ module Matter
 
       private def after_restore_state : Nil
         @microphone_volume_level = @microphone_min_level unless @microphone_volume_level.in?(@microphone_min_level..@microphone_max_level)
+        @speaker_volume_level = @speaker_min_level unless @speaker_volume_level.in?(@speaker_min_level..@speaker_max_level)
         @allocated_audio_streams.clear
         @allocated_video_streams.each { |stream| @video_release_observers.each(&.call(stream.video_stream_id)) }
         @allocated_video_streams.clear
