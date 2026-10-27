@@ -43,7 +43,11 @@ item below as covered only to the extent of its cited tests.
   targets. On CommitFailed, call `retry_failed_joint_group_revocation`, then
   poll again. If the Anchor cannot confirm target ACL delivery, revocation
   remains Pending and requires operator follow-up. See Matter 1.6 Core
-  §11.24.4.9.
+  §11.24.4.9. If UpdateGroup's response is lost, retry the same stage call
+  with the original revoked NOC and survivor stores. It authenticates the
+  Anchor, recognizes the already rotated CAT version and ACLs, and returns a
+  new Pending receipt without issuing another UpdateGroup. Keep the original
+  revoked NOC available until the receipt is obtained.
 - After JCM, a joining Administrator can use
   `JointFabricDeviceMigration.cross_signed_issuer` with its original ICAC
   private key and A's cross-signed ICAC. The resulting issuer's

@@ -5,6 +5,7 @@ private alias JointStore = Matter::Cluster::JointFabricDatastore
 
 private class JointGroupImClient < Matter::Controller::ImClient
   getter commands = [] of UInt32
+  property? lose_update_response = false
 
   def initialize(@store : JointStore)
     super(Matter::Controller::Client.new)
@@ -45,7 +46,12 @@ private class JointGroupImClient < Matter::Controller::ImClient
              when JointStore::CMD_REFRESH_NODE
                @store.refresh_node(JointStore::RefreshNodeRequest.from_slice(fields))
              when JointStore::CMD_UPDATE_GROUP
-               @store.update_group(JointStore::UpdateGroupRequest.from_slice(fields))
+               update_status = @store.update_group(JointStore::UpdateGroupRequest.from_slice(fields))
+               if @lose_update_response
+                 @lose_update_response = false
+                 raise Matter::ProtocolError.new("Simulated lost UpdateGroup response")
+               end
+               update_status
              else
                raise Matter::ProtocolError.new("Unexpected Joint Fabric Datastore command")
              end
@@ -145,8 +151,80 @@ describe "Joint Fabric shared group revocation" do
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
 
+    changed_acls = datastore.node_acl_list
+    changed_entry = changed_acls.first
+    changed_acl = changed_entry.acl_entry
+    changed_acl.privilege = JointStore::DatastoreAccessControlEntryPrivilegeEnum::View
+    changed_entry.acl_entry = changed_acl
+    changed_acls[0] = changed_entry
+    datastore.node_acl_list = changed_acls
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    changed_acl.privilege = JointStore::DatastoreAccessControlEntryPrivilegeEnum::Administer
+    changed_entry.acl_entry = changed_acl
+    changed_acls[0] = changed_entry
+    datastore.node_acl_list = changed_acls
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
+
     # A later ACL using the old CAT anywhere in the group reopens access.
     datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, acl.acl_entry))
+    stale_acl_id = datastore.node_acl_list.last.list_id
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.remove_acl_from_node(JointStore::RemoveACLFromNodeRequest.new(stale_acl_id, 0x200_u64))
+      .success?.should be_true
+    datastore.complete_acl(0x200_u64, stale_acl_id).should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
+
+    # Group permission is also part of the revocation proof.
+    datastore.update_group(JointStore::UpdateGroupRequest.new(10_u16, nil, nil, nil, nil,
+      JointStore::DatastoreAccessControlEntryPrivilegeEnum::View)).success?.should be_true
+    datastore.node_acl_list.each { |entry| datastore.complete_acl(entry.node_id, entry.list_id) }
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+  ensure
+    im.try(&.close)
+  end
+
+  it "recovers a pending receipt after the Anchor applies UpdateGroup but its response is lost" do
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(0x1234_u64, 0x100_u64, 0xFFF1_u16)
+    authority = bootstrap.fabric
+    revoked = Matter::Controller::SharedFabric.delegate_joint(authority, 0x101_u64, 0x1234_u16, 2_u16)
+    survivor = Matter::Controller::SharedFabric.delegate_joint(authority, 0x102_u64, 0x1234_u16, 2_u16)
+    survivor_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    Matter::Controller::SharedFabric.install(survivor_store, survivor)
+    datastore = JointStore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    datastore.configure_anchor(authority.root_cert, 0x100_u64, 0xFFF1_u16, "Anchor")
+    datastore.add_pending_node(JointStore::AddPendingNodeRequest.new(0x200_u64, "Lamp"))
+    datastore.record_endpoint(0x200_u64, 1_u16, "Light")
+    im = JointGroupImClient.new(datastore)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16), case_session: true,
+      peer_node_id: Matter::DataType::NodeId.new(0x100_u64))
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
+      datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+      group_id: 10_u16, group_name: "Controllers", controller: survivor)
+    im.lose_update_response = true
+    expect_raises(Matter::ProtocolError, /lost UpdateGroup response/) do
+      Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+        datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+        survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+        anchor_node_id: 0x100_u64)
+    end
+    datastore.group_list.last.group_cat_version.should eq(3_u16)
+    update_count = im.commands.count(JointStore::CMD_UPDATE_GROUP)
+    receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+      datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+      survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+      anchor_node_id: 0x100_u64)
+    im.commands.count(JointStore::CMD_UPDATE_GROUP).should eq(update_count)
+    receipt.previous_version.should eq(2_u16)
+    receipt.current_version.should eq(3_u16)
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
   ensure

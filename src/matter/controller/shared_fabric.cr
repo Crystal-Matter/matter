@@ -259,18 +259,34 @@ module Matter
         cat = group.group_cat || raise Matter::ConfigurationError.new("Joint Fabric group has no CAT")
         version = group.group_cat_version || raise Matter::ConfigurationError.new("Joint Fabric group has no CAT version")
         unless group.group_permission == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
-               group.group_key_set_id.nil? && version < Datastore::RESERVED_GROUP_CAT_VERSION - 1
+               group.group_key_set_id.nil? && version < Datastore::RESERVED_GROUP_CAT_VERSION
           raise Matter::ConfigurationError.new("Joint Fabric group cannot rotate its CAT version")
         end
-        unless joint_controller_cat?(revoked, authority, cat, version)
-          raise Matter::ConfigurationError.new("Revoked controller does not hold the current group CAT")
-        end
-        next_version = version + 1_u16
+        recovered = false
+        previous_version = if version < Datastore::RESERVED_GROUP_CAT_VERSION - 1 &&
+                              joint_controller_cat?(revoked, authority, cat, version)
+                             version
+                           elsif version > Datastore::FIRST_GROUP_CAT_VERSION &&
+                                 joint_controller_cat?(revoked, authority, cat, version - 1_u16)
+                             recovered = true
+                             version - 1_u16
+                           else
+                             raise Matter::ConfigurationError.new("Revoked controller CAT does not match the current or preceding group version")
+                           end
+        next_version = previous_version + 1_u16
         target_acls = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
+        new_subject = DataType::NodeId.from_case_authenticated_tag(
+          DataType::CaseAuthenticatedTag.create(cat, next_version)).id
         selected_acls = target_acls.select do |entry|
-          entry.status_entry.state != Datastore::DatastoreStateEnum::DeletePending &&
-            acl_grants_cat_version?(entry.acl_entry, cat, version)
+          next false if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending
+          if recovered
+            entry.acl_entry.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
+              entry.acl_entry.privilege == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+              entry.acl_entry.subjects == [new_subject]
+          else
+            acl_grants_cat_version?(entry.acl_entry, cat, previous_version)
+          end
         end
         raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if selected_acls.empty?
         target_ids = selected_acls.map(&.node_id).uniq
@@ -282,8 +298,9 @@ module Matter
           state = store.load
           fabric = state.fabric_for(authority.fabric_id, authority.root_public_key, controller_node_id)
           if seen.includes?(fabric.controller_node_id) ||
-             !(joint_controller_cat?(fabric, authority, cat, version) ||
-             joint_controller_cat?(fabric, authority, cat, next_version))
+             !(joint_controller_cat?(fabric, authority, cat, previous_version) ||
+             joint_controller_cat?(fabric, authority, cat, next_version)) ||
+             (recovered && !joint_controller_cat?(fabric, authority, cat, next_version))
             raise Matter::ConfigurationError.new("Survivor identity is duplicated or lacks the current or next group CAT")
           end
           seen << fabric.controller_node_id
@@ -314,9 +331,11 @@ module Matter
           state.replace_fabric(replacement)
           store.save(state)
         end
-        request = Datastore::UpdateGroupRequest.new(group_id, nil, nil, nil, next_version, nil)
-        invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_UPDATE_GROUP, request.to_slice)
-        JointGroupRevocation.new(group_id, cat, version, next_version, target_ids, target_refs,
+        unless recovered
+          request = Datastore::UpdateGroupRequest.new(group_id, nil, nil, nil, next_version, nil)
+          invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_UPDATE_GROUP, request.to_slice)
+        end
+        JointGroupRevocation.new(group_id, cat, previous_version, next_version, target_ids, target_refs,
           authority.root_cert.dup, anchor_node_id)
       end
 
@@ -331,7 +350,10 @@ module Matter
           datastore_endpoint, Datastore::ATTR_GROUP_LIST)
         group = groups.find(&.group_id.==(receipt.group_id.to_u64))
         return JointGroupRevocation::Status::Pending unless group &&
-                                                            group.group_cat == receipt.group_cat && group.group_cat_version == receipt.current_version
+                                                            group.group_cat == receipt.group_cat &&
+                                                            group.group_cat_version == receipt.current_version &&
+                                                            group.group_permission == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+                                                            group.group_key_set_id.nil?
         entries = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         new_subject = DataType::NodeId.from_case_authenticated_tag(
@@ -344,6 +366,8 @@ module Matter
           entry = entries.find { |candidate| candidate.node_id == target.node_id && candidate.list_id == target.list_id }
           return JointGroupRevocation::Status::Pending unless entry &&
                                                               entry.acl_entry.subjects == [new_subject] &&
+                                                              entry.acl_entry.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
+                                                              entry.acl_entry.privilege == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
                                                               entry.status_entry.state == Datastore::DatastoreStateEnum::Committed
         end
         JointGroupRevocation::Status::Effective

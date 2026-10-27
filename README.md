@@ -1312,7 +1312,9 @@ status = Matter::Controller::SharedFabric.joint_group_revocation_status(
 The host supplies all surviving controller stores and distributes their new
 NOCs. A Pending receipt means some target ACL has not yet committed; use
 `retry_failed_joint_group_revocation` after a Datastore CommitFailed and
-continue checking until the status is Effective.
+continue checking until the status is Effective. If the UpdateGroup response
+is lost, retry `stage_joint_group_revocation` with the original revoked NOC;
+the authenticated Anchor state supplies a fresh Pending receipt.
 
 When the Anchor updates GroupKeySetID zero, refresh each controller's stored
 IPK epochs over an authenticated Anchor CASE session before retiring its old
