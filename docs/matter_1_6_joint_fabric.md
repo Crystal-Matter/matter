@@ -714,6 +714,10 @@ window status, opener fabric, and vendor. The cluster deliberately has no local
 PASE or mDNS window. After restart its published state starts closed until the
 host refreshes it. Advertising this endpoint requires the host to maintain the
 remote-node mapping and forwarding path; this library does not create them.
+The host must bind the mapping to the remote fabric's durable identity and
+revalidate it before each forwarded command because a fabric index can be
+reused. This bridged cluster does not advertise Basic Commissioning, so the
+host cannot publish `BasicWindowOpen` as its state.
 
 `examples/matter_ecosystem_bridge_device.cr` is an opt-in interoperability
 fixture. It publishes clearly synthetic names and a location for each newly
