@@ -219,6 +219,17 @@ item below as covered only to the extent of its cited tests.
   must inspect that Administrator's NOC/CAT and reconcile the rotation before
   resuming; completed rotations are skipped. A three-Administrator spec covers
   interruption during the second rotation.
+  A candidate interrupted in `Copying` can reconcile a Datastore copy only
+  when its journal contains the exact pre-transfer NOC, ICAC, fabric identity,
+  and CATs and its durable Datastore, IPK, bindings, and role match the frozen
+  old Anchor snapshot. Older journals without that credential snapshot remain
+  blocked. A candidate interrupted in `Rotating` proves the selected old
+  Anchor or second Administrator's committed NOC with fresh CASE and a signed
+  host nonce. Recovery checks the exact new fabric, Node ID, Administrator CAT,
+  active target, and already completed rotation prefix before saving the
+  reconciled stage. The official three-Administrator scenario restarts at each
+  of these boundaries and verifies that recovery does not repeat a committed
+  copy or credential rotation.
   A candidate restart after a lost TransferAnchorRequest acknowledgement reads
   the old Anchor's Datastore over CASE. A still-Committed snapshot permits a
   retry. A frozen DeletePending snapshot alone cannot identify which
