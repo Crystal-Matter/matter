@@ -79,6 +79,7 @@ module Matter
         getter max_interval : UInt16
         getter attribute_paths : Array(InteractionModel::AttributePath)
         getter event_paths : Array(InteractionModel::EventPath)
+        getter? fabric_filtered : Bool
 
         # The highest event number the priming report carried, so the first
         # update does not repeat what the controller has already seen.
@@ -94,6 +95,7 @@ module Matter
           remaining_chunks : Array(Bytes),
           @event_paths = [] of InteractionModel::EventPath,
           @last_event_number = 0_u64,
+          @fabric_filtered = true,
         )
           super(peer, session, remaining_chunks)
         end
@@ -165,9 +167,16 @@ module Matter
               return true
             end
 
-            if chunk = pending.next_chunk
+            if chunk = pending.remaining_chunks.first?
+              unless report_chunk_authorized?(pending.session, chunk)
+                @pending_subscriptions.delete(key)
+                send_access_revoked(trigger, pending)
+                Log.warn { "Subscription #{pending.subscription_id} aborted: access revoked before priming chunk" }
+                return true
+              end
               Log.debug { "Subscription #{pending.subscription_id}: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
               send_chunk(pending, trigger, chunk)
+              pending.next_chunk
             else
               @pending_subscriptions.delete(key)
               complete_subscription(pending, trigger, exchange_id)
@@ -192,6 +201,15 @@ module Matter
             end
 
             if chunk = pending.remaining_chunks.first?
+              unless report_chunk_authorized?(pending.session, chunk)
+                @pending_updates.delete(key)
+                @inflight_updates.delete(pending.subscription_id)
+                @dirty_attributes.delete(pending.subscription_id)
+                @registry.remove_subscription(pending.subscription_id)
+                send_access_revoked(trigger, pending)
+                Log.warn { "Subscription #{pending.subscription_id} terminated: access revoked before update chunk" }
+                return true
+              end
               send_chunk(pending, trigger, chunk)
               pending.next_chunk
               pending.last_progress_at = Time.monotonic
@@ -199,9 +217,7 @@ module Matter
               @pending_updates.delete(key)
               @inflight_updates.delete(pending.subscription_id)
               if subscription = @registry.active_subscriptions[pending.subscription_id]?
-                if cursor = pending.event_cursor
-                  subscription.last_event_number = cursor
-                end
+                advance_event_cursor(subscription, pending.event_cursor)
                 subscription.last_report_time = Time.utc
               end
               @sender.send_encrypted_ack(trigger, pending.peer, pending.session) if trigger.payload_header.requires_acknowledge?
@@ -216,9 +232,16 @@ module Matter
               return true
             end
 
-            if chunk = pending.next_chunk
+            if chunk = pending.remaining_chunks.first?
+              unless report_chunk_authorized?(pending.session, chunk)
+                @pending_reads.delete(key)
+                send_access_revoked(trigger, pending)
+                Log.warn { "Read response aborted: access revoked before chunk (exchange=#{exchange_id})" }
+                return true
+              end
               Log.debug { "Read response: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
               send_chunk(pending, trigger, chunk)
+              pending.next_chunk
             end
             @pending_reads.delete(key) unless pending.more_chunks?
 
@@ -280,11 +303,13 @@ module Matter
             # Every report drains whatever the journal still owes this
             # subscription, so a non-urgent event rides out with the next
             # attribute change rather than waiting for its own report.
-            events = pending_events(subscription)
+            records, event_cursor = journal_snapshot(subscription)
+            events = event_reports(subscription, records, event_cursor)
+            advance_event_cursor(subscription, event_cursor) if events.empty? && reports.empty?
             next if reports.empty? && events.empty?
 
             Log.debug { "Sending batched subscription update: subscription_id=#{subscription.subscription_id}, peer=#{subscription.peer}, reports=#{reports.size}, events=#{events.size}" }
-            send_update(subscription, reports, events)
+            send_update(subscription, reports, events, event_cursor)
           end
         end
       end
@@ -307,10 +332,14 @@ module Matter
             next unless report_due
 
             reports = dirty ? collect_reports(subscription, dirty.to_a) : [] of InteractionModel::AttributeReportIB
-            events = pending_events(subscription)
-            next if reports.empty? && events.empty? && !max_elapsed
+            records, event_cursor = journal_snapshot(subscription)
+            events = event_reports(subscription, records, event_cursor)
+            if reports.empty? && events.empty? && !max_elapsed
+              advance_event_cursor(subscription, event_cursor)
+              next
+            end
 
-            send_update(subscription, reports, events)
+            send_update(subscription, reports, events, event_cursor)
           end
         end
       end
@@ -331,19 +360,26 @@ module Matter
           now = Time.utc
           subscriptions.each_value do |subscription|
             next unless subscription.events?
-
-            records = journal_records(subscription)
-            next if records.empty?
-
-            urgent = records.any?(&.urgent_for?(subscription.event_paths))
-            next unless urgent || subscription.min_interval_elapsed?(now)
             next if @inflight_updates.has_key?(subscription.subscription_id)
+
+            records, event_cursor = journal_snapshot(subscription)
+            next unless event_cursor
+
+            events = event_reports(subscription, records, event_cursor)
+            if events.empty?
+              advance_event_cursor(subscription, event_cursor)
+              next
+            end
+            authorized_numbers = events.compact_map(&.event_data).map(&.event_number).to_set
+            urgent = records.any? { |record| authorized_numbers.includes?(record.event_number) && record.urgent_for?(subscription.event_paths) }
+            next unless urgent || subscription.min_interval_elapsed?(now)
 
             Log.debug do
               "Sending event report: subscription_id=#{subscription.subscription_id}, " \
-              "events=#{records.size}, urgent=#{urgent}"
+              "events=#{events.size}, urgent=#{urgent}"
             end
-            send_update(subscription, [] of InteractionModel::AttributeReportIB, event_reports(subscription, records))
+            send_update(subscription, [] of InteractionModel::AttributeReportIB,
+              events, event_cursor)
           end
         end
       end
@@ -354,6 +390,7 @@ module Matter
         subscription : ActiveSubscription,
         reports : Array(InteractionModel::AttributeReportIB),
         events : Array(InteractionModel::EventReportIB),
+        event_cursor : UInt64? = nil,
       ) : Nil
         return if @inflight_updates.has_key?(subscription.subscription_id)
         limit = @sender.im_payload_limit(subscription.session, subscription.peer)
@@ -361,7 +398,7 @@ module Matter
           events, max_payload_size: limit)
         dirty = @dirty_attributes[subscription.subscription_id]? || Set(AttributeKey).new
         @dirty_attributes[subscription.subscription_id] = Set(AttributeKey).new
-        cursor = events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
+        cursor = event_cursor || events.reverse_each.compact_map(&.event_data).first?.try(&.event_number)
         begin
           exchange_id = @sender.send_report(subscription.session, subscription.peer, chunks.first[0])
           key = {subscription.session.session_id, exchange_id}
@@ -373,6 +410,11 @@ module Matter
           raise ex
         end
         subscription.last_report_time = Time.utc
+      end
+
+      private def advance_event_cursor(subscription : ActiveSubscription, scanned_through : UInt64?) : Nil
+        return unless scanned_through
+        subscription.last_event_number = scanned_through if scanned_through > subscription.last_event_number
       end
 
       private def prune_inflight_updates(subscriptions : Hash(UInt32, ActiveSubscription),
@@ -405,31 +447,44 @@ module Matter
         end
       end
 
-      # The journal records *subscription* has not reported yet, in event
-      # number order.
-      private def journal_records(subscription : ActiveSubscription) : Array(EventJournal::Record)
-        return [] of EventJournal::Record unless subscription.events?
+      # Snapshot the global high watermark before selecting requested records.
+      # A newer unrelated event can trigger denied concrete path statuses,
+      # while records added after the snapshot stay available for the next report.
+      private def journal_snapshot(subscription : ActiveSubscription) : Tuple(Array(EventJournal::Record), UInt64?)
+        empty = [] of EventJournal::Record
+        return {empty, nil} unless subscription.events?
 
-        @node.event_journal.query(
+        scanned_through = @node.event_journal.latest_event_number
+        return {empty, nil} if scanned_through <= subscription.last_event_number
+
+        records = @node.event_journal.query(
           subscription.event_paths,
           after: subscription.last_event_number,
           fabric_index: subscription.session.fabric_index
         )
+        {records.select! { |record| record.event_number <= scanned_through }, scanned_through}
       end
 
       # Turns *records* into reports. The cursor advances only after sending.
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),
+        scanned_through : UInt64?,
       ) : Array(InteractionModel::EventReportIB)
-        return [] of InteractionModel::EventReportIB if records.empty?
+        return [] of InteractionModel::EventReportIB unless scanned_through
 
-        records.map { |record| InteractionModel::EventReportIB.new(event_data: IMHandler.build_event_data(record)) }
-      end
-
-      # Everything the journal owes *subscription*, ready to report.
-      private def pending_events(subscription : ActiveSubscription) : Array(InteractionModel::EventReportIB)
-        event_reports(subscription, journal_records(subscription))
+        reports = IMHandler.authorized_event_reports(records, @node.clusters,
+          subscription.session.fabric_index, subscription.session.case_session?,
+          subscription_subjects(subscription))
+        subscription.event_paths.each do |path|
+          next if path.wildcard?
+          if status = IMHandler.concrete_event_status(path, @node.clusters,
+               subscription.session.case_session?, subscription.session.fabric_index,
+               subscription_subjects(subscription))
+            reports << InteractionModel::EventReportIB.new(event_status: status)
+          end
+        end
+        reports
       end
 
       # The reports *subscription* wants out of *attributes*, read at the
@@ -449,21 +504,29 @@ module Matter
             next
           end
 
-          value = cluster.read_attribute(attribute_id, subscription.session.fabric_index)
-          unless value.is_a?(TLV::Any)
-            Log.warn { "Subscription update skipped: read_attribute returned #{value.class} (endpoint=#{endpoint_id}, cluster=0x#{cluster_id.to_s(16)}, attr=0x#{attribute_id.to_s(16)})" }
-            next
+          path = InteractionModel::AttributePath.new(endpoint: endpoint_id,
+            cluster: cluster_id, attribute: attribute_id)
+          concrete = subscription.attribute_paths.any? do |requested|
+            requested.endpoint == endpoint_id && requested.cluster == cluster_id &&
+              requested.attribute == attribute_id
           end
-
-          attribute_data = InteractionModel::AttributeDataIB.new(
-            path: InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id),
-            data: value,
-            data_version: cluster.data_version
-          )
-          reports << InteractionModel::AttributeReportIB.new(attribute_data: attribute_data)
+          # Use the same ACL and fabric-scoped read path as the priming report.
+          # A wildcard subscription still checks each concrete changed path.
+          IMHandler.read_attributes([path], @node.clusters,
+            subscription.session.fabric_index, subscription.session.case_session?,
+            subscription_subjects(subscription), subscription.fabric_filtered?,
+            session_id: subscription.session.session_id.to_u64,
+            local_node_id: subscription.session.local_node_id.try(&.id)).each do |report|
+            reports << report if report.attribute_data || (concrete && report.attribute_status)
+          end
         end
 
         reports
+      end
+
+      private def subscription_subjects(subscription : ActiveSubscription) : Array(UInt64)?
+        subjects = subscription.session.peer_subject_ids
+        subjects.empty? ? nil : subjects
       end
 
       private def send_chunk(pending : PendingChunks, trigger : Codec::MessageCodec::Message, chunk : Bytes) : Nil
@@ -473,6 +536,22 @@ module Matter
           session: pending.session,
           message_type: pending.is_a?(PendingInvoke) ? InteractionModel::MessageType::InvokeResponse.value : InteractionModel::MessageType::ReportData.value,
           payload: chunk,
+          cache_for_mrp: true
+        )
+      end
+
+      private def report_chunk_authorized?(session : Session::SecureContext, chunk : Bytes) : Bool
+        IMHandler.report_chunk_authorized?(chunk, @node.clusters, session)
+      end
+
+      private def send_access_revoked(trigger : Codec::MessageCodec::Message, pending : PendingChunks) : Nil
+        @sender.send_im_response(
+          original_msg: trigger,
+          peer: pending.peer,
+          session: pending.session,
+          message_type: InteractionModel::MessageType::StatusResponse.value,
+          payload: InteractionModel::StatusResponseMessage.new(
+            status: InteractionModel::StatusCode::UnsupportedAccess.value).to_slice,
           cache_for_mrp: true
         )
       end
@@ -506,7 +585,8 @@ module Matter
           attribute_paths: pending.attribute_paths,
           exchange_id: exchange_id,
           event_paths: pending.event_paths,
-          last_event_number: pending.last_event_number
+          last_event_number: pending.last_event_number,
+          fabric_filtered: pending.fabric_filtered?
         ))
       end
     end

@@ -1181,6 +1181,14 @@ module MatterJointFabricAdministrator
     end
 
     private def connect_failsafe_lifecycle : Nil
+      self.commissioning_commit_write = ->(_backend : Matter::Storage::Backend) do
+        joint_fabric_service.try(&.write_pending_completion)
+        bootstrap_joint_fabric_service.try(&.write_pending_completion)
+      end
+      self.commissioning_commit_complete = -> do
+        joint_fabric_service.try(&.confirm_pending_completion)
+        bootstrap_joint_fabric_service.try(&.confirm_pending_completion)
+      end
       armed = general_commissioning.on_failsafe_armed
       expired = general_commissioning.on_failsafe_expired
       succeeded = general_commissioning.on_failsafe_success
@@ -1201,8 +1209,6 @@ module MatterJointFabricAdministrator
       general_commissioning.on_failsafe_success = -> do
         succeeded.try(&.call)
         @jcm_failsafe_session_id = nil
-        joint_fabric_service.try(&.on_commissioning_complete)
-        bootstrap_joint_fabric_service.try(&.on_commissioning_complete)
         fabric_table.all_fabrics.each { |fabric| attach_joined_fabric(fabric) }
         restore_bootstrap_administrator_binding
       end

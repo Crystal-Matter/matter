@@ -19,6 +19,15 @@ module Matter
         abstract def session_removed(registry : SessionRegistry, session_id : UInt16) : Nil
         abstract def subscription_established(registry : SessionRegistry, subscription : ActiveSubscription) : Nil
         abstract def subscription_removed(registry : SessionRegistry, subscription_id : UInt32) : Nil
+
+        # Optional event-number persistence for protocol stores. Implementers
+        # without a durable store keep the journal process-local.
+        def restore_next_event_number : UInt64?
+          nil
+        end
+
+        def persist_next_event_number(next_number : UInt64) : Nil
+        end
       end
 
       # Stores protocol state as documents in a `Storage::Backend`:
@@ -36,6 +45,8 @@ module Matter
 
         COUNTERS_ID              = "counters"
         NEXT_SUBSCRIPTION_ID_KEY = "next_subscription_id"
+        EVENT_COUNTER_ID         = "event_counter"
+        NEXT_EVENT_NUMBER_KEY    = "next_event_number"
 
         # When set, `session_updated` (message counters and activity times)
         # defers its write to this debouncer; the owner calls
@@ -54,6 +65,16 @@ module Matter
         def restore(registry : SessionRegistry, fabric_table : FabricTable) : Nil
           restore_sessions(registry, fabric_table)
           restore_subscriptions(registry)
+        end
+
+        def restore_next_event_number : UInt64?
+          value = @backend.read(DEVICE, EVENT_COUNTER_ID).try(&.[NEXT_EVENT_NUMBER_KEY]?)
+          value ? Storage::Record.decode(value, UInt64, NEXT_EVENT_NUMBER_KEY) : nil
+        end
+
+        def persist_next_event_number(next_number : UInt64) : Nil
+          @backend.write(DEVICE, EVENT_COUNTER_ID,
+            Storage::Document{NEXT_EVENT_NUMBER_KEY => next_number})
         end
 
         def session_established(registry : SessionRegistry, session : Session::SecureContext) : Nil

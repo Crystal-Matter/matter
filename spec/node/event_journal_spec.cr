@@ -21,6 +21,26 @@ end
 
 describe Matter::EventJournal do
   describe "#record" do
+    it "does not publish or consume an event number when durable counter storage fails" do
+      saved = [] of UInt64
+      fail_write = true
+      journal = Matter::EventJournal.new(->(next_number : UInt64) do
+        raise Matter::StorageError.new("counter write failed") if fail_write
+        saved << next_number
+        nil
+      end)
+
+      expect_raises(Matter::StorageError) do
+        journal.record(ENDPOINT, CLUSTER, EVENT_A, :info, payload(1))
+      end
+      journal.size.should eq(0)
+      journal.next_event_number.should eq(1_u64)
+
+      fail_write = false
+      journal.record(ENDPOINT, CLUSTER, EVENT_A, :info, payload(2)).event_number.should eq(1_u64)
+      saved.should eq([2_u64])
+    end
+
     it "numbers events from one, node wide, across endpoints and clusters" do
       journal = Matter::EventJournal.new
       journal.latest_event_number.should eq(0_u64)

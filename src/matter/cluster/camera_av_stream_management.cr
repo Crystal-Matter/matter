@@ -724,6 +724,7 @@ module Matter
       @delivery_observers = [] of Proc(Nil)
       @audio_release_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
+      @viewport_observers = [] of Proc(Viewport, Nil)
       @next_audio_stream_id : UInt16 = 0_u16
       @next_video_stream_id : UInt16 = 0_u16
       @microphone_capabilities : AudioCapabilities?
@@ -873,6 +874,11 @@ module Matter
         return if @viewport == value
         @viewport = value
         increment_version_and_notify(ATTR_VIEWPORT)
+        @viewport_observers.each(&.call(value))
+      end
+
+      def on_viewport_changed(&block : Viewport -> Nil) : Nil
+        @viewport_observers << block
       end
 
       def on_video_allocate(&block : VideoStreamAllocateRequest, UInt16 -> InteractionModel::Status) : Nil
@@ -1350,6 +1356,7 @@ module Matter
       private def after_restore_state : Nil
         @microphone_volume_level = @microphone_min_level unless @microphone_volume_level.in?(@microphone_min_level..@microphone_max_level)
         @allocated_audio_streams.clear
+        @allocated_video_streams.each { |stream| @video_release_observers.each(&.call(stream.video_stream_id)) }
         @allocated_video_streams.clear
       end
 
