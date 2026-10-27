@@ -206,6 +206,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fabric-bound Datastore still contains that same entry and retains
   the original Administrator CAT version. Recovery of a completed
   RemoveAdmin continues through the existing path.
+- Bind both removal outcomes to the journaled prior Administrator CAT version,
+  exact pre-removal AdminList and outgoing entry, Anchor root, and fabric index.
+  The example Anchor compares the live Datastore with its durable record before
+  accepting a lost RemoveAdmin acknowledgement. Journals without these snapshots
+  fail closed and require explicit reconciliation.
 
 ### Door Lock credential user type validation
 
