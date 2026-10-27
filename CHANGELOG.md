@@ -651,7 +651,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preferences, typed charge commands and session events, validated daily
   target schedules, retained charging permission, and physical relay callbacks.
   The synthetic appliance fixture exercises the cluster through chip-tool.
-  Optional SoC, Plug and Charge, and RFID features remain unavailable.
+  Optional Plug and Charge and RFID features remain unavailable.
+- Add opt-in SoC Reporting with nullable host-fed StateOfCharge and
+  BatteryCapacity reads, mandatory TargetSoC in SoC charging schedules, and
+  persisted target schedules. The appliance fixture exposes a separate SoC
+  endpoint for official chip-tool coverage.
 - Add an opt-in V2X profile with timed EnableDischarging, independent persistent
   charge and discharge grants, combined SupplyState, host-approved relay changes,
   separate expiry timers, and feature-required session counters and event fields.

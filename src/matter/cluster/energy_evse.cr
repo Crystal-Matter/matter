@@ -3,7 +3,7 @@ require "./cluster"
 module Matter
   module Cluster
     # Matter 1.6 Energy EVSE (0x0099), revision 4. Charging Preferences is
-    # mandatory. V2X is opt-in; SoC, Plug and Charge and RFID are not advertised.
+    # mandatory. SoC Reporting and V2X are opt-in; Plug and Charge and RFID are not advertised.
     class EnergyEvse < Base
       cluster 0x0099, revision: 4
 
@@ -13,7 +13,8 @@ module Matter
       feature :rfid, bit: 3
       feature :v2x, bit: 4
 
-      SUPPORTED_FEATURES       = Feature::ChargingPreferences.value | Feature::V2x.value
+      SUPPORTED_FEATURES       = Feature::ChargingPreferences.value | Feature::SocReporting.value | Feature::V2x.value
+      MAX_SOC                  =   100_u8
       MAX_TARGET_SCHEDULES     =        7
       MAX_TARGETS_PER_SCHEDULE =       10
       MAX_MINUTE_OF_DAY        = 1439_u16
@@ -284,6 +285,10 @@ module Matter
         requires: :charging_preferences
       attribute 0x0026, :next_charge_target_soc, UInt8, nullable: true,
         requires: :charging_preferences
+      attribute 0x0030, :state_of_charge, UInt8, nullable: true,
+        requires: :soc_reporting, validate: :validate_state_of_charge!
+      attribute 0x0031, :battery_capacity, Int64, nullable: true,
+        requires: :soc_reporting, validate: :validate_battery_capacity!
       attribute 0x0040, :session_id, UInt32, nullable: true, persist: true
       attribute 0x0041, :session_duration, UInt32, nullable: true, persist: true
       attribute 0x0042, :session_energy_charged, Int64, nullable: true, persist: true
@@ -339,6 +344,8 @@ module Matter
                      @next_charge_target_time : UInt32? = nil,
                      @next_charge_required_energy : Int64? = nil,
                      @next_charge_target_soc : UInt8? = nil,
+                     @state_of_charge : UInt8? = nil,
+                     @battery_capacity : Int64? = nil,
                      @session_id : UInt32? = nil,
                      @session_duration : UInt32? = nil,
                      @session_energy_charged : Int64? = nil,
@@ -355,6 +362,8 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("Energy EVSE requires Charging Preferences") unless @feature_map.charging_preferences?
         raise ArgumentError.new("unsupported Energy EVSE feature bits") if (@feature_map.value & ~SUPPORTED_FEATURES) != 0
+        validate_state_of_charge!(@state_of_charge)
+        validate_battery_capacity!(@battery_capacity)
         validate_capacity!(@circuit_capacity)
         raise ArgumentError.new("invalid charge current") if @minimum_charge_current < 0 || @maximum_charge_current < 0 ||
                                                              @maximum_discharge_current < 0
@@ -366,6 +375,16 @@ module Matter
         @charging_target_schedules.dup
       end
 
+      # Publish live EV telemetry. Unknown values are null; a restarted EVSE
+      # waits for the host to provide fresh readings instead of replaying stale data.
+      def report_soc(state_of_charge : UInt8?, battery_capacity : Int64?) : Nil
+        raise ArgumentError.new("SoC Reporting is not enabled") unless @feature_map.soc_reporting?
+        validate_state_of_charge!(state_of_charge)
+        validate_battery_capacity!(battery_capacity)
+        self.state_of_charge = state_of_charge
+        self.battery_capacity = battery_capacity
+      end
+
       # The host owns the charging forecast because it has the charger and EV
       # telemetry. Publish its current estimate through the PREF attributes.
       def report_next_charge(start_time : UInt32?, target_time : UInt32?,
@@ -374,8 +393,11 @@ module Matter
           raise ArgumentError.new("target time precedes charge start")
         end
         raise ArgumentError.new("required energy must be nonnegative") if required_energy && required_energy < 0
-        if target_soc && target_soc != 100_u8
-          raise ArgumentError.new("TargetSoC requires the SoC Reporting feature")
+        if target_soc
+          raise ArgumentError.new("TargetSoC exceeds 100 percent") if target_soc > MAX_SOC
+          if !@feature_map.soc_reporting? && target_soc != MAX_SOC
+            raise ArgumentError.new("TargetSoC requires the SoC Reporting feature")
+          end
         end
         self.next_charge_start_time = start_time
         self.next_charge_target_time = target_time
@@ -471,6 +493,9 @@ module Matter
       # ameba:disable Naming/AccessorMethodName
       def set_targets(request : SetTargetsRequest) : InteractionModel::Status
         schedules = request.charging_target_schedules
+        if @feature_map.soc_reporting? && schedules.any? { |schedule| schedule.charging_targets.any?(&.target_soc.nil?) }
+          return InteractionModel::Status.invalid_command
+        end
         return InteractionModel::Status.constraint_error unless valid_schedules?(schedules)
         if callback = @on_targets_changed
           status = callback.call(copy_schedules(schedules))
@@ -664,6 +689,20 @@ module Matter
         end
       end
 
+      private def validate_state_of_charge!(value : UInt8?) : Nil
+        raise ArgumentError.new("SoC telemetry requires SoC Reporting") if value && !@feature_map.soc_reporting?
+        raise ArgumentError.new("StateOfCharge exceeds 100 percent") if value && value > MAX_SOC
+      end
+
+      private def validate_battery_capacity!(value : Int64?) : Nil
+        raise ArgumentError.new("SoC telemetry requires SoC Reporting") if value && !@feature_map.soc_reporting?
+        raise ArgumentError.new("BatteryCapacity must be nonnegative") if value && value < 0
+      end
+
+      protected def validate_feature_map_change(value : Feature) : Nil
+        raise ArgumentError.new("Energy EVSE feature profile is fixed after construction") unless value == @feature_map
+      end
+
       private def cap_maximum_current(capacity : Int64) : Nil
         self.maximum_charge_current = capacity if @maximum_charge_current > capacity
         if @feature_map.v2x? && @maximum_discharge_current > capacity
@@ -741,9 +780,10 @@ module Matter
           targets.each do |target|
             return false if target.target_time_minutes_past_midnight > MAX_MINUTE_OF_DAY
             if soc = target.target_soc
-              return false unless soc == 100_u8
+              return false if soc > MAX_SOC || (!@feature_map.soc_reporting? && soc != MAX_SOC)
             end
             energy = target.added_energy
+            return false if @feature_map.soc_reporting? && target.target_soc.nil?
             return false if energy.nil? && target.target_soc.nil?
             return false if energy && energy < 0
           end

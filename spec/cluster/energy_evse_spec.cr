@@ -29,6 +29,8 @@ describe Evse do
     read(cluster, Evse::ATTR_CIRCUIT_CAPACITY).should eq(32_000_i64)
     read(cluster, Evse::ATTR_SESSION_ID).should be_nil
     read_status(cluster, 0x0004_u32).status.should eq(EvseStatus::UnsupportedAttribute)
+    read_status(cluster, 0x0030_u32).status.should eq(EvseStatus::UnsupportedAttribute)
+    read_status(cluster, 0x0031_u32).status.should eq(EvseStatus::UnsupportedAttribute)
     accepted_command_ids(cluster).should eq([
       Evse::CMD_DISABLE, Evse::CMD_ENABLE_CHARGING,
       Evse::CMD_SET_TARGETS, Evse::CMD_GET_TARGETS, Evse::CMD_CLEAR_TARGETS,
@@ -247,6 +249,70 @@ describe Evse do
     expect_raises(ArgumentError) { cluster.report_next_charge(100_u32, 200_u32, 12_000_i64, 50_u8) }
     cluster.report_next_charge(nil, nil, nil, nil)
     read(cluster, Evse::ATTR_NEXT_CHARGE_TARGET_TIME).should be_nil
+  end
+
+  it "gates SoC telemetry, validates host reports, and leaves it unknown after restart" do
+    feature = Evse::Feature::ChargingPreferences | Evse::Feature::SocReporting
+    cluster = build(Evse, circuit_capacity: 32_000_i64, feature_map: feature)
+    cluster.feature_map.should eq(feature)
+    read(cluster, Evse::ATTR_STATE_OF_CHARGE).should be_nil
+    read(cluster, Evse::ATTR_BATTERY_CAPACITY).should be_nil
+    cluster.report_soc(72_u8, 60_000_000_i64)
+    read(cluster, Evse::ATTR_STATE_OF_CHARGE).should eq(72_u8)
+    read(cluster, Evse::ATTR_BATTERY_CAPACITY).should eq(60_000_000_i64)
+    expect_raises(ArgumentError) { cluster.report_soc(101_u8, 60_000_000_i64) }
+    expect_raises(ArgumentError) { cluster.report_soc(72_u8, -1_i64) }
+    read(cluster, Evse::ATTR_STATE_OF_CHARGE).should eq(72_u8)
+    read(cluster, Evse::ATTR_BATTERY_CAPACITY).should eq(60_000_000_i64)
+    cluster.report_next_charge(nil, nil, nil, 80_u8)
+    read(cluster, Evse::ATTR_NEXT_CHARGE_TARGET_SOC).should eq(80_u8)
+    restored = build(Evse, circuit_capacity: 32_000_i64, feature_map: feature)
+    restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    read(restored, Evse::ATTR_STATE_OF_CHARGE).should be_nil
+    read(restored, Evse::ATTR_BATTERY_CAPACITY).should be_nil
+    expect_raises(ArgumentError) { evse.report_soc(72_u8, 60_000_000_i64) }
+    expect_raises(ArgumentError) { evse.state_of_charge = 72_u8 }
+    expect_raises(ArgumentError) { evse.battery_capacity = 60_000_000_i64 }
+    expect_raises(ArgumentError) { evse.feature_map = feature }
+  end
+
+  it "requires TargetSoC for every schedule target with the SoC feature" do
+    feature = Evse::Feature::ChargingPreferences | Evse::Feature::SocReporting
+    cluster = build(Evse, circuit_capacity: 32_000_i64, feature_map: feature)
+    missing_soc = target_schedule(0x02_u8, 480_u16, 12_000_i64)
+    expect_status(invoke(cluster, Evse::CMD_SET_TARGETS,
+      Evse::SetTargetsRequest.new([missing_soc])), EvseStatus::InvalidCommand)
+    valid_target = Evse::ChargingTarget.new(480_u16, nil, 80_u8)
+    valid = Evse::ChargingTargetSchedule.new(0x02_u8, [valid_target])
+    expect_status(invoke(cluster, Evse::CMD_SET_TARGETS,
+      Evse::SetTargetsRequest.new([valid])), EvseStatus::Success)
+    expect_status(invoke(cluster, Evse::CMD_SET_TARGETS,
+      Evse::SetTargetsRequest.new([Evse::ChargingTargetSchedule.new(0x04_u8,
+        [Evse::ChargingTarget.new(480_u16, 12_000_i64, 101_u8)])])), EvseStatus::ConstraintError)
+    cluster.charging_target_schedules.should eq([valid])
+    expect_raises(ArgumentError) { cluster.feature_map = Evse::Feature::ChargingPreferences }
+    cluster.feature_map.should eq(feature)
+    restored = build(Evse, circuit_capacity: 32_000_i64, feature_map: feature)
+    restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
+    restored.charging_target_schedules.should eq([valid])
+    restored.charging_target_schedules.first.charging_targets.first.to_tlv(nil).as_structure.keys.should eq([0_u8, 1_u8])
+    combined = build(Evse, circuit_capacity: 32_000_i64,
+      feature_map: feature | Evse::Feature::V2x)
+    read(combined, Evse::ATTR_STATE_OF_CHARGE).should be_nil
+    read(combined, Evse::ATTR_MAXIMUM_DISCHARGE_CURRENT).should eq(0_i64)
+  end
+
+  it "retains the at-least-one target rule without SoC Reporting" do
+    cluster = evse
+    soc_only = Evse::ChargingTargetSchedule.new(0x02_u8,
+      [Evse::ChargingTarget.new(480_u16, nil, 100_u8)])
+    expect_status(invoke(cluster, Evse::CMD_SET_TARGETS,
+      Evse::SetTargetsRequest.new([soc_only])), EvseStatus::Success)
+    neither = Evse::ChargingTargetSchedule.new(0x04_u8,
+      [Evse::ChargingTarget.new(480_u16)])
+    expect_status(invoke(cluster, Evse::CMD_SET_TARGETS,
+      Evse::SetTargetsRequest.new([neither])), EvseStatus::ConstraintError)
+    cluster.charging_target_schedules.should eq([soc_only])
   end
 
   it "lets a physical relay callback veto charging without changing permission" do
