@@ -293,6 +293,59 @@ describe Matter::Controller::DatastoreSynchronizer do
     client.try(&.close)
   end
 
+  it "prunes committed groups and bindings when a retained endpoint no longer advertises their clusters" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.parts_list = [1_u16]
+    im.server_lists[1_u16] = [] of UInt32
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    node_id = 0x100_u64
+    store.node_list = [Datastore::DatastoreNodeInformationEntryStruct.new(node_id, "Node", pending)]
+    store.record_endpoint(node_id, 1_u16, "Endpoint").success?.should be_true
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(node_id, 1_u16, 5_u16, committed)]
+    store.endpoint_binding_list = [Datastore::DatastoreEndpointBindingEntryStruct.new(node_id, 1_u16, 7_u16, binding, committed)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, node_id, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+
+    store.node_endpoint_list.map(&.endpoint_id).should eq([1_u16])
+    store.endpoint_group_id_list.should be_empty
+    store.endpoint_binding_list.should be_empty
+    store.node_list.first.commissioning_status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+  ensure
+    client.try(&.close)
+  end
+
+  it "retains failed pending group and binding work when their endpoint clusters are absent" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.parts_list = [1_u16]
+    im.server_lists[1_u16] = [] of UInt32
+    im.response_code = Matter::InteractionModel::StatusCode::UnsupportedCluster
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    node_id = 0x100_u64
+    store.node_list = [Datastore::DatastoreNodeInformationEntryStruct.new(node_id, "Node", pending)]
+    store.record_endpoint(node_id, 1_u16, "Endpoint").success?.should be_true
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(5_u64, "Group", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(node_id, 1_u16, 5_u16, pending)]
+    store.endpoint_binding_list = [Datastore::DatastoreEndpointBindingEntryStruct.new(node_id, 1_u16, 7_u16, binding, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, node_id, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+    store.endpoint_binding_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+    store.node_list.first.commissioning_status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+  ensure
+    client.try(&.close)
+  end
+
   it "imports operational groups, bindings, key sets, and ACLs during RefreshNode" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)
