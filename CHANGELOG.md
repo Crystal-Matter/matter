@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### LabelStruct bounds
+
+- Reject oversized Fixed Label and User Label entries supplied at construction.
+  Fail closed on LabelList reads if a caller later mutates either list beyond
+  the Matter 1.6 field limit.
+
 ### Thread Network Directory
 
 - Reject a non-null empty PreferredExtendedPanID write with `ConstraintError`,
