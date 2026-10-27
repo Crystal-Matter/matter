@@ -467,6 +467,13 @@ services:
     environment:
       E2E_DEVICE: matter_content_app
 
+  content-app-messages:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_content_app_messages
+      E2E_BINARY: matter_content_app
+      MATTER_MESSAGES_PROFILE: "1"
+
   content-app-observer:
     <<: *device
     environment:

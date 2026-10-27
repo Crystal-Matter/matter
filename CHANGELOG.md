@@ -25,6 +25,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exact single-command MRP retransmission can now recover without re-running
   unrelated commands.
 
+### Messages confirmation profiles
+
+- Add opt-in Matter 1.6 CONF, RESP, and RPLY support to Messages, backed by a
+  presentation host. Validate feature dependencies, response choices, reply
+  length, and conditional nullable event fields; replay pending fabric-scoped
+  messages to the host after restart. The content-app fixture exercises user
+  confirmation and durable cancellation through official chip-tool. PROT stays
+  unadvertised until authentication has a verified host implementation.
+
 ### Subscription access control
 
 - Recheck attribute and event privileges for every active subscription update,
