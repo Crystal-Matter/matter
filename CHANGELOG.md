@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Camera host signaling path
+
+- Add an opt-in Requestor signaling sink that binds Provider session metadata
+  to a host-resolved CASE peer and forwards SDP/ICE/End commands. On outbound
+  failure, tear down only the matching Provider session and notify the host
+  media peer. Real WebRTC media and response-sent dispatch remain host work.
+
 ### Joint Fabric completion durability
 
 - Commit a joining Administrator's cross-signed ICAC, AdministratorFabricIndex,
