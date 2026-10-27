@@ -21,6 +21,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   acknowledgement using a fresh witness from the trusted participant host.
   The candidate checks the exact pending ICAC, fabric identities, and prior
   rotation state before advancing its journal without repeating AddICAC.
+- Reconcile a participant Administrator CAT rotation that did not start after
+  removal only when its pre-rotation credential was journaled, the participant
+  host confirms durable old credentials with a clear fail-safe and credential
+  journal, and fresh CASE and private-channel proofs match the frozen fabric
+  and Administrator order. The participant persists a recovery lease before
+  its final witness, blocks Matter credential mutations until the Anchor
+  durably rewinds its journal, and restores the lease across restart. The
+  Anchor resumes release from its journal after a lost save acknowledgement.
+  Direct host calls hold the protocol lock through their complete fail-safe,
+  credential, fabric-table, and group-key mutations, closing the gap between
+  a pre-mutation guard and the final write. Startup refuses a persisted lease
+  that conflicts with a pending credential undo journal.
 
 ### Joint Fabric journal recovery
 

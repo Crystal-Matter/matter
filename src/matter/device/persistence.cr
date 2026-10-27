@@ -340,6 +340,11 @@ module Matter
       end
 
       private def write_dirty : Nil
+        # FabricTable's deferred flush takes the protocol mutex. Acquire it
+        # before the cluster guards and backend transaction so a concurrent
+        # credential mutation cannot hold that mutex while waiting for storage.
+        protocol_lock = @fabric_table.protocol_lock
+        protocol_lock.try(&.lock)
         return unless @backend.open?
 
         pending = @dirty_clusters.to_a.sort_by(&.persistence_key)
@@ -352,6 +357,8 @@ module Matter
           end
           nil
         end)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       private def with_cluster_persistence_guards(clusters : Array(Cluster::Base), index : Int32,

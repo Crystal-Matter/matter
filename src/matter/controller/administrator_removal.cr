@@ -40,6 +40,8 @@ module Matter
         property outgoing_admin_entry : Bytes?
         property remaining_admin_entries : Array(Bytes)?
         property anchor_pre_rotation_noc : Bytes?
+        property participant_pre_rotation_credential : Bytes?
+        property participant_recovery_lease_id : String?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
@@ -51,7 +53,9 @@ module Matter
                        @anchor_node_id : UInt64? = nil,
                        @outgoing_admin_entry : Bytes? = nil,
                        @remaining_admin_entries : Array(Bytes)? = nil,
-                       @anchor_pre_rotation_noc : Bytes? = nil)
+                       @anchor_pre_rotation_noc : Bytes? = nil,
+                       @participant_pre_rotation_credential : Bytes? = nil,
+                       @participant_recovery_lease_id : String? = nil)
         end
 
         # A save callback may fail after touching its input. Every mutable
@@ -67,7 +71,9 @@ module Matter
             anchor_node_id: @anchor_node_id,
             outgoing_admin_entry: @outgoing_admin_entry.try(&.dup),
             remaining_admin_entries: @remaining_admin_entries.try { |entries| entries.map(&.dup) },
-            anchor_pre_rotation_noc: @anchor_pre_rotation_noc.try(&.dup))
+            anchor_pre_rotation_noc: @anchor_pre_rotation_noc.try(&.dup),
+            participant_pre_rotation_credential: @participant_pre_rotation_credential.try(&.dup),
+            participant_recovery_lease_id: @participant_recovery_lease_id)
         end
       end
 
@@ -151,13 +157,15 @@ module Matter
       class Workflow
         alias SaveJournal = Proc(Journal, Nil)
         alias Consent = Proc(Bool)
+        alias CaptureParticipantCredential = Proc(UInt64, Bytes)
 
         getter journal : Journal
 
         def initialize(@datastore : Datastore, @anchor_node_id : UInt64,
                        @remaining_nodes : Array(UInt64), @port : Port,
                        @anchor_consent : Consent, @outgoing_consent : Consent,
-                       @save : SaveJournal, @journal : Journal)
+                       @save : SaveJournal, @journal : Journal,
+                       @capture_participant_credential : CaptureParticipantCredential? = nil)
           unless @journal.outgoing_node_id != DataType::NodeId::UNSPECIFIED && @anchor_node_id != DataType::NodeId::UNSPECIFIED &&
                  @journal.outgoing_node_id != @anchor_node_id
             raise Matter::ConfigurationError.new("Invalid outgoing Administrator identity")
@@ -197,9 +205,13 @@ module Matter
             advance(Stage::AnchorRotated)
           end
           if @journal.stage.anchor_rotated?
+            if @journal.participant_recovery_lease_id
+              raise Matter::CommissioningError.new("Participant recovery fence needs durable release before retry")
+            end
             @remaining_nodes.each do |node_id|
               next if @journal.rotated_nodes.includes?(node_id)
               pending = @journal.detached_copy
+              pending.participant_pre_rotation_credential = @capture_participant_credential.try(&.call(node_id))
               pending.active_node_id = node_id
               pending.stage = Stage::RotatingParticipant
               @save.call(pending)
@@ -208,6 +220,8 @@ module Matter
               completed = @journal.detached_copy
               completed.rotated_nodes << node_id
               completed.active_node_id = nil
+              completed.participant_pre_rotation_credential = nil
+              completed.participant_recovery_lease_id = nil
               completed.stage = Stage::AnchorRotated
               @save.call(completed)
               @journal = completed
@@ -267,7 +281,7 @@ module Matter
                   when Stage::RemovingFabric      then stable_stage.in?(Stage::Ready, Stage::FabricRemoved)
                   when Stage::RemovingDatastore   then stable_stage.in?(Stage::FabricRemoved, Stage::DatastoreRemoved)
                   when Stage::RotatingAnchor      then stable_stage.in?(Stage::DatastoreRemoved, Stage::AnchorRotated)
-                  when Stage::RotatingParticipant then stable_stage == Stage::AnchorRotated && rotated_node_id == journal.active_node_id && !participant_completed.nil?
+                  when Stage::RotatingParticipant then stable_stage == Stage::AnchorRotated && rotated_node_id == journal.active_node_id && participant_completed == true
                   else                                 false
                   end
           raise Matter::ConfigurationError.new("Invalid Administrator removal reconciliation") unless valid
@@ -277,6 +291,8 @@ module Matter
               updated.rotated_nodes << node_id unless updated.rotated_nodes.includes?(node_id)
             end
             updated.active_node_id = nil
+            updated.participant_pre_rotation_credential = nil
+            updated.participant_recovery_lease_id = nil
           end
           updated.stage = stable_stage
           save.call(updated)
@@ -408,6 +424,63 @@ module Matter
           reconcile_journal!(journal, Stage::DatastoreRemoved, save)
         end
 
+        # A trusted host must establish that the participant's old credential
+        # is durable and its fail-safe and credential undo journal are clear.
+        # The caller also verifies a fresh signed CASE proof of this exact
+        # credential before calling this journal-only transition.
+        def self.reconcile_participant_rotation_no_effect!(journal : Journal, datastore : Datastore,
+                                                           expected_fabric_index : UInt8,
+                                                           observed_credential : Bytes,
+                                                           save : SaveJournal) : Journal
+          target_node_id = journal.active_node_id
+          snapshot = journal.participant_pre_rotation_credential
+          unless journal.stage.rotating_participant? && target_node_id &&
+                 DataType::NodeId.valid_joint_fabric?(target_node_id) &&
+                 journal.fabric_id && journal.fabric_id != Fabric::RESERVED_FABRIC_ID &&
+                 journal.root_public_key && journal.anchor_node_id &&
+                 journal.prior_administrator_cat_version && journal.administrator_cat_version &&
+                 journal.remaining_admin_entries && snapshot
+            raise Matter::ConfigurationError.new("Administrator removal lacks a bound participant credential snapshot")
+          end
+          if snapshot.empty?
+            raise Matter::ConfigurationError.new("Administrator removal has an empty participant credential snapshot")
+          end
+          unless snapshot == observed_credential
+            raise Matter::AuthenticationError.new("Participant credential differs from pre-rotation journal")
+          end
+          unless datastore.status.state.committed? &&
+                 datastore.joint_fabric_index == expected_fabric_index &&
+                 datastore.anchor_node_id == journal.anchor_node_id
+            raise Matter::AuthenticationError.new("Participant rotation Datastore belongs to another Anchor fabric")
+          end
+          verify_anchor_root!(journal, datastore)
+          unless datastore.admin_list.map(&.to_slice) == journal.remaining_admin_entries
+            raise Matter::CommissioningError.new("Participant rotation AdminList differs from frozen removal journal")
+          end
+          administrators = datastore.admin_list.map(&.node_id)
+          participants = administrators.reject(&.==(journal.anchor_node_id))
+          active_index = participants.index(target_node_id)
+          unless active_index && administrators.count(target_node_id) == 1 &&
+                 administrators.count(journal.anchor_node_id) == 1 &&
+                 administrators.uniq.size == administrators.size &&
+                 journal.rotated_nodes == participants.first(active_index) &&
+                 datastore.admin_list.none?(&.node_id.==(journal.outgoing_node_id))
+            raise Matter::CommissioningError.new("Participant rotation order differs from frozen removal journal")
+          end
+          previous = journal.prior_administrator_cat_version.as(UInt16)
+          target = journal.administrator_cat_version.as(UInt16)
+          current = datastore.group_list.find(&.group_cat.==(Datastore::ADMINISTRATOR_CAT)).try(&.group_cat_version)
+          unless target > previous && current == target
+            raise Matter::CommissioningError.new("Participant rotation CAT differs from frozen removal journal")
+          end
+          updated = journal.detached_copy
+          updated.stage = Stage::AnchorRotated
+          updated.active_node_id = nil
+          updated.participant_pre_rotation_credential = nil unless updated.participant_recovery_lease_id
+          save.call(updated)
+          updated
+        end
+
         private def self.verify_anchor_root!(journal : Journal, datastore : Datastore) : Nil
           root = datastore.anchor_root_ca
           Crypto::MatterCertificate::Validation.verify_root(root)
@@ -505,10 +578,31 @@ module Matter
                               node_id : UInt64, prior_administrator_cat_version : UInt16,
                               challenge : Bytes, durable_old_noc : Bytes,
                               anchor_cat_version : UInt16? = nil) : Nil
-          observed = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+          observed = verify_current_credential!(im, session, peer, root_certificate, fabric_id,
             root_public_key, node_id, prior_administrator_cat_version, challenge, anchor_cat_version)
-          unless observed == durable_old_noc
+          unless observed.noc == durable_old_noc
             raise Matter::AuthenticationError.new("Rotation target does not hold the durable NOC")
+          end
+        end
+
+        def capture_pre_rotation_credential!(im : ImClient, session : Session::SecureContext,
+                                             peer : Socket::IPAddress, root_certificate : Bytes,
+                                             fabric_id : UInt64, root_public_key : Bytes,
+                                             node_id : UInt64, prior_administrator_cat_version : UInt16,
+                                             challenge : Bytes) : Bytes
+          verify_current_credential!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, prior_administrator_cat_version, challenge).to_slice
+        end
+
+        def verify_participant_no_effect!(im : ImClient, session : Session::SecureContext,
+                                          peer : Socket::IPAddress, root_certificate : Bytes,
+                                          fabric_id : UInt64, root_public_key : Bytes,
+                                          node_id : UInt64, prior_administrator_cat_version : UInt16,
+                                          challenge : Bytes, credential : Bytes) : Nil
+          observed = verify_current_credential!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, prior_administrator_cat_version, challenge)
+          unless observed.to_slice == credential
+            raise Matter::AuthenticationError.new("Participant CASE credential differs from journaled pre-rotation credential")
           end
         end
 
@@ -518,7 +612,7 @@ module Matter
                               node_id : UInt64, administrator_cat_version : UInt16,
                               challenge : Bytes, anchor_cat_version : UInt16? = nil,
                               exact_cats : Array(DataType::CaseAuthenticatedTag)? = nil) : Nil
-          before_noc = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+          before_noc = verify_current_credential!(im, session, peer, root_certificate, fabric_id,
             root_public_key, node_id, administrator_cat_version, challenge, anchor_cat_version,
             exact_cats)
           result = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
@@ -539,21 +633,21 @@ module Matter
           # fresh challenge prevents a cached pre-commit response from being
           # accepted as post-commit proof.
           final_challenge = Crypto::StandardCrypto.new.random_bytes(VidVerification::CHALLENGE_SIZE)
-          after_noc = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+          after_noc = verify_current_credential!(im, session, peer, root_certificate, fabric_id,
             root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version,
             exact_cats)
-          unless after_noc == before_noc
+          unless after_noc.to_slice == before_noc.to_slice
             raise Matter::AuthenticationError.new("Rotation NOC changed during completion")
           end
           nil
         end
 
-        private def verify_current_noc!(im : ImClient, session : Session::SecureContext,
-                                        peer : Socket::IPAddress, root_certificate : Bytes,
-                                        fabric_id : UInt64, root_public_key : Bytes,
-                                        node_id : UInt64, administrator_cat_version : UInt16,
-                                        challenge : Bytes, anchor_cat_version : UInt16? = nil,
-                                        exact_cats : Array(DataType::CaseAuthenticatedTag)? = nil) : Bytes
+        private def verify_current_credential!(im : ImClient, session : Session::SecureContext,
+                                               peer : Socket::IPAddress, root_certificate : Bytes,
+                                               fabric_id : UInt64, root_public_key : Bytes,
+                                               node_id : UInt64, administrator_cat_version : UInt16,
+                                               challenge : Bytes, anchor_cat_version : UInt16? = nil,
+                                               exact_cats : Array(DataType::CaseAuthenticatedTag)? = nil) : Cluster::OperationalCredentials::Tlv::NOC
           unless session.case_session? && session.peer_node_id.try(&.id) == node_id
             raise Matter::AuthenticationError.new("Rotation CASE peer differs from journaled Node ID")
           end
@@ -655,7 +749,7 @@ module Matter
               raise Matter::AuthenticationError.new("Rotation NOC does not carry the selected Anchor CAT version")
             end
           end
-          noc.noc
+          noc
         end
 
         private def read_list(type : T.class, im : ImClient, session : Session::SecureContext,

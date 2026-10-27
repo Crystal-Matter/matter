@@ -52,6 +52,15 @@ module Matter
       property on_failsafe_expired : Proc(Nil)?
       property on_failsafe_success : Proc(Nil)?
 
+      # Invoked before a host or command arms, re-arms, or disarms a failsafe.
+      # The separate timer hook covers device-side arming without a commissioner.
+      property on_before_arm : Proc(UInt16, UInt8?, Bool, Nil)?
+      property on_before_arm_timer : Proc(UInt16, Nil)?
+      property on_before_state_change : Proc(Nil)?
+
+      # The device's reentrant protocol mutex, installed before transport starts.
+      property protocol_lock : Mutex? = nil
+
       # Invoked with the breadcrumb the commissioner's progress moved to
       property on_breadcrumb_changed : Proc(UInt64, Nil)?
 
@@ -88,6 +97,9 @@ module Matter
         session_fabric_index : UInt8?,
         pase_session : Bool,
       ) : Outcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_arm.try(&.call(expiry_length_seconds, session_fabric_index, pase_session))
         Log.info { "ArmFailSafe: expiry=#{expiry_length_seconds}s, breadcrumb=#{breadcrumb}, fabric=#{session_fabric_index || "PASE"}" }
 
         if expiry_length_seconds > 0 && expiry_length_seconds > @max_cumulative_seconds
@@ -156,6 +168,8 @@ module Matter
         end
 
         Outcome.new
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Handle CommissioningComplete (0x04)
@@ -166,6 +180,9 @@ module Matter
       # @param session_fabric_index Fabric of the requesting session
       # @param case_session Whether the request arrived on a CASE session (required)
       def complete(session_fabric_index : UInt8?, case_session : Bool) : Outcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_state_change.try(&.call)
         Log.info { "CommissioningComplete: fabric=#{session_fabric_index}" }
 
         unless case_session
@@ -212,12 +229,17 @@ module Matter
         @admin_fabric_index = nil
 
         Outcome.new
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Arm the timer outside of an ArmFailSafe request, creating a PASE context
       # if none is armed. Used by tests and by device-side flows that need the
       # failsafe running without a commissioner.
       def arm_timer(expiry_seconds : UInt16) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_arm_timer.try(&.call(expiry_seconds))
         context = @context || begin
           created = FailsafeContext.new(
             associated_fabric_index: nil,
@@ -229,21 +251,31 @@ module Matter
         end
 
         context.arm(expiry_seconds, @max_cumulative_seconds)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Disarm and drop the context without rolling anything back
       def disarm : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_state_change.try(&.call)
         if context = @context
           context.disarm
           @context = nil
           @admin_fabric_index = nil
           @on_terms_conditions_revert.try(&.call)
         end
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Record that AddNOC added a fabric during this failsafe, which is what
       # lets CommissioningComplete arrive on a CASE session of the new fabric.
       def record_added_fabric(fabric_index : UInt8) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_state_change.try(&.call)
         if context = @context
           context.record_added_fabric(fabric_index)
           @admin_fabric_index = fabric_index
@@ -251,26 +283,41 @@ module Matter
         else
           Log.warn { "No failsafe context to record added fabric #{fabric_index}" }
         end
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Snapshot the regulatory configuration before SetRegulatoryConfig changes
       # it, so that an expiring failsafe can put it back
       def record_regulatory_config(location_type : UInt8, country_code : String) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_state_change.try(&.call)
         if (context = @context) && context.armed?
           context.record_regulatory_config(location_type, country_code)
         end
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Expire the failsafe immediately, rolling back provisional state.
       def expire : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_state_change.try(&.call)
         if context = @context
           context.disarm
           handle_expiry
         end
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Roll back every commissioning change made under the expired context
       private def handle_expiry : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_state_change.try(&.call)
         Log.warn { "Failsafe expired - performing rollback" }
 
         if context = @context
@@ -284,6 +331,8 @@ module Matter
 
         @commissioning_window_open = false
         self.breadcrumb = 0_u64
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       private def breadcrumb=(value : UInt64) : Nil

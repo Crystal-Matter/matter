@@ -157,6 +157,50 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     port.events.should eq(["Participant 200 UpdateNOC"])
   end
 
+  it "saves the exact participant credential before invoking UpdateNOC" do
+    datastore = removal_datastore
+    entries = removal_remaining_admin_entries(datastore)
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    credential = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(Bytes[7], Bytes[8], 1_u8).to_slice
+    port = FakeAdministratorRemovalPort.new
+    port.interrupt_participant = true
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::AnchorRotated, remaining_admin_entries: entries)
+    saved = [] of Matter::Controller::AdministratorRemoval::Journal
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true },
+      ->(item : Matter::Controller::AdministratorRemoval::Journal) { saved << item.detached_copy; nil },
+      journal, ->(node_id : UInt64) {
+      node_id.should eq(0x200_u64)
+      credential
+    })
+
+    expect_raises(Matter::TransportError, /interrupted/) { workflow.run }
+    saved.first.stage.should eq(RemovalStage::RotatingParticipant)
+    saved.first.participant_pre_rotation_credential.should eq(credential)
+    workflow.journal.participant_pre_rotation_credential.should eq(credential)
+    port.events.should eq(["Participant 200 UpdateNOC"])
+  end
+
+  it "does not invoke participant UpdateNOC when the credential journal save fails" do
+    datastore = removal_datastore
+    entries = removal_remaining_admin_entries(datastore)
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    port = FakeAdministratorRemovalPort.new
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::AnchorRotated, remaining_admin_entries: entries)
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true },
+      ->(_item : Matter::Controller::AdministratorRemoval::Journal) {
+        raise Matter::StorageError.new("Journal flush failed")
+      }, journal, ->(_node_id : UInt64) { Bytes[1, 2, 3] })
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) { workflow.run }
+    workflow.journal.stage.should eq(RemovalStage::AnchorRotated)
+    workflow.journal.participant_pre_rotation_credential.should be_nil
+    port.events.should be_empty
+  end
+
   it "does not publish a failed reconciliation of participant rotation" do
     journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
       RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
@@ -225,6 +269,49 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
         journal, datastore, 1_u8, save)
     end
     journal.stage.should eq(RemovalStage::RotatingAnchor)
+  end
+
+  it "rewinds only the active participant with an exact pre-rotation credential and frozen AdminList" do
+    datastore = removal_datastore
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    group = datastore.group_list.first
+    group.group_cat_version = 2_u16
+    datastore.group_list = [group]
+    credential = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(Bytes[7], Bytes[8], 1_u8).to_slice
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
+      administrator_cat_version: 2_u16, prior_administrator_cat_version: 1_u16,
+      fabric_id: 0x1111_u64, root_public_key: removal_root_public_key(datastore),
+      anchor_node_id: 0x100_u64, outgoing_admin_entry: Bytes[5],
+      remaining_admin_entries: datastore.admin_list.map(&.to_slice),
+      participant_pre_rotation_credential: credential)
+    saved = [] of Matter::Controller::AdministratorRemoval::Journal
+    save = ->(item : Matter::Controller::AdministratorRemoval::Journal) { saved << item.detached_copy; nil }
+
+    restored = Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+      journal, datastore, 1_u8, credential, save)
+    restored.stage.should eq(RemovalStage::AnchorRotated)
+    restored.active_node_id.should be_nil
+    restored.participant_pre_rotation_credential.should be_nil
+    restored.rotated_nodes.should be_empty
+    saved.size.should eq(1)
+
+    journal.participant_pre_rotation_credential = nil
+    expect_raises(Matter::ConfigurationError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+        journal, datastore, 1_u8, credential, save)
+    end
+    journal.participant_pre_rotation_credential = credential
+    expect_raises(Matter::AuthenticationError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+        journal, datastore, 1_u8, Bytes[9], save)
+    end
+    datastore.admin_list = datastore.admin_list.reverse
+    expect_raises(Matter::CommissioningError) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+        journal, datastore, 1_u8, credential, save)
+    end
+    journal.stage.should eq(RemovalStage::RotatingParticipant)
   end
 
   it "persists the Anchor fabric binding with an uncertain rotation journal" do
@@ -326,11 +413,47 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     workflow.journal.stage.should eq(Matter::Controller::AdministratorRemoval::Stage::RotatingParticipant)
     workflow.journal.active_node_id.should eq(0x200_u64)
     expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
+    expect_raises(Matter::ConfigurationError, /Invalid Administrator removal reconciliation/) do
+      workflow.reconcile!(Matter::Controller::AdministratorRemoval::Stage::AnchorRotated, 0x200_u64,
+        participant_completed: false)
+    end
     workflow.reconcile!(Matter::Controller::AdministratorRemoval::Stage::AnchorRotated, 0x200_u64,
       participant_completed: true)
     workflow.run
     workflow.journal.stage.should eq(Matter::Controller::AdministratorRemoval::Stage::Completed)
     port.events.should eq(["Participant 200 UpdateNOC"])
+  end
+
+  it "retains a participant recovery fence across a no-effect rewind and restart" do
+    datastore = removal_datastore
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    datastore.group_list = [Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct.new(
+      1_u64, "Administrators", nil, Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 2_u16,
+      Matter::Cluster::JointFabricDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer)]
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
+      administrator_cat_version: 2_u16, prior_administrator_cat_version: 1_u16,
+      fabric_id: 0x1111_u64, root_public_key: removal_root_public_key(datastore),
+      anchor_node_id: 0x100_u64,
+      remaining_admin_entries: removal_remaining_admin_entries(datastore),
+      participant_pre_rotation_credential: Bytes[1, 2, 3],
+      participant_recovery_lease_id: "fenced-recovery")
+    saved = nil.as(Matter::Controller::AdministratorRemoval::Journal?)
+    rewound = Matter::Controller::AdministratorRemoval::Workflow.reconcile_participant_rotation_no_effect!(
+      journal, datastore, 1_u8, Bytes[1, 2, 3],
+      ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+        saved = Matter::Controller::AdministratorRemoval::Journal.from_document(state.to_document)
+        nil
+      })
+    rewound.participant_recovery_lease_id.should eq("fenced-recovery")
+    saved.as(Matter::Controller::AdministratorRemoval::Journal)
+      .participant_recovery_lease_id.should eq("fenced-recovery")
+    port = FakeAdministratorRemovalPort.new
+    workflow = Matter::Controller::AdministratorRemoval::Workflow.new(datastore,
+      0x100_u64, [0x200_u64], port, -> { true }, -> { true },
+      ->(_state : Matter::Controller::AdministratorRemoval::Journal) { nil }, rewound)
+    expect_raises(Matter::CommissioningError, /needs durable release/) { workflow.run }
+    port.events.should be_empty
   end
 
   it "reconciles a persisted RemoveFabric journal without an operational session" do
@@ -774,7 +897,10 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
       {"Participant 200 UpdateNOC", RemovalStage::AnchorRotated, RemovalStage::RotatingParticipant, RemovalStage::AnchorRotated},
     }
     boundaries.each do |command, before, uncertain, after|
-      {false, true}.each do |completed|
+      # Participant no-effect now requires the credential snapshot and private
+      # witness checked by the dedicated reconciliation path below.
+      completed_states = command.starts_with?("Participant") ? [true] : [false, true]
+      completed_states.each do |completed|
         port = FakeAdministratorRemovalPort.new
         port.fail_at = command
         datastore = removal_datastore

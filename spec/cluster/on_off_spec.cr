@@ -2,6 +2,17 @@ require "../spec_helper"
 require "../../src/matter/cluster/on_off"
 
 describe Matter::Cluster::OnOff do
+  it "rejects a command at the cluster boundary before changing state" do
+    cluster = build(Matter::Cluster::OnOff)
+    cluster.on_before_command = ->(_command : UInt32) {
+      raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+    }
+
+    result = cluster.invoke_command(Matter::Cluster::OnOff::CMD_ON)
+    result.as(Matter::InteractionModel::Status).status.should eq(Matter::InteractionModel::StatusCode::Busy)
+    cluster.on_off?.should be_false
+  end
+
   describe "initialization" do
     it "creates on/off cluster with default off state" do
       cluster = build(Matter::Cluster::OnOff)

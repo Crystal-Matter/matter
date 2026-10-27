@@ -21,6 +21,13 @@ module Matter
   class FabricTable
     Log = ::Log.for("matter.fabric_table")
 
+    enum FabricMutation
+      Add
+      Update
+      Remove
+      Quarantine
+    end
+
     # Every fabric is one document in this collection, keyed by fabric index.
     COLLECTION = Storage::Collections::FABRICS
 
@@ -45,6 +52,13 @@ module Matter
     getter backend : Storage::Backend
 
     property on_fabric_removed : Proc(Fabric, Nil)?
+
+    # Called before any public fabric-table mutation, including persistence.
+    property on_before_fabric_change : Proc(FabricMutation, UInt8, Nil)?
+    property on_before_clear : Proc(Nil)?
+
+    # The device's reentrant protocol mutex, installed before transport starts.
+    property protocol_lock : Mutex? = nil
 
     # Security cleanup registered by the device runtime and SecureChannel.
     # Host observers may replace `on_fabric_removed` without replacing guards.
@@ -77,6 +91,9 @@ module Matter
 
     # Add a new fabric to the table
     def add_fabric(fabric : Fabric) : Bool
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
+      @on_before_fabric_change.try(&.call(FabricMutation::Add, fabric.fabric_index))
       # Check if we're at capacity
       if @fabrics.size >= @max_fabrics
         return false
@@ -94,10 +111,12 @@ module Matter
         return false
       end
 
-      write_fabric(fabric)
+      persist_fabric(fabric)
       @fabrics[fabric.fabric_index] = fabric
       @identities[fabric.fabric_index] = fabric.storage_identity
       true
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Add a fabric with automatic index assignment
@@ -114,6 +133,8 @@ module Matter
       root_cert : Bytes? = nil,
       fabric_index : UInt8? = nil,
     ) : Fabric?
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
       # Find next available fabric index
       fabric_index ||= next_available_index
       return unless fabric_index
@@ -139,22 +160,32 @@ module Matter
 
       # Add fabric
       add_fabric(fabric) ? fabric : nil
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Update an existing fabric
     def update_fabric(fabric : Fabric) : Bool
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
+      @on_before_fabric_change.try(&.call(FabricMutation::Update, fabric.fabric_index))
       # Fabric must already exist
       return false unless @fabrics.has_key?(fabric.fabric_index)
       return false if quarantined?(fabric.fabric_index)
       return false unless @identities[fabric.fabric_index]? == fabric.storage_identity
 
-      write_fabric(fabric)
+      persist_fabric(fabric)
       @fabrics[fabric.fabric_index] = fabric
       true
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Remove a fabric by fabric_index
     def remove_fabric(fabric_index : UInt8) : Bool
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
+      @on_before_fabric_change.try(&.call(FabricMutation::Remove, fabric_index))
       fabric = @fabrics[fabric_index]?
       return false unless fabric
       return false if identity_changed?(fabric_index)
@@ -168,14 +199,20 @@ module Matter
       @identities.delete(fabric_index)
       @dirty.delete(fabric_index)
       true
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Remove a fabric by fabric_id
     def remove_fabric_by_id(fabric_id : UInt64) : Bool
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
       fabric = find_by_fabric_id(fabric_id)
       return false unless fabric
 
       remove_fabric(fabric.fabric_index)
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Get a fabric by fabric_index
@@ -188,8 +225,13 @@ module Matter
     # unknown. Keep the index reserved and reject its operational traffic
     # until the backend is reopened and its undo journal is resolved.
     def quarantine(fabric_index : UInt8) : Nil
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
+      @on_before_fabric_change.try(&.call(FabricMutation::Quarantine, fabric_index))
       @quarantined.add(fabric_index)
       @dirty.delete(fabric_index)
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     def quarantined?(fabric_index : UInt8) : Bool
@@ -258,16 +300,23 @@ module Matter
 
     # Clear all fabrics (used for factory reset)
     def clear_all
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
+      @on_before_clear.try(&.call)
       @fabrics.clear
       @identities.clear
       @dirty.clear
       @quarantined.clear
       @backend.clear(COLLECTION)
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Mark a fabric as recently used (updates last_used_at). The write is
     # deferred when a `write_debouncer` is attached.
     def mark_fabric_used(fabric_index : UInt8) : Bool
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
       return false if quarantined?(fabric_index)
       fabric = @fabrics[fabric_index]?
       return false unless fabric
@@ -277,26 +326,43 @@ module Matter
         @dirty[fabric_index] = fabric
         debouncer.trigger
       else
-        write_fabric(fabric)
+        persist_fabric(fabric)
       end
       true
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Writes every fabric deferred by `mark_fabric_used`.
     def flush_pending_writes : Nil
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
       return if @dirty.empty?
 
       pending = @dirty.dup
       @dirty.clear
       @backend.transaction do
         pending.each do |index, fabric|
-          write_fabric(fabric) unless quarantined?(index)
+          persist_fabric(fabric) unless quarantined?(index)
         end
       end
+    ensure
+      protocol_lock.try(&.unlock)
     end
 
     # Writes *fabric* as the `fabrics/<index>` document.
     def write_fabric(fabric : Fabric) : Nil
+      protocol_lock = @protocol_lock
+      protocol_lock.try(&.lock)
+      @on_before_fabric_change.try(&.call(FabricMutation::Update, fabric.fabric_index))
+      persist_fabric(fabric)
+    ensure
+      protocol_lock.try(&.unlock)
+    end
+
+    # Call only under the protocol lock after a credential guard, or for the
+    # last-used metadata writes needed by CASE while a recovery lease is held.
+    private def persist_fabric(fabric : Fabric) : Nil
       if @fabrics.any? { |index, stored| stored.same?(fabric) && index != fabric.fabric_index }
         raise StorageError.new("Fabric index changed while stored in the table")
       end

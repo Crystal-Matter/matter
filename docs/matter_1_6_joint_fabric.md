@@ -201,6 +201,48 @@ item below as covered only to the extent of its cited tests.
   could still commit a provisional rotation. The three-Administrator Docker
   scenario exercises this no-effect command after restarting the Anchor at
   the Datastore-to-UpdateNOC boundary, then retries the rotation.
+  A `RotatingParticipant` interruption before C's UpdateNOC can likewise
+  reconcile no effect only when the journal saved C's exact pre-rotation
+  NOCStruct before the command. The promoted Anchor checks its frozen
+  AdminList, CAT version, participant order, and durable Datastore, then
+  obtains C's private host witness of the durable old credential, endpoint
+  binding and role, and cleared fail-safe and credential undo journal. B
+  separately authenticates C over CASE and verifies a fresh signed challenge
+  against that exact NOCStruct. Before the final witness, B durably saves a
+  recovery lease ID in its removal journal. B then asks C through their
+  authenticated private host channel to persist a lease bound to B, C, the
+  fabric, and the outgoing credential before C returns a fresh witness. C
+  rejects Matter command invokes and attribute writes while leased, except
+  for the authenticated CASE VID-signature command B needs to verify C during
+  crash recovery. That command does not mutate credentials. C also guards its
+  public fail-safe, credential, and fabric mutation APIs while leased.
+  C restores the lease and its guards before starting its network transport
+  after a restart. B rewinds its journal only after checking the leased
+  witness, then asks C to release the exact lease after the rewind is
+  durably saved. A failed B save or lost release acknowledgement leaves the
+  lease in place or lets B retry release idempotently from its journaled ID.
+  This implementation serializes Matter invokes, the example's private
+  credential exchange loop, and the full fail-safe, credential,
+  fabric-table, and group-key mutation calls used by the example. They hold
+  the device's reentrant protocol lock during lease acquisition. A direct
+  host call that entered before acquisition must finish before C can inspect
+  and install the lease. A persisted lease paired with a pending credential
+  undo journal stops startup before the journal can roll back the credential.
+  A conflicting saved fabric binding also stops startup before
+  reconciliation can erase recovery evidence.
+  Raw backend writes, mutable returned objects, direct configuration setters,
+  and replacing guard callbacks remain trusted host capabilities outside the fence.
+  Leases have no timeout and never release automatically; a stranded lease
+  requires authenticated B recovery or operator repair after checking B's
+  durable journal. The host must restrict the private command channel to the
+  intended B and C processes and protect its storage; the nonce establishes
+  witness freshness but cannot authenticate that channel. Legacy journals
+  without the credential snapshot and independent participants without an
+  equivalent durable lease and witness fail closed. The three-Administrator
+  Docker scenario interrupts B before its rewind save and after its durable
+  write but before the acknowledgement, verifies a competing ArmFailSafe is
+  Busy before and after C restarts, and completes the checked retry after B
+  releases the lease.
   Before A's authorized removal, B rejects an unconsented
   request to remove C and the test checks that C's fabric, B's AdminList, and
   the Administrator CAT version are unchanged. The former
@@ -581,8 +623,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    C commit witness, and C's new-fabric NOC across those restarts. It also covers A removal,
    B restart after lost RemoveFabric, RemoveAdmin, Anchor rotation, and
    participant rotation acknowledgements, and B/C registration. Recovery of
-   an old-CAT observation remains deliberately blocked until the fail-safe
-   outcome can be established by the host.
+   an old-CAT observation remains blocked unless the host establishes the
+   fail-safe outcome through the durable private witness and lease path
+   described above.
 3. Deploy production PAA/CD signers and a trusted CRL distribution source
    through the JFA example's explicit injection point. The bundled
    `OfflineAttestationRevocation` verifies issuer, signature, time, and chain
