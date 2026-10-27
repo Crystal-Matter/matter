@@ -3,6 +3,7 @@ require "../interaction_model/status_code"
 require "../interaction_model/tlv_messages"
 require "../cluster/cluster"
 require "../event_journal"
+require "../session/context"
 require "../cluster/access_control"
 require "../cluster/group_key_management"
 require "../cluster/thermostat"
@@ -71,6 +72,61 @@ module Matter
             auth_mode: InteractionModel::EntryAuthMode::Case
           )
         end
+      end
+
+      # A ReportData chunk may wait for an earlier chunk's acknowledgement.
+      # Recheck the payload at send time so an ACL change cannot release a
+      # sensitive value from a previously encoded read or subscription report.
+      def self.report_chunk_authorized?(
+        payload : Bytes,
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        session : Session::SecureContext,
+      ) : Bool
+        report = InteractionModel::ReportDataMessage.from_slice(payload)
+        subjects = session.peer_subject_ids
+        peer_subject_ids = subjects.empty? ? nil : subjects
+
+        (report.attribute_reports || [] of InteractionModel::AttributeReportIB).each do |entry|
+          next unless data = entry.attribute_data
+          path = data.path
+          endpoint_id = path.endpoint || return false
+          cluster_id = path.cluster || return false
+          attribute_id = path.attribute || return false
+          cluster = clusters[{endpoint_id, cluster_id}]? || return false
+          # A dynamic profile may have removed this attribute since encoding.
+          # The global attributes are supplied by Base rather than metadata.
+          declared = cluster.attributes.any? { |attr| attr.id.id == attribute_id } ||
+                     [Cluster::Base::GLOBAL_GENERATED_COMMAND_LIST,
+                      Cluster::Base::GLOBAL_ACCEPTED_COMMAND_LIST,
+                      Cluster::Base::GLOBAL_ATTRIBUTE_LIST,
+                      Cluster::Base::GLOBAL_FEATURE_MAP,
+                      Cluster::Base::GLOBAL_CLUSTER_REVISION].includes?(attribute_id)
+          return false unless declared
+          current = read_attributes([path], clusters, session.fabric_index,
+            session.case_session?, peer_subject_ids, session_id: session.session_id.to_u64,
+            local_node_id: session.local_node_id.try(&.id))
+          return false unless current.any?(&.attribute_data)
+        end
+
+        (report.event_reports || [] of InteractionModel::EventReportIB).each do |entry|
+          next unless data = entry.event_data
+          path = data.path
+          endpoint_id = path.endpoint || return false
+          cluster_id = path.cluster || return false
+          event_id = path.event || return false
+          cluster = clusters[{endpoint_id, cluster_id}]? || return false
+          return false unless cluster.get_event_metadata(event_id)
+          # Use the ordinary event read path, including any host restrictions,
+          # against an isolated one-record journal. The live journal and its
+          # event-number sequence stay untouched.
+          journal = EventJournal.new
+          journal.record(endpoint_id, cluster_id, event_id, data.priority,
+            data.data || TLV::Any.new(nil), fabric_index: session.fabric_index)
+          current = read_events([path], journal, clusters, fabric_index: session.fabric_index,
+            is_case_session: session.case_session?, peer_subject_ids: peer_subject_ids)
+          return false unless current.any?(&.event_data)
+        end
+        true
       end
 
       # IM message types
@@ -323,6 +379,23 @@ module Matter
           fabric_index: fabric_index
         )
 
+        reports.concat(authorized_event_reports(records, clusters, fabric_index,
+          is_case_session, peer_subject_ids))
+
+        Log.debug { "Read #{reports.size} event report(s) from #{journal.size} journaled event(s)" }
+        reports
+      end
+
+      # Shared by a Read/Subscribe priming report and every later subscription
+      # update, so an ACL change cannot expose an event after priming.
+      def self.authorized_event_reports(
+        records : Array(EventJournal::Record),
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        fabric_index : UInt8?,
+        is_case_session : Bool,
+        peer_subject_ids : Array(UInt64)?,
+      ) : Array(InteractionModel::EventReportIB)
+        reports = [] of InteractionModel::EventReportIB
         records.each do |record|
           privilege = event_access(clusters, record)
           next unless privilege
@@ -330,8 +403,6 @@ module Matter
 
           reports << InteractionModel::EventReportIB.new(event_data: build_event_data(record))
         end
-
-        Log.debug { "Read #{reports.size} event report(s) from #{journal.size} journaled event(s)" }
         reports
       end
 
@@ -357,7 +428,7 @@ module Matter
 
       # The status a fully specified event path answers with, or `nil` when it
       # names an event the reader may read.
-      private def self.concrete_event_status(
+      def self.concrete_event_status(
         path : InteractionModel::EventPath,
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
         is_case_session : Bool,

@@ -131,6 +131,15 @@ item below as covered only to the extent of its cited tests.
   that stores only the ICAC must still reconcile the validated committed fabric
   during startup, before serving reads or advertising operationally. A service
   configured without a persistence callback provides no durable ICAC commit.
+  In the JFA example, CommissioningComplete writes the ICAC, the post-commit
+  AdministratorFabricIndex, accepted Terms and Conditions, and the device's
+  NOC journal clear in one backend transaction. A failed write leaves the
+  live fail-safe and provisional state available for retry or rollback.
+  File-backed restart and live-retry regressions cover this commit boundary.
+  Other hosts must wire both commissioning commit callbacks to the same
+  backend for this guarantee. A storage commit can succeed even if the
+  CommissioningComplete response is lost; a commissioner should reconcile
+  the committed fabric before trying to repeat provisioning.
 - The Docker two-administrator test bootstraps separate fabrics, performs the
   JCM credential exchange between the Crystal implementations, and checks the
   stored cross-signed ICAC. CommissioningComplete is deferred to the Anchor
@@ -360,8 +369,8 @@ The same workflow's opt-in `opcreds` case runs the unmodified Matter 1.6
 [SDK run](https://github.com/Crystal-Matter/matter/actions/runs/39859190491)
 passed all steps 0–28 with two requested tests passed and zero skips. It covers
 live AddNOC and UpdateNOC rollback, VID/VVS updates, subscriptions, and
-CommissioningComplete. Crash-safe recovery of provisional credentials remains
-the separate limitation described above.
+CommissioningComplete. File-backed crash recovery and the joined JFA
+completion transaction have separate local regressions above.
 
 `e2e/interop/sdk_jf_cert_matrix.py` runs the official SDK v1.6.0.0
 `TC_JFADMIN_1_1`, `1_4`, and `TC_JFDS_2_1` through `2_3` scripts unchanged

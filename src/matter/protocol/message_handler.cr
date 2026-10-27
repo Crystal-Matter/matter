@@ -176,7 +176,14 @@ module Matter
         @operational_credentials_cluster = nil
 
         # Initialize clusters
-        @node = Node.new
+        journal = if persistence = @persistence
+                    store = persistence.as(Persistence::Base)
+                    next_number = store.restore_next_event_number || EventJournal::FIRST_EVENT_NUMBER
+                    EventJournal.new(->(number : UInt64) { store.persist_next_event_number(number) }, next_number)
+                  else
+                    EventJournal.new
+                  end
+        @node = Node.new(journal)
         initialize_clusters
 
         @sender = ResponseSender.new(@transport, @mrp_cache)
@@ -286,6 +293,12 @@ module Matter
         if persistence = @persistence
           begin
             persistence.restore(@registry, @fabric_table)
+            # A legacy store may have subscription cursors but no durable
+            # journal counter. Start above the largest restored cursor so new
+            # events remain visible and event numbers never move backwards.
+            if cursor = @registry.active_subscriptions.values.max_of?(&.last_event_number)
+              @node.event_journal.advance_next_event_number(cursor + 1_u64)
+            end
           rescue ex
             Log.error(exception: ex) { "Failed to restore protocol persistence (persistence=#{persistence.class})" }
           end

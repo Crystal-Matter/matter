@@ -10,7 +10,8 @@ private def set_suggestion_utc(device : E2E::Device) : Nil
     [utc_microseconds.to_s, "4"], endpoint: 0))
 end
 
-private def add_suggestion(device : E2E::Device, handle : String, effective : String = suggestion_now) : E2E::Result
+private def add_suggestion(device : E2E::Device, handle : String, effective : String = "null") : E2E::Result
+  # Null lets the device use its own UTC second after SetUTCTime crosses a host second boundary.
   device.chip("thermostat", "add-thermostat-suggestion", handle, effective, "30", device.node, "1")
 end
 

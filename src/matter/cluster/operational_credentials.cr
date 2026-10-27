@@ -666,8 +666,8 @@ module Matter
       end
 
       # Failsafe disarmed successfully - the credentials are committed
-      def on_failsafe_success
-        credentials.commit_pending
+      def on_failsafe_success(journal_cleared : Bool = false)
+        credentials.commit_pending(journal_cleared: journal_cleared)
         @vid_failsafe_snapshot.clear
       end
 
