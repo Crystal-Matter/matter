@@ -33,6 +33,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or host-reported operation. Add opt-in fault events with standard IDs and
   priorities, and exercise a flow pump endpoint with the official controller.
 
+### OTA Requestor host lifecycle
+
+- Add an opt-in device OTA Requestor service that resolves announced or default
+  providers on the correct CASE fabric, stages and validates an image, gates
+  installation on provider approval, and persists the notification token before
+  installation for restart-safe NotifyUpdateApplied retries.
+
 ### Subscription access control
 
 - Recheck attribute and event privileges for every active subscription update,

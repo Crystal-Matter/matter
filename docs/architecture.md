@@ -368,6 +368,19 @@ can send ApplyUpdateRequest and NotifyUpdateApplied over the same fabric;
 provider scheduling is returned to the application, which persists the token
 and reports success only after the new image is running. `apply_staged` can
 invoke the application's installer after an immediate Proceed response.
+The optional `Device::OtaRequestorLifecycle` binds an announcement or a
+fabric-scoped default provider to a host CASE resolver. It validates the
+resolved session's fabric and peer Node ID before using the controller OTA
+client, then writes the pending notification token to the `app` collection
+before invoking the host installer. A restart can retry NotifyUpdateApplied
+only after the running software version matches. Its `FabricTable` removal
+guard closes any staged image; the durable token remains until fabric deletion
+has succeeded. The token record includes the fabric identity, so the next read
+discards it after removal or index reuse. Delayed
+ApplyUpdate keeps the staged sink open in memory until `resume_delayed_apply`.
+The OTA notification journal records provider success, then event publication,
+before deleting its token. Event publication is at least once if the event
+reaches a live observer but saving its marker fails.
 
 On start, `Protocol::Persistence::StorageBackend#restore` brings back only CASE sessions whose
 fabric still exists, and only subscriptions whose session came back. `Device#shutdown!` persists
