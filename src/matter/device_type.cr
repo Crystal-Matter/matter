@@ -143,6 +143,26 @@ module Matter
       )
     end
 
+    # Bridged Node revision 3. FabricSynchronizedNode adds Administrator
+    # Commissioning and makes Ecosystem Information mandatory; Endpoint checks
+    # that condition against the installed bridged commissioning implementation.
+    def self.bridged_node : DeviceType
+      new(
+        DataType::DeviceTypeId.new(BRIDGED_NODE),
+        "Bridged Node",
+        3_u16,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::BridgedDeviceBasicInformation::CLUSTER_ID,
+        ],
+        optional_server_clusters: [
+          Cluster::AdministratorCommissioning::CLUSTER_ID,
+          Cluster::EcosystemInformation::CLUSTER_ID,
+          Cluster::PowerSource::CLUSTER_ID,
+        ]
+      )
+    end
+
     def self.power_source : DeviceType
       new(
         DataType::DeviceTypeId.new(POWER_SOURCE),
@@ -520,6 +540,7 @@ module Matter
       when ROOT_NODE                      then root_node
       when POWER_SOURCE                   then power_source
       when JOINT_FABRIC_ADMINISTRATOR     then joint_fabric_administrator
+      when BRIDGED_NODE                   then bridged_node
       when SMOKE_CO_ALARM                 then smoke_co_alarm
       when ON_OFF_LIGHT                   then on_off_light
       when DIMMABLE_LIGHT                 then dimmable_light
