@@ -490,6 +490,11 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_zone_management
+
+  zone-management-profiles:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_zone_management_profiles
   pump:
     <<: *device
     environment:

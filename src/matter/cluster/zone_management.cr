@@ -23,6 +23,7 @@ module Matter
       MAX_INITIAL_DURATION = 65_535_u32
       MAX_ZONE_ID          = 65_534_u16
       LAST_ZONE_ID_KEY     = "last_zone_id"
+      SUPPORTED_FEATURES   = 0x0F_u32
 
       enum ZoneType : UInt8
         TwoDCartesian = 0
@@ -266,14 +267,13 @@ module Matter
                      @two_d_cartesian_max : Vertex = Vertex.new(100_u16, 100_u16),
                      @automatic_timeouts : Bool = true)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        unless @feature_map == (Feature::TwoDCartesianZone | Feature::UserDefined)
-          raise ArgumentError.new("only two-dimensional user-defined zones without per-zone sensitivity are supported")
-        end
+        validate_features!(@feature_map)
         raise ArgumentError.new("max_user_defined_zones must be at least five") if @max_user_defined_zones < MIN_USER_ZONES
         mfg_zones = @zones.count(&.source.mfg?)
-        if @max_zones.to_i != mfg_zones + @max_user_defined_zones.to_i
+        if @feature_map.user_defined? && @max_zones.to_i != mfg_zones + @max_user_defined_zones.to_i
           raise ArgumentError.new("max_zones must equal manufacturer zones plus user-defined capacity")
         end
+        raise ArgumentError.new("max_zones must accommodate manufacturer zones") if @max_zones < 1 || @max_zones < mfg_zones
         unless (MIN_SENSITIVITY_MAX..MAX_SENSITIVITY_MAX).includes?(@sensitivity_max)
           raise ArgumentError.new("sensitivity_max must be 2..10")
         end
@@ -285,10 +285,43 @@ module Matter
         @last_zone_id = @zones.max_of?(&.zone_id)
       end
 
-      # Camera hosts use this to apply privacy changes before the zone state is
-      # committed. Motion-only hosts can omit it.
+      protected def validate_feature_map_change(value : Feature) : Nil
+        validate_features!(value)
+        return if value == @feature_map
+        raise ArgumentError.new("Zone Management feature map is fixed after construction")
+      end
+
+      private def validate_features!(features : Feature) : Nil
+        raise ArgumentError.new("unsupported Zone Management feature") unless features.value & ~SUPPORTED_FEATURES == 0
+        if features.per_zone_sensitivity? && !features.two_d_cartesian_zone?
+          raise ArgumentError.new("per-zone sensitivity requires two-dimensional Cartesian zones")
+        end
+        if features.user_defined? && !features.two_d_cartesian_zone?
+          raise ArgumentError.new("user-defined zones require two-dimensional Cartesian zones")
+        end
+        if features.focus_zones? && !features.user_defined?
+          raise ArgumentError.new("focus zones require user-defined zones")
+        end
+      end
+
+      # Camera hosts apply privacy and focus geometry before the zone state is
+      # committed. Motion-only hosts can omit the handler.
       def on_zone_change(&block : ZoneInformation?, ZoneInformation? -> InteractionModel::Status) : Nil
         @zone_change = block
+      end
+
+      # Reapply durable zones after the host has restored its media pipeline.
+      # Call before exposing a camera stream; a failed host change keeps the
+      # device from starting with stale privacy or focus geometry.
+      def replay_zones_to_host! : Nil
+        return if @zones.empty?
+        callback = @zone_change || raise ConfigurationError.new("Zone Management host zone handler is required")
+        @zones.each do |zone|
+          status = callback.call(nil, zone)
+          unless status.success?
+            raise ConfigurationError.new("Zone Management host rejected restored zone #{zone.zone_id}: #{status.status}")
+          end
+        end
       end
 
       def create_two_d_cartesian_zone(request : CreateZoneRequest) : CreateZoneResponse | InteractionModel::Status
@@ -483,10 +516,12 @@ module Matter
       private def validate_zones!(values : Array(ZoneInformation)) : Nil
         raise ArgumentError.new("too many zones") if values.size > @max_zones
         raise ArgumentError.new("duplicate zone ID") if values.map(&.zone_id).uniq!.size != values.size
+        raise ArgumentError.new("user-defined zones are unsupported") if !@feature_map.user_defined? && values.any?(&.source.user?)
         raise ArgumentError.new("too many user-defined zones") if values.count(&.source.user?) > @max_user_defined_zones
         values.each do |zone|
           raise ArgumentError.new("zone ID exceeds the Matter range") if zone.zone_id > MAX_ZONE_ID
-          raise ArgumentError.new("unsupported zone type or geometry") unless zone.zone_type.two_d_cartesian? && valid_zone?(zone.two_d_cartesian_zone)
+          raise ArgumentError.new("unsupported zone type or geometry") unless @feature_map.two_d_cartesian_zone? &&
+                                                                              zone.zone_type.two_d_cartesian? && valid_zone?(zone.two_d_cartesian_zone)
         end
       end
 
@@ -505,12 +540,17 @@ module Matter
           trigger.initial_duration <= MAX_INITIAL_DURATION &&
           trigger.augmentation_duration <= trigger.initial_duration &&
           trigger.max_duration >= trigger.initial_duration &&
-          trigger.sensitivity.nil?
+          if @feature_map.per_zone_sensitivity?
+            sensitivity = trigger.sensitivity
+            !sensitivity.nil? && (MIN_SENSITIVITY..@sensitivity_max).includes?(sensitivity)
+          else
+            trigger.sensitivity.nil?
+          end
       end
 
       private def valid_zone?(zone : TwoDCartesianZone) : Bool
         return false if zone.name.bytesize > MAX_NAME_BYTES
-        return false if zone.use.focus?
+        return false if zone.use.focus? && !@feature_map.focus_zones?
         if color = zone.color
           return false unless /\A\#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?\z/.matches?(color)
         end

@@ -40,6 +40,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   installation on provider approval, and persists the notification token before
   installation for restart-safe NotifyUpdateApplied retries.
 
+### Zone Management optional profiles
+
+- Support Matter 1.6 `PERZONESENS` and `FOCUSZONES` feature bits on opt-in Zone
+  Management servers. Per-zone trigger sensitivity is required and bounded by
+  `SensitivityMax` when enabled; the global `Sensitivity` attribute is absent.
+  Focus zones require `USERDEFINED` and a host zone-change handler. The default
+  Cartesian user-zone profile and its global sensitivity remain unchanged.
+- Exercise the combined profile with an official chip-tool device fixture,
+  including command validation and state restoration after restart.
+
 ### Subscription access control
 
 - Recheck attribute and event privileges for every active subscription update,
