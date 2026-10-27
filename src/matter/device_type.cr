@@ -50,7 +50,10 @@ module Matter
     ELECTRICAL_UTILITY_METER = 0x0511_u32 # Electrical Utility Meter
 
     # Appliance Device Types
-    MICROWAVE_OVEN = 0x0079_u32 # Microwave Oven
+    REFRIGERATOR                   = 0x0070_u32 # Refrigerator
+    TEMPERATURE_CONTROLLED_CABINET = 0x0071_u32 # Temperature Controlled Cabinet
+    DISHWASHER                     = 0x0075_u32 # Dishwasher
+    MICROWAVE_OVEN                 = 0x0079_u32 # Microwave Oven
 
     # Closure Device Types
     DOOR_LOCK                  = 0x000A_u32 # Door Lock
@@ -83,6 +86,11 @@ module Matter
     getter required_server_attributes : Hash(UInt32, Array(UInt32))
     # Device types which must also appear somewhere on the node.
     getter required_node_device_types : Array(UInt32)
+    getter required_endpoint_device_types : Array(UInt32)
+    getter required_server_features : Hash(UInt32, UInt32)
+    getter forbidden_server_features : Hash(UInt32, UInt32)
+    getter required_server_events : Hash(UInt32, Array(UInt32))
+    getter forbidden_server_attributes : Hash(UInt32, Array(UInt32))
 
     def initialize(
       @device_type_id : DataType::DeviceTypeId,
@@ -93,6 +101,11 @@ module Matter
       @required_server_attributes : Hash(UInt32, Array(UInt32)) = {} of UInt32 => Array(UInt32),
       @required_node_device_types : Array(UInt32) = [] of UInt32,
       @required_client_clusters : Array(UInt32) = [] of UInt32,
+      @required_endpoint_device_types : Array(UInt32) = [] of UInt32,
+      @required_server_features : Hash(UInt32, UInt32) = {} of UInt32 => UInt32,
+      @forbidden_server_features : Hash(UInt32, UInt32) = {} of UInt32 => UInt32,
+      @required_server_events : Hash(UInt32, Array(UInt32)) = {} of UInt32 => Array(UInt32),
+      @forbidden_server_attributes : Hash(UInt32, Array(UInt32)) = {} of UInt32 => Array(UInt32),
     )
     end
 
@@ -137,6 +150,51 @@ module Matter
           0x001D_u32, # Descriptor
           0x002F_u32, # Power Source
         ]
+      )
+    end
+
+    # Matter 1.6 Refrigerator requires a Temperature Controlled Cabinet on
+    # the same endpoint with the physical Cooler condition.
+    def self.refrigerator : DeviceType
+      new(
+        DataType::DeviceTypeId.new(REFRIGERATOR), "Refrigerator", 3_u16,
+        required_server_clusters: [0x001D_u32], # Descriptor
+        optional_server_clusters: [0x0003_u32, 0x0052_u32, 0x0057_u32, 0x0072_u32],
+        required_endpoint_device_types: [TEMPERATURE_CONTROLLED_CABINET],
+        forbidden_server_features: {0x0052_u32 => 0x01_u32}, # DEPONOFF
+        forbidden_server_attributes: {0x0052_u32 => [0x0002_u32]}
+      )
+    end
+
+    def self.temperature_controlled_cabinet : DeviceType
+      new(
+        DataType::DeviceTypeId.new(TEMPERATURE_CONTROLLED_CABINET),
+        "Temperature Controlled Cabinet", 6_u16,
+        required_server_clusters: [0x001D_u32, 0x0056_u32],
+        optional_server_clusters: [0x0048_u32, 0x0049_u32, 0x0052_u32, 0x0064_u32, 0x0402_u32],
+        required_server_features: {0x0056_u32 => 0x01_u32}, # TN
+        forbidden_server_features: {
+        0x0049_u32 => 0x01_u32, # Oven Mode DEPONOFF
+        0x0052_u32 => 0x01_u32, # Refrigerator Mode DEPONOFF
+        0x0056_u32 => 0x02_u32, # Temperature Control TL
+      },
+        required_server_events: {0x0048_u32 => [0x0001_u32]}, # OperationCompletion if present
+        forbidden_server_attributes: {
+        0x0049_u32 => [0x0002_u32], # Oven Mode StartUpMode
+        0x0052_u32 => [0x0002_u32], # Refrigerator Mode StartUpMode
+      }
+      )
+    end
+
+    def self.dishwasher : DeviceType
+      new(
+        DataType::DeviceTypeId.new(DISHWASHER), "Dishwasher", 2_u16,
+        required_server_clusters: [0x001D_u32, 0x0060_u32],
+        optional_server_clusters: [0x0003_u32, 0x0006_u32, 0x0056_u32, 0x0059_u32, 0x005D_u32],
+        required_server_features: {0x0006_u32 => 0x02_u32},   # DF, if On/Off present
+        forbidden_server_features: {0x0059_u32 => 0x01_u32},  # Dishwasher Mode DEPONOFF
+        required_server_events: {0x0060_u32 => [0x0001_u32]}, # OperationCompletion
+        forbidden_server_attributes: {0x0059_u32 => [0x0002_u32]}
       )
     end
 
@@ -440,28 +498,31 @@ module Matter
     # refuses to boot.
     def self.for(device_type : UInt32) : DeviceType
       case device_type
-      when ROOT_NODE                  then root_node
-      when POWER_SOURCE               then power_source
-      when JOINT_FABRIC_ADMINISTRATOR then joint_fabric_administrator
-      when SMOKE_CO_ALARM             then smoke_co_alarm
-      when ON_OFF_LIGHT               then on_off_light
-      when DIMMABLE_LIGHT             then dimmable_light
-      when ON_OFF_PLUG_IN_UNIT        then on_off_plug_in_unit
-      when ON_OFF_LIGHT_SWITCH        then on_off_light_switch
-      when DIMMER_SWITCH              then dimmer_switch
-      when CONTACT_SENSOR             then contact_sensor
-      when TEMPERATURE_SENSOR         then temperature_sensor
-      when AIR_QUALITY_SENSOR         then air_quality_sensor
-      when SOIL_SENSOR                then soil_sensor
-      when ELECTRICAL_UTILITY_METER   then electrical_utility_meter
-      when MICROWAVE_OVEN             then microwave_oven
-      when DOOR_LOCK                  then door_lock
-      when CLOSURE                    then closure
-      when CLOSURE_PANEL              then closure_panel
-      when THERMOSTAT                 then thermostat
-      when FAN                        then fan
-      when BASIC_VIDEO_PLAYER         then basic_video_player
-      when CAMERA                     then camera
+      when ROOT_NODE                      then root_node
+      when POWER_SOURCE                   then power_source
+      when JOINT_FABRIC_ADMINISTRATOR     then joint_fabric_administrator
+      when SMOKE_CO_ALARM                 then smoke_co_alarm
+      when ON_OFF_LIGHT                   then on_off_light
+      when DIMMABLE_LIGHT                 then dimmable_light
+      when ON_OFF_PLUG_IN_UNIT            then on_off_plug_in_unit
+      when ON_OFF_LIGHT_SWITCH            then on_off_light_switch
+      when DIMMER_SWITCH                  then dimmer_switch
+      when CONTACT_SENSOR                 then contact_sensor
+      when TEMPERATURE_SENSOR             then temperature_sensor
+      when AIR_QUALITY_SENSOR             then air_quality_sensor
+      when SOIL_SENSOR                    then soil_sensor
+      when ELECTRICAL_UTILITY_METER       then electrical_utility_meter
+      when MICROWAVE_OVEN                 then microwave_oven
+      when REFRIGERATOR                   then refrigerator
+      when TEMPERATURE_CONTROLLED_CABINET then temperature_controlled_cabinet
+      when DISHWASHER                     then dishwasher
+      when DOOR_LOCK                      then door_lock
+      when CLOSURE                        then closure
+      when CLOSURE_PANEL                  then closure_panel
+      when THERMOSTAT                     then thermostat
+      when FAN                            then fan
+      when BASIC_VIDEO_PLAYER             then basic_video_player
+      when CAMERA                         then camera
       else
         new(
           DataType::DeviceTypeId.new(device_type),
@@ -474,53 +535,56 @@ module Matter
     # Human-readable name for a device type id, `nil` when unknown
     def self.name(device_type : UInt32) : String?
       case device_type
-      when ROOT_NODE                  then "Root Node"
-      when JOINT_FABRIC_ADMINISTRATOR then "Joint Fabric Administrator"
-      when POWER_SOURCE               then "Power Source"
-      when SMOKE_CO_ALARM             then "Smoke CO Alarm"
-      when OTA_REQUESTOR              then "OTA Requestor"
-      when OTA_PROVIDER               then "OTA Provider"
-      when AGGREGATOR                 then "Aggregator"
-      when BRIDGED_NODE               then "Bridged Node"
-      when ON_OFF_LIGHT               then "On/Off Light"
-      when DIMMABLE_LIGHT             then "Dimmable Light"
-      when COLOR_TEMPERATURE_LIGHT    then "Color Temperature Light"
-      when EXTENDED_COLOR_LIGHT       then "Extended Color Light"
-      when ON_OFF_PLUG_IN_UNIT        then "On/Off Plug-in Unit"
-      when DIMMABLE_PLUG_IN_UNIT      then "Dimmable Plug-in Unit"
-      when ON_OFF_LIGHT_SWITCH        then "On/Off Light Switch"
-      when DIMMER_SWITCH              then "Dimmer Switch"
-      when COLOR_DIMMER_SWITCH        then "Color Dimmer Switch"
-      when CONTROL_BRIDGE             then "Control Bridge"
-      when PUMP_CONTROLLER            then "Pump Controller"
-      when PUMP                       then "Pump"
-      when CONTACT_SENSOR             then "Contact Sensor"
-      when LIGHT_SENSOR               then "Light Sensor"
-      when OCCUPANCY_SENSOR           then "Occupancy Sensor"
-      when TEMPERATURE_SENSOR         then "Temperature Sensor"
-      when PRESSURE_SENSOR            then "Pressure Sensor"
-      when FLOW_SENSOR                then "Flow Sensor"
-      when HUMIDITY_SENSOR            then "Humidity Sensor"
-      when AIR_QUALITY_SENSOR         then "Air Quality Sensor"
-      when SOIL_SENSOR                then "Soil Sensor"
-      when ELECTRICAL_UTILITY_METER   then "Electrical Utility Meter"
-      when MICROWAVE_OVEN             then "Microwave Oven"
-      when DOOR_LOCK                  then "Door Lock"
-      when CLOSURE                    then "Closure"
-      when CLOSURE_PANEL              then "Closure Panel"
-      when DOOR_LOCK_CONTROLLER       then "Door Lock Controller"
-      when WINDOW_COVERING            then "Window Covering"
-      when WINDOW_COVERING_CONTROLLER then "Window Covering Controller"
-      when HEATING_COOLING_UNIT       then "Heating/Cooling Unit"
-      when THERMOSTAT                 then "Thermostat"
-      when FAN                        then "Fan"
-      when BASIC_VIDEO_PLAYER         then "Basic Video Player"
-      when CAMERA                     then "Camera"
-      when CASTING_VIDEO_PLAYER       then "Casting Video Player"
-      when SPEAKER                    then "Speaker"
-      when CONTENT_APP                then "Content App"
-      when CASTING_VIDEO_CLIENT       then "Casting Video Client"
-      when VIDEO_REMOTE_CONTROL       then "Video Remote Control"
+      when ROOT_NODE                      then "Root Node"
+      when JOINT_FABRIC_ADMINISTRATOR     then "Joint Fabric Administrator"
+      when POWER_SOURCE                   then "Power Source"
+      when SMOKE_CO_ALARM                 then "Smoke CO Alarm"
+      when OTA_REQUESTOR                  then "OTA Requestor"
+      when OTA_PROVIDER                   then "OTA Provider"
+      when AGGREGATOR                     then "Aggregator"
+      when BRIDGED_NODE                   then "Bridged Node"
+      when ON_OFF_LIGHT                   then "On/Off Light"
+      when DIMMABLE_LIGHT                 then "Dimmable Light"
+      when COLOR_TEMPERATURE_LIGHT        then "Color Temperature Light"
+      when EXTENDED_COLOR_LIGHT           then "Extended Color Light"
+      when ON_OFF_PLUG_IN_UNIT            then "On/Off Plug-in Unit"
+      when DIMMABLE_PLUG_IN_UNIT          then "Dimmable Plug-in Unit"
+      when ON_OFF_LIGHT_SWITCH            then "On/Off Light Switch"
+      when DIMMER_SWITCH                  then "Dimmer Switch"
+      when COLOR_DIMMER_SWITCH            then "Color Dimmer Switch"
+      when CONTROL_BRIDGE                 then "Control Bridge"
+      when PUMP_CONTROLLER                then "Pump Controller"
+      when PUMP                           then "Pump"
+      when CONTACT_SENSOR                 then "Contact Sensor"
+      when LIGHT_SENSOR                   then "Light Sensor"
+      when OCCUPANCY_SENSOR               then "Occupancy Sensor"
+      when TEMPERATURE_SENSOR             then "Temperature Sensor"
+      when PRESSURE_SENSOR                then "Pressure Sensor"
+      when FLOW_SENSOR                    then "Flow Sensor"
+      when HUMIDITY_SENSOR                then "Humidity Sensor"
+      when AIR_QUALITY_SENSOR             then "Air Quality Sensor"
+      when SOIL_SENSOR                    then "Soil Sensor"
+      when ELECTRICAL_UTILITY_METER       then "Electrical Utility Meter"
+      when MICROWAVE_OVEN                 then "Microwave Oven"
+      when REFRIGERATOR                   then "Refrigerator"
+      when TEMPERATURE_CONTROLLED_CABINET then "Temperature Controlled Cabinet"
+      when DISHWASHER                     then "Dishwasher"
+      when DOOR_LOCK                      then "Door Lock"
+      when CLOSURE                        then "Closure"
+      when CLOSURE_PANEL                  then "Closure Panel"
+      when DOOR_LOCK_CONTROLLER           then "Door Lock Controller"
+      when WINDOW_COVERING                then "Window Covering"
+      when WINDOW_COVERING_CONTROLLER     then "Window Covering Controller"
+      when HEATING_COOLING_UNIT           then "Heating/Cooling Unit"
+      when THERMOSTAT                     then "Thermostat"
+      when FAN                            then "Fan"
+      when BASIC_VIDEO_PLAYER             then "Basic Video Player"
+      when CAMERA                         then "Camera"
+      when CASTING_VIDEO_PLAYER           then "Casting Video Player"
+      when SPEAKER                        then "Speaker"
+      when CONTENT_APP                    then "Content App"
+      when CASTING_VIDEO_CLIENT           then "Casting Video Client"
+      when VIDEO_REMOTE_CONTROL           then "Video Remote Control"
       end
     end
 

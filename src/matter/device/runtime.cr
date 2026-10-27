@@ -644,6 +644,10 @@ module Matter
       {1_u16 => primary_device_type_id} of UInt16 => UInt32
     end
 
+    protected def endpoint_additional_device_types : Hash(UInt16, Array(UInt32))
+      {} of UInt16 => Array(UInt32)
+    end
+
     protected def endpoint_client_clusters : Hash(UInt16, Array(UInt32))
       {} of UInt16 => Array(UInt32)
     end
@@ -1122,6 +1126,9 @@ module Matter
       device_types << DeviceType.root_node if endpoint_id == Node::ROOT_ENDPOINT_ID
       if declared = declared_types[endpoint_id]?
         device_types << DeviceType.for(declared)
+      end
+      (endpoint_additional_device_types[endpoint_id]? || [] of UInt32).each do |id|
+        device_types << DeviceType.for(id)
       end
       device_types
     end
