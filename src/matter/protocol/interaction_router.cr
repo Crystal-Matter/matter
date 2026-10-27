@@ -348,7 +348,9 @@ module Matter
 
         @subscriptions.abandon_invoke(original_msg.payload_header.exchange_id, session.session_id)
 
-        if request.more_chunked_messages && request.timed_request
+        # Timed writes cannot be chunked, and every non-final write chunk must
+        # receive a WriteResponse before the sender sends the next one.
+        if request.more_chunked_messages && (request.timed_request || request.suppress_response)
           send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
           return
         end

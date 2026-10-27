@@ -244,4 +244,29 @@ describe "chunked WriteRequest" do
       Matter::InteractionModel::StatusCode::InvalidAction.value)
     handler.close
   end
+
+  it "rejects response suppression on a non-final write chunk before mutation" do
+    handler, transport, session, labels = chunked_write_fixture
+    item = Matter::Cluster::LabelStruct.new("room", "office")
+    path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST)
+    data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Any.from_tlv([item].to_tlv))
+    request = Matter::InteractionModel::WriteRequestMessage.new(
+      suppress_response: true, write_requests: [data], more_chunked_messages: true)
+
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+      payload: request.to_slice, message_counter: 92_u32,
+      exchange_id: WRITE_EXCHANGE), WRITE_PEER)
+
+    labels.label_list.should be_empty
+    transport.sent_packets.size.should eq(1)
+    response = chunked_write_message(transport.sent_packets.first[0], session)
+    response.payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::InteractionModel.value)
+    response.payload_header.message_type.should eq(Matter::InteractionModel::MessageType::StatusResponse.value)
+    Matter::InteractionModel::StatusResponseMessage.from_slice(response.payload).status.should eq(
+      Matter::InteractionModel::StatusCode::InvalidAction.value)
+    handler.close
+  end
 end

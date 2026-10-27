@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Interaction Model writes
+
+- Honor `SuppressResponse` on unicast writes while acknowledging reliable
+  requests and replaying the cached acknowledgement on retransmission.
+- Reject non-final write chunks that request response suppression, as required
+  by the Matter 1.6 WriteRequest message encoding.
+
 ### Fan Control Step
 
 - Step discrete MultiSpeed fans in speed units, including wrap to speed 1 or
