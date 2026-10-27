@@ -127,6 +127,16 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#check" do
+    it "accepts rollover and rejects duplicate and stale counters across it" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.check(UInt32::MAX - 1_u32).accept?.should be_true
+      counter.check(UInt32::MAX).accept?.should be_true
+      counter.check(0_u32).accept?.should be_true
+      counter.check(1_u32).accept?.should be_true
+      counter.check(UInt32::MAX).duplicate?.should be_true
+      counter.check(UInt32::MAX - 65_u32).stale?.should be_true
+    end
+
     it "recognizes a duplicate zero counter" do
       counter = Matter::Transport::MessageCounter.new
       counter.check(0_u32).accept?.should be_true
@@ -157,6 +167,16 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#restore_received" do
+    it "keeps a restored floor across UInt32 rollover" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.restore_received(UInt32::MAX)
+
+      counter.check(UInt32::MAX).stale?.should be_true
+      counter.check(UInt32::MAX - 1_u32).stale?.should be_true
+      counter.check(0_u32).accept?.should be_true
+      counter.check(0_u32).duplicate?.should be_true
+    end
+
     it "installs a floor so the restored counter and older ones are stale" do
       counter = Matter::Transport::MessageCounter.new
       counter.restore_received(100_u32)

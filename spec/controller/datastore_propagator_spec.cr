@@ -69,8 +69,8 @@ describe Matter::Controller::DatastorePropagator do
 
     first = reservations.receive
     second = reservations.receive
-    [first, second].sort_by { |reservation| reservation[0] }.should eq([{0_u32, 2_u32}, {2_u32, 2_u32}])
-    state_store.load.unsecured_message_counter.should eq(4_u32)
+    [first, second].sort_by { |reservation| reservation[0] }.should eq([{0_u32, 12_u32}, {12_u32, 12_u32}])
+    state_store.load.unsecured_message_counter.should eq(24_u32)
   end
 
   it "reserves Sigma1 and completion counters for every CASE IPK candidate" do
@@ -79,8 +79,8 @@ describe Matter::Controller::DatastorePropagator do
     fabric.ipk_epoch_keys = [Bytes.new(16, 0xA1_u8), Bytes.new(16, 0xA2_u8), Bytes.new(16, 0xA3_u8)]
     delivery = CounterReservationDelivery.new(state_store)
 
-    delivery.reserve_for_spec(fabric).should eq({0_u32, 6_u32})
-    state_store.load.unsecured_message_counter.should eq(6_u32)
+    delivery.reserve_for_spec(fabric).should eq({0_u32, 36_u32})
+    state_store.load.unsecured_message_counter.should eq(36_u32)
   end
 
   it "drains the background worker before shutdown" do
