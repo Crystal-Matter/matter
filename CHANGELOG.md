@@ -15,6 +15,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shared-fabric CAT identities, protocol IDs, and example test Vendor IDs; decode CAT
   subjects through the Node ID type so invalid zero-version or non-CAT
   subjects cannot match an identity.
+- Keep a queued global EventList attribute authorized while sending chunked
+  subscription priming reports. This restores the official Operational
+  Credentials VID certification subscription sequence.
 
 ### Thermostat Presets production support
 

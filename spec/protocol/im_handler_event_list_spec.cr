@@ -64,6 +64,23 @@ private def assert_wildcard_event_lists(report : Matter::InteractionModel::Repor
 end
 
 describe "Interaction Model wildcard EventList" do
+  it "keeps a queued EventList report authorized during chunked subscription priming" do
+    cluster = Matter::Cluster::OnOff.new(endpoint(1))
+    clusters = { {1_u16, Matter::Cluster::OnOff::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) }
+    session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+    session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute: Matter::Cluster::Base::GLOBAL_EVENT_LIST)
+    reports = Matter::Protocol::IMHandler.read_attributes([path], clusters,
+      fabric_index: session.fabric_index, is_case_session: true,
+      peer_subject_ids: session.peer_subject_ids)
+    reports.first.attribute_data.should_not be_nil
+    payload = Matter::Protocol::IMHandler.encode_report_data(reports, 1_u32)
+
+    Matter::Protocol::IMHandler.report_chunk_authorized?(payload, clusters, session).should be_true
+  end
+
   it "includes eventful and eventless clusters in wildcard Read" do
     assert_wildcard_event_lists(wildcard_event_list_report(false))
   end
