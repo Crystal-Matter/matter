@@ -57,13 +57,13 @@ module Matter
           @pending.size + @active.size >= MAX_TRANSFERS
         end
 
-        def pending_for?(session : Session::SecureContext) : Bool
-          @pending.any?(&.session.same?(session))
+        def pending_for?(session : Session::SecureContext, origin_exchange_id : UInt16) : Bool
+          @pending.any? { |entry| entry.session.same?(session) && entry.origin_exchange_id == origin_exchange_id }
         end
 
         # Starts the log collection tied to a deferred IM InvokeResponse.
-        def start_pending_for(session : Session::SecureContext) : UInt16?
-          index = @pending.index(&.session.same?(session))
+        def start_pending_for(session : Session::SecureContext, origin_exchange_id : UInt16) : UInt16?
+          index = @pending.index { |entry| entry.session.same?(session) && entry.origin_exchange_id == origin_exchange_id }
           return unless index
           start_transfer(@pending.delete_at(index))
         end

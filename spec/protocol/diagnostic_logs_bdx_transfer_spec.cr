@@ -135,11 +135,36 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
+  it "does not defer an unrelated Invoke on the same CASE session for another exchange's queued log" do
+    handler, transport, session = diagnostic_bdx_fixture
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "later-log".to_slice, Bytes[1], 18_u16).should be_true
+
+    unsupported_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 99_u32)
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(unsupported_path, command.to_tlv(nil)),
+    ])
+    inbound = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 17_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+
+    transport.sent_packets.size.should eq(1)
+    diagnostic_bdx_outgoing(transport.sent_packets.first[0], session).payload_header.message_type
+      .should eq(Matter::InteractionModel::MessageType::InvokeResponse.value)
+    handler.bdx_initiator.start_pending(session.object_id.to_u64, 18_u16)
+    transport.sent_packets.size.should eq(2)
+    diagnostic_bdx_outgoing(transport.sent_packets.last[0], session).payload_header.protocol_id
+      .should eq(Matter::Protocol::ProtocolId::Bdx.value)
+    handler.close
+  end
+
   it "scopes pending BDX to the originating exchange on one live CASE session" do
     handler, transport, session = diagnostic_bdx_fixture
     identity = session.object_id.to_u64
-    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "old-log".to_slice, Bytes[1], 17_u16).should be_true
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
       DIAGNOSTIC_PEER, "new-log".to_slice, Bytes[2], 18_u16).should be_true
 
@@ -154,7 +179,7 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
-  it "keeps later matching BDX transfers queued if sending the first fails" do
+  it "allows a new matching BDX transfer after SendInit fails" do
     transport = FailingBdxTransport.new_for_spec
     handler = Matter::Protocol::MessageHandler.new(transport,
       setup_pin: 20202021_u32, discriminator: 3840_u16,
@@ -164,13 +189,13 @@ describe "DiagnosticLogs outbound BDX transfer" do
     identity = session.object_id.to_u64
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
       DIAGNOSTIC_PEER, "first-log".to_slice, Bytes[1], 17_u16).should be_true
-    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_true
 
     failed_exchange = handler.sender.next_exchange_id
     transport.fail_next_send = true
     expect_raises(IO::Error) { handler.bdx_initiator.start_pending(identity, 17_u16) }
     handler.bdx_initiator.handles?(session.session_id, failed_exchange).should be_false
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_true
     handler.bdx_initiator.start_pending(identity, 17_u16)
     transport.sent_packets.size.should eq(1)
     sent = diagnostic_bdx_outgoing(transport.sent_packets.first[0], session)
@@ -179,21 +204,18 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
-  it "starts every pending BDX transfer from the same originating Invoke" do
+  it "admits only one pending or active Diagnostic Logs BDX transfer" do
     handler, transport, session = diagnostic_bdx_fixture
     identity = session.object_id.to_u64
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
       DIAGNOSTIC_PEER, "first-log".to_slice, Bytes[1], 17_u16).should be_true
     handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
-      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_true
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_false
 
     handler.bdx_initiator.start_pending(identity, 17_u16)
-    designators = transport.sent_packets.map do |wire, _peer|
-      sent = diagnostic_bdx_outgoing(wire, session)
-      init = DiagnosticBdx::Wire::Init.decode(DiagnosticBdx::Wire::Opcode::SendInit, sent.payload)
-      String.new(init.file_designator)
-    end
-    designators.should eq(["first-log", "second-log"])
+    transport.sent_packets.size.should eq(1)
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_false
     handler.close
   end
 

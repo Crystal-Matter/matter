@@ -411,7 +411,8 @@ module Matter
 
       private def defer_log_response(prepared : InteractionRouter::PreparedInvoke) : Bool
         session = prepared.session
-        return false unless @bdx_initiator.pending_for?(session)
+        origin_exchange_id = prepared.original_msg.payload_header.exchange_id
+        return false unless @bdx_initiator.pending_for?(session, origin_exchange_id)
 
         # Validate the whole response before opening a second exchange. While
         # BDX negotiates, a standalone ACK answers retransmitted Invokes.
@@ -421,14 +422,14 @@ module Matter
           request_paths: prepared.request_paths)
         @sender.send_encrypted_ack(prepared.original_msg, prepared.peer, session,
           cache_for_mrp: true)
-        exchange_id = @bdx_initiator.start_pending_for(session) ||
+        exchange_id = @bdx_initiator.start_pending_for(session, origin_exchange_id) ||
                       raise Matter::ProtocolError.new("Queued Diagnostic Logs transfer disappeared")
         key = {session.object_id.to_u64, exchange_id}
         @deferred_log_responses[key] = DeferredLogResponse.new(prepared,
           Time.instant + DEFERRED_LOG_RESPONSE_TIMEOUT)
         true
       rescue ex
-        @bdx_initiator.discard_pending
+        @bdx_initiator.discard_pending(session.object_id.to_u64, origin_exchange_id)
         Log.warn(exception: ex) { "Could not initiate deferred Diagnostic Logs transfer" }
         @router.send_prepared_invoke(denied_log_response(prepared))
         true
