@@ -9,6 +9,11 @@ require "./dsl"
 
 module Matter
   module Cluster
+    # Marks an alternate implementation of a cluster ID that must be selected
+    # explicitly by a device instead of discovered through Registry.
+    annotation RegistryExclude
+    end
+
     # Attribute metadata
     struct AttributeMetadata
       property id : DataType::AttributeId

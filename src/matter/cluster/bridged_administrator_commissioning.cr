@@ -8,6 +8,7 @@ module Matter
     # The host forwards commands to the actual node and publishes its observed
     # window state. Callback results describe the completed remote operation,
     # not a queued job. This cluster never opens the bridge's own PASE window.
+    @[RegistryExclude]
     class BridgedAdministratorCommissioning < Base
       alias OpenRequest = AdministratorCommissioning::OpenCommissioningWindowRequest
       alias WindowStatus = AdministratorCommissioning::CommissioningWindowStatus
