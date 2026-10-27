@@ -19,6 +19,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscription priming reports. This restores the official Operational
   Credentials VID certification subscription sequence.
 
+### Thermostat Matter Schedules production support
+
+- Enable opt-in Matter 1.6 MSCH on production Thermostat instances when a host
+  supplies local civil time and fixed validated schedule types at construction. Atomic
+  Schedules writes, active selection, weekly transitions, TEVT events, and
+  committed state restoration now use the production class. The official
+  chip-tool fixture verifies rollback, commit, activation, timed updates, and
+  restart behavior without a conformance-only subclass gate.
+
 ### Thermostat Presets production support
 
 - Enable the opt-in Matter 1.6 PRES feature on production Thermostat instances
@@ -36,6 +45,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   commissioning task still starts only after a successful response send. An
   exact single-command MRP retransmission can now recover without re-running
   unrelated commands.
+
+### Messages confirmation profiles
+
+- Add opt-in Matter 1.6 CONF, RESP, and RPLY support to Messages, backed by a
+  presentation host. Validate feature dependencies, response choices, reply
+  length, and conditional nullable event fields; replay pending fabric-scoped
+  messages to the host after restart. The content-app fixture exercises user
+  confirmation and durable cancellation through official chip-tool. PROT stays
+  unadvertised until authentication has a verified host implementation.
 
 ### Subscription access control
 
@@ -663,7 +681,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Preferences, typed charge commands and session events, validated daily
   target schedules, retained charging permission, and physical relay callbacks.
   The synthetic appliance fixture exercises the cluster through chip-tool.
-  Optional SoC, Plug and Charge, and RFID features remain unavailable.
+  Optional Plug and Charge and RFID features remain unavailable.
+- Add opt-in SoC Reporting with nullable host-fed StateOfCharge and
+  BatteryCapacity reads, mandatory TargetSoC in SoC charging schedules, and
+  persisted target schedules. The appliance fixture exposes a separate SoC
+  endpoint for official chip-tool coverage.
 - Add an opt-in V2X profile with timed EnableDischarging, independent persistent
   charge and discharge grants, combined SupplyState, host-approved relay changes,
   separate expiry timers, and feature-required session counters and event fields.

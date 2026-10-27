@@ -17,7 +17,7 @@
   "0x009F": "Mode Base transitions, fixed options and persisted selection; disallowed OnOff attributes absent",
   "0x00A0": "FORE periods, nullable current conditions and typed change event",
   "0x0101": "Durable users, schedules, Aliro delegate, and disposable/expiring user policies; UBOLT requires a host actuator and BLE/UWB needs a host radio",
-  "0x0102": "Actuator position reporting remains application-owned",
+  "0x0102": "Host-admitted movement and stop callbacks; physical position and safety reporting remain application-owned",
   "0x0150": "SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned",
   "0x0200": "ConstantSpeed profile only; host owns physical mode change and telemetry",
   "0x0201": "SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints, TEVT events, and PRES atomic presets; MSCH and TSUGGEST remain gated in production",

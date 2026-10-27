@@ -7,6 +7,8 @@ module Matter
     class Messages < Base
       cluster 0x0097, revision: 3, persist_state: false
 
+      Log = ::Log.for("matter.cluster.messages")
+
       alias ExpiryTimer = Proc(Time::Span, Proc(Nil), Nil)
 
       MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
@@ -22,7 +24,8 @@ module Matter
       MAX_TEXT_BYTES       = 256
       MAX_RESPONSE_OPTIONS =   4
       MAX_LABEL_BYTES      =  32
-      SUPPORTED_FEATURES   = Feature::None.value
+      SUPPORTED_FEATURES   = (Feature::ReceivedConfirmation | Feature::ConfirmationResponse |
+                              Feature::ConfirmationReply).value
       CONTROL_CONFIRMATION = 0x0001_u16
       CONTROL_RESPONSE     = 0x0002_u16
       CONTROL_REPLY        = 0x0004_u16
@@ -175,6 +178,69 @@ module Matter
         end
       end
 
+      struct MessageCompleteResponseEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, fixed_size: true)]
+        getter message_id : Bytes
+
+        @[TLV::Field(tag: 1, optional: false)]
+        getter response_id : UInt32?
+
+        @[TLV::Field(tag: 3, optional: false)]
+        getter future_preference : FuturePreference?
+
+        def initialize(@message_id : Bytes, @response_id : UInt32?, @future_preference : FuturePreference?)
+        end
+      end
+
+      struct MessageCompleteReplyEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, fixed_size: true)]
+        getter message_id : Bytes
+
+        @[TLV::Field(tag: 2, optional: false)]
+        getter reply : String?
+
+        @[TLV::Field(tag: 3, optional: false)]
+        getter future_preference : FuturePreference?
+
+        def initialize(@message_id : Bytes, @reply : String?, @future_preference : FuturePreference?)
+        end
+      end
+
+      struct MessageCompleteResponseReplyEvent
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0, fixed_size: true)]
+        getter message_id : Bytes
+
+        @[TLV::Field(tag: 1, optional: false)]
+        getter response_id : UInt32?
+
+        @[TLV::Field(tag: 2, optional: false)]
+        getter reply : String?
+
+        @[TLV::Field(tag: 3, optional: false)]
+        getter future_preference : FuturePreference?
+
+        def initialize(@message_id : Bytes, @response_id : UInt32?, @reply : String?,
+                       @future_preference : FuturePreference?)
+        end
+      end
+
+      # The application owns user presentation and confirmation. The callback
+      # runs after the message enters cluster state; it may call #present and
+      # #complete synchronously. The authenticated origin node ID lets the UI
+      # identify who submitted the message. Reuse #replay_messages_to_host!
+      # after loading persisted state so the host can resume outstanding UI.
+      abstract class Host
+        abstract def message_queued(message : Message, origin_node_id : UInt64?, cluster : Messages) : Nil
+
+        abstract def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
+      end
+
       struct PersistedState
         include Storage::Record
 
@@ -182,9 +248,11 @@ module Matter
         getter messages : Array(Message)
         getter active_message_ids : Array(Bytes)
         getter accepted_at_ms : Hash(String, Int64) = {} of String => Int64
+        getter origin_node_ids : Hash(String, UInt64) = {} of String => UInt64
 
         def initialize(@data_version : UInt32, @messages : Array(Message), @active_message_ids : Array(Bytes),
-                       @accepted_at_ms : Hash(String, Int64) = {} of String => Int64)
+                       @accepted_at_ms : Hash(String, Int64) = {} of String => Int64,
+                       @origin_node_ids : Hash(String, UInt64) = {} of String => UInt64)
         end
       end
 
@@ -201,10 +269,14 @@ module Matter
       @messages = [] of Message
       @active_message_ids = [] of Bytes
       @accepted_at_ms = {} of String => Int64
+      @origin_node_ids = {} of String => UInt64
+      @queue_generation = {} of String => UInt64
+      @next_queue_generation = 0_u64
       @expiry_generation = 0_u64
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @feature_map : Feature = Feature::None,
+                     @host : Host? = nil,
                      @clock : Proc(Time) = -> { Time.utc },
                      expiry_timer : ExpiryTimer? = nil)
         @expiry_timer = expiry_timer || ->(delay : Time::Span, callback : Proc(Nil)) do
@@ -215,7 +287,7 @@ module Matter
           nil
         end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        raise ArgumentError.new("optional Messages features require a host implementation") if (@feature_map.value & ~SUPPORTED_FEATURES) != 0
+        validate_supported_features!(@feature_map)
       end
 
       def messages(fabric_index : UInt8?) : Array(Message) | InteractionModel::Status
@@ -234,11 +306,21 @@ module Matter
         validate_request!(request)
         return InteractionModel::Status.constraint_error if @messages.any? { |entry| entry.message_id == request.message_id }
         return InteractionModel::Status.resource_exhausted if @messages.size >= MAX_MESSAGES
-        @messages << Message.new(request, fabric_index)
+        message = Message.new(request, fabric_index)
+        @messages << message
+        generation = register_queue_generation(message.message_id)
+        if origin = request_peer_node_id
+          @origin_node_ids[request.message_id.hexstring] = origin
+        end
         @accepted_at_ms[request.message_id.hexstring] = @clock.call.to_unix_ms if request.start_time.nil? && request.duration
         increment_version_and_notify(ATTR_MESSAGES)
         emit_message_queued(MessageIdEvent.new(request.message_id.dup), fabric_index)
         schedule_expiry
+        if @host && @queue_generation[message.message_id.hexstring]? == generation
+          if current = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == message.message_id }
+            notify_host_queued(current)
+          end
+        end
         InteractionModel::Status.success
       end
 
@@ -251,10 +333,15 @@ module Matter
         return InteractionModel::Status.success if owned.empty?
         @messages.reject! { |entry| owned.any? { |other| other.message_id == entry.message_id } }
         @active_message_ids.reject! { |id| owned.any? { |entry| entry.message_id == id } }
-        owned.each { |entry| @accepted_at_ms.delete(entry.message_id.hexstring) }
+        owned.each do |entry|
+          @accepted_at_ms.delete(entry.message_id.hexstring)
+          @origin_node_ids.delete(entry.message_id.hexstring)
+          @queue_generation.delete(entry.message_id.hexstring)
+        end
         increment_version_and_notify(ATTR_MESSAGES)
         notify_changed(ATTR_ACTIVE_MESSAGE_IDS)
         schedule_expiry
+        owned.each { |entry| notify_host_cancelled(entry.message_id, fabric_index) }
         InteractionModel::Status.success
       end
 
@@ -276,16 +363,19 @@ module Matter
       def complete(message_id : Bytes, fabric_index : UInt8,
                    response_id : UInt32? = nil, reply : String? = nil,
                    future_preference : FuturePreference? = nil) : Nil
-        raise ArgumentError.new("responses require optional Messages features") if response_id || reply
         message = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         raise ArgumentError.new("unknown message") unless message
+        validate_completion!(message, response_id, reply)
         @active_message_ids.reject!(&.==(message_id))
         @messages.reject! { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         @accepted_at_ms.delete(message_id.hexstring)
+        @origin_node_ids.delete(message_id.hexstring)
+        @queue_generation.delete(message_id.hexstring)
         increment_version_and_notify(ATTR_MESSAGES)
         notify_changed(ATTR_ACTIVE_MESSAGE_IDS)
-        emit_message_complete(MessageCompleteEvent.new(message_id.dup, response_id, reply, future_preference), fabric_index)
+        emit_completion(message_id, fabric_index, response_id, reply, future_preference)
         schedule_expiry
+        notify_host_cancelled(message_id, fabric_index)
       end
 
       # Processes elapsed message durations; also useful for hosts with a
@@ -302,14 +392,20 @@ module Matter
         return if ids.empty?
         @messages.reject!(&.fabric_index.==(fabric_index))
         @active_message_ids.reject! { |id| ids.includes?(id) }
-        ids.each { |id| @accepted_at_ms.delete(id.hexstring) }
+        ids.each do |id|
+          @accepted_at_ms.delete(id.hexstring)
+          @origin_node_ids.delete(id.hexstring)
+          @queue_generation.delete(id.hexstring)
+        end
         increment_version_and_notify(ATTR_MESSAGES)
         notify_changed(ATTR_ACTIVE_MESSAGE_IDS)
         schedule_expiry
+        ids.each { |id| notify_host_cancelled(id, fabric_index) }
       end
 
       def save_state : Storage::Document?
-        PersistedState.new(@data_version, @messages, @active_message_ids, @accepted_at_ms).to_document
+        PersistedState.new(@data_version, @messages, @active_message_ids,
+          @accepted_at_ms, @origin_node_ids).to_document
       end
 
       def restore_state(document : Storage::Document) : Nil
@@ -324,6 +420,10 @@ module Matter
         @messages = state.messages
         @active_message_ids = state.active_message_ids
         @accepted_at_ms = state.accepted_at_ms
+        @origin_node_ids = state.origin_node_ids.select { |id, _node| ids.any?(&.hexstring.==(id)) }
+        @queue_generation.clear
+        @next_queue_generation = 0_u64
+        @messages.each { |message| register_queue_generation(message.message_id) }
         now_ms = @clock.call.to_unix_ms
         @messages.each do |message|
           if message.start_time.nil? && message.duration
@@ -331,6 +431,81 @@ module Matter
           end
         end
         process_due_messages
+      end
+
+      def replay_messages_to_host! : Nil
+        snapshots = @messages.map do |message|
+          {message.message_id.dup, message.fabric_index, @queue_generation[message.message_id.hexstring]}
+        end
+        snapshots.each do |id, fabric_index, generation|
+          next unless @queue_generation[id.hexstring]? == generation
+          if current = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == id }
+            notify_host_queued(current)
+          end
+        end
+      end
+
+      private def register_queue_generation(message_id : Bytes) : UInt64
+        @next_queue_generation &+= 1_u64
+        @queue_generation[message_id.hexstring] = @next_queue_generation
+      end
+
+      protected def validate_feature_map_change(value : Feature) : Nil
+        validate_supported_features!(value)
+        raise ArgumentError.new("Messages FeatureMap is fixed after construction") unless value == @feature_map
+      end
+
+      private def validate_supported_features!(value : Feature) : Nil
+        raise ArgumentError.new("PROT requires a verified authentication host") if value.protected_messages?
+        raise ArgumentError.new("unknown Messages feature") if (value.value & ~SUPPORTED_FEATURES) != 0
+        if (value.confirmation_response? || value.confirmation_reply?) && !value.received_confirmation?
+          raise ArgumentError.new("RESP and RPLY require CONF")
+        end
+        raise ArgumentError.new("optional Messages features require a host implementation") if value != Feature::None && !@host
+      end
+
+      private def notify_host_queued(message : Message) : Nil
+        @host.try(&.message_queued(Message.from_document(message.to_document),
+          @origin_node_ids[message.message_id.hexstring]?, self))
+      rescue ex
+        Log.error(exception: ex) { "Messages host could not present queued message" }
+      end
+
+      private def notify_host_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
+        @host.try(&.message_cancelled(message_id.dup, fabric_index))
+      rescue ex
+        Log.error(exception: ex) { "Messages host could not dismiss message" }
+      end
+
+      private def emit_completion(message_id : Bytes, fabric_index : UInt8, response_id : UInt32?,
+                                  reply : String?, future_preference : FuturePreference?) : Nil
+        payload_id = message_id.dup
+        if @feature_map.confirmation_response? && @feature_map.confirmation_reply?
+          emit_event(EVENT_MESSAGE_COMPLETE, MessageCompleteResponseReplyEvent.new(payload_id,
+            response_id, reply, future_preference), fabric_index)
+        elsif @feature_map.confirmation_response?
+          emit_event(EVENT_MESSAGE_COMPLETE, MessageCompleteResponseEvent.new(payload_id,
+            response_id, future_preference), fabric_index)
+        elsif @feature_map.confirmation_reply?
+          emit_event(EVENT_MESSAGE_COMPLETE, MessageCompleteReplyEvent.new(payload_id,
+            reply, future_preference), fabric_index)
+        else
+          emit_message_complete(MessageCompleteEvent.new(payload_id, nil, nil, future_preference), fabric_index)
+        end
+      end
+
+      private def validate_completion!(message : Message, response_id : UInt32?, reply : String?) : Nil
+        if response_id
+          raise ArgumentError.new("RESP required") unless @feature_map.confirmation_response?
+          raise ArgumentError.new("ResponseRequired not set") if (message.control & CONTROL_RESPONSE) == 0
+          options = message.responses || [] of ResponseOption
+          raise ArgumentError.new("unknown response ID") unless options.any?(&.response_id.==(response_id))
+        end
+        if reply
+          raise ArgumentError.new("RPLY required") unless @feature_map.confirmation_reply?
+          raise ArgumentError.new("ReplyMessage not set") if (message.control & CONTROL_REPLY) == 0
+          raise ArgumentError.new("reply exceeds 256 bytes") if reply.bytesize > MAX_TEXT_BYTES
+        end
       end
 
       private def start_ms(message : Message, now_ms : UInt128? = nil) : UInt128
@@ -389,6 +564,7 @@ module Matter
         raise ArgumentError.new("RESP required") if (control & CONTROL_RESPONSE) != 0 && !@feature_map.confirmation_response?
         raise ArgumentError.new("RPLY required") if (control & CONTROL_REPLY) != 0 && !@feature_map.confirmation_reply?
         raise ArgumentError.new("PROT required") if (control & CONTROL_PROTECTED) != 0 && !@feature_map.protected_messages?
+        raise ArgumentError.new("responses required for RESP") if @feature_map.confirmation_response? && !responses
         if responses
           raise ArgumentError.new("too many responses") if responses.size > MAX_RESPONSE_OPTIONS
           raise ArgumentError.new("RESP required") unless @feature_map.confirmation_response?

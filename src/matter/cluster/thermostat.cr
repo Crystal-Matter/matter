@@ -18,7 +18,7 @@ module Matter
       feature :occupancy, bit: 2                     # OCC - Occupied and Unoccupied setpoints
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
-      feature :matter_schedules, bit: 7              # MSCH - gated until timed schedule activation is complete
+      feature :matter_schedules, bit: 7              # MSCH - requires a host civil clock and schedule types
       feature :presets, bit: 8                       # PRES - atomic preset list and activation
       feature :events, bit: 9                        # TEVT - Thermostat change events
       feature :thermostat_suggestions, bit: 10       # TSUGGEST - provisional, gated until behavior is complete
@@ -636,24 +636,24 @@ module Matter
       attribute 0x0029, :thermostat_running_state, RelayState, computed: true, optional: true, requires: :events
       attribute 0x0048, :preset_types, Array(PresetType), computed: true, fixed: true,
         requires: :presets, present_if: :preset_wire_ready?
-      attribute 0x0049, :schedule_types, Array(ScheduleType), computed: true, optional: true,
+      attribute 0x0049, :schedule_types, Array(ScheduleType), computed: true, fixed: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x004A, :number_of_presets, UInt8, computed: true, fixed: true,
         requires: :presets, present_if: :preset_wire_ready?
-      attribute 0x004B, :number_of_schedules, UInt8, computed: true, optional: true,
+      attribute 0x004B, :number_of_schedules, UInt8, computed: true, fixed: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
-      attribute 0x004C, :number_of_schedule_transitions, UInt8, computed: true, optional: true,
+      attribute 0x004C, :number_of_schedule_transitions, UInt8, computed: true, fixed: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x004D, :number_of_schedule_transition_per_day, UInt8, computed: true,
-        nullable: true, optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
+        nullable: true, fixed: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x004E, :active_preset_handle, Bytes, computed: true, nullable: true,
         requires: :presets, present_if: :preset_wire_ready?
-      attribute 0x004F, :active_schedule_handle, Bytes, computed: true, nullable: true, optional: true,
+      attribute 0x004F, :active_schedule_handle, Bytes, computed: true, nullable: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x0050, :presets, Array(Preset), computed: true, writable: true, write_access: :manage,
         requires: :presets, present_if: :preset_wire_ready?
       attribute 0x0051, :schedules, Array(Schedule), computed: true, writable: true, write_access: :manage,
-        optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
+        requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x0053, :max_thermostat_suggestions, UInt8, computed: true,
         optional: true, min: MIN_SUGGESTION_CAPACITY,
         requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?
@@ -715,6 +715,10 @@ module Matter
                      @thermostat_running_mode : ThermostatRunningMode = ThermostatRunningMode::Off,
                      preset_types : Array(PresetType)? = nil,
                      presets : Array(Preset) = [] of Preset,
+                     schedule_types : Array(ScheduleType)? = nil,
+                     schedules : Array(Schedule) = [] of Schedule,
+                     schedule_max_transitions : UInt8 = 0_u8,
+                     schedule_max_per_day : UInt8? = nil,
                      local_time_provider : Proc(Time?)? = nil,
                      utc_time_provider : Proc(UInt32?)? = nil,
                      @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Nil) = ->(delay : Time::Span, action : Proc(Nil)) : Nil {
@@ -765,7 +769,9 @@ module Matter
         @number_of_schedule_transitions = 0_u8
         @number_of_schedule_transition_per_day = nil.as(UInt8?)
 
-        raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules? && !schedule_wire_ready?
+        if @feature_map.matter_schedules? && !@schedule_clock_configured
+          raise ArgumentError.new("MSCH requires a host local civil clock")
+        end
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
         raise ArgumentError.new("TSUGGEST wire conformance is not yet enabled") if @feature_map.thermostat_suggestions? && !suggestion_wire_ready?
         validate_occupancy(@occupancy)
@@ -790,6 +796,12 @@ module Matter
           raise ArgumentError.new("preset_types are required when presets are configured")
         end
         raise ArgumentError.new("preset_types are required for PRES") if @feature_map.presets? && !preset_wire_ready?
+        if types = schedule_types
+          configure_schedules(types, schedules, schedule_max_transitions, schedule_max_per_day)
+        elsif !schedules.empty?
+          raise ArgumentError.new("schedule_types are required when schedules are configured")
+        end
+        raise ArgumentError.new("schedule_types are required for MSCH") if @feature_map.matter_schedules? && !schedule_wire_ready?
       end
 
       def thermostat_running_state : RelayState
@@ -1121,11 +1133,16 @@ module Matter
         })
       end
 
-      # Host-owned schedule configuration. The MSCH wire feature remains gated
-      # while its remaining conformance checks are completed.
+      # Host-owned schedule contents. The advertised MSCH profile is fixed at
+      # construction; hosts may replace its list within those same limits.
       def configure_schedules(types : Array(ScheduleType), schedules : Array(Schedule),
                               max_transitions : UInt8, max_per_day : UInt8?) : Nil
         validate_schedules!(types, schedules, max_transitions, max_per_day)
+        if @feature_map.matter_schedules? && !@schedule_types.empty? &&
+           (types != @schedule_types || max_transitions != @number_of_schedule_transitions ||
+           max_per_day != @number_of_schedule_transition_per_day)
+          raise ArgumentError.new("MSCH schedule types and capacities are fixed after construction")
+        end
         types_changed = @schedule_types != types
         capacity_changed = number_of_schedules != types.sum(&.number_of_schedules.to_i)
         transitions_changed = @number_of_schedule_transitions != max_transitions
@@ -1193,8 +1210,7 @@ module Matter
         @active_schedule_handle.try(&.dup)
       end
 
-      # Selects a committed schedule. Production MSCH wire exposure remains
-      # gated while its remaining conformance checks are completed.
+      # Selects a committed schedule and evaluates the host's local civil time.
       def activate_schedule(request : SetActiveScheduleRequest) : InteractionModel::Status
         handle = request.schedule_handle
         return InteractionModel::Status.constraint_error if handle.size > MAX_SCHEDULE_HANDLE_LENGTH
@@ -1230,8 +1246,8 @@ module Matter
         true
       end
 
-      # Runtime polling is only useful when the host explicitly supplies local
-      # civil time and the guarded MSCH implementation is enabled.
+      # Runtime polling requires a host supplied local civil clock and a
+      # configured MSCH schedule type.
       def schedule_polling_enabled? : Bool
         @feature_map.matter_schedules? && @schedule_clock_configured && schedule_wire_ready?
       end
@@ -1241,7 +1257,7 @@ module Matter
       end
 
       protected def schedule_wire_ready? : Bool
-        false
+        @schedule_clock_configured && !@schedule_types.empty?
       end
 
       protected def schedule_wire_ready?(command_id : UInt32) : Bool
@@ -2213,8 +2229,8 @@ module Matter
         raise ArgumentError.new("schedule types must contain 1 to 3 modes") unless (1..MAX_SCHEDULE_TYPES).includes?(types.size)
         raise ArgumentError.new("duplicate schedule mode") unless types.map(&.system_mode).uniq!.size == types.size
         raise ArgumentError.new("schedule transition capacity must be positive") if max_transitions == 0_u8
-        if max_per_day && !(1_u8..254_u8).includes?(max_per_day)
-          raise ArgumentError.new("per-day transition capacity must be within 1..254")
+        if max_per_day && max_per_day == 0_u8
+          raise ArgumentError.new("per-day transition capacity must be positive")
         end
         types.each do |type|
           raise ArgumentError.new("unsupported schedule mode") unless schedule_mode_allowed?(type.system_mode)

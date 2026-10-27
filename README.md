@@ -484,6 +484,16 @@ administrator-readable allowed vendor list. The host reports changes in the
 app's visible/focused/running state through `update_status`; the status starts
 `Stopped` after each process restart. The
 `examples/matter_content_app_device.cr` example shows this configuration.
+`Cluster::Messages` supports the opt-in Matter 1.6 CONF, RESP, and RPLY
+profiles. Supply a `Messages::Host` and a feature map; the host receives each
+queued message with its authenticated origin node and calls `present` when the
+UI shows it, then `complete` with a
+selected response ID or free-form reply. The cluster validates those values,
+emits fabric-scoped completion events, and retains pending messages and expiry
+times across restarts. Call `replay_messages_to_host!` after loading storage to
+resume the UI. The content-app example enables this profile with
+`MATTER_MESSAGES_PROFILE=1`; its automatic confirmation is for demonstration.
+ProtectedMessages remains unavailable until a host verifier is integrated.
 Basic Video Player endpoints can add the provisional Matter 1.6
 `Cluster::ContentControl` server. The supported BlockUnrated, rating, channel,
 and application features retain policy across restart; the host calls
@@ -705,7 +715,7 @@ With LTNE enabled, `update_local_temperature` feeds the internal measurement
 used by Auto mode while LocalTemperature always reads as TLV null. A direct
 `local_temperature=` call cannot expose a value on an LTNE thermostat. See the
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
-The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; MSCH and TSUGGEST remain unavailable in production.
+The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; TSUGGEST remains unavailable in production.
 
 An opted-in production Thermostat advertises Presets (PRES) when constructed
 with fixed `preset_types` containing one to seven scenarios and a total preset
@@ -718,6 +728,13 @@ configured preset's setpoints, while a later manual setpoint change clears its
 active handle. The list, active handle, and used handles persist across restart
 so deleted handles are not generated again. The production class is exercised
 by the official chip-tool fixture in `e2e/spec/thermostat_presets_spec.cr`.
+
+Matter Schedules (MSCH) is opt-in when the host supplies a local civil clock and
+valid schedule types and capacities. Controllers can atomically replace schedules
+and select an active schedule; the device evaluates weekly transitions as local
+time advances and restores the committed list and selection after restart. See
+[the Thermostat schedules guide](docs/thermostat-schedules.md) for configuration,
+timezone behavior, and the official chip-tool fixture.
 
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
 Register `configure_host(accept, sleep)` to accept or refuse requests and to
@@ -757,7 +774,9 @@ Confirmed working with iOS.
 `examples/matter_level_control_device.cr` exposes a dimmable light with Groups on
 endpoint 1, an extended color light on endpoint 2, and a window covering on endpoint 3.
 The Docker e2e suite commissions it with the official chip-tool and exercises group
-membership, hue, color temperature, and lift position commands.
+membership, hue, color temperature, and lift position commands. Its Window Covering
+endpoint uses `on_move` and `on_stop` callbacks to drive a synthetic motor and
+reports the completed position through `CurrentPositionLiftPercent100ths`.
 The extended color light also demonstrates Level Control's
 `CoupleColorTempToLevel` option: level changes adjust the active color
 temperature across the configured mired range. Per-command option masks can

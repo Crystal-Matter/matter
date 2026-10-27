@@ -8,24 +8,20 @@ private class JointAtomicWireReady < JointThermostat
     true
   end
 
-  protected def schedule_wire_ready? : Bool
-    true
-  end
-
   protected def candidate_preset_handle : Bytes
     Bytes[1_u8]
   end
 end
 
 private def joint_cluster : JointAtomicWireReady
+  type = JointThermostat::ScheduleType.new(JointThermostat::SystemMode::Heat, 2_u8,
+    JointThermostat::ScheduleTypeFeatures::SupportsPresets | JointThermostat::ScheduleTypeFeatures::SupportsSetpoints)
   cluster = build(JointAtomicWireReady,
     feature_map: JointThermostat::Feature::Heating | JointThermostat::Feature::Presets |
                  JointThermostat::Feature::MatterSchedules,
-    preset_types: [JointThermostat::PresetType.new(JointThermostat::PresetScenario::Sleep, 2_u8)])
-  cluster.configure_schedules([
-    JointThermostat::ScheduleType.new(JointThermostat::SystemMode::Heat, 2_u8,
-      JointThermostat::ScheduleTypeFeatures::SupportsPresets | JointThermostat::ScheduleTypeFeatures::SupportsSetpoints),
-  ], [] of JointThermostat::Schedule, 4_u8, 2_u8)
+    preset_types: [JointThermostat::PresetType.new(JointThermostat::PresetScenario::Sleep, 2_u8)],
+    schedule_types: [type], schedule_max_transitions: 4_u8, schedule_max_per_day: 2_u8,
+    local_time_provider: -> : Time? { nil })
   cluster
 end
 

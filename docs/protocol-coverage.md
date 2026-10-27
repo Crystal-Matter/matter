@@ -91,7 +91,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0095 | Commodity Price Cluster | 4 | 4 | — | FORE forecast, detailed response commands and PriceChange event |
 | 0x0097 | Messages Cluster | 3 | 3 | — | Fabric-scoped queue, StartTime/Duration lifecycle, and host-triggered presentation; optional user-interaction features remain absent |
 | 0x0098 | Device Energy Management Cluster | 4 | 4 | — | PA, PFR, SFR, PFR+STA, PFR+PAU, PFR+FA, or PFR+CON profiles; each adjustment uses a host decision |
-| 0x0099 | Energy EVSE Cluster | 4 | 4 | — | Charging Preferences base plus opt-in V2X; host owns charge/discharge relay and metering |
+| 0x0099 | Energy EVSE Cluster | 4 | 4 | — | Charging Preferences base plus opt-in SoC Reporting and V2X; host owns charge/discharge relay, metering, and live SoC telemetry |
 | 0x009B | Energy Preference Cluster | 1 | 1 | — | BALA/LPMS feature choice; validated scales, persisted selections and restart migration |
 | 0x009C | Power Topology Cluster | 1 | 1 | — | — |
 | 0x009D | Energy EVSE Mode Cluster | 2 | 2 | — | Mode Base transitions, fixed options with a Manual mode and persisted selection |
@@ -99,12 +99,12 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x009F | Device Energy Management Mode Cluster | 2 | 2 | — | Mode Base transitions, fixed options and persisted selection; disallowed OnOff attributes absent |
 | 0x00A0 | Electrical Grid Conditions Cluster | 1 | 1 | — | FORE periods, nullable current conditions and typed change event |
 | 0x0101 | Door Lock Cluster | 10 | 10 | — | Durable users, schedules, Aliro delegate, and disposable/expiring user policies; UBOLT requires a host actuator and BLE/UWB needs a host radio |
-| 0x0102 | Window Covering Cluster | 8 | 8 | — | Actuator position reporting remains application-owned |
+| 0x0102 | Window Covering Cluster | 8 | 8 | — | Host-admitted movement and stop callbacks; physical position and safety reporting remain application-owned |
 | 0x0104 | Closure Control Cluster | 1 | 1 | — | — |
 | 0x0105 | Closure Dimension Cluster | 1 | 1 | — | — |
 | 0x0150 | Service Area Cluster | 2 | 2 | — | SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned |
 | 0x0200 | Pump Configuration and Control Cluster | 5 | 5 | — | ConstantSpeed profile only; host owns physical mode change and telemetry |
-| 0x0201 | Thermostat Cluster | 11 | 11 | — | SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints, TEVT events, and PRES atomic presets; MSCH and TSUGGEST remain gated in production |
+| 0x0201 | Thermostat Cluster | 11 | 11 | — | SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints, TEVT events, PRES atomic presets, and MSCH schedules with a host civil clock; TSUGGEST remains gated in production |
 | 0x0202 | Fan Control Cluster | 6 | 6 | — | feature-gated attributes and Step; only FanMode nonvolatile |
 | 0x0204 | Thermostat User Interface Configuration Cluster | 2 | 2 | — | — |
 | 0x0300 | Color Control Cluster | 9 | 9 | — | — |

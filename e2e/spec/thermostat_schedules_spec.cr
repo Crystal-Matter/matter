@@ -1,6 +1,6 @@
 require "./e2e_helper"
 
-describe "Matter Thermostat Schedules guarded fixture" do
+describe "Matter Thermostat Schedules production fixture" do
   device = E2E::Device["matter_thermostat_schedules"]
   schedule_attribute = "[81]"
   baseline = %([{"scheduleHandle":"hex:01","systemMode":4,"transitions":[{"dayOfWeek":2,"transitionTime":480,"heatingSetpoint":1900}],"builtIn":false}])
