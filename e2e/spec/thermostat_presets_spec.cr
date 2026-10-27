@@ -1,9 +1,9 @@
 require "./e2e_helper"
 
-describe "Matter Thermostat Presets guarded fixture" do
+describe "Matter Thermostat Presets production fixture" do
   device = E2E::Device["matter_thermostat_presets"]
 
-  it "commissions and exposes the guarded PRES metadata and configured list" do
+  it "commissions and exposes the PRES metadata and configured list" do
     device.commission!
     read_int(device, "thermostat", "cluster-revision", "ClusterRevision", 1).should eq(11_i64)
     read_int(device, "thermostat", "feature-map", "FeatureMap", 1).should eq(0x303_i64)
@@ -14,7 +14,7 @@ describe "Matter Thermostat Presets guarded fixture" do
 
   it "commits a whole Presets list through AtomicRequest, then activates it" do
     # chip-tool launches a separate process per command, so use the server's
-    # bounded delegate maximum while this guarded conformance fixture runs.
+    # bounded delegate maximum while this synthetic fixture runs.
     expect_success(device.chip("thermostat", "atomic-request", "0", "[80]",
       device.node, "1", "--Timeout", "60000"))
     preset = %([{"presetHandle":"hex:01","presetScenario":3,"coolingSetpoint":2700,"heatingSetpoint":1900,"builtIn":true}])

@@ -19,7 +19,7 @@ module Matter
       feature :automode, bit: 5                      # AUTO - Automatic setpoint management
       feature :local_temperature_not_exposed, bit: 6 # LTNE - Measured temperature is private
       feature :matter_schedules, bit: 7              # MSCH - gated until timed schedule activation is complete
-      feature :presets, bit: 8                       # PRES - gated until wire conformance is complete
+      feature :presets, bit: 8                       # PRES - atomic preset list and activation
       feature :events, bit: 9                        # TEVT - Thermostat change events
       feature :thermostat_suggestions, bit: 10       # TSUGGEST - provisional, gated until behavior is complete
 
@@ -634,11 +634,11 @@ module Matter
         requires: :thermostat_suggestions, present_if: :suggestion_wire_ready?,
         max: 1440, validate: :validate_suggestion_hold_duration
       attribute 0x0029, :thermostat_running_state, RelayState, computed: true, optional: true, requires: :events
-      attribute 0x0048, :preset_types, Array(PresetType), computed: true, optional: true,
+      attribute 0x0048, :preset_types, Array(PresetType), computed: true, fixed: true,
         requires: :presets, present_if: :preset_wire_ready?
       attribute 0x0049, :schedule_types, Array(ScheduleType), computed: true, optional: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
-      attribute 0x004A, :number_of_presets, UInt8, computed: true, optional: true,
+      attribute 0x004A, :number_of_presets, UInt8, computed: true, fixed: true,
         requires: :presets, present_if: :preset_wire_ready?
       attribute 0x004B, :number_of_schedules, UInt8, computed: true, optional: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
@@ -646,12 +646,12 @@ module Matter
         requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x004D, :number_of_schedule_transition_per_day, UInt8, computed: true,
         nullable: true, optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
-      attribute 0x004E, :active_preset_handle, Bytes, computed: true, nullable: true, optional: true,
+      attribute 0x004E, :active_preset_handle, Bytes, computed: true, nullable: true,
         requires: :presets, present_if: :preset_wire_ready?
       attribute 0x004F, :active_schedule_handle, Bytes, computed: true, nullable: true, optional: true,
         requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x0050, :presets, Array(Preset), computed: true, writable: true, write_access: :manage,
-        optional: true, requires: :presets, present_if: :preset_wire_ready?
+        requires: :presets, present_if: :preset_wire_ready?
       attribute 0x0051, :schedules, Array(Schedule), computed: true, writable: true, write_access: :manage,
         optional: true, requires: :matter_schedules, present_if: :schedule_wire_ready?
       attribute 0x0053, :max_thermostat_suggestions, UInt8, computed: true,
@@ -765,7 +765,6 @@ module Matter
         @number_of_schedule_transitions = 0_u8
         @number_of_schedule_transition_per_day = nil.as(UInt8?)
 
-        raise ArgumentError.new("PRES wire conformance is not yet enabled") if @feature_map.presets? && !preset_wire_ready?
         raise ArgumentError.new("MSCH wire conformance is not yet enabled") if @feature_map.matter_schedules? && !schedule_wire_ready?
         raise ArgumentError.new("TSUGGEST requires PRES") if @feature_map.thermostat_suggestions? && !@feature_map.presets?
         raise ArgumentError.new("TSUGGEST wire conformance is not yet enabled") if @feature_map.thermostat_suggestions? && !suggestion_wire_ready?
@@ -790,6 +789,7 @@ module Matter
         elsif !presets.empty?
           raise ArgumentError.new("preset_types are required when presets are configured")
         end
+        raise ArgumentError.new("preset_types are required for PRES") if @feature_map.presets? && !preset_wire_ready?
       end
 
       def thermostat_running_state : RelayState
@@ -901,10 +901,14 @@ module Matter
       # Public Interface
       # ------------------------------------------------------------------------
 
-      # Configure a host-owned preset list. Production instances still reject
-      # PRES; controller writes to Presets require an atomic transaction.
+      # Configure a host-owned preset list. Once PRES is advertised, the
+      # configured types and capacity are fixed; controller writes require an
+      # atomic transaction.
       def configure_presets(types : Array(PresetType), presets : Array(Preset)) : Nil
         validate_presets!(types, presets)
+        if @feature_map.presets? && !@preset_types.empty? && @preset_types != types
+          raise ArgumentError.new("fixed preset types cannot change")
+        end
         unless @schedules.empty?
           validate_schedules!(@schedule_types, @schedules, @number_of_schedule_transitions,
             @number_of_schedule_transition_per_day, presets)
@@ -1260,11 +1264,15 @@ module Matter
       end
 
       protected def preset_wire_ready? : Bool
-        false
+        !@preset_types.empty?
       end
 
       protected def preset_wire_ready?(command_id : UInt32) : Bool
         preset_wire_ready?
+      end
+
+      protected def validate_feature_map_change(value : Feature) : Nil
+        raise ArgumentError.new("Thermostat feature profile is fixed after construction") unless value == @feature_map
       end
 
       def active_preset_handle : Bytes?

@@ -705,22 +705,19 @@ With LTNE enabled, `update_local_temperature` feeds the internal measurement
 used by Auto mode while LocalTemperature always reads as TLV null. A direct
 `local_temperature=` call cannot expose a value on an LTNE thermostat. See the
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
-The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; PRES, MSCH, and TSUGGEST remain unavailable in production.
+The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; MSCH and TSUGGEST remain unavailable in production.
 
-For host-side preset preparation, `Thermostat#configure_presets` accepts typed
-`PresetType` and `Preset` values. `activate_preset` applies a configured preset's
-setpoints; a later manual setpoint change clears its active handle. The list and
-active handle persist with cluster state. This API is preparatory: the PRES bit,
-Preset attributes, and SetActivePreset wire command remain unavailable until
-the full PRES wire flow passes conformance tests.
-The preparatory transaction model includes typed `AtomicRequest` and
-`AtomicResponse` payloads, secure-peer ownership, timeout, rollback and commit.
-The required Preset attribute and command declarations are present behind a
-feature gate, and pending list writes and reads use the writer's private state.
-Committed preset handles are retained in storage so deleted handles are never
-generated again after restart.
-Production Thermostat instances reject the PRES feature until its remaining
-atomic write and official chip-tool checks are complete.
+An opted-in production Thermostat advertises Presets (PRES) when constructed
+with fixed `preset_types` containing one to seven scenarios and a total preset
+capacity of one to 255. `configure_presets` can update the host-owned list but
+cannot change those fixed types or their capacity; the Thermostat feature
+profile also remains fixed after construction. Controller Presets writes
+require `AtomicRequest`; the transaction has secure-peer ownership, timeout,
+rollback, commit, and private pending reads. `SetActivePreset` applies a
+configured preset's setpoints, while a later manual setpoint change clears its
+active handle. The list, active handle, and used handles persist across restart
+so deleted handles are not generated again. The production class is exercised
+by the official chip-tool fixture in `e2e/spec/thermostat_presets_spec.cr`.
 
 `Cluster::LowPower` provides the Matter 1.6 Sleep command on an opt-in endpoint.
 Register `configure_host(accept, sleep)` to accept or refuse requests and to

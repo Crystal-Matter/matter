@@ -20,7 +20,7 @@
   "0x0102": "Actuator position reporting remains application-owned",
   "0x0150": "SelectAreas and selected-state persistence; MAPS/PROG/CurrentArea/SkipArea opt-in, physical route host-owned",
   "0x0200": "ConstantSpeed profile only; host owns physical mode change and telemetry",
-  "0x0201": "SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints and TEVT events; PRES, MSCH and TSUGGEST remain gated in production",
+  "0x0201": "SetpointRaiseLower limits and Auto deadband; opt-in OCC setpoints, TEVT events, and PRES atomic presets; MSCH and TSUGGEST remain gated in production",
   "0x0202": "feature-gated attributes and Step; only FanMode nonvolatile",
   "0x0400": "Fixed sensor configuration, nullable bounds and reading, optional Tolerance/LightSensorType; host owns sampling",
   "0x0403": "Extended feature, optional tolerances, fixed sensor bounds and scale",
