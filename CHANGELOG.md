@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Camera speaker controls
+
+- Add the opt-in Matter 1.6 Speaker feature to Camera AV Stream Management
+  with fixed capabilities, two-way-talk metadata, persistent mute and bounded
+  volume settings. A host callback admits changes before they are committed.
+  The synthetic audio fixture checks the official attribute wire format.
+
 ### Joint Fabric completion durability
 
 - Commit a joining Administrator's cross-signed ICAC, AdministratorFabricIndex,
