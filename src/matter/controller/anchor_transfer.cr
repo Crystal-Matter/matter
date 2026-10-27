@@ -221,7 +221,10 @@ module Matter
         def request : Administrator::TransferAnchorResponseStatusEnum
           response = @im.invoke(@session, @peer, @endpoint_id,
             Administrator::CLUSTER_ID, Administrator::CMD_TRANSFER_ANCHOR_REQUEST)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "TransferAnchorRequest")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Administrator::CMD_TRANSFER_ANCHOR_REQUEST_RESPONSE
+          end
           raise Matter::ProtocolError.new("TransferAnchorRequest returned no response") unless fields
           Administrator::TransferAnchorResponse.from_slice(fields.to_slice).status_code
         end
@@ -229,6 +232,7 @@ module Matter
         def complete : Nil
           response = @im.invoke(@session, @peer, @endpoint_id,
             Administrator::CLUSTER_ID, Administrator::CMD_TRANSFER_ANCHOR_COMPLETE)
+          ImClient.single_invoke_response!(response, "TransferAnchorComplete")
           success = response.invoke_responses.any? do |entry|
             entry.command_status.try(&.status.status) == InteractionModel::StatusCode::Success.value
           end
@@ -453,6 +457,7 @@ module Matter
 
         private def invoke_response_ok!(response : InteractionModel::InvokeResponseMessage,
                                         name : String) : Nil
+          ImClient.single_invoke_response!(response, name)
           unless response.invoke_responses.any? { |entry| entry.command_status.try(&.status.status) == InteractionModel::StatusCode::Success.value }
             raise Matter::CommissioningError.new("#{name} failed")
           end
@@ -460,6 +465,7 @@ module Matter
 
         private def command_fields(response : InteractionModel::InvokeResponseMessage,
                                    command_id : UInt32) : Bytes
+          ImClient.single_invoke_response!(response, "Anchor transfer command")
           command = response.invoke_responses.find do |entry|
             entry.command_data.try(&.command_path.command) == command_id
           end.try(&.command_data)
@@ -645,7 +651,10 @@ module Matter
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(index).to_slice)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "RemoveFabric")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+          end
           raise Matter::ProtocolError.new("RemoveFabric returned no response") unless fields
           result = Cluster::OperationalCredentials::Tlv::TlvNocResponse.from_slice(fields.to_slice)
           unless result.status_code.ok?
@@ -658,13 +667,17 @@ module Matter
             Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
             Cluster::GeneralCommissioning::ArmFailSafeRequest.new(seconds, 0_u64).to_slice)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "ArmFailSafe")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE
+          end
           raise Matter::ProtocolError.new("ArmFailSafe returned no response") unless fields
           outcome = Cluster::GeneralCommissioning::ArmFailSafeResponse.from_slice(fields.to_slice)
           raise Matter::CommissioningError.new("ArmFailSafe failed: #{outcome.error_code}") unless outcome.error_code.ok?
         end
 
         private def assert_commissioning_complete!(response : InteractionModel::InvokeResponseMessage) : Nil
+          ImClient.single_invoke_response!(response, "CommissioningComplete")
           response.invoke_responses.each do |entry|
             if status = entry.command_status
               raise Matter::CommissioningError.new("CommissioningComplete failed: IM status #{status.status.status}")

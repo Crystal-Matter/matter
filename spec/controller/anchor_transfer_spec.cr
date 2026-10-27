@@ -21,6 +21,29 @@ private class FakeAnchorPort < Matter::Controller::AnchorTransfer::Port
   end
 end
 
+private class WrongAnchorResponseImClient < Matter::Controller::ImClient
+  property? mixed_response = false
+
+  def invoke(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+             endpoint_id : UInt16, cluster_id : UInt32, command_id : UInt32,
+             fields : Bytes = Bytes.empty) : Matter::InteractionModel::InvokeResponseMessage
+    response = Matter::Cluster::JointFabricAdministrator::TransferAnchorResponse.new(
+      Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK)
+    path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id,
+      command: mixed_response? ? Matter::Cluster::JointFabricAdministrator::CMD_TRANSFER_ANCHOR_REQUEST_RESPONSE : Matter::Cluster::JointFabricAdministrator::CMD_ICACCSR_REQUEST_RESPONSE)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.from_slice(response.to_slice))
+    entries = [Matter::InteractionModel::InvokeResponseIB.new(command_data: data)]
+    if mixed_response?
+      request_path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id,
+        command: command_id)
+      status = Matter::InteractionModel::CommandStatusIB.new(request_path,
+        Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Failure.value))
+      entries << Matter::InteractionModel::InvokeResponseIB.new(command_status: status)
+    end
+    Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: entries)
+  end
+end
+
 private class FakeAnchorMigration < Matter::Controller::AnchorTransfer::Migration
   getter calls = [] of String
   property? fail_copy = false
@@ -254,6 +277,37 @@ private def committed_anchor_store : Matter::Cluster::JointFabricDatastore
   store.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
     Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
   store
+end
+
+describe Matter::Controller::AnchorTransfer::ImPort do
+  it "rejects another response command for TransferAnchorRequest" do
+    client = Matter::Controller::Client.new
+    im = WrongAnchorResponseImClient.new(client)
+    session = Matter::Session::SecureContext.new(
+      1_u16, 2_u16, Matter::Session::SessionType::Unicast,
+      Bytes.new(16), Bytes.new(16))
+    port = Matter::Controller::AnchorTransfer::ImPort.new(im, session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+
+    expect_raises(Matter::ProtocolError, /TransferAnchorRequest.*response/) { port.request }
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an OK TransferAnchorRequestResponse mixed with a failure status" do
+    client = Matter::Controller::Client.new
+    im = WrongAnchorResponseImClient.new(client)
+    im.mixed_response = true
+    session = Matter::Session::SecureContext.new(
+      1_u16, 2_u16, Matter::Session::SessionType::Unicast,
+      Bytes.new(16), Bytes.new(16))
+    port = Matter::Controller::AnchorTransfer::ImPort.new(im, session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+
+    expect_raises(Matter::ProtocolError, /exactly one InvokeResponse/) { port.request }
+  ensure
+    client.try(&.close)
+  end
 end
 
 describe Matter::Controller::AnchorTransfer::Workflow do

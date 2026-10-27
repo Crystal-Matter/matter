@@ -86,7 +86,10 @@ module Matter
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(index).to_slice)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "RemoveFabric")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+          end
           raise Matter::ProtocolError.new("RemoveFabric omitted response") unless fields
           result = Cluster::OperationalCredentials::Tlv::TlvNocResponse.from_slice(fields.to_slice)
           unless result.status_code.ok?
@@ -488,6 +491,7 @@ module Matter
           result = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
             command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
+          ImClient.single_invoke_response!(result, "Rotation CommissioningComplete")
           command = result.invoke_responses.find do |entry|
             entry.command_data.try(&.command_path.command) ==
               Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE
@@ -561,6 +565,7 @@ module Matter
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
             fields: request.to_slice)
+          ImClient.single_invoke_response!(response_message, "Rotation SignVIDVerificationRequest")
           command = response_message.invoke_responses.find do |entry|
             entry.command_data.try(&.command_path.command) ==
               Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST_RESPONSE

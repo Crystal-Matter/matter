@@ -1,6 +1,35 @@
 require "../spec_helper"
 require "../../src/matter/controller/administrator_removal"
 
+private class WrongRemovalResponseImClient < Matter::Controller::ImClient
+  def read_attribute(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+                     endpoint_id : UInt16, cluster_id : UInt32, attribute_id : UInt32,
+                     fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
+    descriptor = Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor.new(
+      Bytes[1], 1_u16, 1_u64, 0x300_u64, "outgoing", 1_u8)
+    path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id,
+      attribute: attribute_id)
+    data = Matter::InteractionModel::AttributeDataIB.new(path: path,
+      data: TLV::Any.from_slice([descriptor].to_tlv))
+    Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
+      Matter::InteractionModel::AttributeReportIB.new(attribute_data: data),
+    ])
+  end
+
+  def invoke(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+             endpoint_id : UInt16, cluster_id : UInt32, command_id : UInt32,
+             fields : Bytes = Bytes.empty) : Matter::InteractionModel::InvokeResponseMessage
+    response = Matter::Cluster::OperationalCredentials::Tlv::TlvNocResponse.new(
+      Matter::Cluster::OperationalCredentials::Tlv::NodeOperationalCertificateStatus::Ok, 1_u8)
+    path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id,
+      command: Matter::Cluster::OperationalCredentials::CMD_CSR_REQUEST_RESPONSE)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.from_slice(response.to_slice))
+    Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [
+      Matter::InteractionModel::InvokeResponseIB.new(command_data: data),
+    ])
+  end
+end
+
 private alias RemovalStage = Matter::Controller::AdministratorRemoval::Stage
 
 private def removal_datastore : Matter::Cluster::JointFabricDatastore
@@ -748,6 +777,23 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
       -> { nil }, -> { nil }, ->(_node_id : UInt64) { nil })
 
     expect_raises(Matter::AuthenticationError, /CASE peer differs/) { port.remove_outgoing_fabric! }
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects another response command for outgoing RemoveFabric" do
+    session = Matter::Session::SecureContext.new(
+      1_u16, 2_u16, Matter::Session::SessionType::Unicast,
+      Bytes.new(16, 1_u8), Bytes.new(16, 2_u8),
+      peer_node_id: Matter::DataType::NodeId.new(0x300_u64),
+      case_session: true)
+    client = Matter::Controller::Client.new
+    port = Matter::Controller::AdministratorRemoval::ImPort.new(
+      WrongRemovalResponseImClient.new(client), session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u64, Bytes[1], 0x300_u64,
+      removal_datastore, -> { nil }, -> { nil }, ->(_node_id : UInt64) { nil })
+
+    expect_raises(Matter::ProtocolError, /RemoveFabric omitted response/) { port.remove_outgoing_fabric! }
   ensure
     client.try(&.close)
   end

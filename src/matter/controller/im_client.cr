@@ -404,6 +404,18 @@ module Matter
         [empty] + items
       end
 
+      # A single-command consumer must not accept an OK command response while
+      # silently ignoring a second failure or conflicting response in the same
+      # exchange. The transport still assembles chunked responses; this guard
+      # is applied by consumers that expect one terminal response.
+      def self.single_invoke_response!(response : InteractionModel::InvokeResponseMessage,
+                                       operation : String) : InteractionModel::InvokeResponseIB
+        unless response.invoke_responses.size == 1
+          raise Matter::ProtocolError.new("#{operation} expected exactly one InvokeResponse, got #{response.invoke_responses.size}")
+        end
+        response.invoke_responses.first
+      end
+
       def invoke(
         session : Session::SecureContext,
         peer : Socket::IPAddress,
