@@ -257,6 +257,7 @@ services:
       E2E_DEVICE: matter_joint_fabric_migration_target
       E2E_BINARY: matter_switch
       MATTER_SWITCH_MAX_CUMULATIVE_FAILSAFE_SECONDS: "120"
+      MATTER_SWITCH_E2E_DROP_REMOVE_FABRIC_RESPONSE: /e2e/logs/matter_joint_fabric_migration_target.remove_fabric_response
 
   level-control:
     <<: *device

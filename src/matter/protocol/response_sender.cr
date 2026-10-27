@@ -30,6 +30,11 @@ module Matter
       # MRP retransmissions reuse cached bytes and do not invoke this callback.
       property on_im_message_sent : Proc(Nil)?
 
+      # A host-owned transport fault hook can discard a fully encoded IM
+      # response before it enters the packet transport. A discarded packet is
+      # neither queued for reliable retransmission nor cached for MRP replay.
+      property on_im_response_packet : Proc(Codec::MessageCodec::Message, UInt8, Bytes, Bool)?
+
       def initialize(@transport : Transport::PacketTransport, @mrp_cache : MrpCache)
       end
 
@@ -88,6 +93,10 @@ module Matter
         udp_packet, counter = Session::SecureMessage.encode(session, payload_header, payload,
           source_node_id: original_msg.packet_header.destination_node_id || session.local_node_id,
           destination_node_id: original_msg.packet_header.source_node_id)
+
+        if @on_im_response_packet.try(&.call(original_msg, message_type, udp_packet)) == true
+          raise Matter::TransportError.new("Encoded IM response discarded before transport enqueue")
+        end
 
         configure_mrp_peer(peer, session)
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
