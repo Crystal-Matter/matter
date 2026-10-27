@@ -391,6 +391,13 @@ item below as covered only to the extent of its cited tests.
   A's committed entry, it verifies A CASE and the absence of the device's B
   fabric before proceeding. The second restart verifies the old B NodeList is
   absent and completes the journal without sending RemoveNode again.
+  Before that handoff, the fixture uses a separate A Node ID to roll back the
+  same device after a committed Anchor registration. It restarts B after
+  Anchor RemoveNode commits but before B advances its rollback journal,
+  refuses automatic replay, then explicitly resumes. CASE and Datastore reads
+  verify B ownership persists and A's fabric and NodeList entry are removed;
+  the example's read-only local command confirms the A controller node record
+  is deleted before the rollback is marked complete.
   The local `migrate-device` command requires explicit device consent and an
   attestation trust configuration. An embedding application sets
   `Device#migration_attestation_trust=` with an `AttestationTrustStore` holding

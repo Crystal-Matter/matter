@@ -131,6 +131,7 @@ module Matter
                        @commissioning_ack : Proc(Nil)? = nil,
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
                        @anchor_registration_committed : Proc(Nil)? = nil,
+                       @anchor_node_removed : Proc(Nil)? = nil,
                        @old_fabric_removed : Proc(Nil)? = nil,
                        @old_node_removed : Proc(Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
@@ -346,6 +347,7 @@ module Matter
               Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
               Cluster::JointFabricDatastore::RemoveNodeRequest.new(@anchor_node_id).to_slice)
             assert_status_success!(response, "Anchor RemoveNode")
+            @anchor_node_removed.try(&.call)
           end
           session = case_session(@old_fabric, @old_node_id, @device_peer)
           descriptor = fabrics(session, @device_peer).find do |entry|
