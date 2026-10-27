@@ -28,6 +28,38 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
     select_anchor_administrator_fabric(index)
   end
 
+  def persist_transfer_candidate_datastore_for_spec : Nil
+    persist_transfer_candidate_datastore!
+  end
+
+  def verify_frozen_transfer_source_for_spec(journal : Matter::Controller::AnchorTransfer::Journal,
+                                             source : Matter::Cluster::JointFabricDatastore,
+                                             old_anchor_node_id : UInt64,
+                                             old_fabric : Matter::Fabric) : Nil
+    verify_frozen_transfer_source!(journal, source, old_anchor_node_id, old_fabric)
+  end
+
+  def verify_promotion_bindings_for_spec(fabric : Matter::Fabric) : Nil
+    verify_promotion_bindings!(fabric)
+  end
+
+  def verify_promotion_roles_for_spec : Nil
+    verify_promotion_roles!
+  end
+
+  def verify_durable_transfer_datastore_for_spec(source : Matter::Cluster::JointFabricDatastore,
+                                                 candidate_old_node_id : UInt64, own_fabric : Matter::Fabric,
+                                                 bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
+                                                 admin_version : UInt16, anchor_version : UInt16) : Nil
+    verify_durable_transfer_datastore!(source, candidate_old_node_id, own_fabric, bootstrap,
+      admin_version, anchor_version)
+  end
+
+  def anchor_friendly_name_for_attachment_for_spec(datastore : Matter::Cluster::JointFabricDatastore,
+                                                   fabric : Matter::Fabric, root : Bytes) : String
+    anchor_friendly_name_for_attachment(datastore, fabric, root)
+  end
+
   def persist_anchor_role_for_spec(anchor : Bool) : Nil
     persist_anchor_role(anchor)
   end
@@ -194,6 +226,35 @@ class InterruptedJfaCommitSqlite < Matter::Storage::Sqlite
   end
 end
 
+describe "Joint Fabric Administrator Anchor transfer persistence" do
+  it "stops promotion when the candidate Datastore save fails" do
+    path = File.join(Dir.tempdir, "matter-jfa-promotion-save-#{Random::Secure.hex(6)}.yml")
+    backend = InterruptedJfaCommitYaml.new(path)
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    datastore = device.joint_fabric_datastore
+    datastore.anchor_root_ca = Bytes[1_u8]
+    device.persistence.save_cluster(datastore).should be_true
+    datastore.anchor_root_ca = Bytes[2_u8]
+
+    backend.fail_cluster_id = datastore.persistence_key
+    backend.fail_next_cluster_write = true
+    expect_raises(Matter::StorageError) do
+      device.persist_transfer_candidate_datastore_for_spec
+    end
+
+    saved = backend.read(Matter::Storage::Collections::CLUSTERS,
+      datastore.persistence_key).as(Matter::Storage::Document)
+    durable = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    durable.restore_state(saved)
+    durable.anchor_root_ca.should eq(Bytes[1_u8])
+  ensure
+    device.try(&.shutdown!)
+    File.delete?(path) if path
+  end
+end
+
 private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64,
                                   root_key : Matter::Crypto::Key = Matter::Crypto::StandardCrypto.new.create_key_pair,
                                   icac_key : Matter::Crypto::Key = Matter::Crypto::StandardCrypto.new.create_key_pair,
@@ -210,6 +271,145 @@ private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64,
   Matter::Fabric.new(fabric_id, 1_u8, node_id, root_key.public_key, noc, noc_key,
     Bytes.new(16, 0xA5_u8), intermediate_cert: icac, root_cert: root,
     cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0001_u32)])
+end
+
+describe "Joint Fabric Administrator promotion reconciliation evidence" do
+  it "keeps a copied name only for the exact saved fabric, root, and node" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB103_u64)
+    root = fabric.root_cert.as(Bytes)
+    datastore = device.joint_fabric_datastore
+    datastore.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32,
+      Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    datastore.anchor_root_ca = root
+    datastore.anchor_node_id = fabric.node_id
+    datastore.friendly_name = "Shared Fabric Anchor"
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT,
+      MatterJointFabricAdministrator::Device::FabricBindingState.new(
+        fabric.fabric_index, fabric.fabric_id, fabric.root_public_key).to_document)
+    device.anchor_friendly_name_for_attachment_for_spec(datastore, fabric, root)
+      .should eq("Shared Fabric Anchor")
+
+    replacement = jfa_reuse_test_fabric(fabric.fabric_id, fabric.node_id)
+    device.anchor_friendly_name_for_attachment_for_spec(datastore, replacement, replacement.root_cert.as(Bytes))
+      .should eq(MatterJointFabricAdministrator::Device::DEFAULT_ANCHOR_FRIENDLY_NAME)
+    datastore.anchor_node_id = fabric.node_id + 1_u64
+    device.anchor_friendly_name_for_attachment_for_spec(datastore, fabric, root)
+      .should eq(MatterJointFabricAdministrator::Device::DEFAULT_ANCHOR_FRIENDLY_NAME)
+    datastore.anchor_node_id = fabric.node_id
+    datastore.anchor_root_ca = replacement.root_cert.as(Bytes)
+    device.anchor_friendly_name_for_attachment_for_spec(datastore, fabric, root)
+      .should eq(MatterJointFabricAdministrator::Device::DEFAULT_ANCHOR_FRIENDLY_NAME)
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects copied candidate data before Anchor root promotion" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    own_fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB103_u64)
+    identity = Matter::Controller::FabricInfo.new(own_fabric.fabric_id, own_fabric.node_id,
+      own_fabric.ipk, own_fabric.root_cert.as(Bytes), own_fabric.root_public_key,
+      own_fabric.operational_cert, own_fabric.operational_private_key,
+      admin_vendor_id: own_fabric.vendor_id, intermediate_cert: own_fabric.intermediate_cert)
+    bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(identity, Bytes[1_u8])
+    source = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    source.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 1_u32,
+      Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    source.anchor_root_ca = old_fabric.root_cert.as(Bytes)
+    source.anchor_node_id = 0xA102_u64
+    source.admin_list = [Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      old_fabric.node_id, "Old Candidate", old_fabric.vendor_id, old_fabric.intermediate_cert.as(Bytes))]
+    copied = device.joint_fabric_datastore
+    new_admin = Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      own_fabric.node_id, "Crystal Anchor", own_fabric.vendor_id, own_fabric.intermediate_cert.as(Bytes))
+    Matter::Controller::AnchorTransfer::Snapshot.copy!(source, copied, own_fabric.node_id,
+      old_fabric.node_id, new_admin)
+    device.persistence.save_cluster(copied).should be_true
+    device.persistence.flush
+
+    expect_raises(Matter::AuthenticationError, /root/) do
+      device.verify_durable_transfer_datastore_for_spec(source, old_fabric.node_id, own_fabric,
+        bootstrap, 2_u16, 2_u16)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects a frozen Anchor snapshot with a different root" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    source = Matter::Cluster::JointFabricDatastore.new(
+      Matter::DataType::EndpointNumber.new(MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID))
+    source.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 1_u64, 0_u8)
+    source.anchor_root_ca = old_fabric.root_cert.as(Bytes)
+    source.anchor_node_id = 0xA102_u64
+    journal = Matter::Controller::AnchorTransfer::Journal.new(old_fabric.node_id,
+      Matter::Controller::AnchorTransfer::Stage::Promoting)
+    device.verify_frozen_transfer_source_for_spec(journal, source, 0xA102_u64, old_fabric)
+
+    source.anchor_root_ca = Bytes[1_u8]
+    expect_raises(Matter::AuthenticationError, /expected frozen transfer/) do
+      device.verify_frozen_transfer_source_for_spec(journal, source, 0xA102_u64, old_fabric)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects a promoted binding that names another fabric or root" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    candidate = jfa_reuse_test_fabric(0xB100_u64, 0xB102_u64)
+    binding = MatterJointFabricAdministrator::Device::FabricBindingState.new(
+      candidate.fabric_index, candidate.fabric_id, candidate.root_public_key)
+    {MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT,
+     MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_BINDING_DOCUMENT}.each do |name|
+      device.persistence.write_app_document(name, binding.to_document)
+    end
+    device.verify_promotion_bindings_for_spec(candidate)
+
+    wrong = MatterJointFabricAdministrator::Device::FabricBindingState.new(
+      candidate.fabric_index, candidate.fabric_id, Bytes[1_u8])
+    device.persistence.write_app_document(
+      MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT, wrong.to_document)
+    expect_raises(Matter::AuthenticationError, /fabric binding changed/) do
+      device.verify_promotion_bindings_for_spec(candidate)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects promotion before the explicit Anchor role is durable" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_BOOTSTRAP_ROLE_DOCUMENT,
+      MatterJointFabricAdministrator::Device::JointFabricRoleState.new(false, true).to_document)
+    expect_raises(Matter::StorageError, /Promoted Anchor role is absent/) do
+      device.verify_promotion_roles_for_spec
+    end
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ROLE_DOCUMENT,
+      MatterJointFabricAdministrator::Device::JointFabricRoleState.new(false).to_document)
+    expect_raises(Matter::AuthenticationError, /did not finish promotion/) do
+      device.verify_promotion_roles_for_spec
+    end
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ROLE_DOCUMENT,
+      MatterJointFabricAdministrator::Device::JointFabricRoleState.new(true).to_document)
+    device.verify_promotion_roles_for_spec
+    device.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ROLE_DOCUMENT,
+      MatterJointFabricAdministrator::Device::JointFabricRoleState.new(true, true).to_document)
+    expect_raises(Matter::AuthenticationError, /did not finish promotion/) do
+      device.verify_promotion_roles_for_spec
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
 end
 
 private class FailingJfaMemory < Matter::Storage::Memory

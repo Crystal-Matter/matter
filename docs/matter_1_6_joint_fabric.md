@@ -547,7 +547,12 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
    A-to-B transfer with B restarts after durable Datastore copy and participant
-   credential rotation, and before participant follow-up; it checks the copied
+   credential rotation, and after B's own promotion commits before its journal
+   advances. Promotion reconciliation compares the committed B NOC and exact
+   CAT versions with raw durable Datastore, fabric bindings, endpoint ownership,
+   and explicit role records while A remains frozen over CASE. Partial promotion
+   stays blocked so B's UpdateNOC is never replayed. The test also restarts
+   before participant follow-up; it checks the copied
    Administrator entries and C's new-fabric NOC across those restarts. It also covers A removal,
    B restart after lost RemoveFabric, RemoveAdmin, Anchor rotation, and
    participant rotation acknowledgements, and B/C registration. Recovery of
