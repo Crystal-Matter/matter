@@ -30,9 +30,9 @@ module Matter
         loop do
           begin
             return load_once
-          rescue LoadConflict
+          rescue ex : LoadConflict
             attempts += 1
-            raise if attempts >= LOAD_CONFLICT_RETRIES
+            raise ex if attempts >= LOAD_CONFLICT_RETRIES
           end
         end
       rescue ex : Matter::StorageError
