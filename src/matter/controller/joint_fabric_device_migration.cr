@@ -101,6 +101,7 @@ module Matter
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
         abstract def resume_rollback! : Nil
         abstract def finalize_rollback! : Nil
+        abstract def finalize_migration! : Nil
         abstract def validate_journal!(journal : Journal) : Nil
       end
 
@@ -374,6 +375,18 @@ module Matter
           nodes = state.nodes_for(@anchor_fabric.fabric_id,
             @anchor_fabric.root_public_key, @anchor_fabric.controller_node_id)
           @store.save(state) if nodes.delete(@anchor_node_id)
+        end
+
+        # The old controller node is no longer reachable after the device's
+        # B fabric and B Datastore entry have been removed. Keep it until
+        # authenticated completion proof, then clear it before journaling
+        # Complete so a failed local save remains recoverable.
+        def finalize_migration! : Nil
+          verify_postcondition!(Stage::Complete)
+          state = @store.load
+          nodes = state.nodes_for(@old_fabric.fabric_id,
+            @old_fabric.root_public_key, @old_fabric.controller_node_id)
+          @store.save(state) if nodes.delete(@old_node_id)
         end
 
         # These are read-only postconditions for explicit journal
@@ -919,6 +932,7 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
+          @port.finalize_migration! if stage.complete?
           @port.finalize_rollback! if stage.rolled_back?
           updated = @journal
           updated.stage = stage
