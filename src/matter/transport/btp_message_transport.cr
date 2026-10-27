@@ -3,6 +3,7 @@ require "socket"
 
 require "../codec/message_codec"
 require "../error"
+require "../protocol/message_type"
 require "./btp_session"
 require "./packet_transport"
 
@@ -27,8 +28,8 @@ module Matter
       # has exactly one peer; this token never reaches a network socket.
       PEER                        = Socket::IPAddress.new("::1", 5540)
       POLL_INTERVAL               = 25.milliseconds
-      STANDALONE_ACK_MESSAGE_TYPE = 0x10_u8
-      MIN_PACKET_SIZE             =       8
+      STANDALONE_ACK_MESSAGE_TYPE = Protocol::SecureChannelMessageType::StandaloneAck.value
+      MIN_PACKET_SIZE             = 8
 
       getter port : Int32
       getter message_counter : MessageCounter
@@ -217,7 +218,7 @@ module Matter
       private def send_acknowledgment(message : Codec::MessageCodec::Message) : Nil
         header = Codec::MessageCodec::PayloadHeader.new(
           exchange_id: message.payload_header.exchange_id,
-          protocol_id: 0_u16,
+          protocol_id: Protocol::ProtocolId::SecureChannel.value,
           message_type: STANDALONE_ACK_MESSAGE_TYPE,
           initiator_message: !message.payload_header.initiator_message?,
           requires_acknowledge: false,

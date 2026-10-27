@@ -3,6 +3,7 @@ require "../interaction_model/status_code"
 require "../interaction_model/tlv_messages"
 require "../cluster/cluster"
 require "../event_journal"
+require "../node"
 require "../session/context"
 require "../cluster/access_control"
 require "../cluster/group_key_management"
@@ -37,7 +38,7 @@ module Matter
       end
 
       private def self.access_control_cluster(clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base)) : Cluster::AccessControl?
-        clusters[{0_u16, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
+        clusters[{Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
       end
 
       private def self.authorized?(

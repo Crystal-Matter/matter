@@ -2,6 +2,7 @@ require "../interaction_model/tlv_messages"
 require "../session/group_outgoing_counters"
 require "../session/group_secure_packet"
 require "../transport/group_multicast"
+require "./message_type"
 
 module Matter
   module Protocol
@@ -46,7 +47,7 @@ module Matter
         raise ArgumentError.new("Group key is not bound to the multicast fabric") unless key.fabric_id == fabric_id
         payload_header = Codec::MessageCodec::PayloadHeader.new(
           exchange_id: Random::Secure.rand(UInt16),
-          protocol_id: 1_u16,
+          protocol_id: ProtocolId::InteractionModel.value,
           message_type: message_type,
           initiator_message: true,
           requires_acknowledge: false)

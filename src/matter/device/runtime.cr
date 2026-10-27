@@ -920,7 +920,7 @@ module Matter
     end
 
     private def build_and_wire_clusters : Nil
-      endpoint_0 = DataType::EndpointNumber.new(0_u16)
+      endpoint_0 = DataType::EndpointNumber.new(Node::ROOT_ENDPOINT_ID)
 
       # Root Node clusters
       basic_info = Cluster::BasicInformation.new(

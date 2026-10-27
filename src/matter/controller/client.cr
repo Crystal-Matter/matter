@@ -9,14 +9,16 @@ require "../session/secure_message"
 require "../transport/udp_transport"
 require "../transport/tcp_enabled_transport"
 require "../interaction_model/tlv_messages"
+require "../protocol/message_type"
 
 module Matter
   module Controller
     class Client
       Log = ::Log.for("matter.controller.client")
 
-      PROTOCOL_SECURE_CHANNEL    = 0x0000_u16
-      PROTOCOL_INTERACTION_MODEL = 0x0001_u16
+      PROTOCOL_SECURE_CHANNEL    = Protocol::ProtocolId::SecureChannel.value
+      PROTOCOL_INTERACTION_MODEL = Protocol::ProtocolId::InteractionModel.value
+      UNSECURED_SESSION_ID       = 0_u16
       IPV4_MAPPED_PREFIX         = "::ffff:"
 
       MSG_STANDALONE_ACK       = 0x10_u8
@@ -168,7 +170,7 @@ module Matter
       end
 
       def session_id_available?(session_id : UInt16) : Bool
-        session_id != 0 && !@sessions.has_key?(session_id) && !(@session_id_in_use.try(&.call(session_id)) || false)
+        session_id != UNSECURED_SESSION_ID && !@sessions.has_key?(session_id) && !(@session_id_in_use.try(&.call(session_id)) || false)
       end
 
       # Session IDs must be available both locally and to another controller
@@ -200,7 +202,7 @@ module Matter
         requires_ack : Bool = true,
       ) : UInt16
         exchange = @transport.exchange_manager.create_exchange(
-          protocol_id: protocol_id, session_id: 0_u16, peer_address: peer,
+          protocol_id: protocol_id, session_id: UNSECURED_SESSION_ID, peer_address: peer,
           initial_message_type: message_type)
         @owned_unsecured_exchanges.add({exchange.exchange_id, canonical_peer(peer)})
         send_unsecured_on_exchange(peer, exchange.exchange_id, protocol_id,
@@ -209,7 +211,7 @@ module Matter
       end
 
       private def owns_incoming?(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Bool
-        if msg.packet_header.session_id == 0
+        if msg.packet_header.session_id == UNSECURED_SESSION_ID
           !msg.payload_header.initiator_message? &&
             @owned_unsecured_exchanges.includes?({msg.payload_header.exchange_id, canonical_peer(peer)})
         else
@@ -235,12 +237,12 @@ module Matter
         requires_ack : Bool = true,
         acknowledged_message_id : UInt32? = nil,
       ) : Nil
-        unless @transport.exchange_manager.get_exchange(exchange_id, 0_u16, peer, initiator_message)
+        unless @transport.exchange_manager.get_exchange(exchange_id, UNSECURED_SESSION_ID, peer, initiator_message)
           raise Matter::ProtocolError.new("unknown exchange_id=#{exchange_id}")
         end
 
         packet_header = Codec::MessageCodec::PacketHeader.new(
-          session_id: 0_u16,
+          session_id: UNSECURED_SESSION_ID,
           session_type: Codec::MessageCodec::SessionType::Unicast,
           message_id: 0_u32, # assigned by UDPTransport
           privacy_enhancements: false,
@@ -501,7 +503,7 @@ module Matter
       end
 
       private def handle_transport_message(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) : Nil
-        if msg.packet_header.session_id == 0
+        if msg.packet_header.session_id == UNSECURED_SESSION_ID
           # Before CASE/PASE authenticates a session, replies on TCP must
           # match the exact connection that opened the unsecured exchange.
           if peer.port == Transport::TcpEnabledTransport::TOKEN_PORT && !owns_incoming?(msg, peer)
@@ -579,7 +581,7 @@ module Matter
       private def ack_encrypted_if_needed(rec : ReceivedMessage) : Nil
         msg = rec.message
         return unless msg.payload_header.requires_acknowledge?
-        return if msg.packet_header.session_id == 0
+        return if msg.packet_header.session_id == UNSECURED_SESSION_ID
         # ReportData uses the Interaction Model StatusResponse ladder. Sending
         # an MRP ACK here as well would advance a chunked publisher twice.
         return if msg.payload_header.protocol_id == PROTOCOL_INTERACTION_MODEL &&

@@ -12,7 +12,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Use generated cluster, attribute, command, event, and feature identifiers in
   device type definitions and protocol paths, including Robotic Vacuum Cleaner
   and Root Node requirements. Name Thread dataset fields, Root Node endpoints,
-  shared-fabric CAT identities, and example test Vendor IDs; decode CAT
+  shared-fabric CAT identities, protocol IDs, and example test Vendor IDs; decode CAT
   subjects through the Node ID type so invalid zero-version or non-CAT
   subjects cannot match an identity.
 

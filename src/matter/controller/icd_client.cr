@@ -3,6 +3,7 @@ require "log"
 require "../protocol/icd/check_in_message"
 require "../protocol/message_type"
 require "../cluster/icd_management"
+require "../node"
 require "./client"
 require "./icd_peer_store"
 require "./im_client"
@@ -15,10 +16,10 @@ module Matter
     class IcdClient
       Log = ::Log.for("matter.controller.icd_client")
 
-      PROTOCOL_SECURE_CHANNEL      =      0x0000_u16
+      PROTOCOL_SECURE_CHANNEL      = Client::PROTOCOL_SECURE_CHANNEL
       ACTIVE_MODE_THRESHOLD_LENGTH =               2
       COUNTER_REFRESH_OFFSET       = 0x8000_0000_u32
-      ICD_ENDPOINT                 =           0_u16
+      ICD_ENDPOINT                 = Node::ROOT_ENDPOINT_ID
 
       record CheckIn, fabric_id : UInt64, root_public_key : Bytes,
         controller_node_id : UInt64, device_node_id : UInt64,
@@ -33,7 +34,7 @@ module Matter
       def initialize(@client : Client, @store : IcdPeerStore, im : ImClient? = nil)
         @im = im || ImClient.new(@client)
         @observer_id = @client.transport.add_message_observer do |message, peer|
-          if message.packet_header.session_id == 0_u16 &&
+          if message.packet_header.session_id == Client::UNSECURED_SESSION_ID &&
              message.payload_header.protocol_id == PROTOCOL_SECURE_CHANNEL &&
              message.payload_header.message_type == Protocol::SecureChannelMessageType::IcdCheckIn.value &&
              message.payload_header.initiator_message?
