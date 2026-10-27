@@ -484,6 +484,16 @@ administrator-readable allowed vendor list. The host reports changes in the
 app's visible/focused/running state through `update_status`; the status starts
 `Stopped` after each process restart. The
 `examples/matter_content_app_device.cr` example shows this configuration.
+`Cluster::Messages` supports the opt-in Matter 1.6 CONF, RESP, and RPLY
+profiles. Supply a `Messages::Host` and a feature map; the host receives each
+queued message with its authenticated origin node and calls `present` when the
+UI shows it, then `complete` with a
+selected response ID or free-form reply. The cluster validates those values,
+emits fabric-scoped completion events, and retains pending messages and expiry
+times across restarts. Call `replay_messages_to_host!` after loading storage to
+resume the UI. The content-app example enables this profile with
+`MATTER_MESSAGES_PROFILE=1`; its automatic confirmation is for demonstration.
+ProtectedMessages remains unavailable until a host verifier is integrated.
 Basic Video Player endpoints can add the provisional Matter 1.6
 `Cluster::ContentControl` server. The supported BlockUnrated, rating, channel,
 and application features retain policy across restart; the host calls
