@@ -70,7 +70,7 @@ module MatterAirConditioner
         tolerance: TOLERANCE,
         as: :temperature
       cluster Matter::Cluster::Identify, identify_type: :visible_light
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Air Conditioner")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example AirCon")]
       cluster Matter::Cluster::Groups
       cluster Matter::Cluster::ScenesManagement
     end

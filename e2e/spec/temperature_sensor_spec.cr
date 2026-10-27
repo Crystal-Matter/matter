@@ -10,7 +10,7 @@ describe "matter_temperature_sensor example" do
 
   it "is a temperature sensor" do
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x0302_i64
-    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Temperature Sensor"]
+    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Temp"]
   end
 
   it "reads the measured temperature within the configured range" do

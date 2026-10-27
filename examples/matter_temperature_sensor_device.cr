@@ -35,7 +35,7 @@ module MatterTemperatureSensor
         tolerance: TOLERANCE,
         as: :temperature
       cluster Matter::Cluster::Identify, identify_type: :visible_light
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Temperature Sensor")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Temp")]
     end
 
     endpoint 2, device_type: Matter::DeviceType::TEMPERATURE_SENSOR do

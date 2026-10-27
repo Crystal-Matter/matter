@@ -329,6 +329,28 @@ describe Provider do
     peer.endings.should eq([Provider::EndReason::PrivacyMode, Provider::EndReason::UnknownReason])
   end
 
+  it "lets the media host end only the matching fabric and peer session" do
+    provider, _camera, peer, stream_id = web_rtc_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      22_u16, audio_streams: [stream_id])
+    first = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer)
+      .as(Matter::Cluster::CommandResponse)
+    first_id = Provider::ProvideOfferResponse.from_tlv(first.response.as(TLV::Any)).web_rtc_session_id
+    second = invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer, fabric: 2_u8, node: 200_u64)
+      .as(Matter::Cluster::CommandResponse)
+    second_id = Provider::ProvideOfferResponse.from_tlv(second.response.as(TLV::Any)).web_rtc_session_id
+
+    provider.end_host_session(2_u8, 100_u64, first_id).should be_false
+    provider.end_host_session(1_u8, 200_u64, first_id).should be_false
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+    provider.current_sessions(2_u8).as(Array(Provider::Session)).size.should eq(1)
+    provider.end_host_session(1_u8, 100_u64, first_id, Provider::EndReason::IceFailed).should be_true
+    provider.end_host_session(1_u8, 100_u64, first_id).should be_false
+    peer.endings.should eq([Provider::EndReason::IceFailed])
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    provider.current_sessions(2_u8).as(Array(Provider::Session)).map(&.id).should eq([second_id])
+  end
+
   it "rolls back a host-rejected initial offer without exposing a session" do
     provider, _camera, peer, stream_id = web_rtc_fixture
     peer.reject_offer = true

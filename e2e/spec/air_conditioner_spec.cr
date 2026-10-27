@@ -79,6 +79,20 @@ describe "matter_air_conditioner example" do
     read_int(device, "fancontrol", "percent-setting", "PercentSetting", fan).should eq(20_i64)
   end
 
+  it "steps MultiSpeed through discrete speeds over the wire" do
+    expect_success(device.write("fancontrol", "speed-setting", 1, fan))
+    read_int(device, "fancontrol", "speed-current", "SpeedCurrent", fan).should eq(1_i64)
+
+    expect_success(device.invoke("fancontrol", "step", ["0"], endpoint: fan))
+    read_int(device, "fancontrol", "speed-setting", "SpeedSetting", fan).should eq(2_i64)
+    read_int(device, "fancontrol", "speed-current", "SpeedCurrent", fan).should eq(2_i64)
+    read_int(device, "fancontrol", "percent-current", "PercentCurrent", fan).should eq(40_i64)
+
+    expect_success(device.invoke("fancontrol", "step", ["1"], endpoint: fan))
+    read_int(device, "fancontrol", "speed-current", "SpeedCurrent", fan).should eq(1_i64)
+    read_int(device, "fancontrol", "percent-current", "PercentCurrent", fan).should eq(20_i64)
+  end
+
   it "retains FanMode but resets volatile settings after restart" do
     expect_success(device.write("fancontrol", "fan-mode", 3, fan))
     expect_success(device.write("fancontrol", "percent-setting", 75, fan))

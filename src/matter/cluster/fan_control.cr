@@ -34,6 +34,8 @@ module Matter
       # SpeedMax is a count of 1 to 100 speed steps.
       SPEED_MAX_MIN =   1_u8
       SPEED_MAX_MAX = 100_u8
+      SPEED_OFF     =   0_u8
+      SPEED_STEP    =   1_u8
 
       # Fan mode values
       enum FanMode : UInt8
@@ -222,6 +224,28 @@ module Matter
       def step(request : StepRequest) : InteractionModel::Status
         wrap = request.wrap || false
         lowest_off = request.lowest_off.nil? ? true : request.lowest_off
+        if feature_map.multi_speed?
+          lowest_speed = lowest_off ? SPEED_OFF : SPEED_MAX_MIN
+          current_speed = @speed_current
+          target_speed = case request.direction
+                         in .increase?
+                           if current_speed >= @speed_max
+                             wrap ? lowest_speed : current_speed
+                           else
+                             current_speed + SPEED_STEP
+                           end
+                         in .decrease?
+                           if current_speed <= lowest_speed
+                             wrap ? @speed_max : lowest_speed
+                           else
+                             current_speed - SPEED_STEP
+                           end
+                         end
+          sync_from_speed(target_speed)
+          self.speed_setting = target_speed
+          return InteractionModel::Status.success
+        end
+
         lowest = lowest_off ? PERCENT_OFF : PERCENT_LOWEST_ON
         current = @percent_current
 

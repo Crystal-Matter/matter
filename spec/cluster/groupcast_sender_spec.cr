@@ -24,6 +24,31 @@ private def sender_cluster(features : SenderGC::Feature)
 end
 
 describe "Matter 1.6 Groupcast Sender" do
+  it "reports AlreadyExists when a supplied key reuses an installed KeySetID" do
+    sender, keys, _acl = sender_cluster(SenderGC::Feature::Sender)
+    first_key = Bytes.new(16, 0xAA_u8)
+    sender.join_group(SenderGC::JoinGroupRequest.new(0x1234_u16, [] of UInt16, 7_u16,
+      key: first_key)).should eq(SenderStatus.success)
+
+    sender.join_group(SenderGC::JoinGroupRequest.new(0x1235_u16, [] of UInt16, 7_u16,
+      key: Bytes.new(16, 0xBB_u8))).should eq(SenderStatus.already_exists)
+    sender.join_group(SenderGC::JoinGroupRequest.new(0x1235_u16, [] of UInt16, 7_u16,
+      key: Bytes.new(17, 0xBB_u8))).should eq(SenderStatus.constraint_error)
+    sender.membership(1_u8).map(&.group_id).should eq([0x1234_u16])
+    keys.get_key_set(7_u16, 1_u8).as(SenderGKM::GroupKeySetStruct).epoch_key0.should eq(first_key)
+  end
+
+  it "reports the same duplicate-key status for a Listener-only membership" do
+    listener, keys, _acl = sender_cluster(SenderGC::Feature::Listener)
+    listener.join_group(SenderGC::JoinGroupRequest.new(0x1234_u16, [1_u16], 7_u16,
+      key: Bytes.new(16, 0xAA_u8))).should eq(SenderStatus.success)
+
+    listener.join_group(SenderGC::JoinGroupRequest.new(0x1235_u16, [1_u16], 7_u16,
+      key: Bytes.new(16, 0xBB_u8))).should eq(SenderStatus.already_exists)
+    listener.membership(1_u8).map(&.group_id).should eq([0x1234_u16])
+    keys.operational_group_table(1_u8).map(&.group_id).should eq([0x1234_u16])
+  end
+
   it "advertises SD without LN and records a send-only membership with no multicast listener" do
     sender, keys, acl = sender_cluster(SenderGC::Feature::Sender)
     sender.feature_map.sender?.should be_true

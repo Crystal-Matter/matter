@@ -100,11 +100,13 @@ describe Directory do
     cluster.preferred_extended_pan_id = first
     cluster.remove_network(Directory::ExtendedPanIdRequest.new(first)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     cluster.remove_network(Directory::ExtendedPanIdRequest.new(missing)).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.write_attribute(Directory::ATTR_PREFERRED_EXTENDED_PAN_ID, TLV::Any.new(Bytes.new(0))).as(Matter::InteractionModel::Status).status
+      .should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.preferred_extended_pan_id.should eq(first)
+    cluster.remove_network(Directory::ExtendedPanIdRequest.new(first)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
     cluster.preferred_extended_pan_id = nil
     cluster.remove_network(Directory::ExtendedPanIdRequest.new(first)).status.should eq(Matter::InteractionModel::StatusCode::Success)
     cluster.thread_networks.size.should eq(9)
-    cluster.preferred_extended_pan_id = Bytes.new(0)
-    cluster.preferred_extended_pan_id.should be_nil
     cluster.write_attribute(Directory::ATTR_PREFERRED_EXTENDED_PAN_ID, TLV::Any.new(missing)).as(Matter::InteractionModel::Status).status
       .should eq(Matter::InteractionModel::StatusCode::ConstraintError)
   end

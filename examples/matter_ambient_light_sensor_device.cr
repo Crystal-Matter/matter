@@ -32,7 +32,7 @@ module MatterAmbientLightSensor
         light_sensor_type: Matter::Cluster::IlluminanceMeasurement::LightSensorType::Photodiode,
         as: :illuminance
       cluster Matter::Cluster::Identify, identify_type: :visible_led
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Ambient Light Sensor")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example AmbLight")]
     end
 
     on(:illuminance, :illuminance_changed) do |_old_value, new_value|

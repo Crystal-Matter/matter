@@ -26,7 +26,7 @@ module MatterContactSensor
     endpoint 1, device_type: Matter::DeviceType::CONTACT_SENSOR do
       cluster Matter::Cluster::BooleanState, state_value: false, as: :contact
       cluster Matter::Cluster::Identify, identify_type: :visible_led
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Contact Sensor")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Contact")]
     end
 
     on(:contact, :state_changed) do |_old_value, new_value|
