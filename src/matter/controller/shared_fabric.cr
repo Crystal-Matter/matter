@@ -21,6 +21,16 @@ module Matter
 
       # Persist this receipt until `joint_group_revocation_status` reports
       # Effective. UpdateGroup itself only queues target ACL delivery.
+      struct JointGroupACLTarget
+        include Storage::Record
+
+        getter node_id : UInt64
+        getter list_id : UInt16
+
+        def initialize(@node_id, @list_id)
+        end
+      end
+
       struct JointGroupRevocation
         include Storage::Record
 
@@ -34,11 +44,12 @@ module Matter
         getter previous_version : UInt16
         getter current_version : UInt16
         getter target_node_ids : Array(UInt64)
+        getter target_acls : Array(JointGroupACLTarget)
         getter anchor_root_cert : Bytes
         getter anchor_node_id : UInt64
 
         def initialize(@group_id, @group_cat, @previous_version, @current_version,
-                       @target_node_ids, @anchor_root_cert, @anchor_node_id)
+                       @target_node_ids, @target_acls, @anchor_root_cert, @anchor_node_id)
         end
       end
 
@@ -259,11 +270,13 @@ module Matter
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         old_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(cat, version)).id
-        target_ids = target_acls.select do |entry|
+        selected_acls = target_acls.select do |entry|
           entry.status_entry.state != Datastore::DatastoreStateEnum::DeletePending &&
             entry.acl_entry.subjects == [old_subject]
-        end.map(&.node_id).uniq
-        raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if target_ids.empty?
+        end
+        raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if selected_acls.empty?
+        target_ids = selected_acls.map(&.node_id).uniq
+        target_refs = selected_acls.map { |entry| JointGroupACLTarget.new(entry.node_id, entry.list_id) }
 
         seen = [revoked.controller_node_id]
         replacements = [] of {StateStore, FabricInfo}
@@ -305,7 +318,7 @@ module Matter
         end
         request = Datastore::UpdateGroupRequest.new(group_id, nil, nil, nil, next_version, nil)
         invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_UPDATE_GROUP, request.to_slice)
-        JointGroupRevocation.new(group_id, cat, version, next_version, target_ids,
+        JointGroupRevocation.new(group_id, cat, version, next_version, target_ids, target_refs,
           authority.root_cert.dup, anchor_node_id)
       end
 
@@ -334,12 +347,12 @@ module Matter
              end
             return JointGroupRevocation::Status::Pending
           end
-          unless matching.any? do |entry|
-                   entry.acl_entry.subjects == [new_subject] &&
-                   entry.status_entry.state == Datastore::DatastoreStateEnum::Committed
-                 end
-            return JointGroupRevocation::Status::Pending
-          end
+        end
+        receipt.target_acls.each do |target|
+          entry = entries.find { |candidate| candidate.node_id == target.node_id && candidate.list_id == target.list_id }
+          return JointGroupRevocation::Status::Pending unless entry &&
+                                                              entry.acl_entry.subjects == [new_subject] &&
+                                                              entry.status_entry.state == Datastore::DatastoreStateEnum::Committed
         end
         JointGroupRevocation::Status::Effective
       end

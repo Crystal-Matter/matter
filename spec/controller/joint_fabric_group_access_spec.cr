@@ -83,6 +83,9 @@ describe "Joint Fabric shared group revocation" do
     acl = datastore.node_acl_list.last
     datastore.complete_group_membership(0x200_u64, 1_u16, 10_u16).should be_true
     datastore.complete_acl(0x200_u64, acl.list_id).should be_true
+    datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, acl.acl_entry))
+    second_acl = datastore.node_acl_list.last
+    datastore.complete_acl(0x200_u64, second_acl.list_id).should be_true
 
     session.peer_node_id = Matter::DataType::NodeId.new(0x999_u64)
     expect_raises(Matter::AuthenticationError, /expected Anchor/) do
@@ -100,8 +103,9 @@ describe "Joint Fabric shared group revocation" do
       survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
       anchor_node_id: 0x100_u64)
     receipt.target_node_ids.should eq([0x200_u64])
+    receipt.target_acls.map(&.list_id).should eq([acl.list_id, second_acl.list_id])
     Matter::Controller::SharedFabric::JointGroupRevocation.from_document(receipt.to_document)
-      .target_node_ids.should eq(receipt.target_node_ids)
+      .target_acls.map(&.list_id).should eq(receipt.target_acls.map(&.list_id))
     im.commands.last.should eq(JointStore::CMD_UPDATE_GROUP)
     datastore.group_list.last.group_cat_version.should eq(3_u16)
     datastore.endpoint_group_id_list.last.group_id.should eq(membership.group_id)
@@ -132,6 +136,9 @@ describe "Joint Fabric shared group revocation" do
     im.commands.last.should eq(JointStore::CMD_REFRESH_NODE)
     datastore.node_acl_list.last.status_entry.state.should eq(JointStore::DatastoreStateEnum::Pending)
     datastore.complete_acl(0x200_u64, acl.list_id).should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.complete_acl(0x200_u64, second_acl.list_id).should be_true
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
   ensure
