@@ -171,7 +171,10 @@ item below as covered only to the extent of its cited tests.
   and the Administrator CAT must remain unchanged. The three-Administrator
   Docker scenario now exercises this path by adding an unrelated Group entry
   after B restarts, checking the advanced DataVersion and unchanged ICAC,
-  reconciling the no-effect outcome, and then completing removal. B and C remain
+  reconciling the no-effect outcome, and then completing removal. A resumed
+  removal at DatastoreRemoved or AnchorRotated also compares the entire live
+  AdminList with the pre-removal journal snapshot and rejects a changed
+  participant set before issuing another credential rotation. B and C remain
   registered while B is also restarted after lost Anchor and participant rotation
   acknowledgements. Recovery uses fresh CASE and a host-supplied 32-byte
   nonce in SignVIDVerificationRequest to prove possession of the target's
