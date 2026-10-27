@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thread Network Directory
+
+- Reject a non-null empty PreferredExtendedPanID write with `ConstraintError`,
+  preserving the selected network until it is explicitly cleared with null.
+
 ### Groupcast duplicate key status
 
 - Return `AlreadyExists` when JoinGroup supplies a key for a KeySetID already
