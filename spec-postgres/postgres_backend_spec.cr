@@ -1,6 +1,7 @@
 require "uri"
 require "../spec/storage/backend_contract_spec"
 require "../src/matter/storage/postgres"
+require "../src/matter/controller/state_store"
 
 # This suite is intentionally outside spec/: ordinary `crystal spec` never
 # loads the optional PostgreSQL driver or needs a running database. CI and
@@ -12,12 +13,101 @@ private def fresh_postgres(url : String) : Matter::Storage::Postgres
   backend
 end
 
+private class PausedControllerPostgres < Matter::Storage::Postgres
+  def initialize(url : String, @ready : Channel(Nil), @release : Channel(Nil))
+    super(url)
+  end
+
+  def compare_and_swap(collection : String, id : String,
+                       expected : Matter::Storage::Document?,
+                       document : Matter::Storage::Document) : Bool
+    @ready.send(nil)
+    @release.receive
+    super
+  end
+end
+
 if url = ENV["MATTER_TEST_POSTGRES_URL"]?
   raise "PostgreSQL integration tests require a dedicated *_test database" unless URI.parse(url).path.ends_with?("_test")
 
   BackendContract.run("Postgres", ".postgres") { |_path| fresh_postgres(url) }
 
   describe Matter::Storage::Postgres do
+    it "rejects one of two independent controller writes that read the same SQL row" do
+      seed = fresh_postgres(url)
+      seed_store = Matter::Controller::StateStore.new(seed)
+      seed_store.save(Matter::Controller::State.new)
+      seed.close
+      ready = Channel(Nil).new
+      release = Channel(Nil).new
+      first_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      second_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      first_store = Matter::Controller::StateStore.new(first_backend)
+      second_store = Matter::Controller::StateStore.new(second_backend)
+      first = first_store.load
+      second = second_store.load
+      first.unsecured_message_counter = 1_u32
+      second.unsecured_message_counter = 2_u32
+      finished = Channel(Exception?).new
+      spawn do
+        first_store.save(first)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      spawn do
+        second_store.save(second)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      2.times { ready.receive }
+      2.times { release.send(nil) }
+      results = 2.times.map { finished.receive }
+      results.count(&.nil?).should eq(1)
+      results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") }.should eq(1)
+      first_backend.close
+      second_backend.close
+      persisted = Matter::Controller::StateStore.new(Matter::Storage::Postgres.new(url))
+      persisted.load.unsecured_message_counter.in?(1_u32, 2_u32).should be_true
+      persisted.backend.destroy!
+    end
+
+    it "allows only one independent controller insert when both saw no row" do
+      Matter::Storage::Postgres.new(url).destroy!
+      ready = Channel(Nil).new
+      release = Channel(Nil).new
+      first_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      second_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      first_store = Matter::Controller::StateStore.new(first_backend)
+      second_store = Matter::Controller::StateStore.new(second_backend)
+      first = first_store.load
+      second = second_store.load
+      first.unsecured_message_counter = 1_u32
+      second.unsecured_message_counter = 2_u32
+      finished = Channel(Exception?).new
+      spawn do
+        first_store.save(first)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      spawn do
+        second_store.save(second)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      2.times { ready.receive }
+      2.times { release.send(nil) }
+      results = 2.times.map { finished.receive }
+      results.count(&.nil?).should eq(1)
+      results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") }.should eq(1)
+      first_backend.close
+      second_backend.close
+      Matter::Storage::Postgres.new(url).destroy!
+    end
+
     it "rejects a non-PostgreSQL connection URL" do
       expect_raises(Matter::StorageError, /postgres/) { Matter::Storage::Postgres.new("") }
       expect_raises(Matter::StorageError, /postgres/) { Matter::Storage::Postgres.new("sqlite3:///tmp/matter.db") }

@@ -51,7 +51,10 @@ module Matter
           devices, uncertain_device_identity = device_fabrics
           purge_orphaned_credentials(prior_state, devices, uncertain_device_identity)
           document = state.to_document
-          @backend.write(COLLECTION, DOCUMENT_ID, document)
+          expected = state.storage_loaded? ? state.storage_snapshot : previous
+          unless @backend.compare_and_swap(COLLECTION, DOCUMENT_ID, expected, document)
+            raise Matter::StorageError.new("Controller state changed since load; reload before saving")
+          end
           remaining = state.fabrics
           resume_store = Session::Case::ResumptionStore.new(@backend)
           icd_peers = IcdPeerStore.new(@backend)

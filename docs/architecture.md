@@ -504,6 +504,10 @@ slower client cannot move the durable counter backward, including at UInt32
 wraparound. A value saved once from a loaded snapshot must be reloaded before
 another save; freshly constructed `State` values remain an explicit full-state
 replacement path for bootstrap and recovery callers.
+SQL storage uses a conditional row update (or insert if absent) so independent
+SQLite/PostgreSQL adapters cannot both commit a stale state document. File
+backends serialize through their own in-process backend instance; independent
+processes writing the same file path are outside that guarantee.
 
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.
