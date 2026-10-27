@@ -17,6 +17,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Exercise the combined profile with an official chip-tool device fixture,
   including command validation and state restoration after restart.
 
+### Commissioner Control response retry
+
+- Allow a previously approved `CommissionNode` request to retry when its
+  reverse-window response failed before transport delivery. The deferred
+  commissioning task still starts only after a successful response send. An
+  exact single-command MRP retransmission can now recover without re-running
+  unrelated commands.
+
 ### Subscription access control
 
 - Recheck attribute and event privileges for every active subscription update,
