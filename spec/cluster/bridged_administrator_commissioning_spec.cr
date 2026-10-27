@@ -93,6 +93,19 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
     cluster.admin_vendor_id.should be_nil
   end
 
+  it "requires the opening administrator vendor while the remote window is open" do
+    cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
+      target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success })
+
+    expect_raises(ArgumentError, /administrator vendor/) do
+      cluster.publish_remote_window_state(RootAdmin::CommissioningWindowStatus::EnhancedWindowOpen,
+        1_u8, nil)
+    end
+    cluster.window_status.should eq(RootAdmin::CommissioningWindowStatus::WindowNotOpen)
+  end
+
   it "refuses reserved remote target identities" do
     open = ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success }
     revoke = ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success }

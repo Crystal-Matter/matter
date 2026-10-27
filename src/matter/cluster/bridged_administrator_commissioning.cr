@@ -73,6 +73,9 @@ module Matter
         if status == WindowStatus::WindowNotOpen && (admin_fabric_index || admin_vendor_id)
           raise ArgumentError.new("closed commissioning window cannot retain administrator identity")
         end
+        if status != WindowStatus::WindowNotOpen && admin_vendor_id.nil?
+          raise ArgumentError.new("open commissioning window requires the administrator vendor")
+        end
         self.window_status = status
         self.admin_fabric_index = admin_fabric_index
         self.admin_vendor_id = admin_vendor_id
