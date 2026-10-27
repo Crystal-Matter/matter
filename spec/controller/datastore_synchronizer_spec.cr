@@ -395,6 +395,50 @@ describe Matter::Controller::DatastoreSynchronizer do
     client.try(&.close)
   end
 
+  it "delivers pending group and binding removals after an endpoint returns" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.add_pending_node(Datastore::AddPendingNodeRequest.new(0x100_u64, "Node"))
+    store.record_endpoint(0x100_u64, 1_u16, "Temporary endpoint")
+    store.add_group(Datastore::AddGroupRequest.new(5_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate))
+    store.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(0x100_u64, 1_u16, 5_u16))
+      .success?.should be_true
+    store.complete_group_membership(0x100_u64, 1_u16, 5_u16).should be_true
+    target = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    store.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(0x100_u64, 1_u16, target))
+      .success?.should be_true
+    binding_id = store.endpoint_binding_list.first.list_id
+    store.complete_binding(0x100_u64, 1_u16, binding_id).should be_true
+    store.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(0x100_u64, 1_u16, 5_u16))
+      .success?.should be_true
+    store.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(binding_id, 1_u16, 0x100_u64))
+      .success?.should be_true
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
+
+    im.parts_list = [] of UInt16
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    store.node_endpoint_list.should be_empty
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    store.endpoint_binding_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    im.commands.should be_empty
+    im.writes.should be_empty
+
+    store.refresh_node(Datastore::RefreshNodeRequest.new(0x100_u64)).success?.should be_true
+    im.parts_list = [1_u16]
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64, endpoint: 1_u16)]
+    synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
+    store.endpoint_group_id_list.should be_empty
+    store.endpoint_binding_list.should be_empty
+    im.commands.should contain(Matter::Cluster::Groups::CMD_REMOVE_GROUP)
+    im.binding_entries[1_u16].should be_empty
+  ensure
+    client.try(&.close)
+  end
+
   it "imports operational groups, bindings, key sets, and ACLs during RefreshNode" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)

@@ -1293,8 +1293,8 @@ module Matter
 
       # RefreshNode's Descriptor snapshot. New endpoint labels start empty;
       # labels already assigned by an Administrator are preserved. A missing
-      # endpoint drops committed group/binding snapshots, but pending changes
-      # remain available if the endpoint returns on a later refresh.
+      # endpoint drops committed group/binding snapshots, but recoverable
+      # additions and removals remain available on a later refresh.
       def reconcile_node_endpoints(node_id : UInt64, endpoint_ids : Array(UInt16)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless node_exists?(node_id)
@@ -1323,7 +1323,8 @@ module Matter
 
       private def recoverable_endpoint_intent?(status : DatastoreStatusEntryStruct) : Bool
         status.state == DatastoreStateEnum::Pending ||
-          (status.state == DatastoreStateEnum::CommitFailed && !terminal_failure?(status))
+          ((status.state == DatastoreStateEnum::CommitFailed ||
+            status.state == DatastoreStateEnum::DeletePending) && !terminal_failure?(status))
       end
 
       def reconcile_node_groups(node_id : UInt64, endpoint_id : UInt16, group_ids : Array(UInt16)) : InteractionModel::Status
