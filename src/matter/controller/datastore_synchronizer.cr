@@ -105,6 +105,10 @@ module Matter
               request.to_slice)
             group_ids = Cluster::Groups::GetGroupMembershipResponse.from_slice(fields).group_list.map(&.id)
             ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, group_ids))
+          else
+            if store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint.endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
+              ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, [] of UInt16))
+            end
           end
           if servers.includes?(Cluster::Binding::CLUSTER_ID)
             bindings = read_list(Cluster::Binding::Target, session, peer, endpoint.endpoint_id,
@@ -112,6 +116,11 @@ module Matter
               Store::DatastoreBindingTargetStruct.new(target.node, target.group, target.endpoint, target.cluster)
             end
             ensure_reconciled!(store.reconcile_node_bindings(node_id, endpoint.endpoint_id, bindings))
+          else
+            if store.endpoint_binding_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint.endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
+              ensure_reconciled!(store.reconcile_node_bindings(node_id, endpoint.endpoint_id,
+                [] of Store::DatastoreBindingTargetStruct))
+            end
           end
         end
 

@@ -413,14 +413,21 @@ describe Matter::Cluster::JointFabricDatastore do
       Datastore::DatastoreEndpointGroupIDEntryStruct.new(42_u64, 1_u16, 1_u16, committed),
       Datastore::DatastoreEndpointGroupIDEntryStruct.new(42_u64, 1_u16, 2_u16, pending),
     ]
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 43_u64, endpoint: 1_u16)
+    cluster.endpoint_binding_list = [
+      Datastore::DatastoreEndpointBindingEntryStruct.new(42_u64, 1_u16, 7_u16, binding, committed),
+      Datastore::DatastoreEndpointBindingEntryStruct.new(42_u64, 1_u16, 8_u16, binding, pending),
+    ]
     cluster.node_key_set_list = [
       Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 1_u16, committed),
       Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 2_u16, pending),
     ]
 
     cluster.reconcile_node_groups(42_u64, 1_u16, [] of UInt16).success?.should be_true
+    cluster.reconcile_node_bindings(42_u64, 1_u16, [] of Datastore::DatastoreBindingTargetStruct).success?.should be_true
     cluster.reconcile_node_key_sets(42_u64, [] of UInt16).success?.should be_true
     cluster.endpoint_group_id_list.map(&.group_id).should eq([2_u16])
+    cluster.endpoint_binding_list.map(&.list_id).should eq([8_u16])
     cluster.node_key_set_list.map(&.group_key_set_id).should eq([2_u16])
   end
 
