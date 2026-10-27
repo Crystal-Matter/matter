@@ -50,7 +50,7 @@ module Matter
         if floor = @restored_floor
           return CheckResult::Stale unless serial_newer?(message_id, floor)
         end
-        return CheckResult::Accept if serial_newer?(message_id, maximum)
+        return CheckResult::Accept if serial_newer?(message_id, maximum) && (@rollover || message_id > maximum)
         return CheckResult::Duplicate if @received_window.includes?(message_id)
         backward = maximum &- message_id
         return CheckResult::Stale if backward >= SERIAL_HALF_RANGE || backward > WINDOW_SIZE
@@ -61,7 +61,7 @@ module Matter
         result = peek(message_id)
         return result unless result.accept?
         maximum = @max_received
-        if maximum.nil? || serial_newer?(message_id, maximum)
+        if maximum.nil? || (serial_newer?(message_id, maximum) && (@rollover || message_id > maximum))
           @max_received = message_id
           @received_window.reject! { |id| (message_id &- id) > WINDOW_SIZE }
         end

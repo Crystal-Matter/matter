@@ -127,6 +127,12 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#check" do
+    it "rejects secure-session rollover when rollover is disabled" do
+      counter = Matter::Transport::MessageCounter.new(rollover: false)
+      counter.check(UInt32::MAX).accept?.should be_true
+      counter.check(0_u32).stale?.should be_true
+    end
+
     it "accepts rollover and rejects duplicate and stale counters across it" do
       counter = Matter::Transport::MessageCounter.new
       counter.check(UInt32::MAX - 1_u32).accept?.should be_true

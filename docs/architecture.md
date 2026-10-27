@@ -526,7 +526,8 @@ and unused counters stay spent after a crash. A competing SQL writer causes a
 bounded reload and retry before any network packet is sent.
 Incoming replay windows use serial arithmetic so a legitimate counter wrap
 within a CASE exchange remains acceptable while duplicates and older packets
-are still rejected.
+are still rejected. Secure-session peer windows disable rollover because the
+session must be renegotiated before its counter wraps.
 SQL storage uses a conditional row update (or insert if absent) so independent
 SQLite/PostgreSQL adapters cannot both commit a stale state document. File
 backends serialize through their own in-process backend instance; independent
