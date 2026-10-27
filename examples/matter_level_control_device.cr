@@ -30,6 +30,13 @@ module MatterLevelControl
     # Percentages a level is reported as.
     FULL_PERCENT = 100
 
+    SCENE_MODE_ECO   = 1_u8
+    SCENE_MODE_BOOST = 2_u8
+    SCENE_MODES      = [
+      Matter::Cluster::ModeSelect::ModeOption.new("Eco", SCENE_MODE_ECO),
+      Matter::Cluster::ModeSelect::ModeOption.new("Boost", SCENE_MODE_BOOST),
+    ]
+
     identity vendor: "Spider-Gazelle", product: "Crystal Level Control",
       vendor_id: Matter::SetupPayload.test_vendor_id,
       product_id: rand(0x0001_u16..0xFFFF_u16),
@@ -56,6 +63,10 @@ module MatterLevelControl
       cluster Matter::Cluster::Identify, identify_type: :visible_light
       cluster Matter::Cluster::Groups
       cluster Matter::Cluster::ScenesManagement
+      cluster Matter::Cluster::ModeSelect,
+        description: "Lighting scene mode",
+        supported_modes: SCENE_MODES,
+        current_mode: SCENE_MODE_ECO
     end
 
     endpoint COLOR_LIGHT_ENDPOINT, device_type: Matter::DeviceType::EXTENDED_COLOR_LIGHT do
