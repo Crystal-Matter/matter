@@ -324,6 +324,11 @@ item below as covered only to the extent of its cited tests.
   restarts B and checks that recovery waits the advertised cumulative fail-safe
   bound and verifies both fabrics before continuing. This tests the ambiguous
   persisted result; it does not drop a UDP packet on the wire.
+  The same scenario then interrupts B after the Anchor Datastore commits
+  AddPendingNode but before B advances its durable per-device journal. After
+  restart, B refuses to replay AddPendingNode. Reconciliation rejects a missing
+  Anchor NodeList entry while B still owns the device, then accepts the
+  restored committed entry and completes the handoff.
   The local `migrate-device` command requires explicit device consent and an
   attestation trust configuration. An embedding application sets
   `Device#migration_attestation_trust=` with an `AttestationTrustStore` holding

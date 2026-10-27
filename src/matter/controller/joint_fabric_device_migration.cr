@@ -129,6 +129,7 @@ module Matter
                        @attestation_verifier : DeviceAttestationVerifier,
                        @commissioning_ack : Proc(Nil)? = nil,
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
+                       @anchor_registration_committed : Proc(Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @client : Client = Client.new,
@@ -258,6 +259,7 @@ module Matter
             Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE, request.to_slice)
           assert_status_success!(response, "AddPendingNode")
           wait_anchor_node_committed!(im, session)
+          @anchor_registration_committed.try(&.call)
         end
 
         def refresh_anchor_registration! : Nil
