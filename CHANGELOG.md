@@ -19,6 +19,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscription priming reports. This restores the official Operational
   Credentials VID certification subscription sequence.
 
+### Identify and conditional Groups membership
+
+- Count down IdentifyTime from a monotonic clock, report each elapsed change, and
+  stop the host identify effect when the endpoint is removed or replaced. A
+  repeated Identify command refreshes the full requested interval.
+- Honor the Identify state for Groups AddGroupIfIdentifying. When the endpoint
+  is not identifying, return Success without changing group membership or
+  persistent state. Official chip-tool coverage exercises both states.
+
 ### Thermostat Matter Schedules production support
 
 - Enable opt-in Matter 1.6 MSCH on production Thermostat instances when a host

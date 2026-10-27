@@ -77,6 +77,7 @@ module Matter
 
       @endpoints[endpoint.number] = endpoint
       endpoint.clusters.each do |cluster_id, cluster|
+        cluster.as?(Cluster::Identify).try(&.reopen)
         @clusters[{endpoint.number, cluster_id}] = cluster
         apply_callbacks(cluster)
       end
@@ -92,6 +93,7 @@ module Matter
 
       endpoint.clusters.each do |cluster_id, cluster|
         @clusters.delete({endpoint_id, cluster_id})
+        cluster.as?(Cluster::Identify).try(&.close)
         cluster.on_attribute_changed = nil
         cluster.on_version_changed = nil
         cluster.on_event_emitted = nil
