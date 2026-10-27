@@ -708,6 +708,15 @@ commissioned fabric, so the official chip-tool E2E can read both directories,
 restart the bridge and verify two-fabric isolation.
 The ordinary bridge example does not enable this fixture.
 
+`Controller::CommissionerControlClient` provides opt-in typed client operations
+for the approval request, fabric-filtered result event, and `CommissionNode`.
+It matches result events to the CASE client's fabric, NodeID, and RequestID,
+and gives `CommissionNode` its requested 30–120 second response deadline without
+changing the default timeout for other Interaction Model invokes. The host
+still chooses the local target and opens its window after receiving the typed
+response; applications can poll the result journal or use the general event
+subscription API while awaiting a decision.
+
 `Cluster::CommissionerControl` provides the Matter 1.6 wire schema and a
 host-driven approval state machine for a fabric-synchronizing Aggregator. It
 advertises `FabricSynchronization` only after a host configures both callbacks:

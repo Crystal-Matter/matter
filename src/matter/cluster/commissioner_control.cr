@@ -239,7 +239,7 @@ module Matter
         begin
           callback = @on_prepare_window || return InteractionModel::Status.failure
           prepared = callback.call(approval, request) || return InteractionModel::Status.failure
-          return InteractionModel::Status.constraint_error unless valid_window?(prepared.response)
+          return InteractionModel::Status.constraint_error unless self.class.valid_window?(prepared.response)
           still_approved = @approval_mutex.synchronize do
             entry = @approvals[key]?
             if entry && entry.request == approval && entry.status == InteractionModel::StatusCode::Success && entry.preparing?
@@ -350,7 +350,9 @@ module Matter
         {request.fabric_index, request.client_node_id, request.request_id}
       end
 
-      private def valid_window?(response : ReverseOpenCommissioningWindowResponse) : Bool
+      # The response aliases Administrator Commissioning's enhanced-window
+      # parameters. Clients must apply the same constraints before using them.
+      def self.valid_window?(response : ReverseOpenCommissioningWindowResponse) : Bool
         response.commissioning_timeout >= Commissioning::WindowService::MINIMUM_COMMISSIONING_TIMEOUT &&
           response.pake_passcode_verifier.size == Commissioning::WindowService::PAKE_PASSCODE_VERIFIER_LENGTH &&
           response.discriminator <= SetupPayload::MAX_DISCRIMINATOR &&
