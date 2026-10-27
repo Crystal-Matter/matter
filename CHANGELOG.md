@@ -98,7 +98,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reverse-window response failed before transport delivery. The deferred
   commissioning task still starts only after a successful response send. An
   exact single-command MRP retransmission can now recover without re-running
-  unrelated commands.
+  unrelated commands. A newer Invoke on the same secure exchange invalidates
+  the old retry so delayed retransmissions cannot displace its response.
+
+### Chunked reverse commissioning responses
+
+- Start deferred reverse commissioning only after the final encrypted
+  `InvokeResponse` chunk is sent. Rejecting a chunk or failing to send a later
+  chunk discards the pending task. A later send failure attempts an IM Failure
+  response; a fresh Invoke can then use the still valid approval.
 
 ### Pump Configuration and Control profiles
 
