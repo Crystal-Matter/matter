@@ -53,6 +53,22 @@ module Matter
                        @remaining_admin_entries : Array(Bytes)? = nil,
                        @anchor_pre_rotation_noc : Bytes? = nil)
         end
+
+        # A save callback may fail after touching its input. Every mutable
+        # field must be detached before a proposed transition is passed to it.
+        def detached_copy : Journal
+          Journal.new(@outgoing_node_id, @stage,
+            active_node_id: @active_node_id,
+            rotated_nodes: @rotated_nodes.dup,
+            administrator_cat_version: @administrator_cat_version,
+            prior_administrator_cat_version: @prior_administrator_cat_version,
+            fabric_id: @fabric_id,
+            root_public_key: @root_public_key.try(&.dup),
+            anchor_node_id: @anchor_node_id,
+            outgoing_admin_entry: @outgoing_admin_entry.try(&.dup),
+            remaining_admin_entries: @remaining_admin_entries.try { |entries| entries.map(&.dup) },
+            anchor_pre_rotation_noc: @anchor_pre_rotation_noc.try(&.dup))
+        end
       end
 
       abstract class Port
@@ -158,8 +174,14 @@ module Matter
             verify_remaining_admins_after_restart!
           end
           if @journal.stage.ready?
-            preflight!
-            advance(Stage::RemovingFabric)
+            before_preflight = @journal.detached_copy
+            begin
+              preflight!
+              advance(Stage::RemovingFabric)
+            rescue ex
+              @journal = before_preflight
+              raise ex
+            end
             @port.remove_outgoing_fabric!
             advance(Stage::FabricRemoved)
           end
@@ -177,12 +199,18 @@ module Matter
           if @journal.stage.anchor_rotated?
             @remaining_nodes.each do |node_id|
               next if @journal.rotated_nodes.includes?(node_id)
-              @journal.active_node_id = node_id
-              advance(Stage::RotatingParticipant)
+              pending = @journal.detached_copy
+              pending.active_node_id = node_id
+              pending.stage = Stage::RotatingParticipant
+              @save.call(pending)
+              @journal = pending
               @port.rotate_participant!(node_id)
-              @journal.rotated_nodes << node_id
-              @journal.active_node_id = nil
-              advance(Stage::AnchorRotated)
+              completed = @journal.detached_copy
+              completed.rotated_nodes << node_id
+              completed.active_node_id = nil
+              completed.stage = Stage::AnchorRotated
+              @save.call(completed)
+              @journal = completed
             end
             advance(Stage::Completed)
           end
@@ -243,15 +271,16 @@ module Matter
                   else                                 false
                   end
           raise Matter::ConfigurationError.new("Invalid Administrator removal reconciliation") unless valid
+          updated = journal.detached_copy
           if node_id = rotated_node_id
             if participant_completed
-              journal.rotated_nodes << node_id unless journal.rotated_nodes.includes?(node_id)
+              updated.rotated_nodes << node_id unless updated.rotated_nodes.includes?(node_id)
             end
-            journal.active_node_id = nil
+            updated.active_node_id = nil
           end
-          journal.stage = stable_stage
-          save.call(journal)
-          journal
+          updated.stage = stable_stage
+          save.call(updated)
+          updated
         end
 
         # The Anchor can resolve a lost local RemoveAdmin acknowledgement from
@@ -388,8 +417,10 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
-          @journal.stage = stage
-          @save.call(@journal)
+          updated = @journal.detached_copy
+          updated.stage = stage
+          @save.call(updated)
+          @journal = updated
         end
 
         private def record_pre_removal_snapshot! : Nil

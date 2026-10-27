@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric journal recovery
+
+- Keep Anchor transfer and Administrator removal journals at their last saved
+  stage when a storage write fails, so retries require reconciliation before
+  the next protocol command.
+
 ### Controller read response validation
 
 - Bind attribute and event reports to their requested paths in multi-path
