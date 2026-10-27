@@ -498,6 +498,8 @@ Each loaded controller `State` remembers the exact document it read. A later
 `save` rejects that state if another writer has changed the document, avoiding
 silent loss of Datastore registrations, nodes, or counters. Use `StateStore#update`
 for short read-modify-write operations; it runs them in one backend transaction.
+The update block receives a mutable `State` reference, and the store saves
+that same object after the block, including scalar and nested changes.
 Network requests must finish before the update block, which reads fresh state.
 An update advancing the unsecured message counter uses serial arithmetic so a
 slower client cannot move the durable counter backward, including at UInt32

@@ -196,7 +196,7 @@ module Matter
       end
     end
 
-    struct State
+    class State
       include Storage::Record
 
       # A loaded State carries an immutable snapshot for stale-write checks.

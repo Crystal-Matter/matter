@@ -111,6 +111,23 @@ private def assert_atomic_controller_removal(backend : Matter::Storage::Backend,
 end
 
 describe Matter::Controller::StateStore do
+  it "persists scalar and nested mutations made in one atomic update" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = sample_fabric
+    store.save(Matter::Controller::State.new(fabric: fabric))
+
+    store.update do |current|
+      current.unsecured_message_counter = 17_u32
+      current.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+        0x3333_u64, "Lamp", Time.utc.to_unix + 60)
+    end
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(17_u32)
+    loaded.pending_datastore_nodes.size.should eq(1)
+  end
+
   it "rejects a stale full-state save and preserves an intervening journal update" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = sample_fabric
