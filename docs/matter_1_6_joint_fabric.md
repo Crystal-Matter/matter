@@ -329,6 +329,13 @@ item below as covered only to the extent of its cited tests.
   restart, B refuses to replay AddPendingNode. Reconciliation rejects a missing
   Anchor NodeList entry while B still owns the device, then accepts the
   restored committed entry and completes the handoff.
+  It also restarts B after the migrated device commits RemoveFabric and after
+  B's Datastore commits RemoveNode, with each acknowledgement lost before the
+  migration journal advances. The first reconciliation rejects a missing
+  Anchor NodeList entry while B's old NodeList entry remains; after restoring
+  A's committed entry, it verifies A CASE and the absence of the device's B
+  fabric before proceeding. The second restart verifies the old B NodeList is
+  absent and completes the journal without sending RemoveNode again.
   The local `migrate-device` command requires explicit device consent and an
   attestation trust configuration. An embedding application sets
   `Device#migration_attestation_trust=` with an `AttestationTrustStore` holding

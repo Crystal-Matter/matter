@@ -130,6 +130,8 @@ module Matter
                        @commissioning_ack : Proc(Nil)? = nil,
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
                        @anchor_registration_committed : Proc(Nil)? = nil,
+                       @old_fabric_removed : Proc(Nil)? = nil,
+                       @old_node_removed : Proc(Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @client : Client = Client.new,
@@ -313,6 +315,7 @@ module Matter
              end
             raise Matter::CommissioningError.new("Fabric B remained installed after RemoveFabric")
           end
+          @old_fabric_removed.try(&.call)
         end
 
         def remove_old_node! : Nil
@@ -323,6 +326,7 @@ module Matter
             Cluster::JointFabricDatastore::RemoveNodeRequest.new(@old_node_id).to_slice)
           assert_status_success!(response, "RemoveNode")
           verify_postcondition!(Stage::Complete)
+          @old_node_removed.try(&.call)
         end
 
         def rollback_anchor!(anchor_registered : Bool) : Nil

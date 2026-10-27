@@ -179,6 +179,8 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_participant_rotation : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
+      getter? interrupt_after_migration_old_fabric_removed : Bool = false
+      getter? interrupt_after_migration_old_node_removed : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
       getter test_friendly_name : String? = nil
       getter? jcm : Bool
@@ -210,6 +212,8 @@ module MatterJointFabricAdministrator
                      @interrupt_after_participant_rotation : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
+                     @interrupt_after_migration_old_fabric_removed : Bool = false,
+                     @interrupt_after_migration_old_node_removed : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil,
                      @test_friendly_name : String? = nil)
       end
@@ -2971,6 +2975,16 @@ module MatterJointFabricAdministrator
         anchor_registration_committed: -> {
           if request.interrupt_after_migration_anchor_node_committed?
             raise Matter::TransportError.new("Injected interruption after Anchor AddPendingNode committed")
+          end
+        },
+        old_fabric_removed: -> {
+          if request.interrupt_after_migration_old_fabric_removed?
+            raise Matter::TransportError.new("Injected interruption after device RemoveFabric")
+          end
+        },
+        old_node_removed: -> {
+          if request.interrupt_after_migration_old_node_removed?
+            raise Matter::TransportError.new("Injected interruption after Datastore RemoveNode")
           end
         },
         timeout: 30.seconds)
