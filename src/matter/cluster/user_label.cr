@@ -24,6 +24,13 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         raise ArgumentError.new("label list contains an oversized LabelStruct field") unless @label_list.all?(&.valid_lengths?)
       end
+
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        if attribute_id == ATTR_LABEL_LIST && @label_list.any? { |entry| !entry.valid_lengths? }
+          return InteractionModel::Status.failure
+        end
+        super
+      end
     end
   end
 end
