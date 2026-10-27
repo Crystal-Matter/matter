@@ -570,6 +570,7 @@ module Matter
 
         private def assert_status_success!(response : InteractionModel::InvokeResponseMessage,
                                            name : String) : Nil
+          ImClient.single_invoke_response!(response, name)
           status = response.invoke_responses.first?.try(&.command_status).try(&.status) ||
                    raise Matter::ProtocolError.new("#{name} omitted command status")
           unless status.status == InteractionModel::StatusCode::Success.value
@@ -579,7 +580,10 @@ module Matter
 
         private def assert_noc_success!(response : InteractionModel::InvokeResponseMessage,
                                         name : String) : Nil
-          fields = response.invoke_responses.first?.try(&.command_data).try(&.command_fields) ||
+          entry = ImClient.single_invoke_response!(response, name)
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+          end ||
                    raise Matter::ProtocolError.new("#{name} omitted NOCResponse")
           result = Cluster::OperationalCredentials::Tlv::TlvNocResponse.from_slice(fields.to_slice)
           unless result.status_code.ok?

@@ -1134,6 +1134,7 @@ module Matter
       end
 
       private def command_fields(response : InteractionModel::InvokeResponseMessage, command_id : UInt32) : Bytes
+        ImClient.single_invoke_response!(response, "Joint Fabric Administrator command")
         response.invoke_responses.each do |item|
           if command = item.command_data
             if command.command_path.command == command_id
@@ -1149,6 +1150,7 @@ module Matter
       end
 
       def assert_status_success(response : InteractionModel::InvokeResponseMessage) : Nil
+        ImClient.single_invoke_response!(response, "Joint Fabric Administrator command")
         response.invoke_responses.each do |item|
           if status = item.command_status
             return if status.status.status == InteractionModel::StatusCode::Success.value
