@@ -3,8 +3,9 @@ See [CLAUDE.md](CLAUDE.md) — the instructions and conventions for this project
 Protocol IDs in production code must be named at every use site. Use the
 cluster's generated `CLUSTER_ID`, `ATTR_*`, `CMD_*`, and `EVENT_*` constants,
 or a descriptive constant or enum for other protocol values. A comment beside
-a numeric literal is not a substitute. Numeric IDs belong in their defining
-declarations and wire encoding, not in device composition or protocol logic.
+a numeric literal is not a substitute. Numeric ID literals belong only in the
+declarations that define their names. Device composition, protocol logic, and
+wire encoders should refer to those names.
 
 ```crystal
 # Avoid: the comments do not make these IDs self-describing.
