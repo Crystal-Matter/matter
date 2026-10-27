@@ -1,6 +1,7 @@
 require "./node"
 require "./cluster/camera_av_stream_management"
 require "./cluster/web_rtc_transport_provider"
+require "./cluster/web_rtc_transport_requestor"
 require "./cluster/time_synchronization"
 require "./cluster/tls_certificate_management"
 require "./cluster/tls_client_management"
@@ -11,12 +12,12 @@ module Matter
   # Structural requirements for a Matter 1.6 Camera endpoint. This does not
   # prove host media delivery or device-to-device interoperability.
   module CameraComposition
-    REQUESTOR_CLUSTER_ID    = 0x0554_u32
+    REQUESTOR_CLUSTER_ID    = Cluster::WebRtcTransportRequestor::CLUSTER_ID
     TIME_SYNC_CLUSTER_ID    = Cluster::TimeSynchronization::CLUSTER_ID
     POWER_SOURCE_CLUSTER_ID = Cluster::PowerSource::CLUSTER_ID
-    TIME_ZONE_BIT           = 0x01_u32
-    NTP_CLIENT_BIT          = 0x02_u32
-    TIME_SYNC_CLIENT_BIT    = 0x08_u32
+    TIME_ZONE_BIT           = Cluster::TimeSynchronization::Feature::TimeZone.value
+    NTP_CLIENT_BIT          = Cluster::TimeSynchronization::Feature::NtpClient.value
+    TRUSTED_TIME_CLIENT_BIT = Cluster::TimeSynchronization::Feature::TrustedTimeClient.value
 
     def self.validate(node : Node, camera_endpoint_id : UInt16) : Array(String)
       errors = [] of String
@@ -69,7 +70,7 @@ module Matter
         features = time_sync.feature_map.value.to_u32
         errors << "Time Synchronization TimeZone feature is absent" if features & TIME_ZONE_BIT == 0
         errors << "Time Synchronization NTPClient feature is absent" if features & NTP_CLIENT_BIT == 0
-        errors << "Time Synchronization TimeSyncClient feature is absent" if features & TIME_SYNC_CLIENT_BIT == 0
+        errors << "Time Synchronization TrustedTimeClient feature is absent" if features & TRUSTED_TIME_CLIENT_BIT == 0
       else
         errors << "Time Synchronization server is absent on Root Node"
       end

@@ -1,4 +1,5 @@
 require "../error"
+require "../cluster/web_rtc_transport_requestor"
 require "../session"
 require "../interaction_model/tlv_messages"
 require "./im_client"
@@ -9,17 +10,17 @@ module Matter
     # The caller owns the WebRTC peer and media engine. A Binding ties every
     # command to the CASE fabric and peer that supplied the session ID.
     class WebrtcRequestorClient(I)
-      CLUSTER_ID           = 0x0554_u32
-      CMD_OFFER            =      0_u32
-      CMD_ANSWER           =      1_u32
-      CMD_ICE_CANDIDATES   =      2_u32
-      CMD_END              =      3_u32
-      MAX_ICE_SERVERS      =         10
-      MAX_SERVER_URLS      =         10
-      MAX_URL_BYTES        =       2000
-      MAX_POLICY_BYTES     =         16
-      MAX_USERNAME_BYTES   =        508
-      MAX_CREDENTIAL_BYTES =        512
+      CLUSTER_ID           = Cluster::WebRtcTransportRequestor::CLUSTER_ID
+      CMD_OFFER            = Cluster::WebRtcTransportRequestor::CMD_OFFER
+      CMD_ANSWER           = Cluster::WebRtcTransportRequestor::CMD_ANSWER
+      CMD_ICE_CANDIDATES   = Cluster::WebRtcTransportRequestor::CMD_ICE_CANDIDATES
+      CMD_END              = Cluster::WebRtcTransportRequestor::CMD_END
+      MAX_ICE_SERVERS      =   10
+      MAX_SERVER_URLS      =   10
+      MAX_URL_BYTES        = 2000
+      MAX_POLICY_BYTES     =   16
+      MAX_USERNAME_BYTES   =  508
+      MAX_CREDENTIAL_BYTES =  512
 
       enum EndReason : UInt8
         IceFailed         =  0

@@ -2,6 +2,8 @@ require "../cluster/access_control"
 require "../cluster/group_key_management"
 require "../interaction_model/tlv_messages"
 require "../session/group_secure_packet"
+require "../node"
+require "./message_type"
 
 module Matter
   module Protocol
@@ -20,7 +22,7 @@ module Matter
         payload_header = message.payload_header
         return unless header.session_type.group? && header.privacy_enhancements?
         return if header.control_message?
-        return unless payload_header.protocol_id == 1_u16
+        return unless payload_header.protocol_id == ProtocolId::InteractionModel.value
         return unless payload_header.initiator_message?
         return if payload_header.requires_acknowledge?
         return if payload_header.acknowledged_message_id
@@ -29,7 +31,7 @@ module Matter
         return unless group_id
         group = @group_keys.operational_group_table(decoded.fabric_index).find { |entry| entry.group_id == group_id }
         return unless group
-        acl = @clusters[{0_u16, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
+        acl = @clusters[{Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
         return unless acl
         case payload_header.message_type
         when IMHandler::MSG_INVOKE_REQUEST

@@ -7,6 +7,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Named protocol identifiers
+
+- Use generated cluster, attribute, command, event, and feature identifiers in
+  device type definitions and protocol paths, including Robotic Vacuum Cleaner
+  and Root Node requirements. Name Thread dataset fields, Root Node endpoints,
+  shared-fabric CAT identities, protocol IDs, and example test Vendor IDs; decode CAT
+  subjects through the Node ID type so invalid zero-version or non-CAT
+  subjects cannot match an identity.
+- Keep a queued global EventList attribute authorized while sending chunked
+  subscription priming reports. This restores the official Operational
+  Credentials VID certification subscription sequence.
+
 ### Thermostat Matter Schedules production support
 
 - Enable opt-in Matter 1.6 MSCH on production Thermostat instances when a host

@@ -15,6 +15,9 @@ module Matter
   # The 11-digit code is computed as: (discriminator << 27) | PIN
   # Then the Verhoeff check digit is appended.
   module SetupPayload
+    TEST_VENDOR_ID_MINIMUM           = 0xFFF1_u16
+    TEST_VENDOR_ID_EXCLUSIVE_MAXIMUM = 0xFFF4_u16
+
     # Verhoeff check digit algorithm
     # Used by Matter for manual pairing code validation
     module Verhoeff
@@ -70,7 +73,7 @@ module Matter
 
     # generate a test vendor id
     def self.test_vendor_id : UInt16
-      rand(0xFFF1_u16...0xFFF4_u16)
+      rand(TEST_VENDOR_ID_MINIMUM...TEST_VENDOR_ID_EXCLUSIVE_MAXIMUM)
     end
 
     # Generate a serial number

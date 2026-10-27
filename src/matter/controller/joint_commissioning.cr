@@ -1,3 +1,4 @@
+require "../node"
 require "../cluster/joint_fabric_administrator"
 require "../cluster/joint_fabric_datastore"
 require "../cluster/descriptor"
@@ -18,13 +19,15 @@ module Matter
     module JointCommissioning
       extend self
 
-      CERTIFICATE_SERIAL_BYTES =                         8
-      ADMINISTRATOR_CAT_PREFIX = 0xFFFF_FFFD_FFFF_0000_u64
-      ADMINISTRATOR_CAT_MASK   = 0xFFFF_FFFF_FFFF_0000_u64
-      ANCHOR_CAT_PREFIX        = 0xFFFF_FFFD_FFFE_0000_u64
-      BOOTSTRAP_RCAC_ID        =                     1_u64
-      BOOTSTRAP_ICAC_ID        =                     3_u64
-      BOOTSTRAP_SERIAL_BYTES   =                         8
+      CERTIFICATE_SERIAL_BYTES =     8
+      BOOTSTRAP_RCAC_ID        = 1_u64
+      BOOTSTRAP_ICAC_ID        = 3_u64
+      BOOTSTRAP_SERIAL_BYTES   =     8
+
+      def cat_subject(identity : UInt16, version : UInt16) : UInt64
+        DataType::NodeId.from_case_authenticated_tag(
+          DataType::CaseAuthenticatedTag.create(identity, version)).id
+      end
 
       # Allocate against the Datastore NodeList supplied by the caller. A
       # collision requires a fresh random candidate rather than a sequential
@@ -70,8 +73,10 @@ module Matter
                                            anchor_cat_version : UInt16 = 1_u16,
                                            crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : Bytes
           issue_noc(node_id, public_key,
-            [0xFFFF_0000_u32 | administrator_cat_version.to_u32,
-             0xFFFE_0000_u32 | anchor_cat_version.to_u32], crypto)
+            [DataType::CaseAuthenticatedTag.create(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT,
+              administrator_cat_version).value,
+             DataType::CaseAuthenticatedTag.create(Cluster::JointFabricDatastore::ANCHOR_CAT,
+               anchor_cat_version).value], crypto)
         end
       end
 
@@ -171,7 +176,7 @@ module Matter
                     peer : Socket::IPAddress) : Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor)
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, fabric,
             peer_node_id: node_id, timeout: @timeout)
-          report = ImClient.new(@client, @timeout).read_attribute(session, peer, 0_u16,
+          report = ImClient.new(@client, @timeout).read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::ATTR_FABRICS, fabric_filtered: false)
           data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
@@ -324,14 +329,17 @@ module Matter
             raise Matter::AuthenticationError.new("Joining Datastore CAT versions differ from selected Joint Fabric versions")
           end
           JointCommissioning.require_administrator_cat!(joiner.fabric.noc.noc, admin_version)
-          anchor_subject = ANCHOR_CAT_PREFIX | @anchor_cat_version.to_u64
+          anchor_subject = JointCommissioning.cat_subject(
+            Cluster::JointFabricDatastore::ANCHOR_CAT, @anchor_cat_version)
           unless Crypto::MatterCertificate.subject_ids_from_tlv(fabric.controller_noc).includes?(anchor_subject)
             raise Matter::ConfigurationError.new("Controller NOC lacks the Anchor CAT needed for the ICAC exchange")
           end
 
-          admin_cat = 0xFFFF_0000_u32 | @administrator_cat_version.to_u32
+          admin_cat = DataType::CaseAuthenticatedTag.create(
+            Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, @administrator_cat_version).value
           noc = @issue_noc.call(fabric, node_id, csr_public_key, admin_cat)
-          admin_subject = ADMINISTRATOR_CAT_PREFIX | @administrator_cat_version.to_u64
+          admin_subject = JointCommissioning.cat_subject(
+            Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, @administrator_cat_version)
           unless Crypto::MatterCertificate.subject_ids_from_tlv(noc).includes?(admin_subject)
             raise Matter::CertificateError.new("Issued Administrator NOC lacks assigned Administrator CAT")
           end
@@ -695,7 +703,8 @@ module Matter
           end
           fabric.intermediate_authority_key
           fabric.certificate_authority_key
-          anchor_subject = ANCHOR_CAT_PREFIX | anchor_cat_version.to_u64
+          anchor_subject = JointCommissioning.cat_subject(
+            Cluster::JointFabricDatastore::ANCHOR_CAT, anchor_cat_version)
           unless Crypto::MatterCertificate.subject_ids_from_tlv(fabric.controller_noc).includes?(anchor_subject)
             raise Matter::ConfigurationError.new("Selected controller NOC lacks the required Anchor CAT")
           end
@@ -826,8 +835,8 @@ module Matter
         fabric = VidVerification.verify(im, pase_session, peer, administrator_fabric_index, trust, crypto)
         subjects = Crypto::MatterCertificate.subject_ids_from_tlv(fabric.noc.noc)
         unless subjects.any? do |subject|
-                 (subject & ADMINISTRATOR_CAT_MASK) == ADMINISTRATOR_CAT_PREFIX &&
-                 (subject & 0xffff_u64) != 0_u64
+                 cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+                 cat && cat.identity_value == Cluster::JointFabricDatastore::ADMINISTRATOR_CAT
                end
           raise Matter::AuthenticationError.new("Joining Administrator NOC lacks Administrator CAT")
         end
@@ -839,15 +848,18 @@ module Matter
       # Datastore's current CAT version. A stale version has been revoked even
       # though it still has the reserved Administrator CAT identifier.
       def require_administrator_cat!(noc : Bytes, version : UInt16) : Nil
-        subject = ADMINISTRATOR_CAT_PREFIX | version.to_u64
-        unless version != 0_u16 && Crypto::MatterCertificate.subject_ids_from_tlv(noc).includes?(subject)
+        if version == 0_u16
+          raise Matter::AuthenticationError.new("Joining Administrator NOC lacks the current Administrator CAT")
+        end
+        subject = cat_subject(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, version)
+        unless Crypto::MatterCertificate.subject_ids_from_tlv(noc).includes?(subject)
           raise Matter::AuthenticationError.new("Joining Administrator NOC lacks the current Administrator CAT")
         end
       end
 
       def discover_administrator_endpoint(im : ImClient, session : Session::SecureContext,
                                           peer : Socket::IPAddress) : UInt16
-        queue = [0_u16]
+        queue = [Node::ROOT_ENDPOINT_ID]
         seen = Set(UInt16).new
         until queue.empty?
           endpoint = queue.shift
@@ -917,8 +929,8 @@ module Matter
         data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
         raise Matter::ProtocolError.new("Joint Fabric Datastore GroupList read omitted data") unless data
         groups = Array(Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct).from_tlv(data.to_slice)
-        admin_versions = groups.select(&.group_cat.==(0xFFFF_u16)).compact_map(&.group_cat_version)
-        anchor_versions = groups.select(&.group_cat.==(0xFFFE_u16)).compact_map(&.group_cat_version)
+        admin_versions = groups.select(&.group_cat.==(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT)).compact_map(&.group_cat_version)
+        anchor_versions = groups.select(&.group_cat.==(Cluster::JointFabricDatastore::ANCHOR_CAT)).compact_map(&.group_cat_version)
         unless admin_versions.size == 1 && anchor_versions.size == 1 &&
                admin_versions.first != 0_u16 && anchor_versions.first != 0_u16
           raise Matter::AuthenticationError.new("Joining Datastore lacks unique Joint Fabric CAT versions")

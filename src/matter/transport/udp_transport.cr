@@ -34,7 +34,7 @@ module Matter
       MAX_DATAGRAM_SIZE = 1280
 
       # Secure Channel MRP Standalone Acknowledgement (Matter spec 4.10).
-      STANDALONE_ACK_MESSAGE_TYPE = 0x10_u8
+      STANDALONE_ACK_MESSAGE_TYPE = Protocol::SecureChannelMessageType::StandaloneAck.value
 
       # The shortest well-formed packet: flags, session id, security flags and
       # message counter.

@@ -111,6 +111,14 @@ module Matter
     # Represents a Thread Operational Dataset with parsed fields.
     # The operational dataset contains all parameters needed to join a Thread network.
     class ThreadCredentials
+      enum DatasetField : UInt8
+        Channel       = 0x00
+        PanId         = 0x01
+        ExtendedPanId = 0x02
+        NetworkName   = 0x03
+        NetworkKey    = 0x05
+      end
+
       # The complete operational dataset (TLV-encoded)
       getter operational_dataset : Bytes
 
@@ -169,7 +177,7 @@ module Matter
         fields = parse_tlv(dataset)
 
         # Look for Extended PAN ID (Type 0x02)
-        if xpan = fields[0x02_u8]?
+        if xpan = fields[DatasetField::ExtendedPanId.value]?
           return xpan if xpan.size == 8
         end
 
@@ -187,7 +195,7 @@ module Matter
         fields = parse_tlv(dataset)
 
         # Look for Network Name (Type 0x03)
-        if name_bytes = fields[0x03_u8]?
+        if name_bytes = fields[DatasetField::NetworkName.value]?
           return String.new(name_bytes) if name_bytes.size >= 1 && name_bytes.size <= 16
         end
 
@@ -200,7 +208,7 @@ module Matter
         fields = parse_tlv(dataset)
 
         # Look for PAN ID (Type 0x01)
-        if pan_bytes = fields[0x01_u8]?
+        if pan_bytes = fields[DatasetField::PanId.value]?
           if pan_bytes.size == 2
             # Convert 2 bytes to UInt16 (big-endian)
             return (pan_bytes[0].to_u16 << 8) | pan_bytes[1].to_u16
@@ -216,7 +224,7 @@ module Matter
         fields = parse_tlv(dataset)
 
         # Look for Channel (Type 0x00)
-        if channel_bytes = fields[0x00_u8]?
+        if channel_bytes = fields[DatasetField::Channel.value]?
           if channel_bytes.size >= 1
             # First byte is the channel number
             return channel_bytes[0]
@@ -232,7 +240,7 @@ module Matter
         fields = parse_tlv(dataset)
 
         # Look for Network Key (Type 0x05)
-        if key = fields[0x05_u8]?
+        if key = fields[DatasetField::NetworkKey.value]?
           return key if key.size == 16
         end
 

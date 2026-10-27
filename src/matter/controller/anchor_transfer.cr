@@ -1,3 +1,4 @@
+require "../node"
 require "../cluster/joint_fabric_administrator"
 require "../cluster/joint_fabric_datastore"
 require "../cluster/general_commissioning"
@@ -303,11 +304,10 @@ module Matter
       class AdministratorRotation < CredentialTransition
         alias CaseOpener = Proc(FabricInfo, UInt64, Session::SecureContext)
 
-        ADMINISTRATOR_CAT_ID =                0xFFFF_u32
-        ANCHOR_CAT_ID        =                0xFFFE_u32
-        ANCHOR_SUBJECT_BASE  = 0xFFFF_FFFD_FFFE_0000_u64
-        FAIL_SAFE_SECONDS    =                   900_u16
-        CSR_NONCE_BYTES      =                        32
+        ADMINISTRATOR_CAT_ID = Cluster::JointFabricDatastore::ADMINISTRATOR_CAT.to_u32
+        ANCHOR_CAT_ID        = Cluster::JointFabricDatastore::ANCHOR_CAT.to_u32
+        FAIL_SAFE_SECONDS    = 900_u16
+        CSR_NONCE_BYTES      =      32
 
         getter target_node_id : UInt64
 
@@ -341,7 +341,7 @@ module Matter
             arm_fail_safe(FAIL_SAFE_SECONDS)
             armed = true
             nonce = @crypto.random_bytes(CSR_NONCE_BYTES)
-            csr_response = @im.invoke(@old_session, @peer, 0_u16,
+            csr_response = @im.invoke(@old_session, @peer, Node::ROOT_ENDPOINT_ID,
               Cluster::OperationalCredentials::CLUSTER_ID,
               Cluster::OperationalCredentials::CMD_CSR_REQUEST,
               Cluster::OperationalCredentials::Tlv::CsrRequest.new(nonce, @existing_fabric).to_slice)
@@ -358,13 +358,17 @@ module Matter
                 Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(root).to_slice)
             end
 
-            tags = [ADMINISTRATOR_CAT_ID << 16 | @administrator_cat_version.to_u32]
-            tags << (ANCHOR_CAT_ID << 16 | @anchor_cat_version.to_u32) if @anchor_target
+            tags = [DataType::CaseAuthenticatedTag.create(
+              Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, @administrator_cat_version).value]
+            if @anchor_target
+              tags << DataType::CaseAuthenticatedTag.create(
+                Cluster::JointFabricDatastore::ANCHOR_CAT, @anchor_cat_version).value
+            end
             noc = @bootstrap.issue_noc(@target_node_id, public_key, tags, @crypto)
             Crypto::MatterCertificate::Validation.verify_chain(noc,
               @bootstrap.fabric.intermediate_cert, @bootstrap.fabric.root_public_key, @bootstrap.fabric.root_cert)
             response = if @existing_fabric
-                         @im.invoke(@old_session, @peer, 0_u16,
+                         @im.invoke(@old_session, @peer, Node::ROOT_ENDPOINT_ID,
                            Cluster::OperationalCredentials::CLUSTER_ID,
                            Cluster::OperationalCredentials::CMD_UPDATE_NOC,
                            Cluster::OperationalCredentials::Tlv::UpdateNocRequest.new(
@@ -375,7 +379,7 @@ module Matter
                            @bootstrap.fabric.ipk_value,
                            controller_anchor_cat_subject,
                            @bootstrap.fabric.admin_vendor_id)
-                         @im.invoke(@old_session, @peer, 0_u16,
+                         @im.invoke(@old_session, @peer, Node::ROOT_ENDPOINT_ID,
                            Cluster::OperationalCredentials::CLUSTER_ID,
                            Cluster::OperationalCredentials::CMD_ADD_NOC, add_noc.to_slice)
                        end
@@ -391,7 +395,7 @@ module Matter
                             Pairing::CasePairing.new(@crypto).pair(@client, @peer,
                               @bootstrap.fabric, peer_node_id: @target_node_id)
                           end
-            complete_response = @im.invoke(new_session, @peer, 0_u16,
+            complete_response = @im.invoke(new_session, @peer, Node::ROOT_ENDPOINT_ID,
               Cluster::GeneralCommissioning::CLUSTER_ID,
               Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
             complete_fields = command_fields(complete_response,
@@ -415,7 +419,7 @@ module Matter
         end
 
         private def arm_fail_safe(seconds : UInt16) : Nil
-          response = @im.invoke(@old_session, @peer, 0_u16,
+          response = @im.invoke(@old_session, @peer, Node::ROOT_ENDPOINT_ID,
             Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
             Cluster::GeneralCommissioning::ArmFailSafeRequest.new(seconds, 0_u64).to_slice)
@@ -433,14 +437,16 @@ module Matter
         # access before it can send CommissioningComplete.
         private def controller_anchor_cat_subject : UInt64
           subjects = Crypto::MatterCertificate.subject_ids_from_tlv(@bootstrap.fabric.controller_noc)
-          mask = 0xFFFF_FFFF_FFFF_0000_u64
-          subjects.find { |subject| (subject & mask) == ANCHOR_SUBJECT_BASE } ||
+          subjects.find do |subject|
+            cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+            cat && cat.identity_value == Cluster::JointFabricDatastore::ANCHOR_CAT
+          end ||
             raise Matter::ConfigurationError.new("Anchor controller NOC lacks Anchor CAT")
         end
 
         private def invoke_status!(name : String, cluster_id : UInt32,
                                    command_id : UInt32, fields : Bytes) : Nil
-          response = @im.invoke(@old_session, @peer, 0_u16,
+          response = @im.invoke(@old_session, @peer, Node::ROOT_ENDPOINT_ID,
             cluster_id, command_id, fields)
           invoke_response_ok!(response, name)
         end
@@ -571,7 +577,7 @@ module Matter
                 @new_anchor_fabric.fabric_id, @peer_icac_public_key, @icac_id, @crypto)
               @journal.pending_icac = icac
               @save.call(@journal)
-              response = @im.invoke(session, @peer, 0_u16,
+              response = @im.invoke(session, @peer, Node::ROOT_ENDPOINT_ID,
                 Cluster::GeneralCommissioning::CLUSTER_ID,
                 Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
               assert_commissioning_complete!(response)
@@ -620,7 +626,7 @@ module Matter
         end
 
         private def find_old_fabric(session : Session::SecureContext) : UInt8?
-          report = @im.read_attribute(session, @peer, 0_u16,
+          report = @im.read_attribute(session, @peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::ATTR_FABRICS,
             fabric_filtered: false)
@@ -635,7 +641,7 @@ module Matter
         end
 
         private def remove_old_fabric(session : Session::SecureContext, index : UInt8) : Nil
-          response = @im.invoke(session, @peer, 0_u16,
+          response = @im.invoke(session, @peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(index).to_slice)
@@ -648,7 +654,7 @@ module Matter
         end
 
         private def arm_fail_safe(session : Session::SecureContext, seconds : UInt16) : Nil
-          response = @im.invoke(session, @peer, 0_u16,
+          response = @im.invoke(session, @peer, Node::ROOT_ENDPOINT_ID,
             Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
             Cluster::GeneralCommissioning::ArmFailSafeRequest.new(seconds, 0_u64).to_slice)
@@ -733,8 +739,8 @@ module Matter
           end
           @candidate_store.group_key_set_list = key_sets
           @candidate_store.group_list = @candidate_store.group_list.map do |group|
-            group.group_cat_version = @administrator_cat_version if group.group_cat == 0xFFFF_u16 && @administrator_cat_version
-            group.group_cat_version = @anchor_cat_version if group.group_cat == 0xFFFE_u16 && @anchor_cat_version
+            group.group_cat_version = @administrator_cat_version if group.group_cat == Cluster::JointFabricDatastore::ADMINISTRATOR_CAT && @administrator_cat_version
+            group.group_cat_version = @anchor_cat_version if group.group_cat == Cluster::JointFabricDatastore::ANCHOR_CAT && @anchor_cat_version
             group
           end
           @persist.call

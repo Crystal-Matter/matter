@@ -1,4 +1,6 @@
 require "../cluster/joint_fabric_administrator"
+require "../cluster/joint_fabric_datastore"
+require "../datatype/node_id"
 require "../crypto/certificate_validation"
 require "../crypto/pkcs10"
 require "./remote_icac_csr_provider"
@@ -32,9 +34,7 @@ module Matter
       @administrator_cluster : Admin?
       @authenticated_icac_public_key : Bytes?
 
-      ADMINISTRATOR_CAT_SUBJECT_PREFIX = 0xFFFF_FFFD_FFFF_0000_u64
-      ANCHOR_CAT_SUBJECT_PREFIX        = 0xFFFF_FFFD_FFFE_0000_u64
-      MAX_ICAC_BYTES                   =                       400
+      MAX_ICAC_BYTES = 400
 
       def initialize(
         @icac_private_key : Crypto::Key?,
@@ -349,7 +349,7 @@ module Matter
       end
 
       private def administrator_principal?(cluster : Admin) : Bool
-        cat_subject?(cluster.request_peer_subject_ids, ADMINISTRATOR_CAT_SUBJECT_PREFIX,
+        cat_subject?(cluster.request_peer_subject_ids, Cluster::JointFabricDatastore::ADMINISTRATOR_CAT,
           @administrator_cat_version)
       end
 
@@ -364,18 +364,18 @@ module Matter
       private def anchor_principal?(cluster : Admin) : Bool
         icac = cluster.request_peer_icac
         !!icac &&
-          cat_subject?(cluster.request_peer_subject_ids, ANCHOR_CAT_SUBJECT_PREFIX, @anchor_cat_version) &&
+          cat_subject?(cluster.request_peer_subject_ids, Cluster::JointFabricDatastore::ANCHOR_CAT, @anchor_cat_version) &&
           Crypto::MatterCertificate.anchor_icac?(icac)
       end
 
       # CAT authorization follows the same minimum-version rule as Access
       # Control. During Anchor transfer, the new Anchor has the next version
       # before participants retire the old fabric.
-      private def cat_subject?(subjects : Array(UInt64)?, prefix : UInt64, minimum_version : UInt16) : Bool
+      private def cat_subject?(subjects : Array(UInt64)?, identity : UInt16, minimum_version : UInt16) : Bool
         return false unless subjects
         subjects.any? do |subject|
-          (subject & 0xFFFF_FFFF_FFFF_0000_u64) == prefix &&
-            (subject & 0xFFFF_u64) >= minimum_version.to_u64
+          cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+          cat && cat.identity_value == identity && cat.version >= minimum_version
         end
       end
     end

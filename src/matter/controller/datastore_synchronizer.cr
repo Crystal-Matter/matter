@@ -1,3 +1,4 @@
+require "../node"
 require "log"
 
 require "../cluster/joint_fabric_datastore"
@@ -24,7 +25,7 @@ module Matter
       end
 
       def sync_node(store : Store, node_id : UInt64, session : Session::SecureContext, peer : Socket::IPAddress) : Nil
-        root_servers = read_list(UInt32, session, peer, 0_u16,
+        root_servers = read_list(UInt32, session, peer, Node::ROOT_ENDPOINT_ID,
           Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
         groupcast_target = groupcast_available?(root_servers, session, peer)
         refreshing = store.node_list.any? { |entry| entry.node_id == node_id && entry.commissioning_status_entry.state == Store::DatastoreStateEnum::Pending }
@@ -33,9 +34,9 @@ module Matter
           # Datastore lists; pending ACL writes may require a later reread.
           if root_servers.includes?(Cluster::AccessControl::CLUSTER_ID)
             validate_representable_acls!(read_list(Cluster::AccessControl::AccessControlEntry,
-              session, peer, 0_u16, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL), node_id)
+              session, peer, Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL), node_id)
           end
-          endpoint_ids = read_list(UInt16, session, peer, 0_u16, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_PARTS_LIST)
+          endpoint_ids = read_list(UInt16, session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_PARTS_LIST)
           status = store.reconcile_node_endpoints(node_id, endpoint_ids)
           raise Matter::ProtocolError.new("Datastore endpoint reconciliation failed") unless status.success?
         end
@@ -91,7 +92,7 @@ module Matter
                                          session : Session::SecureContext, peer : Socket::IPAddress,
                                          root_servers : Array(UInt32), groupcast_target : Bool) : Nil
         groupcast_memberships = groupcast_target ? read_list(Cluster::Groupcast::MembershipStruct,
-          session, peer, 0_u16, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP) : [] of Cluster::Groupcast::MembershipStruct
+          session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP) : [] of Cluster::Groupcast::MembershipStruct
         store.node_endpoint_list.select(&.node_id.==(node_id)).each do |endpoint|
           servers = read_list(UInt32, session, peer, endpoint.endpoint_id, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
           if groupcast_target
@@ -114,13 +115,13 @@ module Matter
         end
 
         if root_servers.includes?(Cluster::GroupKeyManagement::CLUSTER_ID)
-          fields = invoke_data(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+          fields = invoke_data(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID,
             Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES, Bytes.empty)
           ids = Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(fields).group_key_set_i_ds
           ensure_reconciled!(store.reconcile_node_key_sets(node_id, ids))
         end
         if root_servers.includes?(Cluster::AccessControl::CLUSTER_ID)
-          target_acls = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, 0_u16,
+          target_acls = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL)
           validate_representable_acls!(target_acls, node_id)
           acls = target_acls.map do |entry|
@@ -184,7 +185,7 @@ module Matter
                                session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
           request = Cluster::GroupKeyManagement::KeySetRemoveRequest.new(entry.group_key_set_id)
-          invoke_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::CMD_KEY_SET_REMOVE, request.to_slice)
+          invoke_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::CMD_KEY_SET_REMOVE, request.to_slice)
         else
           source = store.group_key_set_list.find(&.group_key_set_id.==(entry.group_key_set_id)) ||
                    raise Matter::ConfigurationError.new("Datastore key set #{entry.group_key_set_id} is missing")
@@ -198,7 +199,7 @@ module Matter
             epoch_start_time2: source.epoch_start_time2
           )
           request = Cluster::GroupKeyManagement::KeySetWriteRequest.new(key_set)
-          invoke_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::CMD_KEY_SET_WRITE, request.to_slice)
+          invoke_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::CMD_KEY_SET_WRITE, request.to_slice)
         end
       end
 
@@ -239,11 +240,11 @@ module Matter
 
       private def adopt_groupcast(session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         entries = read_list(Cluster::GroupKeyManagement::GroupcastAdoptionStruct, session, peer,
-          0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+          Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID,
           Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION)
         return if entries.any?(&.groupcast_adopted?)
         adoption = [Cluster::GroupKeyManagement::GroupcastAdoptionStruct.new(true)]
-        write_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+        write_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID,
           Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION, adoption.to_tlv)
       end
 
@@ -251,7 +252,7 @@ module Matter
                                        peer : Socket::IPAddress) : Bool
         return false unless root_servers.includes?(Cluster::Groupcast::CLUSTER_ID)
         read_list(Cluster::GroupKeyManagement::GroupcastAdoptionStruct, session, peer,
-          0_u16, Cluster::GroupKeyManagement::CLUSTER_ID,
+          Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID,
           Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION)
         true
       rescue ex : Matter::ClusterError
@@ -262,12 +263,12 @@ module Matter
       private def sync_groupcast(store : Store, entry : Store::DatastoreEndpointGroupIDEntryStruct,
                                  session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         memberships = read_list(Cluster::Groupcast::MembershipStruct, session, peer,
-          0_u16, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP)
+          Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP)
         existing = memberships.find(&.group_id.==(entry.group_id))
         if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
           return unless existing && existing.endpoints.includes?(entry.endpoint_id)
           request = Cluster::Groupcast::LeaveGroupRequest.new(entry.group_id, [entry.endpoint_id])
-          fields = invoke_data(session, peer, 0_u16, Cluster::Groupcast::CLUSTER_ID,
+          fields = invoke_data(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID,
             Cluster::Groupcast::CMD_LEAVE_GROUP, request.to_slice)
           response = Cluster::Groupcast::LeaveGroupResponse.from_slice(fields)
           unless response.group_id == entry.group_id && response.endpoints.includes?(entry.endpoint_id)
@@ -280,7 +281,7 @@ module Matter
                        raise Matter::ConfigurationError.new("Groupcast group #{entry.group_id} has no key set")
           return if existing && existing.endpoints.includes?(entry.endpoint_id) && existing.key_set_id == key_set_id
           request = Cluster::Groupcast::JoinGroupRequest.new(entry.group_id, [entry.endpoint_id], key_set_id)
-          invoke_ok!(session, peer, 0_u16, Cluster::Groupcast::CLUSTER_ID,
+          invoke_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID,
             Cluster::Groupcast::CMD_JOIN_GROUP, request.to_slice)
         end
       end
@@ -292,7 +293,7 @@ module Matter
         deleting = entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
         return unless key_set_id || deleting
 
-        mappings = read_list(Cluster::GroupKeyManagement::GroupKeyMapStruct, session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
+        mappings = read_list(Cluster::GroupKeyManagement::GroupKeyMapStruct, session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
         fabric_index = read_target_fabric_index(session, peer)
         if mappings.any? { |mapping| mapping.fabric_index != fabric_index }
           raise Matter::ProtocolError.new("Target GroupKeyMap contains another fabric's entry")
@@ -303,11 +304,11 @@ module Matter
             mappings << Cluster::GroupKeyManagement::GroupKeyMapStruct.new(entry.group_id, key_set_id, fabric_index)
           end
         end
-        write_ok!(session, peer, 0_u16, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP, mappings.to_tlv)
+        write_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP, mappings.to_tlv)
       end
 
       private def read_target_fabric_index(session : Session::SecureContext, peer : Socket::IPAddress) : UInt8
-        response = @im.read_attribute(session, peer, 0_u16,
+        response = @im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
           Cluster::OperationalCredentials::CLUSTER_ID,
           Cluster::OperationalCredentials::ATTR_CURRENT_FABRIC_INDEX)
         data = response.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
@@ -322,7 +323,7 @@ module Matter
 
       private def sync_acl(store : Store, entry : Store::DatastoreACLEntryStruct,
                            session : Session::SecureContext, peer : Socket::IPAddress) : Nil
-        current = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, 0_u16, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL)
+        current = read_list(Cluster::AccessControl::AccessControlEntry, session, peer, Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL)
         wanted = target_acl(entry.acl_entry)
         if prior = entry.prior_acl_entry
           old = target_acl(prior)
@@ -341,7 +342,7 @@ module Matter
         elsif !current.any? { |item| same_acl?(item, wanted) }
           current << wanted
         end
-        write_ok!(session, peer, 0_u16, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL, current.to_tlv)
+        write_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID, Cluster::AccessControl::ATTR_ACL, current.to_tlv)
       end
 
       private def acl_required_by_other_entry?(store : Store, entry : Store::DatastoreACLEntryStruct,

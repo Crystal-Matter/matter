@@ -42,8 +42,9 @@ module Matter
 
       # PBKDF parameters advertised during PASE unless a commissioning window
       # supplies its own.
-      DEFAULT_PBKDF_ITERATIONS = 1000_u32
-      PBKDF_SALT_LENGTH        =       32
+      DEFAULT_PBKDF_ITERATIONS =   1000_u32
+      PBKDF_SALT_LENGTH        =         32
+      DEFAULT_PRODUCT_ID       = 0x8001_u16
 
       getter transport : Transport::PacketTransport
       getter bdx : Bdx::Responder
@@ -156,8 +157,8 @@ module Matter
         @fabric_table : FabricTable,
         iterations : UInt32 = DEFAULT_PBKDF_ITERATIONS,
         salt : Bytes = Random::Secure.random_bytes(PBKDF_SALT_LENGTH),
-        @vendor_id : UInt16 = 0xFFF1_u16,
-        @product_id : UInt16 = 0x8001_u16,
+        @vendor_id : UInt16 = Fabric::DEFAULT_VENDOR_ID,
+        @product_id : UInt16 = DEFAULT_PRODUCT_ID,
         max_sessions : UInt16 = SessionRegistry::DEFAULT_MAX_SESSIONS,
         subscription_grace_period : Time::Span = SessionRegistry::DEFAULT_SUBSCRIPTION_GRACE_PERIOD,
         transport_retry_window : Time::Span = SessionRegistry::DEFAULT_TRANSPORT_RETRY_WINDOW,
@@ -451,7 +452,7 @@ module Matter
       # must satisfy.
       private def initialize_clusters : Nil
         # Endpoint 0 - Root Node endpoint (required)
-        endpoint_0 = DataType::EndpointNumber.new(0_u16)
+        endpoint_0 = DataType::EndpointNumber.new(Node::ROOT_ENDPOINT_ID)
         root = Endpoint.new(endpoint_0)
 
         # Basic Information cluster (0x0028) - required on endpoint 0
@@ -932,7 +933,7 @@ module Matter
           if session && msg.payload_header.message_type == SecureChannelMessageType::StatusReport.value
             begin
               report = Session::Pase::Definitions::StatusReport.from_bytes(msg.payload)
-              if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == 0
+              if report.protocol_id == ProtocolId::Bdx.value && report.vendor_id == Codec::MessageCodec::COMMON_VENDOR_ID
                 @bdx_initiator.abort(session.session_id, msg.payload_header.exchange_id)
                 @sender.send_encrypted_ack(msg, peer, session, cache_for_mrp: true) if msg.payload_header.requires_acknowledge?
                 return BdxAbort.new(session, msg.payload_header.exchange_id)

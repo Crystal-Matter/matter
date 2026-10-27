@@ -62,6 +62,18 @@ module Matter
         new(CAT_PREFIX | cat.value.to_u64)
       end
 
+      # Decode a CASE subject only when it is a CAT with a nonzero version.
+      # Ordinary operational node IDs and group IDs have no CAT identity.
+      def self.case_authenticated_tag_from_subject?(subject : UInt64) : CaseAuthenticatedTag?
+        node_id = new(subject)
+        return unless node_id.case_authenticated_tag?
+
+        value = (subject & CAT_VALUE_MASK).to_u32
+        return if (value & CaseAuthenticatedTag::VERSION_MASK) == 0_u32
+
+        CaseAuthenticatedTag.new(value)
+      end
+
       # Check if this NodeId encodes a CaseAuthenticatedTag
       def case_authenticated_tag? : Bool
         (id & ~CAT_VALUE_MASK) == CAT_PREFIX

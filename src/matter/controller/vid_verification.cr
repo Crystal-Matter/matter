@@ -1,3 +1,4 @@
+require "../node"
 require "../cluster/operational_credentials"
 require "../crypto/certificate_validation"
 require "./im_client"
@@ -119,7 +120,7 @@ module Matter
 
         client_challenge = crypto.random_bytes(CHALLENGE_SIZE)
         request = Cluster::OperationalCredentials::Tlv::SignVIDVerificationRequest.new(fabric_index, client_challenge)
-        invocation = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+        invocation = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
           cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
           command_id: Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
           fields: request.to_slice)
@@ -176,7 +177,7 @@ module Matter
 
       private def read_list(type : T.class, im : ImClient, session : Session::SecureContext,
                             peer : Socket::IPAddress, attribute_id : UInt32) : Array(T) forall T
-        report = im.read_attribute(session: session, peer: peer, endpoint_id: 0_u16,
+        report = im.read_attribute(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
           cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
           attribute_id: attribute_id, fabric_filtered: false)
         data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)

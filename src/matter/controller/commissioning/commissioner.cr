@@ -1,6 +1,8 @@
+require "../../node"
 require "log"
 
 require "../../cluster/general_commissioning"
+require "../../cluster/joint_fabric_datastore"
 require "../../cluster/network_commissioning"
 require "../../cluster/operational_credentials"
 require "../../crypto/certificate"
@@ -110,9 +112,9 @@ module Matter
 
         # This controller runs one certificate authority per fabric, so the root
         # certificate it issues is always the first one.
-        ROOT_CERTIFICATE_ID =      1_u64
-        ANCHOR_ICAC_ID      =      3_u64
-        ANCHOR_CAT_ID       = 0xFFFE_u32
+        ROOT_CERTIFICATE_ID = 1_u64
+        ANCHOR_ICAC_ID      = 3_u64
+        ANCHOR_CAT_ID       = Cluster::JointFabricDatastore::ANCHOR_CAT.to_u32
         # Serial numbers only have to be distinguishable within a fabric
         CERTIFICATE_SERIAL_BYTES = 8
 
@@ -216,14 +218,14 @@ module Matter
           arm_resp = im.invoke(
             session: pase_session,
             peer: peer_addr,
-            endpoint_id: 0_u16,
+            endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
             command_id: Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
             fields: arm.to_slice
           )
           assert_commissioning_response!(arm_resp,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE, "ArmFailSafe")
-          info_report = im.read_attribute(pase_session, peer_addr, 0_u16,
+          info_report = im.read_attribute(pase_session, peer_addr, Node::ROOT_ENDPOINT_ID,
             Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::ATTR_BASIC_COMMISSIONING_INFO)
           info_data = info_report.attribute_reports.try(&.find(&.attribute_data))
@@ -257,7 +259,7 @@ module Matter
           attestation_nonce = @crypto.random_bytes(DeviceAttestationVerifier::NONCE_SIZE)
           attestation_request = Cluster::OperationalCredentials::Tlv::AttestationRequest.new(attestation_nonce)
           attestation_invocation = im.invoke(session: pase_session, peer: peer_addr,
-            endpoint_id: 0_u16, cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
+            endpoint_id: Node::ROOT_ENDPOINT_ID, cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_ATTESTATION_REQUEST,
             fields: attestation_request.to_slice)
           attestation = Cluster::OperationalCredentials::Tlv::AttestationResponse.from_slice(
@@ -277,7 +279,7 @@ module Matter
             request = Cluster::GeneralCommissioning::SetTCAcknowledgementsRequest.new(
               acknowledgement[0], acknowledgement[1])
             tc_response = im.invoke(session: pase_session, peer: peer_addr,
-              endpoint_id: 0_u16, cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
+              endpoint_id: Node::ROOT_ENDPOINT_ID, cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
               command_id: Cluster::GeneralCommissioning::CMD_SET_TC_ACKNOWLEDGEMENTS,
               fields: request.to_slice)
             assert_tc_acknowledged!(tc_response)
@@ -291,7 +293,7 @@ module Matter
           csr_resp_msg = im.invoke(
             session: pase_session,
             peer: peer_addr,
-            endpoint_id: 0_u16,
+            endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_CSR_REQUEST,
             fields: csr_req.to_slice
@@ -307,7 +309,7 @@ module Matter
           add_root_resp = im.invoke(
             session: pase_session,
             peer: peer_addr,
-            endpoint_id: 0_u16,
+            endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_ADD_TRUSTED_ROOT_CERTIFICATE,
             fields: add_root_req.to_slice
@@ -339,7 +341,7 @@ module Matter
           add_noc_resp_msg = im.invoke(
             session: pase_session,
             peer: peer_addr,
-            endpoint_id: 0_u16,
+            endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_ADD_NOC,
             fields: add_noc_req.to_slice
@@ -390,7 +392,7 @@ module Matter
             commissioning_complete_resp = im.invoke(
               session: case_session,
               peer: peer_addr,
-              endpoint_id: 0_u16,
+              endpoint_id: Node::ROOT_ENDPOINT_ID,
               cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
               command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
               fields: Bytes.empty
@@ -490,7 +492,7 @@ module Matter
                     raise Matter::ConfigurationError.new("Wireless commissioning requires regulatory country code")
           request = Cluster::GeneralCommissioning::SetRegulatoryConfigRequest.new(
             location, country, REGULATORY_BREADCRUMB)
-          response = im.invoke(session, peer, 0_u16, Cluster::GeneralCommissioning::CLUSTER_ID,
+          response = im.invoke(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_SET_REGULATORY_CONFIG, request.to_slice)
           assert_commissioning_response!(response,
             Cluster::GeneralCommissioning::CMD_SET_REGULATORY_CONFIG_RESPONSE, "SetRegulatoryConfig")
@@ -531,7 +533,7 @@ module Matter
                                                 window : FailSafeWindow) : FailSafeWindow
           return window if window.primary_expires_at - Time.instant >=
                              (@fail_safe_expiry_seconds.to_i / FAIL_SAFE_REFRESH_FRACTION).seconds
-          breadcrumb_report = im.read_attribute(session, peer, 0_u16,
+          breadcrumb_report = im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::ATTR_BREADCRUMB)
           breadcrumb = breadcrumb_report.attribute_reports.try(&.find(&.attribute_data))
@@ -542,7 +544,7 @@ module Matter
             breadcrumb: breadcrumb)
           armed_at_unix = Time.utc.to_unix
           armed_at_instant = Time.instant
-          response = im.invoke(session, peer, 0_u16, Cluster::GeneralCommissioning::CLUSTER_ID,
+          response = im.invoke(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE, request.to_slice)
           assert_commissioning_response!(response,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE, "ArmFailSafe")
@@ -600,7 +602,7 @@ module Matter
 
         private def read_basic_information(im : ImClient, session : Session::SecureContext,
                                            peer : Socket::IPAddress, attribute_id : UInt32) : TLV::Any
-          report = im.read_attribute(session, peer, 0_u16, Cluster::BasicInformation::CLUSTER_ID, attribute_id)
+          report = im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::BasicInformation::CLUSTER_ID, attribute_id)
           data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
           data || raise Matter::AuthenticationError.new("BasicInformation attribute #{attribute_id} is missing")
         end
@@ -609,7 +611,7 @@ module Matter
                                         peer : Socket::IPAddress,
                                         kind : Cluster::OperationalCredentials::Tlv::CertificateChainType) : Bytes
           request = Cluster::OperationalCredentials::Tlv::CertificateChainRequest.new(kind)
-          response = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+          response = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_CERTIFICATE_CHAIN_REQUEST,
             fields: request.to_slice)

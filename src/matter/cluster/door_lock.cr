@@ -766,8 +766,8 @@ module Matter
           config.group_identifier, config.group_resolving_key)
         @aliro_config_generation = @aliro_config_generation &+ 1_u64
         increment_version
-        notify_changed(0x0080_u32)
-        notify_changed(0x0081_u32)
+        notify_changed(ATTR_ALIRO_READER_VERIFICATION_KEY)
+        notify_changed(ATTR_ALIRO_READER_GROUP_IDENTIFIER)
         notify_changed(ATTR_ALIRO_GROUP_RESOLVING_KEY) if @feature_map.aliro_bleuwb?
         InteractionModel::Status.success
       end
@@ -786,8 +786,8 @@ module Matter
         @aliro_reader_config = nil
         @aliro_config_generation = @aliro_config_generation &+ 1_u64
         increment_version
-        notify_changed(0x0080_u32)
-        notify_changed(0x0081_u32)
+        notify_changed(ATTR_ALIRO_READER_VERIFICATION_KEY)
+        notify_changed(ATTR_ALIRO_READER_GROUP_IDENTIFIER)
         notify_changed(ATTR_ALIRO_GROUP_RESOLVING_KEY) if @feature_map.aliro_bleuwb?
         InteractionModel::Status.success
       end

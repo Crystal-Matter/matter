@@ -14,7 +14,7 @@ module MatterApplicationLauncher
     include Examples::Console
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Application Launcher",
-      vendor_id: 0xFFF1_u16,
+      vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
       product_id: 0x050C_u16,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,

@@ -1,3 +1,4 @@
+require "../../node"
 require "../im_client"
 require "../../setup_payload"
 require "../../crypto/spake2p"
@@ -43,7 +44,7 @@ module Matter
           resp = im.invoke(
             session: session,
             peer: peer,
-            endpoint_id: 0_u16,
+            endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::AdministratorCommissioning::CLUSTER_ID,
             command_id: Cluster::AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
             fields: request.to_slice,

@@ -8,11 +8,13 @@ module Matter
     # payload through a digest and never retains it in memory. The caller owns
     # the IO and should pass a completed BDX download or another finite source.
     module OtaImage
-      MAGIC               = 0x1BEEF11E_u32
-      PREFIX_SIZE         =         16_u64
-      MAX_HEADER_BYTES    =       4096_u32
-      DEFAULT_MAX_TOTAL   = 64_u64 * 1024 * 1024
-      DIGEST_BUFFER_BYTES = 8192
+      MAGIC                  = 0x1BEEF11E_u32
+      PREFIX_SIZE            =         16_u64
+      MAX_HEADER_BYTES       =       4096_u32
+      DEFAULT_MAX_TOTAL      = 64_u64 * 1024 * 1024
+      DIGEST_BUFFER_BYTES    =  8192
+      UNSPECIFIED_VENDOR_ID  = 0_u16
+      UNSPECIFIED_PRODUCT_ID = 0_u16
 
       class InvalidImage < Matter::Error
       end
@@ -111,8 +113,8 @@ module Matter
                                         product_id : UInt16, current_version : UInt32,
                                         offered_version : UInt32,
                                         declared_payload_size : UInt64) : Nil
-        unless (header.vendor_id == 0 || header.vendor_id == vendor_id) &&
-               (header.product_id == 0 || header.product_id == product_id)
+        unless (header.vendor_id == UNSPECIFIED_VENDOR_ID || header.vendor_id == vendor_id) &&
+               (header.product_id == UNSPECIFIED_PRODUCT_ID || header.product_id == product_id)
           raise InvalidImage.new("OTA image vendor or product mismatch")
         end
         unless offered_version > current_version && header.software_version == offered_version

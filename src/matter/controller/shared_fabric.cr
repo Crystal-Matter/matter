@@ -1,3 +1,4 @@
+require "../node"
 require "../crypto/certificate_builder"
 require "../crypto/certificate_validation"
 require "../crypto/crypto"
@@ -340,7 +341,7 @@ module Matter
         report = im.read_attribute(
           session: session,
           peer: peer,
-          endpoint_id: 0_u16,
+          endpoint_id: Node::ROOT_ENDPOINT_ID,
           cluster_id: Cluster::AccessControl::CLUSTER_ID,
           attribute_id: Cluster::AccessControl::ATTR_ACL
         )
@@ -365,7 +366,7 @@ module Matter
         response = im.write_attribute(
           session: session,
           peer: peer,
-          endpoint_id: 0_u16,
+          endpoint_id: Node::ROOT_ENDPOINT_ID,
           cluster_id: Cluster::AccessControl::CLUSTER_ID,
           attribute_id: Cluster::AccessControl::ATTR_ACL,
           value: entries.to_tlv

@@ -12,7 +12,7 @@ private class LifecycleCredentials < Matter::Controller::Commissioning::Commissi
                           csr_public_key : Bytes, im : Matter::Controller::ImClient,
                           pase_session : Matter::Session::SecureContext,
                           peer : Socket::IPAddress) : Matter::Controller::Commissioning::Commissioner::OperationalCredentials
-    anchor_cat = Matter::Controller::JointCommissioning::ANCHOR_CAT_PREFIX | 1_u64
+    anchor_cat = Matter::Controller::JointCommissioning.cat_subject(LifecycleJFD::ANCHOR_CAT, 1_u16)
     Matter::Controller::Commissioning::Commissioner::OperationalCredentials.new(
       @bootstrap.issue_noc(node_id, csr_public_key), fabric.intermediate_cert,
       fabric.ipk_value, anchor_cat, fabric.admin_vendor_id)
@@ -160,7 +160,7 @@ describe "Joint Fabric Datastore commissioning lifecycle" do
     endpoints.select(&.node_id.==(target_node_id)).map(&.endpoint_id).should contain(1_u16)
     acls = lifecycle_list(LifecycleJFD::DatastoreACLEntryStruct, im, anchor_session,
       anchor_peer, LifecycleJFD::ATTR_NODE_ACL_LIST)
-    anchor_subject = Matter::Controller::JointCommissioning::ANCHOR_CAT_PREFIX | 1_u64
+    anchor_subject = Matter::Controller::JointCommissioning.cat_subject(LifecycleJFD::ANCHOR_CAT, 1_u16)
     acls.any? do |entry|
       entry.node_id == target_node_id && entry.acl_entry.subjects.try(&.includes?(anchor_subject))
     end.should be_true

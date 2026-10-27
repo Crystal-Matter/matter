@@ -133,6 +133,16 @@ describe Matter::DataType::NodeId do
       extracted_cat.version.should eq(0x1234_u16)
     end
 
+    it "only decodes valid CAT subjects for access checks" do
+      cat = Matter::DataType::CaseAuthenticatedTag.create(0xFFFE_u16, 2_u16)
+      subject = Matter::DataType::NodeId.from_case_authenticated_tag(cat).id
+
+      Matter::DataType::NodeId.case_authenticated_tag_from_subject?(subject).should eq(cat)
+      Matter::DataType::NodeId.case_authenticated_tag_from_subject?(0xFFFF_FFFD_FFFE_0000_u64).should be_nil
+      Matter::DataType::NodeId.case_authenticated_tag_from_subject?(0xFFFF_FFFF_FFFE_0002_u64).should be_nil
+      Matter::DataType::NodeId.case_authenticated_tag_from_subject?(1_u64).should be_nil
+    end
+
     it "raises when extracting CAT from non-CAT NodeId" do
       node_id = Matter::DataType::NodeId.new(0x123456789ABCDEF0_u64)
 

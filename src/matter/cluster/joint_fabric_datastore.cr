@@ -1710,8 +1710,8 @@ module Matter
         subjects = acl.subjects
         return false unless subjects
         subjects.any? do |subject|
-          node = DataType::NodeId.new(subject)
-          node.case_authenticated_tag? && ((subject >> 16) & 0xFFFF_u64).to_u16 == cat
+          subject_cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+          subject_cat && subject_cat.identity_value == cat
         end
       end
 
