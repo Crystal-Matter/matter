@@ -164,6 +164,47 @@ describe Matter::Cluster::IcdManagement do
       .should be >= 5_000_u32
   end
 
+  it "caps StayActive extensions and reports the remaining active commitment" do
+    cluster = Icd.new(idle_mode_duration: 60_u32, active_mode_duration: 3_000_u32)
+
+    long = cluster.stay_active_request(Icd::StayActiveRequest.new(20_000_u32))
+    long.promised_active_duration.should be >= 19_000_u32
+    shorter = cluster.stay_active_request(Icd::StayActiveRequest.new(1_000_u32))
+    shorter.promised_active_duration.should be >= 19_000_u32
+    shorter.promised_active_duration.should be <= long.promised_active_duration
+
+    capped = cluster.stay_active_request(Icd::StayActiveRequest.new(UInt32::MAX))
+    capped.promised_active_duration.should be >= 29_000_u32
+    capped.promised_active_duration.should be <= 30_000_u32
+
+    configured = Icd.new(configuration: Icd::Configuration.new(
+      idle_mode_duration: 60_u32, active_mode_duration: 3_000_u32,
+      max_stay_active_duration_ms: 7_000_u32))
+    configured_response = configured.stay_active_request(Icd::StayActiveRequest.new(20_000_u32))
+    configured_response.promised_active_duration.should be >= 6_000_u32
+    configured_response.promised_active_duration.should be <= 7_000_u32
+    expect_raises(ArgumentError) { Icd.new(max_stay_active_duration_ms: 0_u32) }
+  end
+
+  it "does not restart the full active window for a short StayActive request" do
+    cluster = Icd.new(idle_mode_duration: 1_u32, active_mode_duration: 300_u32,
+      max_stay_active_duration_ms: 100_u32)
+    cluster.enter_idle_mode
+    cluster.request_active_mode
+    sleep 100.milliseconds
+    response = cluster.stay_active_request(Icd::StayActiveRequest.new(50_u32))
+    response.promised_active_duration.should be >= 40_u32
+    response.promised_active_duration.should be <= 250_u32
+  end
+
+  it "keeps the active threshold when ActiveModeDuration is zero" do
+    cluster = Icd.new(active_mode_duration: 0_u32, active_mode_threshold: 500_u16)
+    cluster.enter_idle_mode
+    cluster.request_active_mode
+    response = cluster.stay_active_request(Icd::StayActiveRequest.new(0_u32))
+    response.promised_active_duration.should be >= 400_u32
+  end
+
   it "changes a long-idle device from SIT to LIT with registrations" do
     cluster = Icd.new(feature_map: Icd::Feature::CheckInProtocolSupport |
                                    Icd::Feature::UserActiveModeTrigger |
@@ -185,7 +226,7 @@ describe Matter::Cluster::IcdManagement do
     cluster = Icd.new(feature_map: Icd::Feature::CheckInProtocolSupport |
                                    Icd::Feature::UserActiveModeTrigger,
       idle_mode_duration: 60_u32, maximum_check_in_backoff: 240_u32,
-      active_mode_duration: 3_000_u32)
+      active_mode_duration: 1_u32)
     icd_register(cluster, 123_u64, key_a).should be_a(Matter::Cluster::CommandResponse)
     counters = [] of UInt32
     cluster.on_check_in = ->(_fabric : UInt8, _node : UInt64, _key : Bytes, counter : UInt32, _threshold : UInt16) do
@@ -193,14 +234,17 @@ describe Matter::Cluster::IcdManagement do
       nil
     end
     5.times do
+      sleep 2.milliseconds
       cluster.enter_idle_mode
       cluster.request_active_mode
     end
     counters.size.should eq(3) # wakes 1, 2, and 4
+    sleep 2.milliseconds
     cluster.enter_idle_mode
     cluster.trigger_user_active_mode
     counters.size.should eq(4)
     cluster.on_monitored_subject_covered = ->(_fabric : UInt8, _subject : UInt64) { true }
+    sleep 2.milliseconds
     cluster.enter_idle_mode
     cluster.request_active_mode
     counters.size.should eq(4)

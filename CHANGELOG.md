@@ -25,6 +25,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CASE and fall back to a full handshake. An ambiguous legacy record remains
   while either role still owns the matching identity.
 
+### ICD StayActive response
+
+- Cap each StayActiveRequest extension at a configurable 30-second default and
+  report the actual remaining active commitment after repeated requests.
+
 ### Named protocol identifiers
 
 - Use generated cluster, attribute, command, event, and feature identifiers in
