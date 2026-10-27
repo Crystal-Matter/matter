@@ -1099,6 +1099,101 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
 end
 
 describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
+  it "keeps Ready when saving CrossSigning fails before any command" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64)
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        raise Matter::StorageError.new("save failed")
+      }, journal, consent: -> { true },
+      case_opener: ->(_identity : Matter::Controller::FabricInfo, _node : UInt64) { session },
+      endpoint_resolver: ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { 1_u16 })
+
+    expect_raises(Matter::StorageError, /save failed/) { runner.run }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready)
+    journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready)
+    im.commands.should be_empty
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
+  it "retains the pending ICAC when saving CrossSigned reconciliation fails" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    pending_icac = Bytes[0x01, 0x02, 0x03]
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(
+      0x300_u64, Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning,
+      pending_icac)
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        raise Matter::StorageError.new("save failed")
+      }, journal, consent: -> { true })
+
+    expect_raises(Matter::StorageError, /save failed/) { runner.reconcile_cross_sign!(true) }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    runner.journal.pending_icac.should eq(pending_icac)
+    journal.pending_icac.should eq(pending_icac)
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
+  it "does not complete commissioning when saving the pending ICAC fails" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    saved_count = 0
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64)
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        saved_count += 1
+        if saved_count == 2
+          state.pending_icac.as(Bytes)[0] = 0_u8
+          raise Matter::StorageError.new("pending ICAC save failed")
+        end
+        nil
+      }, journal, consent: -> { true },
+      case_opener: ->(_identity : Matter::Controller::FabricInfo, _node : UInt64) { session },
+      endpoint_resolver: ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { 1_u16 })
+
+    expect_raises(Matter::StorageError, /pending ICAC save failed/) { runner.run }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    runner.journal.pending_icac.should be_nil
+    im.commands.should_not contain(Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
+    im.commands.should_not contain(Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC)
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
   it "replays a persisted ICAC into the Datastore when a completed exchange is reconciled" do
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0x1234_u64, 0x200_u64, 0xFFF2_u16)

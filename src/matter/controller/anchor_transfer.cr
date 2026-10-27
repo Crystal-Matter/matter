@@ -514,6 +514,10 @@ module Matter
           def initialize(@target_node_id : UInt64, @stage : Stage = Stage::Ready,
                          @pending_icac : Bytes? = nil)
           end
+
+          def detached_copy : Journal
+            Journal.new(@target_node_id, @stage, @pending_icac.try(&.dup))
+          end
         end
 
         alias SaveJournal = Proc(Journal, Nil)
@@ -592,8 +596,9 @@ module Matter
                 @administrator_endpoint, @new_anchor_fabric.root_cert,
                 @new_anchor_fabric.certificate_authority_key,
                 @new_anchor_fabric.fabric_id, @peer_icac_public_key, @icac_id, @crypto)
-              @journal.pending_icac = icac
-              @save.call(@journal)
+              pending = @journal.detached_copy
+              pending.pending_icac = icac.dup
+              persist_change!(pending)
               response = @im.invoke(session, @peer, Node::ROOT_ENDPOINT_ID,
                 Cluster::GeneralCommissioning::CLUSTER_ID,
                 Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
@@ -609,8 +614,10 @@ module Matter
               end
               raise ex
             end
-            @journal.pending_icac = nil
-            advance(Stage::CrossSigned)
+            completed = @journal.detached_copy
+            completed.pending_icac = nil
+            completed.stage = Stage::CrossSigned
+            persist_change!(completed)
           end
           if @journal.stage.cross_signed? || @journal.stage.removing_old?
             advance(Stage::RemovingOld) unless @journal.stage.removing_old?
@@ -634,11 +641,15 @@ module Matter
                 @peer_icac_public_key, @icac_id)
               callback.call(@target_node_id, icac)
             end
-            @journal.pending_icac = nil
-            advance(Stage::CrossSigned)
+            completed = @journal.detached_copy
+            completed.pending_icac = nil
+            completed.stage = Stage::CrossSigned
+            persist_change!(completed)
           else
-            @journal.pending_icac = nil
-            advance(Stage::Ready)
+            retryable = @journal.detached_copy
+            retryable.pending_icac = nil
+            retryable.stage = Stage::Ready
+            persist_change!(retryable)
           end
         end
 
@@ -706,8 +717,14 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
-          @journal.stage = stage
-          @save.call(@journal)
+          updated = @journal.detached_copy
+          updated.stage = stage
+          persist_change!(updated)
+        end
+
+        private def persist_change!(updated : Journal) : Nil
+          @save.call(updated)
+          @journal = updated
         end
       end
 
