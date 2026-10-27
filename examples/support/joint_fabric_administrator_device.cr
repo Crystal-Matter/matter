@@ -41,13 +41,14 @@ module MatterJointFabricAdministrator
     ANCHOR_CAT_ID                         = Matter::Cluster::JointFabricDatastore::ANCHOR_CAT
     ADMINISTRATOR_CAT_SUBJECT_PREFIX      = Matter::DataType::NodeId::CAT_PREFIX |
                                             (ADMINISTRATOR_CAT_ID.to_u64 << Matter::DataType::CaseAuthenticatedTag::IDENTITY_SHIFT)
-    DEFAULT_OPERATIONAL_PORT    =    5540
-    ADMIN_GROUP_ID              =   1_u16
-    ANCHOR_GROUP_ID             =   2_u16
-    ANCHOR_IPK_KEY_SET_ID       =   0_u16
-    ANCHOR_JFA_ENDPOINT_ID      =   1_u16
-    BOOTSTRAP_JFA_ENDPOINT_ID   =   2_u16
+    DEFAULT_OPERATIONAL_PORT    = 5540
+    ADMIN_GROUP_ID              = 1_u16
+    ANCHOR_GROUP_ID             = 2_u16
+    ANCHOR_IPK_KEY_SET_ID       = 0_u16
+    ANCHOR_JFA_ENDPOINT_ID      = 1_u16
+    BOOTSTRAP_JFA_ENDPOINT_ID   = 2_u16
     UNCOMPRESSED_P256_POINT_TAG = 0x04_u8
+    ROTATION_NONCE_HEX_LENGTH   = Matter::Controller::VidVerification::CHALLENGE_SIZE * 2
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -169,6 +170,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_transfer_request : Bool = false
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
+      getter? interrupt_before_anchor_noc : Bool = false
       getter? interrupt_after_participant_rotation : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
@@ -193,6 +195,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_transfer_request : Bool = false,
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
+                     @interrupt_before_anchor_noc : Bool = false,
                      @interrupt_after_participant_rotation : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil)
@@ -1779,7 +1782,8 @@ module MatterJointFabricAdministrator
                                      interrupt_after_remove_admin : Bool = false,
                                      interrupt_after_anchor_rotation : Bool = false,
                                      interrupt_after_participant_rotation : Bool = false,
-                                     interrupt_before_remove_admin : Bool = false) : Nil
+                                     interrupt_before_remove_admin : Bool = false,
+                                     interrupt_before_anchor_noc : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Another Joint Fabric operation is running") if @removal_in_progress || @transfer_in_progress
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -1806,6 +1810,7 @@ module MatterJointFabricAdministrator
         journal.fabric_id = own_fabric.fabric_id
         journal.root_public_key = own_fabric.root_public_key
         journal.anchor_node_id = own_fabric.node_id
+        journal.anchor_pre_rotation_noc = own_fabric.operational_cert.dup
         persistence.write_app_document(document_name, journal.to_document)
         persistence.flush
       end
@@ -1813,6 +1818,17 @@ module MatterJointFabricAdministrator
              journal.root_public_key == own_fabric.root_public_key &&
              journal.anchor_node_id == own_fabric.node_id
         raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor fabric")
+      end
+      if journal.stage.ready?
+        if old_noc = journal.anchor_pre_rotation_noc
+          unless old_noc == own_fabric.operational_cert
+            raise Matter::AuthenticationError.new("Anchor NOC changed since removal was prepared")
+          end
+        else
+          journal.anchor_pre_rotation_noc = own_fabric.operational_cert.dup
+          persistence.write_app_document(document_name, journal.to_document)
+          persistence.flush
+        end
       end
       if journal.administrator_cat_version.nil?
         unless journal.stage.ready?
@@ -1860,6 +1876,9 @@ module MatterJointFabricAdministrator
             update_datastore_administrator_acl_version(datastore, admin_version)
             raise Matter::StorageError.new("Could not persist Administrator CAT version") unless persistence.save_cluster(datastore)
             persistence.flush
+            if interrupt_before_anchor_noc
+              raise Matter::TransportError.new("Injected interruption before Anchor UpdateNOC")
+            end
             self_peer = Socket::IPAddress.new("127.0.0.1", self.port)
             ::Log.for("matter.example.joint_fabric_administrator").info do
               "Administrator removal CASE pairing with local Anchor before NOC rotation"
@@ -2182,13 +2201,119 @@ module MatterJointFabricAdministrator
         })
     end
 
+    # UpdateNOC may never have started even though the Datastore CAT and ACL
+    # were saved. A signed old-NOC proof is usable only after the local
+    # fail-safe has ended and the durable credential undo journal is clear.
+    private def reconcile_anchor_rotation_no_effect(outgoing_node_id : UInt64, nonce : String?) : Nil
+      raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
+      unless nonce && nonce.size == ROTATION_NONCE_HEX_LENGTH && nonce.matches?(/\A[0-9a-fA-F]+\z/)
+        raise Matter::ConfigurationError.new("A 32-byte hexadecimal rotation nonce is required")
+      end
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+      root_certificate = own_fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
+      datastore = joint_fabric_datastore
+      document_name = "#{APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+      document = persistence.app_document(document_name) ||
+                 raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+      journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+      unless journal.stage.rotating_anchor? && journal.outgoing_node_id == outgoing_node_id &&
+             journal.fabric_id == own_fabric.fabric_id &&
+             journal.root_public_key == own_fabric.root_public_key &&
+             journal.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Removal journal belongs to another Anchor rotation")
+      end
+      prior_version = journal.prior_administrator_cat_version ||
+                      raise Matter::ConfigurationError.new("Removal journal has no prior CAT version")
+      old_noc = journal.anchor_pre_rotation_noc ||
+                raise Matter::ConfigurationError.new("Removal journal has no pre-rotation Anchor NOC")
+      anchor_version = datastore.group_list.find(&.group_cat.==(ANCHOR_CAT_ID)).try(&.group_cat_version) ||
+                       raise Matter::ConfigurationError.new("Removal Datastore has no Anchor CAT version")
+      durable_fabric = verify_durable_anchor_old_credential!(own_fabric)
+      unless durable_fabric.operational_cert == old_noc
+        raise Matter::AuthenticationError.new("Anchor NOC differs from the journaled pre-rotation certificate")
+      end
+      verify_durable_anchor_rotation_datastore!(datastore)
+
+      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      begin
+        controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
+        identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key,
+          own_fabric.node_id)
+        peer = Socket::IPAddress.new("127.0.0.1", port)
+        session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, identity,
+          peer_node_id: own_fabric.node_id)
+        im = Matter::Controller::ImClient.new(client)
+        Matter::Controller::AdministratorRemoval::RotationInspection.verify_no_effect!(im, session,
+          peer, root_certificate, own_fabric.fabric_id, own_fabric.root_public_key,
+          own_fabric.node_id, prior_version, nonce.hexbytes, old_noc,
+          anchor_cat_version: anchor_version)
+
+        # The CASE proof crosses an asynchronous transport. Recheck the local
+        # commit/rollback state immediately before changing the journal.
+        current = verify_durable_anchor_old_credential!(own_fabric)
+        unless current.operational_cert == old_noc
+          raise Matter::AuthenticationError.new("Anchor NOC changed during no-effect inspection")
+        end
+        verify_durable_anchor_rotation_datastore!(datastore)
+        Matter::Controller::AdministratorRemoval::Workflow.reconcile_anchor_rotation_no_effect!(
+          journal, datastore, own_fabric.fabric_index,
+          ->(state : Matter::Controller::AdministratorRemoval::Journal) {
+            persistence.write_app_document(document_name, state.to_document)
+            persistence.flush
+            nil
+          })
+      ensure
+        client.close
+      end
+    end
+
+    private def verify_durable_anchor_old_credential!(fabric : Matter::Fabric) : Matter::Fabric
+      unless persistence.backend.durable?
+        raise Matter::StorageError.new("Anchor rotation recovery requires durable storage")
+      end
+      if general_commissioning.failsafe_armed? ||
+         persistence.backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+           Matter::Commissioning::CredentialJournal::ID)
+        raise Matter::CommissioningError.new("Anchor credential rotation may still be provisional")
+      end
+      live = fabric_table.get_fabric(fabric.fabric_index) ||
+             raise Matter::AuthenticationError.new("Anchor fabric is absent")
+      document = persistence.backend.read(Matter::FabricTable::COLLECTION, fabric.fabric_index.to_s) ||
+                 raise Matter::StorageError.new("Anchor fabric has no durable record")
+      durable = Matter::Fabric.from_document(document)
+      unless durable.fabric_id == fabric.fabric_id && durable.root_public_key == fabric.root_public_key &&
+             durable.node_id == fabric.node_id && durable.fabric_index == fabric.fabric_index &&
+             live.fabric_id == durable.fabric_id && live.root_public_key == durable.root_public_key &&
+             live.node_id == durable.node_id && live.fabric_index == durable.fabric_index &&
+             live.operational_cert == durable.operational_cert &&
+             live.intermediate_cert == durable.intermediate_cert &&
+             live.operational_public_key == durable.operational_public_key &&
+             live.operational_private_key == durable.operational_private_key &&
+             live.cats == durable.cats && fabric.operational_cert == durable.operational_cert &&
+             Matter::Crypto::MatterCertificate.public_key_from_tlv(durable.operational_cert) ==
+               durable.operational_public_key
+        raise Matter::AuthenticationError.new("Anchor live and durable credentials differ")
+      end
+      durable
+    end
+
+    private def verify_durable_anchor_rotation_datastore!(datastore : Datastore) : Nil
+      document = persistence.backend.read(Matter::Storage::Collections::CLUSTERS, datastore.persistence_key) ||
+                 raise Matter::StorageError.new("Anchor Datastore has no durable record")
+      durable = Datastore.new(Matter::DataType::EndpointNumber.new(ANCHOR_JFA_ENDPOINT_ID))
+      durable.restore_state(document)
+      unless datastore.save_state == durable.save_state
+        raise Matter::CommissioningError.new("Anchor Datastore differs from its durable record")
+      end
+    end
+
     # The nonce is supplied by the host performing recovery. A fresh CASE
     # session and signed OperationalCredentials response bind the observed NOC
     # to that nonce, the target Node ID, and this journal's fabric and CAT.
     private def reconcile_removal_rotation(outgoing_node_id : UInt64, nonce : String?,
                                            anchor : Bool) : Nil
       raise Matter::ConfigurationError.new("This device is not the Anchor") unless @anchor_role
-      unless nonce && nonce.size == 64 && nonce.matches?(/\A[0-9a-fA-F]{64}\z/)
+      unless nonce && nonce.size == ROTATION_NONCE_HEX_LENGTH && nonce.matches?(/\A[0-9a-fA-F]+\z/)
         raise Matter::ConfigurationError.new("A 32-byte hexadecimal rotation nonce is required")
       end
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
@@ -2386,7 +2511,8 @@ module MatterJointFabricAdministrator
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
               request.interrupt_after_remove_admin?, request.interrupt_after_anchor_rotation?,
-              request.interrupt_after_participant_rotation?, request.interrupt_before_remove_admin?)
+              request.interrupt_after_participant_rotation?, request.interrupt_before_remove_admin?,
+              request.interrupt_before_anchor_noc?)
             CommandResult.new("ok")
           when "inspect-fabric"
             fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Fabric ID is required")
@@ -2453,6 +2579,9 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok")
           when "reconcile-anchor-rotated"
             reconcile_removal_rotation(request.node_id, request.nonce, true)
+            CommandResult.new("ok", nonce: request.nonce)
+          when "reconcile-anchor-rotation-no-effect"
+            reconcile_anchor_rotation_no_effect(request.node_id, request.nonce)
             CommandResult.new("ok", nonce: request.nonce)
           when "reconcile-participant-rotated"
             reconcile_removal_rotation(request.node_id, request.nonce, false)

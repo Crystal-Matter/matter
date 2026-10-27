@@ -96,9 +96,21 @@ describe Matter::Controller::AdministratorRemoval::RotationInspection do
 
     old_noc = Matter::Crypto::MatterCertificate::Builder.node(node_key.public_key,
       0x1111_u64, 0x2222_u64, icac_key, 1_u64, Bytes[3], crypto,
-      case_authenticated_tag: 0xFFFF_0001_u32, issuer_icac_id: 2_u64)
+      case_authenticated_tags: [0xFFFF_0001_u32, 0xFFFE_0001_u32], issuer_icac_id: 2_u64)
     old_im = RotationProofIm.new(client, descriptor,
       Matter::Cluster::OperationalCredentials::Tlv::NOC.new(old_noc, icac, 1_u8), root, node_key)
+    proof.verify_no_effect!(old_im, session, peer, root, 0x1111_u64,
+      root_key.public_key, 0x2222_u64, 1_u16, nonce, old_noc, anchor_cat_version: 1_u16)
+    old_im.completion_calls.should eq(0)
+    replacement_old_cat_noc = Matter::Crypto::MatterCertificate::Builder.node(node_key.public_key,
+      0x1111_u64, 0x2222_u64, icac_key, 1_u64, Bytes[7], crypto,
+      case_authenticated_tags: [0xFFFF_0001_u32, 0xFFFE_0001_u32], issuer_icac_id: 2_u64)
+    old_im.noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(replacement_old_cat_noc, icac, 1_u8)
+    expect_raises(Matter::AuthenticationError, /durable NOC/) do
+      proof.verify_no_effect!(old_im, session, peer, root, 0x1111_u64,
+        root_key.public_key, 0x2222_u64, 1_u16, nonce, old_noc, anchor_cat_version: 1_u16)
+    end
+    old_im.noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(old_noc, icac, 1_u8)
     expect_raises(Matter::AuthenticationError, /journaled Administrator CAT/) do
       proof.verify_completed!(old_im, session, peer, root, 0x1111_u64, root_key.public_key,
         0x2222_u64, 2_u16, nonce)
@@ -110,6 +122,15 @@ describe Matter::Controller::AdministratorRemoval::RotationInspection do
       case_authenticated_tags: [0xFFFF_0002_u32, 0xFFFE_0001_u32], issuer_icac_id: 2_u64)
     im = RotationProofIm.new(client, descriptor,
       Matter::Cluster::OperationalCredentials::Tlv::NOC.new(new_noc, icac, 1_u8), root, node_key)
+    expect_raises(Matter::AuthenticationError, /journaled Administrator CAT/) do
+      proof.verify_no_effect!(im, session, peer, root, 0x1111_u64,
+        root_key.public_key, 0x2222_u64, 1_u16, nonce, old_noc)
+    end
+    expect_raises(Matter::AuthenticationError, /durable NOC/) do
+      proof.verify_no_effect!(im, session, peer, root, 0x1111_u64,
+        root_key.public_key, 0x2222_u64, 2_u16, nonce, old_noc)
+    end
+    im.challenges.clear
     proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
       0x2222_u64, 2_u16, nonce, anchor_cat_version: 1_u16)
     im.challenges.first.should eq(nonce)
