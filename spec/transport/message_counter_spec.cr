@@ -127,6 +127,14 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#check" do
+    it "retains the maximum when accepting an out-of-order packet" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.check(100_u32).accept?.should be_true
+      counter.check(99_u32).accept?.should be_true
+      counter.check(100_u32).duplicate?.should be_true
+      counter.max_received.should eq(100_u32)
+    end
+
     it "rejects secure-session rollover when rollover is disabled" do
       counter = Matter::Transport::MessageCounter.new(rollover: false)
       counter.check(UInt32::MAX).accept?.should be_true
@@ -173,6 +181,13 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#restore_received" do
+    it "accepts a large forward jump for a nonrolling secure peer" do
+      counter = Matter::Transport::MessageCounter.new(rollover: false)
+      counter.restore_received(1_u32)
+
+      counter.check(Matter::Transport::MessageCounter::SERIAL_HALF_RANGE + 2_u32).accept?.should be_true
+    end
+
     it "keeps a restored floor across UInt32 rollover" do
       counter = Matter::Transport::MessageCounter.new
       counter.restore_received(UInt32::MAX)

@@ -48,9 +48,9 @@ module Matter
         maximum = @max_received
         return CheckResult::Accept unless maximum
         if floor = @restored_floor
-          return CheckResult::Stale unless serial_newer?(message_id, floor)
+          return CheckResult::Stale unless newer?(message_id, floor)
         end
-        return CheckResult::Accept if serial_newer?(message_id, maximum) && (@rollover || message_id > maximum)
+        return CheckResult::Accept if newer?(message_id, maximum)
         return CheckResult::Duplicate if @received_window.includes?(message_id)
         backward = maximum &- message_id
         return CheckResult::Stale if backward >= SERIAL_HALF_RANGE || backward > WINDOW_SIZE
@@ -61,7 +61,7 @@ module Matter
         result = peek(message_id)
         return result unless result.accept?
         maximum = @max_received
-        if maximum.nil? || (serial_newer?(message_id, maximum) && (@rollover || message_id > maximum))
+        if maximum.nil? || newer?(message_id, maximum)
           @max_received = message_id
           @received_window.reject! { |id| (message_id &- id) > WINDOW_SIZE }
         end
@@ -93,7 +93,8 @@ module Matter
         @restored_floor = value
       end
 
-      private def serial_newer?(candidate : UInt32, reference : UInt32) : Bool
+      private def newer?(candidate : UInt32, reference : UInt32) : Bool
+        return candidate > reference unless @rollover
         distance = candidate &- reference
         distance > 0_u32 && distance < SERIAL_HALF_RANGE
       end
