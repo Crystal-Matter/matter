@@ -339,8 +339,11 @@ item below as covered only to the extent of its cited tests.
   whether each A NodeList and device fabric removal took effect before issuing
   only the remaining command. Once both removals are proven, it deletes the
   stale A device record from the controller store before marking the rollback
-  complete. The JFA example now publishes its IPK as
-  GroupKeySetID zero.
+  complete. For journals already marked Complete or RolledBack by an older
+  release, the consented `reconcile-device-migration` command authenticates
+  the corresponding remote postcondition and removes any stale controller
+  node record without replaying removal commands. The JFA example now
+  publishes its IPK as GroupKeySetID zero.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
   crashes in that window, recovery validates both fabric CASE sessions, B's

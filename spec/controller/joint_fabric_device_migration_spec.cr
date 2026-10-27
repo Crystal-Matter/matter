@@ -562,6 +562,52 @@ describe Migration do
     port.calls.count("remove-old").should eq(1)
   end
 
+  it "authenticates and finalizes a Complete journal persisted before controller cleanup existed" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::Complete)
+    store.save(journal)
+    port = MigrationPort.new
+    restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    restarted.run
+    port.calls.should be_empty
+    port.postcondition = false
+    expect_raises(Matter::CommissioningError, /postcondition not proven/) do
+      restarted.reconcile!(Migration::Stage::Complete)
+    end
+    port.calls.should eq(["reconcile-Complete"])
+    port.postcondition = true
+    restarted.reconcile!(Migration::Stage::Complete)
+    port.calls.should eq(["reconcile-Complete", "reconcile-Complete", "finalize-migration"])
+    restarted.journal.stage.should eq(Migration::Stage::Complete)
+  end
+
+  it "authenticates and finalizes a RolledBack journal persisted before controller cleanup existed" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::RolledBack)
+    store.save(journal)
+    port = MigrationPort.new
+    restarted = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port, -> { true },
+      ->(item : Migration::Journal) { store.save(item) })
+    restarted.run
+    port.calls.should be_empty
+    port.postcondition = false
+    expect_raises(Matter::CommissioningError, /postcondition not proven/) do
+      restarted.reconcile!(Migration::Stage::RolledBack)
+    end
+    port.calls.should eq(["reconcile-RolledBack"])
+    port.postcondition = true
+    restarted.reconcile!(Migration::Stage::RolledBack)
+    port.calls.should eq(["reconcile-RolledBack", "reconcile-RolledBack", "finalize-rollback"])
+    restarted.journal.stage.should eq(Migration::Stage::RolledBack)
+  end
+
   it "refreshes an uncertain pending Anchor registration without repeating AddPendingNode" do
     backend = Matter::Storage::Memory.new
     store = Migration::JournalStore.new(backend)

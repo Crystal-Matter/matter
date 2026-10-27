@@ -898,6 +898,19 @@ module Matter
         # inspect the device or Datastore over authenticated CASE and then
         # explicitly record the observed postcondition before resuming.
         def reconcile!(completed : Stage) : Nil
+          # Journals written before controller node cleanup can already be
+          # terminal while their local node record is stale. An explicit
+          # reconciliation proves the remote terminal state before cleanup;
+          # it does not replay either removal command or rewrite the journal.
+          if @journal.stage.in?(Stage::Complete, Stage::RolledBack)
+            unless completed == @journal.stage
+              raise Matter::ConfigurationError.new("Invalid migration reconciliation stage")
+            end
+            @port.verify_postcondition!(completed)
+            @port.finalize_migration! if completed.complete?
+            @port.finalize_rollback! if completed.rolled_back?
+            return
+          end
           expected = case @journal.stage
                      when Stage::CommissioningAnchor then Stage::AnchorCommissioned
                      when Stage::VerifyingAnchor     then Stage::AnchorVerified
