@@ -4,11 +4,7 @@ require "../../src/matter/cluster/thermostat"
 require "../../src/matter/cluster/identify"
 require "../../src/matter/cluster/groups"
 
-private class PollingThermostat < Matter::Cluster::Thermostat
-  protected def schedule_wire_ready? : Bool
-    true
-  end
-end
+private alias PollingThermostat = Matter::Cluster::Thermostat
 
 private class PollingThermostatDevice < Matter::Device
   @thermostat : PollingThermostat? = nil
@@ -48,17 +44,17 @@ private class PollingThermostatDevice < Matter::Device
 
   protected def device_clusters : Array(Matter::Cluster::Base)
     endpoint_number = endpoint(1_u16)
-    @thermostat = PollingThermostat.new(endpoint_number,
-      feature_map: PollingThermostat::Feature::Heating | PollingThermostat::Feature::MatterSchedules |
-                   PollingThermostat::Feature::Events,
-      local_time_provider: @clock)
     type = PollingThermostat::ScheduleType.new(PollingThermostat::SystemMode::Heat, 1_u8,
       PollingThermostat::ScheduleTypeFeatures::SupportsSetpoints)
     transition = PollingThermostat::ScheduleTransition.new(0x02_u8, 480_u16,
       nil, nil, nil, 1900_i16)
     schedule = PollingThermostat::Schedule.new(Bytes[1_u8], PollingThermostat::SystemMode::Heat,
       nil, nil, [transition], false)
-    thermostat.configure_schedules([type], [schedule], 2_u8, 2_u8)
+    @thermostat = PollingThermostat.new(endpoint_number,
+      feature_map: PollingThermostat::Feature::Heating | PollingThermostat::Feature::MatterSchedules |
+                   PollingThermostat::Feature::Events,
+      schedule_types: [type], schedules: [schedule], schedule_max_transitions: 2_u8,
+      schedule_max_per_day: 2_u8, local_time_provider: @clock)
     [thermostat, Matter::Cluster::Identify.new(endpoint_number),
      Matter::Cluster::Groups.new(endpoint_number)] of Matter::Cluster::Base
   end

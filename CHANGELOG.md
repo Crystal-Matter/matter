@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Thermostat Matter Schedules production support
+
+- Enable opt-in Matter 1.6 MSCH on production Thermostat instances when a host
+  supplies local civil time and fixed validated schedule types at construction. Atomic
+  Schedules writes, active selection, weekly transitions, TEVT events, and
+  committed state restoration now use the production class. The official
+  chip-tool fixture verifies rollback, commit, activation, timed updates, and
+  restart behavior without a conformance-only subclass gate.
+
 ### Thermostat Presets production support
 
 - Enable the opt-in Matter 1.6 PRES feature on production Thermostat instances

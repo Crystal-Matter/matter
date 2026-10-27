@@ -3,10 +3,6 @@ require "../spec_helper"
 private alias TickThermostat = Matter::Cluster::Thermostat
 
 private class TickWireReadyThermostat < TickThermostat
-  protected def schedule_wire_ready? : Bool
-    true
-  end
-
   protected def preset_wire_ready? : Bool
     true
   end
@@ -29,10 +25,11 @@ private def tick_cluster(transitions : Array(TickThermostat::ScheduleTransition)
                          type_features = TickThermostat::ScheduleTypeFeatures::SupportsSetpoints,
                          preset : Bytes? = nil,
                          clock : Proc(Time?) = -> : Time? { nil }) : TickWireReadyThermostat
-  cluster = build(TickWireReadyThermostat, feature_map: features, local_time_provider: clock)
   type = TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features)
-  cluster.configure_schedules([type], [tick_schedule(transitions, preset)], 4_u8, 3_u8)
-  cluster
+  build(TickWireReadyThermostat, feature_map: features,
+    schedule_types: [type], schedules: [tick_schedule(transitions, preset)],
+    schedule_max_transitions: 4_u8, schedule_max_per_day: 3_u8,
+    local_time_provider: clock)
 end
 
 describe "Thermostat MSCH timed schedule activation" do
@@ -98,15 +95,15 @@ describe "Thermostat MSCH timed schedule activation" do
     type_features = TickThermostat::ScheduleTypeFeatures::SupportsPresets |
                     TickThermostat::ScheduleTypeFeatures::SupportsSetpoints |
                     TickThermostat::ScheduleTypeFeatures::SupportsOff
+    preset_type = TickThermostat::PresetType.new(TickThermostat::PresetScenario::Wake, 1_u8)
+    preset = TickThermostat::Preset.new(preset_handle, TickThermostat::PresetScenario::Wake,
+      nil, nil, 2200_i16, false)
+    schedule_type = TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features)
     cluster = build(TickWireReadyThermostat, feature_map: features,
+      preset_types: [preset_type], presets: [preset],
+      schedule_types: [schedule_type], schedules: [tick_schedule([on, off])],
+      schedule_max_transitions: 4_u8, schedule_max_per_day: 3_u8,
       local_time_provider: -> : Time? { nil })
-    cluster.configure_presets([
-      TickThermostat::PresetType.new(TickThermostat::PresetScenario::Wake, 1_u8),
-    ], [TickThermostat::Preset.new(preset_handle, TickThermostat::PresetScenario::Wake,
-      nil, nil, 2200_i16, false)])
-    cluster.configure_schedules([
-      TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features),
-    ], [tick_schedule([on, off])], 4_u8, 3_u8)
     cluster.activate_schedule(TickThermostat::SetActiveScheduleRequest.new(Bytes[1_u8]))
 
     cluster.tick_schedule(Time.utc(2026, 10, 26, 8, 0)).should be_true
@@ -168,16 +165,17 @@ describe "Thermostat MSCH timed schedule activation" do
                TickThermostat::Feature::Presets
     type_features = TickThermostat::ScheduleTypeFeatures::SupportsPresets |
                     TickThermostat::ScheduleTypeFeatures::SupportsSetpoints
-    cluster = build(TickWireReadyThermostat, feature_map: features)
-    cluster.configure_presets([
-      TickThermostat::PresetType.new(TickThermostat::PresetScenario::Wake, 1_u8),
-    ], [TickThermostat::Preset.new(preset_handle, TickThermostat::PresetScenario::Wake,
-      nil, nil, 2200_i16, false)])
+    preset_type = TickThermostat::PresetType.new(TickThermostat::PresetScenario::Wake, 1_u8)
+    preset = TickThermostat::Preset.new(preset_handle, TickThermostat::PresetScenario::Wake,
+      nil, nil, 2200_i16, false)
     morning = tick_transition(0x02_u8, 8_u16 * 60, nil)
     evening = tick_transition(0x02_u8, 20_u16 * 60, 1900_i16)
-    cluster.configure_schedules([
-      TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features),
-    ], [tick_schedule([morning, evening], preset_handle)], 4_u8, 3_u8)
+    schedule_type = TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features)
+    cluster = build(TickWireReadyThermostat, feature_map: features,
+      preset_types: [preset_type], presets: [preset],
+      schedule_types: [schedule_type], schedules: [tick_schedule([morning, evening], preset_handle)],
+      schedule_max_transitions: 4_u8, schedule_max_per_day: 3_u8,
+      local_time_provider: -> : Time? { nil })
     cluster.activate_schedule(TickThermostat::SetActiveScheduleRequest.new(Bytes[1_u8]))
 
     cluster.tick_schedule(Time.utc(2026, 10, 26, 8, 0)).should be_true
@@ -211,18 +209,19 @@ describe "Thermostat MSCH timed schedule activation" do
     preset_handle = Bytes[7_u8]
     features = TickThermostat::Feature::Heating | TickThermostat::Feature::Cooling |
                TickThermostat::Feature::MatterSchedules | TickThermostat::Feature::Presets
-    cluster = build(TickWireReadyThermostat, feature_map: features,
-      occupied_cooling_setpoint: 2800_i16)
-    cluster.configure_presets([
-      TickThermostat::PresetType.new(TickThermostat::PresetScenario::Wake, 1_u8),
-    ], [TickThermostat::Preset.new(preset_handle, TickThermostat::PresetScenario::Wake,
-      nil, 2700_i16, 2200_i16, false)])
+    preset_type = TickThermostat::PresetType.new(TickThermostat::PresetScenario::Wake, 1_u8)
+    preset = TickThermostat::Preset.new(preset_handle, TickThermostat::PresetScenario::Wake,
+      nil, 2700_i16, 2200_i16, false)
     type_features = TickThermostat::ScheduleTypeFeatures::SupportsPresets |
                     TickThermostat::ScheduleTypeFeatures::SupportsSetpoints
     transition = tick_transition(0x02_u8, 8_u16 * 60, 1900_i16)
-    cluster.configure_schedules([
-      TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features),
-    ], [tick_schedule([transition], preset_handle)], 4_u8, 3_u8)
+    schedule_type = TickThermostat::ScheduleType.new(TickThermostat::SystemMode::Heat, 1_u8, type_features)
+    cluster = build(TickWireReadyThermostat, feature_map: features,
+      occupied_cooling_setpoint: 2800_i16,
+      preset_types: [preset_type], presets: [preset],
+      schedule_types: [schedule_type], schedules: [tick_schedule([transition], preset_handle)],
+      schedule_max_transitions: 4_u8, schedule_max_per_day: 3_u8,
+      local_time_provider: -> : Time? { nil })
     cluster.activate_schedule(TickThermostat::SetActiveScheduleRequest.new(Bytes[1_u8]))
 
     cluster.tick_schedule(Time.utc(2026, 10, 26, 8, 0)).should be_true
