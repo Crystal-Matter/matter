@@ -131,9 +131,9 @@ module Matter
         loop do
           begin
             return update { |state| state.reserve_unsecured_message_counters(count) }
-          rescue ConflictError
+          rescue ex : ConflictError
             attempts += 1
-            raise if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
+            raise ex if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
           end
         end
       end
