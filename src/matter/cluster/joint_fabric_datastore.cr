@@ -1,5 +1,6 @@
 require "./cluster"
 require "./access_control"
+require "./group_key_management"
 require "../datatype/node_id"
 
 module Matter
@@ -815,14 +816,15 @@ module Matter
       command 0x11, :remove_binding_from_endpoint_for_node, request: RemoveBindingFromEndpointForNodeRequest, access: :administer
       command 0x12, :add_acl_to_node, request: AddACLToNodeRequest, access: :administer
       command 0x13, :remove_acl_from_node, request: RemoveACLFromNodeRequest, access: :administer
-      MAX_KEY_SETS              =             254
-      MAX_GROUPS                =             254
-      MAX_NODES                 =            1024
-      MAX_ADMINS                =              32
-      MAX_NODE_ENTRIES          =            8192
-      MAX_FRIENDLY_NAME_BYTES   =              32
-      EPOCH_KEY_BYTES           =              16
-      RESERVED_GROUP_ID         =           0_u16
+      MAX_KEY_SETS              =  254
+      MAX_GROUPS                =  254
+      MAX_NODES                 = 1024
+      MAX_ADMINS                =   32
+      MAX_NODE_ENTRIES          = 8192
+      MAX_FRIENDLY_NAME_BYTES   =   32
+      EPOCH_KEY_BYTES           =   16
+      RESERVED_GROUP_ID         = DataType::GroupId::RESERVED.id
+      IPK_KEY_SET_ID            = GroupKeyManagement::IPK_KEY_SET_ID
       ADMINISTRATOR_CAT         =      0xFFFF_u16
       ANCHOR_CAT                =      0xFFFE_u16
       MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
@@ -883,7 +885,7 @@ module Matter
       # fabric that gave callers access to them.
       def clear_fabric_state : Nil
         self.anchor_root_ca = Bytes.empty
-        self.anchor_node_id = 0_u64
+        self.anchor_node_id = DataType::NodeId::UNSPECIFIED
         self.anchor_vendor_id = 0_u16
         self.friendly_name = ""
         self.group_key_set_list = [] of DatastoreGroupKeySetStruct
@@ -922,13 +924,13 @@ module Matter
         self.anchor_node_id = node_id
         self.anchor_vendor_id = vendor_id
         self.friendly_name = name
-        unless @group_key_set_list.any?(&.group_key_set_id.==(0_u16))
-          self.group_key_set_list = [DatastoreGroupKeySetStruct.new(0_u16,
+        unless @group_key_set_list.any?(&.group_key_set_id.==(IPK_KEY_SET_ID))
+          self.group_key_set_list = [DatastoreGroupKeySetStruct.new(IPK_KEY_SET_ID,
             DatastoreGroupKeySecurityPolicyEnum::TrustFirst, nil, nil, nil, nil, nil, nil)] + @group_key_set_list
         end
         if key = ipk
           entries = @group_key_set_list.dup
-          index = entries.index!(&.group_key_set_id.==(0_u16))
+          index = entries.index!(&.group_key_set_id.==(IPK_KEY_SET_ID))
           ipk_entry = entries[index]
           ipk_entry.epoch_key0 = key.dup
           ipk_entry.epoch_start_time0 = 0_u64
@@ -955,11 +957,11 @@ module Matter
         index = @group_key_set_list.index { |entry| entry.group_key_set_id == key_set.group_key_set_id }
         return InteractionModel::Status.not_found unless index
         changed = @group_key_set_list[index] != key_set
-        if changed && key_set.group_key_set_id == 0_u16 &&
+        if changed && key_set.group_key_set_id == IPK_KEY_SET_ID &&
            (key_set.epoch_key0.nil? || key_set.epoch_start_time0.nil? || key_set.epoch_start_time0 == 0_u64)
           return InteractionModel::Status.constraint_error
         end
-        return update_ipk_key_set(key_set, index) if changed && key_set.group_key_set_id == 0_u16
+        return update_ipk_key_set(key_set, index) if changed && key_set.group_key_set_id == IPK_KEY_SET_ID
         entries = @group_key_set_list.dup
         entries[index] = key_set
         self.group_key_set_list = entries
@@ -986,7 +988,7 @@ module Matter
         entries[index] = key_set
         @group_key_set_list = entries
         @node_key_set_list = @node_key_set_list.map do |entry|
-          if entry.group_key_set_id == 0_u16 && entry.status_entry.state != DatastoreStateEnum::DeletePending
+          if entry.group_key_set_id == IPK_KEY_SET_ID && entry.status_entry.state != DatastoreStateEnum::DeletePending
             entry.status_entry = status_entry(DatastoreStateEnum::Pending)
           end
           entry
@@ -1016,7 +1018,7 @@ module Matter
         in_use = @node_key_set_list.any? do |entry|
           entry.group_key_set_id == id && entry.status_entry.state != DatastoreStateEnum::DeletePending
         end
-        return InteractionModel::Status.constraint_error if id == 0_u16 || id == UInt16::MAX || in_use
+        return InteractionModel::Status.constraint_error if id == IPK_KEY_SET_ID || id == UInt16::MAX || in_use
         return InteractionModel::Status.not_found unless @group_key_set_list.any?(&.group_key_set_id.==(id))
         self.group_key_set_list = @group_key_set_list.reject { |entry| entry.group_key_set_id == id }
         commit!
@@ -1277,7 +1279,7 @@ module Matter
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless node_exists?(node_id)
         ids = endpoint_ids.uniq
-        return InteractionModel::Status.constraint_error if ids.includes?(0_u16)
+        return InteractionModel::Status.constraint_error if ids.includes?(DataType::EndpointNumber::ROOT.number)
         entries = @node_endpoint_list.reject { |entry| entry.node_id == node_id && !ids.includes?(entry.endpoint_id) }
         ids.each do |endpoint_id|
           unless entries.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint_id }
@@ -1298,7 +1300,7 @@ module Matter
       def reconcile_node_groups(node_id : UInt64, endpoint_id : UInt16, group_ids : Array(UInt16)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
-        return InteractionModel::Status.constraint_error if group_ids.includes?(0_u16)
+        return InteractionModel::Status.constraint_error if group_ids.includes?(RESERVED_GROUP_ID)
         ids = group_ids.uniq
         entries = @endpoint_group_id_list.reject do |entry|
           entry.node_id == node_id && entry.endpoint_id == endpoint_id &&
@@ -1600,19 +1602,19 @@ module Matter
         group = binding.group
         return false if node.nil? == group.nil?
         return false if node && (binding.endpoint.nil? || !DataType::NodeId.valid_joint_fabric?(node))
-        return false if group && (group == 0_u16 || binding.endpoint)
+        return false if group && (group == RESERVED_GROUP_ID || binding.endpoint)
         true
       end
 
       private def valid_key_set?(entry : DatastoreGroupKeySetStruct, allow_ipk : Bool = false) : Bool
-        return false if (entry.group_key_set_id == 0_u16 && !allow_ipk) || entry.group_key_set_id == UInt16::MAX
+        return false if (entry.group_key_set_id == IPK_KEY_SET_ID && !allow_ipk) || entry.group_key_set_id == UInt16::MAX
         return false unless entry.group_key_security_policy == DatastoreGroupKeySecurityPolicyEnum::TrustFirst
         keys = {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}
         times = {entry.epoch_start_time0, entry.epoch_start_time1, entry.epoch_start_time2}
         return false unless keys.zip(times).all? { |key, time| key.nil? == time.nil? && (key.nil? || key.size == EPOCH_KEY_BYTES) }
         # Every non-IPK Datastore key set must be installable with Group Key
         # Management KeySetWrite on its target nodes.
-        if entry.group_key_set_id != 0_u16
+        if entry.group_key_set_id != IPK_KEY_SET_ID
           return false unless entry.epoch_key0 && (first_time = entry.epoch_start_time0) && first_time > 0_u64
         end
         return false if entry.epoch_key2 && entry.epoch_key1.nil?
@@ -1793,7 +1795,7 @@ module Matter
 
       private def mark_unused_key_sets_for_node(node_id : UInt64) : Nil
         entries = @node_key_set_list.map do |entry|
-          if entry.node_id == node_id && entry.group_key_set_id != 0_u16
+          if entry.node_id == node_id && entry.group_key_set_id != IPK_KEY_SET_ID
             needed = @endpoint_group_id_list.any? do |membership|
               membership.node_id == node_id && membership.status_entry.state != DatastoreStateEnum::DeletePending &&
                 @group_list.any? { |group| group.group_id == membership.group_id.to_u64 && group.group_key_set_id == entry.group_key_set_id }

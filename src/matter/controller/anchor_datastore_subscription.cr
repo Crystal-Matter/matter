@@ -22,7 +22,7 @@ module Matter
       getter subscription : AttributeSubscription
       getter resubscription_count : UInt32 = 0_u32
       getter last_status : Store::DatastoreStatusEntryStruct
-      getter resolved_endpoint_id : UInt16 = 0_u16
+      getter resolved_endpoint_id : UInt16 = DataType::EndpointNumber::ROOT.number
 
       def initialize(@scanner : Scanner, @fabric : FabricInfo,
                      @anchor_node_id : UInt64, @endpoint_id : UInt16?,
@@ -30,7 +30,7 @@ module Matter
                      @address_hint : Socket::IPAddress? = nil,
                      @discovery_timeout : Time::Span = 10.seconds,
                      @timeout : Time::Span = 10.seconds)
-        raise Matter::ConfigurationError.new("New Anchor Node ID must be nonzero") if @anchor_node_id == 0_u64
+        raise Matter::ConfigurationError.new("New Anchor Node ID must be nonzero") if @anchor_node_id == DataType::NodeId::UNSPECIFIED
         @peer = discover_peer(@address_hint, @discovery_timeout)
         @client = uninitialized Client
         @session = uninitialized Session::SecureContext

@@ -1,6 +1,7 @@
 require "json"
 require "base64"
 require "../error"
+require "../fabric"
 
 module Matter
   module Commissioning
@@ -11,7 +12,7 @@ module Matter
 
       def initialize(@path : String, @fabric_id : UInt64, @root_public_key : Bytes,
                      @timeout : Time::Span = 5.seconds)
-        raise Matter::ConfigurationError.new("Invalid remote CSR fabric") if @fabric_id == 0
+        raise Matter::ConfigurationError.new("Invalid remote CSR fabric") if @fabric_id == Fabric::RESERVED_FABRIC_ID
         unless @root_public_key.size == 65 && @root_public_key[0] == 4
           raise Matter::ConfigurationError.new("Invalid remote CSR root public key")
         end

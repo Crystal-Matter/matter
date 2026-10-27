@@ -164,7 +164,7 @@ module Matter
       # ========================================================================
 
       def initialize(
-        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
         minimum_timeout : UInt16 = Commissioning::WindowService::MINIMUM_COMMISSIONING_TIMEOUT,
         maximum_timeout : UInt16 = Commissioning::WindowService::STANDARD_COMMISSIONING_TIMEOUT,
         @feature_map : Feature = Feature::Basic,

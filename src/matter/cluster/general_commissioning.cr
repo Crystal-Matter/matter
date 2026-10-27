@@ -295,7 +295,7 @@ module Matter
       # ========================================================================
 
       def initialize(
-        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
         @feature_map : Feature = Feature::None,
         @tc_min_required_version : UInt16? = nil,
         @tc_required_acknowledgements : UInt16 = 0_u16,

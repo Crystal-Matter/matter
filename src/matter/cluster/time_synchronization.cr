@@ -308,9 +308,9 @@ module Matter
       property on_ntp_query : Proc(String, UInt64?)?
       property on_trusted_time_query : Proc(UInt8, UInt64, UInt16, TrustedTimeSample?)?
 
-      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
                      @feature_map : Feature = Feature::None)
-        raise ConfigurationError.new("Time Synchronization belongs on endpoint 0") unless endpoint_id.number == 0_u16
+        raise ConfigurationError.new("Time Synchronization belongs on endpoint 0") unless endpoint_id == DataType::EndpointNumber::ROOT
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
         @base_utc_time = nil
         @base_instant = nil

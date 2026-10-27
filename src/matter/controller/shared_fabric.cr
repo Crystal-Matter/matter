@@ -24,7 +24,7 @@ module Matter
         controller_node_id : UInt64,
         crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
       ) : FabricInfo
-        if controller_node_id == 0_u64 || controller_node_id == authority.controller_node_id
+        if controller_node_id == DataType::NodeId::UNSPECIFIED || controller_node_id == authority.controller_node_id
           raise Matter::ConfigurationError.new("Delegated controller requires a distinct non-zero Node ID")
         end
         if authority.intermediate_cert
@@ -119,7 +119,7 @@ module Matter
                                  device_node_id : UInt64, device_endpoint : UInt16,
                                  group_id : UInt16, group_name : String,
                                  controller : FabricInfo) : Nil
-        if group_id == 0_u16 || device_node_id == 0_u64 || group_name.empty?
+        if group_id == Datastore::RESERVED_GROUP_ID || device_node_id == DataType::NodeId::UNSPECIFIED || group_name.empty?
           raise Matter::ConfigurationError.new("Invalid Joint Fabric group or target node")
         end
         unless session.case_session?
@@ -214,7 +214,7 @@ module Matter
         root_id = root_certificate_id(authority)
 
         ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
-          unless fabric_id == authority.fabric_id && node_id != 0_u64
+          unless fabric_id == authority.fabric_id && node_id != DataType::NodeId::UNSPECIFIED
             raise Matter::CertificateError.new("Certificate request does not match the shared fabric")
           end
 
@@ -235,7 +235,7 @@ module Matter
       # its own operational identity and peer map. To commission more devices
       # with a delegated identity, provide a separate certificate issuer.
       def self.install(store : StateStore, fabric : FabricInfo) : Nil
-        unless fabric.ipk_value.size == Fabric::IPK_SIZE && fabric.controller_node_id != 0_u64 &&
+        unless fabric.ipk_value.size == Fabric::IPK_SIZE && fabric.controller_node_id != DataType::NodeId::UNSPECIFIED &&
                Crypto::MatterCertificate.public_key_from_tlv(fabric.root_cert) == fabric.root_public_key
           raise Matter::ConfigurationError.new("Invalid shared fabric root or controller identity")
         end
@@ -291,7 +291,7 @@ module Matter
         end
         entries = read_datastore_list(Datastore::DatastoreGroupKeySetStruct,
           im, session, peer, endpoint, Datastore::ATTR_GROUP_KEY_SET_LIST)
-        ipk = entries.find(&.group_key_set_id.==(0_u16)) ||
+        ipk = entries.find(&.group_key_set_id.==(Datastore::IPK_KEY_SET_ID)) ||
               raise Matter::ProtocolError.new("Anchor Datastore has no IPK key set")
         unless ipk.group_key_security_policy == Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst &&
                ipk.epoch_key0 && ipk.epoch_start_time0
@@ -334,7 +334,7 @@ module Matter
         peer : Socket::IPAddress,
         controller_node_id : UInt64,
       ) : Nil
-        if controller_node_id == 0_u64
+        if controller_node_id == DataType::NodeId::UNSPECIFIED
           raise Matter::ConfigurationError.new("Administrator Node ID must be non-zero")
         end
 

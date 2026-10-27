@@ -137,7 +137,7 @@ module Matter
                        @remaining_nodes : Array(UInt64), @port : Port,
                        @anchor_consent : Consent, @outgoing_consent : Consent,
                        @save : SaveJournal, @journal : Journal)
-          unless @journal.outgoing_node_id != 0_u64 && @anchor_node_id != 0_u64 &&
+          unless @journal.outgoing_node_id != DataType::NodeId::UNSPECIFIED && @anchor_node_id != DataType::NodeId::UNSPECIFIED &&
                  @journal.outgoing_node_id != @anchor_node_id
             raise Matter::ConfigurationError.new("Invalid outgoing Administrator identity")
           end
@@ -257,7 +257,7 @@ module Matter
           outgoing_admin_entry = journal.outgoing_admin_entry
           bound = journal.stage.removing_datastore? &&
                   DataType::NodeId.valid_joint_fabric?(journal.outgoing_node_id) &&
-                  fabric_id && fabric_id != 0_u64 &&
+                  fabric_id && fabric_id != Fabric::RESERVED_FABRIC_ID &&
                   root_public_key && !root_public_key.empty? &&
                   anchor_node_id && DataType::NodeId.valid_joint_fabric?(anchor_node_id) &&
                   outgoing_admin_entry && !outgoing_admin_entry.empty?
@@ -298,7 +298,7 @@ module Matter
         # restored Anchor Datastore proves that RemoveAdmin had no effect.
         def self.reconcile_datastore_no_effect!(journal : Journal, datastore : Datastore,
                                                 expected_fabric_index : UInt8, save : SaveJournal) : Journal
-          unless journal.stage.removing_datastore? && journal.outgoing_node_id != 0_u64 &&
+          unless journal.stage.removing_datastore? && journal.outgoing_node_id != DataType::NodeId::UNSPECIFIED &&
                  journal.fabric_id && journal.root_public_key && journal.anchor_node_id
             raise Matter::ConfigurationError.new("Administrator removal is not awaiting bound Datastore reconciliation")
           end

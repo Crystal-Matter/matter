@@ -21,6 +21,7 @@ module Matter
       MIN_CLIENT_CERTIFICATES     =      2_u8
       DEFAULT_CLIENT_CERTIFICATES =      5_u8
       MAX_CERTIFICATES            =    254_u8
+      MIN_CERTIFICATE_ID          =     0_u16
       MAX_CERTIFICATE_ID          = 65534_u16
       MAX_CERTIFICATE_BYTES       =      3000
       MAX_INTERMEDIATES           =        10
@@ -94,7 +95,7 @@ module Matter
       getter max_root_certificates : UInt8
       getter max_client_certificates : UInt8
 
-      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
                      @max_root_certificates : UInt8 = MIN_ROOT_CERTIFICATES,
                      @max_client_certificates : UInt8 = DEFAULT_CLIENT_CERTIFICATES)
         unless @max_root_certificates.in?(MIN_ROOT_CERTIFICATES..MAX_CERTIFICATES) &&
@@ -323,14 +324,14 @@ module Matter
       end
 
       private def next_id(counter : Hash(UInt8, UInt16), fabric : UInt8, & : UInt16 -> Bool) : UInt16?
-        start = counter[fabric]? || 0_u16
+        start = counter[fabric]? || MIN_CERTIFICATE_ID
         candidate = start
         loop do
           if yield candidate
-            counter[fabric] = candidate == MAX_CERTIFICATE_ID ? 0_u16 : candidate + 1_u16
+            counter[fabric] = candidate == MAX_CERTIFICATE_ID ? MIN_CERTIFICATE_ID : candidate + 1_u16
             return candidate
           end
-          candidate = candidate == MAX_CERTIFICATE_ID ? 0_u16 : candidate + 1_u16
+          candidate = candidate == MAX_CERTIFICATE_ID ? MIN_CERTIFICATE_ID : candidate + 1_u16
           return if candidate == start
         end
       end

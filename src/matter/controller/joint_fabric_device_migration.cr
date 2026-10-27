@@ -134,7 +134,7 @@ module Matter
                        @client : Client = Client.new,
                        @monotonic_now : Proc(Time::Instant) = -> { Time.instant },
                        @recovery_sleep : Proc(Time::Span, Nil) = ->(duration : Time::Span) { sleep duration })
-          if @old_node_id == 0_u64 || @anchor_node_id == 0_u64 ||
+          if @old_node_id == DataType::NodeId::UNSPECIFIED || @anchor_node_id == DataType::NodeId::UNSPECIFIED ||
              (@old_fabric.fabric_id == @anchor_fabric.fabric_id &&
              @old_fabric.root_public_key == @anchor_fabric.root_public_key)
             raise Matter::ConfigurationError.new("Migration requires distinct B and Anchor fabric identities")
@@ -590,7 +590,7 @@ module Matter
 
       def self.validate_anchor_ipk!(sets : Array(Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct),
                                     expected_ipk : Bytes) : Nil
-        ipks = sets.select(&.group_key_set_id.==(0_u16))
+        ipks = sets.select(&.group_key_set_id.==(Cluster::JointFabricDatastore::IPK_KEY_SET_ID))
         unless expected_ipk.size == Fabric::IPK_SIZE && ipks.size == 1 &&
                ipks.first.epoch_key0 == expected_ipk
           raise Matter::AuthenticationError.new("Anchor Datastore IPK is absent or differs from selected fabric")
@@ -773,8 +773,8 @@ module Matter
 
         def initialize(@journal : Journal, @port : Port, @consent : Consent,
                        @save : SaveJournal)
-          if @journal.old_fabric_id == 0_u64 || @journal.anchor_fabric_id == 0_u64 ||
-             @journal.old_node_id == 0_u64 || @journal.anchor_node_id == 0_u64 ||
+          if @journal.old_fabric_id == Fabric::RESERVED_FABRIC_ID || @journal.anchor_fabric_id == Fabric::RESERVED_FABRIC_ID ||
+             @journal.old_node_id == DataType::NodeId::UNSPECIFIED || @journal.anchor_node_id == DataType::NodeId::UNSPECIFIED ||
              @journal.old_root_public_key.empty? || @journal.anchor_root_public_key.empty? ||
              (@journal.old_fabric_id == @journal.anchor_fabric_id &&
              @journal.old_root_public_key == @journal.anchor_root_public_key)

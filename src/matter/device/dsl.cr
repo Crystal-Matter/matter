@@ -392,7 +392,7 @@ module Matter
             compositions = {} of UInt16 => Tuple(UInt16, Array(::Matter::Cluster::Descriptor::SemanticTag))
             {% for decl in statics %}
               compositions[({{ decl[:number] }}).to_u16] = {
-                {% if decl[:parent_endpoint] %}({{ decl[:parent_endpoint] }}).to_u16{% else %}0_u16{% end %},
+                {% if decl[:parent_endpoint] %}({{ decl[:parent_endpoint] }}).to_u16{% else %}::Matter::Node::ROOT_ENDPOINT_ID{% end %},
                 {% if decl[:tag_list] %}{{ decl[:tag_list] }}{% else %}[] of ::Matter::Cluster::Descriptor::SemanticTag{% end %},
               }
             {% end %}

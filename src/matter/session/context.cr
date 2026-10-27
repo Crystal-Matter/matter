@@ -273,12 +273,14 @@ module Matter
 
     # Unsecured session context (used during commissioning)
     class UnsecuredContext
+      UNSPECIFIED_INITIATOR_SESSION_ID = 0_u16
+
       property session_id : UInt16
       property session_type : SessionType
       property initiator_session_id : UInt16
       property creation_time : Time
 
-      def initialize(@session_id : UInt16, @initiator_session_id : UInt16 = 0_u16)
+      def initialize(@session_id : UInt16, @initiator_session_id : UInt16 = UNSPECIFIED_INITIATOR_SESSION_ID)
         @session_type = SessionType::Unsecured
         @creation_time = Time.utc
       end
