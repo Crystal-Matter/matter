@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Controller read response validation
+
+- Bind attribute and event reports to their requested paths in multi-path
+  reads, and reject unresolved attribute path compression at chunk boundaries.
+
 ### Named protocol identifiers
 
 - Use named root endpoint, reserved group, IPK key-set, and unsecured session
