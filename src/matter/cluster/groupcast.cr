@@ -20,6 +20,8 @@ module Matter
       DEFAULT_MAX_MCAST_ADDR_COUNT   =      1_u16
       MIN_PER_GROUP_MCAST_ADDR_COUNT =      4_u16
       MAX_GROUP_ID                   = 0xFFF7_u16
+      MIN_GROUP_ID                   =      1_u16
+      ALL_GROUPS_ID                  = GroupKeyManagement::RESERVED_GROUP_ID
       MAX_ENDPOINT                   = 0xFFFE_u16
       MAX_MEMBERSHIP_ENDPOINTS       =        255
       MAX_LEAVE_ENDPOINTS            =         20
@@ -241,7 +243,7 @@ module Matter
         payload: GroupcastTestingEvent
 
       @membership = [] of MembershipStruct
-      @test_fabric = 0_u8
+      @test_fabric = DataType::NO_FABRIC
       @test_operation = GroupcastTestingEnum::DisableTesting
       @test_deadline : Time::Instant? = nil
       @test_generation = 0_u32
@@ -254,7 +256,7 @@ module Matter
                      @feature_map : Feature = Feature::Listener,
                      @max_membership_count : UInt16 = DEFAULT_MAX_MEMBERSHIP_COUNT,
                      @max_mcast_addr_count : UInt16 = DEFAULT_MAX_MCAST_ADDR_COUNT)
-        valid_configuration = endpoint_id.number == 0_u16 &&
+        valid_configuration = endpoint_id == DataType::EndpointNumber::ROOT &&
                               (@feature_map.listener? || @feature_map.sender?) &&
                               @group_keys.feature_map.groupcast? &&
                               (!@feature_map.listener? || @access_control.feature_map.auxiliary?) &&
@@ -279,7 +281,7 @@ module Matter
       end
 
       def fabric_under_test : UInt8
-        test_active? ? @test_fabric : 0_u8
+        test_active? ? @test_fabric : DataType::NO_FABRIC
       end
 
       def join_group(request : JoinGroupRequest) : InteractionModel::Status
@@ -335,7 +337,7 @@ module Matter
         requested = request.endpoints
         return InteractionModel::Status.constraint_error if requested && !@feature_map.listener?
         return InteractionModel::Status.constraint_error if requested && (requested.empty? || requested.size > MAX_LEAVE_ENDPOINTS)
-        if request.group_id == 0_u16
+        if request.group_id == ALL_GROUPS_ID
           return InteractionModel::Status.constraint_error if requested
           affected = membership(fabric)
           return InteractionModel::Status.not_found if affected.empty?
@@ -421,7 +423,7 @@ module Matter
         @test_generation &+= 1_u32
         @test_operation = request.test_operation
         if request.test_operation.disable_testing?
-          @test_fabric = 0_u8
+          @test_fabric = DataType::NO_FABRIC
           @test_deadline = nil
         else
           duration = request.duration_seconds || DEFAULT_TEST_DURATION
@@ -452,7 +454,7 @@ module Matter
       def remove_fabric(fabric : UInt8) : Nil
         if @test_fabric == fabric
           @test_generation &+= 1_u32
-          @test_fabric = 0_u8
+          @test_fabric = DataType::NO_FABRIC
           @test_operation = GroupcastTestingEnum::DisableTesting
           @test_deadline = nil
           increment_version_and_notify(ATTR_FABRIC_UNDER_TEST)
@@ -472,20 +474,20 @@ module Matter
       private def administering?(fabric : UInt8) : Bool
         (request_peer_subject_ids || [] of UInt64).any? do |subject|
           @access_control.check_access(subject, fabric, AccessControl::AccessControlEntryPrivilege::Administer,
-            cluster: CLUSTER_ID, endpoint: 0_u16)
+            cluster: CLUSTER_ID, endpoint: DataType::EndpointNumber::ROOT.number)
         end
       end
 
       private def valid_group?(group_id : UInt16) : Bool
-        group_id >= 1_u16 && group_id <= MAX_GROUP_ID
+        group_id >= MIN_GROUP_ID && group_id <= MAX_GROUP_ID
       end
 
       private def valid_key_set?(id : UInt16) : Bool
-        id >= 1_u16 && id != UInt16::MAX
+        id > GroupKeyManagement::IPK_KEY_SET_ID && id != UInt16::MAX
       end
 
       private def valid_endpoint?(endpoint : UInt16) : Bool
-        endpoint > 0_u16 && endpoint <= MAX_ENDPOINT &&
+        endpoint > DataType::EndpointNumber::ROOT.number && endpoint <= MAX_ENDPOINT &&
           (@endpoint_exists.try(&.call(endpoint)) || @endpoint_exists.nil?)
       end
 
@@ -544,7 +546,7 @@ module Matter
         if Time.instant < deadline
           true
         else
-          @test_fabric = 0_u8
+          @test_fabric = DataType::NO_FABRIC
           @test_operation = GroupcastTestingEnum::DisableTesting
           @test_deadline = nil
           increment_version_and_notify(ATTR_FABRIC_UNDER_TEST)

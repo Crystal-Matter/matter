@@ -186,7 +186,7 @@ module Matter
         if packet.header.session_type == Codec::MessageCodec::SessionType::Group
           raise Matter::ProtocolError.new("Group packets cannot be sent over BTP")
         end
-        message = if packet.header.session_id == 0
+        message = if packet.header.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
                     Codec::MessageCodec::Base.decode_payload(packet)
                   else
                     dummy_header = Codec::MessageCodec::PayloadHeader.new(
@@ -196,12 +196,12 @@ module Matter
                       packet.payload, packet.header_bytes)
                   end
 
-        if packet.header.session_id == 0
+        if packet.header.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
           header = message.payload_header
           @exchange_manager.get_or_create_exchange(
             exchange_id: header.exchange_id,
             protocol_id: header.protocol_id,
-            session_id: 0_u16,
+            session_id: Codec::MessageCodec::UNSECURED_SESSION_ID,
             peer_address: PEER,
             peer_node_id: packet.header.source_node_id,
             initiator: !header.initiator_message?)
@@ -224,7 +224,7 @@ module Matter
           requires_acknowledge: false,
           acknowledged_message_id: message.packet_header.message_id)
         packet_header = Codec::MessageCodec::PacketHeader.new(
-          session_id: 0_u16,
+          session_id: Codec::MessageCodec::UNSECURED_SESSION_ID,
           session_type: Codec::MessageCodec::SessionType::Unicast,
           message_id: 0_u32)
         send_message(Codec::MessageCodec::Message.new(packet_header, header, Bytes.empty), PEER)

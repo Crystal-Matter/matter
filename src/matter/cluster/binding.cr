@@ -96,7 +96,7 @@ module Matter
       private def valid_target?(entry : Target) : Bool
         unicast = !entry.node.nil? && !entry.endpoint.nil? && entry.group.nil?
         group = entry.group
-        multicast = entry.node.nil? && entry.endpoint.nil? && !group.nil? && group > 0_u16
+        multicast = entry.node.nil? && entry.endpoint.nil? && !group.nil? && group > DataType::GroupId::RESERVED.id
         unicast || multicast
       end
 

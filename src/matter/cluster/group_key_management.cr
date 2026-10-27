@@ -33,7 +33,7 @@ module Matter
       IPK_KEY_SET_ID = 0_u16
 
       # Group 0 is reserved (Matter Core §11.2.6.4)
-      RESERVED_GROUP_ID = 0_u16
+      RESERVED_GROUP_ID = DataType::GroupId::RESERVED.id
 
       # Security policy for group key sets
       # Matter Core Spec §11.2.6.3.1
@@ -663,7 +663,7 @@ module Matter
         if list = value.as_list?
           return InteractionModel::Status.resource_exhausted if list.size > max_groups_per_fabric
           entries = list.map { |item| GroupKeyMapWriteStruct.from_tlv(item) }
-          return InteractionModel::Status.constraint_error if entries.any? { |entry| entry.group_id == 0 || entry.group_key_set_id == 0 }
+          return InteractionModel::Status.constraint_error if entries.any? { |entry| entry.group_id == RESERVED_GROUP_ID || entry.group_key_set_id == IPK_KEY_SET_ID }
           return InteractionModel::Status.constraint_error if entries.map(&.group_id).to_set.size != entries.size
           return InteractionModel::Status.not_found if entries.any? { |entry| !get_key_set(entry.group_key_set_id, fabric_index) }
           self.group_key_map = entries.map { |entry| GroupKeyMapStruct.new(entry.group_id, entry.group_key_set_id, fabric_index) }

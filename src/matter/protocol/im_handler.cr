@@ -603,7 +603,7 @@ module Matter
           Log.debug { "Writing attribute: #{path}" }
 
           # Get endpoint and cluster IDs
-          endpoint_id = path.endpoint || 0_u16 # Default to endpoint 0 if not specified
+          endpoint_id = path.endpoint || Node::ROOT_ENDPOINT_ID
           cluster_id = path.cluster
 
           unless cluster_id
@@ -1036,7 +1036,7 @@ module Matter
           end
 
           # Find cluster
-          endpoint_id = path.endpoint || 0_u16 # Default to endpoint 0 if not specified
+          endpoint_id = path.endpoint || Node::ROOT_ENDPOINT_ID
           cluster = clusters[{endpoint_id, path.cluster}]?
 
           unless cluster

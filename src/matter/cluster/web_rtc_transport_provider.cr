@@ -10,6 +10,7 @@ module Matter
       cluster 0x0553, revision: 2
 
       MAX_SESSION_ID            = 65_534_u16
+      MIN_SESSION_ID            =      0_u16
       MAX_STREAMS               =         16
       MAX_ICE_SERVERS           =         10
       MAX_ICE_URL_LENGTH        =       2000
@@ -311,7 +312,7 @@ module Matter
 
       @sessions = [] of Session
       @offer_deadlines = {} of UInt16 => Time::Instant
-      @next_session_id = 0_u16
+      @next_session_id = MIN_SESSION_ID
       private record PendingSignaling, session_identity : UInt64, exchange_id : UInt16,
         fabric_index : UInt8, peer_node_id : UInt64, session_id : UInt16,
         sequence : UInt64, task : Proc(Nil)
@@ -648,7 +649,7 @@ module Matter
         return if @sessions.size >= MAX_ACTIVE_SESSIONS
         (MAX_SESSION_ID.to_i + 1).times do
           id = @next_session_id
-          @next_session_id = id == MAX_SESSION_ID ? 0_u16 : id + 1_u16
+          @next_session_id = id == MAX_SESSION_ID ? MIN_SESSION_ID : id + 1_u16
           return id unless @sessions.any? { |session| session.id == id }
         end
         nil

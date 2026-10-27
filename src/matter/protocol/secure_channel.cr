@@ -216,7 +216,7 @@ module Matter
       private def allocate_responder_session_id : UInt16
         SESSION_ID_ALLOCATION_ATTEMPTS.times do
           id = @session_id_candidate.call
-          next if id == 0_u16 || @registry.session(id)
+          next if id == Codec::MessageCodec::UNSECURED_SESSION_ID || @registry.session(id)
           next if @pase_handshakes.values.any?(&.responder_session_id.==(id))
           next if @case_handshakes.values.any?(&.responder_session_id.==(id))
           next if @case_resume_handshakes.values.any?(&.responder_session_id.==(id))
@@ -762,7 +762,7 @@ module Matter
         protocol = status_report.protocol_status
 
         if general == STATUS_REPORT_SUCCESS && protocol == STATUS_REPORT_SUCCESS
-          complete_case_resumption(handshake_key(msg, peer)) if msg.packet_header.session_id == 0
+          complete_case_resumption(handshake_key(msg, peer)) if msg.packet_header.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
           Log.debug { "StatusReport: SUCCESS (peer=#{peer})" }
           return
         end

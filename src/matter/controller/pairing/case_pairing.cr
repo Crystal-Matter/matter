@@ -86,7 +86,7 @@ module Matter
                    end
           peer = resolver.resolve(state, fabric, peer_node_id, timeout)
           if intervals = resolver.last_mrp_parameters
-            client.transport.configure_mrp_peer(peer, 0_u16,
+            client.transport.configure_mrp_peer(peer, Codec::MessageCodec::UNSECURED_SESSION_ID,
               intervals[0], intervals[1], intervals[2])
           end
           begin
@@ -140,7 +140,7 @@ module Matter
 
           controller_fabric = Fabric.new(
             fabric_id: fabric.fabric_id,
-            fabric_index: 1_u8,
+            fabric_index: Fabric::MIN_FABRIC_INDEX,
             node_id: fabric.controller_node_id,
             root_public_key: fabric.root_public_key,
             operational_cert: fabric.controller_noc,
@@ -190,7 +190,7 @@ module Matter
           end
           if sigma2.message.payload_header.message_type == MSG_STATUS_REPORT
             report = Session::Pase::Definitions::StatusReport.from_bytes(sigma2.message.payload.to_slice)
-            if report.general_status == 1_u16 && report.protocol_status == 1_u16
+            if report.general_status == Session::Pase::Definitions::StatusReport::GENERAL_STATUS_FAILURE && report.protocol_status == Session::Pase::Definitions::StatusReport::CASE_NO_SHARED_ROOT
               raise NoSharedRoot.new("CASE: status report before Sigma2 (general_status=1 protocol_status=1)")
             end
             raise Matter::ProtocolError.new(
@@ -270,7 +270,7 @@ module Matter
           end
 
           report = Session::Pase::Definitions::StatusReport.from_bytes(status.message.payload.to_slice)
-          unless report.general_status == 0_u16 && report.protocol_status == 0_u16
+          unless report.general_status == Session::Pase::Definitions::StatusReport::GENERAL_STATUS_SUCCESS && report.protocol_status == Session::Pase::Definitions::StatusReport::PROTOCOL_STATUS_SUCCESS
             raise Matter::ProtocolError.new("CASE: status report failure (general_status=#{report.general_status} protocol_status=#{report.protocol_status})")
           end
 

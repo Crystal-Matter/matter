@@ -121,7 +121,7 @@ module Matter
         def copy!(source : Datastore, candidate : Datastore, candidate_node_id : UInt64,
                   candidate_old_node_id : UInt64? = nil,
                   candidate_administrator : Datastore::DatastoreAdministratorInformationEntryStruct? = nil) : Nil
-          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if candidate_node_id == 0_u64
+          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if candidate_node_id == DataType::NodeId::UNSPECIFIED
           unless source.status.state.in?(Datastore::DatastoreStateEnum::Committed,
                    Datastore::DatastoreStateEnum::DeletePending)
             raise Matter::CommissioningError.new("Source Anchor Datastore cannot be copied while pending")
@@ -322,7 +322,7 @@ module Matter
                        @existing_fabric_index : UInt8? = nil,
                        @case_opener : CaseOpener? = nil,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
-          if @target_node_id == 0_u64 || @administrator_cat_version == 0_u16 ||
+          if @target_node_id == DataType::NodeId::UNSPECIFIED || @administrator_cat_version == 0_u16 ||
              @anchor_cat_version == 0_u16
             raise Matter::ConfigurationError.new("Invalid Anchor transfer Administrator identity or CAT version")
           end
@@ -523,7 +523,7 @@ module Matter
                        @on_committed_icac : CommitIcac? = nil,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
           @journal = journal || Journal.new(@target_node_id)
-          unless @journal.target_node_id == @target_node_id && @target_node_id != 0_u64 && @icac_id != 0_u64
+          unless @journal.target_node_id == @target_node_id && @target_node_id != DataType::NodeId::UNSPECIFIED && @icac_id != 0_u64
             raise Matter::ConfigurationError.new("Invalid Anchor follow-up identity")
           end
           if @new_anchor_fabric.fabric_id == @old_fabric_id &&
@@ -714,7 +714,7 @@ module Matter
                        @finalize_administrators : Operation? = nil,
                        @candidate_old_node_id : UInt64? = nil,
                        @candidate_administrator : Datastore::DatastoreAdministratorInformationEntryStruct? = nil)
-          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if @candidate_node_id == 0_u64
+          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if @candidate_node_id == DataType::NodeId::UNSPECIFIED
         end
 
         def copy_datastore! : Nil
@@ -726,13 +726,13 @@ module Matter
           # The snapshot belongs to the old Anchor fabric. The promoted Anchor
           # must advertise the IPK of its newly bootstrapped fabric after restart.
           keys = @bootstrap.fabric.ipk_epoch_keys
-          ipk_key_set = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+          ipk_key_set = Datastore::DatastoreGroupKeySetStruct.new(Datastore::IPK_KEY_SET_ID,
             Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
             keys[0].dup, FIRST_IPK_EPOCH_START_TIME,
             keys[1]?.try(&.dup), keys[1]? ? FIRST_IPK_EPOCH_START_TIME + 1_u64 : nil,
             keys[2]?.try(&.dup), keys[2]? ? FIRST_IPK_EPOCH_START_TIME + 2_u64 : nil)
           key_sets = @candidate_store.group_key_set_list
-          if index = key_sets.index(&.group_key_set_id.==(0_u16))
+          if index = key_sets.index(&.group_key_set_id.==(Datastore::IPK_KEY_SET_ID))
             key_sets[index] = ipk_key_set
           else
             key_sets.unshift(ipk_key_set)
@@ -850,7 +850,7 @@ module Matter
         def initialize(@source : Datastore, @port : Port, @migration : Migration,
                        @consent : Consent, @save : SaveJournal,
                        @journal : Journal)
-          raise Matter::ConfigurationError.new("Anchor transfer requires a candidate Node ID") if @journal.candidate_node_id == 0_u64
+          raise Matter::ConfigurationError.new("Anchor transfer requires a candidate Node ID") if @journal.candidate_node_id == DataType::NodeId::UNSPECIFIED
           @migration.bind_journal!(@journal, @save)
         end
 
@@ -989,7 +989,7 @@ module Matter
                  witness.old_root_public_key == old_root_public_key &&
                  witness.requester_node_id == journal.candidate_node_id &&
                  witness.new_anchor_node_id == new_anchor_node_id &&
-                 old_anchor_node_id != 0_u64 && new_anchor_node_id != 0_u64
+                 old_anchor_node_id != DataType::NodeId::UNSPECIFIED && new_anchor_node_id != DataType::NodeId::UNSPECIFIED
             raise Matter::AuthenticationError.new("Old Anchor completion witness does not match the pending transfer")
           end
           journal.stage = Stage::Transferred

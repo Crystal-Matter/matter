@@ -46,7 +46,7 @@ module Matter
       def configure_unsecured_mrp_peer(peer : Socket::IPAddress,
                                        idle_interval_ms : UInt32?, active_interval_ms : UInt32?,
                                        active_threshold_ms : UInt16? = nil) : Nil
-        @transport.configure_mrp_peer(peer, 0_u16,
+        @transport.configure_mrp_peer(peer, Codec::MessageCodec::UNSECURED_SESSION_ID,
           idle_interval_ms, active_interval_ms, active_threshold_ms)
       end
 
@@ -92,7 +92,7 @@ module Matter
         configure_mrp_peer(peer, session)
         @transport.send_reliable_raw(udp_packet, peer, session.session_id,
           payload_header.exchange_id, counter)
-        if cache_for_mrp && !session.tcp_session? && original_msg.packet_header.session_id != 0
+        if cache_for_mrp && !session.tcp_session? && original_msg.packet_header.session_id != Codec::MessageCodec::UNSECURED_SESSION_ID
           @mrp_cache.store(original_msg.packet_header.session_id, original_msg.packet_header.message_id, udp_packet.dup)
         end
         @on_im_message_sent.try(&.call)

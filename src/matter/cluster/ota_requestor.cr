@@ -172,7 +172,7 @@ module Matter
       @default_ota_providers = [] of ProviderLocation
 
       def initialize(
-        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
         @update_possible : Bool = false,
         @update_state : UpdateState = UpdateState::Idle,
         @update_state_progress : UInt8? = nil,

@@ -759,7 +759,7 @@ module Matter
           session = nil
           session_id = msg.packet_header.session_id
 
-          if session_id != 0
+          if session_id != Codec::MessageCodec::UNSECURED_SESSION_ID
             Log.trace { "Message is encrypted (session_id=#{session_id}), decrypting" }
 
             session = @registry.sessions[session_id]?

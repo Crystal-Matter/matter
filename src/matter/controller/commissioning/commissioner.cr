@@ -195,7 +195,7 @@ module Matter
                         peer
                       else
                         discovered_peer, idle, active, threshold = discover_commissionable(discriminator)
-                        @client.transport.configure_mrp_peer(discovered_peer, 0_u16,
+                        @client.transport.configure_mrp_peer(discovered_peer, Codec::MessageCodec::UNSECURED_SESSION_ID,
                           idle, active, threshold)
                         discovered_peer
                       end
@@ -625,10 +625,10 @@ module Matter
         def create_fabric(controller_node_id : UInt64) : FabricInfo
           fabric_id = loop do
             id = @crypto.random_uint64
-            break id unless id == 0_u64
+            break id unless id == Fabric::RESERVED_FABRIC_ID
           end
 
-          if controller_node_id == 0_u64
+          if controller_node_id == DataType::NodeId::UNSPECIFIED
             raise ArgumentError.new("controller_node_id must be non-zero")
           end
 
@@ -737,7 +737,7 @@ module Matter
         end
 
         private def validate_credentials(credentials : OperationalCredentials, fabric : FabricInfo, node_id : UInt64, public_key : Bytes) : Nil
-          unless credentials.ipk.size == Fabric::IPK_SIZE && credentials.case_admin_subject != 0_u64
+          unless credentials.ipk.size == Fabric::IPK_SIZE && credentials.case_admin_subject != DataType::NodeId::UNSPECIFIED
             raise Matter::CertificateError.new("Joint commissioning credentials have invalid IPK or administrator subject")
           end
           Crypto::MatterCertificate::Validation.verify_chain(credentials.noc, credentials.icac, fabric.root_public_key, fabric.root_cert)

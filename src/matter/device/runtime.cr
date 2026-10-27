@@ -854,7 +854,7 @@ module Matter
                                   counter : UInt32, threshold : UInt16) : Nil
       payload = Protocol::Icd::CheckInMessage.encode_icd(key, counter, threshold)
       packet = Codec::MessageCodec::PacketHeader.new(
-        session_id: 0_u16,
+        session_id: Codec::MessageCodec::UNSECURED_SESSION_ID,
         session_type: Codec::MessageCodec::SessionType::Unicast,
         message_id: 0_u32)
       header = Codec::MessageCodec::PayloadHeader.new(

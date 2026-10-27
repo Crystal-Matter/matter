@@ -17,6 +17,7 @@ module Matter
       feature :watermark, bit: 6
       feature :osd, bit: 7
 
+      MIN_STREAM_ID          =      0_u16
       MAX_STREAM_ID          = 65_534_u16
       MAX_REFERENCE_COUNT    =     255_u8
       MIN_CHANNEL_COUNT      =       1_u8
@@ -745,7 +746,7 @@ module Matter
       @snapshot_modify_callback : Proc(UInt16, Bool?, Bool?, InteractionModel::Status)?
       @snapshot_deallocate_callback : Proc(UInt16, InteractionModel::Status)?
       @snapshot_capture_callback : Proc(SnapshotStream, VideoResolution, SnapshotImage | InteractionModel::Status)?
-      @next_snapshot_stream_id : UInt16 = 0_u16
+      @next_snapshot_stream_id : UInt16 = MIN_STREAM_ID
       @snapshot_capabilities : Array(SnapshotCapability)
       @allocated_snapshot_streams : Array(SnapshotStream)
       @privacy_callback : Proc(Bool, Bool, Bool, Nil)?
@@ -755,8 +756,8 @@ module Matter
       @audio_release_observers = [] of Proc(UInt16, Nil)
       @video_release_observers = [] of Proc(UInt16, Nil)
       @viewport_observers = [] of Proc(Viewport, Nil)
-      @next_audio_stream_id : UInt16 = 0_u16
-      @next_video_stream_id : UInt16 = 0_u16
+      @next_audio_stream_id : UInt16 = MIN_STREAM_ID
+      @next_video_stream_id : UInt16 = MIN_STREAM_ID
       @microphone_capabilities : AudioCapabilities?
       @video_sensor_params : VideoSensorParams?
       @min_viewport_resolution : VideoResolution?
@@ -1318,7 +1319,7 @@ module Matter
       end
 
       private def advance_audio_id(id : UInt16) : UInt16
-        id == MAX_STREAM_ID ? 0_u16 : id + 1_u16
+        id == MAX_STREAM_ID ? MIN_STREAM_ID : id + 1_u16
       end
 
       private def next_available_audio_id : UInt16?

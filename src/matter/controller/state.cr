@@ -1,3 +1,4 @@
+require "../datatype/node_id"
 require "../storage/record"
 
 module Matter
@@ -211,7 +212,7 @@ module Matter
 
       # Commissioner node id used for unsecured message source_node_id and as the
       # controller node id when creating a new fabric.
-      property commissioner_node_id : UInt64 = 0_u64
+      property commissioner_node_id : UInt64 = DataType::NodeId::UNSPECIFIED
 
       # Monotonic counter for unsecured (session_id=0) messages. This must not go
       # backwards across process restarts or peers may treat requests as stale.
@@ -220,7 +221,7 @@ module Matter
       def initialize(
         @fabric : FabricInfo? = nil,
         @nodes : Hash(UInt64, NodeInfo) = {} of UInt64 => NodeInfo,
-        @commissioner_node_id : UInt64 = 0_u64,
+        @commissioner_node_id : UInt64 = DataType::NodeId::UNSPECIFIED,
         @unsecured_message_counter : UInt32 = 0_u32,
         @other_fabrics : Hash(String, FabricInfo) = {} of String => FabricInfo,
         @other_nodes : Hash(String, Hash(UInt64, NodeInfo)) = {} of String => Hash(UInt64, NodeInfo),
