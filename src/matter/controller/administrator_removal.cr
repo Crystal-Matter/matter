@@ -149,6 +149,9 @@ module Matter
                Stage::RotatingAnchor, Stage::RotatingParticipant)
             raise Matter::CommissioningError.new("Administrator removal stage #{@journal.stage} needs reconciliation")
           end
+          if @journal.stage.in?(Stage::DatastoreRemoved, Stage::AnchorRotated)
+            verify_remaining_admins_after_restart!
+          end
           if @journal.stage.ready?
             preflight!
             advance(Stage::RemovingFabric)
@@ -380,6 +383,27 @@ module Matter
           remaining_entries = @datastore.admin_list.reject(&.node_id.==(@journal.outgoing_node_id)).map(&.to_slice)
           unless @journal.remaining_admin_entries == remaining_entries
             raise Matter::CommissioningError.new("Anchor Datastore remaining AdminList changed during removal")
+          end
+        end
+
+        # A resumed removal must rotate exactly the Administrators captured
+        # before RemoveAdmin. The host may have rebuilt @remaining_nodes from
+        # a Datastore that changed while this workflow was stopped. Compare
+        # entries in journaled list order: even a reorder is a concurrent
+        # Datastore change that this removal has not reconciled.
+        private def verify_remaining_admins_after_restart! : Nil
+          expected_entries = @journal.remaining_admin_entries ||
+                             raise Matter::CommissioningError.new("Administrator removal lacks the journaled remaining AdminList")
+          unless @datastore.status.state.committed? &&
+                 @datastore.admin_list.map(&.to_slice) == expected_entries
+            raise Matter::CommissioningError.new("Administrator removal remaining AdminList changed after restart")
+          end
+          node_ids = @datastore.admin_list.map(&.node_id)
+          expected_participants = node_ids.reject(&.==(@anchor_node_id))
+          unless node_ids.count(@anchor_node_id) == 1 &&
+                 node_ids.uniq.size == node_ids.size &&
+                 @remaining_nodes.sort == expected_participants.sort
+            raise Matter::CommissioningError.new("Administrator removal remaining participant set changed after restart")
           end
         end
       end
