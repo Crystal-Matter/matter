@@ -13,6 +13,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   times out. Preserve interaction model failures and leave write and invoke
   commands unretried.
 
+### Controller credential removal
+
+- Save controller fabric removal and its CASE resumption and ICD Check-In key
+  cleanup in one storage transaction. Loading a legacy store removes orphan
+  controller credentials before an identity can be reinstalled.
+- Preserve CASE resumption records when a Joint Fabric Administrator uses the
+  same backend for its device role and the device still owns that fabric
+  identity. New records identify the initiator or responder role; a removal
+  deletes only the role it owns. Legacy records without a role cannot resume
+  CASE and fall back to a full handshake. An ambiguous legacy record remains
+  while either role still owns the matching identity.
+
 ### Named protocol identifiers
 
 - Use generated cluster, attribute, command, event, and feature identifiers in

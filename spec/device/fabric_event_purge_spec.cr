@@ -149,7 +149,13 @@ describe Matter::Device do
       fabric_id: fabric.fabric_id, root_public_key: fabric.root_public_key,
       local_node_id: fabric.node_id, peer_node_id: 0x1234_u64,
       resumption_id: resumption_id, shared_secret: Bytes.new(32, 0x31_u8),
-      peer_subject_ids: [0x1234_u64]))
+      peer_subject_ids: [0x1234_u64], role: Matter::Session::Case::Role::Responder))
+    legacy_id = Bytes.new(Matter::Session::Case::RESUMPTION_ID_LENGTH, 0x22_u8)
+    resumptions.save(Matter::Session::Case::ResumptionStore::Record.new(
+      fabric_id: fabric.fabric_id, root_public_key: fabric.root_public_key,
+      local_node_id: fabric.node_id, peer_node_id: 0x5678_u64,
+      resumption_id: legacy_id, shared_secret: Bytes.new(32, 0x32_u8),
+      peer_subject_ids: [0x5678_u64]))
     acl = device.access_control
     acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
       privilege: Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
@@ -184,6 +190,7 @@ describe Matter::Device do
     observed.should eq([1_u8])
     device.fabric_table.add_fabric(event_spec_fabric(1_u8, 0x2001_u64)).should be_true
     resumptions.find_by_id(resumption_id).should be_nil
+    resumptions.find_by_id(legacy_id).should be_nil
     device.message_handler.sessions.has_key?(111_u16).should be_false
     device.message_handler.active_subscriptions.has_key?(10_u32).should be_false
     acl.acl(1_u8).should be_empty
