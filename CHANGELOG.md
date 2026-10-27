@@ -46,6 +46,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   chip-tool fixture verifies rollback, commit, activation, timed updates, and
   restart behavior without a conformance-only subclass gate.
 
+### Controller write response validation
+
+- Verify that every WriteResponse status belongs to a requested attribute path,
+  including chunked list writes. Reject missing, duplicate, or unrelated paths
+  before treating a write as successful during shared-fabric propagation.
+
 ### Thermostat Presets production support
 
 - Enable the opt-in Matter 1.6 PRES feature on production Thermostat instances
