@@ -22,6 +22,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   property? groupcast_adopted = false
   property? groupcast_adoption_supported = true
   property? reject_groupcast_adoption = false
+  property? reject_unadvertised_commands = false
   property current_fabric_index = 2_u8
   property group_key_map = [] of Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct
 
@@ -39,6 +40,12 @@ private class DatastoreImClient < Matter::Controller::ImClient
   ) : Matter::InteractionModel::InvokeResponseMessage
     @commands << command_id
     @command_paths << {cluster_id, command_id}
+    if @reject_unadvertised_commands && !(@server_lists[endpoint_id]? || [] of UInt32).includes?(cluster_id)
+      path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id, command: command_id)
+      status = Matter::InteractionModel::CommandStatusIB.new(path,
+        Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::UnsupportedCluster.value))
+      return Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [Matter::InteractionModel::InvokeResponseIB.new(command_status: status)])
+    end
     response_id = command_id
     response_fields = nil.as(TLV::Any?)
     if cluster_id == Matter::Cluster::Groups::CLUSTER_ID
@@ -325,6 +332,7 @@ describe Matter::Controller::DatastoreSynchronizer do
     im.parts_list = [1_u16]
     im.server_lists[1_u16] = [] of UInt32
     im.response_code = Matter::InteractionModel::StatusCode::UnsupportedCluster
+    im.reject_unadvertised_commands = true
     store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
     pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
     node_id = 0x100_u64
