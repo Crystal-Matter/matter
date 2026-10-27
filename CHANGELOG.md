@@ -58,6 +58,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Name Matter group multicast address fields and the DER tags used to encode
   and verify Certification Declarations, preserving their wire values.
 
+### Groups NameSupport bitmap
+
+- Report the GroupNames capability in NameSupport bit 7, as required by Matter
+  1.6, while retaining GroupNames in FeatureMap bit 0.
+
 ### Identify and conditional Groups membership
 
 - Count down IdentifyTime from a monotonic clock and advance its data version for
