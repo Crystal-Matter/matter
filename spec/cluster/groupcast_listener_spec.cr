@@ -95,23 +95,28 @@ describe "Matter 1.6 Groupcast Listener" do
   end
 
   it "keeps LeaveGroupResponse within its 20-endpoint wire bound" do
-    listener, _keys, acl = listener_fixture
+    listener, keys, acl = listener_fixture
     acl.acl = [GroupAcl::AccessControlEntry.new(GroupAcl::AccessControlEntryPrivilege::Administer,
       GroupAcl::AccessControlEntryAuthMode::CASE, [10_u64], nil, 1_u8)]
     endpoints = (1_u16..21_u16).to_a
     as_fabric(listener, 1_u8) do
-      listener.join_group(GroupcastServer::JoinGroupRequest.new(0x1234_u16, endpoints, 1_u16,
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(0x1234_u16, endpoints.first(20), 1_u16,
         key: Bytes.new(16, 0xAA_u8))).should eq(Matter::InteractionModel::Status.success)
-
-      listener.leave_group(GroupcastServer::LeaveGroupRequest.new(0x1234_u16))
-        .should eq(Matter::InteractionModel::Status.constraint_error)
-      listener.membership(1_u8).first.endpoints.should eq(endpoints)
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(0x1234_u16, [21_u16], 1_u16))
+        .should eq(Matter::InteractionModel::Status.success)
 
       removed = listener.leave_group(GroupcastServer::LeaveGroupRequest.new(0x1234_u16, endpoints.first(20)))
         .as(GroupcastServer::LeaveGroupResponse)
       removed.endpoints.should eq(endpoints.first(20))
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(0x1234_u16, endpoints.first(20), 1_u16))
+        .should eq(Matter::InteractionModel::Status.success)
+      listener.membership(1_u8).first.endpoints.size.should eq(21)
+      keys.operational_group_table(1_u8).first.endpoints.size.should eq(21)
+
       listener.leave_group(GroupcastServer::LeaveGroupRequest.new(0x1234_u16))
-        .as(GroupcastServer::LeaveGroupResponse).endpoints.should eq([21_u16])
+        .as(GroupcastServer::LeaveGroupResponse).endpoints.should be_empty
+      listener.membership(1_u8).should be_empty
+      keys.operational_group_table(1_u8).should be_empty
     end
   end
 

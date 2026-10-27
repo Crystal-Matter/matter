@@ -350,10 +350,6 @@ module Matter
         return InteractionModel::Status.not_found unless index
         existing = @membership[index]
         removed = requested.nil? ? existing.endpoints.dup : existing.endpoints.select { |endpoint| requested.includes?(endpoint) }
-        # LeaveGroupResponse.Endpoints has a 20-entry limit even though a
-        # Membership can contain 255 endpoints. Keep the membership intact so
-        # callers can withdraw large groups in bounded endpoint batches.
-        return InteractionModel::Status.constraint_error if removed.size > MAX_LEAVE_ENDPOINTS
         remaining = existing.endpoints.reject { |endpoint| removed.includes?(endpoint) }
         if @feature_map.listener?
           @group_keys.replace_groupcast_membership(existing.group_id, remaining, existing.key_set_id, fabric)
@@ -364,7 +360,10 @@ module Matter
             existing.has_auxiliary_acl?, existing.mcast_addr_policy, fabric)
         end
         changed_membership
-        LeaveGroupResponse.new(request.group_id, removed)
+        # A whole-group removal may exceed the response's 20-endpoint bound.
+        # The SDK returns an empty list in that case while still removing it.
+        response_endpoints = removed.size > MAX_LEAVE_ENDPOINTS ? [] of UInt16 : removed
+        LeaveGroupResponse.new(request.group_id, response_endpoints)
       rescue ex : Matter::ClusterError
         ex.to_status
       end

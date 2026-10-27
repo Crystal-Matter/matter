@@ -39,6 +39,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   certificate parsing and encoding. Name the packed Secure Channel vendor and
   protocol ID fields while preserving their wire bytes.
 
+### Groupcast LeaveGroup
+
+- Remove a Listener membership with more than 20 endpoints when LeaveGroup
+  omits Endpoints, returning an empty bounded endpoint list as the Matter 1.6
+  SDK does.
+
 ### End-to-end CASE read resilience
 
 - Retry an idempotent chip-tool attribute read once when CASE session setup
