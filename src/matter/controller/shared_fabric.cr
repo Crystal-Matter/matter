@@ -336,13 +336,9 @@ module Matter
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         new_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
-        receipt.target_node_ids.each do |node_id|
-          matching = entries.select { |entry| entry.node_id == node_id }
-          if matching.any? do |entry|
-               acl_grants_cat_version?(entry.acl_entry, receipt.group_cat, receipt.previous_version)
-             end
-            return JointGroupRevocation::Status::Pending
-          end
+        if entries.any? { |entry| acl_grants_cat_version?(entry.acl_entry,
+             receipt.group_cat, receipt.previous_version) }
+          return JointGroupRevocation::Status::Pending
         end
         receipt.target_acls.each do |target|
           entry = entries.find { |candidate| candidate.node_id == target.node_id && candidate.list_id == target.list_id }

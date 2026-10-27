@@ -144,6 +144,11 @@ describe "Joint Fabric shared group revocation" do
     datastore.complete_acl(0x200_u64, second_acl.list_id).should be_true
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
+
+    # A later ACL using the old CAT anywhere in the group reopens access.
+    datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, acl.acl_entry))
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
   ensure
     im.try(&.close)
   end
