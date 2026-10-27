@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fan Control Step
+
+- Step discrete MultiSpeed fans in speed units, including wrap to speed 1 or
+  SpeedMax when LowestOff is false, as required by Matter 1.6 TC_FAN_3_5.
+
 ### Mode Select scenes
 
 - Store and recall `CurrentMode` through Scenes Management extension fields,
