@@ -86,5 +86,9 @@ Examples.main("Matter Switch Device") do
   if max_fail_safe = ENV["MATTER_SWITCH_MAX_CUMULATIVE_FAILSAFE_SECONDS"]?.try(&.to_u16)
     device.general_commissioning.max_cumulative_failsafe_seconds = max_fail_safe
   end
+  if ENV["MATTER_SWITCH_E2E_DIAGNOSTIC_LOG"]? == "1"
+    device.node.get_cluster!(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::DiagnosticLogs)
+      .log("E2E BDX diagnostic log " + "L" * 1100)
+  end
   device
 end

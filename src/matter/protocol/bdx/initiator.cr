@@ -9,8 +9,9 @@ module Matter
       # Starts sender-driven BDX uploads for device-initiated transfers such as
       # DiagnosticLogs. All methods run under the SessionRegistry lock.
       class Initiator
-        Log           = ::Log.for("matter.protocol.bdx.initiator")
-        MAX_TRANSFERS = 4
+        Log = ::Log.for("matter.protocol.bdx.initiator")
+        # The Diagnostic Logs server handles one log collection at a time.
+        MAX_TRANSFERS = 1
         MAX_BYTES     = 64 * 1024 * 1024
         BLOCK_SIZE    = 1024_u16
         IDLE_TIMEOUT  = 5.minutes
@@ -47,29 +48,30 @@ module Matter
           return false unless session.case_session? && session.fabric_index && session.peer_node_id
           return false if designator.empty? || designator.size > UInt16::MAX ||
                           content.empty? || content.size > MAX_BYTES
-          return false if @pending.size + @active.size >= MAX_TRANSFERS
+          return false if busy?
           @pending << Pending.new(session, peer, designator.dup, content.dup, origin_exchange_id)
           true
+        end
+
+        def busy? : Bool
+          @pending.size + @active.size >= MAX_TRANSFERS
+        end
+
+        def pending_for?(session : Session::SecureContext) : Bool
+          @pending.any?(&.session.same?(session))
+        end
+
+        # Starts the log collection tied to a deferred IM InvokeResponse.
+        def start_pending_for(session : Session::SecureContext) : UInt16?
+          index = @pending.index(&.session.same?(session))
+          return unless index
+          start_transfer(@pending.delete_at(index))
         end
 
         # Called only after the IM InvokeResponse has been sent.
         def start_pending(session_identity : UInt64? = nil, exchange_id : UInt16? = nil) : Nil
           while index = @pending.index { |entry| pending_matches?(entry, session_identity, exchange_id) }
-            pending = @pending.delete_at(index)
-            bdx_exchange_id = allocate_exchange(pending.session.session_id)
-            key = Key.new(pending.session.session_id, bdx_exchange_id)
-            active = Active.new(pending.session, pending.peer, pending.content)
-            @active[key] = active
-            init = Wire::Init.new(Wire::Opcode::SendInit,
-              Wire::TransferControl::SenderDrive | Wire::TransferControl::ReceiverDrive,
-              BLOCK_SIZE, pending.designator, length: pending.content.size.to_u64)
-            begin
-              @sender.send_bdx_request(pending.session, pending.peer, bdx_exchange_id,
-                init.opcode.value, init.to_slice)
-            rescue ex
-              finish(key)
-              raise ex
-            end
+            start_transfer(@pending.delete_at(index))
           end
         end
 
@@ -146,6 +148,22 @@ module Matter
 
         private def finish(key : Key) : Nil
           @active.delete(key).try(&.io.close)
+        end
+
+        private def start_transfer(pending : Pending) : UInt16
+          exchange_id = allocate_exchange(pending.session.session_id)
+          key = Key.new(pending.session.session_id, exchange_id)
+          active = Active.new(pending.session, pending.peer, pending.content)
+          @active[key] = active
+          init = Wire::Init.new(Wire::Opcode::SendInit,
+            Wire::TransferControl::SenderDrive | Wire::TransferControl::ReceiverDrive,
+            BLOCK_SIZE, pending.designator, length: pending.content.size.to_u64)
+          @sender.send_bdx_request(pending.session, pending.peer, exchange_id,
+            init.opcode.value, init.to_slice)
+          exchange_id
+        rescue ex
+          finish(key) if key
+          raise ex
         end
 
         private def allocate_exchange(session_id : UInt16) : UInt16

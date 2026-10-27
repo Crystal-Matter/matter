@@ -197,16 +197,16 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
-  it "sends InvokeResponse before SendInit for a real encrypted RetrieveLogsRequest" do
+  it "sends SendInit before the encrypted RetrieveLogsResponse and waits for SendAccept" do
     handler, transport, session = diagnostic_bdx_fixture
     session.peer_subject_ids = [0x2222_u64]
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
       if exchange_id = cluster.request_exchange_id
-        handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+        handler.queue_diagnostic_log_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
       else
-        false
+        Matter::Cluster::DiagnosticLogs::TransferStartResult::Unavailable
       end
     end
     handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
@@ -226,30 +226,219 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.handle_message(inbound, DIAGNOSTIC_PEER)
 
     sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
-    sent.size.should eq(2)
-    sent[0].payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::InteractionModel.value)
-    sent[0].payload_header.message_type.should eq(Matter::InteractionModel::MessageType::InvokeResponse.value)
-    response = Matter::InteractionModel::InvokeResponseMessage.from_slice(sent[0].payload)
+    init_index = sent.index! { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value }
+    init_message = sent[init_index]
+    init_message.payload_header.message_type.should eq(DiagnosticBdx::Wire::Opcode::SendInit.value)
+    sent.none? { |message| message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value && message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value }.should be_true
+
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+    replay = diagnostic_bdx_outgoing(transport.sent_packets.last[0], session)
+    replay.payload_header.message_type.should eq(Matter::Protocol::SecureChannelMessageType::StandaloneAck.value)
+    transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+      .count { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value && message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::SendInit.value }
+      .should eq(1)
+
+    accept = DiagnosticBdx::Wire::Accept.new(DiagnosticBdx::Wire::Opcode::SendAccept,
+      DiagnosticBdx::Wire::TransferControl::SenderDrive, 1024_u16)
+    handler.handle_message(diagnostic_bdx_incoming(session, 2_u32,
+      init_message.payload_header.exchange_id, accept.opcode, accept.to_slice), DIAGNOSTIC_PEER)
+
+    sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    response_index = sent.index! { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value && message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value }
+    response_index.should be > init_index
+    block_index = sent.index! { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value && message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value }
+    response_index.should be < block_index
+    response = Matter::InteractionModel::InvokeResponseMessage.from_slice(sent[response_index].payload)
     response.invoke_responses.first.command_status.should be_nil
     data = response.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
     payload = Matter::Cluster::DiagnosticLogs::RetrieveLogsResponse.from_tlv(data.command_fields.as(TLV::Any))
     payload.status.should eq(Matter::Cluster::DiagnosticLogs::LogsStatus::Success)
     payload.log_content.should be_empty
-    sent[1].payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::Bdx.value)
-    sent[1].payload_header.message_type.should eq(DiagnosticBdx::Wire::Opcode::SendInit.value)
+
+    response_wire = transport.sent_packets[response_index][0]
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+    transport.sent_packets.last[0].should eq(response_wire)
     handler.close
   end
 
-  it "sends command data and then BDX even when InvokeRequest suppresses status responses" do
+  it "sends Denied after a BDX failure StatusReport and does not start a block" do
+    handler, transport, session = diagnostic_bdx_fixture
+    session.peer_subject_ids = [0x2222_u64]
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    cluster.log("D" * 1100)
+    cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
+      if exchange_id = cluster.request_exchange_id
+        handler.queue_diagnostic_log_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+      else
+        Matter::Cluster::DiagnosticLogs::TransferStartResult::Unavailable
+      end
+    end
+    handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
+
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+      Matter::Cluster::DiagnosticLogs::TransferProtocol::BDX,
+      "reject-log")
+    path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID,
+      Matter::Cluster::DiagnosticLogs::CMD_RETRIEVE_LOGS_REQUEST)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(path, command.to_tlv(nil)),
+    ])
+    inbound = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 18_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+
+    sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    init = sent.find! { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value }
+    sent.none? { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value }.should be_true
+
+    report = Matter::Session::Pase::Definitions::StatusReport.new(
+      general_status: 1_u16,
+      protocol_id: Matter::Protocol::ProtocolId::Bdx.value,
+      protocol_status: DiagnosticBdx::Transfer::StatusCode::FileDesignatorUnknown.value)
+    failure = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::Protocol::SecureChannelMessageType::StatusReport.value,
+      report.to_bytes, 2_u32, init.payload_header.exchange_id,
+      protocol_id: Matter::Protocol::ProtocolId::SecureChannel.value,
+      initiator_message: false)
+    handler.handle_message(failure, DIAGNOSTIC_PEER)
+
+    sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    response = sent.find! do |message|
+      message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value &&
+        message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+    end
+    response.payload_header.exchange_id.should eq(inbound.payload_header.exchange_id)
+    data = Matter::InteractionModel::InvokeResponseMessage.from_slice(response.payload)
+      .invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+    payload = Matter::Cluster::DiagnosticLogs::RetrieveLogsResponse.from_tlv(data.command_fields.as(TLV::Any))
+    payload.status.should eq(Matter::Cluster::DiagnosticLogs::LogsStatus::Denied)
+    sent.none? { |message| message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value && message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value }.should be_true
+    handler.close
+  end
+
+  it "reports Busy for a second BDX request from the same CASE peer during an active transfer" do
+    handler, transport, session = diagnostic_bdx_fixture
+    session.peer_subject_ids = [0x2222_u64]
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    cluster.log("C" * 1100)
+    cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
+      if exchange_id = cluster.request_exchange_id
+        handler.queue_diagnostic_log_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+      else
+        Matter::Cluster::DiagnosticLogs::TransferStartResult::Unavailable
+      end
+    end
+    handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
+
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+      Matter::Cluster::DiagnosticLogs::TransferProtocol::BDX,
+      "busy-log")
+    path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID,
+      Matter::Cluster::DiagnosticLogs::CMD_RETRIEVE_LOGS_REQUEST)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(path, command.to_tlv(nil)),
+    ])
+    first = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 19_u16)
+    handler.handle_message(first, DIAGNOSTIC_PEER)
+    second = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 2_u32, 20_u16)
+    handler.handle_message(second, DIAGNOSTIC_PEER)
+
+    sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    sent.count { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value && message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::SendInit.value }.should eq(1)
+    response = sent.find! do |message|
+      message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value &&
+        message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value &&
+        message.payload_header.exchange_id == second.payload_header.exchange_id
+    end
+    data = Matter::InteractionModel::InvokeResponseMessage.from_slice(response.payload)
+      .invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+    payload = Matter::Cluster::DiagnosticLogs::RetrieveLogsResponse.from_tlv(data.command_fields.as(TLV::Any))
+    payload.status.should eq(Matter::Cluster::DiagnosticLogs::LogsStatus::Busy)
+    handler.close
+  end
+
+  it "waits for the final chunk of a batched InvokeResponse before sending BDX data" do
+    handler, transport, session = diagnostic_bdx_fixture
+    session.peer_subject_ids = [0x2222_u64]
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    cluster.log("E" * 1100)
+    cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
+      if exchange_id = cluster.request_exchange_id
+        handler.queue_diagnostic_log_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+      else
+        Matter::Cluster::DiagnosticLogs::TransferStartResult::Unavailable
+      end
+    end
+    handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
+
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+      Matter::Cluster::DiagnosticLogs::TransferProtocol::BDX,
+      "chunk-log")
+    path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID,
+      Matter::Cluster::DiagnosticLogs::CMD_RETRIEVE_LOGS_REQUEST)
+    invalid_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID, UInt32::MAX)
+    commands = [Matter::InteractionModel::CommandDataIBTlv.new(path, command.to_tlv(nil))]
+    80.times { commands << Matter::InteractionModel::CommandDataIBTlv.new(invalid_path, command.to_tlv(nil)) }
+    request = Matter::InteractionModel::InvokeRequestMessage.new(commands)
+    invoke = Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 21_u16)
+    handler.handle_message(invoke, DIAGNOSTIC_PEER)
+
+    outgoing = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    init = outgoing.find! { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value }
+    accept = DiagnosticBdx::Wire::Accept.new(DiagnosticBdx::Wire::Opcode::SendAccept,
+      DiagnosticBdx::Wire::TransferControl::SenderDrive, 1024_u16)
+    handler.handle_message(diagnostic_bdx_incoming(session, 2_u32,
+      init.payload_header.exchange_id, accept.opcode, accept.to_slice), DIAGNOSTIC_PEER)
+
+    outgoing = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+    response = Matter::InteractionModel::InvokeResponseMessage.from_slice(outgoing.reverse.find! do |message|
+      message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value &&
+        message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+    end.payload)
+    response.more_chunked_messages.should be_true
+    outgoing.none? { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value && message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value }.should be_true
+
+    counter = 3_u32
+    while response.more_chunked_messages == true
+      handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, counter, 21_u16), DIAGNOSTIC_PEER)
+      counter += 1_u32
+      outgoing = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+      response = Matter::InteractionModel::InvokeResponseMessage.from_slice(outgoing.reverse.find! do |message|
+        message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value &&
+          message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+      end.payload)
+      if response.more_chunked_messages == true
+        outgoing.none? { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value && message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value }.should be_true
+      end
+    end
+    outgoing.any? { |message| message.payload_header.protocol_id == Matter::Protocol::ProtocolId::Bdx.value && message.payload_header.message_type == DiagnosticBdx::Wire::Opcode::Block.value }.should be_true
+    handler.close
+  end
+
+  it "sends command data after BDX acceptance even when InvokeRequest suppresses statuses" do
     handler, transport, session = diagnostic_bdx_fixture
     session.peer_subject_ids = [0x2222_u64]
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
       if exchange_id = cluster.request_exchange_id
-        handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
+        handler.queue_diagnostic_log_transfer(session_id, fabric, node, peer, designator, content, exchange_id)
       else
-        false
+        Matter::Cluster::DiagnosticLogs::TransferStartResult::Unavailable
       end
     end
     handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
@@ -270,10 +459,21 @@ describe "DiagnosticLogs outbound BDX transfer" do
 
     sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
     sent.size.should eq(2)
-    response = Matter::InteractionModel::InvokeResponseMessage.from_slice(sent[0].payload)
-    response.invoke_responses.first.command_data.should_not be_nil
+    sent[0].payload_header.message_type.should eq(Matter::Protocol::SecureChannelMessageType::StandaloneAck.value)
     sent[1].payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::Bdx.value)
     sent[1].payload_header.message_type.should eq(DiagnosticBdx::Wire::Opcode::SendInit.value)
+
+    accept = DiagnosticBdx::Wire::Accept.new(DiagnosticBdx::Wire::Opcode::SendAccept,
+      DiagnosticBdx::Wire::TransferControl::SenderDrive, 1024_u16)
+    handler.handle_message(diagnostic_bdx_incoming(session, 2_u32,
+      sent[1].payload_header.exchange_id, accept.opcode, accept.to_slice), DIAGNOSTIC_PEER)
+    response = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, session) }
+      .find! do |message|
+        message.payload_header.protocol_id == Matter::Protocol::ProtocolId::InteractionModel.value &&
+          message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+      end
+    Matter::InteractionModel::InvokeResponseMessage.from_slice(response.payload)
+      .invoke_responses.first.command_data.should_not be_nil
     handler.close
   end
 

@@ -1083,10 +1083,10 @@ module Matter
       diagnostic_logs = Cluster::DiagnosticLogs.new(endpoint_0)
       diagnostic_logs.on_bdx_transfer = ->(session_id : UInt16, fabric_index : UInt8, peer_node_id : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
         if exchange_id = diagnostic_logs.request_exchange_id
-          @message_handler.queue_bdx_transfer(session_id, fabric_index,
+          @message_handler.queue_diagnostic_log_transfer(session_id, fabric_index,
             peer_node_id, peer, designator, content, exchange_id)
         else
-          false
+          Cluster::DiagnosticLogs::TransferStartResult::Unavailable
         end
       end
       ethernet_diagnostics = include_ethernet_diagnostics? ? Cluster::EthernetNetworkDiagnostics.new(endpoint_0) : nil
