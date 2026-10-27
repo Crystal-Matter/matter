@@ -17,6 +17,7 @@ module Matter
     OTA_PROVIDER               = 0x0014_u32 # OTA Provider
     AGGREGATOR                 = 0x000E_u32 # Aggregator
     BRIDGED_NODE               = 0x0013_u32 # Bridged Node
+    BRIDGED_NODE_REVISION      =      3_u16 # Matter 1.6
     JOINT_FABRIC_ADMINISTRATOR = 0x0130_u32 # Joint Fabric Administrator
 
     # Lighting Device Types
@@ -150,7 +151,7 @@ module Matter
       new(
         DataType::DeviceTypeId.new(BRIDGED_NODE),
         "Bridged Node",
-        3_u16,
+        BRIDGED_NODE_REVISION,
         required_server_clusters: [
           Cluster::Descriptor::CLUSTER_ID,
           Cluster::BridgedDeviceBasicInformation::CLUSTER_ID,
