@@ -298,11 +298,57 @@ module Matter
           unless chunk_statuses.size == chunk.size
             raise Matter::ProtocolError.new("IM: WriteResponse status count did not match WriteRequest (exchange=#{exchange_id})")
           end
+          validate_write_response_paths!(chunk, chunk_statuses, exchange_id)
           statuses.concat(chunk_statuses)
           break unless chunk_statuses.all? { |status| status.status.status == InteractionModel::StatusCode::Success.value }
         end
 
         InteractionModel::WriteResponseMessage.new(statuses)
+      end
+
+      private def validate_write_response_paths!(
+        chunk : Array(InteractionModel::AttributeDataIB),
+        statuses : Array(InteractionModel::AttributeStatusIB),
+        exchange_id : UInt16,
+      ) : Nil
+        unmatched = chunk.map(&.path)
+        statuses.each do |entry|
+          index = unmatched.index do |requested|
+            write_response_path_matches?(requested, entry.path, entry.status.status, chunk)
+          end
+          unless index
+            raise Matter::ProtocolError.new("IM: WriteResponse path did not match WriteRequest (exchange=#{exchange_id})")
+          end
+          unmatched.delete_at(index)
+        end
+      end
+
+      private def write_response_path_matches?(
+        requested : InteractionModel::AttributePath,
+        reported : InteractionModel::AttributePath,
+        status : UInt8,
+        chunk : Array(InteractionModel::AttributeDataIB),
+      ) : Bool
+        return false unless reported.node.nil? && reported.enable_tag_compression != true
+        return false unless requested.endpoint == reported.endpoint &&
+                            requested.cluster == reported.cluster &&
+                            requested.attribute == reported.attribute
+
+        # A failure may identify only the attribute even for a list item
+        # request. That abbreviated path is ambiguous when this chunk also
+        # writes the whole list, so never use it to satisfy an append there.
+        if status != InteractionModel::StatusCode::Success.value &&
+           reported.list_index.nil? && !reported.list_index_null? &&
+           (requested.list_index || requested.list_index_null?)
+          ambiguous = chunk.any? do |item|
+            path = item.path
+            path.endpoint == requested.endpoint && path.cluster == requested.cluster &&
+              path.attribute == requested.attribute && path.list_index.nil? && !path.list_index_null?
+          end
+          return !ambiguous
+        end
+        requested.list_index == reported.list_index &&
+          requested.list_index_null? == reported.list_index_null?
       end
 
       private def write_request(items : Array(InteractionModel::AttributeDataIB), suppress_response : Bool,

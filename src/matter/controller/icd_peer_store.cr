@@ -1,4 +1,5 @@
 require "digest/sha256"
+require "log"
 
 require "../storage/backend"
 require "../storage/record"
@@ -9,6 +10,7 @@ module Matter
     # the complete fabric identity; local fabric indices and UDP addresses are
     # deliberately absent because both may change after restart.
     class IcdPeerStore
+      Log         = ::Log.for("matter.controller.icd_peer_store")
       COLLECTION  = "controller_icd_peers"
       MAX_RECORDS = 64
       KEY_LENGTH  = 16
@@ -91,11 +93,19 @@ module Matter
                         controller_node_id : UInt64) : Nil
         @backend.transaction do
           @backend.all(COLLECTION).each do |id, document|
-            entry = Record.from_document(document)
+            entry = decode_record(document, id)
+            next unless entry
             @backend.delete(COLLECTION, id) if entry.same_fabric?(fabric_id,
                                                  root_public_key, controller_node_id)
           end
         end
+      end
+
+      private def decode_record(document : Storage::Document, id : String) : Record?
+        Record.from_document(document)
+      rescue ex
+        Log.warn(exception: ex) { "Keeping undecodable ICD peer #{id} during fabric removal" }
+        nil
       end
 
       private def record_id(fabric_id : UInt64, root_public_key : Bytes,

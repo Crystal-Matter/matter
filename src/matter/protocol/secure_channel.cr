@@ -2,6 +2,7 @@ require "log"
 require "socket"
 
 require "../codec/message_codec"
+require "../controller/state"
 require "../fabric_table"
 require "../session/case/case"
 require "../session/case/definitions"
@@ -185,8 +186,29 @@ module Matter
         @passcode_verifier = nil
         @resumption_store = Session::Case::ResumptionStore.new(@fabric_table.backend)
         @fabric_table.register_removal_guard do |fabric|
-          @resumption_store.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.node_id)
+          @resumption_store.remove_fabric(fabric.fabric_id, fabric.root_public_key,
+            fabric.node_id, role: Session::Case::Role::Responder,
+            include_legacy: !controller_owns_fabric?(fabric))
         end
+      end
+
+      private def controller_owns_fabric?(fabric : Fabric) : Bool
+        document = @fabric_table.backend.read("controller", "state")
+        return false unless document
+        controller_state = decode_controller_state(document)
+        return true unless controller_state
+        controller_state.fabrics.any? do |controller_fabric|
+          controller_fabric.fabric_id == fabric.fabric_id &&
+            controller_fabric.root_public_key == fabric.root_public_key &&
+            controller_fabric.controller_node_id == fabric.node_id
+        end
+      end
+
+      private def decode_controller_state(document : Storage::Document) : Controller::State?
+        Controller::State.from_document(document)
+      rescue ex
+        Log.warn(exception: ex) { "Keeping ambiguous legacy CASE resumption during device fabric removal" }
+        nil
       end
 
       # An encrypted session ID must be nonzero and must not alias either an
@@ -570,7 +592,8 @@ module Matter
                                             sigma1 : Session::Case::Definitions::Sigma1,
                                             fabric : Fabric, resumption_id : Bytes,
                                             resume_mic : Bytes) : Bool
-        record = @resumption_store.find_by_id(resumption_id)
+        record = @resumption_store.find_by_id(resumption_id,
+          role: Session::Case::Role::Responder)
         return false unless record
         return false unless record.fabric_id == fabric.fabric_id &&
                             record.root_public_key == fabric.root_public_key &&
@@ -711,7 +734,7 @@ module Matter
               save_resumption_record(Session::Case::ResumptionStore::Record.new(
                 fabric.fabric_id, fabric.root_public_key, fabric.node_id,
                 peer_node_id, id, secret, session.peer_subject_ids,
-                session.peer_icac))
+                session.peer_icac, role: Session::Case::Role::Responder))
             end
           end
         end
@@ -798,7 +821,8 @@ module Matter
         save_resumption_record(Session::Case::ResumptionStore::Record.new(
           record.fabric_id, record.root_public_key, record.local_node_id,
           record.peer_node_id, handshake.new_resumption_id, record.shared_secret,
-          record.peer_subject_ids, record.peer_icac))
+          record.peer_subject_ids, record.peer_icac,
+          role: Session::Case::Role::Responder))
       end
 
       private def save_resumption_record(record : Session::Case::ResumptionStore::Record) : Nil

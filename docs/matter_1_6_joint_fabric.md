@@ -160,6 +160,10 @@ item below as covered only to the extent of its cited tests.
   and reconciles the result. It also restarts B after a lost RemoveAdmin
   acknowledgement, checks the removal in B's persisted AdminList over CASE,
   and resumes CAT/NOC rotation only after checked reconciliation.
+  Recovery binds the journal to the prior Administrator CAT version, the exact
+  pre-removal AdminList and outgoing entry, the Anchor root certificate and
+  fabric index, and a Datastore state matching its durable record. The Anchor
+  rejects journals missing these snapshots instead of guessing an outcome.
   An explicit no-effect recovery path also checks B's durable Datastore after
   an interruption before RemoveAdmin: the outgoing Administrator must still
   have the journaled entry, including its ICAC, even if unrelated Datastore

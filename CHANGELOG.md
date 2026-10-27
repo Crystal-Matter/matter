@@ -7,6 +7,24 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### End-to-end CASE read resilience
+
+- Retry an idempotent chip-tool attribute read once when CASE session setup
+  times out. Preserve interaction model failures and leave write and invoke
+  commands unretried.
+
+### Controller credential removal
+
+- Save controller fabric removal and its CASE resumption and ICD Check-In key
+  cleanup in one storage transaction. Loading a legacy store removes orphan
+  controller credentials before an identity can be reinstalled.
+- Preserve CASE resumption records when a Joint Fabric Administrator uses the
+  same backend for its device role and the device still owns that fabric
+  identity. New records identify the initiator or responder role; a removal
+  deletes only the role it owns. Legacy records without a role cannot resume
+  CASE and fall back to a full handshake. An ambiguous legacy record remains
+  while either role still owns the matching identity.
+
 ### Named protocol identifiers
 
 - Use generated cluster, attribute, command, event, and feature identifiers in
@@ -19,6 +37,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subscription priming reports. This restores the official Operational
   Credentials VID certification subscription sequence.
 
+### Identify and conditional Groups membership
+
+- Count down IdentifyTime from a monotonic clock, report each elapsed change, and
+  stop the host identify effect when the endpoint is removed or replaced. A
+  repeated Identify command refreshes the full requested interval.
+- Honor the Identify state for Groups AddGroupIfIdentifying. When the endpoint
+  is not identifying, return Success without changing group membership or
+  persistent state. Official chip-tool coverage exercises both states.
+
 ### Thermostat Matter Schedules production support
 
 - Enable opt-in Matter 1.6 MSCH on production Thermostat instances when a host
@@ -27,6 +54,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   committed state restoration now use the production class. The official
   chip-tool fixture verifies rollback, commit, activation, timed updates, and
   restart behavior without a conformance-only subclass gate.
+
+### Controller write response validation
+
+- Verify that every WriteResponse status belongs to a requested attribute path,
+  including chunked list writes. Reject missing, duplicate, or unrelated paths
+  before treating a write as successful during shared-fabric propagation.
 
 ### Thermostat Presets production support
 
@@ -206,6 +239,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fabric-bound Datastore still contains that same entry and retains
   the original Administrator CAT version. Recovery of a completed
   RemoveAdmin continues through the existing path.
+- Bind both removal outcomes to the journaled prior Administrator CAT version,
+  exact pre-removal AdminList and outgoing entry, Anchor root, and fabric index.
+  The example Anchor compares the live Datastore with its durable record before
+  accepting a lost RemoveAdmin acknowledgement. Journals without these snapshots
+  fail closed and require explicit reconciliation.
 
 ### Door Lock credential user type validation
 

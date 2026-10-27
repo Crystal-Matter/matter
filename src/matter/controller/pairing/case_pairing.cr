@@ -160,7 +160,8 @@ module Matter
           destination_id = compute_destination_id(controller_fabric.derived_ipk, initiator_random, fabric.root_public_key, fabric.fabric_id, peer_node_id)
 
           resume_record = @resumption_store.try(&.find_by_peer(fabric.fabric_id,
-            fabric.root_public_key, fabric.controller_node_id, peer_node_id))
+            fabric.root_public_key, fabric.controller_node_id, peer_node_id,
+            role: Session::Case::Role::Initiator))
 
           sigma1 = Session::Case::Definitions::Sigma1.new(
             initiator_random: initiator_random,
@@ -305,7 +306,8 @@ module Matter
           save_resumption_record(Session::Case::ResumptionStore::Record.new(
             fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
             peer_node_id, encrypted_data2.resumption_id, shared_secret,
-            verified_responder.subject_ids, verified_responder.icac))
+            verified_responder.subject_ids, verified_responder.icac,
+            role: Session::Case::Role::Initiator))
           secure_context
         end
 
@@ -350,7 +352,8 @@ module Matter
           save_resumption_record(Session::Case::ResumptionStore::Record.new(
             fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
             peer_node_id, sigma2.resumption_id, record.shared_secret,
-            record.peer_subject_ids, record.peer_icac))
+            record.peer_subject_ids, record.peer_icac,
+            role: Session::Case::Role::Initiator))
           session
         end
 

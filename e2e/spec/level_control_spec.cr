@@ -6,6 +6,9 @@ module LevelControlE2E
   COVERING_ENDPOINT            =  3
   GROUP_ID                     = 42
   GROUP_NAME                   = "Reading room"
+  CONDITIONAL_GROUP_ID         = 43
+  CONDITIONAL_GROUP_NAME       = "Identifying room"
+  CONDITIONAL_IDENTIFY_TIME    =   60
   TARGET_HUE                   =   90
   OFF_TARGET_HUE               =  120
   COLOR_TEMPERATURE            =  300
@@ -118,6 +121,28 @@ describe "matter_level_control example" do
     removed.int("groupID").should eq(LevelControlE2E::GROUP_ID), removed.output
     listed = expect_success(device.invoke("groups", "get-group-membership", ["[]"]))
     listed.int_list("groupList").should_not contain(LevelControlE2E::GROUP_ID.to_i64)
+  end
+
+  it "adds a group only while the endpoint identifies" do
+    group = LevelControlE2E::CONDITIONAL_GROUP_ID.to_s
+    name = LevelControlE2E::CONDITIONAL_GROUP_NAME
+    expect_success(device.invoke("identify", "identify", ["0"]))
+    expect_success(device.invoke("groups", "remove-group", [group]))
+
+    expect_success(device.invoke("groups", "add-group-if-identifying", [group, name]))
+    listed = expect_success(device.invoke("groups", "get-group-membership", ["[]"]))
+    listed.int_list("groupList").should_not contain(LevelControlE2E::CONDITIONAL_GROUP_ID.to_i64)
+
+    expect_success(device.invoke("identify", "identify", [LevelControlE2E::CONDITIONAL_IDENTIFY_TIME.to_s]))
+    expect_success(device.invoke("groups", "add-group-if-identifying", [group, name]))
+    listed = expect_success(device.invoke("groups", "get-group-membership", ["[]"]))
+    listed.int_list("groupList").should contain(LevelControlE2E::CONDITIONAL_GROUP_ID.to_i64)
+
+    expect_success(device.invoke("identify", "identify", ["0"]))
+    expect_success(device.invoke("groups", "remove-group", [group]))
+    expect_success(device.invoke("groups", "add-group-if-identifying", [group, name]))
+    listed = expect_success(device.invoke("groups", "get-group-membership", ["[]"]))
+    listed.int_list("groupList").should_not contain(LevelControlE2E::CONDITIONAL_GROUP_ID.to_i64)
   end
 
   it "moves color hue and temperature using standard chip-tool requests" do
