@@ -61,12 +61,55 @@ private class FakeAdministratorRemovalPort < Matter::Controller::AdministratorRe
 end
 
 describe Matter::Controller::AdministratorRemoval::Workflow do
+  it "rewinds an unstarted Anchor NOC rotation only with the journaled committed Datastore" do
+    datastore = removal_datastore
+    datastore.admin_list = datastore.admin_list.reject(&.node_id.==(0x300_u64))
+    group = datastore.group_list.first
+    group.group_cat_version = 2_u16
+    datastore.group_list = [group]
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RotatingAnchor, administrator_cat_version: 2_u16,
+      prior_administrator_cat_version: 1_u16, fabric_id: 0x1111_u64,
+      root_public_key: removal_root_public_key(datastore), anchor_node_id: 0x100_u64,
+      outgoing_admin_entry: Bytes[5], remaining_admin_entries: datastore.admin_list.map(&.to_slice),
+      anchor_pre_rotation_noc: Bytes[6])
+    save = ->(_item : Matter::Controller::AdministratorRemoval::Journal) { nil }
+
+    restored = Matter::Controller::AdministratorRemoval::Workflow.reconcile_anchor_rotation_no_effect!(
+      journal, datastore, 1_u8, save)
+    restored.stage.should eq(RemovalStage::DatastoreRemoved)
+    datastore.group_list.first.group_cat_version.should eq(2_u16)
+
+    journal.stage = RemovalStage::RotatingAnchor
+    journal.anchor_pre_rotation_noc = nil
+    expect_raises(Matter::ConfigurationError, /bound Anchor rotation/) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_anchor_rotation_no_effect!(
+        journal, datastore, 1_u8, save)
+    end
+    journal.anchor_pre_rotation_noc = Bytes[6]
+    journal.remaining_admin_entries = [Bytes[9]]
+    expect_raises(Matter::CommissioningError, /AdminList/) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_anchor_rotation_no_effect!(
+        journal, datastore, 1_u8, save)
+    end
+    journal.stage.should eq(RemovalStage::RotatingAnchor)
+    journal.remaining_admin_entries = datastore.admin_list.map(&.to_slice)
+    group.group_cat_version = 1_u16
+    datastore.group_list = [group]
+    expect_raises(Matter::CommissioningError, /CAT/) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_anchor_rotation_no_effect!(
+        journal, datastore, 1_u8, save)
+    end
+    journal.stage.should eq(RemovalStage::RotatingAnchor)
+  end
+
   it "persists the Anchor fabric binding with an uncertain rotation journal" do
     journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
       RemovalStage::RotatingParticipant, active_node_id: 0x200_u64,
       administrator_cat_version: 2_u16, prior_administrator_cat_version: 1_u16, fabric_id: 0x1111_u64,
       root_public_key: Bytes[1, 2, 3], anchor_node_id: 0x100_u64,
-      outgoing_admin_entry: Bytes[7, 8], remaining_admin_entries: [Bytes[9], Bytes[10]])
+      outgoing_admin_entry: Bytes[7, 8], remaining_admin_entries: [Bytes[9], Bytes[10]],
+      anchor_pre_rotation_noc: Bytes[11, 12])
     restored = Matter::Controller::AdministratorRemoval::Journal.from_document(journal.to_document)
     restored.fabric_id.should eq(0x1111_u64)
     restored.root_public_key.should eq(Bytes[1, 2, 3])
@@ -74,6 +117,7 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     restored.anchor_node_id.should eq(0x100_u64)
     restored.outgoing_admin_entry.should eq(Bytes[7, 8])
     restored.remaining_admin_entries.should eq([Bytes[9], Bytes[10]])
+    restored.anchor_pre_rotation_noc.should eq(Bytes[11, 12])
     restored.active_node_id.should eq(0x200_u64)
     restored.stage.should eq(RemovalStage::RotatingParticipant)
   end

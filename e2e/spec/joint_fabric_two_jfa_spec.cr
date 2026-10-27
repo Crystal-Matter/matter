@@ -1442,6 +1442,23 @@ describe "three provisioned Joint Fabric Administrators" do
     reconciled_datastore = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-datastore-removed", 0xA102_u64))
     reconciled_datastore.status.should eq("ok"), reconciled_datastore.error.to_s
+    interrupted_before_noc = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+        interrupt_before_anchor_noc: true))
+    interrupted_before_noc.status.should eq("error")
+    interrupted_before_noc.error.to_s.should contain("Injected interruption before Anchor UpdateNOC")
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    no_effect_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
+    no_effect_retry.status.should eq("error")
+    no_effect_retry.error.to_s.should contain("needs reconciliation")
+    no_effect_proof = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-anchor-rotation-no-effect", 0xA102_u64,
+        nonce: Random::Secure.hex(32)))
+    no_effect_proof.status.should eq("ok"), no_effect_proof.error.to_s
     interrupted_anchor_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
         interrupt_after_anchor_rotation: true))

@@ -39,6 +39,7 @@ module Matter
         property anchor_node_id : UInt64?
         property outgoing_admin_entry : Bytes?
         property remaining_admin_entries : Array(Bytes)?
+        property anchor_pre_rotation_noc : Bytes?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
@@ -49,7 +50,8 @@ module Matter
                        @root_public_key : Bytes? = nil,
                        @anchor_node_id : UInt64? = nil,
                        @outgoing_admin_entry : Bytes? = nil,
-                       @remaining_admin_entries : Array(Bytes)? = nil)
+                       @remaining_admin_entries : Array(Bytes)? = nil,
+                       @anchor_pre_rotation_noc : Bytes? = nil)
         end
       end
 
@@ -333,6 +335,47 @@ module Matter
           reconcile_journal!(journal, Stage::FabricRemoved, save)
         end
 
+        # The caller must first prove, on a fresh CASE session, that the
+        # Anchor still holds its exact durable old NOC and has no armed
+        # fail-safe or pending credential journal. Datastore CAT/ACL updates
+        # can already be durable when UpdateNOC had no effect. Keep those
+        # updates and retry the idempotent local preparation and NOC rotation.
+        def self.reconcile_anchor_rotation_no_effect!(journal : Journal, datastore : Datastore,
+                                                      expected_fabric_index : UInt8, save : SaveJournal) : Journal
+          unless journal.stage.rotating_anchor? &&
+                 DataType::NodeId.valid_joint_fabric?(journal.outgoing_node_id) &&
+                 journal.fabric_id && journal.fabric_id != Fabric::RESERVED_FABRIC_ID &&
+                 journal.root_public_key && journal.root_public_key.as(Bytes).size > 0 &&
+                 journal.anchor_node_id && DataType::NodeId.valid_joint_fabric?(journal.anchor_node_id.as(UInt64)) &&
+                 journal.outgoing_admin_entry && journal.remaining_admin_entries &&
+                 journal.anchor_pre_rotation_noc && journal.anchor_pre_rotation_noc.as(Bytes).size > 0
+            raise Matter::ConfigurationError.new("Administrator removal is not awaiting bound Anchor rotation reconciliation")
+          end
+          unless datastore.anchor_node_id == journal.anchor_node_id &&
+                 datastore.joint_fabric_index == expected_fabric_index
+            raise Matter::AuthenticationError.new("Rotation Datastore belongs to another Anchor fabric")
+          end
+          verify_anchor_root!(journal, datastore)
+          unless datastore.status.state.committed?
+            raise Matter::CommissioningError.new("Anchor Datastore is not committed")
+          end
+          previous = journal.prior_administrator_cat_version
+          target = journal.administrator_cat_version
+          current = datastore.group_list.find(&.group_cat.==(Datastore::ADMINISTRATOR_CAT)).try(&.group_cat_version)
+          unless previous && target && target > previous && current == target &&
+                 journal.rotated_nodes.empty? && journal.active_node_id.nil?
+            raise Matter::CommissioningError.new("Anchor Datastore CAT differs from the pending rotation")
+          end
+          admins = datastore.admin_list
+          unless admins.map(&.to_slice) == journal.remaining_admin_entries &&
+                 admins.none?(&.node_id.==(journal.outgoing_node_id)) &&
+                 admins.count(&.node_id.==(journal.anchor_node_id)) == 1 &&
+                 admins.map(&.node_id).uniq!.size == admins.size
+            raise Matter::CommissioningError.new("Anchor Datastore AdminList differs from the pending rotation")
+          end
+          reconcile_journal!(journal, Stage::DatastoreRemoved, save)
+        end
+
         private def self.verify_anchor_root!(journal : Journal, datastore : Datastore) : Nil
           root = datastore.anchor_root_ca
           Crypto::MatterCertificate::Validation.verify_root(root)
@@ -417,6 +460,24 @@ module Matter
       module RotationInspection
         extend self
 
+        # An old CAT alone does not prove no effect: an armed fail-safe can
+        # install a new NOC later. The local caller must separately establish
+        # that fail-safe and credential-journal state are both clear, and must
+        # pass the exact pre-rotation NOC saved in the removal journal and
+        # checked against its durable fabric record.
+        def verify_no_effect!(im : ImClient, session : Session::SecureContext,
+                              peer : Socket::IPAddress, root_certificate : Bytes,
+                              fabric_id : UInt64, root_public_key : Bytes,
+                              node_id : UInt64, prior_administrator_cat_version : UInt16,
+                              challenge : Bytes, durable_old_noc : Bytes,
+                              anchor_cat_version : UInt16? = nil) : Nil
+          observed = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, prior_administrator_cat_version, challenge, anchor_cat_version)
+          unless observed == durable_old_noc
+            raise Matter::AuthenticationError.new("Rotation target does not hold the durable NOC")
+          end
+        end
+
         def verify_completed!(im : ImClient, session : Session::SecureContext,
                               peer : Socket::IPAddress, root_certificate : Bytes,
                               fabric_id : UInt64, root_public_key : Bytes,
@@ -443,13 +504,14 @@ module Matter
           final_challenge = Crypto::StandardCrypto.new.random_bytes(VidVerification::CHALLENGE_SIZE)
           verify_current_noc!(im, session, peer, root_certificate, fabric_id,
             root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version)
+          nil
         end
 
         private def verify_current_noc!(im : ImClient, session : Session::SecureContext,
                                         peer : Socket::IPAddress, root_certificate : Bytes,
                                         fabric_id : UInt64, root_public_key : Bytes,
                                         node_id : UInt64, administrator_cat_version : UInt16,
-                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
+                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Bytes
           unless session.case_session? && session.peer_node_id.try(&.id) == node_id
             raise Matter::AuthenticationError.new("Rotation CASE peer differs from journaled Node ID")
           end
@@ -542,6 +604,7 @@ module Matter
               raise Matter::AuthenticationError.new("Rotation NOC does not carry the selected Anchor CAT version")
             end
           end
+          noc.noc
         end
 
         private def read_list(type : T.class, im : ImClient, session : Session::SecureContext,
