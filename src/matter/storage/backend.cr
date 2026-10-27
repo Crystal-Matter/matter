@@ -49,7 +49,13 @@ module Matter
       # transaction. Transactions may be nested.
       abstract def transaction(& : -> Nil) : Nil
 
-      # Location of the persisted data, `nil` for in-memory stores.
+      # Whether writes survive a process restart. Custom backends opt in only
+      # when they can preserve the completed review journal durably.
+      def durable? : Bool
+        false
+      end
+
+      # Location of the persisted data, `nil` when there is no local file.
       abstract def path : String?
 
       # Closes the store and removes its persisted data.

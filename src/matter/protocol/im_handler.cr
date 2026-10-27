@@ -74,6 +74,33 @@ module Matter
         end
       end
 
+      # Shared authorization for concrete attribute reads, including active
+      # subscription updates after host policy or ACL changes.
+      def self.attribute_read_status(
+        endpoint_id : UInt16,
+        cluster_id : UInt32,
+        attribute_id : UInt32,
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        is_case_session : Bool,
+        fabric_index : UInt8?,
+        peer_subject_ids : Array(UInt64)?,
+      ) : InteractionModel::StatusCode?
+        cluster = clusters[{endpoint_id, cluster_id}]?
+        return missing_path_status(clusters, endpoint_id) unless cluster
+
+        required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
+        unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
+          return InteractionModel::StatusCode::UnsupportedAccess
+        end
+        if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_read_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
+        if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_attribute_read_restricted?(endpoint_id, cluster_id, attribute_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
+        nil
+      end
+
       # A ReportData chunk may wait for an earlier chunk's acknowledgement.
       # Recheck the payload at send time so an ACL change cannot release a
       # sensitive value from a previously encoded read or subscription report.
@@ -237,9 +264,9 @@ module Matter
                 attribute: attribute_id
               )
 
-              required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
-              unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
-                status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+              if status = attribute_read_status(endpoint_id, cluster_id, attribute_id, clusters,
+                   is_case_session, fabric_index, peer_subject_ids)
+                status_ib = InteractionModel::StatusIB.new(status: status.value)
                 attr_status = InteractionModel::AttributeStatusIB.new(path: concrete_path, status: status_ib)
                 attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
                 next
@@ -286,9 +313,9 @@ module Matter
           next if data_version_filtered?(data_version_filters, endpoint_id, cluster_id,
                     cluster.data_version, local_node_id)
 
-          required = cluster.attributes.find { |attr| attr.id.id == attribute_id }.try(&.access) || InteractionModel::EntryPrivilege::View
-          unless authorized?(clusters, required, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
-            status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
+          if status = attribute_read_status(endpoint_id, cluster_id, attribute_id, clusters,
+               is_case_session, fabric_index, peer_subject_ids)
+            status_ib = InteractionModel::StatusIB.new(status: status.value)
             attr_status = InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
             attribute_reports << InteractionModel::AttributeReportIB.new(attribute_status: attr_status)
             next
@@ -398,9 +425,7 @@ module Matter
       ) : Array(InteractionModel::EventReportIB)
         reports = [] of InteractionModel::EventReportIB
         records.each do |record|
-          privilege = event_access(clusters, record)
-          next unless privilege
-          next unless authorized?(clusters, privilege, record.endpoint, record.cluster, is_case_session, fabric_index, peer_subject_ids)
+          next if event_read_status(record.to_path, clusters, is_case_session, fabric_index, peer_subject_ids)
 
           reports << InteractionModel::EventReportIB.new(event_data: build_event_data(record))
         end
@@ -418,13 +443,38 @@ module Matter
         )
       end
 
-      # The privilege required to read *record*'s event, or `nil` when the
-      # cluster no longer declares it.
-      private def self.event_access(
+      # The status a fully specified event path answers with, or `nil` when it
+      # names an event the reader may read. Active subscription updates use the
+      # same check as initial reads so a policy change cannot expose an event.
+      def self.event_read_status(
+        path : InteractionModel::EventPath,
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
-        record : EventJournal::Record,
-      ) : InteractionModel::EntryPrivilege?
-        clusters[{record.endpoint, record.cluster}]?.try(&.get_event_metadata(record.event)).try(&.access)
+        is_case_session : Bool,
+        fabric_index : UInt8?,
+        peer_subject_ids : Array(UInt64)?,
+      ) : InteractionModel::StatusCode?
+        endpoint_id = path.endpoint.as(UInt16)
+        cluster_id = path.cluster.as(UInt32)
+        event_id = path.event.as(UInt32)
+
+        cluster = clusters[{endpoint_id, cluster_id}]?
+        return missing_path_status(clusters, endpoint_id) unless cluster
+
+        metadata = cluster.get_event_metadata(event_id)
+        return InteractionModel::StatusCode::UnsupportedEvent unless metadata
+
+        unless authorized?(clusters, metadata.access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
+          return InteractionModel::StatusCode::UnsupportedAccess
+        end
+
+        if is_case_session && fabric_index && access_control_cluster(clusters).try(&.event_restricted?(fabric_index, endpoint_id, cluster_id, event_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
+        if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_event_restricted?(endpoint_id, cluster_id, event_id))
+          return InteractionModel::StatusCode::AccessRestricted
+        end
+
+        nil
       end
 
       # The status a fully specified event path answers with, or `nil` when it
@@ -436,21 +486,8 @@ module Matter
         fabric_index : UInt8?,
         peer_subject_ids : Array(UInt64)?,
       ) : InteractionModel::EventStatusIB?
-        endpoint_id = path.endpoint.as(UInt16)
-        cluster_id = path.cluster.as(UInt32)
-        event_id = path.event.as(UInt32)
-
-        cluster = clusters[{endpoint_id, cluster_id}]?
-        return event_status(path, missing_path_status(clusters, endpoint_id)) unless cluster
-
-        metadata = cluster.get_event_metadata(event_id)
-        return event_status(path, InteractionModel::StatusCode::UnsupportedEvent) unless metadata
-
-        unless authorized?(clusters, metadata.access, endpoint_id, cluster_id, is_case_session, fabric_index, peer_subject_ids)
-          return event_status(path, InteractionModel::StatusCode::UnsupportedAccess)
-        end
-
-        nil
+        status = event_read_status(path, clusters, is_case_session, fabric_index, peer_subject_ids)
+        status ? event_status(path, status) : nil
       end
 
       private def self.event_status(
@@ -612,6 +649,11 @@ module Matter
               next
             end
             if is_case_session && fabric_index && access_control_cluster(clusters).try(&.attribute_write_restricted?(fabric_index, endpoint_id, cluster_id, attribute_id))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+              write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
+              next
+            end
+            if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_attribute_write_restricted?(endpoint_id, cluster_id, attribute_id))
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               write_responses << InteractionModel::AttributeStatusIB.new(path: path, status: status_ib)
               next
@@ -1011,6 +1053,12 @@ module Matter
               next
             end
             if is_case_session && fabric_index && access_control_cluster(clusters).try(&.command_restricted?(fabric_index, endpoint_id, path.cluster, path.command))
+              status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
+              cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
+              invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
+              next
+            end
+            if !is_case_session && fabric_index.nil? && access_control_cluster(clusters).try(&.commissioning_command_restricted?(endpoint_id, path.cluster, path.command))
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::AccessRestricted.value)
               cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
               invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)

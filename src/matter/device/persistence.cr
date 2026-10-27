@@ -34,10 +34,12 @@ module Matter
       DEVICE   = Storage::Collections::DEVICE
       APP      = Storage::Collections::APP
 
-      IDENTITY_ID       = "identity"
-      HOSTNAME_KEY      = "commissioning_hostname"
-      SERIAL_NUMBER_KEY = "serial_number"
-      UNIQUE_ID_KEY     = "unique_id"
+      IDENTITY_ID             = "identity"
+      HOSTNAME_KEY            = "commissioning_hostname"
+      SERIAL_NUMBER_KEY       = "serial_number"
+      UNIQUE_ID_KEY           = "unique_id"
+      RESTORE_SENTINEL_PREFIX = "critical_cluster_"
+      RESTORE_SENTINEL_KEY    = "required"
 
       # Generated hostnames are 16 uppercase hex digits followed by this suffix;
       # `update_hostname` may store any other `.local` name.
@@ -80,13 +82,23 @@ module Matter
 
       # Writes the cluster's state now. Returns false when it has none.
       def save_cluster(cluster : Cluster::Base) : Bool
-        document = cluster.save_state
-        return false unless document
+        cluster.with_persistence_guard do
+          document = cluster.save_state
+          return false unless document
 
-        @dirty_clusters.delete(cluster)
-        @backend.write(CLUSTERS, cluster.persistence_key, document)
-        Log.debug { "Saved state for cluster #{cluster.name} (#{cluster.persistence_key})" }
-        true
+          @dirty_clusters.delete(cluster)
+          if cluster.persist_restore_sentinel?
+            sentinel_key = restore_sentinel_key(cluster)
+            unless @backend.read(DEVICE, sentinel_key)
+              # Write the independent marker first: a failed cluster write then
+              # leaves evidence that a missing document must stop restore.
+              @backend.write(DEVICE, sentinel_key, Storage::Document{RESTORE_SENTINEL_KEY => true})
+            end
+          end
+          @backend.write(CLUSTERS, cluster.persistence_key, document)
+          Log.debug { "Saved state for cluster #{cluster.name} (#{cluster.persistence_key})" }
+          true
+        end
       rescue ex
         Log.error(exception: ex) { "Failed to save cluster state (cluster=#{cluster.name} key=#{cluster.persistence_key})" }
         false
@@ -95,9 +107,13 @@ module Matter
       # Writes every cluster's state in one transaction; returns how many had state.
       def save_clusters(clusters : Enumerable(Cluster::Base)) : Int32
         saved = 0
-        @backend.transaction do
-          clusters.each { |cluster| saved += 1 if save_cluster(cluster) }
-        end
+        pending = clusters.to_a.sort_by(&.persistence_key)
+        with_cluster_persistence_guards(pending, 0, -> do
+          @backend.transaction do
+            pending.each { |cluster| saved += 1 if save_cluster(cluster) }
+          end
+          nil
+        end)
         Log.info { "Saved state for #{saved} cluster(s)" } if saved > 0
         saved
       end
@@ -129,14 +145,31 @@ module Matter
 
       private def restore_cluster(cluster : Cluster::Base) : Bool
         document = @backend.read(CLUSTERS, cluster.persistence_key)
-        return false unless document
+        unless document
+          if cluster.fail_closed_restore? &&
+             (@backend.read(DEVICE, restore_sentinel_key(cluster)) ||
+             (!@fabric_table.empty? && cluster.require_state_with_fabrics?))
+            raise AccessControlRestoreError.new("Missing managed cluster state #{cluster.persistence_key}")
+          end
+          return false
+        end
 
         cluster.restore_state(document)
         Log.debug { "Restored state for cluster #{cluster.name} (#{cluster.persistence_key})" }
         true
+      rescue ex : AccessControlRestoreError
+        Log.error(exception: ex) { "Unsafe Access Control state (cluster=#{cluster.name} key=#{cluster.persistence_key})" }
+        raise ex
       rescue ex
         Log.error(exception: ex) { "Failed to restore cluster state (cluster=#{cluster.name} key=#{cluster.persistence_key})" }
+        if cluster.fail_closed_restore?
+          raise AccessControlRestoreError.new("Could not read critical cluster state #{cluster.persistence_key}", ex)
+        end
         false
+      end
+
+      private def restore_sentinel_key(cluster : Cluster::Base) : String
+        "#{RESTORE_SENTINEL_PREFIX}#{cluster.persistence_key}"
       end
 
       # Marks *cluster* as holding unsaved state; the debounced writer picks it
@@ -269,12 +302,24 @@ module Matter
       private def write_dirty : Nil
         return unless @backend.open?
 
-        pending = @dirty_clusters.to_a
+        pending = @dirty_clusters.to_a.sort_by(&.persistence_key)
         @dirty_clusters.clear
-        @backend.transaction do
-          pending.each { |cluster| save_cluster(cluster) }
-          @fabric_table.flush_pending_writes
-          @protocol_persistence.flush_pending_writes
+        with_cluster_persistence_guards(pending, 0, -> do
+          @backend.transaction do
+            pending.each { |cluster| save_cluster(cluster) }
+            @fabric_table.flush_pending_writes
+            @protocol_persistence.flush_pending_writes
+          end
+          nil
+        end)
+      end
+
+      private def with_cluster_persistence_guards(clusters : Array(Cluster::Base), index : Int32,
+                                                  action : Proc(Nil)) : Nil
+        if cluster = clusters[index]?
+          cluster.with_persistence_guard { with_cluster_persistence_guards(clusters, index + 1, action) }
+        else
+          action.call
         end
       end
     end

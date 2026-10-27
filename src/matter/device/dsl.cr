@@ -35,6 +35,9 @@ module Matter
     #   argument stays available, so a spec can pass its own backend.
     # * `network :ethernet | :wifi | :thread` — the Network Commissioning
     #   cluster's network type and feature map.
+    # * `managed_restrictions requested: :method, updated: :method` — opt in
+    #   to the Access Control ManagedDevice feature. Both instance methods
+    #   handle durable, token-correlated host consent callbacks.
     # * `endpoint number, device_type: do ... end` — an endpoint and its
     #   clusters. The block holds `cluster` declarations; the endpoint's device
     #   type goes into `endpoint_device_types`, and `Endpoint#validate` holds
@@ -228,8 +231,28 @@ module Matter
           groupcast_sender : Bool = false,
           groupcast_per_group : Bool = false,
           groupcast_max_mcast_addr_count : UInt16? = nil,
+          on_restriction_review_requested : ::Matter::Device::RestrictionReviewRequested? = nil,
+          on_restriction_review_updated : ::Matter::Device::RestrictionReviewUpdated? = nil,
         )
           super
+        end
+      end
+
+      # Host-owned managed restriction review callbacks. Each method receives
+      # the same token again if a crash interrupted durable completion.
+      macro managed_restrictions(requested, updated)
+        {% unless requested.is_a?(SymbolLiteral) && updated.is_a?(SymbolLiteral) %}
+          {% raise "managed_restrictions requires requested: and updated: method symbols" %}
+        {% end %}
+
+        protected def default_restriction_review_requested : ::Matter::Device::RestrictionReviewRequested?
+          ->(request : ::Matter::Cluster::AccessControl::RestrictionReviewRequest) { {{ requested.id }}(request) }
+        end
+
+        protected def default_restriction_review_updated : ::Matter::Device::RestrictionReviewUpdated?
+          ->(fabric : UInt8, update : ::Matter::Cluster::AccessControl::FabricRestrictionReviewUpdate) do
+            {{ updated.id }}(fabric, update)
+          end
         end
       end
 

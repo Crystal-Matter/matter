@@ -110,11 +110,15 @@ private class PendingJfaCompletionService < Matter::Commissioning::JointFabricAd
 end
 
 private def stage_joined_jfa_completion(backend : Matter::Storage::Backend,
-                                        *, terms_required : Bool = false) : Tuple(InspectableJointFabricAdministratorDevice, PendingJfaCompletionService)
+                                        *, terms_required : Bool = false,
+                                        on_restriction_review_requested : Proc(Matter::Cluster::AccessControl::RestrictionReviewRequest, Nil)? = nil,
+                                        on_restriction_review_updated : Proc(UInt8, Matter::Cluster::AccessControl::FabricRestrictionReviewUpdate, Nil)? = nil) : Tuple(InspectableJointFabricAdministratorDevice, PendingJfaCompletionService)
   device = InspectableJointFabricAdministratorDevice.new(storage: backend,
     ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0,
     tc_min_required_version: terms_required ? 2_u16 : nil,
-    tc_required_acknowledgements: 0b0110_u16)
+    tc_required_acknowledgements: 0b0110_u16,
+    on_restriction_review_requested: on_restriction_review_requested,
+    on_restriction_review_updated: on_restriction_review_updated)
   device.prepare_for_start
   device.general_commissioning.arm_failsafe(
     Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64), 1_u8, true
@@ -201,6 +205,56 @@ private class FailingJfaMemory < Matter::Storage::Memory
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "restores a managed restriction review alongside a committed joined JFA" do
+    path = File.join(Dir.tempdir, "matter-jfa-managed-completion-#{Random::Secure.hex(6)}.yml")
+    backend = InterruptedJfaCommitYaml.new(path)
+    first_requests = [] of UInt64
+    first_requested = ->(request : Matter::Cluster::AccessControl::RestrictionReviewRequest) do
+      first_requests << request.token
+      nil
+    end
+    first_updated = ->(_fabric : UInt8, _update : Matter::Cluster::AccessControl::FabricRestrictionReviewUpdate) { nil }
+    device, service = stage_joined_jfa_completion(backend,
+      on_restriction_review_requested: first_requested,
+      on_restriction_review_updated: first_updated)
+    icac = service.cross_signed_icac.as(Bytes)
+    acl = device.access_control
+    acl.feature_map.managed_device?.should be_true
+    token = acl.request_restriction_review(1_u8, [] of Matter::Cluster::AccessControl::AccessRestrictionEntry)
+    first_requests.should eq([token])
+
+    device.general_commissioning.commissioning_complete(1_u8, true).error_code.ok?.should be_true
+    backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should be_nil
+    backend.close
+
+    replayed = [] of UInt64
+    completed = [] of UInt64
+    restarted = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::YamlFile.new(path),
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0,
+      on_restriction_review_requested: ->(request : Matter::Cluster::AccessControl::RestrictionReviewRequest) do
+        replayed << request.token
+        nil
+      end,
+      on_restriction_review_updated: ->(_fabric : UInt8, update : Matter::Cluster::AccessControl::FabricRestrictionReviewUpdate) do
+        completed << update.token
+        nil
+      end)
+    restarted.fabric_table.get_fabric(1_u8).should_not be_nil
+    restarted.joint_fabric_administrator.administrator_fabric_index.should eq(1_u8)
+    icac_document = restarted.persistence.app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT) ||
+                    raise Matter::StorageError.new("Committed ICAC missing")
+    MatterJointFabricAdministrator::Device::IcacCertificateState.from_document(icac_document).certificate.should eq(icac)
+    restarted.access_control.feature_map.managed_device?.should be_true
+    replayed.should eq([token])
+    restarted.access_control.deny_restriction_review(1_u8, token).should be_true
+    completed.should eq([token])
+  ensure
+    restarted.try(&.shutdown!)
+    device.try(&.shutdown!) if backend.try(&.open?)
+    File.delete?(path) if path
+  end
+
   it "rolls back both joined fabric and JFA identity when their shared completion flush fails" do
     path = File.join(Dir.tempdir, "matter-jfa-completion-#{Random::Secure.hex(6)}.yml")
     backend = InterruptedJfaCommitYaml.new(path)

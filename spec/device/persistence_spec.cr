@@ -1,6 +1,10 @@
 require "../spec_helper"
 require "../../src/matter/device/persistence"
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/access_control"
+require "../../src/matter/cluster/wi_fi_network_management"
+
+private alias ManagedWifi = Matter::Cluster::WiFiNetworkManagement
 
 # Counts file flushes so a spec can pin "one write for many mutations".
 private class CountingYamlFile < Matter::Storage::YamlFile
@@ -8,6 +12,21 @@ private class CountingYamlFile < Matter::Storage::YamlFile
 
   protected def flush : Nil
     @flushes += 1
+    super
+  end
+end
+
+private class PausingClusterMemory < Matter::Storage::Memory
+  property? pause_next_cluster_write = false
+  getter write_started = Channel(Nil).new(1)
+  getter write_resume = Channel(Nil).new(1)
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::CLUSTERS && pause_next_cluster_write?
+      @pause_next_cluster_write = false
+      @write_started.send(nil)
+      @write_resume.receive
+    end
     super
   end
 end
@@ -45,6 +64,106 @@ end
 
 describe Matter::Device::Persistence do
   describe "clusters" do
+    it "orders a snapshotted Access Control write before fabric removal and replacement" do
+      storage = PausingClusterMemory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      acl = Matter::Cluster::AccessControl.new(endpoint(0), Matter::Cluster::AccessControl::Feature::ManagedDevice)
+      original = Matter::Cluster::AccessControl::AccessRestrictionEntry.new(1_u16, ManagedWifi::CLUSTER_ID, [
+        Matter::Cluster::AccessControl::AccessRestriction.new(
+          Matter::Cluster::AccessControl::AccessRestrictionType::AttributeAccessForbidden, ManagedWifi::ATTR_SSID),
+      ])
+      replacement = Matter::Cluster::AccessControl::AccessRestrictionEntry.new(1_u16, ManagedWifi::CLUSTER_ID, [
+        Matter::Cluster::AccessControl::AccessRestriction.new(
+          Matter::Cluster::AccessControl::AccessRestrictionType::AttributeWriteForbidden, ManagedWifi::ATTR_SSID),
+      ])
+      acl.configure_access_restrictions(1_u8, [original])
+      storage.pause_next_cluster_write = true
+      old_saved = Channel(Bool).new(1)
+      spawn { old_saved.send(persistence.save_cluster(acl)) }
+      storage.write_started.receive
+      replacement_saved = Channel(Bool).new(1)
+      spawn do
+        acl.remove_fabric_acl(1_u8)
+        acl.configure_access_restrictions(1_u8, [replacement])
+        replacement_saved.send(persistence.save_cluster(acl))
+      end
+      Fiber.yield
+      storage.write_resume.send(nil)
+      old_saved.receive.should be_true
+      replacement_saved.receive.should be_true
+      restored = Matter::Cluster::AccessControl.new(endpoint(0), Matter::Cluster::AccessControl::Feature::ManagedDevice)
+      restored.restore_state(storage.read(CLUSTERS, acl.persistence_key).as(Matter::Storage::Document))
+      restored.arl(1_u8).first.restrictions.should eq(replacement.restrictions)
+    end
+
+    it "allows legacy fabrics without a saved Access Control document" do
+      storage = Matter::Storage::Memory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      acl = Matter::Cluster::AccessControl.new(endpoint(0))
+      persistence.restore_clusters([acl] of Matter::Cluster::Base).should eq(0)
+      persistence.fabric_table.add_fabric(build_fabric(1_u8))
+      persistence.close
+      restarted = Matter::Device::Persistence.new(storage)
+      restarted.restore_clusters([Matter::Cluster::AccessControl.new(endpoint(0))] of Matter::Cluster::Base).should eq(0)
+      restarted.close
+    end
+
+    it "requires a saved Access Control document after a host ARL policy was persisted" do
+      storage = Matter::Storage::Memory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      persistence.fabric_table.add_fabric(build_fabric(1_u8))
+      acl = Matter::Cluster::AccessControl.new(endpoint(0))
+      acl.configure_access_restrictions(1_u8, [
+        Matter::Cluster::AccessControl::AccessRestrictionEntry.new(1_u16, ManagedWifi::CLUSTER_ID, [
+          Matter::Cluster::AccessControl::AccessRestriction.new(
+            Matter::Cluster::AccessControl::AccessRestrictionType::AttributeAccessForbidden, ManagedWifi::ATTR_SSID),
+        ]),
+      ])
+      persistence.save_cluster(acl).should be_true
+      storage.delete(CLUSTERS, acl.persistence_key)
+      persistence.close
+      restarted = Matter::Device::Persistence.new(storage)
+      expect_raises(Matter::AccessControlRestoreError) do
+        restarted.restore_clusters([Matter::Cluster::AccessControl.new(endpoint(0))] of Matter::Cluster::Base)
+      end
+      restarted.close
+    end
+
+    it "requires Access Control state for an advertised managed device with fabrics" do
+      storage = Matter::Storage::Memory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      managed = Matter::Cluster::AccessControl.new(endpoint(0), Matter::Cluster::AccessControl::Feature::ManagedDevice)
+      persistence.restore_clusters([managed] of Matter::Cluster::Base).should eq(0)
+      persistence.fabric_table.add_fabric(build_fabric(1_u8))
+      persistence.close
+      restarted = Matter::Device::Persistence.new(storage)
+      expect_raises(Matter::AccessControlRestoreError) do
+        restarted.restore_clusters([managed] of Matter::Cluster::Base)
+      end
+      restarted.close
+    end
+
+    it "requires a saved commissioning ARL even before the first fabric joins" do
+      storage = Matter::Storage::Memory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      acl = Matter::Cluster::AccessControl.new(endpoint(0))
+      acl.configure_commissioning_access_restrictions([
+        Matter::Cluster::AccessControl::CommissioningAccessRestrictionEntry.new(
+          1_u16, ManagedWifi::CLUSTER_ID, [
+          Matter::Cluster::AccessControl::AccessRestriction.new(
+            Matter::Cluster::AccessControl::AccessRestrictionType::AttributeAccessForbidden,
+            ManagedWifi::ATTR_SSID),
+        ]),
+      ])
+      persistence.save_cluster(acl).should be_true
+      storage.delete(CLUSTERS, acl.persistence_key)
+      persistence.close
+      restarted = Matter::Device::Persistence.new(storage)
+      expect_raises(Matter::AccessControlRestoreError) do
+        restarted.restore_clusters([Matter::Cluster::AccessControl.new(endpoint(0))] of Matter::Cluster::Base)
+      end
+      restarted.close
+    end
     it "saves a dirty cluster after the debounce without a shutdown" do
       storage = Matter::Storage::Memory.new
       persistence = Matter::Device::Persistence.new(storage)

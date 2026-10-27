@@ -465,7 +465,8 @@ module Matter
         {records.select! { |record| record.event_number <= scanned_through }, scanned_through}
       end
 
-      # Turns *records* into reports. The cursor advances only after sending.
+      # Turns *records* into reports. A sent report advances the cursor only
+      # after the final IM Status.Success acknowledges the transaction.
       private def event_reports(
         subscription : ActiveSubscription,
         records : Array(EventJournal::Record),

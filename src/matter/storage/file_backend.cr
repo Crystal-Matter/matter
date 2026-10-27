@@ -21,6 +21,10 @@ module Matter
 
       getter path : String
 
+      def durable? : Bool
+        true
+      end
+
       def initialize(@path : String)
       end
 

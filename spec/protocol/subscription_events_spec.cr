@@ -1,7 +1,10 @@
 require "../spec_helper"
 
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 require "../../src/matter/cluster/access_control"
+require "../support/allowed_arl_event_cluster"
+define_allowed_arl_event_cluster
 require "../../src/matter/protocol/message_handler"
 
 private PEER        = Socket::IPAddress.new("127.0.0.1", 5540)
@@ -49,6 +52,7 @@ private def event_subscription_fixture(
   endpoint = Matter::Endpoint.new(endpoint(ENDPOINT))
   lock = build(Matter::Cluster::DoorLock, ENDPOINT)
   endpoint.add_cluster(lock)
+  endpoint.add_cluster(build(AllowedArlEventCluster, ENDPOINT))
   handler.node.add_endpoint(endpoint)
   handler.setup_cluster_notifications
 
@@ -135,7 +139,86 @@ private def lock_event_path(urgent : Bool) : Matter::InteractionModel::EventPath
   )
 end
 
+private def managed_event_path(urgent : Bool) : Matter::InteractionModel::EventPath
+  Matter::InteractionModel::EventPath.new(
+    endpoint: ENDPOINT,
+    cluster: AllowedArlEventCluster::CLUSTER_ID,
+    event: AllowedArlEventCluster::EVENT_RESTRICTED,
+    is_urgent: urgent
+  )
+end
+
+private def restricted_event_subscription_fixture(paths : Array(Matter::InteractionModel::EventPath))
+  fixture = event_subscription_fixture(paths)
+  acl = Matter::Cluster::AccessControl.new(endpoint(0))
+  fixture.handler.node.clusters[{0_u16, Matter::Cluster::AccessControl::CLUSTER_ID}] = acl
+  fixture.session.peer_subject_ids = [0x2222_u64]
+  acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+    Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+    Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+    [0x2222_u64], nil, 1_u8)
+  acl.configure_access_restrictions(1_u8, [
+    Matter::Cluster::AccessControl::AccessRestrictionEntry.new(ENDPOINT,
+      AllowedArlEventCluster::CLUSTER_ID, [
+      Matter::Cluster::AccessControl::AccessRestriction.new(
+        Matter::Cluster::AccessControl::AccessRestrictionType::EventForbidden,
+        AllowedArlEventCluster::EVENT_RESTRICTED),
+    ]),
+  ])
+  {fixture, acl}
+end
+
 describe "Subscription event reporting" do
+  it "skips restricted wildcard events and advances the subscription cursor" do
+    fixture, acl = restricted_event_subscription_fixture([Matter::InteractionModel::EventPath.new])
+    fixture.handler.node.event_journal.record(ENDPOINT, AllowedArlEventCluster::CLUSTER_ID,
+      AllowedArlEventCluster::EVENT_RESTRICTED, :critical, TLV::Any.new(1_u32, nil))
+    fixture.handler.subscriptions.notify_events
+    fixture.transport.sent_packets.should be_empty
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 1_u64)
+
+    fixture.handler.node.event_journal.record(ENDPOINT, AllowedArlEventCluster::CLUSTER_ID,
+      AllowedArlEventCluster::EVENT_ALLOWED, :critical, TLV::Any.new(2_u32, nil))
+    fixture.handler.subscriptions.notify_events
+    reported_events(fixture).should eq([fixture.base_event_number + 2_u64])
+    acl.feature_map.value.should eq(Matter::Cluster::AccessControl::Feature::Extension.value)
+    fixture.handler.close
+  end
+
+  it "reports AccessRestricted for a concrete restricted event subscription" do
+    fixture, _acl = restricted_event_subscription_fixture([managed_event_path(true)])
+    fixture.handler.node.event_journal.record(ENDPOINT, AllowedArlEventCluster::CLUSTER_ID,
+      AllowedArlEventCluster::EVENT_RESTRICTED, :critical, TLV::Any.new(1_u32, nil))
+    fixture.handler.subscriptions.notify_events
+
+    reports = fixture.transport.sent_packets.flat_map do |packet_bytes, _|
+      message = Matter::InteractionModel::ReportDataMessage.from_slice(decrypt(packet_bytes, fixture.session))
+      message.event_reports || [] of Matter::InteractionModel::EventReportIB
+    end
+    reports.compact_map(&.event_status).map(&.status.status).should eq([0x9d_u8])
+    reports.compact_map(&.event_data).should be_empty
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number)
+    acknowledge_event_reports(fixture)
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 1_u64)
+    fixture.handler.close
+  end
+
+  it "commits a cursor past filtered and reported events only after final IM status" do
+    fixture, _acl = restricted_event_subscription_fixture([Matter::InteractionModel::EventPath.new])
+    fixture.handler.node.event_journal.record(ENDPOINT, AllowedArlEventCluster::CLUSTER_ID,
+      AllowedArlEventCluster::EVENT_RESTRICTED, :critical, TLV::Any.new(1_u32, nil))
+    fixture.handler.node.event_journal.record(ENDPOINT, AllowedArlEventCluster::CLUSTER_ID,
+      AllowedArlEventCluster::EVENT_ALLOWED, :critical, TLV::Any.new(2_u32, nil))
+
+    fixture.handler.subscriptions.notify_events
+    reported_events(fixture).should eq([fixture.base_event_number + 2_u64])
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number)
+
+    acknowledge_event_reports(fixture)
+    fixture.handler.active_subscriptions[7_u32].last_event_number.should eq(fixture.base_event_number + 2_u64)
+    fixture.handler.close
+  end
+
   it "commits a mixed authorized/denied event batch only after its last chunk" do
     fixture = event_subscription_fixture([Matter::InteractionModel::EventPath.new])
     acl = Matter::Cluster::AccessControl.new(endpoint(0))
@@ -320,6 +403,45 @@ describe "Subscription event reporting" do
 
     fixture.transport.sent_packets.should be_empty
 
+    fixture.handler.close
+  end
+end
+
+describe "Subscription attribute policy changes" do
+  it "reports AccessRestricted after a CASE subscriber's fabric gains an ARL restriction" do
+    fixture = event_subscription_fixture([] of Matter::InteractionModel::EventPath)
+    wifi = build(Matter::Cluster::WiFiNetworkManagement, ENDPOINT)
+    fixture.handler.node.clusters[{ENDPOINT, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID}] = wifi
+    path = Matter::InteractionModel::AttributePath.new(endpoint: ENDPOINT,
+      cluster: Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+      attribute: Matter::Cluster::WiFiNetworkManagement::ATTR_SSID)
+    fixture.handler.active_subscriptions[7_u32].attribute_paths = [path]
+    acl = Matter::Cluster::AccessControl.new(endpoint(0))
+    fixture.handler.node.clusters[{0_u16, Matter::Cluster::AccessControl::CLUSTER_ID}] = acl
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      [0x2222_u64], nil, 1_u8)
+
+    initial = Matter::Protocol::IMHandler.read_attributes([path], fixture.handler.node.clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
+    initial.compact_map(&.attribute_data).size.should eq(1)
+    acl.configure_access_restrictions(1_u8, [
+      Matter::Cluster::AccessControl::AccessRestrictionEntry.new(ENDPOINT,
+        Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID, [
+        Matter::Cluster::AccessControl::AccessRestriction.new(
+          Matter::Cluster::AccessControl::AccessRestrictionType::AttributeAccessForbidden,
+          Matter::Cluster::WiFiNetworkManagement::ATTR_SSID),
+      ]),
+    ])
+    fixture.handler.subscriptions.notify(ENDPOINT, Matter::Cluster::WiFiNetworkManagement::CLUSTER_ID,
+      Matter::Cluster::WiFiNetworkManagement::ATTR_SSID)
+    reports = fixture.transport.sent_packets.flat_map do |packet_bytes, _|
+      message = Matter::InteractionModel::ReportDataMessage.from_slice(decrypt(packet_bytes, fixture.session))
+      message.attribute_reports || [] of Matter::InteractionModel::AttributeReportIB
+    end
+    reports.compact_map(&.attribute_status).map(&.status.status).should eq([0x9d_u8])
+    reports.compact_map(&.attribute_data).should be_empty
     fixture.handler.close
   end
 end

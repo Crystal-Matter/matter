@@ -3,11 +3,13 @@ require "../../src/matter/cluster/access_control"
 require "../../src/matter/cluster/basic_information"
 require "../../src/matter/cluster/camera_av_stream_management"
 require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/wi_fi_network_management"
 require "../../src/matter/protocol/message_handler"
 
 private alias SubscriptionAcl = Matter::Cluster::AccessControl
 private alias SubscriptionBasic = Matter::Cluster::BasicInformation
 private alias SubscriptionCamera = Matter::Cluster::CameraAvStreamManagement
+private alias SubscriptionWiFi = Matter::Cluster::WiFiNetworkManagement
 private alias SubscriptionIM = Matter::Protocol::IMHandler
 
 private class FabricAwareSubscriptionOnOff < Matter::Cluster::OnOff
@@ -380,6 +382,49 @@ describe "active subscription ACL updates" do
     fixture.handler.close
   end
 
+  it "stops a queued priming attribute chunk when its fabric gains an ARL restriction" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    wifi = build(SubscriptionWiFi, 1_u16)
+    wifi.update_credentials("Test Wi-Fi".to_slice, "correct horse".to_slice, 1_u64)
+    fixture.handler.node.clusters[{1_u16, SubscriptionWiFi::CLUSTER_ID}] = wifi
+
+    public_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: SubscriptionWiFi::CLUSTER_ID,
+      attribute: Matter::Cluster::Base::GLOBAL_FEATURE_MAP)
+    sensitive_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: SubscriptionWiFi::CLUSTER_ID, attribute: SubscriptionWiFi::ATTR_SSID)
+    public_report = SubscriptionIM.read_attributes([public_path], fixture.handler.node.clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
+    sensitive_report = SubscriptionIM.read_attributes([sensitive_path], fixture.handler.node.clusters,
+      fabric_index: 1_u8, is_case_session: true, peer_subject_ids: fixture.session.peer_subject_ids)
+    sensitive_report.first.attribute_data.should_not be_nil
+
+    first_chunk = Matter::InteractionModel::ReportDataMessage.new(
+      subscription_id: 42_u32, attribute_reports: public_report, more_chunked_messages: true)
+    queued_chunk = Matter::InteractionModel::ReportDataMessage.new(
+      subscription_id: 42_u32, attribute_reports: sensitive_report)
+    exchange_id = fixture.handler.sender.send_report(fixture.session,
+      Socket::IPAddress.new("127.0.0.1", 5540), first_chunk.to_slice)
+    fixture.handler.subscriptions.await_subscription(exchange_id,
+      Matter::Protocol::SubscriptionManager::PendingSubscription.new(
+        subscription_id: 42_u32, min_interval: 0_u16, max_interval: 60_u16,
+        attribute_paths: [public_path, sensitive_path],
+        peer: Socket::IPAddress.new("127.0.0.1", 5540), session: fixture.session,
+        remaining_chunks: [queued_chunk.to_slice]))
+
+    fixture.acl.configure_access_restrictions(1_u8, [
+      SubscriptionAcl::AccessRestrictionEntry.new(1_u16, SubscriptionWiFi::CLUSTER_ID, [
+        SubscriptionAcl::AccessRestriction.new(
+          SubscriptionAcl::AccessRestrictionType::AttributeAccessForbidden,
+          SubscriptionWiFi::ATTR_SSID),
+      ]),
+    ])
+    subscription_acl_ack_first_report(fixture)
+    subscription_acl_rejected_chunk(fixture)
+    fixture.handler.active_subscriptions.should be_empty
+    fixture.handler.close
+  end
+
   it "stops queued ReadRequest event chunks after Administer is revoked" do
     fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
     path = subscription_acl_seed_events(fixture)
@@ -392,6 +437,68 @@ describe "active subscription ACL updates" do
     subscription_acl_set_privilege(fixture, SubscriptionAcl::AccessControlEntryPrivilege::View)
     subscription_acl_ack_first_report(fixture)
     subscription_acl_rejected_chunk(fixture)
+    fixture.handler.close
+  end
+
+  it "reports a concrete denied event path after an unrelated global event and commits its cursor on ACK" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::View)
+    path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: SubscriptionAcl::CLUSTER_ID,
+      event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+    subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
+    active = fixture.handler.active_subscriptions[1_u32]
+    original_cursor = active.last_event_number
+
+    event = fixture.handler.node.event_journal.record(0_u16,
+      Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP,
+      :info, TLV::Any.new(1_u32))
+    fixture.handler.subscriptions.notify_events
+
+    fixture.transport.sent_packets.size.should eq(1)
+    message = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    reports = Matter::InteractionModel::ReportDataMessage.from_slice(message.payload)
+      .event_reports.as(Array(Matter::InteractionModel::EventReportIB))
+    reports.compact_map(&.event_data).should be_empty
+    reports.compact_map(&.event_status).map(&.status.status)
+      .should eq([Matter::InteractionModel::StatusCode::UnsupportedAccess.value])
+    active.last_event_number.should eq(original_cursor)
+
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 100_u32, message.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    active.last_event_number.should eq(event.event_number)
+    fixture.transport.sent_packets.clear
+    fixture.handler.subscriptions.notify_events
+    fixture.transport.sent_packets.should be_empty
+    fixture.handler.close
+  end
+
+  it "commits an unrelated event cursor only after an empty heartbeat is acknowledged" do
+    fixture = subscription_acl_fixture(SubscriptionAcl::AccessControlEntryPrivilege::Administer)
+    path = Matter::InteractionModel::EventPath.new(endpoint: 0_u16,
+      cluster: SubscriptionAcl::CLUSTER_ID,
+      event: SubscriptionAcl::EVENT_ACCESS_CONTROL_ENTRY_CHANGED)
+    subscription_acl_activate(fixture, [] of Matter::InteractionModel::AttributePath, [path])
+    active = fixture.handler.active_subscriptions[1_u32]
+    original_cursor = active.last_event_number
+    active.last_report_time = Time.utc - 61.seconds
+
+    event = fixture.handler.node.event_journal.record(0_u16,
+      Matter::Cluster::BasicInformation::CLUSTER_ID,
+      Matter::Cluster::BasicInformation::EVENT_START_UP,
+      :info, TLV::Any.new(1_u32))
+    fixture.handler.subscriptions.tick
+    fixture.transport.sent_packets.size.should eq(1)
+    message = subscription_acl_message(fixture.transport.sent_packets.first[0], fixture.session)
+    report = Matter::InteractionModel::ReportDataMessage.from_slice(message.payload)
+    report.event_reports.should be_nil
+    active.last_event_number.should eq(original_cursor)
+
+    fixture.handler.handle_message(Matter::Spec::ProtocolMessages.status_response(
+      fixture.session, 100_u32, message.payload_header.exchange_id),
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    active.last_event_number.should eq(event.event_number)
     fixture.handler.close
   end
 

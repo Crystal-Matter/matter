@@ -11,7 +11,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 - Direct or revision-active mandatory server command IDs absent: 0
 - Direct or revision-active mandatory event IDs absent: 0
 - Conditional command/event declarations for review: 192
-- Feature or complex conditional IDs absent from Crystal: 2
+- Feature or complex conditional IDs absent from Crystal: 0
 - Feature or complex conditional IDs declared without literal `requires:`: 15
   (Neither count alone establishes a conformance failure.)
 
@@ -167,9 +167,9 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0006 | command | 0x0041 | feature(LT) | declared; requires `:lighting` |
 | 0x0006 | command | 0x0042 | feature(LT) | declared; requires `:lighting` |
 | 0x0008 | command | 0x0008 | feature(FQ) | declared; requires `:frequency` |
-| 0x001F | command | 0x0000 | feature(MNGD) | absent |
+| 0x001F | command | 0x0000 | feature(MNGD) | declared; requires `:managed_device` |
 | 0x001F | event | 0x0001 | feature(EXTS) | declared; requires `:extension` |
-| 0x001F | event | 0x0002 | feature(MNGD) | absent |
+| 0x001F | event | 0x0002 | feature(MNGD) | declared; requires `:managed_device` |
 | 0x001F | event | 0x0003 | feature(AUX) | declared; requires `:auxiliary` |
 | 0x0028 | event | 0x0003 | attribute() | declared; requires `—` |
 | 0x0030 | command | 0x0006 | feature(TC) | declared; requires `:terms_and_conditions` |

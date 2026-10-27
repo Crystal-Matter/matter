@@ -1581,11 +1581,50 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Access Control managed restriction foundation
 
+- Add a synthetic durable MNGD device and commissioned official chip-tool E2E
+  for feature advertisement, CommissioningARL/ARL reads, token-correlated
+  ReviewFabricRestrictions denial and approval, completion events, enforced
+  Wi-Fi SSID restrictions, and restart persistence.
+- Add explicit opt-in host approval and denial for pending restriction reviews.
+  Approval atomically saves the host supplied replacement ARL with review
+  completion; denial retains the current ARL. Hosts may also emit interim
+  instructions without consuming a review token. Failed completion restores
+  the previous in-memory policy. MNGD remains disabled by default.
+- Recheck ACL and ARL on active attribute subscription reports after policy
+  changes. Enforce CommissioningARL on PASE reads, writes, commands, and events
+  when MNGD is explicitly enabled; require root endpoint for review commands.
+  Persist a compensating cancellation when a host review callback fails before
+  returning its token. Restriction targets are limited to the three network
+  infrastructure management clusters on non-root endpoints.
+- Persist per-fabric ARL, fixed CommissioningARL, and pending review requests
+  with their tokens and deadlines in the Access Control document. Replay
+  unexpired host reviews after restart, complete expired reviews, and prune
+  orphaned managed state before fabric index reuse. Host policy saves now
+  write through and roll back in-memory changes if storage fails. MNGD remains
+  unadvertised while host consent and installed-target validation are pending.
+- Define the gated Matter 1.6 MNGD wire structs, View-readable
+  `CommissioningARL` and fabric-scoped `ARL`, Administer-only review command,
+  and fabric-sensitive completion event. The default feature map omits MNGD;
+  policy persistence and allowed-target validation remain pending.
+- Add an internal, fabric-scoped restriction review lifecycle with a
+  correlating token, host request/update callbacks, bounded instruction and
+  URL fields, a 59-minute fallback update, and cancellation on fabric removal.
+  MNGD wire command, attributes, and event remain disabled.
+- Validate host-installed ARL entries before replacing fabric policy. Reject
+  reserved fabric, endpoint, cluster, and element IDs and entries without
+  restrictions. Standard global attributes stay readable even when named by
+  an explicit restriction.
+- Enforce host-configured `EventForbidden` restrictions on concrete and
+  wildcard event reads and active subscription updates. A concrete denied
+  event reports `AccessRestricted`; a wildcard silently omits it. Subscription
+  cursors advance past filtered events without exposing them. MNGD remains
+  unadvertised pending wire attributes, policy persistence, allowed-target
+  validation, and the review flow.
 - Enforce host-configured `AttributeWriteForbidden` and `CommandForbidden`
   restrictions for CASE writes and invokes, along with
   `AttributeAccessForbidden` on writes. Blocked requests return
   `AccessRestricted` before a cluster handler runs. ManagedDevice remains
-  unadvertised pending event restrictions, policy persistence, and review flow.
+  unadvertised pending policy persistence and review flow.
 - Recognize Matter 1.6 `AccessRestricted` status (`0x9D`) and enforce a
   host-configured, fabric-specific Access Restriction List for attribute reads.
   A restriction on one fabric does not affect another fabric or standard global

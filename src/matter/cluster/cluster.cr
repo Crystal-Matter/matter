@@ -586,10 +586,34 @@ module Matter
         nil
       end
 
+      # A cluster may serialize its snapshot and backend write with lifecycle
+      # mutations that would otherwise invalidate that snapshot.
+      def with_persistence_guard(&)
+        yield
+      end
+
       # Restore cluster state from a document produced by `save_state`.
       # Override in subclasses that need to restore state.
       def restore_state(document : Storage::Document) : Nil
         # Default: no-op
+      end
+
+      # Clusters with security-critical persisted state can require startup to
+      # fail when their document cannot be read or restored.
+      def fail_closed_restore? : Bool
+        false
+      end
+
+      # Whether this cluster has host-managed state that requires an
+      # independent marker when its document is persisted.
+      def persist_restore_sentinel? : Bool
+        false
+      end
+
+      # Whether an advertised feature requires a saved document once a fabric
+      # exists, even before any host-managed state was configured.
+      def require_state_with_fabrics? : Bool
+        false
       end
 
       # ------------------------------------------------------------------------
