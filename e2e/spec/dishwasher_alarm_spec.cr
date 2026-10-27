@@ -20,6 +20,17 @@ describe "Matter 1.6 Dishwasher Alarm interoperability" do
 
   it "commissions and advertises canonical Alarm Base attributes" do
     device.commission!
+    descriptor = expect_success(device.read("descriptor", "device-type-list", 1))
+    descriptor.int("DeviceType").should eq(0x0075_i64)
+    descriptor.int("Revision").should eq(2_i64)
+    servers = expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList")
+    servers.should contain(0x0060_i64)
+    servers.should contain(0x0006_i64)
+    read_int(device, "onoff", "feature-map", "FeatureMap", 1).should eq(2_i64)
+    # This pinned chip-tool exposes the 1.6 global through raw read-by-id,
+    # but its generated OperationalState command table predates EventList.
+    event_list = expect_success(device.chip("any", "read-by-id", "0x60", "0xfffa", device.node, "1"))
+    event_list.output.should contain("Data =")
     read_dishwasher_alarm(device, 0xFFFD_u32).should eq(1_i64)
     read_dishwasher_alarm(device, 0xFFFC_u32).should eq(1_i64)
     read_dishwasher_alarm(device, 0x0003_u32).should eq(6_i64)

@@ -17,6 +17,15 @@ describe "Matter 1.6 Refrigerator Alarm interoperability" do
 
   it "commissions and exposes DoorOpen alarm without disallowed commands" do
     device.commission!
+    descriptor = expect_success(device.read("descriptor", "device-type-list", 1))
+    descriptor.ints("DeviceType").should eq([0x0070_i64, 0x0071_i64])
+    descriptor.ints("Revision").should eq([3_i64, 6_i64])
+    servers = expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList")
+    servers.should contain(0x0056_i64)
+    read_int(device, "temperaturecontrol", "feature-map", "FeatureMap", 1).should eq(1_i64)
+    expect_success(device.invoke("temperaturecontrol", "set-temperature", endpoint: 1,
+      options: ["--TargetTemperature", "1800"]))
+    read_int(device, "temperaturecontrol", "temperature-setpoint", "TemperatureSetpoint", 1).should eq(1800_i64)
     read_refrigerator_alarm(device, 0xFFFD_u32).should eq(1_i64)
     read_refrigerator_alarm(device, 0xFFFC_u32).should eq(0_i64)
     read_refrigerator_alarm(device, 0x0003_u32).should eq(1_i64)
@@ -25,6 +34,7 @@ describe "Matter 1.6 Refrigerator Alarm interoperability" do
     expect_failure(device.chip("any", "command-by-id", REFRIGERATOR_ALARM_CLUSTER,
       REFRIGERATOR_RESET_COMMAND, %({"0": "u:1"}), device.node, REFRIGERATOR_ALARM_ENDPOINT), "UNSUPPORTED_COMMAND")
     device.restart!
+    read_int(device, "temperaturecontrol", "temperature-setpoint", "TemperatureSetpoint", 1).should eq(1800_i64)
     read_refrigerator_alarm(device, 0x0003_u32).should eq(1_i64)
     read_refrigerator_alarm(device, 0x0002_u32).should eq(1_i64)
   end
