@@ -14,6 +14,8 @@ private def fresh_postgres(url : String) : Matter::Storage::Postgres
 end
 
 private class PausedControllerPostgres < Matter::Storage::Postgres
+  property pause = false
+
   def initialize(url : String, @ready : Channel(Nil), @release : Channel(Nil))
     super(url)
   end
@@ -21,8 +23,10 @@ private class PausedControllerPostgres < Matter::Storage::Postgres
   def compare_and_swap(collection : String, id : String,
                        expected : Matter::Storage::Document?,
                        document : Matter::Storage::Document) : Bool
-    @ready.send(nil)
-    @release.receive
+    if @pause
+      @ready.send(nil)
+      @release.receive
+    end
     super
   end
 end
@@ -107,6 +111,8 @@ if url = ENV["MATTER_TEST_POSTGRES_URL"]?
       second_store = Matter::Controller::StateStore.new(second_backend)
       first = first_store.load
       second = second_store.load
+      first_backend.pause = true
+      second_backend.pause = true
       first.unsecured_message_counter = 1_u32
       second.unsecured_message_counter = 2_u32
       finished = Channel(Exception?).new
@@ -147,6 +153,8 @@ if url = ENV["MATTER_TEST_POSTGRES_URL"]?
       second_store = Matter::Controller::StateStore.new(second_backend)
       first = Matter::Controller::State.new
       second = Matter::Controller::State.new
+      first_backend.pause = true
+      second_backend.pause = true
       first.unsecured_message_counter = 1_u32
       second.unsecured_message_counter = 2_u32
       finished = Channel(Exception?).new
