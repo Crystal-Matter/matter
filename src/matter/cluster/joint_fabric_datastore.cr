@@ -1269,8 +1269,9 @@ module Matter
 
       def update_endpoint_for_node(request : UpdateEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless node_exists?(request.node_id) && valid_name?(request.friendly_name)
-        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.not_found unless node_exists?(request.node_id)
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
 
         entries = @node_endpoint_list.reject { |entry| entry.node_id == request.node_id && entry.endpoint_id == request.endpoint_id }
         entries << DatastoreEndpointEntryStruct.new(request.endpoint_id, request.node_id, request.friendly_name)
@@ -1396,8 +1397,8 @@ module Matter
 
       def add_group_id_to_endpoint_for_node(request : AddGroupIDToEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id) &&
-                                                                @group_list.any?(&.group_id.==(request.group_id.to_u64))
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.constraint_error unless @group_list.any?(&.group_id.==(request.group_id.to_u64))
         return InteractionModel::Status.constraint_error if @endpoint_group_id_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
         return InteractionModel::Status.resource_exhausted if @endpoint_group_id_list.size >= MAX_NODE_ENTRIES
         if (group = @group_list.find { |item| item.group_id == request.group_id.to_u64 }) && (key_id = group.group_key_set_id)
@@ -1430,7 +1431,7 @@ module Matter
 
       def add_binding_to_endpoint_for_node(request : AddBindingToEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
         binding = request.binding
         return InteractionModel::Status.constraint_error unless valid_binding_target?(binding)
         return InteractionModel::Status.resource_exhausted if @endpoint_binding_list.size >= MAX_NODE_ENTRIES
@@ -1455,7 +1456,7 @@ module Matter
 
       def add_acl_to_node(request : AddACLToNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless node_exists?(request.node_id)
+        return InteractionModel::Status.not_found unless node_exists?(request.node_id)
         acl = request.acl_entry
         return InteractionModel::Status.constraint_error if (acl.subjects.try(&.size) || 0) > AccessControl::DEFAULT_SUBJECTS_PER_ENTRY ||
                                                             (acl.targets.try(&.size) || 0) > AccessControl::DEFAULT_TARGETS_PER_ENTRY
