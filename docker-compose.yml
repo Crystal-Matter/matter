@@ -633,8 +633,15 @@ services:
   # Official connectedhomeip server used to verify Crystal-originated groupcast.
   official-group-recipient:
     image: ${MATTER_E2E_TESTS_IMAGE:-matter-e2e-tests}
-    entrypoint: ["/usr/bin/chip-all-clusters-app"]
-    command: ["--discriminator", "3841", "--passcode", "20202021", "--KVS", "/tmp/official-group-recipient.kvs"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until [ -f /e2e/logs/official-group-recipient-${MATTER_E2E_RUN_ID:-manual}.start ]; do sleep 0.2; done
+        exec /usr/bin/chip-all-clusters-app --discriminator 3841 --passcode 20202021 --KVS /tmp/official-group-recipient.kvs
+    environment:
+      MATTER_E2E_RUN_ID: ${MATTER_E2E_RUN_ID:-manual}
+    volumes:
+      - e2e-logs:/e2e/logs
     networks:
       - matter
 
@@ -708,6 +715,7 @@ services:
       # "address" via `chip-tool pairing already-discovered` using the device's IPv6 address.
       E2E_PAIRING: ${E2E_PAIRING:-code}
       E2E_LOG_DIR: /e2e/logs
+      MATTER_E2E_RUN_ID: ${MATTER_E2E_RUN_ID:-manual}
     volumes:
       - e2e-logs:/e2e/logs
       - crystal-cache:/root/.cache/crystal

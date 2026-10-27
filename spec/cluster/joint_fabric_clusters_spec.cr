@@ -16,6 +16,23 @@ private def full_node_key_set_list : Array(Datastore::DatastoreNodeKeySetEntrySt
 end
 
 describe Matter::Cluster::JointFabricDatastore do
+  it "preserves a committed Anchor status when the same configuration is attached again" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    root = Bytes[1_u8]
+    cluster.configure_anchor(root, 7_u64, 0xFFF1_u16, "Anchor").success?.should be_true
+    copied_status = Datastore::DatastoreStatusEntryStruct.new(
+      Datastore::DatastoreStateEnum::Committed, 1_u32, Datastore::NO_FAILURE_CODE)
+    cluster.status = copied_status
+    previous_version = cluster.data_version
+
+    cluster.configure_anchor(root, 7_u64, 0xFFF1_u16, "Anchor").success?.should be_true
+    cluster.status.to_slice.should eq(copied_status.to_slice)
+    cluster.data_version.should eq(previous_version)
+
+    cluster.configure_anchor(root, 7_u64, 0xFFF1_u16, "Renamed Anchor").success?.should be_true
+    cluster.status.update_timestamp.should be > copied_status.update_timestamp
+  end
+
   it "publishes the Anchor fabric IPK in GroupKeySetID zero for JCM device migration" do
     cluster = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     ipk = Bytes.new(16, 0xA5_u8)

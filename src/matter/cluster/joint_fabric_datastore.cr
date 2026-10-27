@@ -928,6 +928,15 @@ module Matter
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.constraint_error if root_ca.empty? || root_ca.size > 400 || !valid_name?(name)
         return InteractionModel::Status.constraint_error if ipk && ipk.size != Fabric::IPK_SIZE
+        # Reattaching a promoted Anchor must preserve the timestamp copied
+        # from the frozen old Datastore when its configuration is unchanged.
+        key_set = @group_key_set_list.find(&.group_key_set_id.==(IPK_KEY_SET_ID))
+        if @status.state.committed? && @status.failure_code == NO_FAILURE_CODE &&
+           @anchor_root_ca == root_ca && @anchor_node_id == node_id &&
+           @anchor_vendor_id == vendor_id && @friendly_name == name && key_set &&
+           (!ipk || (key_set.epoch_key0 == ipk && key_set.epoch_start_time0 == 0_u64))
+          return InteractionModel::Status.success
+        end
         self.anchor_root_ca = root_ca
         self.anchor_node_id = node_id
         self.anchor_vendor_id = vendor_id

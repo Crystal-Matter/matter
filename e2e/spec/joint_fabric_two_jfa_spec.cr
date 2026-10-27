@@ -78,6 +78,22 @@ private def candidate_admin_icac(client : Matter::Controller::Client,
     .from_tlv(data.to_slice).find!(&.node_id.==(administrator_node_id)).icac
 end
 
+private def administrator_noc(client : Matter::Controller::Client,
+                              peer : Socket::IPAddress,
+                              fabric : Matter::Controller::FabricInfo,
+                              node_id : UInt64) : Matter::Cluster::OperationalCredentials::Tlv::NOC
+  session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, fabric,
+    peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
+  im = Matter::Controller::ImClient.new(client, E2E::COMMAND_TIMEOUT)
+  report = im.read_attribute(session: session, peer: peer,
+    endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+    cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+    attribute_id: Matter::Cluster::OperationalCredentials::ATTR_NOCS)
+  data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  Array(Matter::Cluster::OperationalCredentials::Tlv::NOC).from_tlv(data.to_slice).first
+end
+
 private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
                              session : Matter::Session::SecureContext,
                              peer : Socket::IPAddress, node_id : UInt64,
@@ -1059,6 +1075,12 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8)))
     before_transfer.subscription_committed.should be_false
 
+    copied_anchor_name = "Shared Fabric Anchor"
+    named_source = jfa_command("matter_joint_fabric_anchor",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("set-test-datastore-friendly-name", 0xA102_u64,
+        test_friendly_name: copied_anchor_name))
+    named_source.status.should eq("ok"), named_source.error.to_s
+
     # A freezes its Datastore before B receives the TransferAnchorRequest
     # acknowledgement. Restart B with a persisted Requesting journal and
     # require it to recognize the frozen Datastore without sending the request
@@ -1094,6 +1116,114 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-requested", 0xA102_u64,
         nonce: request_nonce))
     accepted_witness.status.should eq("ok"), accepted_witness.error.to_s
+
+    # B commits the copied Datastore, then loses the save acknowledgement
+    # before any Administrator credential rotation. Restart from Copied.
+    interrupted_copy = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_transfer_copy: true))
+    interrupted_copy.status.should eq("error")
+    interrupted_copy.error.to_s.should contain("Injected interruption after durable Anchor Datastore copy")
+    copied_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    copied_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copied.value)
+    copied_identity = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA102_u64,
+        nonce: Random::Secure.hex(8)))
+    copied_entries = copied_identity.inspected_datastore_admin_entries.as(Array(Bytes))
+    copied_entries.map { |entry| Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.from_slice(entry).node_id }
+      .sort!.should eq([0xA102_u64, 0xA104_u64, 0xB102_u64])
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_copy = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    persisted_copy.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copied.value)
+    reloaded_identity = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA102_u64,
+        nonce: Random::Secure.hex(8)))
+    reloaded_identity.inspected_datastore_admin_entries.should eq(copied_entries)
+
+    # A and C rotate onto B's root, then B loses the durable Rotated save
+    # acknowledgement before promoting its own Anchor credentials.
+    interrupted_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_transfer_rotation: true))
+    interrupted_rotation.status.should eq("error")
+    interrupted_rotation.error.to_s.should contain("Injected interruption after durable Administrator rotations")
+    rotated_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    rotated_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotated.value)
+    c_new_fabric_after_rotation = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_new_fabric_after_rotation.fabric_present.should be_true
+    c_rotated_credentials = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    persisted_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotated.value)
+    c_reloaded_credentials = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_reloaded_credentials.noc.should eq(c_rotated_credentials.noc)
+    c_reloaded_credentials.icac.should eq(c_rotated_credentials.icac)
+
+    # B completes its own NOC rotation and persists the promoted Datastore,
+    # endpoint binding, and Anchor role, then loses the acknowledgement before
+    # its Promoted journal save. Recovery must prove this outcome without
+    # issuing UpdateNOC again.
+    interrupted_promotion = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_transfer_promotion: true))
+    interrupted_promotion.status.should eq("error")
+    interrupted_promotion.error.to_s.should contain("Injected interruption after durable Anchor promotion")
+    promoting_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    promoting_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Promoting.value)
+    promoted_noc_before_restart = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    promoted_noc_before_restart.noc.should_not be_empty
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_promotion = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    persisted_promotion.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Promoting.value)
+    promoted_identity = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA102_u64,
+        nonce: Random::Secure.hex(8)))
+    promoted_identity.inspected_fabric_id.should eq(joiner_bootstrap.fabric.fabric_id)
+    promoted_identity.inspected_root_public_key.should eq(joiner_bootstrap.fabric.root_public_key)
+    promoted_identity.inspected_datastore_admin_entries.should eq(copied_entries)
+    frozen_old = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
+      endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_STATUS)
+    frozen_old_data = frozen_old.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.from_slice(frozen_old_data.to_slice)
+      .state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending)
+    promoted_noc_after_restart = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    promoted_noc_after_restart.noc.should eq(promoted_noc_before_restart.noc)
+    promoted_noc_after_restart.icac.should eq(promoted_noc_before_restart.icac)
+    unsafe_promotion_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_promotion_retry.status.should eq("error")
+    unsafe_promotion_retry.error.to_s.should contain("needs reconciliation")
+    reconciled_promotion = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-promoted", 0xA102_u64))
+    reconciled_promotion.status.should eq("ok"), reconciled_promotion.error.to_s
+    promoted_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    promoted_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Promoted.value)
 
     # A executes TransferAnchorComplete, then B loses the response. Restart B
     # with its persisted Completing journal while A and C still use A's fabric.
@@ -1252,6 +1382,8 @@ describe "three provisioned Joint Fabric Administrators" do
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     c_new_credentials_before_restart = Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
       .from_tlv(c_nocs_before_restart_data.to_slice).first
+    c_new_credentials_before_restart.noc.should eq(c_rotated_credentials.noc)
+    c_new_credentials_before_restart.icac.should eq(c_rotated_credentials.icac)
     c_new_credentials_before_restart.icac.should_not be_nil
     c_cross_signed_before_restart = jfa_command("matter_joint_fabric_third",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA104_u64,
@@ -1296,6 +1428,10 @@ describe "three provisioned Joint Fabric Administrators" do
     completed_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     completed_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed.value)
+    promoted_noc_after_transfer = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    promoted_noc_after_transfer.noc.should eq(promoted_noc_before_restart.noc)
+    promoted_noc_after_transfer.icac.should eq(promoted_noc_before_restart.icac)
     c_resumed_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, third_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xA104_u64, timeout: E2E::COMMAND_TIMEOUT)
     c_resumed_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
@@ -1330,6 +1466,13 @@ describe "three provisioned Joint Fabric Administrators" do
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     Array(Matter::Cluster::OperationalCredentials::Tlv::NOC)
       .from_tlv(noc_after_resume_data.to_slice).first.noc.should eq(transfer_anchor_noc)
+    promoted_name = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
+      endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+      attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_FRIENDLY_NAME)
+    promoted_name_data = promoted_name.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    String.from_tlv(promoted_name_data.to_slice).should eq(copied_anchor_name)
     promoted_admins = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)

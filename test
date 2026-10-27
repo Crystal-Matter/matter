@@ -140,6 +140,9 @@ fi
 export E2E_RUN_UNIT="$RUN_UNIT"
 export E2E_RUN_E2E="$RUN_E2E"
 export E2E_SPEC_ARGS="$SPEC_ARGS"
+# The official SDK recipient's initial commissioning window lasts 15 minutes.
+# Give each run a fresh trigger so that recipient starts when its spec begins.
+export MATTER_E2E_RUN_ID="$(date +%s)-$$"
 
 LOG_DIR="$ROOT_DIR/tmp/e2e/logs"
 mkdir -p "$LOG_DIR"

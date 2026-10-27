@@ -25,9 +25,18 @@ sets a test-only 120-second cumulative fail-safe limit through B's local
 command channel, adding about two minutes to this scenario. It leaves B
 running until expiry; restarting B earlier tests a separate rollback path.
 
-B then transfers the Anchor role from A. The fixture interrupts after
-TransferAnchorComplete, restarts B from its persisted FollowingUp journal,
-and resumes only the participant follow-up. C then commits B's cross-signed
+B then transfers the Anchor role from A. The fixture first interrupts after
+B durably copies A's Datastore and again after A and C rotate their credentials;
+each restart checks the persisted stage and copied or rotated state before
+resuming. It next interrupts after B's own NOC and Anchor role are durably
+promoted but before the `Promoted` journal save, then restarts B. Recovery
+checks B's saved NOC, CAT versions, Datastore, binding, and role against A's
+frozen Datastore before advancing the journal, including a custom copied
+friendly name and status timestamp; B's NOC stays unchanged through
+the rest of the transfer. It then interrupts after TransferAnchorComplete, restarts B from its
+persisted `Completing` journal, and reconciles the old Anchor's completion
+witness. A later interruption resumes only the participant follow-up from
+`FollowingUp`. C then commits B's cross-signed
 ICAC, while B stops after durably saving the `CrossSigned` stage and before
 sending RemoveFabric. B restarts again and resumes C's old-fabric removal;
 C's new-fabric NOC is unchanged. C still has A's fabric before that resume,

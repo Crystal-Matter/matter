@@ -41,14 +41,15 @@ module MatterJointFabricAdministrator
     ANCHOR_CAT_ID                         = Matter::Cluster::JointFabricDatastore::ANCHOR_CAT
     ADMINISTRATOR_CAT_SUBJECT_PREFIX      = Matter::DataType::NodeId::CAT_PREFIX |
                                             (ADMINISTRATOR_CAT_ID.to_u64 << Matter::DataType::CaseAuthenticatedTag::IDENTITY_SHIFT)
-    DEFAULT_OPERATIONAL_PORT    =    5540
-    ADMIN_GROUP_ID              =   1_u16
-    ANCHOR_GROUP_ID             =   2_u16
-    ANCHOR_IPK_KEY_SET_ID       =   0_u16
-    ANCHOR_JFA_ENDPOINT_ID      =   1_u16
-    BOOTSTRAP_JFA_ENDPOINT_ID   =   2_u16
-    UNCOMPRESSED_P256_POINT_TAG = 0x04_u8
-    ROTATION_NONCE_HEX_LENGTH   = Matter::Controller::VidVerification::CHALLENGE_SIZE * 2
+    DEFAULT_OPERATIONAL_PORT     =    5540
+    ADMIN_GROUP_ID               =   1_u16
+    ANCHOR_GROUP_ID              =   2_u16
+    ANCHOR_IPK_KEY_SET_ID        =   0_u16
+    ANCHOR_JFA_ENDPOINT_ID       =   1_u16
+    BOOTSTRAP_JFA_ENDPOINT_ID    =   2_u16
+    UNCOMPRESSED_P256_POINT_TAG  = 0x04_u8
+    ROTATION_NONCE_HEX_LENGTH    = Matter::Controller::VidVerification::CHALLENGE_SIZE * 2
+    DEFAULT_ANCHOR_FRIENDLY_NAME = "Crystal Anchor"
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -169,12 +170,16 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_first_transfer_follow_up : Bool = false
       getter? interrupt_after_next_transfer_cross_sign : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
+      getter? interrupt_after_transfer_copy : Bool = false
+      getter? interrupt_after_transfer_rotation : Bool = false
+      getter? interrupt_after_transfer_promotion : Bool = false
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
       getter? interrupt_before_anchor_noc : Bool = false
       getter? interrupt_after_participant_rotation : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
+      getter test_friendly_name : String? = nil
       getter? jcm : Bool
       getter trusted_icac_public_key_b : Bytes?
       getter peer_admin_jfa_endpoint_id : UInt16?
@@ -195,12 +200,16 @@ module MatterJointFabricAdministrator
                      @interrupt_after_first_transfer_follow_up : Bool = false,
                      @interrupt_after_next_transfer_cross_sign : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
+                     @interrupt_after_transfer_copy : Bool = false,
+                     @interrupt_after_transfer_rotation : Bool = false,
+                     @interrupt_after_transfer_promotion : Bool = false,
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
                      @interrupt_before_anchor_noc : Bool = false,
                      @interrupt_after_participant_rotation : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
-                     @fail_safe_max_seconds : UInt16? = nil)
+                     @fail_safe_max_seconds : UInt16? = nil,
+                     @test_friendly_name : String? = nil)
       end
     end
 
@@ -504,6 +513,8 @@ module MatterJointFabricAdministrator
         APP_BOOTSTRAP_BINDING_DOCUMENT, APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_ROLE_DOCUMENT, APP_BOOTSTRAP_ICAC_DOCUMENT} }.each do |administrator, datastore, endpoint_id, document_name, other_document_name, role_document, icac_document|
         next if persistence.app_document(document_name)
 
+        persistence.delete_app_document(APP_TRANSFER_DOCUMENT) if endpoint_id == ANCHOR_JFA_ENDPOINT_ID
+
         # Legacy stores without an authenticated binding cannot distinguish a
         # new FabricID under the same root at a reused index. A partially
         # erased store may lack the JFA index while retaining JFD lists.
@@ -621,6 +632,7 @@ module MatterJointFabricAdministrator
         @anchor_role = false
         persistence.delete_app_document(APP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_ICAC_DOCUMENT)
+        persistence.delete_app_document(APP_TRANSFER_DOCUMENT)
         persistence.delete_app_document(APP_KEY_DOCUMENT) unless bootstrap_joint_fabric_datastore.joint_fabric_index
         persistence.delete_app_document(APP_FABRIC_BINDING_DOCUMENT)
       end
@@ -746,7 +758,8 @@ module MatterJointFabricAdministrator
         end.try(&.epoch_key0)
         ipk_needs_repair = stored_ipk.nil?
         attach_anchor_ipk_key_set(datastore, fabric)
-        status = datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, "Crystal Anchor",
+        status = datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id,
+          anchor_friendly_name_for_attachment(datastore, fabric, root),
           ipk_needs_repair ? fabric.ipk : nil)
         sync_anchor_group_key_set(datastore, fabric)
         if ipk_needs_repair
@@ -962,7 +975,18 @@ module MatterJointFabricAdministrator
       datastore = joint_fabric_datastore
       @datastore_propagator.try(&.stop!)
       @datastore_propagator = nil
-      datastore.clear_fabric_state if datastore.joint_fabric_index != fabric.fabric_index
+      if datastore.joint_fabric_index != fabric.fabric_index
+        # The fabric index is runtime-only. On restart, retain a copied store
+        # only when its saved binding and root still identify this exact fabric.
+        saved_binding_matches = if document = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT)
+                                  FabricBindingState.from_document(document).matches?(fabric)
+                                else
+                                  false
+                                end
+        restored_store_matches = datastore.joint_fabric_index.nil? &&
+                                 datastore.anchor_root_ca == root && saved_binding_matches
+        datastore.clear_fabric_state unless restored_store_matches
+      end
       datastore.joint_fabric_index = fabric.fabric_index
       datastore.access_mode = @anchor_role ? Datastore::AccessMode::Active : Datastore::AccessMode::Inactive
       administrator = joint_fabric_administrator
@@ -1124,10 +1148,22 @@ module MatterJointFabricAdministrator
       end
     end
 
+    private def anchor_friendly_name_for_attachment(datastore : Datastore, fabric : Matter::Fabric,
+                                                    root : Bytes) : String
+      binding_document = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT)
+      if binding_document && datastore.status.state.committed? &&
+         datastore.anchor_root_ca == root && datastore.anchor_node_id == fabric.node_id &&
+         !datastore.friendly_name.empty? &&
+         FabricBindingState.from_document(binding_document).matches?(fabric)
+        return datastore.friendly_name
+      end
+      DEFAULT_ANCHOR_FRIENDLY_NAME
+    end
+
     private def seed_anchor_administrator(datastore : Datastore, fabric : Matter::Fabric, icac : Bytes) : Nil
       return if datastore.admin_list.any?(&.node_id.==(fabric.node_id))
       datastore.add_admin(Datastore::AddAdminRequest.new(
-        fabric.node_id, "Crystal Anchor", fabric.vendor_id, icac))
+        fabric.node_id, DEFAULT_ANCHOR_FRIENDLY_NAME, fabric.vendor_id, icac))
     end
 
     private def anchor_ipk_epoch_keys(entry : Datastore::DatastoreGroupKeySetStruct) : Array(Bytes)
@@ -1525,8 +1561,12 @@ module MatterJointFabricAdministrator
                                      interrupt_before_follow_up : Bool = false,
                                      interrupt_after_first_follow_up : Bool = false,
                                      interrupt_after_request : Bool = false,
+                                     interrupt_after_copy : Bool = false,
+                                     interrupt_after_rotation : Bool = false,
+                                     interrupt_after_promotion : Bool = false,
                                      interrupt_after_complete : Bool = false,
-                                     interrupt_after_next_cross_sign : Bool = false) : Nil
+                                     interrupt_after_next_cross_sign : Bool = false,
+                                     reconcile_promoting : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
@@ -1558,6 +1598,9 @@ module MatterJointFabricAdministrator
                 end
       unless journal.candidate_node_id == old_fabric.node_id
         raise Matter::ConfigurationError.new("Existing transfer journal belongs to another candidate")
+      end
+      if reconcile_promoting && !journal.stage.promoting?
+        raise Matter::ConfigurationError.new("Anchor transfer is not awaiting promotion reconciliation")
       end
       @transfer_in_progress = true
       begin
@@ -1640,14 +1683,18 @@ module MatterJointFabricAdministrator
         own_icac = bootstrap.fabric.intermediate_cert ||
                    raise Matter::ConfigurationError.new("Candidate Anchor ICAC is unavailable")
         candidate_administrator = Datastore::DatastoreAdministratorInformationEntryStruct.new(
-          own_fabric.node_id, "Crystal Anchor", own_fabric.vendor_id, own_icac)
+          own_fabric.node_id, DEFAULT_ANCHOR_FRIENDLY_NAME, own_fabric.vendor_id, own_icac)
         migration = Matter::Controller::AnchorTransfer::RotationMigration.new(old_im, old_session, old_peer,
           old_endpoint, joint_fabric_datastore, own_fabric.node_id, bootstrap,
           rotations, own_rotation,
-          -> { persistence.save_cluster(joint_fabric_datastore); persistence.flush; nil },
+          -> { persist_transfer_candidate_datastore! },
           -> {
             select_anchor_administrator_fabric(own_fabric.fabric_index)
             persist_anchor_role(true)
+            if interrupt_after_promotion
+              persistence.flush
+              raise Matter::TransportError.new("Injected interruption after durable Anchor promotion")
+            end
             @transfer_in_progress = false
             lifecycle.sync_advertisements
             nil
@@ -1672,9 +1719,23 @@ module MatterJointFabricAdministrator
           ->(state : Matter::Controller::AnchorTransfer::Journal) {
             persistence.write_app_document(APP_TRANSFER_DOCUMENT, state.to_document)
             persistence.flush
+            # Test-only lost acknowledgement after the copied Datastore and
+            # Copied journal have both reached durable storage.
+            if interrupt_after_copy && state.stage.copied?
+              raise Matter::TransportError.new("Injected interruption after durable Anchor Datastore copy")
+            end
+            if interrupt_after_rotation && state.stage.rotated?
+              raise Matter::TransportError.new("Injected interruption after durable Administrator rotations")
+            end
             nil
           }, journal)
         workflow.reconcile_request!(preflight.status.state) if journal.stage.requesting?
+        if reconcile_promoting
+          verify_durable_transfer_promotion!(journal, preflight, old_anchor_node_id, old_fabric, own_fabric,
+            bootstrap, admin_version, anchor_version)
+          workflow.reconcile!(Matter::Controller::AnchorTransfer::Stage::Promoted)
+          return
+        end
         workflow.run
       ensure
         @transfer_in_progress = false
@@ -1682,6 +1743,168 @@ module MatterJointFabricAdministrator
         own_client.close
         scanner.close
       end
+    end
+
+    private def persist_transfer_candidate_datastore! : Nil
+      unless persistence.save_cluster(joint_fabric_datastore)
+        raise Matter::StorageError.new("Could not persist transferred Anchor Datastore")
+      end
+      persistence.flush
+    end
+
+    # Promotion changes B's NOC, Datastore, endpoint binding, and role in that
+    # order. A restart at Promoting must inspect their durable results before
+    # deciding that the candidate NOC rotation must never be repeated.
+    private def verify_durable_transfer_promotion!(journal : Matter::Controller::AnchorTransfer::Journal,
+                                                   source : Datastore, old_anchor_node_id : UInt64,
+                                                   old_fabric : Matter::Fabric,
+                                                   own_fabric : Matter::Fabric,
+                                                   bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
+                                                   admin_version : UInt16, anchor_version : UInt16) : Nil
+      verify_frozen_transfer_source!(journal, source, old_anchor_node_id, old_fabric)
+      if !persistence.backend.durable? || general_commissioning.failsafe_armed? ||
+         persistence.backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+           Matter::Commissioning::CredentialJournal::ID)
+        raise Matter::StorageError.new("Anchor promotion credentials are not durably committed")
+      end
+      durable_fabric = verify_durable_anchor_old_credential!(own_fabric)
+      expected_cats = [
+        Matter::DataType::CaseAuthenticatedTag.create(ADMINISTRATOR_CAT_ID, admin_version),
+        Matter::DataType::CaseAuthenticatedTag.create(ANCHOR_CAT_ID, anchor_version),
+      ].sort_by(&.value)
+      certificate_cats = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(durable_fabric.operational_cert)
+        .compact_map { |subject| Matter::DataType::NodeId.case_authenticated_tag_from_subject?(subject) }
+        .sort_by!(&.value)
+      unless durable_fabric.fabric_id == bootstrap.fabric.fabric_id &&
+             durable_fabric.root_public_key == bootstrap.fabric.root_public_key &&
+             durable_fabric.root_cert == bootstrap.fabric.root_cert &&
+             durable_fabric.intermediate_cert == bootstrap.fabric.intermediate_cert &&
+             durable_fabric.node_id == own_fabric.node_id &&
+             durable_fabric.cats.sort_by(&.value) == expected_cats && certificate_cats == expected_cats
+        raise Matter::AuthenticationError.new("Candidate Anchor durable NOC does not match the transfer")
+      end
+      verify_promotion_bindings!(durable_fabric)
+      verify_promotion_roles!
+      durable_administrator = durable_transfer_administrator(ANCHOR_JFA_ENDPOINT_ID)
+      durable_bootstrap_administrator = durable_transfer_administrator(BOOTSTRAP_JFA_ENDPOINT_ID)
+      unless durable_administrator.administrator_fabric_index == durable_fabric.fabric_index &&
+             durable_bootstrap_administrator.administrator_fabric_index.nil?
+        raise Matter::AuthenticationError.new("Candidate Anchor endpoint binding did not finish promotion")
+      end
+      verify_durable_transfer_datastore!(source, old_fabric.node_id, own_fabric, bootstrap,
+        admin_version, anchor_version)
+    end
+
+    private def verify_durable_transfer_datastore!(source : Datastore, candidate_old_node_id : UInt64,
+                                                   own_fabric : Matter::Fabric,
+                                                   bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
+                                                   admin_version : UInt16, anchor_version : UInt16) : Nil
+      durable_datastore = durable_transfer_datastore
+      expected = Datastore.new(Matter::DataType::EndpointNumber.new(ANCHOR_JFA_ENDPOINT_ID))
+      candidate_icac = bootstrap.fabric.intermediate_cert ||
+                       raise Matter::ConfigurationError.new("Candidate Anchor ICAC is absent")
+      candidate_admin = Datastore::DatastoreAdministratorInformationEntryStruct.new(
+        own_fabric.node_id, DEFAULT_ANCHOR_FRIENDLY_NAME, own_fabric.vendor_id, candidate_icac)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(source, expected, own_fabric.node_id,
+        candidate_old_node_id, candidate_admin)
+      keys = bootstrap.fabric.ipk_epoch_keys
+      first_epoch = Matter::Controller::AnchorTransfer::RotationMigration::FIRST_IPK_EPOCH_START_TIME
+      ipk_key_set = Datastore::DatastoreGroupKeySetStruct.new(Datastore::IPK_KEY_SET_ID,
+        Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        keys[0].dup, first_epoch,
+        keys[1]?.try(&.dup), keys[1]? ? first_epoch + 1_u64 : nil,
+        keys[2]?.try(&.dup), keys[2]? ? first_epoch + 2_u64 : nil)
+      key_sets = expected.group_key_set_list
+      if index = key_sets.index(&.group_key_set_id.==(Datastore::IPK_KEY_SET_ID))
+        key_sets[index] = ipk_key_set
+      else
+        key_sets.unshift(ipk_key_set)
+      end
+      expected.group_key_set_list = key_sets
+      expected.group_list = expected.group_list.map do |group|
+        group.group_cat_version = admin_version if group.group_cat == ADMINISTRATOR_CAT_ID
+        group.group_cat_version = anchor_version if group.group_cat == ANCHOR_CAT_ID
+        group
+      end
+      expected.anchor_root_ca = bootstrap.fabric.root_cert.dup
+      expected.anchor_node_id = own_fabric.node_id
+      expected.anchor_vendor_id = bootstrap.fabric.admin_vendor_id
+      checks = {
+        "status state"    => durable_datastore.status.state.committed?,
+        "status time"     => durable_datastore.status.update_timestamp == expected.status.update_timestamp,
+        "status failure"  => durable_datastore.status.failure_code == expected.status.failure_code,
+        "root"            => durable_datastore.anchor_root_ca == expected.anchor_root_ca,
+        "node"            => durable_datastore.anchor_node_id == expected.anchor_node_id,
+        "vendor"          => durable_datastore.anchor_vendor_id == expected.anchor_vendor_id,
+        "name"            => durable_datastore.friendly_name == expected.friendly_name,
+        "key sets"        => durable_datastore.group_key_set_list.to_tlv == expected.group_key_set_list.to_tlv,
+        "groups"          => durable_datastore.group_list.to_tlv == expected.group_list.to_tlv,
+        "nodes"           => durable_datastore.node_list.to_tlv == expected.node_list.to_tlv,
+        "administrators"  => durable_datastore.admin_list.to_tlv == expected.admin_list.to_tlv,
+        "endpoint groups" => durable_datastore.endpoint_group_id_list.to_tlv == expected.endpoint_group_id_list.to_tlv,
+        "bindings"        => durable_datastore.endpoint_binding_list.to_tlv == expected.endpoint_binding_list.to_tlv,
+        "node keys"       => durable_datastore.node_key_set_list.to_tlv == expected.node_key_set_list.to_tlv,
+        "access lists"    => durable_datastore.node_acl_list.to_tlv == expected.node_acl_list.to_tlv,
+        "node endpoints"  => durable_datastore.node_endpoint_list.to_tlv == expected.node_endpoint_list.to_tlv,
+      }
+      mismatches = checks.compact_map { |name, matches| name unless matches }
+      unless mismatches.empty?
+        raise Matter::AuthenticationError.new("Candidate Anchor durable Datastore is incomplete: #{mismatches.join(", ")}")
+      end
+    end
+
+    private def verify_frozen_transfer_source!(journal : Matter::Controller::AnchorTransfer::Journal,
+                                               source : Datastore, old_anchor_node_id : UInt64,
+                                               old_fabric : Matter::Fabric) : Nil
+      unless journal.stage.promoting? && journal.candidate_node_id == old_fabric.node_id &&
+             journal.active_rotation_node_id.nil? && source.status.state.delete_pending? &&
+             source.anchor_root_ca == old_fabric.root_cert &&
+             source.anchor_node_id == old_anchor_node_id
+        raise Matter::AuthenticationError.new("Anchor promotion lacks the expected frozen transfer")
+      end
+      expected_rotations = source.admin_list.map(&.node_id).reject(&.==(old_fabric.node_id)).sort!
+      unless journal.rotated_administrator_node_ids.sort == expected_rotations
+        raise Matter::AuthenticationError.new("Anchor promotion has incomplete Administrator rotations")
+      end
+    end
+
+    private def verify_promotion_bindings!(fabric : Matter::Fabric) : Nil
+      {APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_BINDING_DOCUMENT}.each do |document_name|
+        binding_document = persistence.app_document(document_name) ||
+                           raise Matter::StorageError.new("Candidate Anchor fabric binding is absent")
+        unless FabricBindingState.from_document(binding_document).matches?(fabric)
+          raise Matter::AuthenticationError.new("Candidate Anchor fabric binding changed")
+        end
+      end
+    end
+
+    private def verify_promotion_roles! : Nil
+      role_document = persistence.app_document(APP_ROLE_DOCUMENT) ||
+                      raise Matter::StorageError.new("Promoted Anchor role is absent")
+      bootstrap_role_document = persistence.app_document(APP_BOOTSTRAP_ROLE_DOCUMENT) ||
+                                raise Matter::StorageError.new("Bootstrap Anchor role is absent")
+      role = JointFabricRoleState.from_document(role_document)
+      bootstrap_role = JointFabricRoleState.from_document(bootstrap_role_document)
+      if !role.anchor? || role.transfer_complete? || bootstrap_role.anchor? || !bootstrap_role.transfer_complete? ||
+         persistence.app_document(APP_ICAC_DOCUMENT)
+        raise Matter::AuthenticationError.new("Candidate Anchor role did not finish promotion")
+      end
+    end
+
+    private def durable_transfer_datastore : Datastore
+      document = persistence.backend.read(Matter::Storage::Collections::CLUSTERS,
+        joint_fabric_datastore.persistence_key) || raise Matter::StorageError.new("Promoted Datastore is absent")
+      saved = Datastore.new(Matter::DataType::EndpointNumber.new(ANCHOR_JFA_ENDPOINT_ID))
+      saved.restore_state(document)
+      saved
+    end
+
+    private def durable_transfer_administrator(endpoint_id : UInt16) : Admin
+      saved = Admin.new(Matter::DataType::EndpointNumber.new(endpoint_id))
+      document = persistence.backend.read(Matter::Storage::Collections::CLUSTERS,
+        saved.persistence_key) || raise Matter::StorageError.new("Promoted Administrator endpoint is absent")
+      saved.restore_state(document)
+      saved
     end
 
     # After candidate promotion, VID verification must inspect this device's
@@ -2525,7 +2748,10 @@ module MatterJointFabricAdministrator
           when "transfer-anchor"
             transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?,
               request.interrupt_after_first_transfer_follow_up?, request.interrupt_after_transfer_request?,
-              request.interrupt_after_transfer_complete?, request.interrupt_after_next_transfer_cross_sign?)
+              request.interrupt_after_transfer_copy?, request.interrupt_after_transfer_rotation?,
+              request.interrupt_after_transfer_promotion?,
+              request.interrupt_after_transfer_complete?,
+              request.interrupt_after_next_transfer_cross_sign?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
@@ -2541,6 +2767,21 @@ module MatterJointFabricAdministrator
             end
             CommandResult.new("ok", fabric_present: present, inspected_fabric_id: fabric_id,
               inspected_root_public_key: root_public_key, nonce: request.nonce)
+          when "set-test-datastore-friendly-name"
+            name = request.test_friendly_name || raise Matter::ConfigurationError.new("Test name is required")
+            fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
+            root = fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
+            datastore = joint_fabric_datastore
+            unless @anchor_role && datastore.status.state.committed? &&
+                   datastore.anchor_root_ca == root && datastore.anchor_node_id == fabric.node_id
+              raise Matter::AuthenticationError.new("Only the active Anchor can set the test Datastore name")
+            end
+            unless datastore.configure_anchor(root, fabric.node_id, fabric.vendor_id, name).success? &&
+                   persistence.save_cluster(datastore)
+              raise Matter::StorageError.new("Could not persist test Datastore name")
+            end
+            persistence.flush
+            CommandResult.new("ok")
           when "inspect-anchor-identity"
             fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Anchor fabric is unavailable")
             root_certificate = fabric.root_cert || raise Matter::ConfigurationError.new("Anchor root is unavailable")
@@ -2575,6 +2816,9 @@ module MatterJointFabricAdministrator
             inspect_transfer_completion(request.node_id, request.nonce)
           when "reconcile-transfer-complete"
             reconcile_transfer_complete(request.node_id, request.nonce)
+            CommandResult.new("ok")
+          when "reconcile-transfer-promoted"
+            transfer_anchor_from(request.node_id, reconcile_promoting: true)
             CommandResult.new("ok")
           when "inspect-transfer-stage"
             document = persistence.app_document(APP_TRANSFER_DOCUMENT) ||

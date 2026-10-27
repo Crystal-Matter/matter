@@ -30,6 +30,12 @@ end
 
 describe "Crystal controller group Invoke to official connectedhomeip recipient" do
   it "turns an all-clusters-app OnOff server on over authenticated multicast" do
+    # Start the SDK device near commissioning time. The full E2E suite can
+    # reach this spec after the SDK's initial 15-minute window would close.
+    trigger = File.join(E2E::LOG_DIR,
+      "official-group-recipient-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.start")
+    File.write(trigger, "")
+    sleep 2.seconds
     peer_address = Socket::Addrinfo.udp("official-group-recipient", E2E::DEVICE_PORT,
       family: Socket::Family::INET6).first.ip_address.address
     peer = Socket::IPAddress.new(peer_address, E2E::DEVICE_PORT)
