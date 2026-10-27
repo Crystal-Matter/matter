@@ -31,7 +31,9 @@ module E2E
   LOG_POLL             = 0.5.seconds
   # The examples print their mode banner before binding the UDP transport;
   # give them a moment so chip-tool's first message after a restart is answered.
-  RESTART_SETTLE = 1.second
+  RESTART_SETTLE        = 1.second
+  CASE_READ_RETRY_COUNT = 1
+  CASE_SETUP_TIMEOUT    = "CASESession timed out while waiting for a response from peer"
 
   # Files in LOG_DIR, per device (see e2e/device-entrypoint.sh).
   LOG_SUFFIX            = ".log"
@@ -341,7 +343,13 @@ module E2E
     end
 
     def read(cluster : String, attribute : String, endpoint : Int = 1) : Result
-      chip([cluster, "read", attribute, node, endpoint.to_s])
+      args = [cluster, "read", attribute, node, endpoint.to_s]
+      result = chip(args)
+      CASE_READ_RETRY_COUNT.times do
+        break if result.success? || result.im_status || !result.output.includes?(CASE_SETUP_TIMEOUT)
+        result = chip(args)
+      end
+      result
     end
 
     def write(cluster : String, attribute : String, value : String | Int, endpoint : Int = 1, options : Array(String) = [] of String) : Result

@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### End-to-end CASE read resilience
+
+- Retry an idempotent chip-tool attribute read once when CASE session setup
+  times out. Preserve interaction model failures and leave write and invoke
+  commands unretried.
+
 ### Named protocol identifiers
 
 - Use generated cluster, attribute, command, event, and feature identifiers in
