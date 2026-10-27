@@ -5,11 +5,13 @@ private alias JfdDatastore = Matter::Cluster::JointFabricDatastore
 
 private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
   getter calls = [] of String
+  property? fail_add = false
   property? fail_refresh = false
   property? fail_remove = false
 
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "add:#{node_id}:#{friendly_name}"
+    raise Matter::TransportError.new("offline") if @fail_add
   end
 
   def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
@@ -105,6 +107,38 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     store.load.pending_datastore_nodes.should be_empty
   end
 
+  it "retries a failed AddPendingNode from the durable journal after controller startup" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    state = store.load
+    state.install_fabric(fabric)
+    store.save(state)
+    delivery = RecordingNodeDelivery.new
+    delivery.fail_add = true
+    original = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    deadline = Time.utc.to_unix + 60_i64
+    expect_raises(Matter::TransportError, /offline/) do
+      original.add_pending(fabric, 0x200_u64, "Lamp", deadline)
+    end
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Pending)
+
+    delivery.fail_add = false
+    restarted = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery,
+      retry_interval: 10.milliseconds)
+    commissioner = Matter::Controller::Commissioning::Commissioner.new(store,
+      datastore_registrar: restarted)
+    begin
+      wait_until = Time.instant + 1.second
+      until store.load.pending_datastore_nodes.first.stage.registered? || Time.instant >= wait_until
+        sleep 10.milliseconds
+      end
+      store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+      delivery.calls.should eq(["add:512:Lamp", "add:512:Lamp"])
+    ensure
+      commissioner.close
+    end
+  end
+
   it "retains acknowledged completion until RefreshNode succeeds after restart" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = registrar_fabric
@@ -141,6 +175,8 @@ describe Matter::Controller::DatastoreNodeRegistrar do
 
     registrar.add_pending(fabric, 0x200_u64, "Lamp")
     registrar.completing(fabric, 0x200_u64)
+    registrar.retry_pending_once
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Completing)
     expect_raises(Matter::CommissioningError, /ambiguous/) { registrar.resume(fabric) }
     expect_raises(Matter::CommissioningError, /ambiguous/) { registrar.abort(fabric, 0x200_u64) }
     delivery.calls.should eq(["add:512:Lamp"])

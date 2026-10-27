@@ -319,7 +319,14 @@ item below as covered only to the extent of its cited tests.
   device's final CASE, then RefreshNode after acknowledged commissioning. The
   Anchor CASE adapter reads NodeList before retrying a command; known failures
   remove the pending entry. A lost CommissioningComplete result requires
-  explicit reconciliation before removal. Focused controller specs cover the
+  explicit reconciliation before removal. An opt-in Commissioner starts a
+  retry worker that scans the durable controller journal immediately at startup
+  and periodically thereafter. A durably pending AddPendingNode attempt is retried
+  before the saved commissioning deadline, while an acknowledged completion is
+  retried through RefreshNode. An uncertain Completing stage remains blocked
+  until authenticated reconciliation; the worker does not remove that entry.
+  Closing the Commissioner stops its retry worker before the controller client
+  closes. Focused controller specs cover the
   journal, retry, and network command behavior. A dedicated Docker scenario
   first commissions a Crystal switch with official chip-tool, then joins the
   Anchor fabric through the opt-in registrar; it observes the pending NodeList

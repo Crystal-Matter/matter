@@ -141,9 +141,11 @@ module Matter
               raise Matter::ConfigurationError.new("Regulatory country code must be two uppercase letters")
             end
           end
+          @datastore_registrar.try(&.start_retrying)
         end
 
         def close : Nil
+          @datastore_registrar.try(&.stop_retrying)
           @client.close
         end
 

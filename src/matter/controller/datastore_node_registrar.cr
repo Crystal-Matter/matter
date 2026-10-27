@@ -1,3 +1,4 @@
+require "log"
 require "../cluster/joint_fabric_datastore"
 require "./im_client"
 require "./operational_peer_resolver"
@@ -9,7 +10,9 @@ module Matter
     # Opt-in Joint Fabric Datastore lifecycle for a newly commissioned device.
     # Each network operation is retried from a durable controller-state journal.
     class DatastoreNodeRegistrar
+      Log                    = ::Log.for("matter.controller.datastore_node_registrar")
       alias Datastore = Cluster::JointFabricDatastore
+      DEFAULT_RETRY_INTERVAL = 30.seconds
 
       abstract class Delivery
         abstract def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
@@ -99,7 +102,70 @@ module Matter
         end
       end
 
-      def initialize(@store : StateStore, @delivery : Delivery)
+      @retry_running = false
+      @retry_done : Channel(Nil)?
+      @retry_wake : Channel(Nil)?
+
+      def initialize(@store : StateStore, @delivery : Delivery,
+                     @retry_interval : Time::Span = DEFAULT_RETRY_INTERVAL)
+        raise Matter::ConfigurationError.new("Datastore retry interval must be positive") unless @retry_interval > Time::Span.zero
+      end
+
+      # A long-lived commissioner starts this on construction, including after
+      # restart. Each pass reads the durable journal, so a failed delivery is
+      # retried without keeping an in-memory copy of the pending operation.
+      def start_retrying : Nil
+        return if @retry_running
+        return if (done = @retry_done) && !done.closed?
+        @retry_running = true
+        done = Channel(Nil).new
+        wake = Channel(Nil).new
+        @retry_done = done
+        @retry_wake = wake
+        spawn do
+          while @retry_running
+            begin
+              retry_pending_once
+            rescue ex
+              Log.warn(exception: ex) { "Datastore registration retry pass failed" }
+            end
+            if @retry_running
+              select
+              when wake.receive?
+                break
+              when timeout(@retry_interval)
+              end
+            end
+          end
+        ensure
+          done.close
+        end
+      end
+
+      def stop_retrying : Nil
+        @retry_running = false
+        @retry_wake.try do |wake|
+          wake.close unless wake.closed?
+        end
+        @retry_done.try(&.receive?)
+        @retry_done = nil
+        @retry_wake = nil
+      end
+
+      # Run each persisted operation independently. One offline fabric must not
+      # block delivery for another; an ambiguous Completing stage is reported
+      # and retained for authenticated operator reconciliation.
+      def retry_pending_once(now_unix : Int64 = Time.utc.to_unix) : Nil
+        state = @store.load
+        state.pending_datastore_nodes.each do |saved|
+          begin
+            fabric = state.fabric_for(saved.fabric_id, saved.root_public_key, saved.controller_node_id)
+            current = entry_for(@store.load, fabric, saved.node_id)
+            resume_entry(fabric, current, now_unix) if current
+          rescue ex
+            Log.warn(exception: ex) { "Datastore registration retry failed for node 0x#{saved.node_id.to_s(16)}" }
+          end
+        end
       end
 
       def add_pending(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
@@ -181,19 +247,31 @@ module Matter
       def resume(fabric : FabricInfo, now_unix : Int64 = Time.utc.to_unix) : Nil
         entries = @store.load.pending_datastore_nodes.select { |entry| same_fabric?(entry, fabric) }
         entries.each do |entry|
-          case entry.stage
-          when PendingDatastoreNode::Stage::Pending, PendingDatastoreNode::Stage::Registered
-            abort(fabric, entry.node_id) if now_unix >= entry.expires_at_unix
-          when PendingDatastoreNode::Stage::Completed
+          current = entry_for(@store.load, fabric, entry.node_id)
+          resume_entry(fabric, current, now_unix) if current
+        end
+      end
+
+      private def resume_entry(fabric : FabricInfo, entry : PendingDatastoreNode, now_unix : Int64) : Nil
+        case entry.stage
+        when PendingDatastoreNode::Stage::Pending
+          if now_unix >= entry.expires_at_unix
+            abort(fabric, entry.node_id)
+          else
+            @delivery.add_pending_node(fabric, entry.node_id, entry.friendly_name)
+            set_stage(fabric, entry.node_id, PendingDatastoreNode::Stage::Registered)
+          end
+        when PendingDatastoreNode::Stage::Registered
+          abort(fabric, entry.node_id) if now_unix >= entry.expires_at_unix
+        when PendingDatastoreNode::Stage::Completed
+          refresh(fabric, entry.node_id)
+        when PendingDatastoreNode::Stage::Completing
+          state = @store.load
+          if state.nodes_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id).has_key?(entry.node_id)
+            complete(fabric, entry.node_id)
             refresh(fabric, entry.node_id)
-          when PendingDatastoreNode::Stage::Completing
-            state = @store.load
-            if state.nodes_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id).has_key?(entry.node_id)
-              complete(fabric, entry.node_id)
-              refresh(fabric, entry.node_id)
-            else
-              raise Matter::CommissioningError.new("Datastore node completion is ambiguous; reconcile before retry")
-            end
+          else
+            raise Matter::CommissioningError.new("Datastore node completion is ambiguous; reconcile before retry")
           end
         end
       end

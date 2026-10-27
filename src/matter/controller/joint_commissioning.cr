@@ -508,6 +508,7 @@ module Matter
             ->(pending : PendingRegistration?) { save_pending(pending) },
             initial_pending, @crypto, anchor_exchange, anchor_finalize
           )
+          @datastore_registrar.try(&.start_retrying)
         end
 
         def commission(node_id : UInt64, manual_code : String,
@@ -698,6 +699,7 @@ module Matter
         end
 
         def close : Nil
+          @datastore_registrar.try(&.stop_retrying)
           @client.close
         end
 
