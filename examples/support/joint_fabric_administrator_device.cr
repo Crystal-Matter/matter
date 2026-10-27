@@ -213,6 +213,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_participant_rewind_save : Bool = false
       getter? interrupt_after_participant_rewind_save : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
+      getter? interrupt_after_migration_anchor_node_committed : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
       getter test_friendly_name : String? = nil
       getter? jcm : Bool
@@ -260,6 +261,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_participant_rewind_save : Bool = false,
                      @interrupt_after_participant_rewind_save : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
+                     @interrupt_after_migration_anchor_node_committed : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil,
                      @test_friendly_name : String? = nil)
       end
@@ -292,6 +294,7 @@ module MatterJointFabricAdministrator
       getter inspected_operational_credential : Bytes?
       getter inspected_jfa_endpoint_id : UInt16?
       getter inspected_recovery_lease_id : String?
+      getter inspected_migration_stage : UInt8?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -318,7 +321,8 @@ module MatterJointFabricAdministrator
                      @inspected_credential_journal_clear : Bool? = nil,
                      @inspected_operational_credential : Bytes? = nil,
                      @inspected_jfa_endpoint_id : UInt16? = nil,
-                     @inspected_recovery_lease_id : String? = nil)
+                     @inspected_recovery_lease_id : String? = nil,
+                     @inspected_migration_stage : UInt8? = nil)
       end
 
       # The private host channel carrying this record must authenticate the
@@ -3765,6 +3769,9 @@ module MatterJointFabricAdministrator
           when "reconcile-follow-up-cross-signed"
             reconcile_follow_up_cross_signed(request.node_id, request.nonce)
             CommandResult.new("ok", nonce: request.nonce)
+          when "inspect-device-migration-stage"
+            stage = inspect_device_migration_stage(request)
+            CommandResult.new("ok", inspected_migration_stage: stage.value)
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
             CommandResult.new("ok")
@@ -3815,10 +3822,7 @@ module MatterJointFabricAdministrator
     # A local, consented command. Neither B's ICAC signing key nor A's joined
     # operational private key crosses the command channel.
     private def migrate_device(request : CommandRequest) : Nil
-      allowed = ENV["MATTER_JFA_CONSENTED_MIGRATIONS"]?.to_s.split(',').any? do |id|
-        id.to_u64?(16) == request.node_id
-      end
-      raise Matter::CommissioningError.new("Device migration consent is missing") unless allowed
+      require_migration_consent!(request.node_id)
       verifier = migration_attestation_verifier
       anchor_fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Anchor fabric ID is required")
       anchor_root = request.root_public_key || raise Matter::ConfigurationError.new("Anchor root public key is required")
@@ -3903,6 +3907,11 @@ module MatterJointFabricAdministrator
           armed.fail_safe_max_seconds = max_seconds
           journal_store.save(armed)
         },
+        anchor_registration_committed: -> {
+          if request.interrupt_after_migration_anchor_node_committed?
+            raise Matter::TransportError.new("Injected interruption after Anchor AddPendingNode committed")
+          end
+        },
         timeout: 30.seconds)
       begin
         workflow = Matter::Controller::JointFabricDeviceMigration::Workflow.new(
@@ -3943,6 +3952,31 @@ module MatterJointFabricAdministrator
       ensure
         network.close
       end
+    end
+
+    private def inspect_device_migration_stage(request : CommandRequest) : Matter::Controller::JointFabricDeviceMigration::Stage
+      require_migration_consent!(request.node_id)
+      anchor_fabric_id = request.fabric_id || raise Matter::ConfigurationError.new("Anchor fabric ID is required")
+      anchor_root = request.root_public_key || raise Matter::ConfigurationError.new("Anchor root public key is required")
+      anchor_node_id = request.anchor_node_id || raise Matter::ConfigurationError.new("Anchor device Node ID is required")
+      old_device_fabric = fabric_table.all_fabrics.find do |fabric|
+        provisioned_bootstrap_fabric?(fabric)
+      end || raise Matter::ConfigurationError.new("Bootstrap Fabric B is not installed")
+      joined_device_fabric = fabric_table.all_fabrics.find do |fabric|
+        fabric.fabric_id == anchor_fabric_id && fabric.root_public_key == anchor_root
+      end || raise Matter::ConfigurationError.new("Joined Anchor fabric is not installed")
+      journal_store = Matter::Controller::JointFabricDeviceMigration::JournalStore.new(persistence.backend)
+      journal = journal_store.load(old_device_fabric.fabric_id, old_device_fabric.root_public_key,
+        request.node_id, joined_device_fabric.fabric_id, joined_device_fabric.root_public_key,
+        anchor_node_id) || raise Matter::ConfigurationError.new("Device migration journal is absent")
+      journal.stage
+    end
+
+    private def require_migration_consent!(node_id : UInt64) : Nil
+      allowed = ENV["MATTER_JFA_CONSENTED_MIGRATIONS"]?.to_s.split(',').any? do |id|
+        id.to_u64?(16) == node_id
+      end
+      raise Matter::CommissioningError.new("Device migration consent is missing") unless allowed
     end
 
     private def migration_identity(fabric : Matter::Fabric,
