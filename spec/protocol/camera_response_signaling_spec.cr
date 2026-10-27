@@ -42,6 +42,7 @@ private alias CameraSink = Sink(CameraOutboundIm)
 private class CameraDeferredPeer < Provider::Peer
   property provider : Provider? = nil
   property sink : CameraSink? = nil
+  property? fail_answer_after_queue : Bool = false
 
   def solicit_offer(session : Provider::Session, request : Provider::SolicitOfferRequest) : Matter::InteractionModel::Status
     provider = @provider || return Matter::InteractionModel::Status.invalid_in_state
@@ -63,6 +64,7 @@ private class CameraDeferredPeer < Provider::Peer
     return Matter::InteractionModel::Status.invalid_in_state unless provider.defer_signaling(session) do
                                                                       sink.ice_candidates(session, [Provider::IceCandidate.new("candidate:1", nil, nil)])
                                                                     end
+    return Matter::InteractionModel::Status.invalid_in_state if @fail_answer_after_queue
     Matter::InteractionModel::Status.success
   end
 
@@ -154,6 +156,22 @@ private def camera_expect_no_command(outbound : CameraOutboundIm) : Nil
 end
 
 describe "Camera signaling response handoff" do
+  it "discards signaling queued by a peer callback that then rejects the command" do
+    handler, transport, session, provider, peer, outbound, audio_id = camera_response_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      2_u16, audio_streams: [audio_id])
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_OFFER, offer)], 1_u32, 65_u16)
+    camera_expect_command(outbound, Requestor::CMD_ANSWER)
+    id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
+    peer.fail_answer_after_queue = true
+    answer = Provider::ProvideAnswerRequest.new(id, "v=0")
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_ANSWER, answer)], 2_u32, 66_u16)
+    transport.sent_packets.size.should eq(2)
+    camera_expect_no_command(outbound)
+    provider.take_pending_signaling(session.object_id.to_u64, 66_u16).should be_empty
+    handler.close
+  end
+
   it "sends outbound Answer only after the encrypted Provider response and drops it on send failure" do
     handler, transport, session, provider, _peer, outbound, audio_id = camera_response_fixture
     request = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
