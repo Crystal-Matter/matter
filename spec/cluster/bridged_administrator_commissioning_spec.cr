@@ -22,7 +22,7 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
     request = RootAdmin::OpenCommissioningWindowRequest.new(
       RootAdmin::MINIMUM_COMMISSIONING_TIMEOUT,
       Bytes.new(RootAdmin::PAKE_PASSCODE_VERIFIER_LENGTH),
-      3840_u16, RootAdmin::PBKDF2_MIN_ITERATIONS,
+      3840_u16, RootAdmin::PBKDF2_MIN_ITERATIONS.to_u32,
       Bytes.new(RootAdmin::PAKE_SALT_MIN_LENGTH))
 
     cluster.get_command_metadata(Admin::CMD_OPEN_COMMISSIONING_WINDOW).not_nil!.timed?.should be_true
