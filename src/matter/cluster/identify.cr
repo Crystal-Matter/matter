@@ -256,7 +256,10 @@ module Matter
         @next_identify_tick = @identify_time.zero? ? nil : next_tick + ticks.seconds
         @data_version &+= ticks.to_u32
         @identify_notifications << {Notification::VersionChanged, @identify_generation}
-        @identify_notifications << {Notification::AttributeChanged, @identify_generation}
+        # Timer countdowns are quiet until identification ends.
+        if @identify_time.zero?
+          @identify_notifications << {Notification::AttributeChanged, @identify_generation}
+        end
         sync_identify_callbacks_locked if @identify_time.zero?
         true
       end

@@ -2,6 +2,8 @@ require "./certificate"
 require "./certificate_asn1"
 require "./crypto"
 require "./key"
+require "../datatype/case_authenticated_tag"
+require "./wire_identifiers"
 
 module Matter
   module Crypto
@@ -78,7 +80,7 @@ module Matter
           tags = case_authenticated_tags.dup
           tags.unshift(case_authenticated_tag) if case_authenticated_tag
           if tags.size > MAX_CASE_AUTHENTICATED_TAGS || tags.uniq.size != tags.size ||
-             tags.any? { |tag| (tag & 0xffff_u32) == 0_u32 }
+             tags.any? { |tag| (tag & DataType::CaseAuthenticatedTag::VERSION_MASK) == 0_u32 }
             raise Matter::CertificateError.new("Invalid CASE authenticated tags for NOC")
           end
           issuer = if certificate = issuer_certificate
@@ -227,11 +229,11 @@ module Matter
           raise Matter::CertificateError.new("Certificate serial number is empty") if serial.empty?
 
           first = 0
-          while first < serial.size - 1 && serial[first] == 0_u8 && serial[first + 1] < 0x80_u8
+          while first < serial.size - 1 && serial[first] == 0_u8 && serial[first + 1] < WireIdentifiers::DER_INTEGER_SIGN_BIT
             first += 1
           end
           value = serial[first..]
-          value = Bytes[0_u8] + value if value[0] >= 0x80_u8
+          value = Bytes[0_u8] + value if value[0] >= WireIdentifiers::DER_INTEGER_SIGN_BIT
           if value.size > MAX_SERIAL_NUMBER_LENGTH
             raise Matter::CertificateError.new("Certificate serial number exceeds #{MAX_SERIAL_NUMBER_LENGTH} bytes")
           end

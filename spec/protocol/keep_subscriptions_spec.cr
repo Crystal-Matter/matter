@@ -137,4 +137,46 @@ describe "SubscribeRequest KeepSubscriptions" do
     handler.active_subscriptions.has_key?(1_u32).should be_true
     handler.close
   end
+
+  it "rejects a subscription whose minimum interval exceeds its maximum" do
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    handler = Matter::Protocol::MessageHandler.new(
+      transport: transport,
+      setup_pin: 20202021_u32,
+      discriminator: 3840_u16,
+      fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new)
+    )
+    subscriber = keep_session(1_u16, 1_u8, 0x2222_u64)
+    handler.sessions[subscriber.session_id] = subscriber
+    handler.active_subscriptions[1_u32] = active_keep_subscription(1_u32, subscriber)
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 0_u16,
+      cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+      attribute: Matter::Cluster::BasicInformation::ATTR_VENDOR_NAME)
+    request = Matter::InteractionModel::SubscribeRequestMessage.new(
+      attribute_requests: [path], keep_subscriptions: false,
+      min_interval_floor: 20_u16, max_interval_ceiling: 10_u16)
+
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      subscriber, Matter::InteractionModel::MessageType::SubscribeRequest.value,
+      request.to_slice, 5_u32, 55_u16), KEEP_PEER)
+
+    handler.active_subscriptions.should be_empty
+    transport.sent_packets.size.should eq(1)
+    packet = transport.sent_packets.first[0]
+    Matter::Spec::ProtocolMessages.decode_message_type(packet, subscriber).should eq(
+      Matter::InteractionModel::MessageType::StatusResponse.value)
+    encrypted = Matter::Codec::MessageCodec::Base.decode_packet(packet)
+    header = packet[0, packet.size - encrypted.payload.size]
+    nonce = Matter::Session::SecureMessage.build_nonce(
+      subscriber.local_node_id.as(Matter::DataType::NodeId).id,
+      encrypted.header.message_id,
+      header[Matter::Codec::MessageCodec::SECURITY_FLAGS_OFFSET])
+    plaintext = Matter::Crypto::StandardCrypto.new.decrypt(subscriber.encryption_key,
+      encrypted.payload, nonce, header)
+    response = Matter::Codec::MessageCodec::Base.decode_payload(
+      Matter::Codec::MessageCodec::Packet.new(encrypted.header, plaintext))
+    Matter::InteractionModel::StatusResponseMessage.from_slice(response.payload).status.should eq(
+      Matter::InteractionModel::StatusCode::InvalidAction.value)
+    handler.close
+  end
 end

@@ -1,4 +1,5 @@
 require "openssl_ext"
+require "./wire_identifiers"
 
 module Matter
   module Crypto
@@ -15,7 +16,7 @@ module Matter
         # Validate input sizes
         raise ArgumentError.new("Private key must be 32 bytes") unless private_key.size == 32
         raise ArgumentError.new("Public key must be 65 bytes (uncompressed)") unless peer_public_key.size == 65
-        raise ArgumentError.new("Public key must start with 0x04 (uncompressed marker)") unless peer_public_key[0] == 0x04
+        raise ArgumentError.new("Public key must start with an uncompressed SEC1 point marker") unless peer_public_key[0] == WireIdentifiers::Sec1PointFormat::Uncompressed.value
 
         # Try new openssl_ext API first (OpenSSL 3+ compatible, cleaner code)
         # Fall back to low-level API if new API not available in this environment

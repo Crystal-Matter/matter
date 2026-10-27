@@ -572,7 +572,7 @@ module Matter
           scanner = Scanner.new
           scanner.start
           scanner.query_commissioning
-          short_only = (discriminator & 0x00ff_u16) == 0_u16
+          short_only = (discriminator & SetupPayload::SHORT_DISCRIMINATOR_UNSPECIFIED_BITS_MASK) == 0_u16
           short_discriminator = SetupPayload.short_discriminator(discriminator)
 
           deadline = Time.instant + @timeout

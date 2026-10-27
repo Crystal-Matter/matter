@@ -4,6 +4,9 @@ module Matter
   module Session
     module Pase
       module Definitions
+        VENDOR_PROTOCOL_ID_FIELD_MASK = 0xFFFF_u32
+        PROTOCOL_ID_BITS              =         16
+
         # MRP (Message Reliability Protocol) parameters
         struct MrpParameters
           include TLV::Serializable
@@ -220,8 +223,8 @@ module Matter
 
             # Read vendorProtocolId (UInt32) and split into vendor_id and protocol_id
             vendor_protocol_id = io.read_bytes(UInt32, IO::ByteFormat::LittleEndian)
-            protocol_id = (vendor_protocol_id & 0xFFFF).to_u16
-            vendor_id = ((vendor_protocol_id >> 16) & 0xFFFF).to_u16
+            protocol_id = (vendor_protocol_id & VENDOR_PROTOCOL_ID_FIELD_MASK).to_u16
+            vendor_id = ((vendor_protocol_id >> PROTOCOL_ID_BITS) & VENDOR_PROTOCOL_ID_FIELD_MASK).to_u16
 
             protocol_status = io.read_bytes(UInt16, IO::ByteFormat::LittleEndian)
 

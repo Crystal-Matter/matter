@@ -525,7 +525,7 @@ describe Matter::Cluster::Identify do
   end
 
   describe "data versioning" do
-    it "increments data version and reports each elapsed countdown tick" do
+    it "increments data version for quiet countdown ticks and reports expiration" do
       cluster = build(Matter::Cluster::Identify)
       changed = [] of UInt32
       cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster_id : UInt32, attribute_id : UInt32) {
@@ -547,13 +547,13 @@ describe Matter::Cluster::Identify do
       cluster.advance_identify_time(started + 1.1.seconds)
       cluster.identify_time.should eq(2_u16)
       cluster.data_version.should eq(version + 1)
-      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+      changed.should be_empty
       changed.clear
 
       cluster.advance_identify_time(started + 2.1.seconds)
       cluster.identify_time.should eq(1_u16)
       cluster.data_version.should eq(version + 2)
-      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+      changed.should be_empty
       changed.clear
 
       cluster.advance_identify_time(started + 3.1.seconds)

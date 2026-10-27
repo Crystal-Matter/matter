@@ -1,6 +1,7 @@
 require "openssl"
 require "openssl_ext"
 require "base64"
+require "./wire_identifiers"
 
 module Matter
   module Crypto
@@ -102,7 +103,7 @@ module Matter
         return unless x && y
 
         io = IO::Memory.new
-        io.write_byte(0x04_u8) # Uncompressed point indicator
+        io.write_byte(WireIdentifiers::Sec1PointFormat::Uncompressed.value)
         io.write(x)
         io.write(y)
         io.to_slice
@@ -112,11 +113,12 @@ module Matter
         return if value.size.even?
 
         case value[0]
-        when 0x02, 0x03
+        when WireIdentifiers::Sec1PointFormat::CompressedEven.value,
+             WireIdentifiers::Sec1PointFormat::CompressedOdd.value
           raise Matter::CryptoError.new("Unsupported public key compression")
-        when 0x04
+        when WireIdentifiers::Sec1PointFormat::Uncompressed.value
           # Uncompressed format
-        when 0x05
+        when WireIdentifiers::Sec1PointFormat::IllegalSpecifier.value
           raise Matter::CryptoError.new("Illegal public key format specifier")
         else
           raise Matter::CryptoError.new("Invalid public key format")
@@ -252,7 +254,8 @@ module Matter
         # Look for tag 0x04 (OCTET STRING) followed by length 0x20 (32 bytes)
         # Format: ... 04 20 [32 bytes of private key] ...
         (0...der.size - 2).each do |i|
-          if der[i] == 0x04 && der[i + 1] == 0x20 && i + 2 + CRYPTO_EC_KEY_BYTES <= der.size
+          if der[i] == WireIdentifiers::DerTag::OctetString.value &&
+             der[i + 1] == CRYPTO_EC_KEY_BYTES && i + 2 + CRYPTO_EC_KEY_BYTES <= der.size
             return der[i + 2, CRYPTO_EC_KEY_BYTES]
           end
         end
@@ -266,7 +269,7 @@ module Matter
         # Public key DER format has the 65-byte uncompressed key (0x04 || x || y) at the end
         # Scan backwards for 0x04 marker
         (der.size - 65).downto(0) do |i|
-          if der[i] == 0x04 && i + 65 <= der.size
+          if der[i] == WireIdentifiers::Sec1PointFormat::Uncompressed.value && i + 65 <= der.size
             return der[i, 65]
           end
         end
@@ -335,7 +338,7 @@ module Matter
           pub_bytes = ec_key.public_key_bytes
 
           # Extract x and y coordinates from uncompressed public key (0x04 || x || y)
-          if pub_bytes[0] == 0x04_u8
+          if pub_bytes[0] == WireIdentifiers::Sec1PointFormat::Uncompressed.value
             coordinate_length = (pub_bytes.size - 1) // 2
             @x_bits = pub_bytes[1, coordinate_length]
             @y_bits = pub_bytes[coordinate_length + 1, coordinate_length]

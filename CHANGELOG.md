@@ -7,6 +7,50 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Administrator AddICAC attempts
+
+- Count an authenticated AddICAC invocation as the fabric's sole attempt in an
+  armed fail-safe even when its certificate is rejected. A new fail-safe period
+  permits another attempt.
+
+### Controller invoke response validation
+
+- Verify every InvokeResponse status matches the invoked command path and
+  every command-data response belongs to its endpoint and cluster, including
+  later chunks. Keep distinct response command IDs valid while rejecting
+  unrelated or malformed response entries before Joint Fabric workflows use them.
+  Label oversized response failures with the original request path.
+
+### Named protocol masks and sentinels
+
+- Name the Actions command bitmap, Door Lock legacy programming sentinel,
+  Scenes Management undefined scene ID, delegated CRL key usage mask,
+  onboarding discriminator masks, and BTP handshake version masks at their
+  production use sites.
+
+### Subscription interval validation
+
+- Reject SubscribeRequests whose minimum reporting interval exceeds the maximum
+  with `InvalidAction`, before allocating or priming a subscription.
+
+### Named wire use sites
+
+- Name remaining DER length and sign masks, SEC1 public-key format, CASE
+  authenticated-tag version mask, and header-privacy counter flags at their
+  production use sites.
+
+### Named crypto and PASE wire identifiers
+
+- Use named SEC1 point formats, DER tags and length masks in key, CSR, and
+  certificate parsing and encoding. Name the packed Secure Channel vendor and
+  protocol ID fields while preserving their wire bytes.
+
+### Groupcast LeaveGroup
+
+- Remove a Listener membership with more than 20 endpoints when LeaveGroup
+  omits Endpoints, returning an empty bounded endpoint list as the Matter 1.6
+  SDK does.
+
 ### End-to-end CASE read resilience
 
 - Retry an idempotent chip-tool attribute read once when CASE session setup
@@ -25,6 +69,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CASE and fall back to a full handshake. An ambiguous legacy record remains
   while either role still owns the matching identity.
 
+### ICD StayActive response
+
+- Cap each StayActiveRequest extension at a configurable 30-second default and
+  report the actual remaining active commitment after repeated requests.
+
 ### Named protocol identifiers
 
 - Use generated cluster, attribute, command, event, and feature identifiers in
@@ -36,11 +85,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Keep a queued global EventList attribute authorized while sending chunked
   subscription priming reports. This restores the official Operational
   Credentials VID certification subscription sequence.
+- Name Matter group multicast address fields and the DER tags used to encode
+  and verify Certification Declarations, preserving their wire values.
+
+### Groups NameSupport bitmap
+
+- Report the GroupNames capability in NameSupport bit 7, as required by Matter
+  1.6, while retaining GroupNames in FeatureMap bit 0.
 
 ### Identify and conditional Groups membership
 
-- Count down IdentifyTime from a monotonic clock, report each elapsed change, and
-  stop the host identify effect when the endpoint is removed or replaced. A
+- Count down IdentifyTime from a monotonic clock and advance its data version for
+  each elapsed second. Intermediate countdown values stay quiet for subscriptions;
+  expiration, client changes, and Identify commands report attribute changes.
+  Stop the host identify effect when the endpoint is removed or replaced. A
   repeated Identify command refreshes the full requested interval.
 - Honor the Identify state for Groups AddGroupIfIdentifying. When the endpoint
   is not identifying, return Success without changing group membership or
@@ -98,7 +156,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reverse-window response failed before transport delivery. The deferred
   commissioning task still starts only after a successful response send. An
   exact single-command MRP retransmission can now recover without re-running
-  unrelated commands.
+  unrelated commands. A newer Invoke on the same secure exchange invalidates
+  the old retry so delayed retransmissions cannot displace its response.
+
+### Chunked reverse commissioning responses
+
+- Start deferred reverse commissioning only after the final encrypted
+  `InvokeResponse` chunk is sent. Rejecting a chunk or failing to send a later
+  chunk discards the pending task. A later send failure attempts an IM Failure
+  response; a fresh Invoke can then use the still valid approval.
 
 ### Pump Configuration and Control profiles
 
@@ -180,6 +246,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   legacy Groups when a target advertises Groupcast but does not implement GKM
   GroupcastAdoption. The official SDK groupcast recipient E2E now provisions
   its initial key set and group through the Datastore synchronizer.
+- Require AddGroupResponse and RemoveGroupResponse to confirm the requested
+  GroupId before committing or deleting a pending Datastore membership.
 
 ### Thermostat suggestion guarded wire preparation
 
@@ -1609,7 +1677,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Advertise Matter 1.6 Door Lock revision 10 after confirming its removed Zigbee
   elements are absent from the wire attribute and command lists.
 
-
 ### Thread Network Directory
 
 - Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.
@@ -1937,7 +2004,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Matter 1.6 bounds. Out-of-range MoveTo target fields return ConstraintError
   without interrupting an active transition. The advertised cluster revision
   remains 7.
-
 
 ### Joint Fabric group key validation
 
