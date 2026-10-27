@@ -863,6 +863,38 @@ describe Matter::Cluster::JointFabricDatastore do
     retried.failure_code.should eq(0_u8)
   end
 
+  it "keeps recoverable endpoint intent but prunes committed entries absent from PartsList" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
+    [1_u16, 2_u16, 3_u16].each { |endpoint| cluster.record_endpoint(42_u64, endpoint, "Endpoint") }
+    cluster.add_group(Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate))
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 43_u64, endpoint: 1_u16)
+    [1_u16, 2_u16, 3_u16].each do |endpoint|
+      cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, endpoint, 1_u16))
+        .success?.should be_true
+      cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, endpoint, binding))
+        .success?.should be_true
+    end
+    cluster.complete_group_membership(42_u64, 2_u16, 1_u16).should be_true
+    committed_binding = cluster.endpoint_binding_list.find!(&.endpoint_id.==(2_u16))
+    cluster.complete_binding(42_u64, 2_u16, committed_binding.list_id).should be_true
+    cluster.complete_group_membership(42_u64, 3_u16, 1_u16,
+      Matter::InteractionModel::StatusCode::Busy.value).should be_true
+    failed_binding = cluster.endpoint_binding_list.find!(&.endpoint_id.==(3_u16))
+    cluster.complete_binding(42_u64, 3_u16, failed_binding.list_id,
+      Matter::InteractionModel::StatusCode::Busy.value).should be_true
+
+    cluster.reconcile_node_endpoints(42_u64, [] of UInt16).success?.should be_true
+    cluster.node_endpoint_list.should be_empty
+    cluster.endpoint_group_id_list.map(&.endpoint_id).sort!.should eq([1_u16, 3_u16])
+    cluster.endpoint_binding_list.map(&.endpoint_id).sort!.should eq([1_u16, 3_u16])
+    cluster.endpoint_group_id_list.find!(&.endpoint_id.==(1_u16)).status_entry.state
+      .should eq(Datastore::DatastoreStateEnum::Pending)
+    cluster.endpoint_group_id_list.find!(&.endpoint_id.==(3_u16)).status_entry.state
+      .should eq(Datastore::DatastoreStateEnum::CommitFailed)
+  end
+
   it "freezes a committed Datastore as DeletePending during Anchor transfer" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.configure_anchor(Bytes[1], 42_u64, 0xFFF1_u16, "Anchor").success?.should be_true

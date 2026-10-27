@@ -53,6 +53,11 @@ item below as covered only to the extent of its cited tests.
   RefreshNode rejects a target ProxyView ACL, which the Matter 1.6 Datastore
   privilege enum cannot represent, before changing local Datastore lists; the
   node remains Pending for an operator to resolve the incompatible ACL.
+  When RefreshNode finds an endpoint missing from Descriptor PartsList, it
+  removes that endpoint's NodeEndpointList entry and committed group/binding
+  snapshots. Recoverable pending group and binding changes remain in the
+  Datastore and are delivered if the endpoint appears in a later RefreshNode;
+  they are not sent to an endpoint absent from the current PartsList.
   An opt-in Groupcast Listener target accepts the provisioned key sets through
   GKM, adopts the fabric, and applies endpoint group membership through root
   Groupcast JoinGroup/LeaveGroup. RefreshNode imports Groupcast membership
