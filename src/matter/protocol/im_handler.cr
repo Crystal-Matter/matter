@@ -207,6 +207,7 @@ module Matter
                 [
                   Cluster::Base::GLOBAL_GENERATED_COMMAND_LIST,
                   Cluster::Base::GLOBAL_ACCEPTED_COMMAND_LIST,
+                  Cluster::Base::GLOBAL_EVENT_LIST,
                   Cluster::Base::GLOBAL_ATTRIBUTE_LIST,
                   Cluster::Base::GLOBAL_FEATURE_MAP,
                   Cluster::Base::GLOBAL_CLUSTER_REVISION,
