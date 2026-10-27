@@ -460,14 +460,16 @@ module Matter
       # cannot tear down another fabric's or peer's connection.
       def end_host_session(fabric_index : UInt8, peer_node_id : UInt64,
                            session_id : UInt16, reason : EndReason = EndReason::UnknownReason) : Bool
-        with_request_context do
+        removed = with_request_context do
           session = @sessions.find do |entry|
             entry.fabric_index == fabric_index && entry.peer_node_id == peer_node_id && entry.id == session_id
           end
           return false unless session
-          remove_session(session, reason)
-          true
+          remove_session_state(session)
+          session
         end
+        finish_session_removal(removed, reason)
+        true
       end
 
       # A media Peer can prepare an outbound Requestor command while handling
@@ -668,13 +670,22 @@ module Matter
       end
 
       private def remove_session(session : Session, reason : EndReason) : Nil
+        remove_session_state(session)
+        finish_session_removal(session, reason)
+      end
+
+      private def remove_session_state(session : Session) : Nil
         @sessions.delete(session)
         @pending_signaling.reject! do |entry|
           entry.fabric_index == session.fabric_index && entry.peer_node_id == session.peer_node_id &&
             entry.session_id == session.id
         end
         @offer_deadlines.delete(session.id)
-        changed
+        increment_version
+      end
+
+      private def finish_session_removal(session : Session, reason : EndReason) : Nil
+        notify_changed(ATTR_CURRENT_SESSIONS)
         begin
           @peer.end_session(session, reason)
         rescue ex

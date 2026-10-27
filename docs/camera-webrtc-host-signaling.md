@@ -22,7 +22,13 @@ may call `provider.defer_signaling(session) { sink.offer(session, sdp) }` (or
 Boolean and fail the command if it is false. The protocol dispatches the task
 after the final encrypted InvokeResponse chunk is transmitted; send failure,
 chunk rejection, timeout, session removal, and fabric removal drop it. A task
-that resolves to a different CASE fabric or peer fails closed and ends only its
+queued by a peer callback that rejects its command is also dropped; a new
+Invoke on the same exchange abandons the preceding chunk ladder before it
+runs the new command.
+
+The Provider releases its request lock before notifying subscribers or calling
+the host `end_session` callback after outbound signaling failure. An outbound
+task that resolves to a different CASE fabric or peer fails closed and ends only its
 matching Provider session. A media Peer must release its host resources when
 Provider invokes `end_session`.
 

@@ -4,6 +4,18 @@ require "../../src/matter/protocol/message_handler"
 private alias DiagnosticBdx = Matter::Protocol::Bdx
 private DIAGNOSTIC_PEER = Socket::IPAddress.new("127.0.0.1", 5540)
 
+private class FailingBdxTransport < Matter::Spec::CaptureTransport
+  property? fail_next_send : Bool = false
+
+  protected def transmit(data : Bytes | Slice(UInt8), peer_address : Socket::IPAddress) : Nil
+    if @fail_next_send
+      @fail_next_send = false
+      raise IO::Error.new("synthetic BDX send failure")
+    end
+    super
+  end
+end
+
 private def diagnostic_bdx_fixture
   transport = Matter::Spec::CaptureTransport.new_for_spec
   handler = Matter::Protocol::MessageHandler.new(transport,
@@ -68,13 +80,131 @@ describe "DiagnosticLogs outbound BDX transfer" do
     handler.close
   end
 
+  it "preserves another session's queued BDX when an Invoke response is suppressed" do
+    handler, transport, first = diagnostic_bdx_fixture
+    second = Matter::Spec::ProtocolMessages.case_session(182_u16)
+    handler.sessions[second.session_id] = second
+    handler.queue_bdx_transfer(second.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[1]).should be_true
+
+    unsupported_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 99_u32)
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(unsupported_path, command.to_tlv(nil)),
+    ], suppress_response: true)
+    inbound = Matter::Spec::ProtocolMessages.from_peer(first,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 17_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+    transport.sent_packets.should be_empty
+
+    handler.bdx_initiator.start_pending
+    sent = transport.sent_packets.map(&.[0]).map { |wire| diagnostic_bdx_outgoing(wire, second) }
+    sent.size.should eq(1)
+    sent.first.payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::Bdx.value)
+    handler.close
+  end
+
+  it "does not start another session's queued BDX after an unrelated Invoke succeeds" do
+    handler, transport, first = diagnostic_bdx_fixture
+    second = Matter::Spec::ProtocolMessages.case_session(182_u16)
+    handler.sessions[second.session_id] = second
+    handler.queue_bdx_transfer(second.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[1]).should be_true
+
+    unsupported_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::DiagnosticLogs::CLUSTER_ID, 99_u32)
+    command = Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+      Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(unsupported_path, command.to_tlv(nil)),
+    ])
+    inbound = Matter::Spec::ProtocolMessages.from_peer(first,
+      Matter::InteractionModel::MessageType::InvokeRequest.value,
+      request.to_slice, 1_u32, 17_u16)
+    handler.handle_message(inbound, DIAGNOSTIC_PEER)
+    transport.sent_packets.size.should eq(1)
+    diagnostic_bdx_outgoing(transport.sent_packets.first[0], first).payload_header.message_type
+      .should eq(Matter::InteractionModel::MessageType::InvokeResponse.value)
+
+    handler.bdx_initiator.start_pending
+    sent = diagnostic_bdx_outgoing(transport.sent_packets.last[0], second)
+    sent.payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::Bdx.value)
+    handler.close
+  end
+
+  it "scopes pending BDX to the originating exchange on one live CASE session" do
+    handler, transport, session = diagnostic_bdx_fixture
+    identity = session.object_id.to_u64
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "old-log".to_slice, Bytes[1], 17_u16).should be_true
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "new-log".to_slice, Bytes[2], 18_u16).should be_true
+
+    handler.bdx_initiator.discard_pending(identity, 17_u16)
+    handler.bdx_initiator.start_pending(identity, 17_u16)
+    transport.sent_packets.should be_empty
+    handler.bdx_initiator.start_pending(identity, 18_u16)
+    sent = diagnostic_bdx_outgoing(transport.sent_packets.first[0], session)
+    sent.payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::Bdx.value)
+    init = DiagnosticBdx::Wire::Init.decode(DiagnosticBdx::Wire::Opcode::SendInit, sent.payload)
+    String.new(init.file_designator).should eq("new-log")
+    handler.close
+  end
+
+  it "keeps later matching BDX transfers queued if sending the first fails" do
+    transport = FailingBdxTransport.new_for_spec
+    handler = Matter::Protocol::MessageHandler.new(transport,
+      setup_pin: 20202021_u32, discriminator: 3840_u16,
+      fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
+    session = Matter::Spec::ProtocolMessages.case_session(181_u16)
+    handler.sessions[session.session_id] = session
+    identity = session.object_id.to_u64
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "first-log".to_slice, Bytes[1], 17_u16).should be_true
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_true
+
+    failed_exchange = handler.sender.next_exchange_id
+    transport.fail_next_send = true
+    expect_raises(IO::Error) { handler.bdx_initiator.start_pending(identity, 17_u16) }
+    handler.bdx_initiator.handles?(session.session_id, failed_exchange).should be_false
+    handler.bdx_initiator.start_pending(identity, 17_u16)
+    transport.sent_packets.size.should eq(1)
+    sent = diagnostic_bdx_outgoing(transport.sent_packets.first[0], session)
+    init = DiagnosticBdx::Wire::Init.decode(DiagnosticBdx::Wire::Opcode::SendInit, sent.payload)
+    String.new(init.file_designator).should eq("second-log")
+    handler.close
+  end
+
+  it "starts every pending BDX transfer from the same originating Invoke" do
+    handler, transport, session = diagnostic_bdx_fixture
+    identity = session.object_id.to_u64
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "first-log".to_slice, Bytes[1], 17_u16).should be_true
+    handler.queue_bdx_transfer(session.session_id, 1_u8, 0x2222_u64,
+      DIAGNOSTIC_PEER, "second-log".to_slice, Bytes[2], 17_u16).should be_true
+
+    handler.bdx_initiator.start_pending(identity, 17_u16)
+    designators = transport.sent_packets.map do |wire, _peer|
+      sent = diagnostic_bdx_outgoing(wire, session)
+      init = DiagnosticBdx::Wire::Init.decode(DiagnosticBdx::Wire::Opcode::SendInit, sent.payload)
+      String.new(init.file_designator)
+    end
+    designators.should eq(["first-log", "second-log"])
+    handler.close
+  end
+
   it "sends InvokeResponse before SendInit for a real encrypted RetrieveLogsRequest" do
     handler, transport, session = diagnostic_bdx_fixture
     session.peer_subject_ids = [0x2222_u64]
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
-      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content)
+      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content,
+        cluster.request_exchange_id)
     end
     handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
 
@@ -113,7 +243,8 @@ describe "DiagnosticLogs outbound BDX transfer" do
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("B" * 1100)
     cluster.on_bdx_transfer = ->(session_id : UInt16, fabric : UInt8, node : UInt64, peer : Socket::IPAddress, designator : Bytes, content : Bytes) do
-      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content)
+      handler.queue_bdx_transfer(session_id, fabric, node, peer, designator, content,
+        cluster.request_exchange_id)
     end
     handler.clusters[{0_u16, Matter::Cluster::DiagnosticLogs::CLUSTER_ID}] = cluster
 

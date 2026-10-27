@@ -400,6 +400,11 @@ module Matter
 
         Log.info { "InvokeRequest: #{request.invoke_requests.size} command(s) requested" }
 
+        # A fresh authenticated Invoke replaces any unfinished response on
+        # this session/exchange. Abandon before command dispatch so callbacks
+        # from the old ladder cannot discard newly queued work.
+        @subscriptions.abandon_invoke(original_msg.payload_header.exchange_id, session.session_id)
+
         invoke_responses = IMHandler.invoke_commands(
           request.invoke_requests,
           clusters,

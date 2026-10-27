@@ -221,12 +221,12 @@ module Matter
           start_pending_commissions(session_identity, exchange_id)
           start_pending_sleeps(session_identity, exchange_id)
           start_pending_camera_signaling(session_identity, exchange_id)
-          @bdx_initiator.start_pending
+          @bdx_initiator.start_pending(session_identity, exchange_id)
         end
         @router.on_invoke_response_failed = ->(session : Session::SecureContext, request : Codec::MessageCodec::Message) do
-          @bdx_initiator.discard_pending
           session_identity = session.object_id.to_u64
           exchange_id = request.payload_header.exchange_id
+          @bdx_initiator.discard_pending(session_identity, exchange_id)
           if discard_pending_commissions(session_identity, exchange_id) &&
              sole_commission_node_invoke?(request.payload)
             now = Time.instant
@@ -240,15 +240,10 @@ module Matter
                 now + UNSENT_INVOKE_RETRY_WINDOW)
           end
           discard_pending_sleeps(session_identity, exchange_id)
-        end
-        @router.on_invoke_response_abandoned = ->(session_identity : UInt64, exchange_id : UInt16) do
-          @bdx_initiator.discard_pending
-          discard_pending_commissions(session_identity, exchange_id)
-          discard_pending_sleeps(session_identity, exchange_id)
           discard_pending_camera_signaling(session_identity, exchange_id)
         end
         @router.on_invoke_response_abandoned = ->(session_identity : UInt64, exchange_id : UInt16) do
-          @bdx_initiator.discard_pending
+          @bdx_initiator.discard_pending(session_identity, exchange_id)
           discard_pending_commissions(session_identity, exchange_id)
           discard_pending_sleeps(session_identity, exchange_id)
           discard_pending_camera_signaling(session_identity, exchange_id)
@@ -360,13 +355,14 @@ module Matter
       # actual CASE session here rather than trusting a request field alone.
       def queue_bdx_transfer(session_id : UInt16, fabric_index : UInt8,
                              peer_node_id : UInt64, peer : Socket::IPAddress,
-                             designator : Bytes, content : Bytes) : Bool
+                             designator : Bytes, content : Bytes,
+                             origin_exchange_id : UInt16? = nil) : Bool
         @registry.synchronize do
           session = @registry.sessions[session_id]?
           return false unless session && session.case_session? &&
                               session.fabric_index == fabric_index &&
                               session.peer_node_id.try(&.id) == peer_node_id
-          @bdx_initiator.queue(session, peer, designator, content)
+          @bdx_initiator.queue(session, peer, designator, content, origin_exchange_id)
         end
       end
 

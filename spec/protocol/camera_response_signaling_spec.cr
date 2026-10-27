@@ -110,8 +110,10 @@ end
 private def camera_invoke(handler : Matter::Protocol::MessageHandler,
                           session : Matter::Session::SecureContext,
                           commands : Array(Matter::InteractionModel::CommandDataIBTlv),
-                          counter : UInt32, exchange : UInt16) : Nil
-  request = Matter::InteractionModel::InvokeRequestMessage.new(commands)
+                          counter : UInt32, exchange : UInt16,
+                          suppress_response : Bool = false) : Nil
+  request = Matter::InteractionModel::InvokeRequestMessage.new(commands,
+    suppress_response: suppress_response)
   encrypted = Matter::Spec::ProtocolMessages.from_peer(session,
     Matter::InteractionModel::MessageType::InvokeRequest.value,
     request.to_slice, counter, exchange)
@@ -156,6 +158,80 @@ private def camera_expect_no_command(outbound : CameraOutboundIm) : Nil
 end
 
 describe "Camera signaling response handoff" do
+  it "abandons an old chunked response before a new single Invoke on the exchange" do
+    handler, transport, session, provider, _peer, outbound, audio_id = camera_response_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      2_u16, audio_streams: [audio_id])
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_OFFER, offer)], 1_u32, 67_u16)
+    camera_expect_command(outbound, Requestor::CMD_ANSWER)
+    id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
+    answer = Provider::ProvideAnswerRequest.new(id, "v=0")
+    camera_invoke(handler, session,
+      Array.new(80) { camera_command(Provider::CMD_PROVIDE_ANSWER, answer) }, 2_u32, 67_u16)
+    camera_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+
+    ice = Provider::ProvideIceCandidatesRequest.new(id,
+      [Provider::IceCandidate.new("candidate:1")])
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_ICE_CANDIDATES, ice)], 3_u32, 67_u16)
+    camera_response(transport.sent_packets.last[0], session).more_chunked_messages.should_not be_true
+    before = transport.sent_packets.size
+    handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, 4_u32, 67_u16), CAMERA_PEER)
+    transport.sent_packets.size.should eq(before + 1)
+    Matter::Spec::ProtocolMessages.decode_message_type(transport.sent_packets.last[0], session).should be_nil
+    camera_expect_no_command(outbound)
+    handler.close
+  end
+
+  it "keeps only the new chunked Invoke's signaling when it replaces an old ladder" do
+    handler, transport, session, provider, _peer, outbound, audio_id = camera_response_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      2_u16, audio_streams: [audio_id])
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_OFFER, offer)], 1_u32, 68_u16)
+    camera_expect_command(outbound, Requestor::CMD_ANSWER)
+    id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
+    answer = Provider::ProvideAnswerRequest.new(id, "v=0")
+    commands = Array.new(80) { camera_command(Provider::CMD_PROVIDE_ANSWER, answer) }
+    camera_invoke(handler, session, commands, 2_u32, 68_u16)
+    camera_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+    camera_invoke(handler, session, commands, 3_u32, 68_u16)
+    camera_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+
+    counter = 4_u32
+    while camera_response(transport.sent_packets.last[0], session).more_chunked_messages == true
+      handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, counter, 68_u16), CAMERA_PEER)
+      counter += 1_u32
+      counter.should be <= 10_u32
+    end
+    80.times { camera_expect_command(outbound, Requestor::CMD_ICE_CANDIDATES) }
+    camera_expect_no_command(outbound)
+    handler.close
+  end
+
+  it "abandons old chunks when a replacement Invoke suppresses its status response" do
+    handler, transport, session, provider, _peer, outbound, audio_id = camera_response_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      2_u16, audio_streams: [audio_id])
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_OFFER, offer)], 1_u32, 69_u16)
+    camera_expect_command(outbound, Requestor::CMD_ANSWER)
+    id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
+    answer = Provider::ProvideAnswerRequest.new(id, "v=0")
+    camera_invoke(handler, session,
+      Array.new(80) { camera_command(Provider::CMD_PROVIDE_ANSWER, answer) }, 2_u32, 69_u16)
+    camera_response(transport.sent_packets.last[0], session).more_chunked_messages.should be_true
+
+    ice = Provider::ProvideIceCandidatesRequest.new(id,
+      [Provider::IceCandidate.new("candidate:1")])
+    before = transport.sent_packets.size
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_ICE_CANDIDATES, ice)],
+      3_u32, 69_u16, suppress_response: true)
+    transport.sent_packets.size.should eq(before)
+    handler.handle_message(Matter::Spec::ProtocolMessages.status_response(session, 4_u32, 69_u16), CAMERA_PEER)
+    transport.sent_packets.size.should eq(before + 1)
+    Matter::Spec::ProtocolMessages.decode_message_type(transport.sent_packets.last[0], session).should be_nil
+    camera_expect_no_command(outbound)
+    handler.close
+  end
+
   it "discards signaling queued by a peer callback that then rejects the command" do
     handler, transport, session, provider, peer, outbound, audio_id = camera_response_fixture
     offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
@@ -300,6 +376,54 @@ describe "Camera signaling response handoff" do
       2_u16, audio_streams: [audio_id])
     camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_OFFER, offer)], 1_u32, 64_u16)
     camera_expect_no_command(outbound)
+    provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
+    handler.close
+  end
+
+  it "notifies CurrentSessions after releasing the Provider lock on host signaling failure" do
+    handler, _transport, session, provider, peer, outbound, audio_id = camera_response_fixture
+    offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+      2_u16, audio_streams: [audio_id])
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_OFFER, offer)], 1_u32, 70_u16)
+    camera_expect_command(outbound, Requestor::CMD_ANSWER)
+    id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
+    notification = Channel(Bool).new(2)
+    count = 0
+    provider.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) do
+      if attribute == Provider::ATTR_CURRENT_SESSIONS
+        count += 1
+        lock_acquired = Channel(Nil).new(1)
+        handler.registry.synchronize do
+          spawn { provider.with_request_context { lock_acquired.send(nil) } }
+          free = select
+          when lock_acquired.receive
+            true
+          when timeout(100.milliseconds)
+            false
+          end
+          notification.send(free)
+        end
+      end
+    end
+    wrong = Matter::Session::SecureContext.new(
+      session_id: 342_u16, peer_session_id: 343_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16, 0x11_u8), decryption_key: Bytes.new(16, 0x22_u8),
+      peer_node_id: Matter::DataType::NodeId.new(0x2222_u64),
+      case_session: true, fabric_index: 2_u8)
+    peer.sink = Sink.new(provider, Requestor.new(outbound),
+      ->(_fabric : UInt8, _node : UInt64) : CameraSink::Destination? do
+        CameraSink::Destination.new(wrong, CAMERA_PEER)
+      end)
+    answer = Provider::ProvideAnswerRequest.new(id, "v=0")
+    camera_invoke(handler, session, [camera_command(Provider::CMD_PROVIDE_ANSWER, answer)], 2_u32, 71_u16)
+    select
+    when lock_free = notification.receive
+      lock_free.should be_true
+    when timeout(1.second)
+      fail "host signaling cleanup did not notify CurrentSessions"
+    end
+    count.should eq(1)
     provider.current_sessions(1_u8).as(Array(Provider::Session)).should be_empty
     handler.close
   end
