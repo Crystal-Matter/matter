@@ -715,7 +715,9 @@ and gives `CommissionNode` its requested 30–120 second response deadline witho
 changing the default timeout for other Interaction Model invokes. The host
 still chooses the local target and opens its window after receiving the typed
 response; applications can poll the result journal or use the general event
-subscription API while awaiting a decision.
+subscription API while awaiting a decision. Applications should use unique
+RequestIDs; when reusing one, pass `event_min` to exclude an older matching
+result from the event journal.
 
 `Cluster::CommissionerControl` provides the Matter 1.6 wire schema and a
 host-driven approval state machine for a fabric-synchronizing Aggregator. It

@@ -33,6 +33,8 @@ module Matter
       # Read the fabric-filtered result journal once. A nil result means the
       # asynchronous host decision has not appeared; callers may poll or use
       # the general IM event subscription API before requesting approval.
+      # Use unique RequestIDs or event_min to exclude a prior result for a
+      # reused RequestID.
       def approval_result(session : Session::SecureContext, peer : Socket::IPAddress,
                           endpoint : UInt16, request_id : UInt64,
                           event_min : UInt64? = nil) : InteractionModel::StatusCode?
