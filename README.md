@@ -564,6 +564,12 @@ as 32 hex digits for the isolated DMTEST E2E fixture.
 Each `PowerSource` also exposes the Matter 1.6 mandatory `EndpointList`;
 pass the powered endpoint numbers at construction or call
 `update_endpoint_list` when the mapping changes.
+Battery Power Source instances require the host to provide `bat_charge_level`,
+`bat_replacement_needed`, and `bat_replaceability`; Rechargeable also requires
+`bat_charge_state` and `bat_functional_while_charging`, while Replaceable
+requires `bat_replacement_description` and `bat_quantity`. These attributes
+stay advertised and nonnullable for their features. The host remains
+responsible for updating live battery readings.
 
 Boolean State advertises revision 3 and ChangeEvent by default; changing
 `StateValue` through `update_state` or its setter emits a typed StateChange

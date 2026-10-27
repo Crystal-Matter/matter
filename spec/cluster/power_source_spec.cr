@@ -2,8 +2,47 @@ require "../spec_helper"
 
 describe Matter::Cluster::PowerSource do
   describe "initialization" do
+    it "rejects a BAT profile without its three mandatory values" do
+      expect_raises(ArgumentError, /Battery feature requires/) do
+        build(Matter::Cluster::PowerSource,
+          feature_map: Matter::Cluster::PowerSource::Feature::Battery)
+      end
+    end
+
+    it "rejects RECHG without mandatory BatChargeState" do
+      expect_raises(ArgumentError, /Rechargeable feature requires bat_charge_state/) do
+        build(Matter::Cluster::PowerSource,
+          feature_map: Matter::Cluster::PowerSource::Feature::Battery | Matter::Cluster::PowerSource::Feature::Rechargeable,
+          bat_charge_level: Matter::Cluster::PowerSource::BatChargeLevel::Ok,
+          bat_replacement_needed: false,
+          bat_replaceability: Matter::Cluster::PowerSource::BatReplaceability::NotReplaceable)
+      end
+    end
+
+    it "rejects RECHG without mandatory BatFunctionalWhileCharging" do
+      expect_raises(ArgumentError, /Rechargeable feature requires bat_functional_while_charging/) do
+        build(Matter::Cluster::PowerSource,
+          feature_map: Matter::Cluster::PowerSource::Feature::Battery | Matter::Cluster::PowerSource::Feature::Rechargeable,
+          bat_charge_level: Matter::Cluster::PowerSource::BatChargeLevel::Ok,
+          bat_replacement_needed: false,
+          bat_replaceability: Matter::Cluster::PowerSource::BatReplaceability::NotReplaceable,
+          bat_charge_state: Matter::Cluster::PowerSource::BatChargeState::Unknown)
+      end
+    end
+
+    it "constructs a wired profile without battery arguments" do
+      cluster = build(Matter::Cluster::PowerSource,
+        feature_map: Matter::Cluster::PowerSource::Feature::Wired,
+        description: "Mains supply", wired_present: true)
+      cluster.attributes.map(&.name).should_not contain("batChargeState")
+      cluster.attributes.map(&.name).should contain("wiredCurrentType")
+    end
+
     it "creates with default values (Battery feature)" do
-      cluster = build(Matter::Cluster::PowerSource)
+      cluster = build(Matter::Cluster::PowerSource,
+        bat_charge_level: Matter::Cluster::PowerSource::BatChargeLevel::Ok,
+        bat_replacement_needed: false,
+        bat_replaceability: Matter::Cluster::PowerSource::BatReplaceability::NotReplaceable)
       cluster.status.should eq(Matter::Cluster::PowerSource::PowerSourceStatus::Active)
       cluster.order.should eq(0_u8)
       cluster.description.should eq("Battery")
@@ -170,6 +209,38 @@ describe Matter::Cluster::PowerSource do
       attrs.map(&.name).should contain("batChargeLevel")
       attrs.map(&.name).should contain("batReplacementNeeded")
       attrs.map(&.name).should contain("batReplaceability")
+      [Matter::Cluster::PowerSource::ATTR_BAT_CHARGE_LEVEL,
+       Matter::Cluster::PowerSource::ATTR_BAT_REPLACEMENT_NEEDED,
+       Matter::Cluster::PowerSource::ATTR_BAT_REPLACEABILITY].each do |id|
+        read_tlv(cluster, id).should_not be_nil
+      end
+    end
+
+    it "always advertises and reads the mandatory RECHG charge state" do
+      cluster = build(Matter::Cluster::PowerSource,
+        feature_map: Matter::Cluster::PowerSource::Feature::Battery | Matter::Cluster::PowerSource::Feature::Rechargeable,
+        bat_charge_level: Matter::Cluster::PowerSource::BatChargeLevel::Ok,
+        bat_replacement_needed: false,
+        bat_replaceability: Matter::Cluster::PowerSource::BatReplaceability::NotReplaceable,
+        bat_charge_state: Matter::Cluster::PowerSource::BatChargeState::Unknown,
+        bat_functional_while_charging: true)
+      cluster.attributes.map(&.name).should contain("batChargeState")
+      cluster.attributes.map(&.name).should contain("batFunctionalWhileCharging")
+      read(cluster, Matter::Cluster::PowerSource::ATTR_BAT_CHARGE_STATE).should eq(Matter::Cluster::PowerSource::BatChargeState::Unknown.value)
+      read(cluster, Matter::Cluster::PowerSource::ATTR_BAT_FUNCTIONAL_WHILE_CHARGING).should be_true
+    end
+
+    it "does not permit a host to add an unconfigured feature" do
+      cluster = build(Matter::Cluster::PowerSource,
+        feature_map: Matter::Cluster::PowerSource::Feature::Battery,
+        bat_charge_level: Matter::Cluster::PowerSource::BatChargeLevel::Ok,
+        bat_replacement_needed: false,
+        bat_replaceability: Matter::Cluster::PowerSource::BatReplaceability::NotReplaceable)
+      expect_raises(ArgumentError, /fixed/) do
+        cluster.feature_map = Matter::Cluster::PowerSource::Feature::Battery | Matter::Cluster::PowerSource::Feature::Rechargeable
+      end
+      cluster.attributes.map(&.name).should contain("batChargeLevel")
+      read(cluster, Matter::Cluster::PowerSource::ATTR_BAT_CHARGE_LEVEL).should eq(Matter::Cluster::PowerSource::BatChargeLevel::Ok.value)
     end
 
     it "has Replaceable feature attributes when enabled" do
