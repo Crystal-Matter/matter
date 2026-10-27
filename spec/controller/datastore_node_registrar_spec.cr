@@ -25,6 +25,25 @@ private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar
   end
 end
 
+private class BlockingRetryDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  getter entered = Channel(Nil).new
+  getter release = Channel(Nil).new
+  @attempts = 0
+
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+    @attempts += 1
+    raise Matter::TransportError.new("offline") if @attempts == 1
+    @entered.send(nil)
+    @release.receive
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+end
+
 private class NodeLifecycleIm < Matter::Controller::ImClient
   alias Datastore = Matter::Cluster::JointFabricDatastore
 
@@ -137,6 +156,45 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     ensure
       commissioner.close
     end
+  end
+
+  it "keeps a foreground Completing save after an overlapping retry" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    state = store.load
+    state.install_fabric(fabric)
+    store.save(state)
+    delivery = BlockingRetryDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    expect_raises(Matter::TransportError, /offline/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp", Time.utc.to_unix + 60_i64)
+    end
+
+    retry_finished = Channel(Nil).new
+    spawn do
+      registrar.retry_pending_once
+      retry_finished.send(nil)
+    end
+    delivery.entered.receive
+    foreground_started = Channel(Nil).new
+    foreground_finished = Channel(Nil).new
+    spawn do
+      foreground_started.send(nil)
+      registrar.completing(fabric, 0x200_u64)
+      foreground_finished.send(nil)
+    end
+    foreground_started.receive
+    finished_early = select
+    when foreground_finished.receive?
+      true
+    when timeout(20.milliseconds)
+      false
+    end
+    delivery.release.send(nil)
+    retry_finished.receive
+    foreground_finished.receive unless finished_early
+    finished_early.should be_false
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Completing)
   end
 
   it "retains acknowledged completion until RefreshNode succeeds after restart" do

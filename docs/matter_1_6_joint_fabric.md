@@ -325,8 +325,12 @@ item below as covered only to the extent of its cited tests.
   before the saved commissioning deadline, while an acknowledged completion is
   retried through RefreshNode. An uncertain Completing stage remains blocked
   until authenticated reconciliation; the worker does not remove that entry.
-  Closing the Commissioner stops its retry worker before the controller client
-  closes. Focused controller specs cover the
+  Retry delivery and foreground registrar mutations are serialized through the
+  journal save, so a delayed retry cannot overwrite a newer completion stage.
+  A Joint Commissioning workflow owns its worker while its inner Commissioner
+  uses the same registrar. Closing the owner wakes an idle worker immediately
+  and waits for any active delivery before the controller client closes.
+  Focused controller specs cover the
   journal, retry, and network command behavior. A dedicated Docker scenario
   first commissions a Crystal switch with official chip-tool, then joins the
   Anchor fabric through the opt-in registrar; it observes the pending NodeList
