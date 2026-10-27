@@ -2,6 +2,7 @@ require "openssl_ext"
 require "../certificate/certification_declaration"
 require "../commissioning/credential_service"
 require "../crypto/pkcs10"
+require "../crypto/wire_identifiers"
 
 lib LibCrypto
   fun x509_check_ca = X509_check_ca(cert : X509) : Int32
@@ -314,8 +315,8 @@ module Matter
           marker = @bytes[@offset + 1]? || raise Matter::AuthenticationError.new("Truncated DER length")
           @offset += 2
           length = marker.to_i
-          if marker >= Codec::DERCodec::LONG_FORM_LENGTH.to_u8
-            count = (marker & 0x7f_u8).to_i
+          if marker >= Crypto::WireIdentifiers::DER_LONG_FORM_FLAG
+            count = (marker & Crypto::WireIdentifiers::DER_LENGTH_VALUE_MASK).to_i
             raise Matter::AuthenticationError.new("Invalid DER length") unless count.in?(1..2)
             length = 0
             count.times do

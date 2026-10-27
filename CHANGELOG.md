@@ -33,6 +33,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject SubscribeRequests whose minimum reporting interval exceeds the maximum
   with `InvalidAction`, before allocating or priming a subscription.
 
+### Named wire use sites
+
+- Name remaining DER length and sign masks, SEC1 public-key format, CASE
+  authenticated-tag version mask, and header-privacy counter flags at their
+  production use sites.
+
 ### Named crypto and PASE wire identifiers
 
 - Use named SEC1 point formats, DER tags and length masks in key, CSR, and
@@ -1671,7 +1677,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Advertise Matter 1.6 Door Lock revision 10 after confirming its removed Zigbee
   elements are absent from the wire attribute and command lists.
 
-
 ### Thread Network Directory
 
 - Add the Matter 1.6 opt-in Thread Network Directory server with persistent cross-fabric datasets, strict Thread TLV validation, preferred-network constraints, and CASE-only credential retrieval.
@@ -1999,7 +2004,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Matter 1.6 bounds. Out-of-range MoveTo target fields return ConstraintError
   without interrupting an active transition. The advertised cluster revision
   remains 7.
-
 
 ### Joint Fabric group key validation
 

@@ -20,6 +20,7 @@ module Matter
       DER_NO_UNUSED_BITS    =    0_u8
       DER_LONG_FORM_FLAG    = 0x80_u8
       DER_LENGTH_VALUE_MASK = 0x7F_u8
+      DER_INTEGER_SIGN_BIT  = 0x80_u8
     end
   end
 end
