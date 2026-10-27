@@ -337,6 +337,8 @@ module Matter
 
         return unless timed_interaction_satisfied?(request.timed_request, original_msg, peer, session)
 
+        @subscriptions.abandon_invoke(original_msg.payload_header.exchange_id, session.session_id)
+
         if request.more_chunked_messages && request.timed_request
           send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
           return

@@ -220,6 +220,7 @@ module Matter
         @router.on_invoke_response_sent = ->(session_identity : UInt64, exchange_id : UInt16) do
           start_pending_commissions(session_identity, exchange_id)
           start_pending_sleeps(session_identity, exchange_id)
+          start_pending_camera_signaling(session_identity, exchange_id)
           @bdx_initiator.start_pending
         end
         @router.on_invoke_response_failed = ->(session : Session::SecureContext, request : Codec::MessageCodec::Message) do
@@ -244,6 +245,13 @@ module Matter
           @bdx_initiator.discard_pending
           discard_pending_commissions(session_identity, exchange_id)
           discard_pending_sleeps(session_identity, exchange_id)
+          discard_pending_camera_signaling(session_identity, exchange_id)
+        end
+        @router.on_invoke_response_abandoned = ->(session_identity : UInt64, exchange_id : UInt16) do
+          @bdx_initiator.discard_pending
+          discard_pending_commissions(session_identity, exchange_id)
+          discard_pending_sleeps(session_identity, exchange_id)
+          discard_pending_camera_signaling(session_identity, exchange_id)
         end
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
 
@@ -364,6 +372,27 @@ module Matter
 
       private def commissioner_controls : Array(Cluster::CommissionerControl)
         @node.clusters.values.compact_map(&.as?(Cluster::CommissionerControl))
+      end
+
+      private def camera_providers : Array(Cluster::WebRtcTransportProvider)
+        @node.clusters.values.compact_map(&.as?(Cluster::WebRtcTransportProvider))
+      end
+
+      private def start_pending_camera_signaling(session_identity : UInt64, exchange_id : UInt16) : Nil
+        camera_providers.each do |provider|
+          provider.take_pending_signaling(session_identity, exchange_id).each do |task|
+            spawn do
+              @registry.synchronize { nil }
+              task.call
+            rescue ex
+              Log.error(exception: ex) { "Deferred Camera signaling failed" }
+            end
+          end
+        end
+      end
+
+      private def discard_pending_camera_signaling(session_identity : UInt64, exchange_id : UInt16) : Nil
+        camera_providers.each(&.discard_pending_signaling(session_identity, exchange_id))
       end
 
       private def start_pending_commissions(session_identity : UInt64, exchange_id : UInt16) : Nil

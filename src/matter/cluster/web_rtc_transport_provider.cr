@@ -16,6 +16,7 @@ module Matter
       MAX_ICE_USERNAME_LENGTH   =        508
       MAX_ICE_CREDENTIAL_LENGTH =        512
       MAX_ACTIVE_SESSIONS       =         32
+      MAX_PENDING_SIGNALING     =        128
       OFFER_TIMEOUT             = 30.seconds
 
       enum EndReason : UInt8
@@ -311,6 +312,9 @@ module Matter
       @sessions = [] of Session
       @offer_deadlines = {} of UInt16 => Time::Instant
       @next_session_id = 0_u16
+      private record PendingSignaling, session_identity : UInt64, exchange_id : UInt16,
+        fabric_index : UInt8, peer_node_id : UInt64, session_id : UInt16, task : Proc(Nil)
+      @pending_signaling = [] of PendingSignaling
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @streams : CameraAvStreamManagement, @peer : Peer)
@@ -464,6 +468,53 @@ module Matter
         end
       end
 
+      # A media Peer can prepare an outbound Requestor command while handling
+      # the Provider command, but must wait until its final InvokeResponse has
+      # been transmitted. The protocol layer drains this queue at that point.
+      def defer_signaling(session : Session, &task : -> Nil) : Bool
+        with_request_context do
+          identity = request_session_identity
+          exchange = request_exchange_id
+          return false unless request_command_active? && request_is_case_session? &&
+                              identity && exchange &&
+                              request_fabric_index == session.fabric_index &&
+                              request_peer_node_id == session.peer_node_id &&
+                              session_active?(session) &&
+                              @pending_signaling.size < MAX_PENDING_SIGNALING
+          @pending_signaling << PendingSignaling.new(identity, exchange,
+            session.fabric_index, session.peer_node_id, session.id, task)
+          true
+        end
+      end
+
+      def take_pending_signaling(session_identity : UInt64, exchange_id : UInt16) : Array(Proc(Nil))
+        with_request_context do
+          selected = @pending_signaling.select do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+          @pending_signaling.reject! do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+          selected.select { |entry| session_active?(entry.fabric_index, entry.peer_node_id, entry.session_id) }
+            .map do |entry|
+              -> : Nil do
+                active = with_request_context do
+                  session_active?(entry.fabric_index, entry.peer_node_id, entry.session_id)
+                end
+                entry.task.call if active
+              end
+            end
+        end
+      end
+
+      def discard_pending_signaling(session_identity : UInt64, exchange_id : UInt16) : Nil
+        with_request_context do
+          @pending_signaling.reject! do |entry|
+            entry.session_identity == session_identity && entry.exchange_id == exchange_id
+          end
+        end
+      end
+
       def end_private_sessions : Nil
         @sessions.reject { |session| delivery_allowed?(session) }.each do |session|
           remove_session(session, EndReason::PrivacyMode)
@@ -595,12 +646,26 @@ module Matter
 
       private def remove_session(session : Session, reason : EndReason) : Nil
         @sessions.delete(session)
+        @pending_signaling.reject! do |entry|
+          entry.fabric_index == session.fabric_index && entry.peer_node_id == session.peer_node_id &&
+            entry.session_id == session.id
+        end
         @offer_deadlines.delete(session.id)
         changed
         begin
           @peer.end_session(session, reason)
         rescue ex
           Log.error(exception: ex) { "WebRTC peer cleanup failed for session #{session.id}" }
+        end
+      end
+
+      private def session_active?(session : Session) : Bool
+        session_active?(session.fabric_index, session.peer_node_id, session.id)
+      end
+
+      private def session_active?(fabric_index : UInt8, peer_node_id : UInt64, id : UInt16) : Bool
+        @sessions.any? do |session|
+          session.fabric_index == fabric_index && session.peer_node_id == peer_node_id && session.id == id
         end
       end
 

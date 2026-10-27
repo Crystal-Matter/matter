@@ -16,10 +16,17 @@ failures use `UnknownReason`. The Provider API is idempotent for a session that
 has already ended, such as after privacy or fabric removal.
 
 The media host still creates SDP and ICE, owns audio/video tracks, and decides
-when the Requestor peer has installed its session. The sink does not dispatch
-automatically from Provider command handlers: doing so before the Provider
-response reaches the peer can race Requestor session registration. A production
-adapter needs a response-sent hook and a real WebRTC backend. The Matter SDK's
-Linux Camera example uses libdatachannel plus GStreamer for this layer. This
-repository does not yet include that backend or decoded-frame interoperability
-proof, so no example advertises Camera device type `0x0142`.
+when the Requestor peer has installed its session. A Provider `Peer` callback
+may call `provider.defer_signaling(session) { sink.offer(session, sdp) }` (or
+`answer` / `ice_candidates`) while handling a CASE command. Check the returned
+Boolean and fail the command if it is false. The protocol dispatches the task
+after the final encrypted InvokeResponse chunk is transmitted; send failure,
+chunk rejection, timeout, session removal, and fabric removal drop it. A task
+that resolves to a different CASE fabric or peer fails closed and ends only its
+matching Provider session. A media Peer must release its host resources when
+Provider invokes `end_session`.
+
+The Matter SDK's Linux Camera example uses libdatachannel plus GStreamer for
+the actual media layer. This repository does not yet include that backend or
+decoded-frame interoperability proof, so no example advertises Camera device
+type `0x0142`.
