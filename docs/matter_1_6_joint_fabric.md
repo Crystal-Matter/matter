@@ -334,7 +334,9 @@ item below as covered only to the extent of its cited tests.
   against split ownership. Rollback is available before B removal. An
   interrupted rollback can be resumed explicitly: authenticated reads check
   whether each A NodeList and device fabric removal took effect before issuing
-  only the remaining command. The JFA example now publishes its IPK as
+  only the remaining command. Once both removals are proven, it deletes the
+  stale A device record from the controller store before marking the rollback
+  complete. The JFA example now publishes its IPK as
   GroupKeySetID zero.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
