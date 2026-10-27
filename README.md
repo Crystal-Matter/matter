@@ -1296,6 +1296,24 @@ Wait for the Datastore entries to become Committed before the delegated
 controller opens CASE to the device. The ICAC signing key stays with
 `joint_authority`.
 
+To revoke one controller while another still uses the group CAT, rotate its
+version and reissue every survivor's NOC on the same operational key:
+
+```crystal
+receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(
+  im, anchor_case_session, anchor_peer, datastore_endpoint, group_id,
+  revoked_controller, [{survivor_store, survivor_node_id}], joint_authority,
+  anchor_node_id)
+# Save receipt.to_document durably, then poll after the Anchor synchronizes.
+status = Matter::Controller::SharedFabric.joint_group_revocation_status(
+  im, anchor_case_session, anchor_peer, datastore_endpoint, receipt)
+```
+
+The host supplies all surviving controller stores and distributes their new
+NOCs. A Pending receipt means some target ACL has not yet committed; use
+`retry_failed_joint_group_revocation` after a Datastore CommitFailed and
+continue checking until the status is Effective.
+
 When the Anchor updates GroupKeySetID zero, refresh each controller's stored
 IPK epochs over an authenticated Anchor CASE session before retiring its old
 epoch. The controller then selects the second-newest epoch for new CASE and
