@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Administrator AddICAC attempts
+
+- Count an authenticated AddICAC invocation as the fabric's sole attempt in an
+  armed fail-safe even when its certificate is rejected. A new fail-safe period
+  permits another attempt.
+
 ### End-to-end CASE read resilience
 
 - Retry an idempotent chip-tool attribute read once when CASE session setup

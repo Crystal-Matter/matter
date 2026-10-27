@@ -84,6 +84,51 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     jfa_icac_install_status(wrong_fabric, root, icac_key, anchor_icac).should eq(invalid)
   end
 
+  it "allows only one authenticated AddICAC attempt per armed fail-safe" do
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_peer_subject_ids = [Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 1_u16)).id]
+    cluster.request_peer_icac = anchor_icac
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 2_u8
+    cluster.request_session_id = 3_u64
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+
+    announce = Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16)
+    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
+    service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+
+    invalid = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      icac_key.public_key, fabric_id + 1_u64, 2_u64, root_key, 1_u64, Bytes[0x02], crypto)
+    valid = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      icac_key.public_key, fabric_id, 2_u64, root_key, 1_u64, Bytes[0x03], crypto)
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(invalid))
+      .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidICAC)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid)).should eq(
+      Matter::InteractionModel::Status.constraint_error)
+    service.cross_signed_icac.should be_nil
+
+    service.reset_failsafe
+    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
+    service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid))
+      .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
+  end
+
   it "checks remote CSR proof and pinned existing ICAC before returning bytes" do
     provider = StubRemoteIcacCsrProvider.new(Matter::Crypto::Pkcs10.create(icac_key, crypto), root_key.public_key)
     service = Matter::Commissioning::JointFabricAdministratorService.new(
