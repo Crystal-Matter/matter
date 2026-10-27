@@ -41,12 +41,12 @@ module MatterJointFabricAdministrator
     ANCHOR_CAT_ID                         = Matter::Cluster::JointFabricDatastore::ANCHOR_CAT
     ADMINISTRATOR_CAT_SUBJECT_PREFIX      = Matter::DataType::NodeId::CAT_PREFIX |
                                             (ADMINISTRATOR_CAT_ID.to_u64 << Matter::DataType::CaseAuthenticatedTag::IDENTITY_SHIFT)
-    DEFAULT_OPERATIONAL_PORT    = 5540
-    ADMIN_GROUP_ID              = 1_u16
-    ANCHOR_GROUP_ID             = 2_u16
-    ANCHOR_IPK_KEY_SET_ID       = 0_u16
-    ANCHOR_JFA_ENDPOINT_ID      = 1_u16
-    BOOTSTRAP_JFA_ENDPOINT_ID   = 2_u16
+    DEFAULT_OPERATIONAL_PORT    =    5540
+    ADMIN_GROUP_ID              =   1_u16
+    ANCHOR_GROUP_ID             =   2_u16
+    ANCHOR_IPK_KEY_SET_ID       =   0_u16
+    ANCHOR_JFA_ENDPOINT_ID      =   1_u16
+    BOOTSTRAP_JFA_ENDPOINT_ID   =   2_u16
     UNCOMPRESSED_P256_POINT_TAG = 0x04_u8
     ROTATION_NONCE_HEX_LENGTH   = Matter::Controller::VidVerification::CHALLENGE_SIZE * 2
 
