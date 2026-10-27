@@ -7,6 +7,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Mode Select scenes
+
+- Store and recall `CurrentMode` through Scenes Management extension fields,
+  accepting only advertised modes during scene recall.
+
 ### LabelStruct bounds
 
 - Reject oversized Fixed Label and User Label entries supplied at construction.
