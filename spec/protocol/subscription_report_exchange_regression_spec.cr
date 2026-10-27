@@ -54,6 +54,7 @@ describe "Subscription report exchange regression" do
       peer_node_id: Matter::DataType::NodeId.new(0x2222_u64),
       local_node_id: Matter::DataType::NodeId.new(0x1111_u64),
       case_session: true, fabric_index: 1_u8)
+    session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
     subscription = Matter::Protocol::ActiveSubscription.new(
       subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
       peer: Socket::IPAddress.new("127.0.0.1", 5540), session: session,
@@ -83,6 +84,7 @@ describe "Subscription report exchange regression" do
     cluster = LargeListSubscriptionOnOff.new(endpoint(1))
     handler.clusters[{1_u16, Matter::Cluster::OnOff::CLUSTER_ID}] = cluster
     session = Matter::Spec::ProtocolMessages.case_session(21_u16)
+    session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
     handler.sessions[session.session_id] = session
     subscription = Matter::Protocol::ActiveSubscription.new(
       subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
@@ -143,6 +145,7 @@ describe "Subscription report exchange regression" do
     cluster = Matter::Cluster::OnOff.new(endpoint(1))
     handler.clusters[{1_u16, Matter::Cluster::OnOff::CLUSTER_ID}] = cluster
     session = Matter::Spec::ProtocolMessages.case_session(21_u16)
+    session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
     handler.sessions[session.session_id] = session
     subscription = Matter::Protocol::ActiveSubscription.new(
       subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
@@ -189,6 +192,7 @@ describe "Subscription report exchange regression" do
       case_session: true,
       fabric_index: 1_u8
     )
+    session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
 
     subscription_exchange_id = 0x1234_u16
     subscription = Matter::Protocol::ActiveSubscription.new(
