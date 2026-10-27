@@ -32,11 +32,12 @@ module MatterRvc
       product_id: 0x4850_u16,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
-      device_type: Matter::DeviceType::ROOT_NODE
+      device_type: Matter::DeviceType::ROBOTIC_VACUUM_CLEANER
 
     storage yaml: "matter_rvc_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint 1, device_type: Matter::DeviceType::ROBOTIC_VACUUM_CLEANER do
+      cluster Matter::Cluster::Identify, identify_type: :audible_beep
       cluster RunMode, supported_modes: RUN_MODES, current_mode: 0_u8, as: :run_mode
       cluster CleanMode, run_mode: run_mode, supported_modes: CLEAN_MODES, current_mode: 0_u8, as: :clean_mode
       cluster RvcState, run_mode: run_mode,

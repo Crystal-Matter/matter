@@ -9,6 +9,16 @@ describe "Matter 1.6 robotic vacuum interoperability" do
 
   it "commissions and reads all three RVC cluster schemas" do
     device.commission!
+    descriptor = expect_success(device.read("descriptor", "device-type-list", 1))
+    descriptor.int("DeviceType").should eq(0x0074_i64)
+    descriptor.int("Revision").should eq(4_i64)
+    servers = expect_success(device.read("descriptor", "server-list", 1)).int_list("ServerList")
+    servers.should contain(0x0003_i64)
+    servers.should contain(0x0054_i64)
+    servers.should contain(0x0061_i64)
+    # The pinned chip-tool lacks a generated EventList reader for this cluster.
+    event_list = expect_success(device.chip("any", "read-by-id", "0x61", "0xfffa", device.node, "1"))
+    event_list.output.should contain("Data =")
     read_int(device, RVC_RUN, "cluster-revision", "ClusterRevision", 1).should eq(4_i64)
     read_int(device, RVC_RUN, "feature-map", "FeatureMap", 1).should eq(0_i64)
     expect_success(device.read(RVC_RUN, "supported-modes", 1)).output.should contain("Cleaning")
