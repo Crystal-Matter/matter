@@ -12,6 +12,8 @@ private class TimedInteractionClient < Matter::Controller::Client
   property timed_status : Matter::InteractionModel::StatusCode? = nil
   property? drop_timed_status : Bool = false
   property timed_status_delay : Time::Span = 0.seconds
+  property write_response_override : Array(Matter::InteractionModel::AttributeStatusIB)? = nil
+  property write_response_transform : Proc(Array(Matter::InteractionModel::AttributeStatusIB), Array(Matter::InteractionModel::AttributeStatusIB))? = nil
 
   @message_counter = 1_u32
 
@@ -65,6 +67,17 @@ private class TimedInteractionClient < Matter::Controller::Client
       next unless message.payload_header.exchange_id == exchange_id
       next unless message.payload_header.protocol_id == protocol_id
       next unless message_types.includes?(message.payload_header.message_type)
+      if message.payload_header.message_type == Matter::InteractionModel::MessageType::WriteResponse.value
+        statuses = @write_response_override
+        if transform = @write_response_transform
+          actual = Matter::InteractionModel::WriteResponseMessage.from_slice(message.payload.to_slice).write_responses
+          statuses = transform.call(actual)
+        end
+        if statuses
+          message = Matter::Codec::MessageCodec::Message.new(message.packet_header, message.payload_header,
+            Matter::InteractionModel::WriteResponseMessage.new(statuses).to_slice)
+        end
+      end
       return ReceivedMessage.new(message, sent[1])
     end
     nil
@@ -235,6 +248,110 @@ describe Matter::Controller::ImClient do
         [item].to_tlv.to_slice)
     end
     fixture.client.sent.should be_empty
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "rejects a WriteResponse success for an unrequested attribute path" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    wrong = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16,
+      cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+      attribute: Matter::Cluster::BasicInformation::ATTR_NODE_LABEL)
+    fixture.client.write_response_override = [Matter::InteractionModel::AttributeStatusIB.new(
+      wrong, Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Success.value))]
+
+    expect_raises(Matter::ProtocolError, /WriteResponse path/) do
+      im.write_attribute(fixture.session, fixture.peer,
+        0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+        Matter::Cluster::BasicInformation::ATTR_NODE_LABEL,
+        "Node".to_tlv.to_slice)
+    end
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "rejects duplicate WriteResponse paths even when their count matches" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    node_label = Matter::InteractionModel::AttributePath.new(
+      endpoint: 0_u16,
+      cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+      attribute: Matter::Cluster::BasicInformation::ATTR_NODE_LABEL)
+    success = Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Success.value)
+    fixture.client.write_response_override = [
+      Matter::InteractionModel::AttributeStatusIB.new(node_label, success),
+      Matter::InteractionModel::AttributeStatusIB.new(node_label, success),
+    ]
+
+    expect_raises(Matter::ProtocolError, /WriteResponse path/) do
+      im.write_attributes(fixture.session, fixture.peer, [
+        {0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+         Matter::Cluster::BasicInformation::ATTR_NODE_LABEL, "Node".to_tlv.to_slice},
+        {0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+         Matter::Cluster::BasicInformation::ATTR_LOCATION, "US".to_tlv.to_slice},
+      ])
+    end
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "accepts a WriteResponse whose requested paths arrive in a different order" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    node_label = Matter::InteractionModel::AttributePath.new(
+      endpoint: 0_u16,
+      cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+      attribute: Matter::Cluster::BasicInformation::ATTR_NODE_LABEL)
+    location = Matter::InteractionModel::AttributePath.new(
+      endpoint: 0_u16,
+      cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+      attribute: Matter::Cluster::BasicInformation::ATTR_LOCATION)
+    success = Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Success.value)
+    fixture.client.write_response_override = [
+      Matter::InteractionModel::AttributeStatusIB.new(location, success),
+      Matter::InteractionModel::AttributeStatusIB.new(node_label, success),
+    ]
+
+    response = im.write_attributes(fixture.session, fixture.peer, [
+      {0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+       Matter::Cluster::BasicInformation::ATTR_NODE_LABEL, "Node".to_tlv.to_slice},
+      {0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,
+       Matter::Cluster::BasicInformation::ATTR_LOCATION, "US".to_tlv.to_slice},
+    ])
+    response.write_responses.size.should eq(2)
+    response.write_responses.map(&.path.attribute).should eq([
+      Matter::Cluster::BasicInformation::ATTR_LOCATION,
+      Matter::Cluster::BasicInformation::ATTR_NODE_LABEL,
+    ])
+  ensure
+    fixture.try(&.client.close)
+    fixture.try(&.handler.close)
+  end
+
+  it "rejects duplicate whole-list error paths for a whole-list and append write" do
+    fixture = timed_interaction_fixture
+    im = Matter::Controller::ImClient.new(fixture.client)
+    fixture.client.write_response_transform = ->(statuses : Array(Matter::InteractionModel::AttributeStatusIB)) do
+      statuses.size.should be > 1
+      statuses.first.path.list_index_null?.should be_false
+      statuses[1].path.list_index_null?.should be_true
+      whole_list_path = statuses.first.path
+      failure = Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Failure.value)
+      statuses.map { Matter::InteractionModel::AttributeStatusIB.new(whole_list_path, failure) }
+    end
+    entries = (0...100).map { |index| Matter::Cluster::LabelStruct.new("room#{index}", "value#{index}") }
+
+    expect_raises(Matter::ProtocolError, /WriteResponse path/) do
+      im.write_attribute(fixture.session, fixture.peer, 1_u16,
+        Matter::Cluster::UserLabel::CLUSTER_ID,
+        Matter::Cluster::UserLabel::ATTR_LABEL_LIST,
+        entries.to_tlv.to_slice)
+    end
   ensure
     fixture.try(&.client.close)
     fixture.try(&.handler.close)
