@@ -1,5 +1,6 @@
 require "./datatype/device_type_id"
 require "./datatype/cluster_id"
+require "./cluster"
 require "./hex"
 
 module Matter
@@ -118,17 +119,17 @@ module Matter
         "Root Node",
         1_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0028_u32, # Basic Information
-          0x0030_u32, # General Commissioning
-          0x0031_u32, # Network Commissioning
-          0x003C_u32, # General Diagnostics
-          0x003E_u32, # Administrator Commissioning
-          0x003F_u32, # Operational Credentials
-          0x0033_u32, # Group Key Management
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::BasicInformation::CLUSTER_ID,
+          Cluster::GeneralCommissioning::CLUSTER_ID,
+          Cluster::NetworkCommissioning::CLUSTER_ID,
+          Cluster::AdministratorCommissioning::CLUSTER_ID,
+          Cluster::OperationalCredentials::CLUSTER_ID,
+          Cluster::GroupKeyManagement::CLUSTER_ID,
+          Cluster::GeneralDiagnostics::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0003_u32, # Identify
+          Cluster::Identify::CLUSTER_ID,
         ]
       )
     end
@@ -138,7 +139,7 @@ module Matter
         DataType::DeviceTypeId.new(JOINT_FABRIC_ADMINISTRATOR),
         "Joint Fabric Administrator",
         1_u16,
-        required_server_clusters: [0x0752_u32, 0x0753_u32]
+        required_server_clusters: [Cluster::JointFabricDatastore::CLUSTER_ID, Cluster::JointFabricAdministrator::CLUSTER_ID]
       )
     end
 
@@ -148,8 +149,8 @@ module Matter
         "Power Source",
         1_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x002F_u32, # Power Source
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::PowerSource::CLUSTER_ID,
         ]
       )
     end
@@ -159,11 +160,11 @@ module Matter
     def self.refrigerator : DeviceType
       new(
         DataType::DeviceTypeId.new(REFRIGERATOR), "Refrigerator", 3_u16,
-        required_server_clusters: [0x001D_u32], # Descriptor
-        optional_server_clusters: [0x0003_u32, 0x0052_u32, 0x0057_u32, 0x0072_u32],
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID],
+        optional_server_clusters: [Cluster::Identify::CLUSTER_ID, Cluster::RefrigeratorAndTemperatureControlledCabinetMode::CLUSTER_ID, Cluster::RefrigeratorAlarm::CLUSTER_ID, Cluster::ActivatedCarbonFilterMonitoring::CLUSTER_ID],
         required_endpoint_device_types: [TEMPERATURE_CONTROLLED_CABINET],
-        forbidden_server_features: {0x0052_u32 => 0x01_u32}, # DEPONOFF
-        forbidden_server_attributes: {0x0052_u32 => [0x0002_u32]}
+        forbidden_server_features: {Cluster::RefrigeratorAndTemperatureControlledCabinetMode::CLUSTER_ID => Cluster::ModeBase::Feature::DependentOnOff.value},
+        forbidden_server_attributes: {Cluster::RefrigeratorAndTemperatureControlledCabinetMode::CLUSTER_ID => [Cluster::ModeBase::ATTR_START_UP_MODE]}
       )
     end
 
@@ -171,18 +172,18 @@ module Matter
       new(
         DataType::DeviceTypeId.new(TEMPERATURE_CONTROLLED_CABINET),
         "Temperature Controlled Cabinet", 6_u16,
-        required_server_clusters: [0x001D_u32, 0x0056_u32],
-        optional_server_clusters: [0x0048_u32, 0x0049_u32, 0x0052_u32, 0x0064_u32, 0x0402_u32],
-        required_server_features: {0x0056_u32 => 0x01_u32}, # TN
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::TemperatureControl::CLUSTER_ID],
+        optional_server_clusters: [Cluster::OvenCavityOperationalState::CLUSTER_ID, Cluster::OvenMode::CLUSTER_ID, Cluster::RefrigeratorAndTemperatureControlledCabinetMode::CLUSTER_ID, Cluster::TemperatureAlarm::CLUSTER_ID, Cluster::TemperatureMeasurement::CLUSTER_ID],
+        required_server_features: {Cluster::TemperatureControl::CLUSTER_ID => Cluster::TemperatureControl::Feature::TemperatureNumber.value},
         forbidden_server_features: {
-        0x0049_u32 => 0x01_u32, # Oven Mode DEPONOFF
-        0x0052_u32 => 0x01_u32, # Refrigerator Mode DEPONOFF
-        0x0056_u32 => 0x02_u32, # Temperature Control TL
-      },
-        required_server_events: {0x0048_u32 => [0x0001_u32]}, # OperationCompletion if present
+          Cluster::OvenMode::CLUSTER_ID                                        => Cluster::ModeBase::Feature::DependentOnOff.value,
+          Cluster::RefrigeratorAndTemperatureControlledCabinetMode::CLUSTER_ID => Cluster::ModeBase::Feature::DependentOnOff.value,
+          Cluster::TemperatureControl::CLUSTER_ID                              => Cluster::TemperatureControl::Feature::TemperatureLevel.value,
+        },
+        required_server_events: {Cluster::OvenCavityOperationalState::CLUSTER_ID => [Cluster::OvenCavityOperationalState::EVENT_OPERATION_COMPLETION]}, # OperationCompletion if present
         forbidden_server_attributes: {
-        0x0049_u32 => [0x0002_u32], # Oven Mode StartUpMode
-        0x0052_u32 => [0x0002_u32], # Refrigerator Mode StartUpMode
+        Cluster::OvenMode::CLUSTER_ID                                        => [Cluster::ModeBase::ATTR_START_UP_MODE],
+        Cluster::RefrigeratorAndTemperatureControlledCabinetMode::CLUSTER_ID => [Cluster::ModeBase::ATTR_START_UP_MODE],
       }
       )
     end
@@ -190,12 +191,12 @@ module Matter
     def self.dishwasher : DeviceType
       new(
         DataType::DeviceTypeId.new(DISHWASHER), "Dishwasher", 2_u16,
-        required_server_clusters: [0x001D_u32, 0x0060_u32],
-        optional_server_clusters: [0x0003_u32, 0x0006_u32, 0x0056_u32, 0x0059_u32, 0x005D_u32],
-        required_server_features: {0x0006_u32 => 0x02_u32},   # DF, if On/Off present
-        forbidden_server_features: {0x0059_u32 => 0x01_u32},  # Dishwasher Mode DEPONOFF
-        required_server_events: {0x0060_u32 => [0x0001_u32]}, # OperationCompletion
-        forbidden_server_attributes: {0x0059_u32 => [0x0002_u32]}
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::OperationalState::CLUSTER_ID],
+        optional_server_clusters: [Cluster::Identify::CLUSTER_ID, Cluster::OnOff::CLUSTER_ID, Cluster::TemperatureControl::CLUSTER_ID, Cluster::DishwasherMode::CLUSTER_ID, Cluster::DishwasherAlarm::CLUSTER_ID],
+        required_server_features: {Cluster::OnOff::CLUSTER_ID => Cluster::OnOff::Feature::DeadFrontBehavior.value}, # DF, if On/Off present
+        forbidden_server_features: {Cluster::DishwasherMode::CLUSTER_ID => Cluster::ModeBase::Feature::DependentOnOff.value},
+        required_server_events: {Cluster::OperationalState::CLUSTER_ID => [Cluster::OperationalState::EVENT_OPERATION_COMPLETION]},
+        forbidden_server_attributes: {Cluster::DishwasherMode::CLUSTER_ID => [Cluster::ModeBase::ATTR_START_UP_MODE]}
       )
     end
 
@@ -203,16 +204,16 @@ module Matter
       new(
         DataType::DeviceTypeId.new(ROBOTIC_VACUUM_CLEANER), "Robotic Vacuum Cleaner", 4_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0054_u32, # RVC Run Mode
-          0x0061_u32, # RVC Operational State
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::RvcRunMode::CLUSTER_ID,
+          Cluster::RvcOperationalState::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0055_u32, # RVC Clean Mode
-          0x0150_u32, # Service Area
+          Cluster::RvcCleanMode::CLUSTER_ID,
+          Cluster::ServiceArea::CLUSTER_ID,
         ],
-        required_server_events: {0x0061_u32 => [0x0001_u32]} # OperationCompletion
+        required_server_events: {Cluster::RvcOperationalState::CLUSTER_ID => [Cluster::RvcOperationalState::EVENT_OPERATION_COMPLETION]}
       )
     end
 
@@ -222,20 +223,20 @@ module Matter
         "Camera",
         1_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0551_u32, # Camera AV Stream Management (ADO, VDO, SNP)
-          0x0553_u32, # WebRTC Transport Provider
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::CameraAvStreamManagement::CLUSTER_ID, # Camera AV Stream Management (ADO, VDO, SNP)
+          Cluster::WebRtcTransportProvider::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0003_u32, # Identify
-          0x0406_u32, # Occupancy Sensing
-          0x0550_u32, # Zone Management (TWODCART)
-          0x0552_u32, # Camera AV Settings User Level Management
-          0x0554_u32, # WebRTC Transport Requestor
-          0x0555_u32, # Push AV Stream Transport
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::OccupancySensing::CLUSTER_ID,
+          Cluster::ZoneManagement::CLUSTER_ID, # Zone Management (TWODCART)
+          Cluster::CameraAvSettingsUserLevelManagement::CLUSTER_ID,
+          Cluster::WebRtcTransportRequestor::CLUSTER_ID,
+          Cluster::PushAvStreamTransport::CLUSTER_ID,
         ],
         required_node_device_types: [ROOT_NODE, POWER_SOURCE],
-        required_client_clusters: [0x0554_u32] # WebRTC Transport Requestor
+        required_client_clusters: [Cluster::WebRtcTransportRequestor::CLUSTER_ID]
       )
     end
 
@@ -245,15 +246,15 @@ module Matter
         "Smoke CO Alarm",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x005C_u32, # Smoke CO Alarm
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::SmokeCOAlarm::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0004_u32, # Groups
-          0x0402_u32, # Temperature Measurement
-          0x0405_u32, # Relative Humidity Measurement
-          0x040C_u32, # Carbon Monoxide Concentration Measurement
+          Cluster::Groups::CLUSTER_ID,
+          Cluster::TemperatureMeasurement::CLUSTER_ID,
+          Cluster::RelativeHumidityMeasurement::CLUSTER_ID,
+          Cluster::CarbonMonoxideConcentrationMeasurement::CLUSTER_ID,
         ],
         required_node_device_types: [POWER_SOURCE]
       )
@@ -265,14 +266,14 @@ module Matter
         "On/Off Light",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0004_u32, # Groups
-          0x0006_u32, # On/Off
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Groups::CLUSTER_ID,
+          Cluster::OnOff::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0008_u32, # Level Control (for compatibility)
-          0x0062_u32, # Scenes Management
+          Cluster::LevelControl::CLUSTER_ID, # Level Control (for compatibility)
+          Cluster::ScenesManagement::CLUSTER_ID,
         ]
       )
     end
@@ -283,14 +284,14 @@ module Matter
         "Dimmable Light",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0004_u32, # Groups
-          0x0006_u32, # On/Off
-          0x0008_u32, # Level Control
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Groups::CLUSTER_ID,
+          Cluster::OnOff::CLUSTER_ID,
+          Cluster::LevelControl::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0062_u32, # Scenes Management
+          Cluster::ScenesManagement::CLUSTER_ID,
         ]
       )
     end
@@ -301,14 +302,14 @@ module Matter
         "On/Off Plug-in Unit",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0004_u32, # Groups
-          0x0006_u32, # On/Off
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Groups::CLUSTER_ID,
+          Cluster::OnOff::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0008_u32, # Level Control
-          0x0062_u32, # Scenes Management
+          Cluster::LevelControl::CLUSTER_ID,
+          Cluster::ScenesManagement::CLUSTER_ID,
         ]
       )
     end
@@ -319,8 +320,8 @@ module Matter
         "On/Off Light Switch",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
         ],
         optional_server_clusters: [] of UInt32
       )
@@ -332,8 +333,8 @@ module Matter
         "Dimmer Switch",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
         ],
         optional_server_clusters: [] of UInt32
       )
@@ -345,9 +346,9 @@ module Matter
         "Contact Sensor",
         1_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0045_u32, # Boolean State
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::BooleanState::CLUSTER_ID,
         ],
         optional_server_clusters: [] of UInt32
       )
@@ -359,9 +360,9 @@ module Matter
         "Temperature Sensor",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0402_u32, # Temperature Measurement
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::TemperatureMeasurement::CLUSTER_ID,
         ],
         optional_server_clusters: [] of UInt32
       )
@@ -372,11 +373,11 @@ module Matter
         DataType::DeviceTypeId.new(AIR_QUALITY_SENSOR),
         "Air Quality Sensor",
         1_u16,
-        required_server_clusters: [0x001D_u32, 0x0003_u32, 0x005B_u32],
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::Identify::CLUSTER_ID, Cluster::AirQuality::CLUSTER_ID],
         optional_server_clusters: [
-          0x0402_u32, 0x0405_u32, 0x040C_u32, 0x040D_u32, 0x0413_u32,
-          0x0415_u32, 0x042A_u32, 0x042B_u32, 0x042C_u32, 0x042D_u32,
-          0x042E_u32, 0x042F_u32,
+          Cluster::TemperatureMeasurement::CLUSTER_ID, Cluster::RelativeHumidityMeasurement::CLUSTER_ID, Cluster::CarbonMonoxideConcentrationMeasurement::CLUSTER_ID, Cluster::CarbonDioxideConcentrationMeasurement::CLUSTER_ID, Cluster::NitrogenDioxideConcentrationMeasurement::CLUSTER_ID,
+          Cluster::OzoneConcentrationMeasurement::CLUSTER_ID, Cluster::Pm25ConcentrationMeasurement::CLUSTER_ID, Cluster::FormaldehydeConcentrationMeasurement::CLUSTER_ID, Cluster::Pm1ConcentrationMeasurement::CLUSTER_ID, Cluster::Pm10ConcentrationMeasurement::CLUSTER_ID,
+          Cluster::TotalVolatileOrganicCompoundsConcentrationMeasurement::CLUSTER_ID, Cluster::RadonConcentrationMeasurement::CLUSTER_ID,
         ]
       )
     end
@@ -386,8 +387,8 @@ module Matter
         DataType::DeviceTypeId.new(SOIL_SENSOR),
         "Soil Sensor",
         1_u16,
-        required_server_clusters: [0x001D_u32, 0x0003_u32, 0x0430_u32],
-        optional_server_clusters: [0x0402_u32]
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::Identify::CLUSTER_ID, Cluster::SoilMeasurement::CLUSTER_ID],
+        optional_server_clusters: [Cluster::TemperatureMeasurement::CLUSTER_ID]
       )
     end
 
@@ -396,9 +397,9 @@ module Matter
         DataType::DeviceTypeId.new(MICROWAVE_OVEN),
         "Microwave Oven",
         2_u16,
-        required_server_clusters: [0x001D_u32, 0x0060_u32, 0x005E_u32, 0x005F_u32],
-        optional_server_clusters: [0x0003_u32, 0x0202_u32],
-        required_server_attributes: {0x0060_u32 => [0x0002_u32]}
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::OperationalState::CLUSTER_ID, Cluster::MicrowaveOvenMode::CLUSTER_ID, Cluster::MicrowaveOvenControl::CLUSTER_ID],
+        optional_server_clusters: [Cluster::Identify::CLUSTER_ID, Cluster::FanControl::CLUSTER_ID],
+        required_server_attributes: {Cluster::OperationalState::CLUSTER_ID => [Cluster::OperationalState::ATTR_COUNTDOWN_TIME]}
       )
     end
 
@@ -407,7 +408,7 @@ module Matter
         DataType::DeviceTypeId.new(ELECTRICAL_UTILITY_METER),
         "Electrical Utility Meter",
         1_u16,
-        required_server_clusters: [0x001D_u32, 0x0B06_u32]
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::MeterIdentification::CLUSTER_ID]
       )
     end
 
@@ -417,9 +418,9 @@ module Matter
         "Door Lock",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0101_u32, # Door Lock
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::DoorLock::CLUSTER_ID,
         ],
         optional_server_clusters: [] of UInt32
       )
@@ -430,7 +431,7 @@ module Matter
         DataType::DeviceTypeId.new(CLOSURE),
         "Closure",
         1_u16,
-        required_server_clusters: [0x001D_u32, 0x0003_u32, 0x0104_u32]
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::Identify::CLUSTER_ID, Cluster::ClosureControl::CLUSTER_ID]
       )
     end
 
@@ -439,7 +440,7 @@ module Matter
         DataType::DeviceTypeId.new(CLOSURE_PANEL),
         "Closure Panel",
         1_u16,
-        required_server_clusters: [0x001D_u32, 0x0105_u32]
+        required_server_clusters: [Cluster::Descriptor::CLUSTER_ID, Cluster::ClosureDimension::CLUSTER_ID]
       )
     end
 
@@ -449,15 +450,15 @@ module Matter
         "Thermostat",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0004_u32, # Groups
-          0x0201_u32, # Thermostat
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Groups::CLUSTER_ID,
+          Cluster::Thermostat::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0204_u32, # Thermostat User Interface Configuration
-          0x0402_u32, # Temperature Measurement
-          0x0062_u32, # Scenes Management
+          Cluster::ThermostatUserInterfaceConfiguration::CLUSTER_ID,
+          Cluster::TemperatureMeasurement::CLUSTER_ID,
+          Cluster::ScenesManagement::CLUSTER_ID,
         ]
       )
     end
@@ -468,13 +469,13 @@ module Matter
         "Fan",
         3_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0003_u32, # Identify
-          0x0004_u32, # Groups
-          0x0202_u32, # Fan Control
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::Identify::CLUSTER_ID,
+          Cluster::Groups::CLUSTER_ID,
+          Cluster::FanControl::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0006_u32, # On/Off
+          Cluster::OnOff::CLUSTER_ID,
         ]
       )
     end
@@ -487,20 +488,20 @@ module Matter
         "Basic Video Player",
         2_u16,
         required_server_clusters: [
-          0x001D_u32, # Descriptor
-          0x0006_u32, # On/Off
-          0x0506_u32, # Media Playback
-          0x0509_u32, # Keypad Input
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::OnOff::CLUSTER_ID,
+          Cluster::MediaPlayback::CLUSTER_ID,
+          Cluster::KeypadInput::CLUSTER_ID,
         ],
         optional_server_clusters: [
-          0x0097_u32, # Messages
-          0x0503_u32, # Wake On LAN
-          0x0504_u32, # Channel
-          0x0505_u32, # Target Navigator
-          0x0507_u32, # Media Input when PhysicalInputs applies
-          0x0508_u32, # Low Power
-          0x050B_u32, # Audio Output
-          0x050F_u32, # Content Control
+          Cluster::Messages::CLUSTER_ID,
+          Cluster::WakeOnLan::CLUSTER_ID,
+          Cluster::Channel::CLUSTER_ID,
+          Cluster::TargetNavigator::CLUSTER_ID,
+          Cluster::MediaInput::CLUSTER_ID,
+          Cluster::LowPower::CLUSTER_ID,
+          Cluster::AudioOutput::CLUSTER_ID,
+          Cluster::ContentControl::CLUSTER_ID,
         ]
       )
     end

@@ -1,3 +1,4 @@
+require "../node"
 require "../cluster/joint_fabric_datastore"
 require "../cluster/general_commissioning"
 require "../cluster/operational_credentials"
@@ -75,7 +76,7 @@ module Matter
           end
           peer = @peer || raise Matter::ConfigurationError.new("Outgoing Administrator peer is unavailable")
           index = outgoing_fabric_index
-          response = @im.invoke(session, peer, 0_u16,
+          response = @im.invoke(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(index).to_slice)
@@ -108,7 +109,7 @@ module Matter
         private def outgoing_fabric_index : UInt8
           session = @session || raise Matter::ConfigurationError.new("Outgoing Administrator CASE session is unavailable")
           peer = @peer || raise Matter::ConfigurationError.new("Outgoing Administrator peer is unavailable")
-          report = @im.read_attribute(session, peer, 0_u16,
+          report = @im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::ATTR_FABRICS,
             fabric_filtered: false)
@@ -185,7 +186,7 @@ module Matter
                  @datastore.admin_list.any?(&.node_id.==(@journal.outgoing_node_id))
             raise Matter::CommissioningError.new("Outgoing Administrator is absent or Datastore is uncommitted")
           end
-          current_version = @datastore.group_list.find(&.group_cat.==(0xFFFF_u16)).try(&.group_cat_version)
+          current_version = @datastore.group_list.find(&.group_cat.==(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT)).try(&.group_cat_version)
           next_version = @journal.administrator_cat_version
           unless current_version && next_version && next_version > current_version
             raise Matter::ConfigurationError.new("Administrator removal requires a newer Administrator CAT version")
@@ -272,7 +273,7 @@ module Matter
             raise Matter::CommissioningError.new("Outgoing Administrator is not uniquely present")
           end
           target_version = journal.administrator_cat_version
-          current_version = datastore.group_list.find(&.group_cat.==(0xFFFF_u16)).try(&.group_cat_version)
+          current_version = datastore.group_list.find(&.group_cat.==(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT)).try(&.group_cat_version)
           unless target_version && target_version > 0_u16 && current_version == target_version - 1_u16 &&
                  journal.outgoing_admin_entry == matching_admins.first.to_slice &&
                  journal.rotated_nodes.empty? && journal.active_node_id.nil?
@@ -296,9 +297,6 @@ module Matter
       module RotationInspection
         extend self
 
-        ADMINISTRATOR_CAT_PREFIX = 0xFFFF_FFFD_FFFF_0000_u64
-        ANCHOR_CAT_PREFIX        = 0xFFFF_FFFD_FFFE_0000_u64
-
         def verify_completed!(im : ImClient, session : Session::SecureContext,
                               peer : Socket::IPAddress, root_certificate : Bytes,
                               fabric_id : UInt64, root_public_key : Bytes,
@@ -306,7 +304,7 @@ module Matter
                               challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
           verify_current_noc!(im, session, peer, root_certificate, fabric_id,
             root_public_key, node_id, administrator_cat_version, challenge, anchor_cat_version)
-          result = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+          result = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
             command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
           command = result.invoke_responses.find do |entry|
@@ -341,7 +339,7 @@ module Matter
 
           # Find the fabric by its full identity before invoking the signed
           # proof. Never use a fabric index supplied by an untrusted peer.
-          report = im.read_attribute(session, peer, 0_u16,
+          report = im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::ATTR_FABRICS, fabric_filtered: false)
           data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
@@ -377,7 +375,7 @@ module Matter
           end
           request = Cluster::OperationalCredentials::Tlv::SignVIDVerificationRequest.new(
             descriptor.fabric_index, challenge)
-          response_message = im.invoke(session: session, peer: peer, endpoint_id: 0_u16,
+          response_message = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
             fields: request.to_slice)
@@ -409,18 +407,16 @@ module Matter
 
           subjects = Crypto::MatterCertificate.subject_ids_from_tlv(noc.noc)
           versions = subjects.compact_map do |subject|
-            if subject & 0xFFFF_FFFF_FFFF_0000_u64 == ADMINISTRATOR_CAT_PREFIX
-              (subject & 0xFFFF_u64).to_u16
-            end
+            cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+            cat.version if cat && cat.identity_value == Cluster::JointFabricDatastore::ADMINISTRATOR_CAT
           end
           unless versions == [administrator_cat_version]
             raise Matter::AuthenticationError.new("Rotation NOC does not carry the journaled Administrator CAT version")
           end
           if anchor_cat_version
             anchor_versions = subjects.compact_map do |subject|
-              if subject & 0xFFFF_FFFF_FFFF_0000_u64 == ANCHOR_CAT_PREFIX
-                (subject & 0xFFFF_u64).to_u16
-              end
+              cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+              cat.version if cat && cat.identity_value == Cluster::JointFabricDatastore::ANCHOR_CAT
             end
             unless anchor_versions == [anchor_cat_version]
               raise Matter::AuthenticationError.new("Rotation NOC does not carry the selected Anchor CAT version")
@@ -430,7 +426,7 @@ module Matter
 
         private def read_list(type : T.class, im : ImClient, session : Session::SecureContext,
                               peer : Socket::IPAddress, attribute_id : UInt32) : Array(T) forall T
-          report = im.read_attribute(session, peer, 0_u16,
+          report = im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID, attribute_id, fabric_filtered: false)
           data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
           raise Matter::ProtocolError.new("Rotation attribute #{attribute_id} omitted data") unless data

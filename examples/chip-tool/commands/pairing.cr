@@ -138,7 +138,7 @@ module ChipTool
               resp = im.invoke(
                 session: session,
                 peer: peer,
-                endpoint_id: 0_u16,
+                endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
                 cluster_id: Matter::Cluster::AdministratorCommissioning::CLUSTER_ID,
                 command_id: Matter::Cluster::AdministratorCommissioning::CMD_OPEN_BASIC_COMMISSIONING_WINDOW,
                 fields: request.to_slice,

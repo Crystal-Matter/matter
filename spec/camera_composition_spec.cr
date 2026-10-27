@@ -174,7 +174,7 @@ describe Matter::CameraComposition do
 
     errors = Matter::CameraComposition.validate(node, CAMERA_ENDPOINT.number)
     errors.join.should contain("NTPClient")
-    errors.join.should contain("TimeSyncClient")
+    errors.join.should contain("TrustedTimeClient")
     errors.join.should_not contain("TimeZone")
     errors.join.should_not contain("Time Synchronization client")
   end

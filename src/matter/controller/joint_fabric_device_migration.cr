@@ -1,3 +1,4 @@
+require "../node"
 require "../cluster/joint_fabric_datastore"
 require "../cluster/operational_credentials"
 require "./commissioning/commissioner"
@@ -10,8 +11,8 @@ module Matter
     # old operational identity remains valid until the new one has been
     # commissioned, authenticated over CASE, and registered with the Anchor.
     module JointFabricDeviceMigration
-      ADMINISTRATOR_CAT_ID     = 0xFFFF_u32
-      CERTIFICATE_SERIAL_BYTES =          8
+      ADMINISTRATOR_CAT_ID     = Cluster::JointFabricDatastore::ADMINISTRATOR_CAT.to_u32
+      CERTIFICATE_SERIAL_BYTES = 8
 
       enum Stage : UInt8
         Ready
@@ -180,7 +181,8 @@ module Matter
           current_admin_cat, _anchor_cat = JointCommissioning.read_joint_cat_versions(
             ImClient.new(@client, @timeout), datastore_session,
             @old_datastore_peer, @old_datastore_endpoint)
-          unless @administrator_cat == (ADMINISTRATOR_CAT_ID << 16 | current_admin_cat.to_u32)
+          unless @administrator_cat == DataType::CaseAuthenticatedTag.create(
+                   Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, current_admin_cat).value
             raise Matter::AuthenticationError.new("Selected Administrator CAT differs from Fabric B Datastore")
           end
           JointCommissioning.require_administrator_cat!(@old_fabric.controller_noc, current_admin_cat)
@@ -299,7 +301,7 @@ module Matter
               entry.node_id == @old_node_id
           end
           raise Matter::AuthenticationError.new("Selected Fabric B is absent or has a different device Node ID") unless descriptor
-          response = ImClient.new(@client, @timeout).invoke(session, @device_peer, 0_u16,
+          response = ImClient.new(@client, @timeout).invoke(session, @device_peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
@@ -345,7 +347,7 @@ module Matter
               entry.node_id == @anchor_node_id
           end
           if descriptor
-            response = ImClient.new(@client, @timeout).invoke(session, @device_peer, 0_u16,
+            response = ImClient.new(@client, @timeout).invoke(session, @device_peer, Node::ROOT_ENDPOINT_ID,
               Cluster::OperationalCredentials::CLUSTER_ID,
               Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
               Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
@@ -541,7 +543,7 @@ module Matter
 
         private def fabrics(session : Session::SecureContext,
                             peer : Socket::IPAddress) : Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor)
-          report = ImClient.new(@client, @timeout).read_attribute(session, peer, 0_u16,
+          report = ImClient.new(@client, @timeout).read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::ATTR_FABRICS, fabric_filtered: false)
           data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
@@ -698,13 +700,14 @@ module Matter
         end
         subjects = Crypto::MatterCertificate.subject_ids_from_tlv(anchor.controller_noc)
         unless subjects.any? do |subject|
-                 (subject & 0xFFFF_FFFF_0000_0000_u64) == 0xFFFF_FFFD_0000_0000_u64 &&
-                 ((subject >> 16) & 0xFFFF_u64) == ADMINISTRATOR_CAT_ID.to_u64
+                 cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+                 cat && cat.identity_value == Cluster::JointFabricDatastore::ADMINISTRATOR_CAT
                end
           raise Matter::CertificateError.new("Administrator NOC lacks the Administrator CAT")
         end
         if subjects.any? do |subject|
-             (subject & 0xFFFF_FFFF_FFFF_0000_u64) == 0xFFFF_FFFD_FFFE_0000_u64
+             cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+             cat && cat.identity_value == Cluster::JointFabricDatastore::ANCHOR_CAT
            end
           raise Matter::CertificateError.new("Migration requires the joining Administrator identity, not the Anchor identity")
         end
@@ -722,7 +725,7 @@ module Matter
                        @commissioning_ack : Proc(Nil)? = nil,
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil)
           unless @administrator_cat >> 16 == ADMINISTRATOR_CAT_ID &&
-                 (@administrator_cat & 0xFFFF_u32) != 0_u32
+                 (@administrator_cat & DataType::CaseAuthenticatedTag::VERSION_MASK) != 0_u32
             raise Matter::ConfigurationError.new("A current Administrator CAT is required")
           end
         end
@@ -738,7 +741,8 @@ module Matter
                   csr_public_key : Bytes) : Commissioning::Commissioner::OperationalCredentials
           noc = @issuer.issue_noc(fabric, node_id, csr_public_key, @crypto)
           Commissioning::Commissioner::OperationalCredentials.new(noc, @issuer.icac,
-            fabric.ipk_value, 0xFFFF_FFFD_0000_0000_u64 | @administrator_cat.to_u64,
+            fabric.ipk_value, DataType::NodeId.from_case_authenticated_tag(
+            DataType::CaseAuthenticatedTag.new(@administrator_cat)).id,
             @admin_vendor_id)
         end
 

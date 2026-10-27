@@ -15,7 +15,7 @@ module MatterAudioOutput
     include Examples::Console
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Audio Output",
-      vendor_id: 0xFFF1_u16, product_id: 0x050B_u16,
+      vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID, product_id: 0x050B_u16,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

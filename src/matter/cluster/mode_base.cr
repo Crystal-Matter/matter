@@ -4,6 +4,13 @@ module Matter
   module Cluster
     # Shared wire types and Mode Base rev2 rules for derived mode clusters.
     module ModeBase
+      @[Flags]
+      enum Feature : UInt32
+        DependentOnOff = 0x01_u32
+      end
+
+      ATTR_START_UP_MODE = 0x0002_u32
+
       MIN_SUPPORTED_MODES =     2
       MAX_SUPPORTED_MODES =   255
       MIN_MODE_TAGS       =     1

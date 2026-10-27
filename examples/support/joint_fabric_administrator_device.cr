@@ -1,3 +1,4 @@
+require "../../src/matter/node"
 require "./console"
 require "../../src/matter/commissioning/joint_fabric_administrator_service"
 require "../../src/matter/controller/datastore_propagator"
@@ -34,11 +35,14 @@ module MatterJointFabricAdministrator
     JCM_RPC_REQUEST                       = "request"
     JCM_RPC_RESULT                        = "result"
     COMMAND_RPC_COLLECTION                = "jfa_command"
-    ANCHOR_CAT_ID                         = 0xFFFE_u16
-    DEFAULT_OPERATIONAL_PORT              =       5540
-    ADMIN_GROUP_ID                        =      1_u16
-    ANCHOR_GROUP_ID                       =      2_u16
-    ANCHOR_IPK_KEY_SET_ID                 =      0_u16
+    ADMINISTRATOR_CAT_ID                  = Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT
+    ANCHOR_CAT_ID                         = Matter::Cluster::JointFabricDatastore::ANCHOR_CAT
+    ADMINISTRATOR_CAT_SUBJECT_PREFIX      = Matter::DataType::NodeId::CAT_PREFIX |
+                                            (ADMINISTRATOR_CAT_ID.to_u64 << Matter::DataType::CaseAuthenticatedTag::IDENTITY_SHIFT)
+    DEFAULT_OPERATIONAL_PORT =  5540
+    ADMIN_GROUP_ID           = 1_u16
+    ANCHOR_GROUP_ID          = 2_u16
+    ANCHOR_IPK_KEY_SET_ID    = 0_u16
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -1020,9 +1024,9 @@ module MatterJointFabricAdministrator
 
     private def grant_administrator_cat_access(fabric : Matter::Fabric) : Nil
       acl = access_control
-      version = fabric.cats.find(&.identity_value.==(0xFFFF_u16)).try(&.version) || 1_u16
+      version = fabric.cats.find(&.identity_value.==(ADMINISTRATOR_CAT_ID)).try(&.version) || 1_u16
       subject = Matter::DataType::NodeId.from_case_authenticated_tag(
-        Matter::DataType::CaseAuthenticatedTag.create(0xFFFF_u16, version)).id
+        Matter::DataType::CaseAuthenticatedTag.create(ADMINISTRATOR_CAT_ID, version)).id
       return if acl.get_acl_for_fabric(fabric.fabric_index).any? do |entry|
                   subjects = entry.subjects
                   subjects.nil? || subjects.empty? || subjects.includes?(subject)
@@ -1102,11 +1106,11 @@ module MatterJointFabricAdministrator
     end
 
     private def seed_joint_fabric_groups(datastore : Datastore) : Nil
-      unless datastore.group_list.any?(&.group_cat.==(0xFFFF_u16))
-        datastore.seed_reserved_cat_group(ADMIN_GROUP_ID, "Administrators", 0xFFFF_u16, 1_u16)
+      unless datastore.group_list.any?(&.group_cat.==(ADMINISTRATOR_CAT_ID))
+        datastore.seed_reserved_cat_group(ADMIN_GROUP_ID, "Administrators", ADMINISTRATOR_CAT_ID, 1_u16)
       end
-      unless datastore.group_list.any?(&.group_cat.==(0xFFFE_u16))
-        datastore.seed_reserved_cat_group(ANCHOR_GROUP_ID, "Anchors", 0xFFFE_u16, 1_u16)
+      unless datastore.group_list.any?(&.group_cat.==(ANCHOR_CAT_ID))
+        datastore.seed_reserved_cat_group(ANCHOR_GROUP_ID, "Anchors", ANCHOR_CAT_ID, 1_u16)
       end
     end
 
@@ -1470,7 +1474,7 @@ module MatterJointFabricAdministrator
         node = Matter::DataType::NodeId.new(subject)
         if node.case_authenticated_tag?
           cat = node.extract_as_case_authenticated_tag
-          cat.identity_value == 0xFFFE_u16 && cat.version > 0_u16
+          cat.identity_value == ANCHOR_CAT_ID && cat.version > 0_u16
         else
           false
         end
@@ -1514,7 +1518,7 @@ module MatterJointFabricAdministrator
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
         fabric.root_public_key != own_fabric.root_public_key &&
-          fabric.cats.any?(&.identity_value.==(0xFFFF_u16))
+          fabric.cats.any?(&.identity_value.==(ADMINISTRATOR_CAT_ID))
       end
       unless old_fabrics.size == 1
         raise Matter::ConfigurationError.new("Candidate must have exactly one joined Joint Fabric with Administrator CAT")
@@ -1599,8 +1603,8 @@ module MatterJointFabricAdministrator
           end
           Matter::Crypto::MatterCertificate.public_key_from_tlv(admin.icac)
         end
-        admin_version = next_transfer_cat_version(preflight, 0xFFFF_u16)
-        anchor_version = next_transfer_cat_version(preflight, 0xFFFE_u16)
+        admin_version = next_transfer_cat_version(preflight, ADMINISTRATOR_CAT_ID)
+        anchor_version = next_transfer_cat_version(preflight, ANCHOR_CAT_ID)
 
         rotations = [] of Matter::Controller::AnchorTransfer::CredentialTransition
         preflight.admin_list.each do |admin|
@@ -1807,7 +1811,7 @@ module MatterJointFabricAdministrator
         unless journal.stage.ready?
           raise Matter::CommissioningError.new("Interrupted removal lacks its CAT version; reconcile before retry")
         end
-        journal.administrator_cat_version = next_transfer_cat_version(datastore, 0xFFFF_u16)
+        journal.administrator_cat_version = next_transfer_cat_version(datastore, ADMINISTRATOR_CAT_ID)
         persistence.write_app_document(document_name, journal.to_document)
         persistence.flush
       end
@@ -1831,7 +1835,7 @@ module MatterJointFabricAdministrator
           outgoing_session = Matter::Controller::Pairing::CasePairing.new.pair(client, outgoing_peer,
             identity, peer_node_id: outgoing_node_id)
         end
-        anchor_version = datastore.group_list.find(&.group_cat.==(0xFFFE_u16)).try(&.group_cat_version) ||
+        anchor_version = datastore.group_list.find(&.group_cat.==(ANCHOR_CAT_ID)).try(&.group_cat_version) ||
                          raise Matter::ConfigurationError.new("Anchor CAT group is unavailable")
         port = Matter::Controller::AdministratorRemoval::ImPort.new(im, outgoing_session,
           outgoing_peer, own_fabric.fabric_id, own_fabric.root_public_key, outgoing_node_id,
@@ -1842,7 +1846,7 @@ module MatterJointFabricAdministrator
         },
           -> {
             groups = datastore.group_list.map do |group|
-              group.group_cat_version = admin_version if group.group_cat == 0xFFFF_u16
+              group.group_cat_version = admin_version if group.group_cat == ADMINISTRATOR_CAT_ID
               group
             end
             datastore.group_list = groups
@@ -1986,7 +1990,7 @@ module MatterJointFabricAdministrator
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is unavailable")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
         fabric.root_public_key != own_fabric.root_public_key &&
-          fabric.cats.any?(&.identity_value.==(0xFFFF_u16))
+          fabric.cats.any?(&.identity_value.==(ADMINISTRATOR_CAT_ID))
       end
       unless old_fabrics.size == 1
         raise Matter::ConfigurationError.new("Candidate must have exactly one joined Joint Fabric")
@@ -2059,7 +2063,7 @@ module MatterJointFabricAdministrator
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is unavailable")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
         fabric.root_public_key != own_fabric.root_public_key &&
-          fabric.cats.any?(&.identity_value.==(0xFFFF_u16))
+          fabric.cats.any?(&.identity_value.==(ADMINISTRATOR_CAT_ID))
       end
       unless old_fabrics.size == 1
         raise Matter::ConfigurationError.new("Candidate must have exactly one joined Joint Fabric")
@@ -2191,7 +2195,7 @@ module MatterJointFabricAdministrator
       version = journal.administrator_cat_version ||
                 raise Matter::ConfigurationError.new("Removal journal has no CAT version")
       anchor_version = if anchor
-                         datastore.group_list.find(&.group_cat.==(0xFFFE_u16)).try(&.group_cat_version) ||
+                         datastore.group_list.find(&.group_cat.==(ANCHOR_CAT_ID)).try(&.group_cat_version) ||
                            raise Matter::ConfigurationError.new("Removal Datastore has no Anchor CAT version")
                        end
       target_node_id = if anchor
@@ -2234,8 +2238,8 @@ module MatterJointFabricAdministrator
 
     private def update_datastore_administrator_acl_version(datastore : Datastore,
                                                            version : UInt16) : Nil
-      old_subject = 0xFFFF_FFFD_FFFF_0000_u64 | (version - 1_u16).to_u64
-      new_subject = 0xFFFF_FFFD_FFFF_0000_u64 | version.to_u64
+      old_subject = ADMINISTRATOR_CAT_SUBJECT_PREFIX | (version - 1_u16).to_u64
+      new_subject = ADMINISTRATOR_CAT_SUBJECT_PREFIX | version.to_u64
       entries = datastore.node_acl_list.map do |entry|
         if subjects = entry.acl_entry.subjects
           entry.acl_entry.subjects = subjects.map { |subject| subject == old_subject ? new_subject : subject }
@@ -2248,9 +2252,9 @@ module MatterJointFabricAdministrator
     private def tighten_administrator_acl(im : Matter::Controller::ImClient,
                                           session : Matter::Session::SecureContext,
                                           peer : Socket::IPAddress, version : UInt16) : Nil
-      old_subject = 0xFFFF_FFFD_FFFF_0000_u64 | (version - 1_u16).to_u64
-      new_subject = 0xFFFF_FFFD_FFFF_0000_u64 | version.to_u64
-      report = im.read_attribute(session, peer, 0_u16,
+      old_subject = ADMINISTRATOR_CAT_SUBJECT_PREFIX | (version - 1_u16).to_u64
+      new_subject = ADMINISTRATOR_CAT_SUBJECT_PREFIX | version.to_u64
+      report = im.read_attribute(session, peer, Matter::Node::ROOT_ENDPOINT_ID,
         Matter::Cluster::AccessControl::CLUSTER_ID, Matter::Cluster::AccessControl::ATTR_ACL)
       data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
              raise Matter::ProtocolError.new("Administrator ACL read omitted data")
@@ -2263,7 +2267,7 @@ module MatterJointFabricAdministrator
         changed = true
       end
       return unless changed
-      response = im.write_attribute(session, peer, 0_u16,
+      response = im.write_attribute(session, peer, Matter::Node::ROOT_ENDPOINT_ID,
         Matter::Cluster::AccessControl::CLUSTER_ID, Matter::Cluster::AccessControl::ATTR_ACL,
         entries.to_tlv)
       unless response.write_responses.any? { |item| item.status.status == Matter::InteractionModel::StatusCode::Success.value }
@@ -2275,7 +2279,7 @@ module MatterJointFabricAdministrator
                                     session : Matter::Session::SecureContext,
                                     peer : Socket::IPAddress,
                                     fabric : Matter::Fabric) : UInt8
-      report = im.read_attribute(session, peer, 0_u16,
+      report = im.read_attribute(session, peer, Matter::Node::ROOT_ENDPOINT_ID,
         Matter::Cluster::OperationalCredentials::CLUSTER_ID,
         Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
         fabric_filtered: false)
@@ -2495,11 +2499,11 @@ module MatterJointFabricAdministrator
                                  raise Matter::ConfigurationError.new("Anchor Node ID is required")
       anchor_peer = configured_peer_hints[anchor_datastore_node_id]? ||
                     raise Matter::ConfigurationError.new("Anchor operational address is unavailable")
-      admin_group = bootstrap_joint_fabric_datastore.group_list.find(&.group_cat.==(0xFFFF_u16)) ||
+      admin_group = bootstrap_joint_fabric_datastore.group_list.find(&.group_cat.==(ADMINISTRATOR_CAT_ID)) ||
                     raise Matter::ConfigurationError.new("Fabric B Administrator CAT group is missing")
       admin_version = admin_group.group_cat_version ||
                       raise Matter::ConfigurationError.new("Fabric B Administrator CAT version is missing")
-      admin_cat = (0xFFFF_u32 << 16) | admin_version.to_u32
+      admin_cat = Matter::DataType::CaseAuthenticatedTag.create(ADMINISTRATOR_CAT_ID, admin_version).value
       store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
       state = store.load
       [old_fabric, anchor_fabric].each do |identity|
@@ -2660,7 +2664,7 @@ module MatterJointFabricAdministrator
         session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
           identity, peer_node_id: request.node_id)
         response = Matter::Controller::ImClient.new(client, 45.seconds).invoke(
-          session: session, peer: peer, endpoint_id: 0_u16,
+          session: session, peer: peer, endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
           cluster_id: Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
           command_id: Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE,
           fields: Bytes.empty)

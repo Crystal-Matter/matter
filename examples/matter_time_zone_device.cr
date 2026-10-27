@@ -11,7 +11,7 @@ module MatterTimeZone
     @ntp_server : Matter::Cluster::TimeSynchronization::SntpServer?
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Time Zone",
-      vendor_id: 0xFFF1_u16,
+      vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
       product_id: 0x1236_u16,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,

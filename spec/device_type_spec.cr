@@ -53,6 +53,21 @@ describe Matter::DeviceType do
       device_type.requires_cluster?(0x0028_u32).should be_true # Basic Information
     end
 
+    it "keeps Root Node cluster requirements aligned with their generated IDs" do
+      root = Matter::DeviceType.root_node
+
+      root.required_server_clusters.should eq([
+        Matter::Cluster::Descriptor::CLUSTER_ID,
+        Matter::Cluster::BasicInformation::CLUSTER_ID,
+        Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+        Matter::Cluster::NetworkCommissioning::CLUSTER_ID,
+        Matter::Cluster::AdministratorCommissioning::CLUSTER_ID,
+        Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+        Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+        Matter::Cluster::GeneralDiagnostics::CLUSTER_ID,
+      ])
+    end
+
     it "creates on/off light device type" do
       device_type = Matter::DeviceType.on_off_light
 

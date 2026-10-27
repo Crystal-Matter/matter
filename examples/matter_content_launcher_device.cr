@@ -10,7 +10,7 @@ module MatterContentLauncher
     include Examples::Console
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Content Launcher",
-      vendor_id: 0xFFF1_u16,
+      vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
       product_id: 0x050A_u16,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,

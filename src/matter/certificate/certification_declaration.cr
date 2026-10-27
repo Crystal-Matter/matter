@@ -17,6 +17,10 @@ module Matter
       # Subject Key Identifier for the test CMS signer certificate
       TEST_CMS_SIGNER_SKI = "62FA823359ACFAA9963E1CFA140ADDF504F37160"
 
+      # The test CD uses Root Node (0x0016). Certificate loading precedes the
+      # device type catalog, so its fixture ID is declared here.
+      TEST_CD_DEVICE_TYPE_ID = 0x0016_u32
+
       # CD TLV content structure
       # Based on Matter Core Spec section 6.3.1
       struct CDContent
@@ -91,7 +95,7 @@ module Matter
           format_version: 1_u8,
           vendor_id: vendor_id,
           product_ids: [product_id],
-          device_type_id: 22_u32,
+          device_type_id: TEST_CD_DEVICE_TYPE_ID,
           certificate_id: "CSA00000SWC00000-00",
           security_level: 0_u8,
           security_information: 0_u16,

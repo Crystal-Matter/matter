@@ -297,7 +297,7 @@ module Matter
       end
 
       private def command_supported?(id : UInt32) : Bool
-        id == 0x80_u32 ? @go_home : @supported_commands.any? { |command| command.value.to_u32 == id }
+        id == CMD_GO_HOME ? @go_home : @supported_commands.any? { |command| command.value.to_u32 == id }
       end
 
       private def countdown_supported? : Bool

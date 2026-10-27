@@ -156,7 +156,7 @@ module Matter
         @fabric_table : FabricTable,
         iterations : UInt32 = DEFAULT_PBKDF_ITERATIONS,
         salt : Bytes = Random::Secure.random_bytes(PBKDF_SALT_LENGTH),
-        @vendor_id : UInt16 = 0xFFF1_u16,
+        @vendor_id : UInt16 = Fabric::DEFAULT_VENDOR_ID,
         @product_id : UInt16 = 0x8001_u16,
         max_sessions : UInt16 = SessionRegistry::DEFAULT_MAX_SESSIONS,
         subscription_grace_period : Time::Span = SessionRegistry::DEFAULT_SUBSCRIPTION_GRACE_PERIOD,

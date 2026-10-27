@@ -1,3 +1,4 @@
+require "../node"
 require "./im_subscription"
 require "./scanner"
 require "./operational_peer_resolver"
@@ -104,7 +105,7 @@ module Matter
       # different endpoints; only one must be readable on the new fabric and
       # attest the CASE root and Anchor Node ID.
       private def discover_datastore_endpoint : UInt16
-        endpoints = descriptor_list(UInt16, 0_u16, Cluster::Descriptor::ATTR_PARTS_LIST)
+        endpoints = descriptor_list(UInt16, Node::ROOT_ENDPOINT_ID, Cluster::Descriptor::ATTR_PARTS_LIST)
         candidates = endpoints.select do |endpoint_id|
           descriptor_list(UInt32, endpoint_id, Cluster::Descriptor::ATTR_SERVER_LIST)
             .includes?(Store::CLUSTER_ID)
