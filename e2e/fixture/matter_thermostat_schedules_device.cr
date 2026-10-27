@@ -1,12 +1,12 @@
 require "../../examples/support/console"
 require "../../examples/support/main"
 
-# Certification fixture only: production Thermostat keeps MSCH gated while
-# its remaining wire conformance checks are completed.
+# The fixture supplies local civil time from a host-owned clock file. A real
+# device should supply its timezone-aware local clock through the same API.
 module MatterThermostatSchedulesFixture
   alias Thermostat = Matter::Cluster::Thermostat
 
-  class WireThermostat < Thermostat
+  class ScheduledThermostat < Thermostat
     FIXTURE_TIME = Time.utc(2026, 10, 26, 8, 30)
     CLOCK_PATH   = ENV["MATTER_THERMOSTAT_CLOCK_PATH"]? || "/e2e/logs/matter_thermostat_schedules.clock"
 
@@ -17,18 +17,15 @@ module MatterThermostatSchedulesFixture
     end
 
     def initialize(endpoint_id : Matter::DataType::EndpointNumber, feature_map : Feature)
-      super(endpoint_id, feature_map: feature_map,
-        local_time_provider: -> : Time? { WireThermostat.local_time })
       type = ScheduleType.new(SystemMode::Heat, 1_u8,
         ScheduleTypeFeatures::SupportsSetpoints)
       transition = ScheduleTransition.new(0x02_u8, 480_u16, nil, nil, nil, 1900_i16)
       schedule = Schedule.new(Bytes[1_u8], SystemMode::Heat, nil, nil,
         [transition], false)
-      configure_schedules([type], [schedule], 2_u8, 2_u8)
-    end
-
-    protected def schedule_wire_ready? : Bool
-      true
+      super(endpoint_id, feature_map: feature_map,
+        schedule_types: [type], schedules: [schedule], schedule_max_transitions: 2_u8,
+        schedule_max_per_day: 2_u8,
+        local_time_provider: -> : Time? { ScheduledThermostat.local_time })
     end
   end
 
@@ -47,7 +44,7 @@ module MatterThermostatSchedulesFixture
     endpoint 1, device_type: Matter::DeviceType::THERMOSTAT do
       cluster Matter::Cluster::Identify, identify_type: :visible_led
       cluster Matter::Cluster::Groups
-      cluster WireThermostat,
+      cluster ScheduledThermostat,
         feature_map: Thermostat::Feature::Heating | Thermostat::Feature::MatterSchedules |
                      Thermostat::Feature::Events,
         as: :thermostat

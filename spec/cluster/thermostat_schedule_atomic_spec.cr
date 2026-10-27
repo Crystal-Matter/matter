@@ -3,20 +3,15 @@ require "../spec_helper"
 private alias ScheduleAtomic = Matter::Cluster::Thermostat
 private alias ScheduleStatus = Matter::InteractionModel::StatusCode
 
-# Production MSCH stays gated until scheduled activation is implemented.
-private class ScheduleAtomicWireReady < ScheduleAtomic
-  protected def schedule_wire_ready? : Bool
-    true
-  end
-end
+private alias ScheduleAtomicWireReady = ScheduleAtomic
 
 private def schedule_atomic_cluster : ScheduleAtomicWireReady
+  type = ScheduleAtomic::ScheduleType.new(ScheduleAtomic::SystemMode::Heat, 2_u8,
+    ScheduleAtomic::ScheduleTypeFeatures::SupportsSetpoints)
   cluster = build(ScheduleAtomicWireReady,
-    feature_map: ScheduleAtomic::Feature::Heating | ScheduleAtomic::Feature::MatterSchedules)
-  cluster.configure_schedules([
-    ScheduleAtomic::ScheduleType.new(ScheduleAtomic::SystemMode::Heat, 2_u8,
-      ScheduleAtomic::ScheduleTypeFeatures::SupportsSetpoints),
-  ], [] of ScheduleAtomic::Schedule, 4_u8, 2_u8)
+    feature_map: ScheduleAtomic::Feature::Heating | ScheduleAtomic::Feature::MatterSchedules,
+    schedule_types: [type], schedule_max_transitions: 4_u8, schedule_max_per_day: 2_u8,
+    local_time_provider: -> : Time? { nil })
   cluster
 end
 
@@ -68,7 +63,7 @@ private def schedule_atomic_value(handle : Bytes? = nil, heating : Int16 = 2100_
 end
 
 describe "Thermostat MSCH atomic-write transaction" do
-  it "keeps production MSCH gated and declares Manage-only wire metadata for conformance tests" do
+  it "requires a host clock and declares Manage-only wire metadata" do
     expect_raises(ArgumentError) do
       build(ScheduleAtomic, feature_map: ScheduleAtomic::Feature::Heating | ScheduleAtomic::Feature::MatterSchedules)
     end

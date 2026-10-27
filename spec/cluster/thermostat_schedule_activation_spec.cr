@@ -3,24 +3,19 @@ require "../spec_helper"
 private alias ActiveScheduleThermostat = Matter::Cluster::Thermostat
 private alias ActiveScheduleStatus = Matter::InteractionModel::StatusCode
 
-# The production feature remains gated until timed transitions are implemented.
-private class ActiveScheduleWireReady < ActiveScheduleThermostat
-  protected def schedule_wire_ready? : Bool
-    true
-  end
-end
+private alias ActiveScheduleWireReady = ActiveScheduleThermostat
 
 private def active_schedule_cluster(events : Bool = false) : ActiveScheduleWireReady
   features = ActiveScheduleThermostat::Feature::Heating | ActiveScheduleThermostat::Feature::MatterSchedules
   features |= ActiveScheduleThermostat::Feature::Events if events
-  cluster = build(ActiveScheduleWireReady, feature_map: features)
   type = ActiveScheduleThermostat::ScheduleType.new(ActiveScheduleThermostat::SystemMode::Heat, 2_u8,
     ActiveScheduleThermostat::ScheduleTypeFeatures::SupportsSetpoints)
   transition = ActiveScheduleThermostat::ScheduleTransition.new(0x02_u8, 480_u16, nil, nil, nil, 2100_i16)
   schedule = ActiveScheduleThermostat::Schedule.new(Bytes[1_u8], ActiveScheduleThermostat::SystemMode::Heat,
     nil, nil, [transition], false)
-  cluster.configure_schedules([type], [schedule], 4_u8, 2_u8)
-  cluster
+  build(ActiveScheduleWireReady, feature_map: features,
+    schedule_types: [type], schedules: [schedule], schedule_max_transitions: 4_u8,
+    schedule_max_per_day: 2_u8, local_time_provider: -> : Time? { nil })
 end
 
 private def invoke_active_schedule(cluster : ActiveScheduleThermostat, handle : Bytes) : ActiveScheduleStatus
@@ -38,7 +33,7 @@ private def invoke_active_schedule(cluster : ActiveScheduleThermostat, handle : 
 end
 
 describe "Thermostat MSCH SetActiveSchedule" do
-  it "keeps production MSCH gated and exposes command 0x05 only with MSCH" do
+  it "requires a host clock and exposes command 0x05 only with configured MSCH" do
     expect_raises(ArgumentError) do
       build(ActiveScheduleThermostat,
         feature_map: ActiveScheduleThermostat::Feature::Heating | ActiveScheduleThermostat::Feature::MatterSchedules)
