@@ -141,6 +141,15 @@ describe Matter::Controller::StateStore do
     store.load.unsecured_message_counter.should eq(1_u32)
   end
 
+  it "keeps the newer unsecured counter from concurrent clients across wraparound" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX - 1_u32))
+    store.update { |current| current.advance_unsecured_message_counter(1_u32) }
+    store.update { |current| current.advance_unsecured_message_counter(UInt32::MAX) }
+
+    store.load.unsecured_message_counter.should eq(1_u32)
+  end
+
   it "persists replaced IPK epochs without losing the controller's peers" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = sample_fabric

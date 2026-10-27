@@ -499,6 +499,11 @@ Each loaded controller `State` remembers the exact document it read. A later
 silent loss of Datastore registrations, nodes, or counters. Use `StateStore#update`
 for short read-modify-write operations; it runs them in one backend transaction.
 Network requests must finish before the update block, which reads fresh state.
+An update advancing the unsecured message counter uses serial arithmetic so a
+slower client cannot move the durable counter backward, including at UInt32
+wraparound. A value saved once from a loaded snapshot must be reloaded before
+another save; freshly constructed `State` values remain an explicit full-state
+replacement path for bootstrap and recovery callers.
 
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.

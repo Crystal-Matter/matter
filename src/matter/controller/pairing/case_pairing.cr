@@ -110,7 +110,7 @@ module Matter
                   NodeInfo.new(peer_node_id, OperationalPeerResolver.address_hint(peer), peer.port),
                   fabric.root_public_key, fabric.controller_node_id)
               end
-              current.unsecured_message_counter = client.transport.message_counter.counter
+              current.advance_unsecured_message_counter(client.transport.message_counter.counter)
             end
           end
         end

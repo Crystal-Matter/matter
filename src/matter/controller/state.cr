@@ -225,6 +225,17 @@ module Matter
       # backwards across process restarts or peers may treat requests as stale.
       property unsecured_message_counter : UInt32 = 0_u32
 
+      UNSECURED_COUNTER_HALF_RANGE = 1_u32 << 31
+
+      # Accept a counter from a client that may have started from an older
+      # snapshot. Serial arithmetic also handles a legitimate UInt32 wrap.
+      def advance_unsecured_message_counter(candidate : UInt32) : Nil
+        distance = candidate &- @unsecured_message_counter
+        if distance > 0_u32 && distance < UNSECURED_COUNTER_HALF_RANGE
+          @unsecured_message_counter = candidate
+        end
+      end
+
       def initialize(
         @fabric : FabricInfo? = nil,
         @nodes : Hash(UInt64, NodeInfo) = {} of UInt64 => NodeInfo,
