@@ -22,6 +22,9 @@ module MatterReverseTarget
 
     endpoint 1, device_type: Matter::DeviceType::ON_OFF_LIGHT do
       cluster Matter::Cluster::OnOff, feature_map: :lighting
+      cluster Matter::Cluster::Identify, identify_type: :visible_light
+      cluster Matter::Cluster::Groups
+      cluster Matter::Cluster::ScenesManagement
     end
   end
 end
