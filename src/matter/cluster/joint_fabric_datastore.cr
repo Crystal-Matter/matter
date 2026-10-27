@@ -970,9 +970,9 @@ module Matter
       def update_key_set(request : UpdateKeySetRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         key_set = request.group_key_set
-        return InteractionModel::Status.constraint_error unless valid_key_set?(key_set, allow_ipk: true)
         index = @group_key_set_list.index { |entry| entry.group_key_set_id == key_set.group_key_set_id }
         return InteractionModel::Status.not_found unless index
+        return InteractionModel::Status.constraint_error unless valid_key_set?(key_set, allow_ipk: true)
         changed = @group_key_set_list[index] != key_set
         if changed && key_set.group_key_set_id == IPK_KEY_SET_ID &&
            (key_set.epoch_key0.nil? || key_set.epoch_start_time0.nil? || key_set.epoch_start_time0 == 0_u64)
@@ -1244,9 +1244,9 @@ module Matter
 
       def update_node(request : UpdateNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
         index = @node_list.index { |entry| entry.node_id == request.node_id }
         return InteractionModel::Status.not_found unless index
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
         entry = @node_list[index]
         entry.friendly_name = request.friendly_name
         entries = @node_list.dup
@@ -1270,8 +1270,8 @@ module Matter
       def update_endpoint_for_node(request : UpdateEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless node_exists?(request.node_id)
-        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
         return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
 
         entries = @node_endpoint_list.reject { |entry| entry.node_id == request.node_id && entry.endpoint_id == request.endpoint_id }
         entries << DatastoreEndpointEntryStruct.new(request.endpoint_id, request.node_id, request.friendly_name)
