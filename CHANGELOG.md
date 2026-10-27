@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### General Diagnostics reboot count
+
+- Persist the mandatory RebootCount and advance it on each restored device boot,
+  saturating at the 16-bit maximum. A failed durable write now stops startup.
+  Omit optional TotalOperationalHours until a lifetime counter is available;
+  the previous per-boot calculation could not satisfy its nonvolatile semantics.
+
 ### Commissioner Control response retry
 
 - Allow a previously approved `CommissionNode` request to retry when its
