@@ -122,6 +122,19 @@ describe Matter::Controller::AdministratorRemoval::RotationInspection do
       case_authenticated_tags: [0xFFFF_0002_u32, 0xFFFE_0001_u32], issuer_icac_id: 2_u64)
     im = RotationProofIm.new(client, descriptor,
       Matter::Cluster::OperationalCredentials::Tlv::NOC.new(new_noc, icac, 1_u8), root, node_key)
+    expected_administrator_cat = Matter::DataType::CaseAuthenticatedTag.create(
+      Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 2_u16)
+    expect_raises(Matter::AuthenticationError, /unexpected CATs/) do
+      proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
+        0x2222_u64, 2_u16, nonce, exact_cats: [expected_administrator_cat])
+    end
+    admin_only_noc = Matter::Crypto::MatterCertificate::Builder.node(node_key.public_key,
+      0x1111_u64, 0x2222_u64, icac_key, 1_u64, Bytes[8], crypto,
+      case_authenticated_tags: [expected_administrator_cat.value], issuer_icac_id: 2_u64)
+    admin_only_im = RotationProofIm.new(client, descriptor,
+      Matter::Cluster::OperationalCredentials::Tlv::NOC.new(admin_only_noc, icac, 1_u8), root, node_key)
+    proof.verify_completed!(admin_only_im, session, peer, root, 0x1111_u64, root_key.public_key,
+      0x2222_u64, 2_u16, nonce, exact_cats: [expected_administrator_cat])
     expect_raises(Matter::AuthenticationError, /journaled Administrator CAT/) do
       proof.verify_no_effect!(im, session, peer, root, 0x1111_u64,
         root_key.public_key, 0x2222_u64, 1_u16, nonce, old_noc)
@@ -142,6 +155,15 @@ describe Matter::Controller::AdministratorRemoval::RotationInspection do
     im.completion_calls.should eq(2)
     im.rollback_noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(old_noc, icac, 1_u8)
     expect_raises(Matter::AuthenticationError, /journaled Administrator CAT/) do
+      proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
+        0x2222_u64, 2_u16, nonce)
+    end
+    replacement_new_cat_noc = Matter::Crypto::MatterCertificate::Builder.node(node_key.public_key,
+      0x1111_u64, 0x2222_u64, icac_key, 1_u64, Bytes[9], crypto,
+      case_authenticated_tags: [0xFFFF_0002_u32, 0xFFFE_0001_u32], issuer_icac_id: 2_u64)
+    im.noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(new_noc, icac, 1_u8)
+    im.rollback_noc = Matter::Cluster::OperationalCredentials::Tlv::NOC.new(replacement_new_cat_noc, icac, 1_u8)
+    expect_raises(Matter::AuthenticationError, /changed during completion/) do
       proof.verify_completed!(im, session, peer, root, 0x1111_u64, root_key.public_key,
         0x2222_u64, 2_u16, nonce)
     end

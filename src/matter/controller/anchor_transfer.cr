@@ -890,6 +890,20 @@ module Matter
 
         getter journal : Journal
 
+        # Durable completed entries must be the exact prefix of the frozen
+        # Administrator order before the active target. Reordered, duplicate,
+        # or unknown IDs cannot authorize a lost-ack rotation recovery.
+        def self.verify_rotation_prefix!(journal : Journal, ordered_node_ids : Array(UInt64),
+                                         active_node_id : UInt64) : Nil
+          prefix = ordered_node_ids.take_while { |node_id| node_id != active_node_id }
+          unless journal.stage.rotating? && journal.active_rotation_node_id == active_node_id &&
+                 ordered_node_ids.includes?(active_node_id) &&
+                 ordered_node_ids.uniq.size == ordered_node_ids.size &&
+                 journal.rotated_administrator_node_ids == prefix
+            raise Matter::AuthenticationError.new("Administrator rotation journal differs from frozen order")
+          end
+        end
+
         def initialize(@source : Datastore, @port : Port, @migration : Migration,
                        @consent : Consent, @save : SaveJournal,
                        @journal : Journal)
@@ -1053,6 +1067,21 @@ module Matter
               updated.rotated_administrator_node_ids << node_id
             end
             updated.active_rotation_node_id = nil
+          end
+        end
+
+        # The caller has authenticated the completed rotation. Save both the
+        # resolved node and resumable stage together so a crash cannot leave
+        # an unresumable half-reconciled journal.
+        def reconcile_completed_rotation!(node_id : UInt64) : Nil
+          if !@journal.stage.rotating? || @journal.active_rotation_node_id != node_id ||
+             @journal.rotated_administrator_node_ids.includes?(node_id)
+            raise Matter::ConfigurationError.new("Invalid completed Administrator rotation reconciliation")
+          end
+          @journal.persist_change!(@save) do |updated|
+            updated.rotated_administrator_node_ids << node_id
+            updated.active_rotation_node_id = nil
+            updated.stage = Stage::Copied
           end
         end
 

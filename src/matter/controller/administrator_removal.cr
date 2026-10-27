@@ -516,9 +516,11 @@ module Matter
                               peer : Socket::IPAddress, root_certificate : Bytes,
                               fabric_id : UInt64, root_public_key : Bytes,
                               node_id : UInt64, administrator_cat_version : UInt16,
-                              challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
-          verify_current_noc!(im, session, peer, root_certificate, fabric_id,
-            root_public_key, node_id, administrator_cat_version, challenge, anchor_cat_version)
+                              challenge : Bytes, anchor_cat_version : UInt16? = nil,
+                              exact_cats : Array(DataType::CaseAuthenticatedTag)? = nil) : Nil
+          before_noc = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, administrator_cat_version, challenge, anchor_cat_version,
+            exact_cats)
           result = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
             command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
@@ -537,8 +539,12 @@ module Matter
           # fresh challenge prevents a cached pre-commit response from being
           # accepted as post-commit proof.
           final_challenge = Crypto::StandardCrypto.new.random_bytes(VidVerification::CHALLENGE_SIZE)
-          verify_current_noc!(im, session, peer, root_certificate, fabric_id,
-            root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version)
+          after_noc = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version,
+            exact_cats)
+          unless after_noc == before_noc
+            raise Matter::AuthenticationError.new("Rotation NOC changed during completion")
+          end
           nil
         end
 
@@ -546,7 +552,8 @@ module Matter
                                         peer : Socket::IPAddress, root_certificate : Bytes,
                                         fabric_id : UInt64, root_public_key : Bytes,
                                         node_id : UInt64, administrator_cat_version : UInt16,
-                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Bytes
+                                        challenge : Bytes, anchor_cat_version : UInt16? = nil,
+                                        exact_cats : Array(DataType::CaseAuthenticatedTag)? = nil) : Bytes
           unless session.case_session? && session.peer_node_id.try(&.id) == node_id
             raise Matter::AuthenticationError.new("Rotation CASE peer differs from journaled Node ID")
           end
@@ -624,6 +631,14 @@ module Matter
           Crypto::StandardCrypto.new.verify_ecdsa(noc_key, signed.to_slice, response.signature)
 
           subjects = Crypto::MatterCertificate.subject_ids_from_tlv(noc.noc)
+          if expected = exact_cats
+            observed_cats = subjects.compact_map do |subject|
+              DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+            end.sort_by!(&.value)
+            unless observed_cats == expected.sort_by(&.value)
+              raise Matter::AuthenticationError.new("Rotation NOC carries unexpected CATs")
+            end
+          end
           versions = subjects.compact_map do |subject|
             cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
             cat.version if cat && cat.identity_value == Cluster::JointFabricDatastore::ADMINISTRATOR_CAT

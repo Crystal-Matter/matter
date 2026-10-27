@@ -544,6 +544,67 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     journal.rotated_administrator_node_ids.should be_empty
   end
 
+  it "persists a completed Administrator rotation and resumable stage atomically" do
+    store = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x100_u64
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    save = ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      durable = Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true }, save, journal)
+
+    expect_raises(Matter::ConfigurationError, /Invalid completed/) do
+      workflow.reconcile_completed_rotation!(0x300_u64)
+    end
+    durable.active_rotation_node_id.should eq(0x100_u64)
+    workflow.reconcile_completed_rotation!(0x100_u64)
+    durable.stage.should eq(TransferStage::Copied)
+    durable.active_rotation_node_id.should be_nil
+    durable.rotated_administrator_node_ids.should eq([0x100_u64])
+    expect_raises(Matter::ConfigurationError, /Invalid completed/) do
+      workflow.reconcile_completed_rotation!(0x100_u64)
+    end
+  end
+
+  it "accepts only a unique durable prefix before the active Administrator rotation" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x100_u64
+    journal.rotated_administrator_node_ids << 0x300_u64
+    verifier = Matter::Controller::AnchorTransfer::Workflow
+    verifier.verify_rotation_prefix!(journal, [0x300_u64, 0x100_u64], 0x100_u64)
+    [[0x100_u64, 0x300_u64], [0x400_u64, 0x100_u64], [0x300_u64, 0x300_u64, 0x100_u64],
+     [0x300_u64, 0x400_u64]].each do |ordered|
+      expect_raises(Matter::AuthenticationError, /frozen order/) do
+        verifier.verify_rotation_prefix!(journal, ordered, 0x100_u64)
+      end
+    end
+    journal.rotated_administrator_node_ids << 0x400_u64
+    expect_raises(Matter::AuthenticationError, /frozen order/) do
+      verifier.verify_rotation_prefix!(journal, [0x300_u64, 0x100_u64], 0x100_u64)
+    end
+  end
+
+  it "keeps the active rotation unresolved when atomic reconciliation cannot be saved" do
+    store = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x100_u64
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) do
+      workflow.reconcile_completed_rotation!(0x100_u64)
+    end
+    journal.stage.should eq(TransferStage::Rotating)
+    journal.active_rotation_node_id.should eq(0x100_u64)
+    journal.rotated_administrator_node_ids.should be_empty
+  end
+
   it "blocks request when an individual entry is pending or consent is absent" do
     store = committed_anchor_store
     pending = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(

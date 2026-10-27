@@ -1145,6 +1145,68 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8)))
     reloaded_identity.inspected_datastore_admin_entries.should eq(copied_entries)
 
+    # A commits its new-fabric AddNOC and CommissioningComplete, then B loses
+    # the acknowledgement before saving A in its rotation journal. B must
+    # prove the committed credential after restart instead of adding it again.
+    a_old_noc_before_rotation = administrator_noc(anchor_client, anchor_peer,
+      anchor_bootstrap.fabric, 0xA102_u64)
+    b_noc_before_rotation = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    c_old_noc_before_rotation = administrator_noc(anchor_client, third_peer,
+      anchor_bootstrap.fabric, 0xA104_u64)
+    interrupted_first_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_first_transfer_administrator_rotation: true))
+    interrupted_first_rotation.status.should eq("error")
+    interrupted_first_rotation.error.to_s.should contain("Injected interruption after durable first Administrator rotation")
+    active_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    active_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating.value)
+    active_rotation.inspected_active_rotation_node_id.should eq(0xA102_u64)
+    a_new_noc_before_restart = administrator_noc(joiner_client, anchor_peer,
+      joiner_bootstrap.fabric, 0xA102_u64)
+    a_new_noc_before_restart.noc.should_not be_empty
+    administrator_noc(anchor_client, anchor_peer, anchor_bootstrap.fabric, 0xA102_u64).noc
+      .should eq(a_old_noc_before_rotation.noc)
+    administrator_noc(joiner_client, joiner_peer, joiner_bootstrap.fabric, 0xB102_u64).noc
+      .should eq(b_noc_before_rotation.noc)
+    administrator_noc(anchor_client, third_peer, anchor_bootstrap.fabric, 0xA104_u64).noc
+      .should eq(c_old_noc_before_rotation.noc)
+    c_before_transfer_rotation = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_before_transfer_rotation.fabric_present.should be_false
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_active_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    persisted_active_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating.value)
+    persisted_active_rotation.inspected_active_rotation_node_id.should eq(0xA102_u64)
+    a_new_noc_after_restart = administrator_noc(joiner_client, anchor_peer,
+      joiner_bootstrap.fabric, 0xA102_u64)
+    a_new_noc_after_restart.noc.should eq(a_new_noc_before_restart.noc)
+    unsafe_rotation_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_rotation_retry.status.should eq("error")
+    unsafe_rotation_retry.error.to_s.should contain("needs reconciliation")
+    malformed_rotation_nonce = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA102_u64,
+        nonce: "invalid"))
+    malformed_rotation_nonce.status.should eq("error")
+    malformed_rotation_nonce.error.to_s.should contain("32-byte hexadecimal rotation nonce")
+    wrong_rotation_target = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA104_u64,
+        nonce: Random::Secure.hex(32)))
+    wrong_rotation_target.status.should eq("error")
+    wrong_rotation_target.error.to_s.should contain("not awaiting the old Anchor rotation")
+    reconciled_first_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA102_u64,
+        nonce: Random::Secure.hex(32)))
+    reconciled_first_rotation.status.should eq("ok"), reconciled_first_rotation.error.to_s
+
     # A and C rotate onto B's root, then B loses the durable Rotated save
     # acknowledgement before promoting its own Anchor credentials.
     interrupted_rotation = jfa_command("matter_joint_fabric_joiner",
@@ -1155,6 +1217,9 @@ describe "three provisioned Joint Fabric Administrators" do
     rotated_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     rotated_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotated.value)
+    a_new_noc_after_resume = administrator_noc(joiner_client, anchor_peer,
+      joiner_bootstrap.fabric, 0xA102_u64)
+    a_new_noc_after_resume.noc.should eq(a_new_noc_before_restart.noc)
     c_new_fabric_after_rotation = jfa_command("matter_joint_fabric_third",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
         joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
@@ -1202,6 +1267,8 @@ describe "three provisioned Joint Fabric Administrators" do
     promoted_identity.inspected_fabric_id.should eq(joiner_bootstrap.fabric.fabric_id)
     promoted_identity.inspected_root_public_key.should eq(joiner_bootstrap.fabric.root_public_key)
     promoted_identity.inspected_datastore_admin_entries.should eq(copied_entries)
+    anchor_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client, anchor_peer,
+      anchor_bootstrap.fabric, peer_node_id: 0xA102_u64, timeout: E2E::COMMAND_TIMEOUT)
     frozen_old = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
       endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
       cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
