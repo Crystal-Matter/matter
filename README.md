@@ -613,7 +613,11 @@ the optional DirectModeChange feature, with a non-Idle run mode otherwise
 blocking direct changes. The operational cluster can expose paired Pause and
 Resume plus optional GoHome. Host callbacks decide whether physical actions
 are safe, and the host reports charging, docking, errors, and completion.
-See `examples/matter_rvc_device.cr` for a synthetic endpoint.
+The Matter 1.6 Robotic Vacuum Cleaner device type (`0x0074`, revision 4)
+requires Identify, RVC Run Mode, RVC Operational State, and its
+OperationCompletion event. RVC Clean Mode and Service Area are optional.
+`Endpoint#validate` checks this composition. See
+`examples/matter_rvc_device.cr` for a synthetic endpoint.
 
 `ServiceArea` revision 2 adds the RVC's area catalogue and the `SelectAreas`
 command. The host supplies meaningful area descriptions and decides whether a

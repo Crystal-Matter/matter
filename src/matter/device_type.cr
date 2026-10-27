@@ -54,6 +54,7 @@ module Matter
     TEMPERATURE_CONTROLLED_CABINET = 0x0071_u32 # Temperature Controlled Cabinet
     DISHWASHER                     = 0x0075_u32 # Dishwasher
     MICROWAVE_OVEN                 = 0x0079_u32 # Microwave Oven
+    ROBOTIC_VACUUM_CLEANER         = 0x0074_u32 # Robotic Vacuum Cleaner
 
     # Closure Device Types
     DOOR_LOCK                  = 0x000A_u32 # Door Lock
@@ -195,6 +196,23 @@ module Matter
         forbidden_server_features: {0x0059_u32 => 0x01_u32},  # Dishwasher Mode DEPONOFF
         required_server_events: {0x0060_u32 => [0x0001_u32]}, # OperationCompletion
         forbidden_server_attributes: {0x0059_u32 => [0x0002_u32]}
+      )
+    end
+
+    def self.robotic_vacuum_cleaner : DeviceType
+      new(
+        DataType::DeviceTypeId.new(ROBOTIC_VACUUM_CLEANER), "Robotic Vacuum Cleaner", 4_u16,
+        required_server_clusters: [
+          0x001D_u32, # Descriptor
+          0x0003_u32, # Identify
+          0x0054_u32, # RVC Run Mode
+          0x0061_u32, # RVC Operational State
+        ],
+        optional_server_clusters: [
+          0x0055_u32, # RVC Clean Mode
+          0x0150_u32, # Service Area
+        ],
+        required_server_events: {0x0061_u32 => [0x0001_u32]} # OperationCompletion
       )
     end
 
@@ -516,6 +534,7 @@ module Matter
       when REFRIGERATOR                   then refrigerator
       when TEMPERATURE_CONTROLLED_CABINET then temperature_controlled_cabinet
       when DISHWASHER                     then dishwasher
+      when ROBOTIC_VACUUM_CLEANER         then robotic_vacuum_cleaner
       when DOOR_LOCK                      then door_lock
       when CLOSURE                        then closure
       when CLOSURE_PANEL                  then closure_panel
@@ -569,6 +588,7 @@ module Matter
       when REFRIGERATOR                   then "Refrigerator"
       when TEMPERATURE_CONTROLLED_CABINET then "Temperature Controlled Cabinet"
       when DISHWASHER                     then "Dishwasher"
+      when ROBOTIC_VACUUM_CLEANER         then "Robotic Vacuum Cleaner"
       when DOOR_LOCK                      then "Door Lock"
       when CLOSURE                        then "Closure"
       when CLOSURE_PANEL                  then "Closure Panel"
