@@ -133,6 +133,7 @@ module Matter
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
                        @anchor_registration_committed : Proc(Nil)? = nil,
                        @anchor_node_removed : Proc(Nil)? = nil,
+                       @anchor_fabric_removed : Proc(Nil)? = nil,
                        @old_fabric_removed : Proc(Nil)? = nil,
                        @old_node_removed : Proc(Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
@@ -362,6 +363,7 @@ module Matter
               Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
               Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(descriptor.fabric_index).to_slice)
             assert_noc_success!(response, "Anchor RemoveFabric")
+            @anchor_fabric_removed.try(&.call)
           end
           verify_postcondition!(Stage::RolledBack)
         end
