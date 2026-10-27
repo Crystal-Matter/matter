@@ -62,8 +62,10 @@ module Matter
     # (indirect) CRL signers require a separate authenticated distribution
     # provider and are not silently treated as good here.
     class OfflineAttestationRevocation
-      MAX_CRL_SIZE       = 1_048_576
-      KEY_USAGE_CRL_SIGN =  0x02_u32
+      MAX_CRL_SIZE                = 1_048_576
+      KEY_USAGE_DIGITAL_SIGNATURE =  0x80_u32
+      KEY_USAGE_CRL_SIGN          =  0x02_u32
+      ALLOWED_DELEGATE_KEY_USAGE  = KEY_USAGE_DIGITAL_SIGNATURE | KEY_USAGE_CRL_SIGN
 
       record CrlValidation,
         certificate_issuer : Bytes,
@@ -179,7 +181,7 @@ module Matter
                             LibCrypto.matter_x509_extension_get_critical(constraint) == 1 &&
                             LibCrypto.matter_x509_extension_get_critical(usage_extension) == 1 &&
                             constraint.value.includes?("CA:FALSE") && LibCrypto.x509_check_ca(delegate) == 0 &&
-                            (usage & KEY_USAGE_CRL_SIGN) != 0 && (usage & ~0x82_u32) == 0
+                            (usage & KEY_USAGE_CRL_SIGN) != 0 && (usage & ~ALLOWED_DELEGATE_KEY_USAGE) == 0
         now = Time.utc
         return false unless delegate.not_before <= now && now <= delegate.not_after &&
                             LibCrypto.x509_get_signature_nid(delegate) == LibCrypto.obj_txt2nid("ecdsa-with-SHA256") &&

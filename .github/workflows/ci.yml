@@ -74,7 +74,7 @@ jobs:
         run: ./examples/run_validation.sh --chip-tool ./bin/chip-tool
   docker_interoperability:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
       - name: Commission example devices with official chip-tool

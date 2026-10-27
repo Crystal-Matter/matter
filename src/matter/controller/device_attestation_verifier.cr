@@ -2,6 +2,7 @@ require "openssl_ext"
 require "../certificate/certification_declaration"
 require "../commissioning/credential_service"
 require "../crypto/pkcs10"
+require "../crypto/wire_identifiers"
 
 lib LibCrypto
   fun x509_check_ca = X509_check_ca(cert : X509) : Int32
@@ -189,53 +190,53 @@ module Matter
                                      paa : OpenSSL::X509::Certificate) : Nil
         raise Matter::AuthenticationError.new("Certification Declaration is too large") if cms.size > MAX_DECLARATION_SIZE
         outer = DerReader.new(cms)
-        content_info = outer.read(0x30_u8)
+        content_info = outer.read(Codec::DERCodec::Tag::SEQUENCE)
         outer.finished!
         info = DerReader.new(content_info)
-        unless info.read(0x06_u8) == SIGNED_DATA_OID
+        unless info.read(Codec::DERCodec::Tag::OBJECT_IDENTIFIER) == SIGNED_DATA_OID
           raise Matter::AuthenticationError.new("Certification Declaration is not CMS SignedData")
         end
-        signed_wrapper = DerReader.new(info.read(0xa0_u8))
-        signed = DerReader.new(signed_wrapper.read(0x30_u8))
+        signed_wrapper = DerReader.new(info.read(Codec::DERCodec::Tag::CONTEXT_0_CONSTRUCTED))
+        signed = DerReader.new(signed_wrapper.read(Codec::DERCodec::Tag::SEQUENCE))
         signed_wrapper.finished!
         info.finished!
-        signed.read(0x02_u8)
+        signed.read(Codec::DERCodec::Tag::INTEGER)
         digest_algorithm = Codec::DERCodec::Base.encode(Codec::DERCodec::SHA256_CMS.call)
-        unless signed.read(0x31_u8) == digest_algorithm
+        unless signed.read(Codec::DERCodec::Tag::SET) == digest_algorithm
           raise Matter::AuthenticationError.new("Unsupported Certification Declaration digest")
         end
-        encapsulated = DerReader.new(signed.read(0x30_u8))
-        unless encapsulated.read(0x06_u8) == DATA_OID
+        encapsulated = DerReader.new(signed.read(Codec::DERCodec::Tag::SEQUENCE))
+        unless encapsulated.read(Codec::DERCodec::Tag::OBJECT_IDENTIFIER) == DATA_OID
           raise Matter::AuthenticationError.new("Unsupported CD encapsulated content")
         end
-        payload_wrapper = DerReader.new(encapsulated.read(0xa0_u8))
-        payload = payload_wrapper.read(0x04_u8)
+        payload_wrapper = DerReader.new(encapsulated.read(Codec::DERCodec::Tag::CONTEXT_0_CONSTRUCTED))
+        payload = payload_wrapper.read(Codec::DERCodec::Tag::OCTET_STRING)
         payload_wrapper.finished!
         encapsulated.finished!
-        signers = DerReader.new(signed.read(0x31_u8))
-        signer = DerReader.new(signers.read(0x30_u8))
+        signers = DerReader.new(signed.read(Codec::DERCodec::Tag::SET))
+        signer = DerReader.new(signers.read(Codec::DERCodec::Tag::SEQUENCE))
         signers.finished!
         signed.finished!
-        signer.read(0x02_u8)
-        ski = signer.read(0x80_u8)
-        unless signer.read(0x30_u8) == DerReader.new(digest_algorithm).read(0x30_u8)
+        signer.read(Codec::DERCodec::Tag::INTEGER)
+        ski = signer.read(Codec::DERCodec::Tag::CONTEXT_0_PRIMITIVE)
+        unless signer.read(Codec::DERCodec::Tag::SEQUENCE) == DerReader.new(digest_algorithm).read(Codec::DERCodec::Tag::SEQUENCE)
           raise Matter::AuthenticationError.new("Unsupported Certification Declaration digest algorithm")
         end
         signed_content = payload
-        if signer.next_tag == 0xa0_u8
-          attributes = signer.read(0xa0_u8)
+        if signer.next_tag == Codec::DERCodec::Tag::CONTEXT_0_CONSTRUCTED
+          attributes = signer.read(Codec::DERCodec::Tag::CONTEXT_0_CONSTRUCTED)
           verify_signed_attributes(attributes, payload)
           io = IO::Memory.new
-          io.write_byte(0x31_u8)
+          io.write_byte(Codec::DERCodec::Tag::SET)
           io.write(Codec::DERCodec::Base.encode_length_bytes(attributes.size))
           io.write(attributes)
           signed_content = io.to_slice
         end
-        unless signer.read(0x30_u8) == DerReader.new(
-                 Codec::DERCodec::Base.encode(Codec::DERCodec::ECDSA_WITH_SHA256_X962.call)).read(0x30_u8)
+        unless signer.read(Codec::DERCodec::Tag::SEQUENCE) == DerReader.new(
+                 Codec::DERCodec::Base.encode(Codec::DERCodec::ECDSA_WITH_SHA256_X962.call)).read(Codec::DERCodec::Tag::SEQUENCE)
           raise Matter::AuthenticationError.new("Unsupported Certification Declaration signature algorithm")
         end
-        signature = signer.read(0x04_u8)
+        signature = signer.read(Codec::DERCodec::Tag::OCTET_STRING)
         signer.finished!
         public_key = @trust.cd_signers[ski.hexstring.upcase]? ||
                      raise Matter::AuthenticationError.new("Untrusted Certification Declaration signer")
@@ -275,18 +276,18 @@ module Matter
         content_type_count = 0
         digest_count = 0
         until attributes.finished?
-          attribute = DerReader.new(attributes.read(0x30_u8))
-          oid = attribute.read(0x06_u8)
-          values = DerReader.new(attribute.read(0x31_u8))
+          attribute = DerReader.new(attributes.read(Codec::DERCodec::Tag::SEQUENCE))
+          oid = attribute.read(Codec::DERCodec::Tag::OBJECT_IDENTIFIER)
+          values = DerReader.new(attribute.read(Codec::DERCodec::Tag::SET))
           attribute.finished!
           if oid == CONTENT_TYPE_ATTRIBUTE_OID
             content_type_count += 1
-            unless values.read(0x06_u8) == DATA_OID
+            unless values.read(Codec::DERCodec::Tag::OBJECT_IDENTIFIER) == DATA_OID
               raise Matter::AuthenticationError.new("Certification Declaration signed content type mismatch")
             end
           elsif oid == MESSAGE_DIGEST_ATTRIBUTE_OID
             digest_count += 1
-            unless values.read(0x04_u8) == @crypto.compute_sha256(payload)
+            unless values.read(Codec::DERCodec::Tag::OCTET_STRING) == @crypto.compute_sha256(payload)
               raise Matter::AuthenticationError.new("Certification Declaration signed digest mismatch")
             end
           else
@@ -314,8 +315,8 @@ module Matter
           marker = @bytes[@offset + 1]? || raise Matter::AuthenticationError.new("Truncated DER length")
           @offset += 2
           length = marker.to_i
-          if marker >= 0x80_u8
-            count = (marker & 0x7f_u8).to_i
+          if marker >= Crypto::WireIdentifiers::DER_LONG_FORM_FLAG
+            count = (marker & Crypto::WireIdentifiers::DER_LENGTH_VALUE_MASK).to_i
             raise Matter::AuthenticationError.new("Invalid DER length") unless count.in?(1..2)
             length = 0
             count.times do

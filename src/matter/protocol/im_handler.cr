@@ -1156,14 +1156,18 @@ module Matter
         invoke_responses : Array(InteractionModel::InvokeResponseIB),
         suppress_response : Bool = false,
         max_payload_size : Int32 = MAX_REPORT_PAYLOAD_SIZE,
+        request_paths : Array(InteractionModel::CommandPath)? = nil,
       ) : Array(Bytes)
         unless max_payload_size.in?(MAX_REPORT_PAYLOAD_SIZE..MAX_TCP_REPORT_PAYLOAD_SIZE)
           raise Matter::ConfigurationError.new("IM invoke payload limit is out of range")
         end
+        if request_paths && request_paths.size != invoke_responses.size
+          raise Matter::ConfigurationError.new("IM invoke response paths must match request count")
+        end
         chunks = [] of Bytes
         current = [] of InteractionModel::InvokeResponseIB
 
-        invoke_responses.each do |response|
+        invoke_responses.each_with_index do |response, index|
           candidate = current + [response]
           if encode_invoke_response(candidate, more_chunked_messages: true).size > max_payload_size
             unless current.empty?
@@ -1172,7 +1176,10 @@ module Matter
             end
 
             if encode_invoke_response([response]).size > max_payload_size
-              path = response.command_data.try(&.command_path) || response.command_status.try(&.command_path)
+              # A data response uses its response command ID. A status must
+              # identify the original command that caused the oversized data.
+              path = request_paths.try(&.[index]) || response.command_data.try(&.command_path) ||
+                     response.command_status.try(&.command_path)
               raise Matter::ProtocolError.new("Invoke response exceeds maximum payload without a command path") unless path
               status = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::ResourceExhausted.value)
               response = InteractionModel::InvokeResponseIB.new(

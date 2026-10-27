@@ -37,7 +37,7 @@ module Matter
 
       def initialize(
         @scene_count = 0_u8,
-        @current_scene = 0xFF_u8,
+        @current_scene = ScenesManagement::UNDEFINED_SCENE_ID,
         @current_group = 0_u16,
         @scene_valid = false,
         @remaining_capacity = 16_u8,
@@ -390,7 +390,8 @@ module Matter
       DEFAULT_FABRIC_INDEX = 1_u8
 
       # Minimum Scene Table size the specification allows (Matter 1.4 §1.4.8.1).
-      DEFAULT_SCENE_TABLE_SIZE = 16_u16
+      DEFAULT_SCENE_TABLE_SIZE =  16_u16
+      UNDEFINED_SCENE_ID       = 0xFF_u8
 
       # Largest exact capacity a SceneInfo / GetSceneMembershipResponse can
       # report; 0xFE means "at least one" and 0xFF "unknown".
@@ -412,7 +413,7 @@ module Matter
 
         def initialize(
           @scene_count = 0_u8,
-          @current_scene = 0xFF_u8,
+          @current_scene = UNDEFINED_SCENE_ID,
           @current_group = 0_u16,
           @scene_valid = false,
           @remaining_capacity = DEFAULT_SCENE_TABLE_SIZE.to_u8,

@@ -203,6 +203,9 @@ module Matter
                @csr_requester_fabric_index == cluster.request_fabric_index
           return InteractionModel::Status.unsupported_access
         end
+        # An authenticated AddICAC consumes this fabric's one attempt even if
+        # its certificate or CSR public key is invalid.
+        @icac_attempt_fabric_indices.add(cluster.request_fabric_index)
         csr_key = @last_csr_public_key
         return Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::InvalidPublicKey) unless csr_key
         accessing_index = cluster.request_fabric_index
@@ -229,7 +232,6 @@ module Matter
         cluster.begin_provisional_administrator_fabric_index(accessing_index)
         @administrator_cluster = cluster
         @cross_signed_icac = request.icac_value.dup
-        @icac_attempt_fabric_indices.add(accessing_index)
         @icac_pending_commit = true
         Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::OK)
       rescue Matter::Error

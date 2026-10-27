@@ -24,6 +24,8 @@ module Matter
 
       property on_invoke_response_sent : Proc(UInt64, UInt16, Nil)?
       property on_invoke_response_failed : Proc(Session::SecureContext, Codec::MessageCodec::Message, Nil)?
+      property on_invoke_response_abandoned : Proc(UInt64, UInt16, Nil)?
+      property on_invoke_request_accepted : Proc(UInt64, UInt16, Nil)?
 
       WRITE_CHUNK_TIMEOUT = 60.seconds
 
@@ -266,6 +268,11 @@ module Matter
 
         @subscriptions.replace_subscriber_subscriptions(session) unless request.keep_subscriptions?
 
+        if request.min_interval_floor > request.max_interval_ceiling
+          send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
+          return
+        end
+
         subscription_id = @registry.allocate_subscription_id
         Log.info { "Created subscription #{subscription_id}" }
 
@@ -386,6 +393,9 @@ module Matter
 
         return unless timed_interaction_satisfied?(request.timed_request, original_msg, peer, session)
 
+        @on_invoke_request_accepted.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
+        @subscriptions.abandon_invoke(original_msg.payload_header.exchange_id, session.session_id)
+
         Log.info { "InvokeRequest: #{request.invoke_requests.size} command(s) requested" }
 
         invoke_responses = IMHandler.invoke_commands(
@@ -415,7 +425,8 @@ module Matter
 
         chunks = IMHandler.encode_chunked_invoke_response(invoke_responses,
           suppress_response: request.suppress_response || false,
-          max_payload_size: @sender.im_payload_limit(session, peer))
+          max_payload_size: @sender.im_payload_limit(session, peer),
+          request_paths: request.invoke_requests.map(&.command_path))
         @sender.send_im_response(
           original_msg: original_msg,
           peer: peer,
@@ -425,10 +436,15 @@ module Matter
           cache_for_mrp: true
         )
         if chunks.size > 1
+          session_identity = session.object_id.to_u64
+          exchange_id = original_msg.payload_header.exchange_id
+          on_sent = -> : Nil { @on_invoke_response_sent.try(&.call(session_identity, exchange_id)); nil }
+          on_failed = -> : Nil { @on_invoke_response_abandoned.try(&.call(session_identity, exchange_id)); nil }
           @subscriptions.await_invoke(original_msg.payload_header.exchange_id,
-            SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..]))
+            SubscriptionManager::PendingInvoke.new(peer, session, chunks[1..], on_sent, on_failed))
+        else
+          @on_invoke_response_sent.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         end
-        @on_invoke_response_sent.try(&.call(session.object_id.to_u64, original_msg.payload_header.exchange_id))
         Log.info { "Sent InvokeResponse in #{chunks.size} chunk(s)" }
       rescue ex
         @on_invoke_response_failed.try(&.call(session, original_msg))

@@ -18,7 +18,7 @@ module Matter
 
       @[Flags]
       enum NameSupport : UInt8
-        GroupNames = 0x01
+        GroupNames = 0x80
       end
 
       # Group 0 is reserved and names are bounded in UTF-8 bytes (Matter 1.4 §1.3.7.1).

@@ -441,11 +441,12 @@ module Matter
           requires_ack: true
         )
 
-        read_invoke_responses(session, peer, exchange_id)
+        read_invoke_responses(session, peer, exchange_id, path)
       end
 
       private def read_invoke_responses(session : Session::SecureContext, peer : Socket::IPAddress,
-                                        exchange_id : UInt16) : InteractionModel::InvokeResponseMessage
+                                        exchange_id : UInt16,
+                                        request_path : InteractionModel::CommandPath) : InteractionModel::InvokeResponseMessage
         deadline = Time.instant + @timeout
         responses = [] of InteractionModel::InvokeResponseIB
         chunks_received = 0
@@ -474,6 +475,9 @@ module Matter
           rescue ex
             raise Matter::ProtocolError.new("IM: invalid InvokeResponse (exchange=#{exchange_id})", cause: ex)
           end
+          chunk.invoke_responses.each do |entry|
+            validate_invoke_response_path!(entry, request_path)
+          end
           responses.concat(chunk.invoke_responses)
           unless chunk.more_chunked_messages
             return InteractionModel::InvokeResponseMessage.new(
@@ -488,6 +492,24 @@ module Matter
             exchange_id: exchange_id,
             initiator_message: !message.payload_header.initiator_message?,
             acknowledged_message_id: message.packet_header.message_id)
+        end
+      end
+
+      private def validate_invoke_response_path!(entry : InteractionModel::InvokeResponseIB,
+                                                 request_path : InteractionModel::CommandPath) : Nil
+        data = entry.command_data
+        status = entry.command_status
+        if data && status || (!data && !status)
+          raise Matter::ProtocolError.new("IM: InvokeResponse must contain one command data or status")
+        end
+        if status && status.command_path != request_path
+          raise Matter::ProtocolError.new("IM: InvokeResponse status path #{status.command_path} differs from request #{request_path}")
+        end
+        if data && (data.command_path.endpoint != request_path.endpoint ||
+           data.command_path.cluster != request_path.cluster)
+          # Command data uses a response command ID, which may differ from the
+          # invoked command ID. Endpoint and cluster must still match.
+          raise Matter::ProtocolError.new("IM: InvokeResponse data path #{data.command_path} differs from request #{request_path}")
         end
       end
 

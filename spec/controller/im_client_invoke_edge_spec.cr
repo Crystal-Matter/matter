@@ -69,6 +69,96 @@ private def invoke_chunk(status : Matter::InteractionModel::StatusCode,
 end
 
 describe "controller chunked InvokeResponse" do
+  it "rejects a Success status for a different requested command" do
+    require_udp_sockets!
+    client = InvokeChunkClient.new
+    path = Matter::InteractionModel::CommandPath.new(endpoint: 1_u16,
+      cluster: Matter::Cluster::OnOff::CLUSTER_ID,
+      command: Matter::Cluster::OnOff::CMD_OFF)
+    status = Matter::InteractionModel::CommandStatusIB.new(path,
+      Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Success.value))
+    response = Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [
+      Matter::InteractionModel::InvokeResponseIB.new(command_status: status),
+    ])
+    client.queue(Matter::Controller::ImClient::MSG_INVOKE_RESPONSE, response.to_slice, 11_u32)
+
+    expect_raises(Matter::ProtocolError, /InvokeResponse.*path/) do
+      Matter::Controller::ImClient.new(client).invoke(invoke_chunk_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects response data from another endpoint even when the command ID matches" do
+    require_udp_sockets!
+    client = InvokeChunkClient.new
+    path = Matter::InteractionModel::CommandPath.new(endpoint: 2_u16,
+      cluster: Matter::Cluster::OnOff::CLUSTER_ID,
+      command: Matter::Cluster::OnOff::CMD_ON)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.new(true, nil))
+    response = Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [
+      Matter::InteractionModel::InvokeResponseIB.new(command_data: data),
+    ])
+    client.queue(Matter::Controller::ImClient::MSG_INVOKE_RESPONSE, response.to_slice, 11_u32)
+
+    expect_raises(Matter::ProtocolError, /InvokeResponse.*path/) do
+      Matter::Controller::ImClient.new(client).invoke(invoke_chunk_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects response data from another cluster" do
+    require_udp_sockets!
+    client = InvokeChunkClient.new
+    path = Matter::InteractionModel::CommandPath.new(endpoint: 1_u16,
+      cluster: Matter::Cluster::Identify::CLUSTER_ID,
+      command: Matter::Cluster::Identify::CMD_IDENTIFY)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.new(true, nil))
+    response = Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [
+      Matter::InteractionModel::InvokeResponseIB.new(command_data: data),
+    ])
+    client.queue(Matter::Controller::ImClient::MSG_INVOKE_RESPONSE, response.to_slice, 11_u32)
+
+    expect_raises(Matter::ProtocolError, /InvokeResponse.*path/) do
+      Matter::Controller::ImClient.new(client).invoke(invoke_chunk_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an unrelated Success status in a later chunk" do
+    require_udp_sockets!
+    client = InvokeChunkClient.new
+    client.queue(Matter::Controller::ImClient::MSG_INVOKE_RESPONSE,
+      invoke_chunk(Matter::InteractionModel::StatusCode::Success, true), 11_u32)
+    path = Matter::InteractionModel::CommandPath.new(endpoint: 2_u16,
+      cluster: Matter::Cluster::OnOff::CLUSTER_ID,
+      command: Matter::Cluster::OnOff::CMD_OFF)
+    status = Matter::InteractionModel::CommandStatusIB.new(path,
+      Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Success.value))
+    response = Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [
+      Matter::InteractionModel::InvokeResponseIB.new(command_status: status),
+    ])
+    client.queue(Matter::Controller::ImClient::MSG_INVOKE_RESPONSE, response.to_slice, 12_u32)
+
+    expect_raises(Matter::ProtocolError, /InvokeResponse.*path/) do
+      Matter::Controller::ImClient.new(client).invoke(invoke_chunk_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16,
+        Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_OFF)
+    end
+    client.sent.map(&.[0]).should eq([Matter::Controller::ImClient::MSG_INVOKE_REQUEST,
+                                      Matter::Controller::ImClient::MSG_STATUS_RESPONSE])
+  ensure
+    client.try(&.close)
+  end
+
   it "rejects a chunk from another session before sending continuation" do
     require_udp_sockets!
     client = InvokeChunkClient.new

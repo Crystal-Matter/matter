@@ -54,7 +54,9 @@ module Matter
       OPERATIONAL = "_matter._tcp.local"
 
       # Service discovery service
-      SERVICE_DISCOVERY = "_services._dns-sd._udp.local"
+      SERVICE_DISCOVERY        = "_services._dns-sd._udp.local"
+      SHORT_DISCRIMINATOR_MASK =   0x0F_u16
+      LONG_DISCRIMINATOR_MASK  = 0x0FFF_u16
 
       # Get service name for type
       def service_name(type : ServiceType) : String
@@ -112,14 +114,14 @@ module Matter
       # Build short discriminator subtype (4 bits)
       # Format: _S<short-discriminator>._sub._matterc._udp.local
       def short_discriminator_subtype(discriminator : UInt16) : String
-        short = (discriminator >> 8) & 0x0F
+        short = (discriminator >> 8) & SHORT_DISCRIMINATOR_MASK
         "_S#{short}._sub.#{COMMISSIONING}"
       end
 
       # Build long discriminator subtype (12 bits)
       # Format: _L<long-discriminator>._sub._matterc._udp.local
       def long_discriminator_subtype(discriminator : UInt16) : String
-        long = discriminator & 0x0FFF
+        long = discriminator & LONG_DISCRIMINATOR_MASK
         "_L#{long}._sub.#{COMMISSIONING}"
       end
 

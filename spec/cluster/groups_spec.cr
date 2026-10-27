@@ -94,8 +94,10 @@ describe Matter::Cluster::Groups do
 
   it "reports group name support" do
     cluster = build(Matter::Cluster::Groups)
-    read(cluster, Matter::Cluster::Groups::ATTR_NAME_SUPPORT).should eq(1_u8)
-    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(1_u32)
+    # NameSupport.GroupNames is bit 7, while FeatureMap.GN is bit 0.
+    GroupsDef::NameSupport::GroupNames.value.should eq(0x80_u8)
+    read(cluster, GroupsDef::ATTR_NAME_SUPPORT).should eq(GroupsDef::NameSupport::GroupNames.value)
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(GroupsDef::Feature::GroupNames.value)
     cluster.attributes.size.should eq(1)
     cluster.attributes.first.name.should eq("nameSupport")
     cluster.attributes.first.writable?.should be_false

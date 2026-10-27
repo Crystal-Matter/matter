@@ -10,6 +10,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   getter write_response_codes = [] of Matter::InteractionModel::StatusCode
   property? success = true
   property response_code : Matter::InteractionModel::StatusCode? = nil
+  property group_response_id : Matter::DataType::GroupId? = nil
   property acl_entries = [] of Matter::Cluster::AccessControl::AccessControlEntry
   property parts_list = [] of UInt16
   getter server_lists = Hash(UInt16, Array(UInt32)).new
@@ -43,7 +44,11 @@ private class DatastoreImClient < Matter::Controller::ImClient
       if command_id == Matter::Cluster::Groups::CMD_ADD_GROUP
         request = Matter::Cluster::Groups::AddGroupRequest.from_slice(fields)
         response_id = Matter::Cluster::Groups::CMD_ADD_GROUP_RESPONSE
-        response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::AddGroupResponse.new(Matter::InteractionModel::StatusCode::Success, request.group_id).to_slice)
+        response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::AddGroupResponse.new(Matter::InteractionModel::StatusCode::Success, @group_response_id || request.group_id).to_slice)
+      elsif command_id == Matter::Cluster::Groups::CMD_REMOVE_GROUP
+        request = Matter::Cluster::Groups::RemoveGroupRequest.from_slice(fields)
+        response_id = Matter::Cluster::Groups::CMD_REMOVE_GROUP_RESPONSE
+        response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::RemoveGroupResponse.new(Matter::InteractionModel::StatusCode::Success, @group_response_id || request.group_id).to_slice)
       elsif command_id == Matter::Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP
         response_id = Matter::Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE
         groups = @group_memberships[endpoint_id]? || [] of Matter::DataType::GroupId
@@ -748,6 +753,42 @@ describe Matter::Controller::DatastoreSynchronizer do
     mappings.first.fabric_index.should eq(im.current_fabric_index)
     im.commands.should eq([Matter::Cluster::Groups::CMD_ADD_GROUP])
     store.endpoint_group_id_list.first.status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
+  ensure
+    client.try(&.close)
+  end
+
+  it "does not commit a group when AddGroupResponse names another group" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.group_response_id = Matter::DataType::GroupId.new(3_u16)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
+      2_u64, "kitchen", 1_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(0x100_u64, 1_u16, 2_u16, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    entry = store.endpoint_group_id_list.first
+    entry.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+    entry.status_entry.failure_code.should eq(Matter::InteractionModel::StatusCode::Failure.value)
+  ensure
+    client.try(&.close)
+  end
+
+  it "does not erase a pending deletion when RemoveGroupResponse names another group" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.group_response_id = Matter::DataType::GroupId.new(3_u16)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(0x100_u64, 1_u16, 2_u16, deleting)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    entry = store.endpoint_group_id_list.first
+    entry.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    entry.status_entry.failure_code.should eq(Matter::InteractionModel::StatusCode::Failure.value)
   ensure
     client.try(&.close)
   end

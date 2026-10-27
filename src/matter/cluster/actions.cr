@@ -8,10 +8,11 @@ module Matter
     class Actions < Base
       cluster 0x0025, revision: 1
 
-      MAX_ENTRIES    = 256
-      MAX_NAME_BYTES = 128
-      MAX_NAME_CHARS =  32
-      MAX_URL_BYTES  = 512
+      MAX_ENTRIES             =        256
+      MAX_NAME_BYTES          =        128
+      MAX_NAME_CHARS          =         32
+      MAX_URL_BYTES           =        512
+      SUPPORTED_COMMANDS_MASK = 0x0FFF_u16
 
       enum ActionType : UInt8
         Other
@@ -97,7 +98,7 @@ module Matter
                        @endpoint_list_id : UInt16, @supported_commands : CommandBits,
                        @state : ActionState)
           Actions.validate_name!(@name)
-          if @supported_commands.value & ~0x0FFF_u16 != 0
+          if @supported_commands.value & ~SUPPORTED_COMMANDS_MASK != 0
             raise ArgumentError.new("action supported commands exceed the revision-one bitmap")
           end
         end

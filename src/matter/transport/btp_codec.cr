@@ -6,13 +6,15 @@ module Matter
     module BtpCodec
       extend self
 
-      HANDSHAKE_HEADER        = 0x65_u8
-      HANDSHAKE_OPCODE        = 0x6c_u8
-      HANDSHAKE_REQUEST_SIZE  =       9
-      HANDSHAKE_RESPONSE_SIZE =       6
-      VERSION_SLOTS           =       8
-      MINIMUM_SEGMENT_SIZE    =  20_u16
-      DATA_FLAG_MASK          = 0x0f_u8
+      HANDSHAKE_HEADER                = 0x65_u8
+      HANDSHAKE_OPCODE                = 0x6c_u8
+      HANDSHAKE_REQUEST_SIZE          =       9
+      HANDSHAKE_RESPONSE_SIZE         =       6
+      VERSION_SLOTS                   =       8
+      MINIMUM_SEGMENT_SIZE            =  20_u16
+      DATA_FLAG_MASK                  = 0x0f_u8
+      HANDSHAKE_VERSION_MASK          = 0x0f_u8
+      HANDSHAKE_RESERVED_VERSION_MASK = 0xf0_u8
 
       @[Flags]
       enum Flags : UInt8
@@ -48,7 +50,7 @@ module Matter
         versions = [] of UInt8
         VERSION_SLOTS.times do |index|
           packed = data[2 + index // 2]
-          version = index.even? ? packed & 0x0f_u8 : packed >> 4
+          version = index.even? ? packed & HANDSHAKE_VERSION_MASK : packed >> 4
           versions << version unless version == 0_u8
         end
         raise Matter::CodecError.new("BTP handshake has no supported versions") if versions.empty?
@@ -72,8 +74,8 @@ module Matter
 
       def decode_handshake_response(data : Bytes) : HandshakeResponse
         validate_handshake_header(data, HANDSHAKE_RESPONSE_SIZE)
-        raise Matter::CodecError.new("BTP response reserved version bits are set") unless data[2] & 0xf0_u8 == 0_u8
-        version = data[2] & 0x0f_u8
+        raise Matter::CodecError.new("BTP response reserved version bits are set") unless data[2] & HANDSHAKE_RESERVED_VERSION_MASK == 0_u8
+        version = data[2] & HANDSHAKE_VERSION_MASK
         raise Matter::CodecError.new("BTP response version is zero") if version == 0_u8
         segment_size = IO::ByteFormat::LittleEndian.decode(UInt16, data[3, 2])
         window_size = data[5]

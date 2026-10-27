@@ -52,4 +52,23 @@ describe Matter::Protocol::IMHandler do
     status.should_not be_nil
     status.try(&.status.status).should eq Matter::InteractionModel::StatusCode::ResourceExhausted.value
   end
+
+  it "uses the invoked command path when an oversized response uses a different command ID" do
+    request_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+      Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE)
+    response_path = Matter::InteractionModel::CommandPath.new(0_u16,
+      Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+      Matter::Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(response_path, TLV::Any.new("B" * 1300, nil))
+    response = Matter::InteractionModel::InvokeResponseIB.new(command_data: data)
+
+    chunks = Matter::Protocol::IMHandler.encode_chunked_invoke_response([response],
+      request_paths: [request_path])
+
+    status = Matter::InteractionModel::InvokeResponseMessage.from_slice(chunks.first)
+      .invoke_responses.first.command_status
+    status.try(&.command_path).should eq request_path
+    status.try(&.status.status).should eq Matter::InteractionModel::StatusCode::ResourceExhausted.value
+  end
 end

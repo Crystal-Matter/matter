@@ -228,13 +228,18 @@ module Matter
           raise Matter::ClusterError.from_wire("Groups command failed", status.status, status.cluster_status)
         end
         raise Matter::ProtocolError.new("Groups command returned no response data") unless fields
-        status = if response_id == Cluster::Groups::CMD_ADD_GROUP_RESPONSE
-                   Cluster::Groups::AddGroupResponse.from_slice(fields.to_slice).status_code
-                 else
-                   Cluster::Groups::RemoveGroupResponse.from_slice(fields.to_slice).status_code
-                 end
+        status, group_id = if response_id == Cluster::Groups::CMD_ADD_GROUP_RESPONSE
+                             result = Cluster::Groups::AddGroupResponse.from_slice(fields.to_slice)
+                             {result.status_code, result.group_id}
+                           else
+                             result = Cluster::Groups::RemoveGroupResponse.from_slice(fields.to_slice)
+                             {result.status_code, result.group_id}
+                           end
         unless status == InteractionModel::StatusCode::Success
           raise Matter::ClusterError.new("Groups command failed with status #{status}", status)
+        end
+        unless group_id.id == entry.group_id
+          raise Matter::ProtocolError.new("Groups response confirmed a different group")
         end
       end
 

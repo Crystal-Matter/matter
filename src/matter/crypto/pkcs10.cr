@@ -1,6 +1,7 @@
 require "../error"
 require "./crypto"
 require "./key"
+require "./wire_identifiers"
 
 module Matter
   module Crypto
@@ -14,11 +15,11 @@ module Matter
       CSR_SUBJECT            = Bytes[0x30, 0x0e, 0x31, 0x0c, 0x30, 0x0a, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x03, 0x43, 0x53, 0x52]
       CSR_ATTRIBUTES         = Bytes[0xa0, 0x00]
       ECDSA_SHA256_ALGORITHM = Bytes[0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]
-      DER_SEQUENCE           = 0x30_u8
-      DER_BIT_STRING         = 0x03_u8
-      DER_NO_PADDING         = 0x00_u8
-      DER_LONG_FORM          = 0x80_u8
-      PUBLIC_KEY_SIZE        =      65
+      DER_SEQUENCE           = WireIdentifiers::DerTag::Sequence.value
+      DER_BIT_STRING         = WireIdentifiers::DerTag::BitString.value
+      DER_NO_PADDING         = WireIdentifiers::DER_NO_UNUSED_BITS
+      DER_LONG_FORM          = WireIdentifiers::DER_LONG_FORM_FLAG
+      PUBLIC_KEY_SIZE        = 65
 
       def create(key : Key, crypto : CryptoBase = Crypto.instance) : Bytes
         info = IO::Memory.new
@@ -103,7 +104,7 @@ module Matter
         if marker < DER_LONG_FORM
           length = marker.to_i
         else
-          count = (marker & 0x7f).to_i
+          count = (marker & WireIdentifiers::DER_LENGTH_VALUE_MASK).to_i
           if count == 0 || count > 4 || cursor + count > data.size
             raise Matter::CertificateError.new("Invalid ICAC CSR length")
           end

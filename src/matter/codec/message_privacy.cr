@@ -8,12 +8,13 @@ module Matter
     module MessagePrivacy
       extend self
 
-      KEY_LENGTH        = 16
-      NONCE_LENGTH      = 13
-      MIC_LENGTH        = 16
-      MIC_OFFSET        =  5
-      CTR_BLOCK_LENGTH  = 16
-      MAX_HEADER_REGION = 20
+      KEY_LENGTH        =      16
+      NONCE_LENGTH      =      13
+      MIC_LENGTH        =      16
+      MIC_OFFSET        =       5
+      CTR_BLOCK_LENGTH  =      16
+      CTR_BLOCK_FLAGS   = 0x01_u8
+      MAX_HEADER_REGION =      20
       KEY_INFO          = "PrivacyKey".to_slice
 
       def derive_key(encryption_key : Bytes) : Bytes
@@ -40,7 +41,7 @@ module Matter
 
         output = header_region.dup
         block = Bytes.new(CTR_BLOCK_LENGTH)
-        block[0] = 0x01_u8
+        block[0] = CTR_BLOCK_FLAGS
         block[1, NONCE_LENGTH].copy_from(privacy_nonce)
         offset = 0
         counter = 1_u16

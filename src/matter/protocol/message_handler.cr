@@ -205,9 +205,18 @@ module Matter
         @registry.add_sweep_hook(-> { @bdx_initiator.sweep })
         @registry.add_sweep_hook(-> { @unsent_invoke_retries.reject! { |_, retry| retry.expires_at < Time.instant } })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
+        @registry.add_session_cleanup_hook(->(id : UInt16) { @subscriptions.forget_invoke_session(id) })
         @registry.add_sweep_hook(-> { @subscriptions.tick })
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
         @router = InteractionRouter.new(@registry, @node, @subscriptions, @sender)
+        @router.on_invoke_request_accepted = ->(session_identity : UInt64, exchange_id : UInt16) do
+          # A newer authenticated Invoke on this live exchange supersedes any
+          # prior unsent response. Its delayed MRP retransmission must not run
+          # cluster commands or displace the new chunk ladder.
+          @unsent_invoke_retries.reject! do |key, retry_entry|
+            key[0] == session_identity && retry_entry.exchange_id == exchange_id
+          end
+        end
         @router.on_invoke_response_sent = ->(session_identity : UInt64, exchange_id : UInt16) do
           start_pending_commissions(session_identity, exchange_id)
           start_pending_sleeps(session_identity, exchange_id)
@@ -229,6 +238,11 @@ module Matter
               UnsentInvokeRetry.new(session, exchange_id, request.payload.dup,
                 now + UNSENT_INVOKE_RETRY_WINDOW)
           end
+          discard_pending_sleeps(session_identity, exchange_id)
+        end
+        @router.on_invoke_response_abandoned = ->(session_identity : UInt64, exchange_id : UInt16) do
+          @bdx_initiator.discard_pending
+          discard_pending_commissions(session_identity, exchange_id)
           discard_pending_sleeps(session_identity, exchange_id)
         end
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)

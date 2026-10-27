@@ -1318,6 +1318,7 @@ icd = Matter::Cluster::IcdManagement::Configuration.new(
   idle_mode_duration: 60_u32,       # seconds
   active_mode_duration: 3_000_u32,   # milliseconds
   active_mode_threshold: 5_000_u16, # milliseconds
+  max_stay_active_duration_ms: 30_000_u32,
   slow_polling_interval_ms: 2_000_u32,
   fast_polling_interval_ms: 50_u32
 )
@@ -1338,6 +1339,9 @@ Set the slow and fast polling intervals to the platform's actual radio polling
 cadence. MRP retries use 500 ms plus the slow poll interval when idle and 300 ms
 plus the fast poll interval when active. `active_mode_duration` is how long the
 ICD remains awake; it is not an MRP retry interval.
+`StayActiveRequest` caps each requested extension at 30 seconds by default, or
+at `max_stay_active_duration_ms` when configured. Its response reports the
+remaining active time, including any longer commitment already in effect.
 
 The cluster implements fabric-scoped RegisterClient/UnregisterClient,
 StayActiveRequest, per-client Check-In backoff, and the feature-gated 1.6

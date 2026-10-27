@@ -10,10 +10,11 @@ module Matter
 
       # These trigger hints require a non-empty instruction telling a user
       # how to activate the ICD (Matter 1.6 ICD Management §9.16.6.7).
-      INSTRUCTION_REQUIRED_TRIGGER_HINTS = 0x0001_AC64_u32
-      MRP_BASE_IDLE_INTERVAL_MS          =         500_u32
-      MRP_BASE_ACTIVE_INTERVAL_MS        =         300_u32
-      MRP_MAX_INTERVAL_MS                =   3_600_000_u32
+      INSTRUCTION_REQUIRED_TRIGGER_HINTS  = 0x0001_AC64_u32
+      MRP_BASE_IDLE_INTERVAL_MS           =         500_u32
+      MRP_BASE_ACTIVE_INTERVAL_MS         =         300_u32
+      MRP_MAX_INTERVAL_MS                 =   3_600_000_u32
+      DEFAULT_MAX_STAY_ACTIVE_DURATION_MS =      30_000_u32
 
       feature :check_in_protocol_support, bit: 0
       feature :user_active_mode_trigger, bit: 1
@@ -135,6 +136,7 @@ module Matter
         getter maximum_check_in_backoff : UInt32
         getter user_active_mode_trigger_hint : UInt32
         getter user_active_mode_trigger_instruction : String
+        getter max_stay_active_duration_ms : UInt32
 
         def initialize(@feature_map : Feature = Feature::None,
                        @idle_mode_duration : UInt32 = 1_u32,
@@ -145,7 +147,8 @@ module Matter
                        @clients_supported_per_fabric : UInt16 = 1_u16,
                        maximum_check_in_backoff : UInt32? = nil,
                        @user_active_mode_trigger_hint : UInt32 = 0_u32,
-                       @user_active_mode_trigger_instruction : String = "")
+                       @user_active_mode_trigger_instruction : String = "",
+                       @max_stay_active_duration_ms : UInt32 = DEFAULT_MAX_STAY_ACTIVE_DURATION_MS)
           @maximum_check_in_backoff = maximum_check_in_backoff || @idle_mode_duration
         end
       end
@@ -182,13 +185,13 @@ module Matter
       getter maximum_check_in_backoff : UInt32
       getter user_active_mode_trigger_hint : UInt32
       getter user_active_mode_trigger_instruction : String
+      getter max_stay_active_duration_ms : UInt32
       getter icd_counter : UInt32
 
       @registrations = [] of Registration
       @check_in_send_count = {} of Tuple(UInt8, UInt64) => UInt8
       @check_in_skip_cycles = {} of Tuple(UInt8, UInt64) => UInt32
       @idle = false
-      @promised_active_duration = 0_u32
       @active_until : Time::Instant? = nil
       @forced_operating_mode : OperatingMode? = nil
 
@@ -203,6 +206,7 @@ module Matter
                      maximum_check_in_backoff : UInt32? = nil,
                      @user_active_mode_trigger_hint : UInt32 = 0_u32,
                      @user_active_mode_trigger_instruction : String = "",
+                     @max_stay_active_duration_ms : UInt32 = DEFAULT_MAX_STAY_ACTIVE_DURATION_MS,
                      counter_seed : UInt32? = nil,
                      configuration : Configuration? = nil)
         @maximum_check_in_backoff = maximum_check_in_backoff || @idle_mode_duration
@@ -217,6 +221,7 @@ module Matter
           @maximum_check_in_backoff = configuration.maximum_check_in_backoff
           @user_active_mode_trigger_hint = configuration.user_active_mode_trigger_hint
           @user_active_mode_trigger_instruction = configuration.user_active_mode_trigger_instruction
+          @max_stay_active_duration_ms = configuration.max_stay_active_duration_ms
         end
         validate_configuration
         @icd_counter = counter_seed || ((Random::Secure.rand(UInt32) >> 4) + 1_u32)
@@ -321,16 +326,21 @@ module Matter
       end
 
       def stay_active_request(request : StayActiveRequest) : StayActiveResponse
+        now = Time.instant
+        @active_until = now + baseline_active_duration_ms.milliseconds if @idle || @active_until.nil?
         @idle = false
-        @promised_active_duration = {request.stay_active_duration, @active_mode_duration}.max
-        deadline = Time.instant + @promised_active_duration.milliseconds
-        @active_until = {deadline, @active_until || deadline}.max
-        StayActiveResponse.new(@promised_active_duration)
+        requested = {request.stay_active_duration, @max_stay_active_duration_ms}.min
+        deadline = now + requested.milliseconds
+        active_until = {deadline, @active_until || deadline}.max
+        @active_until = active_until
+        remaining_ms = (active_until - Time.instant).total_milliseconds.ceil.to_i64
+        StayActiveResponse.new(remaining_ms.clamp(0_i64, UInt32::MAX.to_i64).to_u32)
       end
 
       # Platform power managers call this when the ICD actually enters idle mode.
       def enter_idle_mode : Nil
         return if (deadline = @active_until) && Time.instant < deadline
+        @active_until = nil
         @idle = true
       end
 
@@ -339,6 +349,7 @@ module Matter
       def request_active_mode : Nil
         return unless @idle
         @idle = false
+        @active_until = Time.instant + baseline_active_duration_ms.milliseconds
         callback = @on_check_in
         return unless callback && @feature_map.includes?(Feature::CheckInProtocolSupport)
         @registrations.each do |entry|
@@ -404,11 +415,16 @@ module Matter
         difference == 0_u8
       end
 
+      private def baseline_active_duration_ms : UInt32
+        @active_mode_duration == 0_u32 ? @active_mode_threshold.to_u32 : @active_mode_duration
+      end
+
       private def validate_configuration : Nil
         raise ArgumentError.new("ICD MRP idle interval exceeds one hour") if @slow_polling_interval_ms > MRP_MAX_INTERVAL_MS - MRP_BASE_IDLE_INTERVAL_MS
         raise ArgumentError.new("ICD MRP active interval exceeds one hour") if @fast_polling_interval_ms > MRP_MAX_INTERVAL_MS - MRP_BASE_ACTIVE_INTERVAL_MS
         raise ArgumentError.new("ICD idle duration out of range") unless (1_u32..64_800_u32).includes?(@idle_mode_duration)
         raise ArgumentError.new("ICD active duration exceeds idle duration") if @active_mode_duration > @idle_mode_duration * 1000_u32
+        raise ArgumentError.new("ICD StayActive maximum must be positive") if @max_stay_active_duration_ms == 0
         raise ArgumentError.new("ICD registration capacity must be positive") if @clients_supported_per_fabric == 0
         raise ArgumentError.new("ICD Check-In backoff out of range") unless (@idle_mode_duration..64_800_u32).includes?(@maximum_check_in_backoff)
         lits = @feature_map.includes?(Feature::LongIdleTimeSupport)
