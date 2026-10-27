@@ -13,6 +13,7 @@ module Matter
 
       def initialize(endpoint_id : DataType::EndpointNumber, @label_list : Array(LabelStruct))
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+        raise ArgumentError.new("label list contains an oversized LabelStruct field") unless @label_list.all?(&.valid_lengths?)
       end
     end
   end

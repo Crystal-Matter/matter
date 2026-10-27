@@ -40,4 +40,15 @@ describe Matter::Cluster::FixedLabel do
     entry.label.should eq("k")
     entry.value.should eq("v")
   end
+
+  it "rejects an initial label or value beyond the Matter LabelStruct limit" do
+    max = Matter::Cluster::LabelStruct::MAX_LENGTH
+    build(Matter::Cluster::FixedLabel, label_list: [Matter::Cluster::LabelStruct.new("l" * max, "v" * max)])
+    expect_raises(ArgumentError) do
+      build(Matter::Cluster::FixedLabel, label_list: [Matter::Cluster::LabelStruct.new("l" * (max + 1), "v")])
+    end
+    expect_raises(ArgumentError) do
+      build(Matter::Cluster::FixedLabel, label_list: [Matter::Cluster::LabelStruct.new("l", "v" * (max + 1))])
+    end
+  end
 end
