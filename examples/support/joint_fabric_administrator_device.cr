@@ -169,6 +169,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_transfer_follow_up : Bool = false
       getter? interrupt_after_first_transfer_follow_up : Bool = false
       getter? interrupt_after_next_transfer_cross_sign : Bool = false
+      getter? interrupt_before_next_transfer_cross_sign_journal : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
       getter? interrupt_before_transfer_copy_journal : Bool = false
       getter? interrupt_after_transfer_copy : Bool = false
@@ -204,6 +205,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_transfer_follow_up : Bool = false,
                      @interrupt_after_first_transfer_follow_up : Bool = false,
                      @interrupt_after_next_transfer_cross_sign : Bool = false,
+                     @interrupt_before_next_transfer_cross_sign_journal : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
                      @interrupt_before_transfer_copy_journal : Bool = false,
                      @interrupt_after_transfer_copy : Bool = false,
@@ -243,6 +245,9 @@ module MatterJointFabricAdministrator
       getter inspected_transfer_stage : UInt8?
       getter inspected_active_rotation_node_id : UInt64?
       getter inspected_follow_up_stage : UInt8?
+      getter inspected_failsafe_clear : Bool?
+      getter inspected_credential_journal_clear : Bool?
+      getter inspected_jfa_endpoint_id : UInt16?
       getter nonce : String?
       getter certificate : Bytes?
       getter subscription_committed : Bool?
@@ -264,7 +269,27 @@ module MatterJointFabricAdministrator
                      @inspected_new_anchor_node_id : UInt64? = nil,
                      @inspected_transfer_stage : UInt8? = nil,
                      @inspected_active_rotation_node_id : UInt64? = nil,
-                     @inspected_follow_up_stage : UInt8? = nil)
+                     @inspected_follow_up_stage : UInt8? = nil,
+                     @inspected_failsafe_clear : Bool? = nil,
+                     @inspected_credential_journal_clear : Bool? = nil,
+                     @inspected_jfa_endpoint_id : UInt16? = nil)
+      end
+
+      # The private host channel carrying this record must authenticate the
+      # participant. The nonce only binds a fresh result to this request.
+      def proves_committed_cross_sign?(expected_nonce : String, expected_icac : Bytes,
+                                       expected_fabric : Matter::Fabric,
+                                       expected_node_id : UInt64,
+                                       expected_endpoint_id : UInt16,
+                                       expected_participant_fabric_index : UInt8) : Bool
+        @status == "ok" && @nonce == expected_nonce &&
+          @inspected_cross_signed_icac == expected_icac &&
+          @inspected_fabric_id == expected_fabric.fabric_id &&
+          @inspected_root_public_key == expected_fabric.root_public_key &&
+          @inspected_node_id == expected_node_id &&
+          @inspected_administrator_fabric_index == expected_participant_fabric_index &&
+          @inspected_jfa_endpoint_id == expected_endpoint_id &&
+          @inspected_failsafe_clear == true && @inspected_credential_journal_clear == true
       end
     end
 
@@ -1579,6 +1604,7 @@ module MatterJointFabricAdministrator
                                      interrupt_after_promotion : Bool = false,
                                      interrupt_after_complete : Bool = false,
                                      interrupt_after_next_cross_sign : Bool = false,
+                                     interrupt_before_next_cross_sign_journal : Bool = false,
                                      reconcile_promoting : Bool = false,
                                      reconcile_rotating_administrator : Bool = false,
                                      reconcile_copying : Bool = false,
@@ -1653,7 +1679,8 @@ module MatterJointFabricAdministrator
             raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
           end
           follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, own_client, own_im,
-            interrupt_after_first_follow_up, interrupt_after_next_cross_sign)
+            interrupt_after_first_follow_up, interrupt_after_next_cross_sign,
+            interrupt_before_next_cross_sign_journal)
           journal.stage = Matter::Controller::AnchorTransfer::Stage::Completed
           persistence.write_app_document(APP_TRANSFER_DOCUMENT, journal.to_document)
           persistence.flush
@@ -1756,7 +1783,8 @@ module MatterJointFabricAdministrator
               raise Matter::TransportError.new("Injected interruption before Anchor transfer follow-up")
             end
             follow_up_administrators(preflight, old_fabric, scanner, own_client, own_im,
-              interrupt_after_first_follow_up, interrupt_after_next_cross_sign)
+              interrupt_after_first_follow_up, interrupt_after_next_cross_sign,
+              interrupt_before_next_cross_sign_journal)
             nil
           })
         port = Matter::Controller::AnchorTransfer::ImPort.new(old_im, old_session, old_peer, old_endpoint)
@@ -2123,7 +2151,9 @@ module MatterJointFabricAdministrator
                                          client : Matter::Controller::Client,
                                          im : Matter::Controller::ImClient,
                                          interrupt_after_first : Bool = false,
-                                         interrupt_after_next_cross_sign : Bool = false) : Nil
+                                         interrupt_after_next_cross_sign : Bool = false,
+                                         interrupt_before_next_cross_sign_journal : Bool = false,
+                                         reconcile_target_node_id : UInt64? = nil) : Nil
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric disappeared")
       controller_store = @controller_store || raise Matter::ConfigurationError.new("Candidate controller identity disappeared")
       identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
@@ -2133,6 +2163,7 @@ module MatterJointFabricAdministrator
         # The frozen source lists our old Joint Fabric Node ID; a restored
         # promoted Datastore instead lists our new Anchor Node ID.
         next if admin.node_id == old_fabric.node_id || admin.node_id == own_fabric.node_id
+        next if reconcile_target_node_id && admin.node_id != reconcile_target_node_id
         document_name = "#{APP_FOLLOW_UP_PREFIX}#{admin.node_id.to_s(16)}"
         journal = if document = persistence.app_document(document_name)
                     Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.from_document(document)
@@ -2147,6 +2178,9 @@ module MatterJointFabricAdministrator
         endpoint = Matter::Controller::JointCommissioning.discover_administrator_endpoint(
           im, Matter::Controller::Pairing::CasePairing.new.pair(client, peer, identity,
           peer_node_id: admin.node_id), peer)
+        if reconcile_target_node_id && endpoint != ANCHOR_JFA_ENDPOINT_ID
+          raise Matter::AuthenticationError.new("Participant JFA endpoint changed during reconciliation")
+        end
         runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
           client, im, peer, admin.node_id, identity, old_fabric.fabric_id,
           old_fabric.root_public_key, endpoint, icac_public_key, icac_id,
@@ -2173,13 +2207,164 @@ module MatterJointFabricAdministrator
               raise Matter::StorageError.new("Could not persist follow-up Administrator ICAC")
             end
             persistence.flush
+            if interrupt_before_next_cross_sign_journal
+              raise Matter::TransportError.new("Injected interruption after committed participant cross-sign before journal save")
+            end
             nil
           })
+        if reconcile_target_node_id
+          runner.reconcile_cross_sign!(true)
+          return
+        end
         runner.run
         followed_up += 1
         if interrupt_after_first && followed_up == 1
           raise Matter::TransportError.new("Injected interruption after first Anchor participant follow-up")
         end
+      end
+      if reconcile_target_node_id
+        raise Matter::ConfigurationError.new("Reconciliation target is absent from the frozen Administrator list")
+      end
+    end
+
+    # C's private, host-authenticated witness for a committed AddICAC. A
+    # nonce alone is freshness, not authentication of the command channel.
+    private def inspect_cross_sign_commit(node_id : UInt64, fabric_id : UInt64?,
+                                          root_public_key : Bytes?, nonce : String?) : CommandResult
+      validate_recovery_nonce!(nonce)
+      matches = fabric_table.all_fabrics.select do |candidate|
+        candidate.node_id == node_id && candidate.fabric_id == fabric_id &&
+          candidate.root_public_key == root_public_key
+      end
+      if matches.size != 1 || @anchor_role || !@joint_fabric_provisioned
+        raise Matter::AuthenticationError.new("Participant does not own the selected joined fabric")
+      end
+      fabric = matches.first
+      certificate = persisted_icac ||
+                    raise Matter::ConfigurationError.new("Committed participant ICAC is absent")
+      binding_document = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT) ||
+                         raise Matter::StorageError.new("Participant fabric binding is absent")
+      role_document = persistence.app_document(APP_ROLE_DOCUMENT) ||
+                      raise Matter::StorageError.new("Participant role is absent")
+      role = JointFabricRoleState.from_document(role_document)
+      if role.anchor? || role.transfer_complete?
+        raise Matter::AuthenticationError.new("Participant role changed before cross-sign reconciliation")
+      end
+      durable_administrator = durable_transfer_administrator(ANCHOR_JFA_ENDPOINT_ID)
+      unless FabricBindingState.from_document(binding_document).matches?(fabric) &&
+             joined_icac_matches_fabric?(certificate, fabric) &&
+             joint_fabric_administrator.administrator_fabric_index == fabric.fabric_index &&
+             durable_administrator.administrator_fabric_index == fabric.fabric_index &&
+             joint_fabric_datastore.joint_fabric_index == fabric.fabric_index &&
+             joint_fabric_service.try(&.cross_signed_icac) == certificate
+        raise Matter::AuthenticationError.new("Participant committed ICAC or endpoint binding changed")
+      end
+      verify_durable_anchor_old_credential!(fabric)
+      if !persistence.backend.durable? || general_commissioning.failsafe_armed? ||
+         persistence.backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+           Matter::Commissioning::CredentialJournal::ID)
+        raise Matter::CommissioningError.new("Participant cross-sign may still be provisional")
+      end
+      CommandResult.new("ok", nonce: nonce,
+        inspected_cross_signed_icac: certificate,
+        inspected_fabric_id: fabric.fabric_id,
+        inspected_root_public_key: fabric.root_public_key,
+        inspected_node_id: fabric.node_id,
+        inspected_administrator_fabric_index: fabric.fabric_index,
+        inspected_jfa_endpoint_id: ANCHOR_JFA_ENDPOINT_ID,
+        inspected_failsafe_clear: true,
+        inspected_credential_journal_clear: true)
+    end
+
+    private def validate_recovery_nonce!(nonce : String?) : Nil
+      unless nonce && nonce.size == ROTATION_NONCE_HEX_LENGTH && nonce.matches?(/\A[0-9a-fA-F]+\z/)
+        raise Matter::ConfigurationError.new("A 32-byte hexadecimal recovery nonce is required")
+      end
+    end
+
+    # The inspection file is an opt-in authenticated host channel to C. An
+    # independent participant without an equivalent trusted witness remains
+    # at CrossSigning; ordinary Matter attributes cannot prove durable AddICAC.
+    private def reconcile_follow_up_cross_signed(target_node_id : UInt64, nonce : String?) : Nil
+      validate_recovery_nonce!(nonce)
+      proof_path = ENV["MATTER_JFA_FOLLOW_UP_INSPECTION_PATH"]? ||
+                   raise Matter::ConfigurationError.new("Participant commit inspection channel is unavailable")
+      own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Promoted Anchor fabric is unavailable")
+      unless @anchor_role && @joint_fabric_provisioned
+        raise Matter::AuthenticationError.new("Only the promoted Anchor can reconcile participant follow-up")
+      end
+      old_fabrics = fabric_table.all_fabrics.select do |fabric|
+        fabric.root_public_key != own_fabric.root_public_key &&
+          fabric.cats.any?(&.identity_value.==(ADMINISTRATOR_CAT_ID))
+      end
+      unless old_fabrics.size == 1
+        raise Matter::ConfigurationError.new("Promoted Anchor must retain exactly one old Joint Fabric")
+      end
+      old_fabric = old_fabrics.first
+      transfer_document = persistence.app_document(APP_TRANSFER_DOCUMENT) ||
+                          raise Matter::ConfigurationError.new("Anchor transfer journal is absent")
+      transfer = Matter::Controller::AnchorTransfer::Journal.from_document(transfer_document)
+      unless transfer.stage.following_up? && transfer.candidate_node_id == old_fabric.node_id
+        raise Matter::ConfigurationError.new("Anchor transfer is not awaiting participant follow-up")
+      end
+      document_name = "#{APP_FOLLOW_UP_PREFIX}#{target_node_id.to_s(16)}"
+      follow_up_document = persistence.app_document(document_name) ||
+                           raise Matter::ConfigurationError.new("Participant follow-up journal is absent")
+      journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.from_document(follow_up_document)
+      pending_icac = journal.pending_icac ||
+                     raise Matter::ConfigurationError.new("Participant follow-up has no pending ICAC")
+      unless journal.stage.cross_signing? && journal.target_node_id == target_node_id &&
+             target_node_id != own_fabric.node_id && target_node_id != old_fabric.node_id
+        raise Matter::ConfigurationError.new("Participant follow-up is not awaiting cross-sign reconciliation")
+      end
+      durable_fabric = verify_durable_anchor_old_credential!(own_fabric)
+      verify_promotion_bindings!(durable_fabric)
+      verify_promotion_roles!
+      durable_datastore = durable_transfer_datastore
+      unless joint_fabric_datastore.save_state == durable_datastore.save_state &&
+             durable_datastore.status.state.committed? &&
+             joint_fabric_datastore.joint_fabric_index == own_fabric.fabric_index &&
+             durable_datastore.anchor_root_ca == own_fabric.root_cert &&
+             durable_datastore.anchor_node_id == own_fabric.node_id
+        raise Matter::AuthenticationError.new("Promoted Anchor Datastore is not durably bound")
+      end
+      admins = durable_datastore.admin_list.select(&.node_id.==(target_node_id))
+      unless admins.size == 1 && admins.first.icac == pending_icac
+        raise Matter::AuthenticationError.new("Promoted Anchor Administrator record lacks the pending ICAC")
+      end
+      backend = Matter::Storage::YamlFile.new(proof_path)
+      backend.open
+      proof = begin
+        result = backend.read(COMMAND_RPC_COLLECTION, "result") ||
+                 raise Matter::ConfigurationError.new("Participant commit inspection result is absent")
+        CommandResult.from_document(result)
+      ensure
+        backend.close if backend.open?
+      end
+      scanner = Matter::Controller::Scanner.new
+      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      begin
+        scanner.start
+        scanner.query_operational
+        controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
+        identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key,
+          own_fabric.node_id)
+        peer = resolve_transfer_peer(scanner, identity.compressed_fabric_id, target_node_id)
+        session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, identity,
+          peer_node_id: target_node_id)
+        im = Matter::Controller::ImClient.new(client)
+        endpoint = Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
+        participant_index = remote_fabric_index(im, session, peer, own_fabric)
+        unless endpoint == ANCHOR_JFA_ENDPOINT_ID &&
+               proof.proves_committed_cross_sign?(nonce.as(String), pending_icac, own_fabric,
+                 target_node_id, endpoint, participant_index)
+          raise Matter::AuthenticationError.new("Participant commit witness does not match the pending cross-sign")
+        end
+        follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, client, im,
+          reconcile_target_node_id: target_node_id)
+      ensure
+        client.close
+        scanner.close
       end
     end
 
@@ -2931,7 +3116,8 @@ module MatterJointFabricAdministrator
               request.interrupt_after_second_transfer_administrator_rotation?,
               request.interrupt_after_transfer_promotion?,
               request.interrupt_after_transfer_complete?,
-              request.interrupt_after_next_transfer_cross_sign?)
+              request.interrupt_after_next_transfer_cross_sign?,
+              request.interrupt_before_next_transfer_cross_sign_journal?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,
@@ -2974,6 +3160,9 @@ module MatterJointFabricAdministrator
               inspected_fabric_count: fabric_table.all_fabrics.size,
               inspected_datastore_admin_entries: joint_fabric_datastore.admin_list.map(&.to_slice),
               nonce: request.nonce)
+          when "inspect-cross-sign-commit"
+            inspect_cross_sign_commit(request.node_id, request.fabric_id,
+              request.root_public_key, request.nonce)
           when "inspect-new-anchor"
             CommandResult.new("ok", nonce: request.nonce,
               subscription_committed: @participant_view_current)
@@ -3020,6 +3209,9 @@ module MatterJointFabricAdministrator
               Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.from_document(entry).stage.value
             end
             CommandResult.new("ok", inspected_follow_up_stage: stage)
+          when "reconcile-follow-up-cross-signed"
+            reconcile_follow_up_cross_signed(request.node_id, request.nonce)
+            CommandResult.new("ok", nonce: request.nonce)
           when "reconcile-fabric-removed"
             reconcile_fabric_removed(request.node_id, request.nonce)
             CommandResult.new("ok")

@@ -180,6 +180,7 @@ services:
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_joiner.command.yml
       MATTER_JFA_CONSENTED_REMOVALS: a102
       MATTER_JFA_OUTGOING_INSPECTION_PATH: /e2e/logs/matter_joint_fabric_anchor.command.yml
+      MATTER_JFA_FOLLOW_UP_INSPECTION_PATH: /e2e/logs/matter_joint_fabric_third.command.yml
 
   joint-fabric-third:
     <<: *device

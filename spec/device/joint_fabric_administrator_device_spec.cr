@@ -300,6 +300,58 @@ private def jfa_reuse_test_fabric(fabric_id : UInt64, node_id : UInt64,
     cats: [Matter::DataType::CaseAuthenticatedTag.new(0xFFFE_0001_u32)])
 end
 
+describe "Joint Fabric participant cross-sign commit witness" do
+  it "requires the exact nonce, ICAC, fabric, node, endpoint and clear provisional state" do
+    fabric = jfa_reuse_test_fabric(0xB100_u64, 0xB102_u64)
+    node_id = 0xA104_u64
+    endpoint = MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID
+    participant_index = 2_u8
+    nonce = "a" * MatterJointFabricAdministrator::Device::ROTATION_NONCE_HEX_LENGTH
+    icac = Bytes[1_u8, 2_u8, 3_u8]
+    result = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_fabric_id: fabric.fabric_id,
+      inspected_root_public_key: fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: participant_index,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: true,
+      inspected_credential_journal_clear: true)
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_true
+    MatterJointFabricAdministrator::Device::CommandResult.from_document(result.to_document)
+      .proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_true
+    result.proves_committed_cross_sign?("b" * nonce.size, icac, fabric, node_id, endpoint, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, Bytes[9_u8], fabric, node_id, endpoint, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id + 1_u64, endpoint, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint + 1_u16, participant_index).should be_false
+    result.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index + 1_u8).should be_false
+    other = jfa_reuse_test_fabric(0xB200_u64, fabric.node_id)
+    result.proves_committed_cross_sign?(nonce, icac, other, node_id, endpoint, participant_index).should be_false
+    other_root = jfa_reuse_test_fabric(fabric.fabric_id, fabric.node_id)
+    result.proves_committed_cross_sign?(nonce, icac, other_root, node_id, endpoint, participant_index).should be_false
+    provisional = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_fabric_id: fabric.fabric_id,
+      inspected_root_public_key: fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: participant_index,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: false,
+      inspected_credential_journal_clear: true)
+    provisional.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_false
+    incomplete = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_fabric_id: fabric.fabric_id,
+      inspected_root_public_key: fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: participant_index,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: true,
+      inspected_credential_journal_clear: false)
+    incomplete.proves_committed_cross_sign?(nonce, icac, fabric, node_id, endpoint, participant_index).should be_false
+  end
+end
+
 describe "Joint Fabric Administrator saved candidate credential evidence" do
   it "rejects legacy journals and a same-CAT candidate NOC replacement" do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
@@ -1598,6 +1650,18 @@ describe MatterJointFabricAdministrator::Device do
     old_document.delete("interrupt_after_first_transfer_follow_up")
     MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
       .interrupt_after_first_transfer_follow_up?.should be_false
+  end
+
+  it "round-trips the committed participant cross-sign interruption flag" do
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+      interrupt_before_next_transfer_cross_sign_journal: true)
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(request.to_document)
+      .interrupt_before_next_transfer_cross_sign_journal?.should be_true
+
+    old_document = request.to_document
+    old_document.delete("interrupt_before_next_transfer_cross_sign_journal")
+    MatterJointFabricAdministrator::Device::CommandRequest.from_document(old_document)
+      .interrupt_before_next_transfer_cross_sign_journal?.should be_false
   end
 
   it "round-trips the transfer request interruption flag and defaults old commands to false" do

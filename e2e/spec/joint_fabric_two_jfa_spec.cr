@@ -1477,17 +1477,17 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
     persisted_first_follow_up.inspected_follow_up_stage.should eq(
       Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
-    # C commits B's cross-signed ICAC, but B stops after durably recording
-    # CrossSigned and before asking C to remove A's fabric.
+    # C commits B's cross-signed ICAC, but B loses the CrossSigned save after
+    # durably updating its own AdminList. A restart must not replay AddICAC.
     interrupted_cross_signed = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
-        interrupt_after_next_transfer_cross_sign: true))
+        interrupt_before_next_transfer_cross_sign_journal: true))
     interrupted_cross_signed.status.should eq("error")
-    interrupted_cross_signed.error.to_s.should contain("Injected interruption after durable Anchor participant cross-sign")
+    interrupted_cross_signed.error.to_s.should contain("Injected interruption after committed participant cross-sign before journal save")
     cross_signed_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
     cross_signed_stage.inspected_follow_up_stage.should eq(
-      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigned.value)
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
     c_old_before_restart = jfa_command("matter_joint_fabric_third",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
         anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
@@ -1524,7 +1524,7 @@ describe "three provisioned Joint Fabric Administrators" do
     persisted_cross_signed = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
     persisted_cross_signed.inspected_follow_up_stage.should eq(
-      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigned.value)
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
     b_admin_c_icac_after_restart = candidate_admin_icac(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, 0xB102_u64, 0xA104_u64)
     b_admin_c_icac_after_restart.should eq(c_cross_signed_before_restart)
@@ -1542,6 +1542,55 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA104_u64,
         nonce: Random::Secure.hex(8))).inspected_cross_signed_icac.as(Bytes)
     c_cross_signed_after_restart.should eq(c_cross_signed_before_restart)
+    unsafe_cross_sign_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_cross_sign_retry.status.should eq("error")
+    unsafe_cross_sign_retry.error.to_s.should contain("needs reconciliation")
+    unwitnessed_cross_sign = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-signed", 0xA104_u64,
+        nonce: Random::Secure.hex(32)))
+    unwitnessed_cross_sign.status.should eq("error")
+    wrong_target_cross_sign = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-signed", 0xA102_u64,
+        nonce: Random::Secure.hex(32)))
+    wrong_target_cross_sign.status.should eq("error")
+    rejected_fabric_nonce = Random::Secure.hex(32)
+    wrong_fabric_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-cross-sign-commit", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        nonce: rejected_fabric_nonce))
+    wrong_fabric_witness.status.should eq("error")
+    wrong_fabric_reconciliation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-signed", 0xA104_u64,
+        nonce: rejected_fabric_nonce))
+    wrong_fabric_reconciliation.status.should eq("error")
+    cross_sign_nonce = Random::Secure.hex(32)
+    committed_cross_sign_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-cross-sign-commit", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        nonce: cross_sign_nonce))
+    committed_cross_sign_witness.status.should eq("ok"), committed_cross_sign_witness.error.to_s
+    committed_cross_sign_witness.inspected_cross_signed_icac.should eq(c_cross_signed_before_restart)
+    stale_nonce_reconciliation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-signed", 0xA104_u64,
+        nonce: Random::Secure.hex(32)))
+    stale_nonce_reconciliation.status.should eq("error")
+    rejected_cross_sign_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    rejected_cross_sign_stage.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
+    reconciled_cross_sign = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-signed", 0xA104_u64,
+        nonce: cross_sign_nonce))
+    reconciled_cross_sign.status.should eq("ok"), reconciled_cross_sign.error.to_s
+    cross_signed_after_reconciliation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    cross_signed_after_reconciliation.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigned.value)
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
     # The resumed command must remove only C's old fabric, not replay either
     # participant cross-sign, rotate B's credentials, or recopy the Datastore.
     transferred = jfa_command("matter_joint_fabric_joiner",

@@ -1362,6 +1362,44 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
     client.try(&.close)
   end
 
+  it "keeps CrossSigning when the reconciled Administrator record cannot be saved" do
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16)
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    peer_key = Matter::Crypto::Key.generate_key_pair
+    crypto = Matter::Crypto::StandardCrypto.new
+    icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      peer_key.public_key, bootstrap.fabric.fabric_id, 3_u64,
+      bootstrap.fabric.certificate_authority_key, 1_u64, Bytes[1], crypto)
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(
+      0x300_u64, Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning, icac)
+    saved = false
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      bootstrap.fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, peer_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        saved = true
+        nil
+      }, journal, consent: -> { true },
+      on_committed_icac: ->(_node_id : UInt64, _certificate : Bytes) {
+        raise Matter::StorageError.new("Administrator record save failed")
+      })
+
+    expect_raises(Matter::StorageError, /Administrator record save failed/) do
+      runner.reconcile_cross_sign!(true)
+    end
+    saved.should be_false
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    runner.journal.pending_icac.should eq(icac)
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
   it "rejects a failed CommissioningComplete response after ICAC exchange" do
     new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
