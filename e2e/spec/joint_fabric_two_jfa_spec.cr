@@ -1117,16 +1117,16 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: request_nonce))
     accepted_witness.status.should eq("ok"), accepted_witness.error.to_s
 
-    # B commits the copied Datastore, then loses the save acknowledgement
-    # before any Administrator credential rotation. Restart from Copied.
+    # B commits its copied Datastore, but crashes before saving Copied in the
+    # transfer journal. Recovery must prove that exact copy before proceeding.
     interrupted_copy = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
-        interrupt_after_transfer_copy: true))
+        interrupt_before_transfer_copy_journal: true))
     interrupted_copy.status.should eq("error")
-    interrupted_copy.error.to_s.should contain("Injected interruption after durable Anchor Datastore copy")
+    interrupted_copy.error.to_s.should contain("Injected interruption after durable copy before Copied journal save")
     copied_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
-    copied_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copied.value)
+    copied_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copying.value)
     copied_identity = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA102_u64,
         nonce: Random::Secure.hex(8)))
@@ -1139,11 +1139,21 @@ describe "three provisioned Joint Fabric Administrators" do
       unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
     persisted_copy = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
-    persisted_copy.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copied.value)
+    persisted_copy.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copying.value)
     reloaded_identity = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-anchor-identity", 0xA102_u64,
         nonce: Random::Secure.hex(8)))
     reloaded_identity.inspected_datastore_admin_entries.should eq(copied_entries)
+    unsafe_copy_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_copy_retry.status.should eq("error")
+    unsafe_copy_retry.error.to_s.should contain("needs reconciliation")
+    reconciled_copy = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-copied", 0xA102_u64))
+    reconciled_copy.status.should eq("ok"), reconciled_copy.error.to_s
+    recovered_copy_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    recovered_copy_stage.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copied.value)
 
     # A commits its new-fabric AddNOC and CommissioningComplete, then B loses
     # the acknowledgement before saving A in its rotation journal. B must

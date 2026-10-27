@@ -467,6 +467,30 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     restored = Matter::Controller::AnchorTransfer::Journal.from_document(legacy)
     restored.rotated_administrator_node_ids.should be_empty
     restored.active_rotation_node_id.should be_nil
+    restored.candidate_operational_cert.should be_nil
+  end
+
+  it "saves candidate credential evidence before requesting the old Anchor freeze" do
+    key = Matter::Crypto::StandardCrypto.new.create_key_pair
+    fabric = Matter::Fabric.new(0xB100_u64, 1_u8, 0xB102_u64, key.public_key,
+      Bytes[1_u8], key, Bytes.new(Matter::Fabric::IPK_SIZE, 0xA5_u8),
+      intermediate_cert: Bytes[2_u8])
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64)
+    journal.capture_candidate_credential!(fabric)
+    loaded = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    loaded.candidate_credential_matches?(fabric).should be_true
+
+    port = FakeAnchorPort.new
+    migration = FakeAnchorMigration.new
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(committed_anchor_store,
+      port, migration, -> { true },
+      ->(state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Requesting journal flush failed") if state.stage.requesting?
+        nil
+      }, journal)
+    expect_raises(Matter::StorageError, /Requesting journal flush failed/) { workflow.run }
+    journal.stage.should eq(TransferStage::Ready)
+    port.calls.should be_empty
   end
 
   it "orders the accepted transfer and saves every boundary" do
@@ -645,6 +669,23 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     workflow.run
     port.calls.should eq(["request", "complete"])
     workflow.journal.stage.should eq(Matter::Controller::AnchorTransfer::Stage::Completed)
+  end
+
+  it "keeps Copying unresolved when the proved Copied journal save fails" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64, TransferStage::Copying)
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(committed_anchor_store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Copied journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Copied journal flush failed/) do
+      workflow.reconcile!(TransferStage::Copied)
+    end
+    journal.stage.should eq(TransferStage::Copying)
+    durable.stage.should eq(TransferStage::Copying)
+    expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
   end
 
   it "recovers every interrupted transfer command from a persisted journal" do

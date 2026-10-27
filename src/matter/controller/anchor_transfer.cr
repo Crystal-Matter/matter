@@ -42,8 +42,42 @@ module Matter
         property stage : Stage
         property active_rotation_node_id : UInt64? = nil
         property rotated_administrator_node_ids = [] of UInt64
+        getter candidate_fabric_id : UInt64? = nil
+        getter candidate_root_public_key : Bytes? = nil
+        getter candidate_operational_node_id : UInt64? = nil
+        getter candidate_operational_cert : Bytes? = nil
+        getter candidate_intermediate_cert : Bytes? = nil
+        getter candidate_cat_values : Array(UInt32)? = nil
 
         def initialize(@candidate_node_id : UInt64, @stage : Stage = Stage::Ready)
+        end
+
+        # Capture the candidate device credential before the Requesting save.
+        # The first persisted stage therefore contains evidence of the NOC
+        # that must still be present at Copying and before A's rotation.
+        def capture_candidate_credential!(fabric : Fabric) : Nil
+          if @candidate_operational_cert
+            unless candidate_credential_matches?(fabric)
+              raise Matter::AuthenticationError.new("Candidate credential differs from transfer journal")
+            end
+            return
+          end
+          raise Matter::ConfigurationError.new("Candidate ICAC is absent") unless fabric.intermediate_cert
+          @candidate_fabric_id = fabric.fabric_id
+          @candidate_root_public_key = fabric.root_public_key.dup
+          @candidate_operational_node_id = fabric.node_id
+          @candidate_operational_cert = fabric.operational_cert.dup
+          @candidate_intermediate_cert = fabric.intermediate_cert.try(&.dup)
+          @candidate_cat_values = fabric.cats.map(&.value)
+        end
+
+        def candidate_credential_matches?(fabric : Fabric) : Bool
+          @candidate_fabric_id == fabric.fabric_id &&
+            @candidate_root_public_key == fabric.root_public_key &&
+            @candidate_operational_node_id == fabric.node_id &&
+            @candidate_operational_cert == fabric.operational_cert &&
+            @candidate_intermediate_cert == fabric.intermediate_cert &&
+            @candidate_cat_values == fabric.cats.map(&.value)
         end
 
         # Keep the live journal at its last saved state if storage fails. The

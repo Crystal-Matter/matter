@@ -170,6 +170,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_first_transfer_follow_up : Bool = false
       getter? interrupt_after_next_transfer_cross_sign : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
+      getter? interrupt_before_transfer_copy_journal : Bool = false
       getter? interrupt_after_transfer_copy : Bool = false
       getter? interrupt_after_transfer_rotation : Bool = false
       getter? interrupt_after_first_transfer_administrator_rotation : Bool = false
@@ -201,6 +202,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_first_transfer_follow_up : Bool = false,
                      @interrupt_after_next_transfer_cross_sign : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
+                     @interrupt_before_transfer_copy_journal : Bool = false,
                      @interrupt_after_transfer_copy : Bool = false,
                      @interrupt_after_transfer_rotation : Bool = false,
                      @interrupt_after_first_transfer_administrator_rotation : Bool = false,
@@ -1565,6 +1567,7 @@ module MatterJointFabricAdministrator
                                      interrupt_before_follow_up : Bool = false,
                                      interrupt_after_first_follow_up : Bool = false,
                                      interrupt_after_request : Bool = false,
+                                     interrupt_before_copy_journal : Bool = false,
                                      interrupt_after_copy : Bool = false,
                                      interrupt_after_rotation : Bool = false,
                                      interrupt_after_first_administrator_rotation : Bool = false,
@@ -1573,6 +1576,7 @@ module MatterJointFabricAdministrator
                                      interrupt_after_next_cross_sign : Bool = false,
                                      reconcile_promoting : Bool = false,
                                      reconcile_rotating_administrator : Bool = false,
+                                     reconcile_copying : Bool = false,
                                      reconciliation_nonce : String? = nil) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
@@ -1606,8 +1610,13 @@ module MatterJointFabricAdministrator
       unless journal.candidate_node_id == old_fabric.node_id
         raise Matter::ConfigurationError.new("Existing transfer journal belongs to another candidate")
       end
+      journal.capture_candidate_credential!(own_fabric) if journal.stage.ready?
       if reconcile_promoting && !journal.stage.promoting?
         raise Matter::ConfigurationError.new("Anchor transfer is not awaiting promotion reconciliation")
+      end
+      if reconcile_copying && (!journal.stage.copying? || journal.active_rotation_node_id ||
+         !journal.rotated_administrator_node_ids.empty?)
+        raise Matter::ConfigurationError.new("Anchor transfer is not awaiting Datastore copy reconciliation")
       end
       if reconcile_rotating_administrator
         unless reconciliation_nonce && reconciliation_nonce.size == ROTATION_NONCE_HEX_LENGTH &&
@@ -1706,6 +1715,9 @@ module MatterJointFabricAdministrator
           rotations, own_rotation,
           -> {
             persist_transfer_candidate_datastore!
+            if interrupt_before_copy_journal && journal.stage.copying?
+              raise Matter::TransportError.new("Injected interruption after durable copy before Copied journal save")
+            end
             if interrupt_after_first_administrator_rotation && journal.stage.rotating? &&
                journal.active_rotation_node_id == old_anchor_node_id
               raise Matter::TransportError.new("Injected interruption after durable first Administrator rotation")
@@ -1760,6 +1772,12 @@ module MatterJointFabricAdministrator
           workflow.reconcile!(Matter::Controller::AnchorTransfer::Stage::Promoted)
           return
         end
+        if reconcile_copying
+          verify_durable_transfer_copy!(journal, preflight, old_anchor_node_id, old_fabric,
+            own_fabric, bootstrap, admin_version, anchor_version)
+          workflow.reconcile!(Matter::Controller::AnchorTransfer::Stage::Copied)
+          return
+        end
         if reconcile_rotating_administrator
           nonce = reconciliation_nonce || raise Matter::ConfigurationError.new("Rotation nonce is unavailable")
           verify_durable_transfer_rotation!(journal, preflight, old_anchor_node_id, old_fabric,
@@ -1804,29 +1822,77 @@ module MatterJointFabricAdministrator
       rotation_order = source.admin_list.map(&.node_id).reject(&.==(old_fabric.node_id))
       Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal,
         rotation_order, old_anchor_node_id)
-      durable_fabric = verify_durable_anchor_old_credential!(own_fabric)
-      unless durable_fabric.fabric_id == bootstrap.fabric.fabric_id &&
-             durable_fabric.root_public_key == bootstrap.fabric.root_public_key &&
-             durable_fabric.root_cert == bootstrap.fabric.root_cert &&
-             durable_fabric.node_id == own_fabric.node_id
-        raise Matter::AuthenticationError.new("Candidate fabric differs from rotation bootstrap")
+      verify_unpromoted_transfer_candidate!(journal, source, old_fabric, own_fabric, bootstrap,
+        admin_version, anchor_version)
+    end
+
+    private def verify_durable_transfer_copy!(journal : Matter::Controller::AnchorTransfer::Journal,
+                                              source : Datastore, old_anchor_node_id : UInt64,
+                                              old_fabric : Matter::Fabric, own_fabric : Matter::Fabric,
+                                              bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
+                                              admin_version : UInt16, anchor_version : UInt16) : Nil
+      unless journal.stage.copying? && journal.candidate_node_id == old_fabric.node_id &&
+             journal.active_rotation_node_id.nil? && journal.rotated_administrator_node_ids.empty? &&
+             source.status.state.delete_pending? && source.anchor_root_ca == old_fabric.root_cert &&
+             source.anchor_node_id == old_anchor_node_id
+        raise Matter::AuthenticationError.new("Anchor copy lacks the expected frozen transfer")
       end
+      verify_unpromoted_transfer_candidate!(journal, source, old_fabric, own_fabric, bootstrap,
+        admin_version, anchor_version)
+    end
+
+    private def verify_unpromoted_transfer_candidate!(journal : Matter::Controller::AnchorTransfer::Journal,
+                                                      source : Datastore, old_fabric : Matter::Fabric,
+                                                      own_fabric : Matter::Fabric,
+                                                      bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
+                                                      admin_version : UInt16, anchor_version : UInt16) : Nil
+      durable_fabric = verify_durable_anchor_old_credential!(own_fabric)
+      verify_unpromoted_candidate_credential!(journal, durable_fabric, bootstrap)
       durable_old_fabric = verify_durable_anchor_old_credential!(old_fabric)
       unless durable_old_fabric.root_cert == old_fabric.root_cert
         raise Matter::AuthenticationError.new("Joined old fabric root changed during rotation")
       end
+      verify_unpromoted_transfer_bindings_and_roles!(durable_old_fabric, durable_fabric)
+      verify_durable_transfer_datastore!(source, old_fabric.node_id, own_fabric, bootstrap,
+        admin_version, anchor_version, promoted: false)
+      verify_transfer_datastore_equivalent!(joint_fabric_datastore, durable_transfer_datastore,
+        "Candidate Anchor live Datastore differs from its durable copy")
+    end
+
+    private def verify_unpromoted_candidate_credential!(journal : Matter::Controller::AnchorTransfer::Journal,
+                                                        fabric : Matter::Fabric,
+                                                        bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap) : Nil
+      actual_cats = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(fabric.operational_cert)
+        .compact_map { |subject| Matter::DataType::NodeId.case_authenticated_tag_from_subject?(subject) }
+        .sort_by!(&.value)
+      recorded_cats = journal.candidate_cat_values
+      recorded_noc = journal.candidate_operational_cert
+      recorded_icac = journal.candidate_intermediate_cert
+      unless fabric.fabric_id == bootstrap.fabric.fabric_id &&
+             fabric.root_public_key == bootstrap.fabric.root_public_key &&
+             fabric.root_cert == bootstrap.fabric.root_cert &&
+             recorded_noc && recorded_icac && recorded_cats &&
+             journal.candidate_credential_matches?(fabric) &&
+             fabric.cats.sort_by(&.value) == actual_cats &&
+             actual_cats.map(&.value).sort! == recorded_cats.sort
+        raise Matter::AuthenticationError.new("Candidate fabric differs from saved pre-transfer credentials")
+      end
+    end
+
+    private def verify_unpromoted_transfer_bindings_and_roles!(old_fabric : Matter::Fabric,
+                                                               own_fabric : Matter::Fabric) : Nil
       old_binding = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT) ||
                     raise Matter::StorageError.new("Joined old fabric binding is absent")
       new_binding = persistence.app_document(APP_BOOTSTRAP_BINDING_DOCUMENT) ||
                     raise Matter::StorageError.new("Candidate bootstrap binding is absent")
-      unless FabricBindingState.from_document(old_binding).matches?(durable_old_fabric) &&
-             FabricBindingState.from_document(new_binding).matches?(durable_fabric)
+      unless FabricBindingState.from_document(old_binding).matches?(old_fabric) &&
+             FabricBindingState.from_document(new_binding).matches?(own_fabric)
         raise Matter::AuthenticationError.new("Candidate fabric bindings differ from interrupted transfer")
       end
       old_administrator = durable_transfer_administrator(ANCHOR_JFA_ENDPOINT_ID)
       new_administrator = durable_transfer_administrator(BOOTSTRAP_JFA_ENDPOINT_ID)
-      unless old_administrator.administrator_fabric_index == durable_old_fabric.fabric_index &&
-             new_administrator.administrator_fabric_index == durable_fabric.fabric_index
+      unless old_administrator.administrator_fabric_index == old_fabric.fabric_index &&
+             new_administrator.administrator_fabric_index == own_fabric.fabric_index
         raise Matter::AuthenticationError.new("Candidate Administrator endpoints changed during rotation")
       end
       joined_role_document = persistence.app_document(APP_ROLE_DOCUMENT) ||
@@ -1837,8 +1903,6 @@ module MatterJointFabricAdministrator
          !bootstrap_role.anchor? || bootstrap_role.transfer_complete?
         raise Matter::AuthenticationError.new("Candidate Administrator roles changed during rotation")
       end
-      verify_durable_transfer_datastore!(source, old_fabric.node_id, own_fabric, bootstrap,
-        admin_version, anchor_version, promoted: false)
     end
 
     # Promotion changes B's NOC, Datastore, endpoint binding, and role in that
@@ -1921,27 +1985,33 @@ module MatterJointFabricAdministrator
         expected.anchor_node_id = own_fabric.node_id
         expected.anchor_vendor_id = bootstrap.fabric.admin_vendor_id
       end
+      verify_transfer_datastore_equivalent!(durable_datastore, expected,
+        "Candidate Anchor durable Datastore is incomplete")
+    end
+
+    private def verify_transfer_datastore_equivalent!(actual : Datastore, expected : Datastore,
+                                                      description : String) : Nil
       checks = {
-        "status state"    => durable_datastore.status.state.committed?,
-        "status time"     => durable_datastore.status.update_timestamp == expected.status.update_timestamp,
-        "status failure"  => durable_datastore.status.failure_code == expected.status.failure_code,
-        "root"            => durable_datastore.anchor_root_ca == expected.anchor_root_ca,
-        "node"            => durable_datastore.anchor_node_id == expected.anchor_node_id,
-        "vendor"          => durable_datastore.anchor_vendor_id == expected.anchor_vendor_id,
-        "name"            => durable_datastore.friendly_name == expected.friendly_name,
-        "key sets"        => durable_datastore.group_key_set_list.to_tlv == expected.group_key_set_list.to_tlv,
-        "groups"          => durable_datastore.group_list.to_tlv == expected.group_list.to_tlv,
-        "nodes"           => durable_datastore.node_list.to_tlv == expected.node_list.to_tlv,
-        "administrators"  => durable_datastore.admin_list.to_tlv == expected.admin_list.to_tlv,
-        "endpoint groups" => durable_datastore.endpoint_group_id_list.to_tlv == expected.endpoint_group_id_list.to_tlv,
-        "bindings"        => durable_datastore.endpoint_binding_list.to_tlv == expected.endpoint_binding_list.to_tlv,
-        "node keys"       => durable_datastore.node_key_set_list.to_tlv == expected.node_key_set_list.to_tlv,
-        "access lists"    => durable_datastore.node_acl_list.to_tlv == expected.node_acl_list.to_tlv,
-        "node endpoints"  => durable_datastore.node_endpoint_list.to_tlv == expected.node_endpoint_list.to_tlv,
+        "status state"    => actual.status.state == expected.status.state,
+        "status time"     => actual.status.update_timestamp == expected.status.update_timestamp,
+        "status failure"  => actual.status.failure_code == expected.status.failure_code,
+        "root"            => actual.anchor_root_ca == expected.anchor_root_ca,
+        "node"            => actual.anchor_node_id == expected.anchor_node_id,
+        "vendor"          => actual.anchor_vendor_id == expected.anchor_vendor_id,
+        "name"            => actual.friendly_name == expected.friendly_name,
+        "key sets"        => actual.group_key_set_list.to_tlv == expected.group_key_set_list.to_tlv,
+        "groups"          => actual.group_list.to_tlv == expected.group_list.to_tlv,
+        "nodes"           => actual.node_list.to_tlv == expected.node_list.to_tlv,
+        "administrators"  => actual.admin_list.to_tlv == expected.admin_list.to_tlv,
+        "endpoint groups" => actual.endpoint_group_id_list.to_tlv == expected.endpoint_group_id_list.to_tlv,
+        "bindings"        => actual.endpoint_binding_list.to_tlv == expected.endpoint_binding_list.to_tlv,
+        "node keys"       => actual.node_key_set_list.to_tlv == expected.node_key_set_list.to_tlv,
+        "access lists"    => actual.node_acl_list.to_tlv == expected.node_acl_list.to_tlv,
+        "node endpoints"  => actual.node_endpoint_list.to_tlv == expected.node_endpoint_list.to_tlv,
       }
       mismatches = checks.compact_map { |name, matches| name unless matches }
       unless mismatches.empty?
-        raise Matter::AuthenticationError.new("Candidate Anchor durable Datastore is incomplete: #{mismatches.join(", ")}")
+        raise Matter::AuthenticationError.new("#{description}: #{mismatches.join(", ")}")
       end
     end
 
@@ -2840,6 +2910,7 @@ module MatterJointFabricAdministrator
           when "transfer-anchor"
             transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?,
               request.interrupt_after_first_transfer_follow_up?, request.interrupt_after_transfer_request?,
+              request.interrupt_before_transfer_copy_journal?,
               request.interrupt_after_transfer_copy?, request.interrupt_after_transfer_rotation?,
               request.interrupt_after_first_transfer_administrator_rotation?,
               request.interrupt_after_transfer_promotion?,
@@ -2912,6 +2983,9 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok")
           when "reconcile-transfer-promoted"
             transfer_anchor_from(request.node_id, reconcile_promoting: true)
+            CommandResult.new("ok")
+          when "reconcile-transfer-copied"
+            transfer_anchor_from(request.node_id, reconcile_copying: true)
             CommandResult.new("ok")
           when "reconcile-transfer-rotated-administrator"
             transfer_anchor_from(request.node_id, reconcile_rotating_administrator: true,
