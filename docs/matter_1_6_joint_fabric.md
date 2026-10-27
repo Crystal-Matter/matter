@@ -610,10 +610,14 @@ The host must finish preparation within `ResponseTimeoutSeconds` and its task
 must use the approved VendorID/ProductID when calling
 `Controller::Commissioning::Commissioner#pairing_code` with `expected_identity`.
 That option checks both IDs after device attestation and before AddNOC. A
-failed preparation leaves the approval available for a retry; a prepared
-response consumes it even if the response send fails, so a fresh approval is
-required. Ordinary device and bridge examples do not advertise this cluster,
-and the current slice is not a complete reverse-commissioning flow.
+failed preparation leaves the approval available for a retry. A failed
+InvokeResponse send discards its pending task and permits another preparation.
+An authenticated retransmission of the same single-command `CommissionNode`
+request can retry on its original MRP counter; a multi-command request needs a
+fresh InvokeRequest so other commands cannot be executed twice. A successful
+send consumes the approval. Ordinary device and bridge examples
+do not advertise this cluster, and the current slice is not a complete
+reverse-commissioning flow.
 `examples/matter_commissioner_control_device.cr` is an opt-in synthetic
 Aggregator used only for chip-tool interoperability testing. It auto-approves
 one test VID/PID pair and returns dummy reverse-window bytes with a no-op

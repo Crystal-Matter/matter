@@ -364,6 +364,7 @@ describe Matter::Cluster::DSL do
         Widget::ATTR_MIRROR, Widget::ATTR_UPTIME, Widget::ATTR_FABRIC_VIEW, Widget::ATTR_STATE, Widget::ATTR_RAW,
         Widget::ATTR_STORE, Widget::ATTR_TAG, Widget::ATTR_ALPHA_OR_BETA,
         Matter::Cluster::Base::GLOBAL_GENERATED_COMMAND_LIST, Matter::Cluster::Base::GLOBAL_ACCEPTED_COMMAND_LIST,
+        Matter::Cluster::Base::GLOBAL_EVENT_LIST,
         Matter::Cluster::Base::GLOBAL_ATTRIBUTE_LIST, Matter::Cluster::Base::GLOBAL_FEATURE_MAP,
         Matter::Cluster::Base::GLOBAL_CLUSTER_REVISION,
       ])

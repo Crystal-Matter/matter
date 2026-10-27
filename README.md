@@ -361,6 +361,22 @@ when physical or manual intervention is still required. `Latch` and `Supported`
 are fixed capabilities. See `examples/matter_dishwasher_alarm_device.cr` for a
 synthetic device.
 
+Refrigerator (`0x0070`, revision 3), Temperature Controlled Cabinet
+(`0x0071`, revision 6), and Dishwasher (`0x0075`, revision 2) are available as
+device types. A static endpoint may advertise several types with
+`device_type: [primary, companion]`; Descriptor.DeviceTypeList retains each
+type's revision. A Refrigerator must include Temperature Controlled Cabinet
+on the same endpoint and the cabinet must expose Temperature Control with TN
+and without TL. The physical Cooler condition is the appliance host's
+responsibility. Dishwasher requires Operational State and its
+OperationCompletion event. When Dishwasher also exposes On/Off, DF is
+required. `Endpoint#validate` checks these requirements plus forbidden
+features and attributes for clusters present on the endpoint. The synthetic
+refrigerator and dishwasher alarm fixtures advertise these device types and
+are read by chip-tool in the focused E2E specs.
+Every cluster also exposes the Matter 1.6 global EventList attribute,
+including an empty list on clusters with no declared events.
+
 `Cluster::DishwasherMode` and `Cluster::LaundryWasherMode` implement the Matter
 1.6 revision 3 Mode Base derivations. Provide 2–255 fixed mode options with
 distinct values, labels, and tag sets; each option has 1–8 tags including a
