@@ -1,4 +1,5 @@
 require "log"
+require "../crypto/wire_identifiers"
 
 module Matter
   module Controller
@@ -15,7 +16,7 @@ module Matter
       def extract_uncompressed_public_key_from_csr(csr_der : Bytes) : Bytes
         i = 0
         while i < csr_der.size - 4
-          if csr_der[i] == 0x03_u8
+          if csr_der[i] == Crypto::WireIdentifiers::DerTag::BitString.value
             length, length_bytes = parse_der_length(csr_der, i + 1)
             bit_string_start = i + 1 + length_bytes
 
@@ -23,7 +24,8 @@ module Matter
               unused_bits = csr_der[bit_string_start]
               marker = csr_der[bit_string_start + 1]
 
-              if unused_bits == 0_u8 && marker == 0x04_u8
+              if unused_bits == Crypto::WireIdentifiers::DER_NO_UNUSED_BITS &&
+                 marker == Crypto::WireIdentifiers::Sec1PointFormat::Uncompressed.value
                 return csr_der[bit_string_start + 1, 65]
               end
             end
@@ -41,10 +43,10 @@ module Matter
         first = data[offset]?
         raise Matter::CodecError.new("DER length out of bounds") unless first
 
-        if first < 0x80
+        if first < Crypto::WireIdentifiers::DER_LONG_FORM_FLAG
           {first.to_i, 1}
         else
-          count = (first & 0x7f).to_i
+          count = (first & Crypto::WireIdentifiers::DER_LENGTH_VALUE_MASK).to_i
           raise Matter::CodecError.new("DER length uses indefinite form") if count == 0
           raise Matter::CodecError.new("DER length out of bounds") if offset + count >= data.size
 

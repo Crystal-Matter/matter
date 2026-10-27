@@ -33,6 +33,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject SubscribeRequests whose minimum reporting interval exceeds the maximum
   with `InvalidAction`, before allocating or priming a subscription.
 
+### Named crypto and PASE wire identifiers
+
+- Use named SEC1 point formats, DER tags and length masks in key, CSR, and
+  certificate parsing and encoding. Name the packed Secure Channel vendor and
+  protocol ID fields while preserving their wire bytes.
+
 ### End-to-end CASE read resilience
 
 - Retry an idempotent chip-tool attribute read once when CASE session setup

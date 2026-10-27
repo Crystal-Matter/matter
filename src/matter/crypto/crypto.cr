@@ -4,6 +4,7 @@ require "openssl/hmac"
 require "bindata/asn1"
 require "base64"
 require "./aes/ccm"
+require "./wire_identifiers"
 
 module Matter
   module Crypto
@@ -318,32 +319,32 @@ module Matter
         io.write Bytes[0x02, 0x01, 0x01]
 
         # Private key (OCTET STRING)
-        io.write_byte 0x04_u8 # OCTET STRING tag
+        io.write_byte WireIdentifiers::DerTag::OctetString.value
         io.write_byte priv.size.to_u8
         io.write priv
 
         # Curve parameters ([0] EXPLICIT containing OID)
-        io.write_byte 0xa0_u8              # Context tag [0]
+        io.write_byte WireIdentifiers::DerTag::Context0Constructed.value
         io.write_byte curve_oid.size.to_u8 # Length of the OID (including its tag/length)
         io.write curve_oid                 # The complete OID with its tag and length
 
         # Public key ([1] EXPLICIT containing BIT STRING)
         # Build the BIT STRING first
         bit_string_content = IO::Memory.new
-        bit_string_content.write_byte 0x03_u8              # BIT STRING tag
+        bit_string_content.write_byte WireIdentifiers::DerTag::BitString.value
         bit_string_content.write_byte (pub.size + 1).to_u8 # Length (data + unused bits byte)
-        bit_string_content.write_byte 0x00_u8              # No unused bits
+        bit_string_content.write_byte WireIdentifiers::DER_NO_UNUSED_BITS
         bit_string_content.write pub
         bit_string_bytes = bit_string_content.to_slice
 
-        io.write_byte 0xa1_u8 # Context tag [1]
+        io.write_byte WireIdentifiers::DerTag::Context1Constructed.value
         io.write_byte bit_string_bytes.size.to_u8
         io.write bit_string_bytes
 
         # Wrap in SEQUENCE
         content = io.to_slice
         result = IO::Memory.new
-        result.write_byte 0x30_u8 # SEQUENCE tag
+        result.write_byte WireIdentifiers::DerTag::Sequence.value
         write_der_length(result, content.size)
         result.write content
 
@@ -365,15 +366,15 @@ module Matter
         io.write algo_id
 
         # Public key (BIT STRING)
-        io.write_byte 0x03_u8 # BIT STRING tag
+        io.write_byte WireIdentifiers::DerTag::BitString.value
         write_der_length(io, pub.size + 1)
-        io.write_byte 0x00_u8 # No unused bits
+        io.write_byte WireIdentifiers::DER_NO_UNUSED_BITS
         io.write pub
 
         # Wrap in SEQUENCE
         content = io.to_slice
         result = IO::Memory.new
-        result.write_byte 0x30_u8 # SEQUENCE tag
+        result.write_byte WireIdentifiers::DerTag::Sequence.value
         write_der_length(result, content.size)
         result.write content
 
@@ -391,7 +392,7 @@ module Matter
             bytes.unshift(temp.to_u8 & 0xFF)
             temp >>= 8
           end
-          io.write_byte (0x80 | bytes.size).to_u8
+          io.write_byte (WireIdentifiers::DER_LONG_FORM_FLAG | bytes.size).to_u8
           bytes.each { |byte| io.write_byte byte }
         end
       end
