@@ -199,6 +199,13 @@ module Matter
     struct State
       include Storage::Record
 
+      # A loaded State carries an immutable snapshot for stale-write checks.
+      @[Storage::Field(ignore: true)]
+      property storage_snapshot : Storage::Document? = nil
+
+      @[Storage::Field(ignore: true)]
+      property? storage_loaded : Bool = false
+
       property fabric : FabricInfo?
       property nodes : Hash(UInt64, NodeInfo)
 

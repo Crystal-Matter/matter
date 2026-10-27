@@ -111,6 +111,36 @@ private def assert_atomic_controller_removal(backend : Matter::Storage::Backend,
 end
 
 describe Matter::Controller::StateStore do
+  it "rejects a stale full-state save and preserves an intervening journal update" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = sample_fabric
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    stale = store.load
+    store.update do |current|
+      current.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+        0x3333_u64, "Lamp", Time.utc.to_unix + 60)
+    end
+    stale.unsecured_message_counter = 42_u32
+
+    expect_raises(Matter::StorageError, /changed since load/) { store.save(stale) }
+    store.load.pending_datastore_nodes.size.should eq(1)
+    store.load.unsecured_message_counter.should eq(0_u32)
+  end
+
+  it "rejects a second save from a copied loaded snapshot" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new(fabric: sample_fabric))
+    first = store.load
+    second = first
+    first.unsecured_message_counter = 1_u32
+    store.save(first)
+    second.unsecured_message_counter = 2_u32
+
+    expect_raises(Matter::StorageError, /changed since load/) { store.save(second) }
+    store.load.unsecured_message_counter.should eq(1_u32)
+  end
+
   it "persists replaced IPK epochs without losing the controller's peers" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = sample_fabric

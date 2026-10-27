@@ -30,6 +30,8 @@ module Matter
           devices, uncertain_device_identity = device_fabrics
           purge_orphaned_credentials(state, devices, uncertain_device_identity)
           @backend.write(COLLECTION, DOCUMENT_ID, state.to_document) if dirty && document
+          state.storage_snapshot = document ? Storage.deep_copy(dirty ? state.to_document : document) : nil
+          state.storage_loaded = true
         end
         state
       rescue ex : Matter::StorageError
@@ -42,10 +44,14 @@ module Matter
         @backend.open unless @backend.open?
         @backend.transaction do
           previous = @backend.read(COLLECTION, DOCUMENT_ID)
+          if state.storage_loaded? && previous != state.storage_snapshot
+            raise Matter::StorageError.new("Controller state changed since load; reload before saving")
+          end
           prior_state = previous ? State.from_document(previous) : State.new
           devices, uncertain_device_identity = device_fabrics
           purge_orphaned_credentials(prior_state, devices, uncertain_device_identity)
-          @backend.write(COLLECTION, DOCUMENT_ID, state.to_document)
+          document = state.to_document
+          @backend.write(COLLECTION, DOCUMENT_ID, document)
           remaining = state.fabrics
           resume_store = Session::Case::ResumptionStore.new(@backend)
           icd_peers = IcdPeerStore.new(@backend)
@@ -70,6 +76,19 @@ module Matter
         raise ex
       rescue ex
         raise Matter::StorageError.new("Failed to save controller state (path=#{@backend.path.inspect}): #{ex.message}", cause: ex)
+      end
+
+      # Keep the read, mutation and write inside one backend transaction. The
+      # block must contain only local state changes; perform network work first.
+      def update(& : State -> T) : T forall T
+        result = uninitialized T
+        @backend.open unless @backend.open?
+        @backend.transaction do
+          state = load
+          result = yield state
+          save(state)
+        end
+        result
       end
 
       # Older saves could durably remove a fabric before deleting its separate

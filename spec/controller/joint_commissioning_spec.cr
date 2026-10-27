@@ -25,6 +25,17 @@ private class JointRecoveryPort < Matter::Controller::JointCommissioning::Recove
   end
 end
 
+private class JointRetryDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+end
+
 private class JointDescriptorIm < Matter::Controller::ImClient
   def initialize(client : Matter::Controller::Client)
     super(client)
@@ -572,6 +583,69 @@ describe Matter::Controller::JointCommissioning do
     store.load.pending_handoffs.should be_empty
     store.load.nodes[9_u64].address.should eq("127.0.0.1")
     datastore.admin_list.first.icac.should eq(icac)
+  ensure
+    workflow.try(&.close)
+  end
+
+  it "preserves a Datastore retry stage advanced during a deferred handoff wait" do
+    joint = Matter::Controller::JointCommissioning
+    fabric = joint.bootstrap_anchor_fabric(0x456A_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    state = store.load
+    state.install_fabric(fabric)
+    state.add_pending_handoff(Matter::Controller::PendingCommissioningHandoff.new(
+      fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+      9_u64, "127.0.0.1", 5540, Time.utc.to_unix + 60, "retry-race-nonce"))
+    state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+      fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+      10_u64, "Lamp", Time.utc.to_unix + 60)
+    store.save(state)
+    joiner_key = crypto.create_key_pair
+    pending = Matter::Controller::JointCommissioning::PendingRegistration.new(fabric.fabric_id, fabric.controller_node_id,
+      fabric.root_public_key, 9_u64, 0xFFF2_u16, "Joining Administrator", Bytes.empty,
+      "127.0.0.1", 5540, handoff_nonce: "retry-race-nonce",
+      joiner_icac_public_key: joiner_key.public_key)
+    key = "#{fabric.fabric_id.to_s(16)}-#{fabric.root_public_key.hexstring}-#{fabric.controller_node_id.to_s(16)}"
+    store.backend.write("joint_commissioning", "pending-#{key}", pending.to_document)
+    icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      joiner_key.public_key, fabric.fabric_id, 2_u64,
+      fabric.certificate_authority_key, 1_u64, Bytes[0x0B], crypto)
+    entered = Channel(Nil).new
+    release = Channel(Nil).new
+    datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    workflow = Matter::Controller::JointCommissioning::Workflow.new(store, fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id, 1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16,
+      2_u64, JointTestTrust.new,
+      ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+      ->(request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) {
+        joint.add_admin_once(datastore, request); nil
+      },
+      ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+      handoff_result: ->(_nonce : String) {
+        entered.send(nil)
+        release.receive
+        Matter::Controller::JointCommissioning::Workflow::HandoffResult.new("retry-race-nonce", icac).as(Matter::Controller::JointCommissioning::Workflow::HandoffResult?)
+      })
+    finished = Channel(Exception?).new
+    spawn do
+      begin
+        workflow.resume_pending
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+    end
+    entered.receive
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, JointRetryDelivery.new)
+    registrar.retry_pending_once
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+    release.send(nil)
+    if error = finished.receive
+      raise error
+    end
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+    store.load.nodes[9_u64].address.should eq("127.0.0.1")
   ensure
     workflow.try(&.close)
   end

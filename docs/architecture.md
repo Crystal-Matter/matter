@@ -494,6 +494,12 @@ falls back to full CASE. A legacy record matching both roles remains until
 neither role owns that identity. Undecodable credential documents are retained
 and logged so a damaged record cannot block controller state recovery.
 
+Each loaded controller `State` remembers the exact document it read. A later
+`save` rejects that state if another writer has changed the document, avoiding
+silent loss of Datastore registrations, nodes, or counters. Use `StateStore#update`
+for short read-modify-write operations; it runs them in one backend transaction.
+Network requests must finish before the update block, which reads fresh state.
+
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.
 

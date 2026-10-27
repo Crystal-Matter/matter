@@ -256,13 +256,12 @@ module Matter
         crypto = Crypto::StandardCrypto.new
         crypto.verify_ecdsa(key, KEY_PROOF_MESSAGE, crypto.sign_ecdsa(key, KEY_PROOF_MESSAGE))
 
-        state = store.load
-        if state.fabric.nil? && !state.nodes.empty?
-          raise Matter::ConfigurationError.new("Controller store contains peers without a fabric")
+        store.update do |state|
+          if state.fabric.nil? && !state.nodes.empty?
+            raise Matter::ConfigurationError.new("Controller store contains peers without a fabric")
+          end
+          state.install_fabric(fabric)
         end
-
-        state.install_fabric(fabric)
-        store.save(state)
       end
 
       # Learn an Anchor's rotated IPK epochs while an authenticated CASE
@@ -317,11 +316,11 @@ module Matter
           raise Matter::ProtocolError.new("Anchor IPK epochs are incomplete")
         end
 
-        state = store.load
-        stored = state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
-        stored.ipk_epoch_keys = keys
-        state.replace_fabric(stored)
-        store.save(state)
+        store.update do |state|
+          stored = state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+          stored.ipk_epoch_keys = keys
+          state.replace_fabric(stored)
+        end
         fabric.ipk_epoch_keys = keys
       end
 
