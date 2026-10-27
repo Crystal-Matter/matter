@@ -36,6 +36,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Keep a queued global EventList attribute authorized while sending chunked
   subscription priming reports. This restores the official Operational
   Credentials VID certification subscription sequence.
+- Name Matter group multicast address fields and the DER tags used to encode
+  and verify Certification Declarations, preserving their wire values.
 
 ### Identify and conditional Groups membership
 

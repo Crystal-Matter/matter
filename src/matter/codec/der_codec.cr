@@ -47,6 +47,16 @@ module Matter
         ContextSpecific = 0x80
       end
 
+      module Tag
+        INTEGER               = Type::UnsignedInt.value
+        OCTET_STRING          = Type::OctetString.value
+        OBJECT_IDENTIFIER     = Type::ObjectIdentifier.value
+        SEQUENCE              = (Type::Sequence.value | CONSTRUCTED).to_u8
+        SET                   = (Type::Set.value | CONSTRUCTED).to_u8
+        CONTEXT_0_PRIMITIVE   = Class::ContextSpecific.value
+        CONTEXT_0_CONSTRUCTED = (Class::ContextSpecific.value | CONSTRUCTED).to_u8
+      end
+
       module Base
         extend self
 

@@ -19,7 +19,9 @@ module Matter
 
       # The test CD uses Root Node (0x0016). Certificate loading precedes the
       # device type catalog, so its fixture ID is declared here.
-      TEST_CD_DEVICE_TYPE_ID = 0x0016_u32
+      TEST_CD_DEVICE_TYPE_ID  = 0x0016_u32
+      CMS_SIGNER_INFO_VERSION =       3_u8
+      CMS_SIGNED_DATA_VERSION =       3_u8
 
       # CD TLV content structure
       # Based on Matter Core Spec section 6.3.1
@@ -134,11 +136,11 @@ module Matter
         # Build SignerInfo SEQUENCE manually in RFC 5652 order:
         # version, sid, digestAlgorithm, signatureAlgorithm, signature
         signer_info_fields = [] of Bytes
-        signer_info_fields << Codec::DERCodec::Base.encode(3_u8) # version
+        signer_info_fields << Codec::DERCodec::Base.encode(CMS_SIGNER_INFO_VERSION)
 
         # Build SubjectKeyIdentifier as context-specific [0] primitive (just raw bytes)
         ski_io = IO::Memory.new
-        ski_io.write_byte(0x80_u8) # Context-specific [0] (primitive)
+        ski_io.write_byte(Codec::DERCodec::Tag::CONTEXT_0_PRIMITIVE)
         ski_length_bytes = Codec::DERCodec::Base.encode_length_bytes(ski_bytes.size)
         ski_io.write(ski_length_bytes)
         ski_io.write(ski_bytes)
@@ -149,18 +151,18 @@ module Matter
         signer_info_fields << Codec::DERCodec::Base.encode(signature)                                    # signature
         signer_info_seq = Codec::DERCodec::Base.encode_sequence(Slice(UInt8).join(signer_info_fields))
 
-        # Build SET OF SignerInfo (tag 0x31 = SET | CONSTRUCTED)
+        # Build SET OF SignerInfo.
         io = IO::Memory.new
-        io.write_byte(0x31_u8) # SET | CONSTRUCTED
+        io.write_byte(Codec::DERCodec::Tag::SET)
         length_bytes = Codec::DERCodec::Base.encode_length_bytes(signer_info_seq.size)
         io.write(length_bytes)
         io.write(signer_info_seq)
         signer_infos_set = io.to_slice
 
-        # Build digestAlgorithms SET (tag 0x31)
+        # Build digestAlgorithms SET.
         digest_alg_encoded = Codec::DERCodec::Base.encode(Codec::DERCodec::SHA256_CMS.call)
         io2 = IO::Memory.new
-        io2.write_byte(0x31_u8) # SET | CONSTRUCTED
+        io2.write_byte(Codec::DERCodec::Tag::SET)
         length_bytes2 = Codec::DERCodec::Base.encode_length_bytes(digest_alg_encoded.size)
         io2.write(length_bytes2)
         io2.write(digest_alg_encoded)
@@ -169,7 +171,7 @@ module Matter
         # Build SignedData SEQUENCE in RFC 5652 order:
         # version, digestAlgorithms, encapContentInfo, signerInfos
         signed_data_fields = [] of Bytes
-        signed_data_fields << Codec::DERCodec::Base.encode(3_u8)                                     # version
+        signed_data_fields << Codec::DERCodec::Base.encode(CMS_SIGNED_DATA_VERSION)                  # version
         signed_data_fields << digest_algs_set                                                        # digestAlgorithms SET
         signed_data_fields << Codec::DERCodec::Base.encode(Codec::DERCodec::Pkcs7Data.call(content)) # encapContentInfo
         signed_data_fields << signer_infos_set                                                       # signerInfos SET
@@ -180,7 +182,7 @@ module Matter
 
         # Build context tag [0] EXPLICIT (CONSTRUCTED) with raw SignedData bytes
         ctx_io = IO::Memory.new
-        ctx_io.write_byte(0xA0_u8) # Context [0] | CONSTRUCTED
+        ctx_io.write_byte(Codec::DERCodec::Tag::CONTEXT_0_CONSTRUCTED)
         ctx_length = Codec::DERCodec::Base.encode_length_bytes(signed_data_seq.size)
         ctx_io.write(ctx_length)
         ctx_io.write(signed_data_seq)
