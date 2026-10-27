@@ -313,8 +313,10 @@ module Matter
       @offer_deadlines = {} of UInt16 => Time::Instant
       @next_session_id = 0_u16
       private record PendingSignaling, session_identity : UInt64, exchange_id : UInt16,
-        fabric_index : UInt8, peer_node_id : UInt64, session_id : UInt16, task : Proc(Nil)
+        fabric_index : UInt8, peer_node_id : UInt64, session_id : UInt16,
+        sequence : UInt64, task : Proc(Nil)
       @pending_signaling = [] of PendingSignaling
+      @pending_signaling_sequence = 0_u64
 
       def initialize(endpoint_id : DataType::EndpointNumber,
                      @streams : CameraAvStreamManagement, @peer : Peer)
@@ -358,7 +360,7 @@ module Matter
         schedule_offer_timeout
         changed
         begin
-          status = @peer.solicit_offer(session, request)
+          status = peer_status { @peer.solicit_offer(session, request) }
         rescue ex
           remove_session(session, EndReason::UnknownReason)
           raise ex
@@ -383,7 +385,7 @@ module Matter
           return InteractionModel::Status.constraint_error if (endpoint = request.originating_endpoint_id) && endpoint != session.peer_endpoint_id
           return InteractionModel::Status.constraint_error if request.audio_streams || !request.audio_stream_id_state.absent? ||
                                                               request.video_streams || !request.video_stream_id_state.absent?
-          status = @peer.accept_offer(session, request)
+          status = peer_status { @peer.accept_offer(session, request) }
           return status unless status.success?
           @offer_deadlines[id] = Time.instant + OFFER_TIMEOUT
           schedule_offer_timeout
@@ -407,7 +409,7 @@ module Matter
         schedule_offer_timeout
         changed
         begin
-          status = @peer.accept_offer(session, request)
+          status = peer_status { @peer.accept_offer(session, request) }
         rescue ex
           remove_session(session, EndReason::UnknownReason)
           raise ex
@@ -426,7 +428,7 @@ module Matter
         session = owned_session(request.web_rtc_session_id, fabric, node) || return InteractionModel::Status.not_found
         return InteractionModel::Status.constraint_error if request.sdp.empty?
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
-        status = @peer.accept_answer(session, request.sdp)
+        status = peer_status { @peer.accept_answer(session, request.sdp) }
         @offer_deadlines.delete(session.id) if status.success?
         status
       end
@@ -437,7 +439,7 @@ module Matter
         return InteractionModel::Status.constraint_error if request.ice_candidates.empty?
         return InteractionModel::Status.constraint_error if request.ice_candidates.any? { |candidate| candidate.sdp_mid == "" }
         return InteractionModel::Status.invalid_in_state unless delivery_allowed?(session)
-        @peer.add_ice_candidates(session, request.ice_candidates)
+        peer_status { @peer.add_ice_candidates(session, request.ice_candidates) }
       end
 
       def end_session(request : EndSessionRequest) : InteractionModel::Status
@@ -481,8 +483,10 @@ module Matter
                               request_peer_node_id == session.peer_node_id &&
                               session_active?(session) &&
                               @pending_signaling.size < MAX_PENDING_SIGNALING
+          @pending_signaling_sequence += 1_u64
           @pending_signaling << PendingSignaling.new(identity, exchange,
-            session.fabric_index, session.peer_node_id, session.id, task)
+            session.fabric_index, session.peer_node_id, session.id,
+            @pending_signaling_sequence, task)
           true
         end
       end
@@ -526,6 +530,25 @@ module Matter
         fabric = request_fabric_index
         node = request_peer_node_id
         {fabric, node} if fabric && node
+      end
+
+      # A Peer may enqueue outbound signaling before discovering it cannot
+      # accept the command. Keep tasks from earlier successful commands on the
+      # same InvokeRequest while dropping only this callback's additions.
+      private def peer_status(& : -> InteractionModel::Status) : InteractionModel::Status
+        before = @pending_signaling_sequence
+        begin
+          status = yield
+        rescue ex
+          discard_pending_after(before)
+          raise ex
+        end
+        discard_pending_after(before) unless status.success?
+        status
+      end
+
+      private def discard_pending_after(sequence : UInt64) : Nil
+        @pending_signaling.reject! { |entry| entry.sequence > sequence }
       end
 
       private def selected_audio_id(field : TLV::FieldState(UInt16), usage : StreamUsage) : UInt16?
