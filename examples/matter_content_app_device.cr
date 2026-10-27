@@ -6,6 +6,11 @@ module MatterContentApp
   alias Messages = Matter::Cluster::Messages
   alias AccountLogin = Matter::Cluster::AccountLogin
 
+  MESSAGE_PROFILE  = ENV["MATTER_MESSAGES_PROFILE"]? == "1"
+  MESSAGE_FEATURES = Messages::Feature::ReceivedConfirmation |
+                     Messages::Feature::ConfirmationResponse |
+                     Messages::Feature::ConfirmationReply
+
   class AccountHost < AccountLogin::Host
     TEMP_ACCOUNT_IDENTIFIER = "crystal-radio-user"
     SETUP_PIN               = "12345678"
@@ -30,6 +35,39 @@ module MatterContentApp
 
     def logout(node : UInt64?, fabric_index : UInt8) : Bool
       true
+    end
+  end
+
+  # The opt-in E2E profile demonstrates how an application presents and
+  # confirms messages. A real UI can make these calls after user interaction.
+  class MessageHost < Messages::Host
+    AUTO_CONFIRM_TEXT = "Confirm in demo UI"
+    Log               = ::Log.for("matter.example.content_app.messages")
+
+    def message_queued(message : Messages::Message, origin_node_id : UInt64?, cluster : Messages) : Nil
+      if start = message.start_time
+        available_at = Time.unix(start.to_i64 + Messages::MATTER_EPOCH_UNIX_SECONDS)
+        if available_at > Time.utc
+          spawn do
+            remaining = available_at - Time.utc
+            sleep remaining if remaining > 0.seconds
+            present_message(message, cluster)
+          end
+          return
+        end
+      end
+      present_message(message, cluster)
+    end
+
+    private def present_message(message : Messages::Message, cluster : Messages) : Nil
+      cluster.present(message.message_id, message.fabric_index)
+      return unless message.text == AUTO_CONFIRM_TEXT
+      cluster.complete(message.message_id, message.fabric_index, 2_u32, "Seen")
+    rescue ex : ArgumentError
+      Log.debug(exception: ex) { "Message #{message.message_id.hexstring} was cancelled, expired, or not ready" }
+    end
+
+    def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
     end
   end
 
@@ -59,11 +97,15 @@ module MatterContentApp
         vendor_id: CATALOG_VENDOR_ID,
         as: :application_basic
 
-      cluster Messages, as: :messages
+      cluster Messages,
+        feature_map: MESSAGE_PROFILE ? MESSAGE_FEATURES : Messages::Feature::None,
+        host: MESSAGE_PROFILE ? MessageHost.new : nil,
+        as: :messages
     end
 
     protected def before_start : Nil
       application_basic.update_status(ApplicationBasic::ApplicationStatus::ActiveVisibleFocus)
+      messages.replay_messages_to_host! if MESSAGE_PROFILE
       super
     end
 

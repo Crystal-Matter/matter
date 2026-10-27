@@ -3,6 +3,53 @@ require "../spec_helper"
 private alias Messages = Matter::Cluster::Messages
 private alias MessageStatus = Matter::InteractionModel::StatusCode
 
+private class MessagePresentationHost < Messages::Host
+  getter queued = [] of {Bytes, UInt8, UInt64?}
+  getter cancelled = [] of {Bytes, UInt8}
+
+  def message_queued(message : Messages::Message, origin_node_id : UInt64?, cluster : Messages) : Nil
+    @queued << {message.message_id.dup, message.fabric_index, origin_node_id}
+  end
+
+  def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
+    @cancelled << {message_id.dup, fabric_index}
+  end
+end
+
+private class ReentrantMessagePresentationHost < Messages::Host
+  property removed_fabric : UInt8? = nil
+  getter queued = [] of Bytes
+
+  def message_queued(message : Messages::Message, origin_node_id : UInt64?, cluster : Messages) : Nil
+    @queued << message.message_id.dup
+    if fabric = @removed_fabric
+      @removed_fabric = nil
+      cluster.remove_fabric(fabric)
+    end
+  end
+
+  def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
+  end
+end
+
+private class ReplacingMessagePresentationHost < Messages::Host
+  property replacement : Messages::PresentRequest? = nil
+  getter seen = [] of String
+
+  def message_queued(message : Messages::Message, origin_node_id : UInt64?, cluster : Messages) : Nil
+    @seen << message.text
+    if request = @replacement
+      @replacement = nil
+      cluster.remove_fabric(2_u8)
+      cluster.invoke_command(Messages::CMD_PRESENT_MESSAGES_REQUEST, request.to_tlv(nil),
+        is_case_session: true, fabric_index: 2_u8)
+    end
+  end
+
+  def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
+  end
+end
+
 private def message_id(value : UInt8) : Bytes
   Bytes.new(16, value)
 end
@@ -16,16 +63,200 @@ private def present_message(id : Bytes, text : String = "Hello") : Messages::Pre
 end
 
 describe Messages do
-  it "declares revision 3 and rejects unimplemented optional features" do
+  it "declares revision 3 and rejects unsupported feature combinations" do
     cluster = build(Messages)
     cluster.cluster_id.id.should eq(0x0097_u32)
     cluster.cluster_revision.should eq(3_u16)
     read_tlv(cluster, Messages::ATTR_MESSAGES, 1_u8).as_list.should be_empty
     read_tlv(cluster, Messages::ATTR_ACTIVE_MESSAGE_IDS, 1_u8).as_list.should be_empty
+    host = MessagePresentationHost.new
     expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ReceivedConfirmation) }
     expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ConfirmationResponse) }
     expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ConfirmationReply) }
     expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ProtectedMessages) }
+    expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ConfirmationResponse, host: host) }
+    expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ConfirmationReply, host: host) }
+    expect_raises(ArgumentError) { build(Messages, feature_map: Messages::Feature::ProtectedMessages, host: host) }
+    confirmed = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation, host: host)
+    expect_raises(ArgumentError) { confirmed.feature_map = Messages::Feature::None }
+    build(Messages, feature_map: Messages::Feature::ReceivedConfirmation |
+                                 Messages::Feature::ConfirmationResponse |
+                                 Messages::Feature::ConfirmationReply, host: host)
+  end
+
+  it "validates choices, replies, and event fields for enabled response profiles" do
+    host = MessagePresentationHost.new
+    cluster = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation |
+                                           Messages::Feature::ConfirmationResponse |
+                                           Messages::Feature::ConfirmationReply, host: host)
+    events = [] of TLV::Any
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, fabric : UInt8?) do
+      events << data if event == Messages::EVENT_MESSAGE_COMPLETE && fabric == 1_u8
+      nil
+    end
+    id = message_id(21_u8)
+    control = Messages::CONTROL_CONFIRMATION | Messages::CONTROL_RESPONSE | Messages::CONTROL_REPLY
+    request = Messages::PresentRequest.new(id, Messages::Priority::Medium, control, nil, nil,
+      "Please respond", [Messages::ResponseOption.new(2_u32, "Yes"), Messages::ResponseOption.new(3_u32, "No")])
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+      is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
+    host.queued.should eq([{id, 1_u8, nil}])
+    expect_raises(ArgumentError) { cluster.complete(id, 2_u8, 2_u32) }
+    expect_raises(ArgumentError) { cluster.complete(id, 1_u8, 4_u32) }
+    expect_raises(ArgumentError) { cluster.complete(id, 1_u8, 2_u32, "x" * 257) }
+    cluster.present(id, 1_u8)
+    cluster.complete(id, 1_u8, 2_u32, "Accepted", Messages::FuturePreference::Allowed)
+    fields = events.last.as_structure
+    fields.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8])
+    fields[1_u8].value.should eq(2_u32)
+    fields[2_u8].value.should eq("Accepted")
+    cluster.messages(1_u8).as(Array(Messages::Message)).should be_empty
+  end
+
+  it "persists confirmation state and emits nullable fields on expiry" do
+    host = MessagePresentationHost.new
+    now_ms = 1_700_000_000_000_i64
+    clock = -> { Time.unix_ms(now_ms) }
+    cluster = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation |
+                                           Messages::Feature::ConfirmationResponse |
+                                           Messages::Feature::ConfirmationReply, host: host, clock: clock)
+    id = message_id(22_u8)
+    request = Messages::PresentRequest.new(id, Messages::Priority::High,
+      Messages::CONTROL_CONFIRMATION | Messages::CONTROL_RESPONSE | Messages::CONTROL_REPLY,
+      nil, 1_000_u64, "Expires", [] of Messages::ResponseOption)
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+      is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
+    cluster.present(id, 1_u8)
+    restored = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation |
+                                            Messages::Feature::ConfirmationResponse |
+                                            Messages::Feature::ConfirmationReply, host: host, clock: clock)
+    events = [] of TLV::Any
+    restored.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, fabric : UInt8?) do
+      events << data if event == Messages::EVENT_MESSAGE_COMPLETE && fabric == 1_u8
+      nil
+    end
+    restored.restore_state(cluster.save_state || fail("Messages state missing"))
+    restored.active_message_ids.should eq([id])
+    now_ms += 1_000
+    restored.process_due_messages
+    fields = events.last.as_structure
+    fields.keys.should eq([0_u8, 1_u8, 2_u8, 3_u8])
+    fields[1_u8].value.should be_nil
+    fields[2_u8].value.should be_nil
+    fields[3_u8].value.should be_nil
+  end
+
+  it "emits only the fields allowed by each advertised profile" do
+    host = MessagePresentationHost.new
+    {
+      {Messages::Feature::ReceivedConfirmation, [0_u8, 3_u8]},
+      {Messages::Feature::ReceivedConfirmation | Messages::Feature::ConfirmationResponse, [0_u8, 1_u8, 3_u8]},
+      {Messages::Feature::ReceivedConfirmation | Messages::Feature::ConfirmationReply, [0_u8, 2_u8, 3_u8]},
+    }.each_with_index do |(features, expected_fields), index|
+      cluster = build(Messages, feature_map: features, host: host)
+      emitted = [] of TLV::Any
+      cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+        emitted << data if event == Messages::EVENT_MESSAGE_COMPLETE
+        nil
+      end
+      id = message_id((30 + index).to_u8)
+      responses = features.confirmation_response? ? [] of Messages::ResponseOption : nil
+      request = Messages::PresentRequest.new(id, Messages::Priority::Low, 0_u16, nil, nil, "Notice", responses)
+      expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+        is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
+      cluster.complete(id, 1_u8)
+      emitted.last.as_structure.keys.should eq(expected_fields)
+    end
+  end
+
+  it "rejects malformed responses without storing a message" do
+    host = MessagePresentationHost.new
+    cluster = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation |
+                                           Messages::Feature::ConfirmationResponse |
+                                           Messages::Feature::ConfirmationReply, host: host)
+    id = message_id(40_u8)
+    duplicates = [Messages::ResponseOption.new(2_u32, "Yes"), Messages::ResponseOption.new(2_u32, "No")]
+    request = Messages::PresentRequest.new(id, Messages::Priority::Medium,
+      Messages::CONTROL_RESPONSE, nil, nil, "Question", duplicates)
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+      is_case_session: true, fabric_index: 1_u8), MessageStatus::InvalidCommand)
+    read_tlv(cluster, Messages::ATTR_MESSAGES, 1_u8).as_list.should be_empty
+    without_responses = Messages::PresentRequest.new(id, Messages::Priority::Medium,
+      Messages::CONTROL_RESPONSE, nil, nil, "Question")
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, without_responses,
+      is_case_session: true, fabric_index: 1_u8), MessageStatus::InvalidCommand)
+  end
+
+  it "replays pending messages to the host and dismisses only the removed fabric" do
+    host = MessagePresentationHost.new
+    features = Messages::Feature::ReceivedConfirmation
+    cluster = build(Messages, feature_map: features, host: host)
+    first = message_id(41_u8)
+    second = message_id(42_u8)
+    [{first, 1_u8, 111_u64}, {second, 2_u8, 222_u64}].each do |id, fabric, origin|
+      cluster.request_peer_node_id = origin
+      request = Messages::PresentRequest.new(id, Messages::Priority::Low,
+        Messages::CONTROL_CONFIRMATION, nil, nil, "Notice")
+      expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+        is_case_session: true, fabric_index: fabric), MessageStatus::Success)
+    end
+    restored = build(Messages, feature_map: features, host: host)
+    restored.restore_state(cluster.save_state || fail("Messages state missing"))
+    host.queued.clear
+    restored.replay_messages_to_host!
+    host.queued.should eq([{first, 1_u8, 111_u64}, {second, 2_u8, 222_u64}])
+    restored.remove_fabric(1_u8)
+    host.cancelled.should eq([{first, 1_u8}])
+    restored.messages(2_u8).as(Array(Messages::Message)).map(&.message_id).should eq([second])
+
+    legacy = cluster.save_state || fail("Messages state missing")
+    legacy.delete("origin_node_ids")
+    legacy_restored = build(Messages, feature_map: features, host: host)
+    legacy_restored.restore_state(legacy)
+    host.queued.clear
+    legacy_restored.replay_messages_to_host!
+    host.queued.should eq([{first, 1_u8, nil}, {second, 2_u8, nil}])
+  end
+
+  it "does not replay a message removed by an earlier host callback" do
+    host = ReentrantMessagePresentationHost.new
+    cluster = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation, host: host)
+    first = message_id(43_u8)
+    removed = message_id(44_u8)
+    [{first, 1_u8}, {removed, 2_u8}].each do |id, fabric|
+      request = Messages::PresentRequest.new(id, Messages::Priority::Low,
+        Messages::CONTROL_CONFIRMATION, nil, nil, "Notice")
+      expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+        is_case_session: true, fabric_index: fabric), MessageStatus::Success)
+    end
+    host.queued.clear
+    restored = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation, host: host)
+    restored.restore_state(cluster.save_state || fail("Messages state missing"))
+    host.removed_fabric = 2_u8
+    restored.replay_messages_to_host!
+    host.queued.should eq([first])
+    restored.messages(2_u8).as(Array(Messages::Message)).should be_empty
+  end
+
+  it "does not replay stale content when a callback replaces the same ID" do
+    host = ReplacingMessagePresentationHost.new
+    cluster = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation, host: host)
+    first = message_id(45_u8)
+    replaced = message_id(46_u8)
+    [{first, 1_u8, "First"}, {replaced, 2_u8, "Stale"}].each do |id, fabric, text|
+      request = Messages::PresentRequest.new(id, Messages::Priority::Low,
+        Messages::CONTROL_CONFIRMATION, nil, nil, text)
+      expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+        is_case_session: true, fabric_index: fabric), MessageStatus::Success)
+    end
+    restored = build(Messages, feature_map: Messages::Feature::ReceivedConfirmation, host: host)
+    restored.restore_state(cluster.save_state || fail("Messages state missing"))
+    host.seen.clear
+    host.replacement = Messages::PresentRequest.new(replaced, Messages::Priority::High,
+      Messages::CONTROL_CONFIRMATION, nil, nil, "Fresh")
+    restored.replay_messages_to_host!
+    host.seen.should eq(["First", "Fresh"])
+    restored.messages(2_u8).as(Array(Messages::Message)).first.text.should eq("Fresh")
   end
 
   it "encodes the fixed 16-byte ID and mandatory nullable fields" do
