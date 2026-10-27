@@ -1211,11 +1211,58 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA104_u64,
         nonce: Random::Secure.hex(32)))
     wrong_rotation_target.status.should eq("error")
-    wrong_rotation_target.error.to_s.should contain("not awaiting the old Anchor rotation")
+    wrong_rotation_target.error.to_s.should contain("not awaiting the requested Administrator rotation")
     reconciled_first_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA102_u64,
         nonce: Random::Secure.hex(32)))
     reconciled_first_rotation.status.should eq("ok"), reconciled_first_rotation.error.to_s
+
+    # C commits the new-fabric NOC, but B loses the durable completion save.
+    interrupted_second_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_second_transfer_administrator_rotation: true))
+    interrupted_second_rotation.status.should eq("error")
+    interrupted_second_rotation.error.to_s.should contain("Injected interruption after durable second Administrator rotation")
+    active_second_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    active_second_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating.value)
+    active_second_rotation.inspected_active_rotation_node_id.should eq(0xA104_u64)
+    c_committed_noc = administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64)
+    c_committed_noc.noc.should_not be_empty
+    administrator_noc(joiner_client, anchor_peer, joiner_bootstrap.fabric, 0xA102_u64).noc
+      .should eq(a_new_noc_before_restart.noc)
+    administrator_noc(joiner_client, joiner_peer, joiner_bootstrap.fabric, 0xB102_u64).noc
+      .should eq(b_noc_before_rotation.noc)
+    joiner.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+    persisted_second_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    persisted_second_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating.value)
+    persisted_second_rotation.inspected_active_rotation_node_id.should eq(0xA104_u64)
+    c_reloaded_noc = administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64)
+    c_reloaded_noc.noc.should eq(c_committed_noc.noc)
+    c_reloaded_noc.icac.should eq(c_committed_noc.icac)
+    unsafe_second_rotation_retry = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
+    unsafe_second_rotation_retry.status.should eq("error")
+    unsafe_second_rotation_retry.error.to_s.should contain("needs reconciliation")
+    wrong_second_rotation_target = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA102_u64,
+        nonce: Random::Secure.hex(32), rotation_target_node_id: 0xA102_u64))
+    wrong_second_rotation_target.status.should eq("error")
+    wrong_second_rotation_target.error.to_s.should contain("not awaiting the requested Administrator rotation")
+    reconciled_second_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-transfer-rotated-administrator", 0xA102_u64,
+        nonce: Random::Secure.hex(32), rotation_target_node_id: 0xA104_u64))
+    reconciled_second_rotation.status.should eq("ok"), reconciled_second_rotation.error.to_s
+    recovered_second_rotation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
+    recovered_second_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copied.value)
+    recovered_second_rotation.inspected_active_rotation_node_id.should be_nil
+    administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64).noc
+      .should eq(c_committed_noc.noc)
 
     # A and C rotate onto B's root, then B loses the durable Rotated save
     # acknowledgement before promoting its own Anchor credentials.
@@ -1237,6 +1284,8 @@ describe "three provisioned Joint Fabric Administrators" do
     c_new_fabric_after_rotation.fabric_present.should be_true
     c_rotated_credentials = administrator_noc(joiner_client, third_peer,
       joiner_bootstrap.fabric, 0xA104_u64)
+    c_rotated_credentials.noc.should eq(c_committed_noc.noc)
+    c_rotated_credentials.icac.should eq(c_committed_noc.icac)
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(

@@ -174,6 +174,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_transfer_copy : Bool = false
       getter? interrupt_after_transfer_rotation : Bool = false
       getter? interrupt_after_first_transfer_administrator_rotation : Bool = false
+      getter? interrupt_after_second_transfer_administrator_rotation : Bool = false
       getter? interrupt_after_transfer_promotion : Bool = false
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
@@ -188,6 +189,7 @@ module MatterJointFabricAdministrator
       getter anchor_node_id : UInt64?
       getter peer_address : String?
       getter peer_port : Int32?
+      getter rotation_target_node_id : UInt64? = nil
 
       def initialize(@operation : String, @node_id : UInt64,
                      @fabric_id : UInt64? = nil, @root_public_key : Bytes? = nil,
@@ -196,6 +198,7 @@ module MatterJointFabricAdministrator
                      @peer_admin_jfa_endpoint_id : UInt16? = nil,
                      @anchor_node_id : UInt64? = nil, @peer_address : String? = nil,
                      @peer_port : Int32? = nil,
+                     @rotation_target_node_id : UInt64? = nil,
                      @interrupt_after_remove_admin : Bool = false,
                      @interrupt_before_remove_admin : Bool = false,
                      @interrupt_before_transfer_follow_up : Bool = false,
@@ -206,6 +209,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_transfer_copy : Bool = false,
                      @interrupt_after_transfer_rotation : Bool = false,
                      @interrupt_after_first_transfer_administrator_rotation : Bool = false,
+                     @interrupt_after_second_transfer_administrator_rotation : Bool = false,
                      @interrupt_after_transfer_promotion : Bool = false,
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
@@ -1571,13 +1575,15 @@ module MatterJointFabricAdministrator
                                      interrupt_after_copy : Bool = false,
                                      interrupt_after_rotation : Bool = false,
                                      interrupt_after_first_administrator_rotation : Bool = false,
+                                     interrupt_after_second_administrator_rotation : Bool = false,
                                      interrupt_after_promotion : Bool = false,
                                      interrupt_after_complete : Bool = false,
                                      interrupt_after_next_cross_sign : Bool = false,
                                      reconcile_promoting : Bool = false,
                                      reconcile_rotating_administrator : Bool = false,
                                      reconcile_copying : Bool = false,
-                                     reconciliation_nonce : String? = nil) : Nil
+                                     reconciliation_nonce : String? = nil,
+                                     reconciliation_target_node_id : UInt64? = nil) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
       own_fabric = @propagation_fabric || raise Matter::ConfigurationError.new("Candidate Anchor fabric is not provisioned")
       old_fabrics = fabric_table.all_fabrics.select do |fabric|
@@ -1619,13 +1625,14 @@ module MatterJointFabricAdministrator
         raise Matter::ConfigurationError.new("Anchor transfer is not awaiting Datastore copy reconciliation")
       end
       if reconcile_rotating_administrator
+        rotation_target_node_id = reconciliation_target_node_id || old_anchor_node_id
         unless reconciliation_nonce && reconciliation_nonce.size == ROTATION_NONCE_HEX_LENGTH &&
                reconciliation_nonce.matches?(/\A[0-9a-fA-F]+\z/)
           raise Matter::ConfigurationError.new("A 32-byte hexadecimal rotation nonce is required")
         end
-        if !journal.stage.rotating? || journal.active_rotation_node_id != old_anchor_node_id ||
-           journal.rotated_administrator_node_ids.includes?(old_anchor_node_id)
-          raise Matter::ConfigurationError.new("Anchor transfer is not awaiting the old Anchor rotation")
+        if !journal.stage.rotating? || journal.active_rotation_node_id != rotation_target_node_id ||
+           journal.rotated_administrator_node_ids.includes?(rotation_target_node_id)
+          raise Matter::ConfigurationError.new("Anchor transfer is not awaiting the requested Administrator rotation")
         end
       end
       @transfer_in_progress = true
@@ -1722,6 +1729,11 @@ module MatterJointFabricAdministrator
                journal.active_rotation_node_id == old_anchor_node_id
               raise Matter::TransportError.new("Injected interruption after durable first Administrator rotation")
             end
+            if interrupt_after_second_administrator_rotation && journal.stage.rotating? &&
+               journal.active_rotation_node_id != old_anchor_node_id &&
+               journal.rotated_administrator_node_ids.includes?(old_anchor_node_id)
+              raise Matter::TransportError.new("Injected interruption after durable second Administrator rotation")
+            end
             nil
           },
           -> {
@@ -1780,16 +1792,18 @@ module MatterJointFabricAdministrator
         end
         if reconcile_rotating_administrator
           nonce = reconciliation_nonce || raise Matter::ConfigurationError.new("Rotation nonce is unavailable")
+          target_node_id = reconciliation_target_node_id || old_anchor_node_id
           verify_durable_transfer_rotation!(journal, preflight, old_anchor_node_id, old_fabric,
-            own_fabric, bootstrap, admin_version, anchor_version)
-          new_session = Matter::Controller::Pairing::CasePairing.new.pair(own_client, old_peer,
-            bootstrap.fabric, peer_node_id: old_anchor_node_id)
+            own_fabric, bootstrap, admin_version, anchor_version, target_node_id)
+          target_peer = target_node_id == old_anchor_node_id ? old_peer : resolve_transfer_peer(scanner, old_identity.compressed_fabric_id, target_node_id)
+          new_session = Matter::Controller::Pairing::CasePairing.new.pair(own_client, target_peer,
+            bootstrap.fabric, peer_node_id: target_node_id)
           Matter::Controller::AdministratorRemoval::RotationInspection.verify_completed!(
-            own_im, new_session, old_peer, bootstrap.fabric.root_cert,
+            own_im, new_session, target_peer, bootstrap.fabric.root_cert,
             bootstrap.fabric.fabric_id, bootstrap.fabric.root_public_key,
-            old_anchor_node_id, admin_version, nonce.hexbytes,
+            target_node_id, admin_version, nonce.hexbytes,
             exact_cats: [Matter::DataType::CaseAuthenticatedTag.create(ADMINISTRATOR_CAT_ID, admin_version)])
-          workflow.reconcile_completed_rotation!(old_anchor_node_id)
+          workflow.reconcile_completed_rotation!(target_node_id)
           return
         end
         workflow.run
@@ -1812,16 +1826,17 @@ module MatterJointFabricAdministrator
                                                   source : Datastore, old_anchor_node_id : UInt64,
                                                   old_fabric : Matter::Fabric, own_fabric : Matter::Fabric,
                                                   bootstrap : Matter::Controller::JointCommissioning::AnchorBootstrap,
-                                                  admin_version : UInt16, anchor_version : UInt16) : Nil
+                                                  admin_version : UInt16, anchor_version : UInt16,
+                                                  target_node_id : UInt64) : Nil
       unless journal.stage.rotating? && journal.candidate_node_id == old_fabric.node_id &&
-             journal.active_rotation_node_id == old_anchor_node_id &&
+             journal.active_rotation_node_id == target_node_id &&
              source.status.state.delete_pending? && source.anchor_root_ca == old_fabric.root_cert &&
              source.anchor_node_id == old_anchor_node_id
         raise Matter::AuthenticationError.new("Old Anchor rotation lacks the expected frozen transfer")
       end
       rotation_order = source.admin_list.map(&.node_id).reject(&.==(old_fabric.node_id))
       Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal,
-        rotation_order, old_anchor_node_id)
+        rotation_order, target_node_id)
       verify_unpromoted_transfer_candidate!(journal, source, old_fabric, own_fabric, bootstrap,
         admin_version, anchor_version)
     end
@@ -2913,6 +2928,7 @@ module MatterJointFabricAdministrator
               request.interrupt_before_transfer_copy_journal?,
               request.interrupt_after_transfer_copy?, request.interrupt_after_transfer_rotation?,
               request.interrupt_after_first_transfer_administrator_rotation?,
+              request.interrupt_after_second_transfer_administrator_rotation?,
               request.interrupt_after_transfer_promotion?,
               request.interrupt_after_transfer_complete?,
               request.interrupt_after_next_transfer_cross_sign?)
@@ -2989,7 +3005,8 @@ module MatterJointFabricAdministrator
             CommandResult.new("ok")
           when "reconcile-transfer-rotated-administrator"
             transfer_anchor_from(request.node_id, reconcile_rotating_administrator: true,
-              reconciliation_nonce: request.nonce)
+              reconciliation_nonce: request.nonce,
+              reconciliation_target_node_id: request.rotation_target_node_id)
             CommandResult.new("ok")
           when "inspect-transfer-stage"
             document = persistence.app_document(APP_TRANSFER_DOCUMENT) ||

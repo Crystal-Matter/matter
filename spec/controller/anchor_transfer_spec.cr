@@ -629,6 +629,38 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     journal.rotated_administrator_node_ids.should be_empty
   end
 
+  it "keeps the second Administrator active unless its exact ordered proof can be saved" do
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0xA103_u64, TransferStage::Rotating)
+    journal.active_rotation_node_id = 0xA104_u64
+    journal.rotated_administrator_node_ids << 0xA102_u64
+    ordered = [0xA102_u64, 0xA104_u64]
+    Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal, ordered, 0xA104_u64)
+    expect_raises(Matter::AuthenticationError, /frozen order/) do
+      Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal, ordered, 0xA102_u64)
+    end
+    journal.rotated_administrator_node_ids << 0xA102_u64
+    expect_raises(Matter::AuthenticationError, /frozen order/) do
+      Matter::Controller::AnchorTransfer::Workflow.verify_rotation_prefix!(journal, ordered, 0xA104_u64)
+    end
+    journal.rotated_administrator_node_ids.pop
+
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(committed_anchor_store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(_state : Matter::Controller::AnchorTransfer::Journal) {
+        raise Matter::StorageError.new("Second rotation journal flush failed")
+      }, journal)
+    expect_raises(Matter::StorageError, /Second rotation journal flush failed/) do
+      workflow.reconcile_completed_rotation!(0xA104_u64)
+    end
+    journal.stage.should eq(TransferStage::Rotating)
+    journal.active_rotation_node_id.should eq(0xA104_u64)
+    journal.rotated_administrator_node_ids.should eq([0xA102_u64])
+    durable.stage.should eq(TransferStage::Rotating)
+    durable.active_rotation_node_id.should eq(0xA104_u64)
+    durable.rotated_administrator_node_ids.should eq([0xA102_u64])
+  end
+
   it "blocks request when an individual entry is pending or consent is absent" do
     store = committed_anchor_store
     pending = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
