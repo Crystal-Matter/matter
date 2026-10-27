@@ -126,8 +126,9 @@ module Matter
           raise Matter::ProtocolError.new("OTA provider returned an invalid image offer")
         end
 
-        if offer.user_consent_needed && (consent = @on_user_consent)
-          unless consent.call(offer)
+        if offer.user_consent_needed
+          consent = @on_user_consent
+          unless consent && consent.call(offer)
             @requestor.transition_to(Requestor::UpdateState::DelayedOnUserConsent,
               Requestor::ChangeReason::Unknown, version)
             return
@@ -242,7 +243,8 @@ module Matter
       # token across any reboot before calling this method.
       def notify_applied(session : Session::SecureContext, peer : Socket::IPAddress,
                          provider_endpoint : UInt16, update_token : Bytes,
-                         software_version : UInt32, product_id : UInt16) : Nil
+                         software_version : UInt32, product_id : UInt16,
+                         publish_result : Bool = true) : Nil
         unless session.case_session? && session.fabric_index && session.peer_node_id &&
                update_token.size.in?(Provider::UPDATE_TOKEN_MIN_LENGTH..Provider::UPDATE_TOKEN_MAX_LENGTH)
           raise Matter::SessionError.new("OTA NotifyUpdateApplied requires a CASE provider and valid token")
@@ -260,8 +262,10 @@ module Matter
           raise Matter::ClusterError.from_wire("OTA NotifyUpdateApplied failed",
             status.status.status, status.status.cluster_status)
         end
-        @requestor.emit_version_applied(software_version, product_id)
-        @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Success)
+        if publish_result
+          @requestor.emit_version_applied(software_version, product_id)
+          @requestor.transition_to(Requestor::UpdateState::Idle, Requestor::ChangeReason::Success)
+        end
       end
 
       private def response_fields(response : InteractionModel::InvokeResponseMessage,
