@@ -5,6 +5,9 @@ require "./support/main"
 # feature choices. A real appliance replaces these callbacks with its own
 # physical controls and can refuse a command while a cycle is running.
 module MatterTemperatureControl
+  NUMERIC_TEMPERATURE_ENDPOINT_ID = 1_u16
+  TEMPERATURE_LEVEL_ENDPOINT_ID   = 2_u16
+
   alias Control = Matter::Cluster::TemperatureControl
   alias Status = Matter::InteractionModel::Status
 
@@ -13,14 +16,14 @@ module MatterTemperatureControl
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Temperature Control",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_temperature_control_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint NUMERIC_TEMPERATURE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Control,
         feature_map: Control::Feature::TemperatureNumber | Control::Feature::TemperatureStep,
         min_temperature: 1500_i16,
@@ -29,7 +32,7 @@ module MatterTemperatureControl
         step: 50_i16
     end
 
-    endpoint 2, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint TEMPERATURE_LEVEL_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Control,
         feature_map: Control::Feature::TemperatureLevel,
         supported_temperature_levels: ["Cold", "Warm", "Hot"],
@@ -37,12 +40,12 @@ module MatterTemperatureControl
     end
 
     protected def before_start : Nil
-      numeric = node.get_cluster!(1_u16, Control)
+      numeric = node.get_cluster!(NUMERIC_TEMPERATURE_ENDPOINT_ID, Control)
       numeric.on_set_temperature do |temperature, _level|
         # Refuse the hot extreme to demonstrate a real host acceptance gate.
         temperature == 3500_i16 ? Status.invalid_in_state : Status.success
       end
-      levels = node.get_cluster!(2_u16, Control)
+      levels = node.get_cluster!(TEMPERATURE_LEVEL_ENDPOINT_ID, Control)
       levels.on_set_temperature do |_temperature, _level|
         Status.success
       end

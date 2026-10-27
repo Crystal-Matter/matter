@@ -3,6 +3,10 @@ require "./support/main"
 
 # Synthetic actuator and video source for commissioned PTZ wire tests.
 module MatterCameraPtz
+  DEVICE_ENDPOINT_ID = 1_u16
+
+  EXAMPLE_PRODUCT_ID = 0x0554_u16
+
   alias Settings = Matter::Cluster::CameraAvSettingsUserLevelManagement
   alias Video = Matter::Cluster::CameraAvStreamManagement
   alias Status = Matter::InteractionModel::Status
@@ -12,14 +16,14 @@ module MatterCameraPtz
 
     identity vendor: "Spider-Gazelle", product: "Synthetic PTZ Camera",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0554_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_camera_ptz_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Video,
         supported_stream_usages: [Video::StreamUsage::LiveView],
         max_content_buffer_size: 65_536_u32,
@@ -42,8 +46,8 @@ module MatterCameraPtz
     end
 
     protected def before_start : Nil
-      video = node.get_cluster!(1_u16, Video)
-      settings = node.get_cluster!(1_u16, Settings)
+      video = node.get_cluster!(DEVICE_ENDPOINT_ID, Video)
+      settings = node.get_cluster!(DEVICE_ENDPOINT_ID, Settings)
       video.on_video_allocate { |_request, _id| Status.success }
       video.on_video_deallocate { |_id| Status.success }
       settings.on_mptz_move do |target|

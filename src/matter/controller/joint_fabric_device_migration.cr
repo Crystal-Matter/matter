@@ -651,9 +651,10 @@ module Matter
           unless DataType::NodeId.valid_joint_fabric?(node_id) && node_id != anchor.controller_node_id
             raise Matter::ConfigurationError.new("Delegated Joint Fabric controller needs a distinct operational Node ID")
           end
-          if group_cat == 0_u16 || group_cat.in?(Cluster::JointFabricDatastore::ANCHOR_CAT,
+          if group_cat == Cluster::JointFabricDatastore::UNSPECIFIED_GROUP_CAT || group_cat.in?(Cluster::JointFabricDatastore::ANCHOR_CAT,
                Cluster::JointFabricDatastore::ADMINISTRATOR_CAT) ||
-             group_cat_version.in?(0_u16, UInt16::MAX)
+             group_cat_version.in?(Cluster::JointFabricDatastore::UNSPECIFIED_GROUP_CAT_VERSION,
+               Cluster::JointFabricDatastore::RESERVED_GROUP_CAT_VERSION)
             raise Matter::ConfigurationError.new("Invalid Joint Fabric group CAT or version")
           end
           unless @fabric_id == anchor.fabric_id && @root_public_key == anchor.root_public_key

@@ -4,6 +4,12 @@ require "./support/main"
 # Synthetic combined detector. Real hardware must report sensor conditions,
 # mounting, power-source faults, and expiry using the cluster host API.
 module MatterSmokeCOAlarm
+  SMOKE_CO_ENDPOINT_ID       = 1_u16
+  EXTERNAL_POWER_ENDPOINT_ID = 2_u16
+  BACKUP_BATTERY_ENDPOINT_ID = 3_u16
+
+  EXAMPLE_PRODUCT_ID = 0x005C_u16
+
   alias Alarm = Matter::Cluster::SmokeCOAlarm
   alias Power = Matter::Cluster::PowerSource
 
@@ -12,28 +18,28 @@ module MatterSmokeCOAlarm
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Smoke CO Alarm",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x005C_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::SMOKE_CO_ALARM
 
     storage yaml: "matter_smoke_co_alarm_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::SMOKE_CO_ALARM do
+    endpoint SMOKE_CO_ENDPOINT_ID, device_type: Matter::DeviceType::SMOKE_CO_ALARM do
       cluster Matter::Cluster::Identify
       cluster Alarm, feature_map: Alarm::Feature::SmokeAlarm | Alarm::Feature::CoAlarm,
         self_test_supported: true
     end
 
-    endpoint 2, device_type: Matter::DeviceType::POWER_SOURCE do
+    endpoint EXTERNAL_POWER_ENDPOINT_ID, device_type: Matter::DeviceType::POWER_SOURCE do
       cluster Power, feature_map: Power::Feature::Wired,
         description: "Synthetic external power", wired_present: true,
-        endpoint_list: [1_u16]
+        endpoint_list: [SMOKE_CO_ENDPOINT_ID]
     end
 
-    endpoint 3, device_type: Matter::DeviceType::POWER_SOURCE do
+    endpoint BACKUP_BATTERY_ENDPOINT_ID, device_type: Matter::DeviceType::POWER_SOURCE do
       cluster Power, feature_map: Power::Feature::Battery | Power::Feature::Rechargeable | Power::Feature::Replaceable,
-        description: "Synthetic backup battery", endpoint_list: [1_u16],
+        description: "Synthetic backup battery", endpoint_list: [SMOKE_CO_ENDPOINT_ID],
         bat_charge_level: Power::BatChargeLevel::Ok,
         bat_replacement_needed: false,
         bat_replaceability: Power::BatReplaceability::UserReplaceable,
@@ -43,7 +49,7 @@ module MatterSmokeCOAlarm
     end
 
     protected def before_start : Nil
-      alarm = node.get_cluster!(1_u16, Alarm)
+      alarm = node.get_cluster!(SMOKE_CO_ENDPOINT_ID, Alarm)
       alarm.on_self_test do
         spawn do
           sleep 15.seconds

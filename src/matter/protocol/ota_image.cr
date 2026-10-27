@@ -16,6 +16,13 @@ module Matter
       UNSPECIFIED_VENDOR_ID  = 0_u16
       UNSPECIFIED_PRODUCT_ID = 0_u16
 
+      enum DigestType : UInt8
+        Sha256   =  1
+        Sha384   =  7
+        Sha512   =  8
+        Sha3_256 = 10
+      end
+
       class InvalidImage < Matter::Error
       end
 
@@ -60,7 +67,7 @@ module Matter
                        @min_applicable_software_version : UInt32? = nil,
                        @max_applicable_software_version : UInt32? = nil,
                        @release_notes_url : String? = nil,
-                       @image_digest_type : UInt8 = 1_u8,
+                       @image_digest_type : UInt8 = DigestType::Sha256.value,
                        @image_digest : Bytes = Bytes.empty)
         end
       end
@@ -139,10 +146,10 @@ module Matter
 
       private def self.digest_algorithm(type : UInt8) : {String, Int32}
         case type
-        when  1_u8 then {"SHA256", 32}
-        when  7_u8 then {"SHA384", 48}
-        when  8_u8 then {"SHA512", 64}
-        when 10_u8 then {"SHA3-256", 32}
+        when DigestType::Sha256.value   then {"SHA256", 32}
+        when DigestType::Sha384.value   then {"SHA384", 48}
+        when DigestType::Sha512.value   then {"SHA512", 64}
+        when DigestType::Sha3_256.value then {"SHA3-256", 32}
         else
           raise InvalidImage.new("Unsupported OTA image digest algorithm #{type}")
         end

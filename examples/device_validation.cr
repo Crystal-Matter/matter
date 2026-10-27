@@ -3,6 +3,17 @@ require "json"
 require "file_utils"
 require "colorize"
 
+module DeviceValidationProtocolIds
+  GLOBAL_GENERATED_COMMAND_LIST = 0xFFF8_u32
+  GLOBAL_ACCEPTED_COMMAND_LIST  = 0xFFF9_u32
+  GLOBAL_ATTRIBUTE_LIST         = 0xFFFB_u32
+  GLOBAL_FEATURE_MAP            = 0xFFFC_u32
+  GLOBAL_CLUSTER_REVISION       = 0xFFFD_u32
+  CASE_AUTH_MODE                =       2_u8
+  ADMINISTER_PRIVILEGE          =       5_u8
+  DEFAULT_DEVICE_ENDPOINT_ID    =      1_u16
+end
+
 # Device validation helper that shells out to `chip-tool`.
 #
 # Intended usage (after pairing with `chip-tool`):
@@ -370,7 +381,13 @@ run_check(checks, chip_tool, storage_dir_a, "onoff.attribute-list", ["onoff", "r
     next CheckResult.new("onoff.attribute-list", false, "duplicates found: #{duplicates.sort.join(", ")}")
   end
 
-  required = [65528_u32, 65529_u32, 65531_u32, 65532_u32, 65533_u32] # generated/accepted/attribute-list/feature-map/cluster-revision
+  required = [
+    DeviceValidationProtocolIds::GLOBAL_GENERATED_COMMAND_LIST,
+    DeviceValidationProtocolIds::GLOBAL_ACCEPTED_COMMAND_LIST,
+    DeviceValidationProtocolIds::GLOBAL_ATTRIBUTE_LIST,
+    DeviceValidationProtocolIds::GLOBAL_FEATURE_MAP,
+    DeviceValidationProtocolIds::GLOBAL_CLUSTER_REVISION,
+  ]
   missing = required.reject { |id| list.includes?(id) }
   unless missing.empty?
     next CheckResult.new("onoff.attribute-list", false, "missing required global attributes: #{missing.join(", ")}")
@@ -409,7 +426,7 @@ node_id_b ||= begin
   end
 end
 
-endpoint_u16 = endpoint_id.to_u16? || 1_u16
+endpoint_u16 = endpoint_id.to_u16? || DeviceValidationProtocolIds::DEFAULT_DEVICE_ENDPOINT_ID
 
 pairing_code = pairing_code_override
 window_discriminator = Random.rand(0..4095).to_s
@@ -511,7 +528,7 @@ if pairing_code && b_storage_ready
   run_check(checks, chip_tool, storage_dir_a, "accesscontrol.acl.fabric-a (discover admin)", ["accesscontrol", "read", "acl", node_id, "0"]) do |cmd_result|
     next check_command_ok("accesscontrol.acl.fabric-a (discover admin)", cmd_result) unless cmd_result.ok?
     entries = extract_acl_entries(cmd_result.output)
-    entry = entries.find { |acl_entry| acl_entry.auth_mode == 2_u8 && acl_entry.privilege >= 5_u8 && !acl_entry.subjects.empty? }
+    entry = entries.find { |acl_entry| acl_entry.auth_mode == DeviceValidationProtocolIds::CASE_AUTH_MODE && acl_entry.privilege >= DeviceValidationProtocolIds::ADMINISTER_PRIVILEGE && !acl_entry.subjects.empty? }
     subject_a = entry.try(&.subjects.first?)
     if subject_a
       CheckResult.new("accesscontrol.acl.fabric-a (discover admin)", true, "subject_a=#{subject_a}")
@@ -523,7 +540,7 @@ if pairing_code && b_storage_ready
   run_check(checks, chip_tool, storage_dir_b, "accesscontrol.acl.fabric-b (discover admin)", ["accesscontrol", "read", "acl", node_id_b.as(String), "0"]) do |cmd_result|
     next check_command_ok("accesscontrol.acl.fabric-b (discover admin)", cmd_result) unless cmd_result.ok?
     entries = extract_acl_entries(cmd_result.output)
-    entry = entries.find { |acl_entry| acl_entry.auth_mode == 2_u8 && acl_entry.privilege >= 5_u8 && !acl_entry.subjects.empty? }
+    entry = entries.find { |acl_entry| acl_entry.auth_mode == DeviceValidationProtocolIds::CASE_AUTH_MODE && acl_entry.privilege >= DeviceValidationProtocolIds::ADMINISTER_PRIVILEGE && !acl_entry.subjects.empty? }
     subject_b = entry.try(&.subjects.first?)
     if subject_b
       CheckResult.new("accesscontrol.acl.fabric-b (discover admin)", true, "subject_b=#{subject_b}")

@@ -4,6 +4,10 @@ require "./support/main"
 # Synthetic robotic vacuum. A real host connects these callbacks to its
 # motors, docking sensors, cleaning hardware, and safety interlocks.
 module MatterRvc
+  DEVICE_ENDPOINT_ID = 1_u16
+
+  EXAMPLE_PRODUCT_ID = 0x4850_u16
+
   alias ModeBase = Matter::Cluster::ModeBase
   alias RunMode = Matter::Cluster::RvcRunMode
   alias CleanMode = Matter::Cluster::RvcCleanMode
@@ -29,29 +33,29 @@ module MatterRvc
 
     identity vendor: "Spider-Gazelle", product: "Synthetic RVC",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x4850_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROBOTIC_VACUUM_CLEANER
 
     storage yaml: "matter_rvc_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::ROBOTIC_VACUUM_CLEANER do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::ROBOTIC_VACUUM_CLEANER do
       cluster Matter::Cluster::Identify, identify_type: :audible_beep
-      cluster RunMode, supported_modes: RUN_MODES, current_mode: 0_u8, as: :run_mode
-      cluster CleanMode, run_mode: run_mode, supported_modes: CLEAN_MODES, current_mode: 0_u8, as: :clean_mode
+      cluster RunMode, supported_modes: RUN_MODES, current_mode: RUN_MODES.first.mode, as: :run_mode
+      cluster CleanMode, run_mode: run_mode, supported_modes: CLEAN_MODES, current_mode: CLEAN_MODES.first.mode, as: :clean_mode
       cluster RvcState, run_mode: run_mode,
         supported_commands: [RvcState::Command::Pause, RvcState::Command::Resume],
         go_home: true, as: :rvc_state
-      cluster ServiceArea, areas: AREAS, reports_current_area: true, current_area: 1_u32,
+      cluster ServiceArea, areas: AREAS, reports_current_area: true, current_area: AREAS.first.area_id,
         skip_enabled: true, as: :service_area
     end
 
     protected def before_start : Nil
-      run = node.endpoint!(1_u16).get_cluster!(RunMode)
-      clean = node.endpoint!(1_u16).get_cluster!(CleanMode)
-      state = node.endpoint!(1_u16).get_cluster!(RvcState)
-      areas = node.endpoint!(1_u16).get_cluster!(ServiceArea)
+      run = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(RunMode)
+      clean = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(CleanMode)
+      state = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(RvcState)
+      areas = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(ServiceArea)
       run.on_change_to_mode = ->(_previous : UInt8, selected : UInt8) do
         state.report_state(selected == run.idle_mode ? RvcState::STOPPED : RvcState::RUNNING)
         ModeBase::ChangeToModeResponse.new(ModeBase::ModeChangeStatus::Success)

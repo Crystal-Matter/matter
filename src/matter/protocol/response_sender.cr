@@ -140,7 +140,7 @@ module Matter
         status : Bdx::Transfer::StatusCode,
       ) : Nil
         report = Session::Pase::Definitions::StatusReport.new(
-          general_status: 1_u16,
+          general_status: Session::Pase::Definitions::StatusReport::GENERAL_STATUS_FAILURE,
           protocol_id: ProtocolId::Bdx.value,
           protocol_status: status.value)
         send_bdx_payload(original_msg, peer, session, ProtocolId::SecureChannel.value,

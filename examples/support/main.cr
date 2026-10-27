@@ -1,6 +1,9 @@
 require "../../src/matter"
 
 module Examples
+  # ProductId zero is reserved; synthetic devices choose a nonzero example ID.
+  RANDOM_PRODUCT_ID_RANGE = 1_u16..UInt16::MAX
+
   # Log level when `MATTER_LOG` names none.
   DEFAULT_LOG_LEVEL = "info"
 

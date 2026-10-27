@@ -13,6 +13,9 @@ module Matter
     class DoorLock < Base
       Log = ::Log.for("matter.cluster.door_lock")
 
+      DEFAULT_PROGRAMMING_USER_INDEX     = 1_u16
+      DEFAULT_PROGRAMMING_USER_UNIQUE_ID = 1_u32
+
       cluster 0x0101, revision: 10
 
       feature :pin_credential, bit: 0
@@ -547,10 +550,10 @@ module Matter
 
         if @feature_map.user?
           # Keep a default programming user slot for easier integration testing.
-          @users[1_u16] = UserRecord.new(
-            user_index: 1_u16,
+          @users[DEFAULT_PROGRAMMING_USER_INDEX] = UserRecord.new(
+            user_index: DEFAULT_PROGRAMMING_USER_INDEX,
             user_name: "Admin",
-            user_unique_id: 1_u32,
+            user_unique_id: DEFAULT_PROGRAMMING_USER_UNIQUE_ID,
             user_status: UserStatus::OccupiedEnabled,
             user_type: UserType::ProgrammingUser,
             credential_rule: CredentialRule::Single,

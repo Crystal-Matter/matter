@@ -4,6 +4,10 @@ require "./support/main"
 # Synthetic VDO endpoint for wire interoperability. Real hosts must attach a
 # camera sensor, encoder and transport before advertising the feature.
 module MatterCameraVideo
+  DEVICE_ENDPOINT_ID = 1_u16
+
+  EXAMPLE_PRODUCT_ID = 0x0552_u16
+
   alias CameraAv = Matter::Cluster::CameraAvStreamManagement
 
   class Device < Matter::Device
@@ -11,14 +15,14 @@ module MatterCameraVideo
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Camera Video",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0552_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_camera_video_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster CameraAv,
         supported_stream_usages: [CameraAv::StreamUsage::LiveView, CameraAv::StreamUsage::Recording],
         max_content_buffer_size: 65_536_u32,
@@ -33,7 +37,7 @@ module MatterCameraVideo
     end
 
     protected def before_start : Nil
-      camera = node.get_cluster!(1_u16, CameraAv)
+      camera = node.get_cluster!(DEVICE_ENDPOINT_ID, CameraAv)
       camera.on_video_allocate { |_request, _id| Matter::InteractionModel::Status.success }
       camera.on_video_deallocate { |_id| Matter::InteractionModel::Status.success }
       super
