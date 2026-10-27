@@ -17,7 +17,7 @@ module Matter
 
         private record Key, session_id : UInt16, exchange_id : UInt16
         private record Pending, session : Session::SecureContext, peer : Socket::IPAddress,
-          designator : Bytes, content : Bytes
+          designator : Bytes, content : Bytes, origin_exchange_id : UInt16?
 
         private class Active
           getter session : Session::SecureContext
@@ -42,32 +42,44 @@ module Matter
         end
 
         def queue(session : Session::SecureContext, peer : Socket::IPAddress,
-                  designator : Bytes, content : Bytes) : Bool
+                  designator : Bytes, content : Bytes,
+                  origin_exchange_id : UInt16? = nil) : Bool
           return false unless session.case_session? && session.fabric_index && session.peer_node_id
           return false if designator.empty? || designator.size > UInt16::MAX ||
                           content.empty? || content.size > MAX_BYTES
           return false if @pending.size + @active.size >= MAX_TRANSFERS
-          @pending << Pending.new(session, peer, designator.dup, content.dup)
+          @pending << Pending.new(session, peer, designator.dup, content.dup, origin_exchange_id)
           true
         end
 
         # Called only after the IM InvokeResponse has been sent.
-        def start_pending : Nil
-          while pending = @pending.shift?
-            exchange_id = allocate_exchange(pending.session.session_id)
-            key = Key.new(pending.session.session_id, exchange_id)
+        def start_pending(session_identity : UInt64? = nil, exchange_id : UInt16? = nil) : Nil
+          while index = @pending.index { |entry| pending_matches?(entry, session_identity, exchange_id) }
+            pending = @pending.delete_at(index)
+            bdx_exchange_id = allocate_exchange(pending.session.session_id)
+            key = Key.new(pending.session.session_id, bdx_exchange_id)
             active = Active.new(pending.session, pending.peer, pending.content)
             @active[key] = active
             init = Wire::Init.new(Wire::Opcode::SendInit,
               Wire::TransferControl::SenderDrive | Wire::TransferControl::ReceiverDrive,
               BLOCK_SIZE, pending.designator, length: pending.content.size.to_u64)
-            @sender.send_bdx_request(pending.session, pending.peer, exchange_id,
-              init.opcode.value, init.to_slice)
+            begin
+              @sender.send_bdx_request(pending.session, pending.peer, bdx_exchange_id,
+                init.opcode.value, init.to_slice)
+            rescue ex
+              finish(key)
+              raise ex
+            end
           end
         end
 
-        def discard_pending : Nil
-          @pending.clear
+        def discard_pending(session_identity : UInt64? = nil, exchange_id : UInt16? = nil) : Nil
+          @pending.reject! { |entry| pending_matches?(entry, session_identity, exchange_id) }
+        end
+
+        private def pending_matches?(entry : Pending, session_identity : UInt64?, exchange_id : UInt16?) : Bool
+          return true unless session_identity && exchange_id
+          entry.session.object_id.to_u64 == session_identity && entry.origin_exchange_id == exchange_id
         end
 
         def handles?(session_id : UInt16, exchange_id : UInt16) : Bool

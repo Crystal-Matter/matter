@@ -12,8 +12,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Let a WebRTC Provider media peer queue outbound Requestor signaling while
   handling a CASE command. The queue dispatches only after the final encrypted
   InvokeResponse chunk is sent, and is discarded on response failure, chunk
-  rejection, timeout, session removal, or fabric removal. A fabric-bound CASE
-  Requestor sink still requires a host media engine; no decoded media is claimed.
+  rejection, timeout, session removal, or fabric removal. A new Invoke on the
+  same exchange abandons the old response before command dispatch, and host
+  cleanup notifies CurrentSessions after releasing the Provider lock. Scope
+  pending outbound BDX to its live CASE session and originating exchange.
+  A fabric-bound CASE Requestor sink still requires a host media engine; no
+  decoded media is claimed.
 
 ### Camera host signaling path
 
