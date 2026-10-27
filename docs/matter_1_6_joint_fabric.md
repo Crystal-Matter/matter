@@ -56,7 +56,10 @@ item below as covered only to the extent of its cited tests.
   An opt-in Groupcast Listener target accepts the provisioned key sets through
   GKM, adopts the fabric, and applies endpoint group membership through root
   Groupcast JoinGroup/LeaveGroup. RefreshNode imports Groupcast membership
-  when present. The target derives fabric-scoped AuxiliaryACL entries for
+  when present. It also reconciles Groups and Binding on endpoint 0 when those
+  clusters are advertised there, while NodeEndpointList continues to contain
+  only the target's Descriptor PartsList endpoints. The target derives
+  fabric-scoped AuxiliaryACL entries for
   authorized group endpoints and hides legacy GKM maps from an adopted fabric.
   An opt-in Sender on the same shared fabric can provision send-only membership
   with no listener endpoints and transmit authenticated group commands using

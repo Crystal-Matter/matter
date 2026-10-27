@@ -93,32 +93,33 @@ module Matter
                                          root_servers : Array(UInt32), groupcast_target : Bool) : Nil
         groupcast_memberships = groupcast_target ? read_list(Cluster::Groupcast::MembershipStruct,
           session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP) : [] of Cluster::Groupcast::MembershipStruct
-        store.node_endpoint_list.select(&.node_id.==(node_id)).each do |endpoint|
-          servers = read_list(UInt32, session, peer, endpoint.endpoint_id, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
+        endpoint_ids = store.node_endpoint_list.select(&.node_id.==(node_id)).map(&.endpoint_id) + [Node::ROOT_ENDPOINT_ID]
+        endpoint_ids.uniq.each do |endpoint_id|
+          servers = endpoint_id == Node::ROOT_ENDPOINT_ID ? root_servers : read_list(UInt32, session, peer, endpoint_id, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
           if groupcast_target
-            group_ids = groupcast_memberships.select { |member| member.endpoints.includes?(endpoint.endpoint_id) }.map(&.group_id)
-            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, group_ids))
+            group_ids = groupcast_memberships.select { |member| member.endpoints.includes?(endpoint_id) }.map(&.group_id)
+            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, group_ids))
           elsif servers.includes?(Cluster::Groups::CLUSTER_ID)
             request = Cluster::Groups::GetGroupMembershipRequest.new([] of DataType::GroupId)
-            fields = invoke_data(session, peer, endpoint.endpoint_id, Cluster::Groups::CLUSTER_ID,
+            fields = invoke_data(session, peer, endpoint_id, Cluster::Groups::CLUSTER_ID,
               Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP, Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE,
               request.to_slice)
             group_ids = Cluster::Groups::GetGroupMembershipResponse.from_slice(fields).group_list.map(&.id)
-            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, group_ids))
+            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, group_ids))
           else
-            if store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint.endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
-              ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, [] of UInt16))
+            if store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
+              ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, [] of UInt16))
             end
           end
           if servers.includes?(Cluster::Binding::CLUSTER_ID)
-            bindings = read_list(Cluster::Binding::Target, session, peer, endpoint.endpoint_id,
+            bindings = read_list(Cluster::Binding::Target, session, peer, endpoint_id,
               Cluster::Binding::CLUSTER_ID, Cluster::Binding::ATTR_BINDING).map do |target|
               Store::DatastoreBindingTargetStruct.new(target.node, target.group, target.endpoint, target.cluster)
             end
-            ensure_reconciled!(store.reconcile_node_bindings(node_id, endpoint.endpoint_id, bindings))
+            ensure_reconciled!(store.reconcile_node_bindings(node_id, endpoint_id, bindings))
           else
-            if store.endpoint_binding_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint.endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
-              ensure_reconciled!(store.reconcile_node_bindings(node_id, endpoint.endpoint_id,
+            if store.endpoint_binding_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
+              ensure_reconciled!(store.reconcile_node_bindings(node_id, endpoint_id,
                 [] of Store::DatastoreBindingTargetStruct))
             end
           end

@@ -1307,17 +1307,17 @@ module Matter
         end
         self.node_endpoint_list = entries
         self.endpoint_group_id_list = @endpoint_group_id_list.reject do |entry|
-          entry.node_id == node_id && !ids.includes?(entry.endpoint_id)
+          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number && !ids.includes?(entry.endpoint_id)
         end
         self.endpoint_binding_list = @endpoint_binding_list.reject do |entry|
-          entry.node_id == node_id && !ids.includes?(entry.endpoint_id)
+          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number && !ids.includes?(entry.endpoint_id)
         end
         commit!
       end
 
       def reconcile_node_groups(node_id : UInt64, endpoint_id : UInt16, group_ids : Array(UInt16)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
+        return InteractionModel::Status.not_found unless refresh_endpoint_exists?(node_id, endpoint_id)
         return InteractionModel::Status.constraint_error if group_ids.includes?(RESERVED_GROUP_ID)
         ids = group_ids.uniq
         entries = @endpoint_group_id_list.reject do |entry|
@@ -1337,7 +1337,7 @@ module Matter
       def reconcile_node_bindings(node_id : UInt64, endpoint_id : UInt16,
                                   bindings : Array(DatastoreBindingTargetStruct)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
+        return InteractionModel::Status.not_found unless refresh_endpoint_exists?(node_id, endpoint_id)
         return InteractionModel::Status.constraint_error unless bindings.all? { |binding| valid_binding_target?(binding) }
         entries = @endpoint_binding_list.reject do |entry|
           entry.node_id == node_id && entry.endpoint_id == endpoint_id &&
@@ -1667,6 +1667,13 @@ module Matter
 
       private def endpoint_exists?(node_id : UInt64, endpoint_id : UInt16) : Bool
         @node_endpoint_list.any? { |e| e.node_id == node_id && e.endpoint_id == endpoint_id }
+      end
+
+      # RefreshNode observes the root endpoint, which is absent from NodeEndpointList.
+      # Wire commands continue to require an endpoint stored in that list.
+      private def refresh_endpoint_exists?(node_id : UInt64, endpoint_id : UInt16) : Bool
+        endpoint_exists?(node_id, endpoint_id) ||
+          (endpoint_id == DataType::EndpointNumber::ROOT.number && node_exists?(node_id))
       end
 
       private def next_list_id(ids : Array(UInt16)) : UInt16?
