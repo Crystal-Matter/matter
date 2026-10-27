@@ -28,6 +28,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   onboarding discriminator masks, and BTP handshake version masks at their
   production use sites.
 
+### Subscription interval validation
+
+- Reject SubscribeRequests whose minimum reporting interval exceeds the maximum
+  with `InvalidAction`, before allocating or priming a subscription.
+
 ### End-to-end CASE read resilience
 
 - Retry an idempotent chip-tool attribute read once when CASE session setup

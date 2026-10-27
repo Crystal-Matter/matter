@@ -268,6 +268,11 @@ module Matter
 
         @subscriptions.replace_subscriber_subscriptions(session) unless request.keep_subscriptions?
 
+        if request.min_interval_floor > request.max_interval_ceiling
+          send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
+          return
+        end
+
         subscription_id = @registry.allocate_subscription_id
         Log.info { "Created subscription #{subscription_id}" }
 
