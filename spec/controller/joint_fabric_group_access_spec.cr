@@ -83,7 +83,10 @@ describe "Joint Fabric shared group revocation" do
     acl = datastore.node_acl_list.last
     datastore.complete_group_membership(0x200_u64, 1_u16, 10_u16).should be_true
     datastore.complete_acl(0x200_u64, acl.list_id).should be_true
-    datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, acl.acl_entry))
+    older_acl = acl.acl_entry
+    older_acl.subjects = [Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(0x1234_u16, 1_u16)).id]
+    datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, older_acl))
     second_acl = datastore.node_acl_list.last
     datastore.complete_acl(0x200_u64, second_acl.list_id).should be_true
 

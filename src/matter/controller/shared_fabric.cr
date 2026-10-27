@@ -268,11 +268,9 @@ module Matter
         next_version = version + 1_u16
         target_acls = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
-        old_subject = DataType::NodeId.from_case_authenticated_tag(
-          DataType::CaseAuthenticatedTag.create(cat, version)).id
         selected_acls = target_acls.select do |entry|
           entry.status_entry.state != Datastore::DatastoreStateEnum::DeletePending &&
-            entry.acl_entry.subjects == [old_subject]
+            acl_grants_cat_version?(entry.acl_entry, cat, version)
         end
         raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if selected_acls.empty?
         target_ids = selected_acls.map(&.node_id).uniq
@@ -336,14 +334,12 @@ module Matter
                                                             group.group_cat == receipt.group_cat && group.group_cat_version == receipt.current_version
         entries = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
-        old_subject = DataType::NodeId.from_case_authenticated_tag(
-          DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.previous_version)).id
         new_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
         receipt.target_node_ids.each do |node_id|
           matching = entries.select { |entry| entry.node_id == node_id }
           if matching.any? do |entry|
-               entry.acl_entry.subjects.try(&.includes?(old_subject))
+               acl_grants_cat_version?(entry.acl_entry, receipt.group_cat, receipt.previous_version)
              end
             return JointGroupRevocation::Status::Pending
           end
@@ -393,6 +389,17 @@ module Matter
         subjects.includes?(subject) && subjects.count { |id|
           DataType::NodeId.case_authenticated_tag_from_subject?(id) != nil
         } == 1
+      end
+
+      private def self.acl_grants_cat_version?(acl : Datastore::DatastoreAccessControlEntryStruct,
+                                               cat : UInt16, max_version : UInt16) : Bool
+        return false unless acl.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
+        subjects = acl.subjects
+        return false unless subjects
+        subjects.any? do |subject|
+          tag = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+          !tag.nil? && tag.identity_value == cat && tag.version <= max_version
+        end
       end
 
       private def self.verify_joint_anchor!(im : ImClient, session : Session::SecureContext,
