@@ -11,6 +11,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   property? success = true
   property response_code : Matter::InteractionModel::StatusCode? = nil
   property group_response_id : Matter::DataType::GroupId? = nil
+  property wrong_data_command_id : UInt32? = nil
   property acl_entries = [] of Matter::Cluster::AccessControl::AccessControlEntry
   property parts_list = [] of UInt16
   getter server_lists = Hash(UInt16, Array(UInt32)).new
@@ -79,6 +80,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
           request.group_id, removed).to_slice)
       end
     end
+    response_id = @wrong_data_command_id || response_id if response_fields
     path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id, command: response_id)
     if response_fields
       data = Matter::InteractionModel::CommandDataIBTlv.new(path, response_fields)
@@ -176,6 +178,43 @@ private def datastore_session : Matter::Session::SecureContext
 end
 
 describe Matter::Controller::DatastoreSynchronizer do
+  it "rejects another response command while refreshing Groups membership" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.parts_list = [1_u16]
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID]
+    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(5_u16)]
+    im.wrong_data_command_id = Matter::Cluster::Groups::CMD_ADD_GROUP_RESPONSE
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.node_list = [Datastore::DatastoreNodeInformationEntryStruct.new(0x100_u64, "Node", pending)]
+
+    expect_raises(Matter::ProtocolError, /response command/) do
+      Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+        Socket::IPAddress.new("127.0.0.1", 5540))
+    end
+    store.endpoint_group_id_list.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "does not commit a group from another response command" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.wrong_data_command_id = Matter::Cluster::Groups::CMD_REMOVE_GROUP_RESPONSE
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
+      2_u64, "kitchen", 1_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(0x100_u64, 1_u16, 2_u16, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+  ensure
+    client.try(&.close)
+  end
+
   it "records adoption rejection against the pending group and does not invoke JoinGroup" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)

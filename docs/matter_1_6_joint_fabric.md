@@ -171,7 +171,10 @@ item below as covered only to the extent of its cited tests.
   and the Administrator CAT must remain unchanged. The three-Administrator
   Docker scenario now exercises this path by adding an unrelated Group entry
   after B restarts, checking the advanced DataVersion and unchanged ICAC,
-  reconciling the no-effect outcome, and then completing removal. B and C remain
+  reconciling the no-effect outcome, and then completing removal. A resumed
+  removal at DatastoreRemoved or AnchorRotated also compares the entire live
+  AdminList with the pre-removal journal snapshot and rejects a changed
+  participant set before issuing another credential rotation. B and C remain
   registered while B is also restarted after lost Anchor and participant rotation
   acknowledgements. Recovery uses fresh CASE and a host-supplied 32-byte
   nonce in SignVIDVerificationRequest to prove possession of the target's
@@ -180,9 +183,22 @@ item below as covered only to the extent of its cited tests.
   Anchor recovery also checks the selected Anchor CAT version. Recovery sends
   CommissioningComplete over that CASE session: success commits a provisional
   NOC, while NoFailSafe confirms no pending fail-safe. It then proves the NOC
-  again with a fresh challenge before advancing the journal. A target still
-  showing the old CAT remains blocked because an armed fail-safe could commit
-  the rotation later.
+  again with a fresh challenge before advancing the journal. The separate
+  `reconcile-anchor-rotation-no-effect` command handles an interruption after
+  the Anchor saved its new Datastore CAT and ACL but before its UpdateNOC took
+  effect. It requires a fresh CASE signature over the host's 32-byte nonce,
+  the exact pre-rotation NOC saved in the removal journal and still present
+  in the durable fabric record, the journaled prior
+  Administrator CAT and current Anchor CAT, a matching live and durable
+  Datastore snapshot, no armed fail-safe, and no pending credential undo
+  journal. A legacy journal without a pre-rotation NOC cannot take this path.
+  Recovery rechecks the local state after the signed proof before rewinding
+  the removal journal to `DatastoreRemoved`; the already saved Datastore CAT
+  and ACL stay in place because the retry applies their update idempotently.
+  An old CAT without those checks remains inconclusive: an armed fail-safe
+  could still commit a provisional rotation. The three-Administrator Docker
+  scenario exercises this no-effect command after restarting the Anchor at
+  the Datastore-to-UpdateNOC boundary, then retries the rotation.
   Before A's authorized removal, B rejects an unconsented
   request to remove C and the test checks that C's fabric, B's AdminList, and
   the Administrator CAT version are unchanged. The former

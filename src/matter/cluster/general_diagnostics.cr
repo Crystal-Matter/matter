@@ -394,7 +394,7 @@ module Matter
       property on_test_event_trigger : Proc(UInt64, Bool)?
 
       def initialize(
-        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
         @reboot_count : UInt16 = 0_u16,
         @boot_reason : BootReason = BootReason::Unspecified,
         test_enable_key : Bytes? = nil,

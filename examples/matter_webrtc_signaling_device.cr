@@ -4,6 +4,10 @@ require "./support/main"
 # Logical signaling fixture. The peer records commands but deliberately does
 # not create a WebRTC connection or deliver media.
 module MatterWebRtcSignaling
+  DEVICE_ENDPOINT_ID = 1_u16
+
+  EXAMPLE_PRODUCT_ID = 0x0553_u16
+
   alias CameraAv = Matter::Cluster::CameraAvStreamManagement
   alias Provider = Matter::Cluster::WebRtcTransportProvider
   alias Status = Matter::InteractionModel::Status
@@ -34,14 +38,14 @@ module MatterWebRtcSignaling
 
     identity vendor: "Spider-Gazelle", product: "WebRTC Signaling Test",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0553_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_webrtc_signaling_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster CameraAv,
         microphone_capabilities: CameraAv::AudioCapabilities.new(1_u8,
           [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
@@ -67,7 +71,7 @@ module MatterWebRtcSignaling
     end
 
     protected def before_start : Nil
-      camera = node.get_cluster!(1_u16, CameraAv)
+      camera = node.get_cluster!(DEVICE_ENDPOINT_ID, CameraAv)
       camera.on_audio_allocate { |_request, _id| Status.success }
       camera.on_audio_deallocate { |_id| Status.success }
       camera.on_video_allocate { |_request, _id| Status.success }

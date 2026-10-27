@@ -105,7 +105,7 @@ module Matter
       def add_pending(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
                       expires_at_unix : Int64 = Time.utc.to_unix,
                       peer : Socket::IPAddress? = nil) : Nil
-        if node_id == 0_u64 || friendly_name.empty?
+        if node_id == DataType::NodeId::UNSPECIFIED || friendly_name.empty?
           raise Matter::ConfigurationError.new("Datastore pending node needs a Node ID and friendly name")
         end
         state = @store.load

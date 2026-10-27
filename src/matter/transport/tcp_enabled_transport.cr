@@ -327,7 +327,7 @@ module Matter
         if packet.header.session_type == Codec::MessageCodec::SessionType::Group
           raise Matter::ProtocolError.new("Matter group packets cannot use TCP")
         end
-        message = if packet.header.session_id == 0
+        message = if packet.header.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
                     Codec::MessageCodec::Base.decode_payload(packet)
                   else
                     dummy = Codec::MessageCodec::PayloadHeader.new(

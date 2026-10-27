@@ -4,6 +4,11 @@ require "./support/main"
 # Synthetic video player. The host callbacks model application availability,
 # foreground focus, and lifecycle; production players connect real app state.
 module MatterApplicationLauncher
+  PLATFORM_ENDPOINT_ID  = 1_u16
+  LOCAL_APP_ENDPOINT_ID = 2_u16
+
+  EXAMPLE_PRODUCT_ID = 0x050C_u16
+
   alias Launcher = Matter::Cluster::ApplicationLauncher
   alias ApplicationBasic = Matter::Cluster::ApplicationBasic
 
@@ -15,19 +20,19 @@ module MatterApplicationLauncher
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Application Launcher",
       vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
-      product_id: 0x050C_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_application_launcher_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint PLATFORM_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Launcher, feature_map: Launcher::Feature::ApplicationPlatform,
         catalog_list: [CATALOG_VENDOR_ID]
     end
 
-    endpoint 2, device_type: Matter::DeviceType::CONTENT_APP do
+    endpoint LOCAL_APP_ENDPOINT_ID, device_type: Matter::DeviceType::CONTENT_APP do
       cluster Launcher
       cluster ApplicationBasic,
         application_name: "Crystal Radio",
@@ -40,9 +45,9 @@ module MatterApplicationLauncher
     end
 
     protected def before_start : Nil
-      platform = node.get_cluster!(1_u16, Launcher)
-      local = node.get_cluster!(2_u16, Launcher)
-      app_basic = node.get_cluster!(2_u16, ApplicationBasic)
+      platform = node.get_cluster!(PLATFORM_ENDPOINT_ID, Launcher)
+      local = node.get_cluster!(LOCAL_APP_ENDPOINT_ID, Launcher)
+      app_basic = node.get_cluster!(LOCAL_APP_ENDPOINT_ID, ApplicationBasic)
       app_basic.update_status(ApplicationBasic::ApplicationStatus::Stopped)
       platform.on_launch_app do |request|
         app = request.application

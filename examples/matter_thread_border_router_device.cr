@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic wire fixture. It does not provide a radio, an OpenThread stack,
 # or the Border Router device type; real hosts must implement Backend.
 module MatterThreadBorderRouter
+  ROUTER_ENDPOINT_ID = 1_u16
+
   alias Router = Matter::Cluster::ThreadBorderRouterManagement
 
   class MemoryBackend < Router::Backend
@@ -65,7 +67,7 @@ module MatterThreadBorderRouter
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Thread Border Router",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
@@ -73,12 +75,12 @@ module MatterThreadBorderRouter
     storage yaml: "matter_thread_border_router_storage.yml"
 
     protected def before_start : Nil
-      return super if node.has_endpoint?(1_u16)
+      return super if node.has_endpoint?(ROUTER_ENDPOINT_ID)
       commissioning = node.get_cluster(Matter::Cluster::GeneralCommissioning) ||
                       raise Matter::ConfigurationError.new("General Commissioning is missing")
-      router = Router.new(Matter::DataType::EndpointNumber.new(1_u16),
+      router = Router.new(Matter::DataType::EndpointNumber.new(ROUTER_ENDPOINT_ID),
         MemoryBackend.new, commissioning, feature_map: Router::Feature::PanChange)
-      add_endpoint(1_u16, Matter::DeviceType::AGGREGATOR, [router.as(Matter::Cluster::Base)])
+      add_endpoint(ROUTER_ENDPOINT_ID, Matter::DeviceType::AGGREGATOR, [router.as(Matter::Cluster::Base)])
       super
     end
   end

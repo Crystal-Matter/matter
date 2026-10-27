@@ -45,6 +45,17 @@ module Matter
 
         def initialize(@candidate_node_id : UInt64, @stage : Stage = Stage::Ready)
         end
+
+        # Keep the live journal at its last saved state if storage fails. The
+        # migration object and workflow both retain this same Journal instance.
+        def persist_change!(save : Proc(Journal, Nil), &) : Nil
+          updated = self.class.from_document(to_document)
+          yield updated
+          save.call(updated)
+          @stage = updated.stage
+          @active_rotation_node_id = updated.active_rotation_node_id
+          @rotated_administrator_node_ids = updated.rotated_administrator_node_ids.dup
+        end
       end
 
       # A host-supplied witness for an acknowledgement lost after the old
@@ -121,7 +132,7 @@ module Matter
         def copy!(source : Datastore, candidate : Datastore, candidate_node_id : UInt64,
                   candidate_old_node_id : UInt64? = nil,
                   candidate_administrator : Datastore::DatastoreAdministratorInformationEntryStruct? = nil) : Nil
-          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if candidate_node_id == 0_u64
+          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if candidate_node_id == DataType::NodeId::UNSPECIFIED
           unless source.status.state.in?(Datastore::DatastoreStateEnum::Committed,
                    Datastore::DatastoreStateEnum::DeletePending)
             raise Matter::CommissioningError.new("Source Anchor Datastore cannot be copied while pending")
@@ -221,7 +232,10 @@ module Matter
         def request : Administrator::TransferAnchorResponseStatusEnum
           response = @im.invoke(@session, @peer, @endpoint_id,
             Administrator::CLUSTER_ID, Administrator::CMD_TRANSFER_ANCHOR_REQUEST)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "TransferAnchorRequest")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Administrator::CMD_TRANSFER_ANCHOR_REQUEST_RESPONSE
+          end
           raise Matter::ProtocolError.new("TransferAnchorRequest returned no response") unless fields
           Administrator::TransferAnchorResponse.from_slice(fields.to_slice).status_code
         end
@@ -229,6 +243,7 @@ module Matter
         def complete : Nil
           response = @im.invoke(@session, @peer, @endpoint_id,
             Administrator::CLUSTER_ID, Administrator::CMD_TRANSFER_ANCHOR_COMPLETE)
+          ImClient.single_invoke_response!(response, "TransferAnchorComplete")
           success = response.invoke_responses.any? do |entry|
             entry.command_status.try(&.status.status) == InteractionModel::StatusCode::Success.value
           end
@@ -322,7 +337,7 @@ module Matter
                        @existing_fabric_index : UInt8? = nil,
                        @case_opener : CaseOpener? = nil,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
-          if @target_node_id == 0_u64 || @administrator_cat_version == 0_u16 ||
+          if @target_node_id == DataType::NodeId::UNSPECIFIED || @administrator_cat_version == 0_u16 ||
              @anchor_cat_version == 0_u16
             raise Matter::ConfigurationError.new("Invalid Anchor transfer Administrator identity or CAT version")
           end
@@ -453,6 +468,7 @@ module Matter
 
         private def invoke_response_ok!(response : InteractionModel::InvokeResponseMessage,
                                         name : String) : Nil
+          ImClient.single_invoke_response!(response, name)
           unless response.invoke_responses.any? { |entry| entry.command_status.try(&.status.status) == InteractionModel::StatusCode::Success.value }
             raise Matter::CommissioningError.new("#{name} failed")
           end
@@ -460,6 +476,7 @@ module Matter
 
         private def command_fields(response : InteractionModel::InvokeResponseMessage,
                                    command_id : UInt32) : Bytes
+          ImClient.single_invoke_response!(response, "Anchor transfer command")
           command = response.invoke_responses.find do |entry|
             entry.command_data.try(&.command_path.command) == command_id
           end.try(&.command_data)
@@ -497,6 +514,10 @@ module Matter
           def initialize(@target_node_id : UInt64, @stage : Stage = Stage::Ready,
                          @pending_icac : Bytes? = nil)
           end
+
+          def detached_copy : Journal
+            Journal.new(@target_node_id, @stage, @pending_icac.try(&.dup))
+          end
         end
 
         alias SaveJournal = Proc(Journal, Nil)
@@ -523,7 +544,7 @@ module Matter
                        @on_committed_icac : CommitIcac? = nil,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
           @journal = journal || Journal.new(@target_node_id)
-          unless @journal.target_node_id == @target_node_id && @target_node_id != 0_u64 && @icac_id != 0_u64
+          unless @journal.target_node_id == @target_node_id && @target_node_id != DataType::NodeId::UNSPECIFIED && @icac_id != 0_u64
             raise Matter::ConfigurationError.new("Invalid Anchor follow-up identity")
           end
           if @new_anchor_fabric.fabric_id == @old_fabric_id &&
@@ -575,8 +596,9 @@ module Matter
                 @administrator_endpoint, @new_anchor_fabric.root_cert,
                 @new_anchor_fabric.certificate_authority_key,
                 @new_anchor_fabric.fabric_id, @peer_icac_public_key, @icac_id, @crypto)
-              @journal.pending_icac = icac
-              @save.call(@journal)
+              pending = @journal.detached_copy
+              pending.pending_icac = icac.dup
+              persist_change!(pending)
               response = @im.invoke(session, @peer, Node::ROOT_ENDPOINT_ID,
                 Cluster::GeneralCommissioning::CLUSTER_ID,
                 Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
@@ -592,8 +614,10 @@ module Matter
               end
               raise ex
             end
-            @journal.pending_icac = nil
-            advance(Stage::CrossSigned)
+            completed = @journal.detached_copy
+            completed.pending_icac = nil
+            completed.stage = Stage::CrossSigned
+            persist_change!(completed)
           end
           if @journal.stage.cross_signed? || @journal.stage.removing_old?
             advance(Stage::RemovingOld) unless @journal.stage.removing_old?
@@ -617,11 +641,15 @@ module Matter
                 @peer_icac_public_key, @icac_id)
               callback.call(@target_node_id, icac)
             end
-            @journal.pending_icac = nil
-            advance(Stage::CrossSigned)
+            completed = @journal.detached_copy
+            completed.pending_icac = nil
+            completed.stage = Stage::CrossSigned
+            persist_change!(completed)
           else
-            @journal.pending_icac = nil
-            advance(Stage::Ready)
+            retryable = @journal.detached_copy
+            retryable.pending_icac = nil
+            retryable.stage = Stage::Ready
+            persist_change!(retryable)
           end
         end
 
@@ -645,7 +673,10 @@ module Matter
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(index).to_slice)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "RemoveFabric")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+          end
           raise Matter::ProtocolError.new("RemoveFabric returned no response") unless fields
           result = Cluster::OperationalCredentials::Tlv::TlvNocResponse.from_slice(fields.to_slice)
           unless result.status_code.ok?
@@ -658,13 +689,17 @@ module Matter
             Cluster::GeneralCommissioning::CLUSTER_ID,
             Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE,
             Cluster::GeneralCommissioning::ArmFailSafeRequest.new(seconds, 0_u64).to_slice)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "ArmFailSafe")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::GeneralCommissioning::CMD_ARM_FAIL_SAFE_RESPONSE
+          end
           raise Matter::ProtocolError.new("ArmFailSafe returned no response") unless fields
           outcome = Cluster::GeneralCommissioning::ArmFailSafeResponse.from_slice(fields.to_slice)
           raise Matter::CommissioningError.new("ArmFailSafe failed: #{outcome.error_code}") unless outcome.error_code.ok?
         end
 
         private def assert_commissioning_complete!(response : InteractionModel::InvokeResponseMessage) : Nil
+          ImClient.single_invoke_response!(response, "CommissioningComplete")
           response.invoke_responses.each do |entry|
             if status = entry.command_status
               raise Matter::CommissioningError.new("CommissioningComplete failed: IM status #{status.status.status}")
@@ -682,8 +717,14 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
-          @journal.stage = stage
-          @save.call(@journal)
+          updated = @journal.detached_copy
+          updated.stage = stage
+          persist_change!(updated)
+        end
+
+        private def persist_change!(updated : Journal) : Nil
+          @save.call(updated)
+          @journal = updated
         end
       end
 
@@ -714,7 +755,7 @@ module Matter
                        @finalize_administrators : Operation? = nil,
                        @candidate_old_node_id : UInt64? = nil,
                        @candidate_administrator : Datastore::DatastoreAdministratorInformationEntryStruct? = nil)
-          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if @candidate_node_id == 0_u64
+          raise Matter::ConfigurationError.new("Candidate Node ID must be nonzero") if @candidate_node_id == DataType::NodeId::UNSPECIFIED
         end
 
         def copy_datastore! : Nil
@@ -726,13 +767,13 @@ module Matter
           # The snapshot belongs to the old Anchor fabric. The promoted Anchor
           # must advertise the IPK of its newly bootstrapped fabric after restart.
           keys = @bootstrap.fabric.ipk_epoch_keys
-          ipk_key_set = Datastore::DatastoreGroupKeySetStruct.new(0_u16,
+          ipk_key_set = Datastore::DatastoreGroupKeySetStruct.new(Datastore::IPK_KEY_SET_ID,
             Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
             keys[0].dup, FIRST_IPK_EPOCH_START_TIME,
             keys[1]?.try(&.dup), keys[1]? ? FIRST_IPK_EPOCH_START_TIME + 1_u64 : nil,
             keys[2]?.try(&.dup), keys[2]? ? FIRST_IPK_EPOCH_START_TIME + 2_u64 : nil)
           key_sets = @candidate_store.group_key_set_list
-          if index = key_sets.index(&.group_key_set_id.==(0_u16))
+          if index = key_sets.index(&.group_key_set_id.==(Datastore::IPK_KEY_SET_ID))
             key_sets[index] = ipk_key_set
           else
             key_sets.unshift(ipk_key_set)
@@ -784,15 +825,17 @@ module Matter
               if journal.active_rotation_node_id
                 raise Matter::CommissioningError.new("Administrator rotation needs reconciliation before retry")
               end
-              journal.active_rotation_node_id = node_id
-              save_rotation_journal.call(journal)
+              journal.persist_change!(save_rotation_journal) do |pending|
+                pending.active_rotation_node_id = node_id
+              end
             end
             administrator.transition!
             @persist.call
             if journal = @rotation_journal
-              journal.rotated_administrator_node_ids << node_id
-              journal.active_rotation_node_id = nil
-              save_rotation_journal.call(journal)
+              journal.persist_change!(save_rotation_journal) do |completed|
+                completed.rotated_administrator_node_ids << node_id
+                completed.active_rotation_node_id = nil
+              end
             end
           end
         end
@@ -850,7 +893,7 @@ module Matter
         def initialize(@source : Datastore, @port : Port, @migration : Migration,
                        @consent : Consent, @save : SaveJournal,
                        @journal : Journal)
-          raise Matter::ConfigurationError.new("Anchor transfer requires a candidate Node ID") if @journal.candidate_node_id == 0_u64
+          raise Matter::ConfigurationError.new("Anchor transfer requires a candidate Node ID") if @journal.candidate_node_id == DataType::NodeId::UNSPECIFIED
           @migration.bind_journal!(@journal, @save)
         end
 
@@ -962,8 +1005,9 @@ module Matter
                          else
                            raise Matter::CommissioningError.new("Old Anchor Datastore cannot reconcile TransferAnchorRequest")
                          end
-          journal.stage = stable_stage
-          save.call(journal)
+          journal.persist_change!(save) do |updated|
+            updated.stage = stable_stage
+          end
           journal
         end
 
@@ -989,15 +1033,11 @@ module Matter
                  witness.old_root_public_key == old_root_public_key &&
                  witness.requester_node_id == journal.candidate_node_id &&
                  witness.new_anchor_node_id == new_anchor_node_id &&
-                 old_anchor_node_id != 0_u64 && new_anchor_node_id != 0_u64
+                 old_anchor_node_id != DataType::NodeId::UNSPECIFIED && new_anchor_node_id != DataType::NodeId::UNSPECIFIED
             raise Matter::AuthenticationError.new("Old Anchor completion witness does not match the pending transfer")
           end
-          journal.stage = Stage::Transferred
-          begin
-            save.call(journal)
-          rescue ex
-            journal.stage = Stage::Completing
-            raise ex
+          journal.persist_change!(save) do |updated|
+            updated.stage = Stage::Transferred
           end
           journal
         end
@@ -1008,16 +1048,18 @@ module Matter
           unless @journal.stage.rotating? && @journal.active_rotation_node_id == node_id
             raise Matter::ConfigurationError.new("Invalid Administrator rotation reconciliation")
           end
-          if completed && !@journal.rotated_administrator_node_ids.includes?(node_id)
-            @journal.rotated_administrator_node_ids << node_id
+          @journal.persist_change!(@save) do |updated|
+            if completed && !updated.rotated_administrator_node_ids.includes?(node_id)
+              updated.rotated_administrator_node_ids << node_id
+            end
+            updated.active_rotation_node_id = nil
           end
-          @journal.active_rotation_node_id = nil
-          @save.call(@journal)
         end
 
         private def advance(stage : Stage) : Nil
-          @journal.stage = stage
-          @save.call(@journal)
+          @journal.persist_change!(@save) do |updated|
+            updated.stage = stage
+          end
         end
 
         private def in_progress?(stage : Stage) : Bool

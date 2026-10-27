@@ -38,7 +38,7 @@ module Matter
       def initialize(
         @scene_count = 0_u8,
         @current_scene = ScenesManagement::UNDEFINED_SCENE_ID,
-        @current_group = 0_u16,
+        @current_group = DataType::GroupId::RESERVED.id,
         @scene_valid = false,
         @remaining_capacity = 16_u8,
         @fabric_index = ScenesManagement::DEFAULT_FABRIC_INDEX,
@@ -414,7 +414,7 @@ module Matter
         def initialize(
           @scene_count = 0_u8,
           @current_scene = UNDEFINED_SCENE_ID,
-          @current_group = 0_u16,
+          @current_group = DataType::GroupId::RESERVED.id,
           @scene_valid = false,
           @remaining_capacity = DEFAULT_SCENE_TABLE_SIZE.to_u8,
           @fabric_index = DEFAULT_FABRIC_INDEX,

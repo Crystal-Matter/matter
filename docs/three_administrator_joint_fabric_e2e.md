@@ -27,9 +27,12 @@ running until expiry; restarting B earlier tests a separate rollback path.
 
 B then transfers the Anchor role from A. The fixture interrupts after
 TransferAnchorComplete, restarts B from its persisted FollowingUp journal,
-and resumes only the participant follow-up. C still has A's fabric before
-follow-up, and B's NOC and Administrator CAT version stay unchanged after
-resume. The test checks that the new Anchor Datastore contains A, B, and C,
+and resumes only the participant follow-up. C then commits B's cross-signed
+ICAC, while B stops after durably saving the `CrossSigned` stage and before
+sending RemoveFabric. B restarts again and resumes C's old-fabric removal;
+C's new-fabric NOC is unchanged. C still has A's fabric before that resume,
+and B's NOC and Administrator CAT version stay unchanged. The test checks
+that the new Anchor Datastore contains A, B, and C,
 and that C removes its A fabric and installs B's fabric. A follows B's
 Datastore over a verified CASE session. Its
 subscription discovers Descriptor endpoints carrying the Datastore cluster,

@@ -21,6 +21,29 @@ private class FakeAnchorPort < Matter::Controller::AnchorTransfer::Port
   end
 end
 
+private class WrongAnchorResponseImClient < Matter::Controller::ImClient
+  property? mixed_response = false
+
+  def invoke(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
+             endpoint_id : UInt16, cluster_id : UInt32, command_id : UInt32,
+             fields : Bytes = Bytes.empty) : Matter::InteractionModel::InvokeResponseMessage
+    response = Matter::Cluster::JointFabricAdministrator::TransferAnchorResponse.new(
+      Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK)
+    path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id,
+      command: mixed_response? ? Matter::Cluster::JointFabricAdministrator::CMD_TRANSFER_ANCHOR_REQUEST_RESPONSE : Matter::Cluster::JointFabricAdministrator::CMD_ICACCSR_REQUEST_RESPONSE)
+    data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Any.from_slice(response.to_slice))
+    entries = [Matter::InteractionModel::InvokeResponseIB.new(command_data: data)]
+    if mixed_response?
+      request_path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id,
+        command: command_id)
+      status = Matter::InteractionModel::CommandStatusIB.new(request_path,
+        Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::Failure.value))
+      entries << Matter::InteractionModel::InvokeResponseIB.new(command_status: status)
+    end
+    Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: entries)
+  end
+end
+
 private class FakeAnchorMigration < Matter::Controller::AnchorTransfer::Migration
   getter calls = [] of String
   property? fail_copy = false
@@ -256,6 +279,37 @@ private def committed_anchor_store : Matter::Cluster::JointFabricDatastore
   store
 end
 
+describe Matter::Controller::AnchorTransfer::ImPort do
+  it "rejects another response command for TransferAnchorRequest" do
+    client = Matter::Controller::Client.new
+    im = WrongAnchorResponseImClient.new(client)
+    session = Matter::Session::SecureContext.new(
+      1_u16, 2_u16, Matter::Session::SessionType::Unicast,
+      Bytes.new(16), Bytes.new(16))
+    port = Matter::Controller::AnchorTransfer::ImPort.new(im, session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+
+    expect_raises(Matter::ProtocolError, /TransferAnchorRequest.*response/) { port.request }
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an OK TransferAnchorRequestResponse mixed with a failure status" do
+    client = Matter::Controller::Client.new
+    im = WrongAnchorResponseImClient.new(client)
+    im.mixed_response = true
+    session = Matter::Session::SecureContext.new(
+      1_u16, 2_u16, Matter::Session::SessionType::Unicast,
+      Bytes.new(16), Bytes.new(16))
+    port = Matter::Controller::AnchorTransfer::ImPort.new(im, session,
+      Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+
+    expect_raises(Matter::ProtocolError, /exactly one InvokeResponse/) { port.request }
+  ensure
+    client.try(&.close)
+  end
+end
+
 describe Matter::Controller::AnchorTransfer::Workflow do
   it "resumes a persisted TransferAnchorRequest after the old Anchor freezes without replaying it" do
     source = committed_anchor_store
@@ -444,6 +498,50 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     ])
     workflow.run
     port.calls.size.should eq(2)
+  end
+
+  it "keeps a failed post-request journal write uncertain before datastore copy" do
+    store = committed_anchor_store
+    port = FakeAnchorPort.new
+    migration = FakeAnchorMigration.new
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64)
+    durable = Matter::Controller::AnchorTransfer::Journal.from_document(journal.to_document)
+    failed = false
+    save = ->(state : Matter::Controller::AnchorTransfer::Journal) {
+      if state.stage.requested? && !failed
+        failed = true
+        raise Matter::StorageError.new("Journal flush failed")
+      end
+      durable = Matter::Controller::AnchorTransfer::Journal.from_document(state.to_document)
+      nil
+    }
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store, port,
+      migration, -> { true }, save, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) { workflow.run }
+    durable.stage.should eq(TransferStage::Requesting)
+    expect_raises(Matter::CommissioningError, /reconciliation/) { workflow.run }
+    port.calls.should eq(["request"])
+    migration.calls.should be_empty
+  end
+
+  it "retains an uncertain Administrator rotation if reconciliation cannot be saved" do
+    store = committed_anchor_store
+    journal = Matter::Controller::AnchorTransfer::Journal.new(0x200_u64,
+      TransferStage::Rotating)
+    journal.active_rotation_node_id = 0x300_u64
+    workflow = Matter::Controller::AnchorTransfer::Workflow.new(store,
+      FakeAnchorPort.new, FakeAnchorMigration.new, -> { true },
+      ->(state : Matter::Controller::AnchorTransfer::Journal) {
+        state.rotated_administrator_node_ids << 0x400_u64
+        raise Matter::StorageError.new("Journal flush failed")
+      }, journal)
+
+    expect_raises(Matter::StorageError, /Journal flush failed/) do
+      workflow.reconcile_rotation!(0x300_u64, completed: true)
+    end
+    journal.active_rotation_node_id.should eq(0x300_u64)
+    journal.rotated_administrator_node_ids.should be_empty
   end
 
   it "blocks request when an individual entry is pending or consent is absent" do
@@ -1001,6 +1099,101 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
 end
 
 describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
+  it "keeps Ready when saving CrossSigning fails before any command" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64)
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        raise Matter::StorageError.new("save failed")
+      }, journal, consent: -> { true },
+      case_opener: ->(_identity : Matter::Controller::FabricInfo, _node : UInt64) { session },
+      endpoint_resolver: ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { 1_u16 })
+
+    expect_raises(Matter::StorageError, /save failed/) { runner.run }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready)
+    journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready)
+    im.commands.should be_empty
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
+  it "retains the pending ICAC when saving CrossSigned reconciliation fails" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    pending_icac = Bytes[0x01, 0x02, 0x03]
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(
+      0x300_u64, Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning,
+      pending_icac)
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        raise Matter::StorageError.new("save failed")
+      }, journal, consent: -> { true })
+
+    expect_raises(Matter::StorageError, /save failed/) { runner.reconcile_cross_sign!(true) }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    runner.journal.pending_icac.should eq(pending_icac)
+    journal.pending_icac.should eq(pending_icac)
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
+  it "does not complete commissioning when saving the pending ICAC fails" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    saved_count = 0
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64)
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        saved_count += 1
+        if saved_count == 2
+          state.pending_icac.as(Bytes)[0] = 0_u8
+          raise Matter::StorageError.new("pending ICAC save failed")
+        end
+        nil
+      }, journal, consent: -> { true },
+      case_opener: ->(_identity : Matter::Controller::FabricInfo, _node : UInt64) { session },
+      endpoint_resolver: ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { 1_u16 })
+
+    expect_raises(Matter::StorageError, /pending ICAC save failed/) { runner.run }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    runner.journal.pending_icac.should be_nil
+    im.commands.should_not contain(Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
+    im.commands.should_not contain(Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC)
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
   it "replays a persisted ICAC into the Datastore when a completed exchange is reconciled" do
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0x1234_u64, 0x200_u64, 0xFFF2_u16)

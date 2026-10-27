@@ -10,6 +10,7 @@ module MatterContentApp
   MESSAGE_FEATURES = Messages::Feature::ReceivedConfirmation |
                      Messages::Feature::ConfirmationResponse |
                      Messages::Feature::ConfirmationReply
+  AUTO_CONFIRM_RESPONSE_ID = 2_u32
 
   class AccountHost < AccountLogin::Host
     TEMP_ACCOUNT_IDENTIFIER = "crystal-radio-user"
@@ -62,7 +63,7 @@ module MatterContentApp
     private def present_message(message : Messages::Message, cluster : Messages) : Nil
       cluster.present(message.message_id, message.fabric_index)
       return unless message.text == AUTO_CONFIRM_TEXT
-      cluster.complete(message.message_id, message.fabric_index, 2_u32, "Seen")
+      cluster.complete(message.message_id, message.fabric_index, AUTO_CONFIRM_RESPONSE_ID, "Seen")
     rescue ex : ArgumentError
       Log.debug(exception: ex) { "Message #{message.message_id.hexstring} was cancelled, expired, or not ready" }
     end
@@ -79,7 +80,7 @@ module MatterContentApp
 
     identity vendor: "Spider-Gazelle", product: "Crystal Radio Content App",
       vendor_id: CATALOG_VENDOR_ID,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

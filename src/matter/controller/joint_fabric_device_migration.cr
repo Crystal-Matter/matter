@@ -134,7 +134,7 @@ module Matter
                        @client : Client = Client.new,
                        @monotonic_now : Proc(Time::Instant) = -> { Time.instant },
                        @recovery_sleep : Proc(Time::Span, Nil) = ->(duration : Time::Span) { sleep duration })
-          if @old_node_id == 0_u64 || @anchor_node_id == 0_u64 ||
+          if @old_node_id == DataType::NodeId::UNSPECIFIED || @anchor_node_id == DataType::NodeId::UNSPECIFIED ||
              (@old_fabric.fabric_id == @anchor_fabric.fabric_id &&
              @old_fabric.root_public_key == @anchor_fabric.root_public_key)
             raise Matter::ConfigurationError.new("Migration requires distinct B and Anchor fabric identities")
@@ -570,6 +570,7 @@ module Matter
 
         private def assert_status_success!(response : InteractionModel::InvokeResponseMessage,
                                            name : String) : Nil
+          ImClient.single_invoke_response!(response, name)
           status = response.invoke_responses.first?.try(&.command_status).try(&.status) ||
                    raise Matter::ProtocolError.new("#{name} omitted command status")
           unless status.status == InteractionModel::StatusCode::Success.value
@@ -579,7 +580,10 @@ module Matter
 
         private def assert_noc_success!(response : InteractionModel::InvokeResponseMessage,
                                         name : String) : Nil
-          fields = response.invoke_responses.first?.try(&.command_data).try(&.command_fields) ||
+          entry = ImClient.single_invoke_response!(response, name)
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+          end ||
                    raise Matter::ProtocolError.new("#{name} omitted NOCResponse")
           result = Cluster::OperationalCredentials::Tlv::TlvNocResponse.from_slice(fields.to_slice)
           unless result.status_code.ok?
@@ -590,7 +594,7 @@ module Matter
 
       def self.validate_anchor_ipk!(sets : Array(Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct),
                                     expected_ipk : Bytes) : Nil
-        ipks = sets.select(&.group_key_set_id.==(0_u16))
+        ipks = sets.select(&.group_key_set_id.==(Cluster::JointFabricDatastore::IPK_KEY_SET_ID))
         unless expected_ipk.size == Fabric::IPK_SIZE && ipks.size == 1 &&
                ipks.first.epoch_key0 == expected_ipk
           raise Matter::AuthenticationError.new("Anchor Datastore IPK is absent or differs from selected fabric")
@@ -651,9 +655,10 @@ module Matter
           unless DataType::NodeId.valid_joint_fabric?(node_id) && node_id != anchor.controller_node_id
             raise Matter::ConfigurationError.new("Delegated Joint Fabric controller needs a distinct operational Node ID")
           end
-          if group_cat == 0_u16 || group_cat.in?(Cluster::JointFabricDatastore::ANCHOR_CAT,
+          if group_cat == Cluster::JointFabricDatastore::UNSPECIFIED_GROUP_CAT || group_cat.in?(Cluster::JointFabricDatastore::ANCHOR_CAT,
                Cluster::JointFabricDatastore::ADMINISTRATOR_CAT) ||
-             group_cat_version.in?(0_u16, UInt16::MAX)
+             group_cat_version.in?(Cluster::JointFabricDatastore::UNSPECIFIED_GROUP_CAT_VERSION,
+               Cluster::JointFabricDatastore::RESERVED_GROUP_CAT_VERSION)
             raise Matter::ConfigurationError.new("Invalid Joint Fabric group CAT or version")
           end
           unless @fabric_id == anchor.fabric_id && @root_public_key == anchor.root_public_key
@@ -773,8 +778,8 @@ module Matter
 
         def initialize(@journal : Journal, @port : Port, @consent : Consent,
                        @save : SaveJournal)
-          if @journal.old_fabric_id == 0_u64 || @journal.anchor_fabric_id == 0_u64 ||
-             @journal.old_node_id == 0_u64 || @journal.anchor_node_id == 0_u64 ||
+          if @journal.old_fabric_id == Fabric::RESERVED_FABRIC_ID || @journal.anchor_fabric_id == Fabric::RESERVED_FABRIC_ID ||
+             @journal.old_node_id == DataType::NodeId::UNSPECIFIED || @journal.anchor_node_id == DataType::NodeId::UNSPECIFIED ||
              @journal.old_root_public_key.empty? || @journal.anchor_root_public_key.empty? ||
              (@journal.old_fabric_id == @journal.anchor_fabric_id &&
              @journal.old_root_public_key == @journal.anchor_root_public_key)

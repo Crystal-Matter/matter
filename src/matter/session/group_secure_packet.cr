@@ -1,5 +1,8 @@
 require "../codec/message_codec"
 require "../codec/message_privacy"
+require "../datatype/fabric_index"
+require "../datatype/group_id"
+require "../fabric"
 require "../crypto/crypto"
 require "../transport/message_counter"
 require "./secure_message"
@@ -31,8 +34,8 @@ module Matter
         getter fabric_index : UInt8
         getter group_id : UInt16
 
-        def initialize(message : String? = nil, @fabric_index : UInt8 = 0_u8,
-                       @group_id : UInt16 = 0_u16)
+        def initialize(message : String? = nil, @fabric_index : UInt8 = DataType::NO_FABRIC,
+                       @group_id : UInt16 = DataType::GroupId::RESERVED.id)
           super(message || "Duplicate or stale group message")
         end
       end
@@ -47,9 +50,9 @@ module Matter
 
         def initialize(@fabric_index : UInt8, group_id : UInt16, @operational_key : Bytes,
                        @fabric_id : UInt64? = nil)
-          raise Matter::SessionError.new("Group key requires a fabric") if @fabric_index == 0
-          raise Matter::SessionError.new("Fabric ID zero is reserved") if @fabric_id == 0_u64
-          raise Matter::SessionError.new("Group ID zero is reserved") if group_id == 0
+          raise Matter::SessionError.new("Group key requires a fabric") if @fabric_index == DataType::NO_FABRIC
+          raise Matter::SessionError.new("Fabric ID zero is reserved") if @fabric_id == Fabric::RESERVED_FABRIC_ID
+          raise Matter::SessionError.new("Group ID zero is reserved") if group_id == DataType::GroupId::RESERVED.id
           raise Matter::SessionError.new("Operational group key must be 16 bytes") unless @operational_key.size == 16
           @group_id = DataType::GroupId.new(group_id)
           @session_id = GroupSecurePacket.session_id(@operational_key)
@@ -103,7 +106,7 @@ module Matter
                  payload_header : Codec::MessageCodec::PayloadHeader, payload : Bytes,
                  control : Bool = false) : Bytes
         raise Matter::SessionError.new("Group key is not installed") unless @keys.includes?(key)
-        raise Matter::SessionError.new("Source Node ID is required") if source_node_id == 0
+        raise Matter::SessionError.new("Source Node ID is required") if source_node_id == DataType::NodeId::UNSPECIFIED
         header = Codec::MessageCodec::PacketHeader.new(
           session_id: key.session_id,
           session_type: Codec::MessageCodec::SessionType::Group,

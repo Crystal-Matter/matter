@@ -3,8 +3,9 @@ module Matter
     module MessageCodec
       Log = ::Log.for("matter.codec.message_codec")
 
-      HEADER_VERSION   = UInt8.new(0x00)
-      COMMON_VENDOR_ID = UInt16.new(0x0000)
+      HEADER_VERSION       = UInt8.new(0x00)
+      COMMON_VENDOR_ID     = UInt16.new(0x0000)
+      UNSECURED_SESSION_ID = 0_u16
 
       # Header version lives in the top nibble of the packet header flags byte
       VERSION_SHIFT = 4

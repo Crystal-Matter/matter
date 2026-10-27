@@ -74,7 +74,7 @@ module Matter
       property privacy_allows : Proc(StreamUsage, Bool)?
       property transport_busy : Proc(UInt8, UInt16, Bool)?
 
-      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
                      @feature_map : Feature = Feature::None,
                      @clock : Proc(Time) = -> { Time.utc }, expiry_timer : ExpiryTimer? = nil)
         @expiry_timer = expiry_timer || ->(delay : Time::Span, callback : Proc(Nil)) do

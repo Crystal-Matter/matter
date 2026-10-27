@@ -5,6 +5,8 @@ require "./support/main"
 # Aggregator is used as a wire fixture because this example does not claim all
 # required clusters of the Basic Video Player device type.
 module MatterMediaPlayback
+  DEVICE_ENDPOINT_ID = 1_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -19,14 +21,14 @@ module MatterMediaPlayback
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Media Player",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_media_playback_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Playback, feature_map: Playback::Feature::AdvancedSeek |
                                      Playback::Feature::VariableSpeed | Playback::Feature::AudioTracks |
                                      Playback::Feature::TextTracks | Playback::Feature::AudioAdvance,
@@ -35,7 +37,7 @@ module MatterMediaPlayback
     end
 
     protected def before_start : Nil
-      player = node.endpoint!(1_u16).get_cluster!(Playback)
+      player = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(Playback)
       player.update_seek_range(0_u64, MEDIA_DURATION_MS, MEDIA_DURATION_MS)
       audio = Playback::Track.new("eng", Playback::TrackAttributes.new("en", [Playback::Characteristic::MainProgram], "English"))
       captions = Playback::Track.new("captions", Playback::TrackAttributes.new("en", [Playback::Characteristic::Caption], "English captions"))

@@ -24,7 +24,7 @@ module Matter
       # ManagedDevice remains disabled in the default feature map.
       GLOBAL_ATTRIBUTE_ID_START               = 0xFFF8_u32
       GLOBAL_ATTRIBUTE_ID_END                 = 0xFFFD_u32
-      ARL_ROOT_ENDPOINT_ID                    =      0_u16
+      ARL_ROOT_ENDPOINT_ID                    = DataType::EndpointNumber::ROOT.number
       ARL_WIFI_NETWORK_MANAGEMENT_CLUSTER_ID  = 0x0451_u32
       ARL_THREAD_BORDER_ROUTER_CLUSTER_ID     = 0x0452_u32
       ARL_THREAD_NETWORK_DIRECTORY_CLUSTER_ID = 0x0453_u32
@@ -608,7 +608,7 @@ module Matter
       end
 
       def review_fabric_restrictions(request : ReviewFabricRestrictionsRequest) : ReviewFabricRestrictionsResponse | InteractionModel::Status
-        return InteractionModel::Status.invalid_command unless @endpoint_id.number == 0_u16
+        return InteractionModel::Status.invalid_command unless @endpoint_id.number == ARL_ROOT_ENDPOINT_ID
         fabric_index = @request_fabric_index
         return InteractionModel::Status.unsupported_access unless @request_is_case_session && fabric_index
         entries = request.arl.map do |entry|

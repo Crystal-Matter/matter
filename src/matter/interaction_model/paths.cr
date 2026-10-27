@@ -82,6 +82,14 @@ module Matter
     struct AttributePath
       include TLV::Serializable
 
+      TAG_ENABLE_TAG_COMPRESSION = 0_u8
+      TAG_NODE                   = 1_u8
+      TAG_ENDPOINT               = 2_u8
+      TAG_CLUSTER                = 3_u8
+      TAG_ATTRIBUTE              = 4_u8
+      TAG_LIST_INDEX             = 5_u8
+      TAG_WILDCARD_PATH_FLAGS    = 6_u8
+
       @[TLV::Field(tag: 0, optional: true)]
       property enable_tag_compression : Bool?
 
@@ -184,9 +192,9 @@ module Matter
         path = previous_def
         element = case value = any.value
                   when TLV::List
-                    value.find { |item| item.header.ids == 5_u8 }
+                    value.find { |item| item.header.ids == TAG_LIST_INDEX }
                   when TLV::Structure
-                    value[5_u8]?
+                    value[TAG_LIST_INDEX]?
                   end
         path.set_list_index_null(element.try(&.header.element_type.null?) == true)
         path
@@ -437,17 +445,17 @@ struct Matter::InteractionModel::AttributePath
 
   private def encode_path(outer_tag : UInt8? | {UInt16, UInt16} | {UInt16, UInt16, UInt16}) : TLV::Any
     list = TLV::List.new
-    list << TLV::Serializable.serialize_value(@enable_tag_compression, 0_u8) unless @enable_tag_compression.nil?
-    list << TLV::Serializable.serialize_value(@node_raw, 1_u8, true) unless @node_raw.nil?
-    list << TLV::Serializable.serialize_value(@endpoint_raw, 2_u8, true) unless @endpoint_raw.nil?
-    list << TLV::Serializable.serialize_value(@cluster_raw, 3_u8, true) unless @cluster_raw.nil?
-    list << TLV::Serializable.serialize_value(@attribute_raw, 4_u8, true) unless @attribute_raw.nil?
+    list << TLV::Serializable.serialize_value(@enable_tag_compression, TAG_ENABLE_TAG_COMPRESSION) unless @enable_tag_compression.nil?
+    list << TLV::Serializable.serialize_value(@node_raw, TAG_NODE, true) unless @node_raw.nil?
+    list << TLV::Serializable.serialize_value(@endpoint_raw, TAG_ENDPOINT, true) unless @endpoint_raw.nil?
+    list << TLV::Serializable.serialize_value(@cluster_raw, TAG_CLUSTER, true) unless @cluster_raw.nil?
+    list << TLV::Serializable.serialize_value(@attribute_raw, TAG_ATTRIBUTE, true) unless @attribute_raw.nil?
     if @list_index_null
-      list << TLV::Serializable.serialize_value(nil, 5_u8)
+      list << TLV::Serializable.serialize_value(nil, TAG_LIST_INDEX)
     elsif !@list_index_raw.nil?
-      list << TLV::Serializable.serialize_value(@list_index_raw, 5_u8, true)
+      list << TLV::Serializable.serialize_value(@list_index_raw, TAG_LIST_INDEX, true)
     end
-    list << TLV::Serializable.serialize_value(@wildcard_path_flags_raw, 6_u8, true) unless @wildcard_path_flags_raw.nil?
+    list << TLV::Serializable.serialize_value(@wildcard_path_flags_raw, TAG_WILDCARD_PATH_FLAGS, true) unless @wildcard_path_flags_raw.nil?
     TLV::Any.new(list, outer_tag)
   end
 end

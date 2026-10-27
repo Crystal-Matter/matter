@@ -244,8 +244,9 @@ module Matter
         key.public_bits = public_key
         @crypto.verify_ecdsa(key, signed_content, signature, "der")
         declaration = Certificate::CertificationDeclaration::CDContent.from_slice(payload)
-        unless declaration.format_version == 1_u8 && declaration.vendor_id == vendor_id &&
-               declaration.product_ids.includes?(product_id) && declaration.certification_type <= 2_u8
+        unless declaration.format_version == Certificate::CertificationDeclaration::SUPPORTED_FORMAT_VERSION &&
+               declaration.vendor_id == vendor_id && declaration.product_ids.includes?(product_id) &&
+               declaration.certification_type <= Certificate::CertificationDeclaration::MAX_SUPPORTED_CERTIFICATION_TYPE
           raise Matter::AuthenticationError.new("Certification Declaration VID/PID or type mismatch")
         end
         origin_vendor = declaration.dac_origin_vendor_id

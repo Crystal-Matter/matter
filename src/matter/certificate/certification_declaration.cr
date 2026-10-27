@@ -19,9 +19,11 @@ module Matter
 
       # The test CD uses Root Node (0x0016). Certificate loading precedes the
       # device type catalog, so its fixture ID is declared here.
-      TEST_CD_DEVICE_TYPE_ID  = 0x0016_u32
-      CMS_SIGNER_INFO_VERSION =       3_u8
-      CMS_SIGNED_DATA_VERSION =       3_u8
+      TEST_CD_DEVICE_TYPE_ID           = 0x0016_u32
+      CMS_SIGNER_INFO_VERSION          =       3_u8
+      CMS_SIGNED_DATA_VERSION          =       3_u8
+      SUPPORTED_FORMAT_VERSION         =       1_u8
+      MAX_SUPPORTED_CERTIFICATION_TYPE =       2_u8
 
       # CD TLV content structure
       # Based on Matter Core Spec section 6.3.1
@@ -94,7 +96,7 @@ module Matter
       # Based on Matter Core Spec section 6.3.1
       private def self.build_cd_tlv(vendor_id : UInt16, product_id : UInt16) : Bytes
         content = CDContent.new(
-          format_version: 1_u8,
+          format_version: SUPPORTED_FORMAT_VERSION,
           vendor_id: vendor_id,
           product_ids: [product_id],
           device_type_id: TEST_CD_DEVICE_TYPE_ID,

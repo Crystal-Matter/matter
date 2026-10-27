@@ -186,6 +186,7 @@ module Matter
       end
 
       private def response_fields(invocation : InteractionModel::InvokeResponseMessage) : Bytes
+        ImClient.single_invoke_response!(invocation, "SignVIDVerificationRequest")
         invocation.invoke_responses.each do |item|
           if command = item.command_data
             if command.command_path.command == Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST_RESPONSE

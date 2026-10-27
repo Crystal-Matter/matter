@@ -86,7 +86,7 @@ module Matter
                                   anchor_cat_version : UInt16 = 1_u16,
                                   crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                                   ipk_value : Bytes? = nil) : AnchorBootstrap
-        if fabric_id == 0_u64 || !DataType::NodeId.valid_joint_fabric?(controller_node_id) ||
+        if fabric_id == Fabric::RESERVED_FABRIC_ID || !DataType::NodeId.valid_joint_fabric?(controller_node_id) ||
            administrator_cat_version == 0_u16 || anchor_cat_version == 0_u16
           raise Matter::ConfigurationError.new("Invalid Anchor fabric identity or CAT version")
         end
@@ -230,7 +230,7 @@ module Matter
           @anchor_finalize : AnchorFinalize? = nil,
         )
           @pending = initial_pending
-          if @administrator_fabric_index == 0_u8 || @administrator_cat_version == 0_u16 ||
+          if @administrator_fabric_index == DataType::NO_FABRIC || @administrator_cat_version == 0_u16 ||
              @anchor_cat_version == 0_u16 || @icac_id == 0_u64
             raise Matter::ConfigurationError.new("Invalid Joint Commissioning fabric index, CAT version or ICAC ID")
           end
@@ -892,7 +892,7 @@ module Matter
           endpoint = data.path.endpoint
           next unless endpoint
           index = UInt8.from_tlv(data.data.to_slice)
-          endpoint if index != 0_u8
+          endpoint if index != DataType::NO_FABRIC
         end
         endpoints.uniq!
         return endpoints.first if endpoints.size == 1
@@ -915,7 +915,7 @@ module Matter
         raise Matter::ProtocolError.new("AdministratorFabricIndex read omitted data") unless data
         return if data.header.element_type.null?
         index = UInt8.from_tlv(data.to_slice)
-        index unless index == 0_u8
+        index unless index == DataType::NO_FABRIC
       end
 
       # The joining ecosystem's Datastore declares the versions to use for
@@ -1134,6 +1134,7 @@ module Matter
       end
 
       private def command_fields(response : InteractionModel::InvokeResponseMessage, command_id : UInt32) : Bytes
+        ImClient.single_invoke_response!(response, "Joint Fabric Administrator command")
         response.invoke_responses.each do |item|
           if command = item.command_data
             if command.command_path.command == command_id
@@ -1149,6 +1150,7 @@ module Matter
       end
 
       def assert_status_success(response : InteractionModel::InvokeResponseMessage) : Nil
+        ImClient.single_invoke_response!(response, "Joint Fabric Administrator command")
         response.invoke_responses.each do |item|
           if status = item.command_status
             return if status.status.status == InteractionModel::StatusCode::Success.value

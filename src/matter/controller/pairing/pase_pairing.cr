@@ -34,7 +34,7 @@ module Matter
           pbkdf_req = Session::Pase::Definitions::PbkdfParamRequest.new(
             initiator_random: initiator_random,
             initiator_session_id: initiator_session_id,
-            passcode_id: 0_u16,
+            passcode_id: Session::Pase::Definitions::PbkdfParamRequest::DEFAULT_PASSCODE_ID,
             has_pbkdf_parameters: false,
             mrp_parameters: nil
           )
@@ -54,7 +54,7 @@ module Matter
           pbkdf_resp_bytes = pbkdf_resp.message.payload.to_slice
           resp = Session::Pase::Definitions::PbkdfParamResponse.from_slice(pbkdf_resp_bytes)
           if mrp = resp.mrp_parameters
-            client.transport.configure_mrp_peer(peer, 0_u16,
+            client.transport.configure_mrp_peer(peer, Codec::MessageCodec::UNSECURED_SESSION_ID,
               mrp.idle_retransmit_timeout_ms, mrp.active_retransmit_timeout_ms)
           end
 
@@ -112,7 +112,7 @@ module Matter
           raise Matter::TimeoutError.new("PASE: timeout waiting for StatusReport") unless status
 
           report = Session::Pase::Definitions::StatusReport.from_bytes(status.message.payload.to_slice)
-          unless report.general_status == 0_u16 && report.protocol_status == 0_u16
+          unless report.general_status == Session::Pase::Definitions::StatusReport::GENERAL_STATUS_SUCCESS && report.protocol_status == Session::Pase::Definitions::StatusReport::PROTOCOL_STATUS_SUCCESS
             raise Matter::ProtocolError.new("PASE: status report failure (general_status=#{report.general_status} protocol_status=#{report.protocol_status})")
           end
 

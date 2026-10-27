@@ -1,5 +1,6 @@
 require "./cluster"
 require "./access_control"
+require "./group_key_management"
 require "../datatype/node_id"
 
 module Matter
@@ -9,6 +10,14 @@ module Matter
     # joint-fabric-datastore-cluster.xml.
     class JointFabricDatastore < Base
       cluster 0x0752, revision: 1
+
+      UNSPECIFIED_ANCHOR_VENDOR_ID  = 0_u16
+      UNSPECIFIED_GROUP_CAT         = 0_u16
+      RESERVED_GROUP_CAT            = UInt16::MAX
+      UNSPECIFIED_GROUP_CAT_VERSION = 0_u16
+      FIRST_GROUP_CAT_VERSION       = 1_u16
+      RESERVED_GROUP_CAT_VERSION    = UInt16::MAX
+      NO_FAILURE_CODE               = 0_u8
 
       enum DatastoreAccessControlEntryAuthModeEnum : UInt8
         PASE  = 1
@@ -782,13 +791,13 @@ module Matter
 
       attribute 0x0000, :anchor_root_ca, Bytes, default: Bytes.empty, read_access: :administer, persist: true
       attribute 0x0001, :anchor_node_id, UInt64, default: 0_u64, read_access: :administer, persist: true
-      attribute 0x0002, :anchor_vendor_id, UInt16, default: 0_u16, read_access: :administer, persist: true
+      attribute 0x0002, :anchor_vendor_id, UInt16, default: UNSPECIFIED_ANCHOR_VENDOR_ID, read_access: :administer, persist: true
       attribute 0x0003, :friendly_name, String, default: "", read_access: :administer, persist: true
       attribute 0x0004, :group_key_set_list, Array(DatastoreGroupKeySetStruct), default: [] of DatastoreGroupKeySetStruct, read_access: :administer, persist: true
       attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true
-      attribute 0x0008, :status, DatastoreStatusEntryStruct, default: DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, 0_u8), read_access: :administer, persist: true
+      attribute 0x0008, :status, DatastoreStatusEntryStruct, default: DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, NO_FAILURE_CODE), read_access: :administer, persist: true
       attribute 0x0009, :endpoint_group_id_list, Array(DatastoreEndpointGroupIDEntryStruct), default: [] of DatastoreEndpointGroupIDEntryStruct, read_access: :administer, persist: true
       attribute 0x000A, :endpoint_binding_list, Array(DatastoreEndpointBindingEntryStruct), default: [] of DatastoreEndpointBindingEntryStruct, read_access: :administer, persist: true
       attribute 0x000B, :node_key_set_list, Array(DatastoreNodeKeySetEntryStruct), default: [] of DatastoreNodeKeySetEntryStruct, read_access: :administer, persist: true
@@ -815,14 +824,15 @@ module Matter
       command 0x11, :remove_binding_from_endpoint_for_node, request: RemoveBindingFromEndpointForNodeRequest, access: :administer
       command 0x12, :add_acl_to_node, request: AddACLToNodeRequest, access: :administer
       command 0x13, :remove_acl_from_node, request: RemoveACLFromNodeRequest, access: :administer
-      MAX_KEY_SETS              =             254
-      MAX_GROUPS                =             254
-      MAX_NODES                 =            1024
-      MAX_ADMINS                =              32
-      MAX_NODE_ENTRIES          =            8192
-      MAX_FRIENDLY_NAME_BYTES   =              32
-      EPOCH_KEY_BYTES           =              16
-      RESERVED_GROUP_ID         =           0_u16
+      MAX_KEY_SETS              =  254
+      MAX_GROUPS                =  254
+      MAX_NODES                 = 1024
+      MAX_ADMINS                =   32
+      MAX_NODE_ENTRIES          = 8192
+      MAX_FRIENDLY_NAME_BYTES   =   32
+      EPOCH_KEY_BYTES           =   16
+      RESERVED_GROUP_ID         = DataType::GroupId::RESERVED.id
+      IPK_KEY_SET_ID            = GroupKeyManagement::IPK_KEY_SET_ID
       ADMINISTRATOR_CAT         =      0xFFFF_u16
       ANCHOR_CAT                =      0xFFFE_u16
       MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
@@ -883,14 +893,14 @@ module Matter
       # fabric that gave callers access to them.
       def clear_fabric_state : Nil
         self.anchor_root_ca = Bytes.empty
-        self.anchor_node_id = 0_u64
-        self.anchor_vendor_id = 0_u16
+        self.anchor_node_id = DataType::NodeId::UNSPECIFIED
+        self.anchor_vendor_id = UNSPECIFIED_ANCHOR_VENDOR_ID
         self.friendly_name = ""
         self.group_key_set_list = [] of DatastoreGroupKeySetStruct
         self.group_list = [] of DatastoreGroupInformationEntryStruct
         self.node_list = [] of DatastoreNodeInformationEntryStruct
         self.admin_list = [] of DatastoreAdministratorInformationEntryStruct
-        self.status = DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, 0_u8)
+        self.status = DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, NO_FAILURE_CODE)
         self.endpoint_group_id_list = [] of DatastoreEndpointGroupIDEntryStruct
         self.endpoint_binding_list = [] of DatastoreEndpointBindingEntryStruct
         self.node_key_set_list = [] of DatastoreNodeKeySetEntryStruct
@@ -922,13 +932,13 @@ module Matter
         self.anchor_node_id = node_id
         self.anchor_vendor_id = vendor_id
         self.friendly_name = name
-        unless @group_key_set_list.any?(&.group_key_set_id.==(0_u16))
-          self.group_key_set_list = [DatastoreGroupKeySetStruct.new(0_u16,
+        unless @group_key_set_list.any?(&.group_key_set_id.==(IPK_KEY_SET_ID))
+          self.group_key_set_list = [DatastoreGroupKeySetStruct.new(IPK_KEY_SET_ID,
             DatastoreGroupKeySecurityPolicyEnum::TrustFirst, nil, nil, nil, nil, nil, nil)] + @group_key_set_list
         end
         if key = ipk
           entries = @group_key_set_list.dup
-          index = entries.index!(&.group_key_set_id.==(0_u16))
+          index = entries.index!(&.group_key_set_id.==(IPK_KEY_SET_ID))
           ipk_entry = entries[index]
           ipk_entry.epoch_key0 = key.dup
           ipk_entry.epoch_start_time0 = 0_u64
@@ -955,11 +965,11 @@ module Matter
         index = @group_key_set_list.index { |entry| entry.group_key_set_id == key_set.group_key_set_id }
         return InteractionModel::Status.not_found unless index
         changed = @group_key_set_list[index] != key_set
-        if changed && key_set.group_key_set_id == 0_u16 &&
+        if changed && key_set.group_key_set_id == IPK_KEY_SET_ID &&
            (key_set.epoch_key0.nil? || key_set.epoch_start_time0.nil? || key_set.epoch_start_time0 == 0_u64)
           return InteractionModel::Status.constraint_error
         end
-        return update_ipk_key_set(key_set, index) if changed && key_set.group_key_set_id == 0_u16
+        return update_ipk_key_set(key_set, index) if changed && key_set.group_key_set_id == IPK_KEY_SET_ID
         entries = @group_key_set_list.dup
         entries[index] = key_set
         self.group_key_set_list = entries
@@ -986,7 +996,7 @@ module Matter
         entries[index] = key_set
         @group_key_set_list = entries
         @node_key_set_list = @node_key_set_list.map do |entry|
-          if entry.group_key_set_id == 0_u16 && entry.status_entry.state != DatastoreStateEnum::DeletePending
+          if entry.group_key_set_id == IPK_KEY_SET_ID && entry.status_entry.state != DatastoreStateEnum::DeletePending
             entry.status_entry = status_entry(DatastoreStateEnum::Pending)
           end
           entry
@@ -1016,7 +1026,7 @@ module Matter
         in_use = @node_key_set_list.any? do |entry|
           entry.group_key_set_id == id && entry.status_entry.state != DatastoreStateEnum::DeletePending
         end
-        return InteractionModel::Status.constraint_error if id == 0_u16 || id == UInt16::MAX || in_use
+        return InteractionModel::Status.constraint_error if id == IPK_KEY_SET_ID || id == UInt16::MAX || in_use
         return InteractionModel::Status.not_found unless @group_key_set_list.any?(&.group_key_set_id.==(id))
         self.group_key_set_list = @group_key_set_list.reject { |entry| entry.group_key_set_id == id }
         commit!
@@ -1277,7 +1287,7 @@ module Matter
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless node_exists?(node_id)
         ids = endpoint_ids.uniq
-        return InteractionModel::Status.constraint_error if ids.includes?(0_u16)
+        return InteractionModel::Status.constraint_error if ids.includes?(DataType::EndpointNumber::ROOT.number)
         entries = @node_endpoint_list.reject { |entry| entry.node_id == node_id && !ids.includes?(entry.endpoint_id) }
         ids.each do |endpoint_id|
           unless entries.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint_id }
@@ -1298,7 +1308,7 @@ module Matter
       def reconcile_node_groups(node_id : UInt64, endpoint_id : UInt16, group_ids : Array(UInt16)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
-        return InteractionModel::Status.constraint_error if group_ids.includes?(0_u16)
+        return InteractionModel::Status.constraint_error if group_ids.includes?(RESERVED_GROUP_ID)
         ids = group_ids.uniq
         entries = @endpoint_group_id_list.reject do |entry|
           entry.node_id == node_id && entry.endpoint_id == endpoint_id &&
@@ -1483,7 +1493,7 @@ module Matter
       # Called after the corresponding device operation completes. A pending
       # deletion remains visible until the device confirms it, so a failed
       # write can be retried by RefreshNode.
-      def complete_node(node_id : UInt64, failure_code : UInt8 = 0_u8) : Bool
+      def complete_node(node_id : UInt64, failure_code : UInt8 = NO_FAILURE_CODE) : Bool
         entries = @node_list.dup
         index = entries.index { |e| e.node_id == node_id }
         return false unless index
@@ -1495,12 +1505,12 @@ module Matter
         true
       end
 
-      def complete_group_membership(node_id : UInt64, endpoint_id : UInt16, group_id : UInt16, failure_code : UInt8 = 0_u8) : Bool
+      def complete_group_membership(node_id : UInt64, endpoint_id : UInt16, group_id : UInt16, failure_code : UInt8 = NO_FAILURE_CODE) : Bool
         entries = @endpoint_group_id_list.dup
         index = entries.index { |e| e.node_id == node_id && e.endpoint_id == endpoint_id && e.group_id == group_id }
         return false unless index
         entry = entries[index]
-        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == 0_u8
+        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == NO_FAILURE_CODE
           entries.delete_at(index)
         else
           entry.status_entry = synced_status(failure_code, entry.status_entry.state)
@@ -1511,12 +1521,12 @@ module Matter
         true
       end
 
-      def complete_binding(node_id : UInt64, endpoint_id : UInt16, list_id : UInt16, failure_code : UInt8 = 0_u8) : Bool
+      def complete_binding(node_id : UInt64, endpoint_id : UInt16, list_id : UInt16, failure_code : UInt8 = NO_FAILURE_CODE) : Bool
         entries = @endpoint_binding_list.dup
         index = entries.index { |e| e.node_id == node_id && e.endpoint_id == endpoint_id && e.list_id == list_id }
         return false unless index
         entry = entries[index]
-        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == 0_u8
+        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == NO_FAILURE_CODE
           entries.delete_at(index)
         else
           entry.status_entry = synced_status(failure_code, entry.status_entry.state)
@@ -1527,16 +1537,16 @@ module Matter
         true
       end
 
-      def complete_acl(node_id : UInt64, list_id : UInt16, failure_code : UInt8 = 0_u8) : Bool
+      def complete_acl(node_id : UInt64, list_id : UInt16, failure_code : UInt8 = NO_FAILURE_CODE) : Bool
         entries = @node_acl_list.dup
         index = entries.index { |e| e.node_id == node_id && e.list_id == list_id }
         return false unless index
         entry = entries[index]
-        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == 0_u8
+        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == NO_FAILURE_CODE
           entries.delete_at(index)
         else
           entry.status_entry = synced_status(failure_code, entry.status_entry.state)
-          entry.prior_acl_entry = nil if failure_code == 0_u8
+          entry.prior_acl_entry = nil if failure_code == NO_FAILURE_CODE
           entries[index] = entry
         end
         self.node_acl_list = entries
@@ -1544,12 +1554,12 @@ module Matter
         true
       end
 
-      def complete_node_key_set(node_id : UInt64, key_set_id : UInt16, failure_code : UInt8 = 0_u8) : Bool
+      def complete_node_key_set(node_id : UInt64, key_set_id : UInt16, failure_code : UInt8 = NO_FAILURE_CODE) : Bool
         entries = @node_key_set_list.dup
         index = entries.index { |e| e.node_id == node_id && e.group_key_set_id == key_set_id }
         return false unless index
         entry = entries[index]
-        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == 0_u8
+        if entry.status_entry.state == DatastoreStateEnum::DeletePending && failure_code == NO_FAILURE_CODE
           entries.delete_at(index)
         else
           entry.status_entry = synced_status(failure_code, entry.status_entry.state)
@@ -1561,7 +1571,7 @@ module Matter
       end
 
       private def synced_status(failure_code : UInt8, previous_state : DatastoreStateEnum = DatastoreStateEnum::Pending) : DatastoreStatusEntryStruct
-        state = if failure_code == 0_u8
+        state = if failure_code == NO_FAILURE_CODE
                   DatastoreStateEnum::Committed
                 elsif previous_state == DatastoreStateEnum::DeletePending
                   DatastoreStateEnum::DeletePending
@@ -1576,7 +1586,7 @@ module Matter
         when DatastoreStateEnum::CommitFailed
           status_entry(DatastoreStateEnum::Pending)
         when DatastoreStateEnum::DeletePending
-          entry.failure_code == 0_u8 ? entry : status_entry(DatastoreStateEnum::DeletePending)
+          entry.failure_code == NO_FAILURE_CODE ? entry : status_entry(DatastoreStateEnum::DeletePending)
         else
           entry
         end
@@ -1586,7 +1596,7 @@ module Matter
       # are pruned. Unknown failures keep their intent for a later refresh.
       private def terminal_failure?(entry : DatastoreStatusEntryStruct) : Bool
         return false unless entry.state == DatastoreStateEnum::CommitFailed ||
-                            (entry.state == DatastoreStateEnum::DeletePending && entry.failure_code != 0_u8)
+                            (entry.state == DatastoreStateEnum::DeletePending && entry.failure_code != NO_FAILURE_CODE)
         entry.failure_code == InteractionModel::StatusCode::ResourceExhausted.value ||
           entry.failure_code == InteractionModel::StatusCode::ConstraintError.value
       end
@@ -1600,19 +1610,19 @@ module Matter
         group = binding.group
         return false if node.nil? == group.nil?
         return false if node && (binding.endpoint.nil? || !DataType::NodeId.valid_joint_fabric?(node))
-        return false if group && (group == 0_u16 || binding.endpoint)
+        return false if group && (group == RESERVED_GROUP_ID || binding.endpoint)
         true
       end
 
       private def valid_key_set?(entry : DatastoreGroupKeySetStruct, allow_ipk : Bool = false) : Bool
-        return false if (entry.group_key_set_id == 0_u16 && !allow_ipk) || entry.group_key_set_id == UInt16::MAX
+        return false if (entry.group_key_set_id == IPK_KEY_SET_ID && !allow_ipk) || entry.group_key_set_id == UInt16::MAX
         return false unless entry.group_key_security_policy == DatastoreGroupKeySecurityPolicyEnum::TrustFirst
         keys = {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}
         times = {entry.epoch_start_time0, entry.epoch_start_time1, entry.epoch_start_time2}
         return false unless keys.zip(times).all? { |key, time| key.nil? == time.nil? && (key.nil? || key.size == EPOCH_KEY_BYTES) }
         # Every non-IPK Datastore key set must be installable with Group Key
         # Management KeySetWrite on its target nodes.
-        if entry.group_key_set_id != 0_u16
+        if entry.group_key_set_id != IPK_KEY_SET_ID
           return false unless entry.epoch_key0 && (first_time = entry.epoch_start_time0) && first_time > 0_u64
         end
         return false if entry.epoch_key2 && entry.epoch_key1.nil?
@@ -1629,11 +1639,11 @@ module Matter
       end
 
       private def valid_group_cat?(cat : UInt16?) : Bool
-        cat.nil? || (cat > 0_u16 && cat < UInt16::MAX)
+        cat.nil? || (cat > UNSPECIFIED_GROUP_CAT && cat < RESERVED_GROUP_CAT)
       end
 
       private def valid_group_cat_version?(version : UInt16?) : Bool
-        version.nil? || (version >= 1_u16 && version < UInt16::MAX)
+        version.nil? || (version >= FIRST_GROUP_CAT_VERSION && version < RESERVED_GROUP_CAT_VERSION)
       end
 
       private def privileged_group_with_key_set?(permission : DatastoreAccessControlEntryPrivilegeEnum, key_set_id : UInt16?) : Bool
@@ -1793,7 +1803,7 @@ module Matter
 
       private def mark_unused_key_sets_for_node(node_id : UInt64) : Nil
         entries = @node_key_set_list.map do |entry|
-          if entry.node_id == node_id && entry.group_key_set_id != 0_u16
+          if entry.node_id == node_id && entry.group_key_set_id != IPK_KEY_SET_ID
             needed = @endpoint_group_id_list.any? do |membership|
               membership.node_id == node_id && membership.status_entry.state != DatastoreStateEnum::DeletePending &&
                 @group_list.any? { |group| group.group_id == membership.group_id.to_u64 && group.group_key_set_id == entry.group_key_set_id }
@@ -1806,7 +1816,7 @@ module Matter
       end
 
       private def status_entry(state : DatastoreStateEnum = DatastoreStateEnum::Committed) : DatastoreStatusEntryStruct
-        DatastoreStatusEntryStruct.new(state, matter_timestamp, 0_u8)
+        DatastoreStatusEntryStruct.new(state, matter_timestamp, NO_FAILURE_CODE)
       end
 
       private def matter_timestamp : UInt32

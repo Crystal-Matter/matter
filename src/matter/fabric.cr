@@ -24,8 +24,9 @@ module Matter
     EXPIRY = 365.days
 
     # Fabric indices are 1..254: 0 is reserved and 255 is invalid.
-    MIN_FABRIC_INDEX =   1_u8
-    MAX_FABRIC_INDEX = 254_u8
+    RESERVED_FABRIC_ID =  0_u64
+    MIN_FABRIC_INDEX   =   1_u8
+    MAX_FABRIC_INDEX   = 254_u8
 
     # The Identity Protection Key is always 16 bytes.
     IPK_SIZE = 16
@@ -144,8 +145,8 @@ module Matter
       raise ArgumentError.new("fabric_index must be #{MIN_FABRIC_INDEX}-#{MAX_FABRIC_INDEX}") unless MIN_FABRIC_INDEX <= @fabric_index <= MAX_FABRIC_INDEX
       raise ArgumentError.new("ipk must be #{IPK_SIZE} bytes") if @ipk.size != IPK_SIZE
       raise ArgumentError.new("label must be <= #{MAX_LABEL_LENGTH} characters") if @label.size > MAX_LABEL_LENGTH
-      raise ArgumentError.new("fabric_id must not be 0") if @fabric_id == 0
-      raise ArgumentError.new("node_id must not be 0") if @node_id == 0
+      raise ArgumentError.new("fabric_id must not be 0") if @fabric_id == RESERVED_FABRIC_ID
+      raise ArgumentError.new("node_id must not be 0") if @node_id == DataType::NodeId::UNSPECIFIED
       raise ArgumentError.new("cats must have <= #{MAX_CATS} entries") if @cat_values.size > MAX_CATS
     end
 

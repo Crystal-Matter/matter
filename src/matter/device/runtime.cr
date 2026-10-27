@@ -77,7 +77,8 @@ module Matter
     getter ip_addresses : Array(Socket::IPAddress)
 
     # Default Matter operational UDP port.
-    DEFAULT_PORT = 5540
+    DEFAULT_PORT               =  5540
+    DEFAULT_DEVICE_ENDPOINT_ID = 1_u16
 
     # Application document holding the endpoints added at runtime from an
     # `endpoint_template`, and the keys of one of its entries.
@@ -689,7 +690,7 @@ module Matter
 
     # Map endpoint -> device type ID for Descriptor population.
     protected def endpoint_device_types : Hash(UInt16, UInt32)
-      {1_u16 => primary_device_type_id} of UInt16 => UInt32
+      {DEFAULT_DEVICE_ENDPOINT_ID => primary_device_type_id} of UInt16 => UInt32
     end
 
     protected def endpoint_additional_device_types : Hash(UInt16, Array(UInt32))
@@ -854,7 +855,7 @@ module Matter
                                   counter : UInt32, threshold : UInt16) : Nil
       payload = Protocol::Icd::CheckInMessage.encode_icd(key, counter, threshold)
       packet = Codec::MessageCodec::PacketHeader.new(
-        session_id: 0_u16,
+        session_id: Codec::MessageCodec::UNSECURED_SESSION_ID,
         session_type: Codec::MessageCodec::SessionType::Unicast,
         message_id: 0_u32)
       header = Codec::MessageCodec::PayloadHeader.new(

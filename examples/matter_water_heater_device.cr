@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic water heater: the host callbacks stand in for physical heater and
 # mode and power controls. The energy manager shares the heater endpoint.
 module MatterWaterHeater
+  DEVICE_ENDPOINT_ID = 1_u16
+
   alias Energy = Matter::Cluster::DeviceEnergyManagement
   alias Mode = Matter::Cluster::WaterHeaterMode
   alias Management = Matter::Cluster::WaterHeaterManagement
@@ -23,14 +25,14 @@ module MatterWaterHeater
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Water Heater",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_water_heater_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Thermostat, feature_map: Thermostat::Feature::Heating,
         occupied_heating_setpoint: 6000_i16
       cluster Mode, supported_modes: MODES, current_mode: OFF_MODE
@@ -47,10 +49,10 @@ module MatterWaterHeater
     end
 
     protected def before_start : Nil
-      mode = node.get_cluster!(1_u16, Mode)
-      heater = node.get_cluster!(1_u16, Management)
-      energy = node.get_cluster!(1_u16, Energy)
-      thermostat = node.get_cluster!(1_u16, Thermostat)
+      mode = node.get_cluster!(DEVICE_ENDPOINT_ID, Mode)
+      heater = node.get_cluster!(DEVICE_ENDPOINT_ID, Management)
+      energy = node.get_cluster!(DEVICE_ENDPOINT_ID, Energy)
+      thermostat = node.get_cluster!(DEVICE_ENDPOINT_ID, Thermostat)
 
       mode.on_change_to_mode do |_requested|
         Mode::ChangeToModeResponse.new(Mode::ModeStatus::Success)

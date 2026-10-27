@@ -4,6 +4,11 @@ require "./support/main"
 # Synthetic Audio Output fixture. A media product would wire selection to its
 # audio path and advertise the other clusters required by its device type.
 module MatterAudioOutput
+  NAME_UPDATABLE_OUTPUT_ENDPOINT_ID = 1_u16
+  BASIC_OUTPUT_ENDPOINT_ID          = 2_u16
+
+  EXAMPLE_PRODUCT_ID = 0x050B_u16
+
   alias Audio = Matter::Cluster::AudioOutput
 
   OUTPUTS = [
@@ -15,28 +20,28 @@ module MatterAudioOutput
     include Examples::Console
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Audio Output",
-      vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID, product_id: 0x050B_u16,
+      vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID, product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_audio_output_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint NAME_UPDATABLE_OUTPUT_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Audio, output_list: OUTPUTS, current_output: 0_u8,
         feature_map: Audio::Feature::NameUpdates
     end
 
-    endpoint 2, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint BASIC_OUTPUT_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Audio, output_list: OUTPUTS, current_output: 0_u8
     end
 
     protected def before_start : Nil
-      node.get_cluster!(1_u16, Audio).on_select_output do |output|
+      node.get_cluster!(NAME_UPDATABLE_OUTPUT_ENDPOINT_ID, Audio).on_select_output do |output|
         puts "Synthetic audio route: #{output.index}"
         true
       end
-      node.get_cluster!(2_u16, Audio).on_select_output { |_output| true }
+      node.get_cluster!(BASIC_OUTPUT_ENDPOINT_ID, Audio).on_select_output { |_output| true }
       super
     end
   end

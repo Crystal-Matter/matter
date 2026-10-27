@@ -39,6 +39,7 @@ module Matter
         property anchor_node_id : UInt64?
         property outgoing_admin_entry : Bytes?
         property remaining_admin_entries : Array(Bytes)?
+        property anchor_pre_rotation_noc : Bytes?
 
         def initialize(@outgoing_node_id : UInt64, @stage : Stage = Stage::Ready,
                        @active_node_id : UInt64? = nil,
@@ -49,7 +50,24 @@ module Matter
                        @root_public_key : Bytes? = nil,
                        @anchor_node_id : UInt64? = nil,
                        @outgoing_admin_entry : Bytes? = nil,
-                       @remaining_admin_entries : Array(Bytes)? = nil)
+                       @remaining_admin_entries : Array(Bytes)? = nil,
+                       @anchor_pre_rotation_noc : Bytes? = nil)
+        end
+
+        # A save callback may fail after touching its input. Every mutable
+        # field must be detached before a proposed transition is passed to it.
+        def detached_copy : Journal
+          Journal.new(@outgoing_node_id, @stage,
+            active_node_id: @active_node_id,
+            rotated_nodes: @rotated_nodes.dup,
+            administrator_cat_version: @administrator_cat_version,
+            prior_administrator_cat_version: @prior_administrator_cat_version,
+            fabric_id: @fabric_id,
+            root_public_key: @root_public_key.try(&.dup),
+            anchor_node_id: @anchor_node_id,
+            outgoing_admin_entry: @outgoing_admin_entry.try(&.dup),
+            remaining_admin_entries: @remaining_admin_entries.try { |entries| entries.map(&.dup) },
+            anchor_pre_rotation_noc: @anchor_pre_rotation_noc.try(&.dup))
         end
       end
 
@@ -84,7 +102,10 @@ module Matter
             Cluster::OperationalCredentials::CLUSTER_ID,
             Cluster::OperationalCredentials::CMD_REMOVE_FABRIC,
             Cluster::OperationalCredentials::Tlv::RemoveFabricRequest.new(index).to_slice)
-          fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+          entry = ImClient.single_invoke_response!(response, "RemoveFabric")
+          fields = entry.command_data.try do |command|
+            command.command_fields if command.command_path.command == Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+          end
           raise Matter::ProtocolError.new("RemoveFabric omitted response") unless fields
           result = Cluster::OperationalCredentials::Tlv::TlvNocResponse.from_slice(fields.to_slice)
           unless result.status_code.ok?
@@ -137,7 +158,7 @@ module Matter
                        @remaining_nodes : Array(UInt64), @port : Port,
                        @anchor_consent : Consent, @outgoing_consent : Consent,
                        @save : SaveJournal, @journal : Journal)
-          unless @journal.outgoing_node_id != 0_u64 && @anchor_node_id != 0_u64 &&
+          unless @journal.outgoing_node_id != DataType::NodeId::UNSPECIFIED && @anchor_node_id != DataType::NodeId::UNSPECIFIED &&
                  @journal.outgoing_node_id != @anchor_node_id
             raise Matter::ConfigurationError.new("Invalid outgoing Administrator identity")
           end
@@ -149,9 +170,18 @@ module Matter
                Stage::RotatingAnchor, Stage::RotatingParticipant)
             raise Matter::CommissioningError.new("Administrator removal stage #{@journal.stage} needs reconciliation")
           end
+          if @journal.stage.in?(Stage::DatastoreRemoved, Stage::AnchorRotated)
+            verify_remaining_admins_after_restart!
+          end
           if @journal.stage.ready?
-            preflight!
-            advance(Stage::RemovingFabric)
+            before_preflight = @journal.detached_copy
+            begin
+              preflight!
+              advance(Stage::RemovingFabric)
+            rescue ex
+              @journal = before_preflight
+              raise ex
+            end
             @port.remove_outgoing_fabric!
             advance(Stage::FabricRemoved)
           end
@@ -169,12 +199,18 @@ module Matter
           if @journal.stage.anchor_rotated?
             @remaining_nodes.each do |node_id|
               next if @journal.rotated_nodes.includes?(node_id)
-              @journal.active_node_id = node_id
-              advance(Stage::RotatingParticipant)
+              pending = @journal.detached_copy
+              pending.active_node_id = node_id
+              pending.stage = Stage::RotatingParticipant
+              @save.call(pending)
+              @journal = pending
               @port.rotate_participant!(node_id)
-              @journal.rotated_nodes << node_id
-              @journal.active_node_id = nil
-              advance(Stage::AnchorRotated)
+              completed = @journal.detached_copy
+              completed.rotated_nodes << node_id
+              completed.active_node_id = nil
+              completed.stage = Stage::AnchorRotated
+              @save.call(completed)
+              @journal = completed
             end
             advance(Stage::Completed)
           end
@@ -235,15 +271,16 @@ module Matter
                   else                                 false
                   end
           raise Matter::ConfigurationError.new("Invalid Administrator removal reconciliation") unless valid
+          updated = journal.detached_copy
           if node_id = rotated_node_id
             if participant_completed
-              journal.rotated_nodes << node_id unless journal.rotated_nodes.includes?(node_id)
+              updated.rotated_nodes << node_id unless updated.rotated_nodes.includes?(node_id)
             end
-            journal.active_node_id = nil
+            updated.active_node_id = nil
           end
-          journal.stage = stable_stage
-          save.call(journal)
-          journal
+          updated.stage = stable_stage
+          save.call(updated)
+          updated
         end
 
         # The Anchor can resolve a lost local RemoveAdmin acknowledgement from
@@ -257,7 +294,7 @@ module Matter
           outgoing_admin_entry = journal.outgoing_admin_entry
           bound = journal.stage.removing_datastore? &&
                   DataType::NodeId.valid_joint_fabric?(journal.outgoing_node_id) &&
-                  fabric_id && fabric_id != 0_u64 &&
+                  fabric_id && fabric_id != Fabric::RESERVED_FABRIC_ID &&
                   root_public_key && !root_public_key.empty? &&
                   anchor_node_id && DataType::NodeId.valid_joint_fabric?(anchor_node_id) &&
                   outgoing_admin_entry && !outgoing_admin_entry.empty?
@@ -298,7 +335,7 @@ module Matter
         # restored Anchor Datastore proves that RemoveAdmin had no effect.
         def self.reconcile_datastore_no_effect!(journal : Journal, datastore : Datastore,
                                                 expected_fabric_index : UInt8, save : SaveJournal) : Journal
-          unless journal.stage.removing_datastore? && journal.outgoing_node_id != 0_u64 &&
+          unless journal.stage.removing_datastore? && journal.outgoing_node_id != DataType::NodeId::UNSPECIFIED &&
                  journal.fabric_id && journal.root_public_key && journal.anchor_node_id
             raise Matter::ConfigurationError.new("Administrator removal is not awaiting bound Datastore reconciliation")
           end
@@ -330,6 +367,47 @@ module Matter
           reconcile_journal!(journal, Stage::FabricRemoved, save)
         end
 
+        # The caller must first prove, on a fresh CASE session, that the
+        # Anchor still holds its exact durable old NOC and has no armed
+        # fail-safe or pending credential journal. Datastore CAT/ACL updates
+        # can already be durable when UpdateNOC had no effect. Keep those
+        # updates and retry the idempotent local preparation and NOC rotation.
+        def self.reconcile_anchor_rotation_no_effect!(journal : Journal, datastore : Datastore,
+                                                      expected_fabric_index : UInt8, save : SaveJournal) : Journal
+          unless journal.stage.rotating_anchor? &&
+                 DataType::NodeId.valid_joint_fabric?(journal.outgoing_node_id) &&
+                 journal.fabric_id && journal.fabric_id != Fabric::RESERVED_FABRIC_ID &&
+                 journal.root_public_key && journal.root_public_key.as(Bytes).size > 0 &&
+                 journal.anchor_node_id && DataType::NodeId.valid_joint_fabric?(journal.anchor_node_id.as(UInt64)) &&
+                 journal.outgoing_admin_entry && journal.remaining_admin_entries &&
+                 journal.anchor_pre_rotation_noc && journal.anchor_pre_rotation_noc.as(Bytes).size > 0
+            raise Matter::ConfigurationError.new("Administrator removal is not awaiting bound Anchor rotation reconciliation")
+          end
+          unless datastore.anchor_node_id == journal.anchor_node_id &&
+                 datastore.joint_fabric_index == expected_fabric_index
+            raise Matter::AuthenticationError.new("Rotation Datastore belongs to another Anchor fabric")
+          end
+          verify_anchor_root!(journal, datastore)
+          unless datastore.status.state.committed?
+            raise Matter::CommissioningError.new("Anchor Datastore is not committed")
+          end
+          previous = journal.prior_administrator_cat_version
+          target = journal.administrator_cat_version
+          current = datastore.group_list.find(&.group_cat.==(Datastore::ADMINISTRATOR_CAT)).try(&.group_cat_version)
+          unless previous && target && target > previous && current == target &&
+                 journal.rotated_nodes.empty? && journal.active_node_id.nil?
+            raise Matter::CommissioningError.new("Anchor Datastore CAT differs from the pending rotation")
+          end
+          admins = datastore.admin_list
+          unless admins.map(&.to_slice) == journal.remaining_admin_entries &&
+                 admins.none?(&.node_id.==(journal.outgoing_node_id)) &&
+                 admins.count(&.node_id.==(journal.anchor_node_id)) == 1 &&
+                 admins.map(&.node_id).uniq!.size == admins.size
+            raise Matter::CommissioningError.new("Anchor Datastore AdminList differs from the pending rotation")
+          end
+          reconcile_journal!(journal, Stage::DatastoreRemoved, save)
+        end
+
         private def self.verify_anchor_root!(journal : Journal, datastore : Datastore) : Nil
           root = datastore.anchor_root_ca
           Crypto::MatterCertificate::Validation.verify_root(root)
@@ -339,8 +417,10 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
-          @journal.stage = stage
-          @save.call(@journal)
+          updated = @journal.detached_copy
+          updated.stage = stage
+          @save.call(updated)
+          @journal = updated
         end
 
         private def record_pre_removal_snapshot! : Nil
@@ -382,6 +462,27 @@ module Matter
             raise Matter::CommissioningError.new("Anchor Datastore remaining AdminList changed during removal")
           end
         end
+
+        # A resumed removal must rotate exactly the Administrators captured
+        # before RemoveAdmin. The host may have rebuilt @remaining_nodes from
+        # a Datastore that changed while this workflow was stopped. Compare
+        # entries in journaled list order: even a reorder is a concurrent
+        # Datastore change that this removal has not reconciled.
+        private def verify_remaining_admins_after_restart! : Nil
+          expected_entries = @journal.remaining_admin_entries ||
+                             raise Matter::CommissioningError.new("Administrator removal lacks the journaled remaining AdminList")
+          unless @datastore.status.state.committed? &&
+                 @datastore.admin_list.map(&.to_slice) == expected_entries
+            raise Matter::CommissioningError.new("Administrator removal remaining AdminList changed after restart")
+          end
+          node_ids = @datastore.admin_list.map(&.node_id)
+          expected_participants = node_ids.reject(&.==(@anchor_node_id))
+          unless node_ids.count(@anchor_node_id) == 1 &&
+                 node_ids.uniq.size == node_ids.size &&
+                 @remaining_nodes.sort == expected_participants.sort
+            raise Matter::CommissioningError.new("Administrator removal remaining participant set changed after restart")
+          end
+        end
       end
 
       # Resolve a lost rotation acknowledgement only after the target proves
@@ -393,6 +494,24 @@ module Matter
       module RotationInspection
         extend self
 
+        # An old CAT alone does not prove no effect: an armed fail-safe can
+        # install a new NOC later. The local caller must separately establish
+        # that fail-safe and credential-journal state are both clear, and must
+        # pass the exact pre-rotation NOC saved in the removal journal and
+        # checked against its durable fabric record.
+        def verify_no_effect!(im : ImClient, session : Session::SecureContext,
+                              peer : Socket::IPAddress, root_certificate : Bytes,
+                              fabric_id : UInt64, root_public_key : Bytes,
+                              node_id : UInt64, prior_administrator_cat_version : UInt16,
+                              challenge : Bytes, durable_old_noc : Bytes,
+                              anchor_cat_version : UInt16? = nil) : Nil
+          observed = verify_current_noc!(im, session, peer, root_certificate, fabric_id,
+            root_public_key, node_id, prior_administrator_cat_version, challenge, anchor_cat_version)
+          unless observed == durable_old_noc
+            raise Matter::AuthenticationError.new("Rotation target does not hold the durable NOC")
+          end
+        end
+
         def verify_completed!(im : ImClient, session : Session::SecureContext,
                               peer : Socket::IPAddress, root_certificate : Bytes,
                               fabric_id : UInt64, root_public_key : Bytes,
@@ -403,6 +522,7 @@ module Matter
           result = im.invoke(session: session, peer: peer, endpoint_id: Node::ROOT_ENDPOINT_ID,
             cluster_id: Cluster::GeneralCommissioning::CLUSTER_ID,
             command_id: Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE)
+          ImClient.single_invoke_response!(result, "Rotation CommissioningComplete")
           command = result.invoke_responses.find do |entry|
             entry.command_data.try(&.command_path.command) ==
               Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE
@@ -419,13 +539,14 @@ module Matter
           final_challenge = Crypto::StandardCrypto.new.random_bytes(VidVerification::CHALLENGE_SIZE)
           verify_current_noc!(im, session, peer, root_certificate, fabric_id,
             root_public_key, node_id, administrator_cat_version, final_challenge, anchor_cat_version)
+          nil
         end
 
         private def verify_current_noc!(im : ImClient, session : Session::SecureContext,
                                         peer : Socket::IPAddress, root_certificate : Bytes,
                                         fabric_id : UInt64, root_public_key : Bytes,
                                         node_id : UInt64, administrator_cat_version : UInt16,
-                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Nil
+                                        challenge : Bytes, anchor_cat_version : UInt16? = nil) : Bytes
           unless session.case_session? && session.peer_node_id.try(&.id) == node_id
             raise Matter::AuthenticationError.new("Rotation CASE peer differs from journaled Node ID")
           end
@@ -475,6 +596,7 @@ module Matter
             cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
             command_id: Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST,
             fields: request.to_slice)
+          ImClient.single_invoke_response!(response_message, "Rotation SignVIDVerificationRequest")
           command = response_message.invoke_responses.find do |entry|
             entry.command_data.try(&.command_path.command) ==
               Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST_RESPONSE
@@ -518,6 +640,7 @@ module Matter
               raise Matter::AuthenticationError.new("Rotation NOC does not carry the selected Anchor CAT version")
             end
           end
+          noc.noc
         end
 
         private def read_list(type : T.class, im : ImClient, session : Session::SecureContext,

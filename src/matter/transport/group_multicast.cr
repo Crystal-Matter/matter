@@ -1,4 +1,5 @@
 require "socket"
+require "../datatype/group_id"
 
 module Matter
   module Transport
@@ -10,7 +11,7 @@ module Matter
       PER_GROUP_ID_NETWORK_PREFIX = 0x0040_u16
       PER_GROUP_ID_FABRIC_PREFIX  =    0xfd_u8
       PER_GROUP_ID_RESERVED_OCTET =       0_u8
-      RESERVED_GROUP_ID           =      0_u16
+      RESERVED_GROUP_ID           = DataType::GroupId::RESERVED.id
 
       def self.iana_address(port : Int32 = UDPTransport::MATTER_PORT) : Socket::IPAddress
         Socket::IPAddress.new(IANA_ADDRESS, port)

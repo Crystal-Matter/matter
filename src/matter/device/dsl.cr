@@ -4,14 +4,18 @@ module Matter
     #
     # ```
     # class Switch < Matter::Device
+    #   PRODUCT_ID        = 0x8001_u16
+    #   LIGHT_ENDPOINT_ID =      1_u16
+    #
     #   identity vendor: "Spider-Gazelle", product: "Crystal Switch",
-    #     vendor_id: Matter::SetupPayload.test_vendor_id, product_id: 0x8001_u16,
-    #     discriminator: 3840_u16, pin: 20202021_u32,
+    #     vendor_id: Matter::SetupPayload.test_vendor_id, product_id: PRODUCT_ID,
+    #     discriminator: Matter::SetupPayload.generate_random_discriminator,
+    #     pin: Matter::SetupPayload.generate_random_pin,
     #     device_type: Matter::DeviceType::ON_OFF_LIGHT, appearance: :satin
     #   storage yaml: "matter_switch_storage.yml"
     #   network :ethernet
     #
-    #   endpoint 1, device_type: Matter::DeviceType::ON_OFF_LIGHT do
+    #   endpoint LIGHT_ENDPOINT_ID, device_type: Matter::DeviceType::ON_OFF_LIGHT do
     #     cluster Matter::Cluster::OnOff, feature_map: :lighting, as: :switch
     #     cluster Matter::Cluster::Identify, identify_type: :visible_light
     #     cluster Matter::Cluster::Groups
@@ -392,7 +396,7 @@ module Matter
             compositions = {} of UInt16 => Tuple(UInt16, Array(::Matter::Cluster::Descriptor::SemanticTag))
             {% for decl in statics %}
               compositions[({{ decl[:number] }}).to_u16] = {
-                {% if decl[:parent_endpoint] %}({{ decl[:parent_endpoint] }}).to_u16{% else %}0_u16{% end %},
+                {% if decl[:parent_endpoint] %}({{ decl[:parent_endpoint] }}).to_u16{% else %}::Matter::Node::ROOT_ENDPOINT_ID{% end %},
                 {% if decl[:tag_list] %}{{ decl[:tag_list] }}{% else %}[] of ::Matter::Cluster::Descriptor::SemanticTag{% end %},
               }
             {% end %}

@@ -57,7 +57,7 @@ module Matter
           store.complete_group_membership(node_id, entry.endpoint_id, entry.group_id, status)
         end
 
-        store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && entry.status_entry.failure_code == 0_u8 }.each do |entry|
+        store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && entry.status_entry.failure_code == Store::NO_FAILURE_CODE }.each do |entry|
           status = apply do
             sync_key_set(store, entry, session, peer)
           end
@@ -84,7 +84,7 @@ module Matter
                    store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
                    store.node_acl_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
                    store.endpoint_binding_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) }
-          store.complete_node(node_id, failed ? FAILURE_CODE : 0_u8)
+          store.complete_node(node_id, failed ? FAILURE_CODE : Store::NO_FAILURE_CODE)
         end
       end
 
@@ -101,7 +101,8 @@ module Matter
           elsif servers.includes?(Cluster::Groups::CLUSTER_ID)
             request = Cluster::Groups::GetGroupMembershipRequest.new([] of DataType::GroupId)
             fields = invoke_data(session, peer, endpoint.endpoint_id, Cluster::Groups::CLUSTER_ID,
-              Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP, request.to_slice)
+              Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP, Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE,
+              request.to_slice)
             group_ids = Cluster::Groups::GetGroupMembershipResponse.from_slice(fields).group_list.map(&.id)
             ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint.endpoint_id, group_ids))
           end
@@ -116,7 +117,8 @@ module Matter
 
         if root_servers.includes?(Cluster::GroupKeyManagement::CLUSTER_ID)
           fields = invoke_data(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID,
-            Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES, Bytes.empty)
+            Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES,
+            Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES_RESPONSE, Bytes.empty)
           ids = Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(fields).group_key_set_i_ds
           ensure_reconciled!(store.reconcile_node_key_sets(node_id, ids))
         end
@@ -147,24 +149,28 @@ module Matter
       end
 
       private def invoke_data(session : Session::SecureContext, peer : Socket::IPAddress, endpoint_id : UInt16,
-                              cluster_id : UInt32, command_id : UInt32, fields : Bytes) : Bytes
+                              cluster_id : UInt32, command_id : UInt32,
+                              response_command_id : UInt32, fields : Bytes) : Bytes
         response = @im.invoke(session, peer, endpoint_id, cluster_id, command_id, fields)
-        data = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+        entry = ImClient.single_invoke_response!(response, "Datastore target command")
+        data = entry.command_data.try do |command|
+          command.command_fields if command.command_path.command == response_command_id
+        end
         if !data && (status = response.invoke_responses.compact_map(&.command_status).first?.try(&.status))
           raise Matter::ClusterError.from_wire("Datastore target command failed", status.status, status.cluster_status)
         end
-        raise Matter::ProtocolError.new("Datastore target command returned no data") unless data
+        raise Matter::ProtocolError.new("Datastore target command returned no data for response command #{response_command_id}") unless data
         data.to_slice
       end
 
       private def pending?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::Pending ||
-          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == 0_u8)
+          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == Store::NO_FAILURE_CODE)
       end
 
       private def failed?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::CommitFailed ||
-          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code != 0_u8)
+          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code != Store::NO_FAILURE_CODE)
       end
 
       private def apply(& : -> Nil) : UInt8
@@ -223,11 +229,14 @@ module Matter
           command_id = Cluster::Groups::CMD_ADD_GROUP
         end
         response = @im.invoke(session, peer, entry.endpoint_id, Cluster::Groups::CLUSTER_ID, command_id, request.to_slice)
-        fields = response.invoke_responses.find(&.command_data).try(&.command_data).try(&.command_fields)
+        item = ImClient.single_invoke_response!(response, "Groups command")
+        fields = item.command_data.try do |command|
+          command.command_fields if command.command_path.command == response_id
+        end
         if !fields && (status = response.invoke_responses.compact_map(&.command_status).first?.try(&.status))
           raise Matter::ClusterError.from_wire("Groups command failed", status.status, status.cluster_status)
         end
-        raise Matter::ProtocolError.new("Groups command returned no response data") unless fields
+        raise Matter::ProtocolError.new("Groups command returned no data for response command #{response_id}") unless fields
         status, group_id = if response_id == Cluster::Groups::CMD_ADD_GROUP_RESPONSE
                              result = Cluster::Groups::AddGroupResponse.from_slice(fields.to_slice)
                              {result.status_code, result.group_id}
@@ -274,7 +283,7 @@ module Matter
           return unless existing && existing.endpoints.includes?(entry.endpoint_id)
           request = Cluster::Groupcast::LeaveGroupRequest.new(entry.group_id, [entry.endpoint_id])
           fields = invoke_data(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID,
-            Cluster::Groupcast::CMD_LEAVE_GROUP, request.to_slice)
+            Cluster::Groupcast::CMD_LEAVE_GROUP, Cluster::Groupcast::CMD_LEAVE_GROUP_RESPONSE, request.to_slice)
           response = Cluster::Groupcast::LeaveGroupResponse.from_slice(fields)
           unless response.group_id == entry.group_id && response.endpoints.includes?(entry.endpoint_id)
             raise Matter::ProtocolError.new("Groupcast LeaveGroup did not confirm endpoint removal")
@@ -322,7 +331,7 @@ module Matter
         end
         raise Matter::ProtocolError.new("Target CurrentFabricIndex read returned no data") unless data
         index = UInt8.from_tlv(data.to_slice)
-        raise Matter::ProtocolError.new("Target CurrentFabricIndex is undefined") if index == 0_u8
+        raise Matter::ProtocolError.new("Target CurrentFabricIndex is undefined") if index == DataType::NO_FABRIC
         index
       end
 
@@ -419,6 +428,7 @@ module Matter
       private def invoke_ok!(session : Session::SecureContext, peer : Socket::IPAddress,
                              endpoint_id : UInt16, cluster_id : UInt32, command_id : UInt32, fields : Bytes) : Nil
         response = @im.invoke(session, peer, endpoint_id, cluster_id, command_id, fields)
+        ImClient.single_invoke_response!(response, "Datastore target command")
         return if response.invoke_responses.any? { |entry| entry.command_status.try(&.status.status) == InteractionModel::StatusCode::Success.value }
         status = response.invoke_responses.compact_map(&.command_status).first?.try(&.status)
         raise Matter::ClusterError.from_wire("Datastore target command failed", status.status, status.cluster_status) if status

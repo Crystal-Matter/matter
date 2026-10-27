@@ -18,7 +18,7 @@ module Matter
 
       PROTOCOL_SECURE_CHANNEL    = Protocol::ProtocolId::SecureChannel.value
       PROTOCOL_INTERACTION_MODEL = Protocol::ProtocolId::InteractionModel.value
-      UNSECURED_SESSION_ID       = 0_u16
+      UNSECURED_SESSION_ID       = Codec::MessageCodec::UNSECURED_SESSION_ID
       IPV4_MAPPED_PREFIX         = "::ffff:"
 
       MSG_STANDALONE_ACK       = 0x10_u8

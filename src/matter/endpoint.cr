@@ -31,7 +31,7 @@ module Matter
     def initialize(
       @endpoint_id : DataType::EndpointNumber,
       @device_types : Array(DeviceType) = [] of DeviceType,
-      @parent_endpoint_id : UInt16 = 0_u16,
+      @parent_endpoint_id : UInt16 = DataType::EndpointNumber::ROOT.number,
       @semantic_tags : Array(Cluster::Descriptor::SemanticTag) = [] of Cluster::Descriptor::SemanticTag,
     )
       @clusters = {} of UInt32 => Cluster::Base
@@ -40,7 +40,7 @@ module Matter
 
     # Convenience constructor for single device type
     def initialize(@endpoint_id : DataType::EndpointNumber, device_type : DeviceType,
-                   @parent_endpoint_id : UInt16 = 0_u16,
+                   @parent_endpoint_id : UInt16 = DataType::EndpointNumber::ROOT.number,
                    @semantic_tags : Array(Cluster::Descriptor::SemanticTag) = [] of Cluster::Descriptor::SemanticTag)
       @device_types = [device_type]
       @clusters = {} of UInt32 => Cluster::Base

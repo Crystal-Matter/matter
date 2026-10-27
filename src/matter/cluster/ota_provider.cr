@@ -171,7 +171,7 @@ module Matter
       property on_apply_update : Proc(RequestContext, ApplyUpdateRequest, ApplyUpdateResponse)?
       property on_notify_update_applied : Proc(RequestContext, NotifyUpdateAppliedRequest, Nil)?
 
-      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16))
+      def initialize(endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 

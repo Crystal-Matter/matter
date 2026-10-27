@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic daily price calendar on an Aggregator endpoint. A production
 # provider publishes its own calendar and refreshes projections on clock edges.
 module MatterCommodityTariff
+  EXAMPLE_PRODUCT_ID = 0x0700_u16
+
   alias Tariff = Matter::Cluster::CommodityTariff
 
   class Device < Matter::Device
@@ -11,7 +13,7 @@ module MatterCommodityTariff
 
     identity vendor: "Spider-Gazelle", product: "Crystal Tariff Provider",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0700_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

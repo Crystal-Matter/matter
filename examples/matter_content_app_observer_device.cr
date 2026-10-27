@@ -4,6 +4,8 @@ require "./support/main"
 # A synthetic Casting Video Client receiving application-defined messages.
 # Production hosts validate the sender and interpret Data in this callback.
 module MatterContentAppObserver
+  EXAMPLE_PRODUCT_ID = 0x0510_u16
+
   alias Observer = Matter::Cluster::ContentAppObserver
 
   class Device < Matter::Device
@@ -11,7 +13,7 @@ module MatterContentAppObserver
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Content App Observer",
       vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
-      product_id: 0x0510_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

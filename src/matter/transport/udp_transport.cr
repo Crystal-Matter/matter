@@ -275,7 +275,7 @@ module Matter
       # that packet, never re-enter the PASE or CASE handshake.
       def cache_unsecured_response(original : Codec::MessageCodec::Message,
                                    peer : Socket::IPAddress, response : Bytes) : Nil
-        return unless original.packet_header.session_id == 0_u16
+        return unless original.packet_header.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
 
         key = {original.packet_header.source_node_id.try(&.id), peer,
                original.packet_header.message_id}
@@ -341,7 +341,7 @@ module Matter
         @reliable_mutex.synchronize do
           @pending_reliable.reject! { |(pending_session_id, _, _), _| pending_session_id == session_id }
           @mrp_peer_parameters.reject! { |(stored_session_id, _), _| stored_session_id == session_id }
-          @mrp_unsecured_configured_at.clear if session_id == 0_u16
+          @mrp_unsecured_configured_at.clear if session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
           @mrp_peer_last_active.reject! { |(stored_session_id, _), _| stored_session_id == session_id }
         end
       end
@@ -356,7 +356,7 @@ module Matter
         @reliable_mutex.synchronize do
           canonical = canonical_peer(peer)
           @mrp_peer_parameters[{session_id, canonical}] = {idle, active, threshold}
-          @mrp_unsecured_configured_at[canonical] = Time.instant if session_id == 0_u16
+          @mrp_unsecured_configured_at[canonical] = Time.instant if session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
         end
       end
 
@@ -372,10 +372,10 @@ module Matter
         @reliable_mutex.synchronize do
           @mrp_unsecured_configured_at.reject! do |peer, configured_at|
             pending_for_peer = @pending_reliable.values.any? do |pending|
-              pending.session_id == 0_u16 && canonical_peer(pending.peer) == peer
+              pending.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID && canonical_peer(pending.peer) == peer
             end
             if now - configured_at > MRP_UNSECURED_CONFIG_TTL && !pending_for_peer
-              @mrp_peer_parameters.delete({0_u16, peer})
+              @mrp_peer_parameters.delete({Codec::MessageCodec::UNSECURED_SESSION_ID, peer})
               true
             else
               false
@@ -593,7 +593,7 @@ module Matter
           session_id_bytes = data[session_id_offset, 2]
           session_id = IO::ByteFormat::LittleEndian.decode(UInt16, session_id_bytes)
 
-          if session_id != 0
+          if session_id != Codec::MessageCodec::UNSECURED_SESSION_ID
             flags = data[Codec::MessageCodec::FLAGS_OFFSET]
             Log.trace do
               "Encrypted packet header: first24=#{data[0, [24, data.size].min].hexstring} " \
@@ -619,7 +619,7 @@ module Matter
         # Decode the payload header first so only this message bypasses the
         # ordinary unsecured packet replay window; IcdClient validates the
         # inner counter after trial decryption.
-        unsecured_message = session_id == 0 ? Codec::MessageCodec::Base.decode_payload(packet) : nil
+        unsecured_message = session_id == Codec::MessageCodec::UNSECURED_SESSION_ID ? Codec::MessageCodec::Base.decode_payload(packet) : nil
         icd_check_in = if decoded = unsecured_message
                          decoded.payload_header.protocol_id == Protocol::ProtocolId::SecureChannel.value &&
                            decoded.payload_header.message_type == Protocol::SecureChannelMessageType::IcdCheckIn.value &&
@@ -638,7 +638,7 @@ module Matter
                              {Protocol::SecureChannelMessageType::CaseSigma2.value,
                               Protocol::SecureChannelMessageType::CaseSigma2Resume.value,
                               Protocol::SecureChannelMessageType::StatusReport.value}.includes?(header.message_type)
-                            exchange = @exchange_manager.get_exchange(header.exchange_id, 0_u16, peer_address, true)
+                            exchange = @exchange_manager.get_exchange(header.exchange_id, Codec::MessageCodec::UNSECURED_SESSION_ID, peer_address, true)
                             exchange && exchange.protocol_id == Protocol::ProtocolId::SecureChannel.value &&
                               exchange.initial_message_type == Protocol::SecureChannelMessageType::CaseSigma1.value &&
                               !exchange.stale?
@@ -648,7 +648,7 @@ module Matter
                         else
                           false
                         end
-        if session_id == 0 && !icd_check_in
+        if session_id == Codec::MessageCodec::UNSECURED_SESSION_ID && !icd_check_in
           # A new transport can reuse its Node ID while starting a fresh counter.
           # Keep replay windows separate for each source socket, including when
           # the packet omits a source Node ID.
@@ -721,8 +721,8 @@ module Matter
 
         # For encrypted messages, skip exchange management - the message handler will do this after decryption
         # For unencrypted messages, handle exchanges and acknowledgments here
-        if session_id == 0
-          mark_mrp_peer_active(peer_address, 0_u16)
+        if session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
+          mark_mrp_peer_active(peer_address, Codec::MessageCodec::UNSECURED_SESSION_ID)
           # Get or create exchange
           exchange = @exchange_manager.get_or_create_exchange(
             exchange_id: message.payload_header.exchange_id,
@@ -739,7 +739,7 @@ module Matter
             send_acknowledgment(message, peer_address, exchange)
           end
           if ack = message.payload_header.acknowledged_message_id
-            acknowledge_reliable(0_u16, message.payload_header.exchange_id, ack, peer_address)
+            acknowledge_reliable(Codec::MessageCodec::UNSECURED_SESSION_ID, message.payload_header.exchange_id, ack, peer_address)
           end
         end
 
@@ -797,7 +797,7 @@ module Matter
           exchange = @exchange_manager.get_or_create_exchange(
             exchange_id: message.payload_header.exchange_id,
             protocol_id: message.payload_header.protocol_id,
-            session_id: 0_u16,
+            session_id: Codec::MessageCodec::UNSECURED_SESSION_ID,
             peer_address: peer,
             peer_node_id: packet.header.source_node_id,
             initiator: !message.payload_header.initiator_message?)

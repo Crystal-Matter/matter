@@ -325,7 +325,7 @@ module Matter
       @connected_network_index : Int32?
 
       def initialize(
-        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber.new(0_u16),
+        endpoint_id : DataType::EndpointNumber = DataType::EndpointNumber::ROOT,
         @network_type : NetworkType = NetworkType::WiFi,
         @max_networks : UInt8 = DEFAULT_MAX_NETWORKS,
         @feature_map : Feature = Feature::None,
