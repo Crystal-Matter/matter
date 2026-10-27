@@ -17,6 +17,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the journaled target and completed rotation order. The official
   three-Administrator E2E exercises each interruption without replaying a
   committed rotation.
+- Reconcile a participant's committed cross-signed ICAC after a lost journal
+  acknowledgement using a fresh witness from the trusted participant host.
+  The candidate checks the exact pending ICAC, fabric identities, and prior
+  rotation state before advancing its journal without repeating AddICAC.
 
 ### Joint Fabric journal recovery
 
