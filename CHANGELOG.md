@@ -203,6 +203,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   legacy Groups when a target advertises Groupcast but does not implement GKM
   GroupcastAdoption. The official SDK groupcast recipient E2E now provisions
   its initial key set and group through the Datastore synchronizer.
+- Require AddGroupResponse and RemoveGroupResponse to confirm the requested
+  GroupId before committing or deleting a pending Datastore membership.
 
 ### Thermostat suggestion guarded wire preparation
 
