@@ -5,10 +5,11 @@ module ChipTool
   # wait for devices. The controller state lives in one YAML store,
   # `<storage_directory>/controller.yml`, shared by every command.
   class Context
-    DEFAULT_TIMEOUT       = 10.seconds
-    DEFAULT_STORAGE_DIR   = "chip-tool-storage"
-    STORAGE_DIR_ENV       = "MATTER_CHIP_TOOL_STORAGE"
-    CONTROLLER_STATE_FILE = "controller.yml"
+    UNCOMPRESSED_P256_POINT_TAG = 0x04_u8
+    DEFAULT_TIMEOUT             = 10.seconds
+    DEFAULT_STORAGE_DIR         = "chip-tool-storage"
+    STORAGE_DIR_ENV             = "MATTER_CHIP_TOOL_STORAGE"
+    CONTROLLER_STATE_FILE       = "controller.yml"
 
     getter storage_directory : String
     getter timeout : Time::Span
@@ -62,7 +63,7 @@ module ChipTool
           value = args[i + 1]?
           raise ArgumentError.new("missing value for --root-public-key") unless value
           root_public_key = value.hexbytes
-          raise ArgumentError.new("root public key must be a 65-byte uncompressed P-256 point") unless root_public_key.size == 65 && root_public_key[0] == 0x04_u8
+          raise ArgumentError.new("root public key must be a 65-byte uncompressed P-256 point") unless root_public_key.size == 65 && root_public_key[0] == UNCOMPRESSED_P256_POINT_TAG
           args.delete_at(i)
           args.delete_at(i)
           next

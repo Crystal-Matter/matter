@@ -77,8 +77,8 @@ module Matter
                controller_node_id != authority.controller_node_id
           raise Matter::ConfigurationError.new("Delegated Joint Fabric controller needs a distinct operational Node ID")
         end
-        if group_cat == 0_u16 || group_cat.in?(Datastore::ANCHOR_CAT, Datastore::ADMINISTRATOR_CAT) ||
-           group_cat_version.in?(0_u16, UInt16::MAX)
+        if group_cat == Datastore::UNSPECIFIED_GROUP_CAT || group_cat.in?(Datastore::ANCHOR_CAT, Datastore::ADMINISTRATOR_CAT) ||
+           group_cat_version.in?(Datastore::UNSPECIFIED_GROUP_CAT_VERSION, Datastore::RESERVED_GROUP_CAT_VERSION)
           raise Matter::ConfigurationError.new("Invalid Joint Fabric group CAT or version")
         end
         icac = authority.intermediate_cert || raise Matter::ConfigurationError.new("Joint Fabric delegation requires an ICAC")

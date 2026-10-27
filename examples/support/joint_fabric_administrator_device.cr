@@ -13,6 +13,8 @@ require "../../src/matter/controller/vid_verification_dcl"
 # this device onto an Anchor fabric first; its JF service binds to that fabric
 # as soon as the RCAC and operational credentials are installed.
 module MatterJointFabricAdministrator
+  EXAMPLE_PRODUCT_ID = 0x0130_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -39,12 +41,13 @@ module MatterJointFabricAdministrator
     ANCHOR_CAT_ID                         = Matter::Cluster::JointFabricDatastore::ANCHOR_CAT
     ADMINISTRATOR_CAT_SUBJECT_PREFIX      = Matter::DataType::NodeId::CAT_PREFIX |
                                             (ADMINISTRATOR_CAT_ID.to_u64 << Matter::DataType::CaseAuthenticatedTag::IDENTITY_SHIFT)
-    DEFAULT_OPERATIONAL_PORT  =  5540
-    ADMIN_GROUP_ID            = 1_u16
-    ANCHOR_GROUP_ID           = 2_u16
-    ANCHOR_IPK_KEY_SET_ID     = 0_u16
-    ANCHOR_JFA_ENDPOINT_ID    = 1_u16
-    BOOTSTRAP_JFA_ENDPOINT_ID = 2_u16
+    DEFAULT_OPERATIONAL_PORT    =    5540
+    ADMIN_GROUP_ID              =   1_u16
+    ANCHOR_GROUP_ID             =   2_u16
+    ANCHOR_IPK_KEY_SET_ID       =   0_u16
+    ANCHOR_JFA_ENDPOINT_ID      =   1_u16
+    BOOTSTRAP_JFA_ENDPOINT_ID   =   2_u16
+    UNCOMPRESSED_P256_POINT_TAG = 0x04_u8
 
     struct IcacKeyState
       include Matter::Storage::Record
@@ -306,7 +309,7 @@ module MatterJointFabricAdministrator
 
     identity vendor: "Crystal Matter", product: "Crystal Joint Fabric Administrator",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0130_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::JOINT_FABRIC_ADMINISTRATOR
@@ -415,7 +418,7 @@ module MatterJointFabricAdministrator
       # The second endpoint is a retained bootstrap JFA only when explicitly
       # provisioned. A wildcard JCM read must not discover a second JFA with
       # a null AdministratorFabricIndex, which the SDK correctly rejects.
-      remove_endpoint(2_u16, notify_subscribers: false) unless ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
+      remove_endpoint(BOOTSTRAP_JFA_ENDPOINT_ID, notify_subscribers: false) unless ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]? == "1"
       connect_failsafe_lifecycle
       fabrics = fabric_table.all_fabrics
       fabrics.select { |fabric| compliant_anchor_fabric?(fabric) }.each { |fabric| attach_joint_fabric(fabric) }
@@ -565,7 +568,7 @@ module MatterJointFabricAdministrator
         bootstrap_joint_fabric_datastore.allow_jcm_pase_group_list = nil
         bootstrap_joint_fabric_administrator.administrator_fabric_index = nil
         bootstrap_joint_fabric_administrator.service = nil
-        persistence.forget_cluster(2_u16, Datastore::CLUSTER_ID)
+        persistence.forget_cluster(BOOTSTRAP_JFA_ENDPOINT_ID, Datastore::CLUSTER_ID)
         persistence.delete_app_document(APP_BOOTSTRAP_ROLE_DOCUMENT)
         persistence.delete_app_document(APP_BOOTSTRAP_ICAC_DOCUMENT)
         persistence.delete_app_document(APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT)
@@ -606,7 +609,7 @@ module MatterJointFabricAdministrator
         joint_fabric_datastore.clear_fabric_state
         joint_fabric_datastore.allow_jcm_pase_group_list = nil
         @jcm_failsafe_session_id = nil
-        persistence.forget_cluster(1_u16, Datastore::CLUSTER_ID)
+        persistence.forget_cluster(ANCHOR_JFA_ENDPOINT_ID, Datastore::CLUSTER_ID)
         joint_fabric_administrator.administrator_fabric_index = nil
         joint_fabric_administrator.service = nil
         @joint_fabric_provisioned = !bootstrap_joint_fabric_datastore.joint_fabric_index.nil?
@@ -1321,7 +1324,8 @@ module MatterJointFabricAdministrator
     private def record_bootstrap_transfer_candidate(node_id : UInt64, fabric_index : UInt8) : Nil
       fabric = fabric_table.get_fabric(fabric_index) ||
                raise Matter::AuthenticationError.new("Bootstrap transfer requester fabric is unavailable")
-      unless bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index && node_id != 0_u64
+      unless bootstrap_joint_fabric_datastore.joint_fabric_index == fabric_index &&
+             node_id != Matter::DataType::NodeId::UNSPECIFIED
         raise Matter::AuthenticationError.new("Transfer requester is not on the bootstrap fabric")
       end
       persistence.write_app_document(APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT,
@@ -1368,7 +1372,8 @@ module MatterJointFabricAdministrator
     private def record_transfer_candidate(node_id : UInt64, fabric_index : UInt8) : Nil
       fabric = fabric_table.get_fabric(fabric_index) ||
                raise Matter::AuthenticationError.new("Transfer requester fabric is unavailable")
-      unless joint_fabric_datastore.joint_fabric_index == fabric_index && node_id != 0_u64
+      unless joint_fabric_datastore.joint_fabric_index == fabric_index &&
+             node_id != Matter::DataType::NodeId::UNSPECIFIED
         raise Matter::AuthenticationError.new("Transfer requester is not on the Anchor fabric")
       end
       new_anchor_node_id = configured_new_anchor_node_id(node_id)
@@ -1390,7 +1395,7 @@ module MatterJointFabricAdministrator
       watch = TransferWatchState.from_document(document)
       return unless watch.old_fabric_id == fabric.fabric_id &&
                     watch.old_root_public_key == fabric.root_public_key &&
-                    watch.requester_node_id != 0_u64
+                    watch.requester_node_id != Matter::DataType::NodeId::UNSPECIFIED
       {watch.requester_node_id, fabric.fabric_index}
     end
 
@@ -2542,8 +2547,8 @@ module MatterJointFabricAdministrator
       local_peer = Socket::IPAddress.new("127.0.0.1", port)
       network = Matter::Controller::JointFabricDeviceMigration::NetworkPort.new(
         store, old_fabric, anchor_fabric, issuer, request.node_id, anchor_node_id,
-        target_peer, old_device_fabric.node_id, local_peer, 2_u16,
-        anchor_datastore_node_id, anchor_peer, 1_u16, "Migrated device", admin_cat,
+        target_peer, old_device_fabric.node_id, local_peer, BOOTSTRAP_JFA_ENDPOINT_ID,
+        anchor_datastore_node_id, anchor_peer, ANCHOR_JFA_ENDPOINT_ID, "Migrated device", admin_cat,
         verifier,
         commissioning_ack: -> {
           if request.interrupt_after_migration_complete_before_ack?
@@ -2636,7 +2641,7 @@ module MatterJointFabricAdministrator
     end
 
     private def finalize_commissioning(request : CommandRequest) : Bytes?
-      raise Matter::ConfigurationError.new("Finalization requires a target Node ID") if request.node_id == 0_u64
+      raise Matter::ConfigurationError.new("Finalization requires a target Node ID") if request.node_id == Matter::DataType::NodeId::UNSPECIFIED
       nonce = request.nonce
       raise Matter::ConfigurationError.new("Finalization nonce is required") if nonce.nil? || nonce.empty?
       jcm_parameters = joint_handoff_parameters(request) if request.jcm?
@@ -2693,7 +2698,7 @@ module MatterJointFabricAdministrator
     private def joint_handoff_parameters(request : CommandRequest) : {Bytes, UInt16}
       public_key = request.trusted_icac_public_key_b ||
                    raise Matter::ConfigurationError.new("JCM requires the authenticated Administrator ICAC public key")
-      unless public_key.size == 65 && public_key[0] == 0x04_u8
+      unless public_key.size == 65 && public_key[0] == UNCOMPRESSED_P256_POINT_TAG
         raise Matter::AuthenticationError.new("JCM Administrator ICAC public key is not uncompressed P-256")
       end
       endpoint = request.peer_admin_jfa_endpoint_id ||

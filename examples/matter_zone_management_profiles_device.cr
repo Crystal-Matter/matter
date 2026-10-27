@@ -5,6 +5,8 @@ require "./support/main"
 # A real host uses on_zone_change to apply focus/privacy geometry to its
 # capture pipeline and calls report_motion with its detector's observations.
 module MatterZoneManagementProfiles
+  EXAMPLE_PRODUCT_ID = 0x0551_u16
+
   alias Zone = Matter::Cluster::ZoneManagement
 
   class Device < Matter::Device
@@ -12,7 +14,7 @@ module MatterZoneManagementProfiles
 
     identity vendor: "Spider-Gazelle", product: "Crystal Zone Profiles",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0551_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

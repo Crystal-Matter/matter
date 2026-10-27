@@ -3,6 +3,8 @@ require "./support/main"
 
 # Synthetic heater whose host accepts a bounded power and duration change.
 module MatterAdjustableHeater
+  DEVICE_ENDPOINT_ID = 1_u16
+
   alias Energy = Matter::Cluster::DeviceEnergyManagement
   alias Status = Matter::InteractionModel::Status
 
@@ -11,21 +13,21 @@ module MatterAdjustableHeater
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Adjustable Heater",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_adjustable_heater_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Energy, esa_type: Energy::ESAType::WaterHeating,
         can_generate: false, abs_min_power: 0_i64, abs_max_power: 5_000_i64,
         feature_map: Energy::Feature::PowerForecastReporting | Energy::Feature::ForecastAdjustment
     end
 
     protected def before_start : Nil
-      energy = node.get_cluster!(1_u16, Energy)
+      energy = node.get_cluster!(DEVICE_ENDPOINT_ID, Energy)
       now = (Time.utc.to_unix - 946_684_800_i64).to_u32
       start_time = now + 3_600_u32
       energy.report_forecast(forecast_for(start_time, 2_000_i64, 1_200_u32))

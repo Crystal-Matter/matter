@@ -5,6 +5,8 @@ require "../src/matter/controller"
 # Opt-in SDK v1.6 reverse-commissioning fixture. Approval is restricted to the
 # test bridge identity and requires explicit local consent from the harness.
 module MatterReverseCommissioning
+  DEVICE_ENDPOINT_ID = 1_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -33,7 +35,7 @@ module MatterReverseCommissioning
 
     storage yaml: "matter_reverse_commissioning_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Control
     end
 
@@ -67,7 +69,7 @@ module MatterReverseCommissioning
       state_path = ENV["MATTER_REVERSE_CONTROLLER_STATE"]? ||
                    raise Matter::ConfigurationError.new("Missing reverse-commissioning controller state")
       consent = ENV["MATTER_REVERSE_TEST_CONSENT"]? == "1"
-      control = node.endpoint!(1_u16).get_cluster!(Control)
+      control = node.endpoint!(DEVICE_ENDPOINT_ID).get_cluster!(Control)
       control.configure_host(
         ->(approval : Control::ApprovalRequest) do
           spawn do

@@ -57,7 +57,7 @@ module Matter
           store.complete_group_membership(node_id, entry.endpoint_id, entry.group_id, status)
         end
 
-        store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && entry.status_entry.failure_code == 0_u8 }.each do |entry|
+        store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && entry.status_entry.failure_code == Store::NO_FAILURE_CODE }.each do |entry|
           status = apply do
             sync_key_set(store, entry, session, peer)
           end
@@ -84,7 +84,7 @@ module Matter
                    store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
                    store.node_acl_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) } ||
                    store.endpoint_binding_list.any? { |entry| entry.node_id == node_id && failed?(entry.status_entry) }
-          store.complete_node(node_id, failed ? FAILURE_CODE : 0_u8)
+          store.complete_node(node_id, failed ? FAILURE_CODE : Store::NO_FAILURE_CODE)
         end
       end
 
@@ -159,12 +159,12 @@ module Matter
 
       private def pending?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::Pending ||
-          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == 0_u8)
+          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == Store::NO_FAILURE_CODE)
       end
 
       private def failed?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::CommitFailed ||
-          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code != 0_u8)
+          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code != Store::NO_FAILURE_CODE)
       end
 
       private def apply(& : -> Nil) : UInt8

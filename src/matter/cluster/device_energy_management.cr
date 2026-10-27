@@ -221,6 +221,16 @@ module Matter
       struct Forecast
         include TLV::Serializable
 
+        TAG_FORECAST_ID            = 0_u8
+        TAG_ACTIVE_SLOT_NUMBER     = 1_u8
+        TAG_START_TIME             = 2_u8
+        TAG_END_TIME               = 3_u8
+        TAG_EARLIEST_START_TIME    = 4_u8
+        TAG_LATEST_END_TIME        = 5_u8
+        TAG_IS_PAUSABLE            = 6_u8
+        TAG_SLOTS                  = 7_u8
+        TAG_FORECAST_UPDATE_REASON = 8_u8
+
         @[TLV::Field(tag: 0)]
         getter forecast_id : UInt32
         @[TLV::Field(tag: 1, optional: false)]
@@ -1179,17 +1189,17 @@ struct Matter::Cluster::DeviceEnergyManagement::Forecast
 
   private def encode_forecast(outer_tag) : TLV::Any
     fields = TLV::Structure.new
-    fields[0_u8] = TLV::Any.new(@forecast_id, 0_u8)
-    fields[1_u8] = TLV::Any.new(@active_slot_number, 1_u8)
-    fields[2_u8] = TLV::Any.new(@start_time, 2_u8)
-    fields[3_u8] = TLV::Any.new(@end_time, 3_u8)
+    fields[TAG_FORECAST_ID] = TLV::Any.new(@forecast_id, TAG_FORECAST_ID)
+    fields[TAG_ACTIVE_SLOT_NUMBER] = TLV::Any.new(@active_slot_number, TAG_ACTIVE_SLOT_NUMBER)
+    fields[TAG_START_TIME] = TLV::Any.new(@start_time, TAG_START_TIME)
+    fields[TAG_END_TIME] = TLV::Any.new(@end_time, TAG_END_TIME)
     if @latest_end_time
-      fields[4_u8] = TLV::Any.new(@earliest_start_time, 4_u8)
-      fields[5_u8] = TLV::Any.new(@latest_end_time, 5_u8)
+      fields[TAG_EARLIEST_START_TIME] = TLV::Any.new(@earliest_start_time, TAG_EARLIEST_START_TIME)
+      fields[TAG_LATEST_END_TIME] = TLV::Any.new(@latest_end_time, TAG_LATEST_END_TIME)
     end
-    fields[6_u8] = TLV::Any.new(@is_pausable, 6_u8)
-    fields[7_u8] = TLV::Serializable.serialize_value(@slots, 7_u8)
-    fields[8_u8] = TLV::Serializable.serialize_value(@forecast_update_reason, 8_u8)
+    fields[TAG_IS_PAUSABLE] = TLV::Any.new(@is_pausable, TAG_IS_PAUSABLE)
+    fields[TAG_SLOTS] = TLV::Serializable.serialize_value(@slots, TAG_SLOTS)
+    fields[TAG_FORECAST_UPDATE_REASON] = TLV::Serializable.serialize_value(@forecast_update_reason, TAG_FORECAST_UPDATE_REASON)
     TLV::Any.new(fields, outer_tag)
   end
 end

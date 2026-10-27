@@ -5,6 +5,9 @@ require "./support/main"
 # It does not advertise the Network Infrastructure Manager device type, whose
 # required Thread clusters and physical router behavior are not implemented.
 module MatterWiFiManagement
+  MANAGED_WIFI_ENDPOINT_ID = 1_u16
+  WIFI_ENDPOINT_ID         = 2_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -14,23 +17,23 @@ module MatterWiFiManagement
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Wi-Fi Management",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_wifi_management_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint MANAGED_WIFI_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Matter::Cluster::WiFiNetworkManagement
     end
 
-    endpoint 2, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint WIFI_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster Matter::Cluster::WiFiNetworkManagement
     end
 
     protected def before_start : Nil
-      node.endpoint!(1_u16).get_cluster!(Matter::Cluster::WiFiNetworkManagement)
+      node.endpoint!(MANAGED_WIFI_ENDPOINT_ID).get_cluster!(Matter::Cluster::WiFiNetworkManagement)
         .update_credentials(TEST_SSID.to_slice, TEST_PASSPHRASE.to_slice, TEST_SURROGATE)
       super
     end
