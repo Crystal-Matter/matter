@@ -20,6 +20,7 @@ describe "cluster command wire format" do
 
   it "decodes a tagged GoToLiftPercentage request" do
     cluster = build(Matter::Cluster::WindowCovering)
+    cluster.on_move { |_request| Matter::InteractionModel::Status.success }
     fields = TLV::Any.new({0_u8 => TLV::Any.new(4321_u16, 0_u8)} of TLV::TagId => TLV::Any)
     expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_LIFT_PERCENTAGE, fields.to_slice))
     cluster.target_position_lift_percent100ths.should eq(4321_u16)

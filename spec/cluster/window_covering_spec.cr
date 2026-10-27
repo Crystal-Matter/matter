@@ -158,6 +158,7 @@ describe Matter::Cluster::WindowCovering do
   describe "percentage commands on the wire" do
     it "sets the lift target from tag zero" do
       cluster = build(Matter::Cluster::WindowCovering)
+      cluster.on_move { |_request| Matter::InteractionModel::Status.success }
       request = Matter::Cluster::WindowCovering::GoToLiftPercentageRequest.new(4321_u16)
       expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_LIFT_PERCENTAGE, request))
       read(cluster, Matter::Cluster::WindowCovering::ATTR_TARGET_POSITION_LIFT_PERCENT100THS).should eq(4321_u16)
@@ -178,6 +179,7 @@ describe Matter::Cluster::WindowCovering do
     it "sets the tilt target from tag zero" do
       cluster = build(Matter::Cluster::WindowCovering,
         feature_map: Matter::Cluster::WindowCovering::Feature::Tilt | Matter::Cluster::WindowCovering::Feature::PositionAwareTilt)
+      cluster.on_move { |_request| Matter::InteractionModel::Status.success }
       request = Matter::Cluster::WindowCovering::GoToTiltPercentageRequest.new(6789_u16)
       expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_TILT_PERCENTAGE, request))
       read(cluster, Matter::Cluster::WindowCovering::ATTR_TARGET_POSITION_TILT_PERCENT100THS).should eq(6789_u16)
@@ -192,6 +194,115 @@ describe Matter::Cluster::WindowCovering do
       request = Matter::Cluster::WindowCovering::GoToTiltPercentageRequest.new(10001_u16)
       expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_TILT_PERCENTAGE, request), Matter::InteractionModel::StatusCode::ConstraintError)
       cluster.target_position_tilt_percent100ths.should be_nil
+    end
+  end
+
+  describe "host motion admission" do
+    it "accepts an idle stop as a no-op without a host callback" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering)
+      expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_STOP_MOTION))
+      cluster.target_position_lift_percent100ths.should be_nil
+    end
+
+    it "delivers stop while a percentage move has an unknown current position" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering)
+      stopped = false
+      cluster.on_move { |_request| Matter::InteractionModel::Status.success }
+      cluster.on_stop do
+        stopped = true
+        Matter::InteractionModel::Status.success
+      end
+      expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_GO_TO_LIFT_PERCENTAGE,
+        Matter::Cluster::WindowCovering::GoToLiftPercentageRequest.new(4_000_u16)))
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus::None)
+
+      expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_STOP_MOTION))
+      stopped.should be_true
+      cluster.target_position_lift_percent100ths.should be_nil
+    end
+
+    it "does not acknowledge physical motion without a host" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering)
+      expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_UP_OR_OPEN),
+        Matter::InteractionModel::StatusCode::InvalidInState)
+      cluster.target_position_lift_percent100ths.should be_nil
+    end
+
+    it "routes lift and tilt targets together and leaves state unchanged when the host rejects motion" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering, feature_map: Matter::Cluster::WindowCovering::Feature::Lift | Matter::Cluster::WindowCovering::Feature::Tilt |
+                                             Matter::Cluster::WindowCovering::Feature::PositionAwareLift | Matter::Cluster::WindowCovering::Feature::PositionAwareTilt)
+      requests = [] of Matter::Cluster::WindowCovering::MotionRequest
+      cluster.on_move do |request|
+        requests << request
+        Matter::InteractionModel::Status.failure
+      end
+
+      expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_DOWN_OR_CLOSE), Matter::InteractionModel::StatusCode::Failure)
+      requests.size.should eq(1)
+      requests.first.lift_target.should eq(10_000_u16)
+      requests.first.tilt_target.should eq(10_000_u16)
+      cluster.target_position_lift_percent100ths.should be_nil
+      cluster.target_position_tilt_percent100ths.should be_nil
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus::None)
+    end
+
+    it "returns failure without changing targets if the actuator callback raises" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering)
+      cluster.on_move do |_request|
+        raise Matter::ClusterError.new("actuator failed")
+      end
+
+      expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_DOWN_OR_CLOSE),
+        Matter::InteractionModel::StatusCode::Failure)
+      cluster.target_position_lift_percent100ths.should be_nil
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus::None)
+    end
+
+    it "delivers stop and retains motion state if the host cannot stop" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering)
+      cluster.current_position_lift_percent100ths = 0_u16
+      cluster.on_move { |_request| Matter::InteractionModel::Status.success }
+      expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_DOWN_OR_CLOSE))
+      cluster.on_stop { Matter::InteractionModel::Status.failure }
+
+      expect_status(invoke(cluster, Matter::Cluster::WindowCovering::CMD_STOP_MOTION), Matter::InteractionModel::StatusCode::Failure)
+      cluster.target_position_lift_percent100ths.should eq(10_000_u16)
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus.new(0x0A_u8))
+    end
+
+    it "settles only the axis whose reported position reaches its target" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering, feature_map: Matter::Cluster::WindowCovering::Feature::Lift | Matter::Cluster::WindowCovering::Feature::Tilt |
+                                             Matter::Cluster::WindowCovering::Feature::PositionAwareLift | Matter::Cluster::WindowCovering::Feature::PositionAwareTilt)
+      cluster.current_position_lift_percent100ths = 0_u16
+      cluster.current_position_tilt_percent100ths = 0_u16
+      cluster.on_move { |_request| Matter::InteractionModel::Status.success }
+      expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_DOWN_OR_CLOSE))
+
+      cluster.current_position_lift_percent100ths = 10_000_u16
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus.new(0x22_u8))
+      cluster.current_position_tilt_percent100ths = 10_000_u16
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus::None)
+    end
+
+    it "settles immediately when the host reports completion during admission" do
+      covering = Matter::Cluster::WindowCovering
+      cluster = build(covering)
+      cluster.current_position_lift_percent100ths = 0_u16
+      cluster.on_move do |request|
+        cluster.current_position_lift_percent100ths = request.lift_target
+        Matter::InteractionModel::Status.success
+      end
+
+      expect_success(invoke(cluster, Matter::Cluster::WindowCovering::CMD_DOWN_OR_CLOSE))
+      cluster.current_position_lift_percent100ths.should eq(10_000_u16)
+      cluster.operational_status.should eq(Matter::Cluster::WindowCovering::OperationalStatus::None)
     end
   end
 

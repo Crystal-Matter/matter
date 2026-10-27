@@ -134,6 +134,18 @@ module Matter
         end
       end
 
+      # Requested physical targets. A nil axis is not part of this command.
+      struct MotionRequest
+        getter lift_target : UInt16?
+        getter tilt_target : UInt16?
+
+        def initialize(@lift_target : UInt16? = nil, @tilt_target : UInt16? = nil)
+        end
+      end
+
+      @move_callback : Proc(MotionRequest, InteractionModel::Status)?
+      @stop_callback : Proc(InteractionModel::Status)?
+
       attribute 0x0000, :type, CoveringType, default: CoveringType::Rollershade, fixed: true
       attribute 0x0005, :number_of_actuations_lift, UInt16, default: 0_u16, persist: true, optional: true, requires: :lift
       attribute 0x0006, :number_of_actuations_tilt, UInt16, default: 0_u16, persist: true, optional: true, requires: :tilt
@@ -181,8 +193,16 @@ module Matter
       end
 
       # ------------------------------------------------------------------------
-      # Commands (movement is not simulated; the target moves immediately)
+      # Commands admit physical motion through the host before changing targets.
       # ------------------------------------------------------------------------
+
+      def on_move(&block : MotionRequest -> InteractionModel::Status) : Nil
+        @move_callback = block
+      end
+
+      def on_stop(&block : -> InteractionModel::Status) : Nil
+        @stop_callback = block
+      end
 
       def up_or_open : InteractionModel::Status
         lock_status = motion_lock_status
@@ -199,6 +219,10 @@ module Matter
       def stop_motion : InteractionModel::Status
         lock_status = motion_lock_status
         return lock_status if lock_status
+        return InteractionModel::Status.success unless motion_in_progress?
+        callback = @stop_callback || return InteractionModel::Status.invalid_in_state
+        status = callback.call
+        return status unless status.success?
         self.target_position_lift_percent100ths = current_position_lift_percent100ths if @feature_map.position_aware_lift?
         self.target_position_tilt_percent100ths = current_position_tilt_percent100ths if @feature_map.position_aware_tilt?
         self.operational_status = OperationalStatus::None
@@ -220,18 +244,26 @@ module Matter
         percentage = request.tilt_percent100ths_value
         return InteractionModel::Status.constraint_error if percentage > MAX_POSITION_PERCENT100THS
 
+        status = admit_motion(MotionRequest.new(tilt_target: percentage))
+        return status unless status.success?
         self.target_position_tilt_percent100ths = percentage
         set_movement_status(lift_movement_status,
           movement_toward(current_position_tilt_percent100ths, percentage))
+        settle_reached_targets
         InteractionModel::Status.success
       end
 
       private def move_to(percentage : UInt16, direction : MovementStatus) : InteractionModel::Status
+        status = admit_motion(MotionRequest.new(
+          lift_target: @feature_map.lift? ? percentage : nil,
+          tilt_target: @feature_map.tilt? ? percentage : nil))
+        return status unless status.success?
         self.target_position_lift_percent100ths = percentage if @feature_map.position_aware_lift?
         self.target_position_tilt_percent100ths = percentage if @feature_map.position_aware_tilt?
         set_movement_status(
           @feature_map.lift? ? direction : MovementStatus::Stopped,
           @feature_map.tilt? ? direction : MovementStatus::Stopped)
+        settle_reached_targets
         InteractionModel::Status.success
       end
 
@@ -239,6 +271,21 @@ module Matter
         return InteractionModel::Status.busy if @mode.maintenance_mode?
         return InteractionModel::Status.failure if @mode.calibration_mode?
         nil
+      end
+
+      private def motion_in_progress? : Bool
+        return true unless operational_status == OperationalStatus::None
+        if @feature_map.position_aware_lift?
+          if target = target_position_lift_percent100ths
+            return true if target != current_position_lift_percent100ths
+          end
+        end
+        if @feature_map.position_aware_tilt?
+          if target = target_position_tilt_percent100ths
+            return true if target != current_position_tilt_percent100ths
+          end
+        end
+        false
       end
 
       private def sync_lift_percentage(position : UInt16?) : Nil
@@ -281,10 +328,35 @@ module Matter
       end
 
       private def move_lift_to(percentage : UInt16) : InteractionModel::Status
+        status = admit_motion(MotionRequest.new(lift_target: percentage))
+        return status unless status.success?
         self.target_position_lift_percent100ths = percentage if @feature_map.position_aware_lift?
         set_movement_status(movement_toward(current_position_lift_percent100ths, percentage),
           tilt_movement_status)
+        settle_reached_targets
         InteractionModel::Status.success
+      end
+
+      private def settle_reached_targets : Nil
+        if @feature_map.position_aware_lift? && !lift_movement_status.stopped?
+          if target = target_position_lift_percent100ths
+            if current_position_lift_percent100ths == target
+              set_movement_status(MovementStatus::Stopped, tilt_movement_status)
+            end
+          end
+        end
+        if @feature_map.position_aware_tilt? && !tilt_movement_status.stopped?
+          if target = target_position_tilt_percent100ths
+            if current_position_tilt_percent100ths == target
+              set_movement_status(lift_movement_status, MovementStatus::Stopped)
+            end
+          end
+        end
+      end
+
+      private def admit_motion(request : MotionRequest) : InteractionModel::Status
+        callback = @move_callback || return InteractionModel::Status.invalid_in_state
+        callback.call(request)
       end
 
       private def movement_toward(current : UInt16?, target : UInt16) : MovementStatus

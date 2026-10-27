@@ -37,6 +37,8 @@ describe "Window Covering Matter 1.6 state and feature composition" do
     cluster = build(Covering,
       feature_map: Covering::Feature::Lift | Covering::Feature::Tilt |
                    Covering::Feature::PositionAwareLift | Covering::Feature::PositionAwareTilt)
+    cluster.on_move { |_request| Matter::InteractionModel::Status.success }
+    cluster.on_stop { Matter::InteractionModel::Status.success }
 
     expect_success(invoke(cluster, Covering::CMD_DOWN_OR_CLOSE))
     cluster.target_position_lift_percent100ths.should eq(10_000_u16)
@@ -57,6 +59,8 @@ describe "Window Covering Matter 1.6 state and feature composition" do
     both = build(Covering,
       feature_map: Covering::Feature::Lift | Covering::Feature::Tilt |
                    Covering::Feature::PositionAwareLift | Covering::Feature::PositionAwareTilt)
+    both.on_move { |_request| Matter::InteractionModel::Status.success }
+    both.on_stop { Matter::InteractionModel::Status.success }
     expect_success(invoke(both, Covering::CMD_UP_OR_OPEN))
     both.operational_status.value.should eq(0x15_u8) # global, lift, tilt opening
     expect_success(invoke(both, Covering::CMD_DOWN_OR_CLOSE))
@@ -66,6 +70,7 @@ describe "Window Covering Matter 1.6 state and feature composition" do
 
     tilt_only = build(Covering,
       feature_map: Covering::Feature::Tilt | Covering::Feature::PositionAwareTilt)
+    tilt_only.on_move { |_request| Matter::InteractionModel::Status.success }
     expect_success(invoke(tilt_only, Covering::CMD_UP_OR_OPEN))
     tilt_only.operational_status.value.should eq(0x11_u8) # global and tilt opening
     expect_success(invoke(tilt_only, Covering::CMD_DOWN_OR_CLOSE))
@@ -75,6 +80,7 @@ describe "Window Covering Matter 1.6 state and feature composition" do
   it "derives percentage-move direction from a reported position" do
     tilt_only = build(Covering,
       feature_map: Covering::Feature::Tilt | Covering::Feature::PositionAwareTilt)
+    tilt_only.on_move { |_request| Matter::InteractionModel::Status.success }
     tilt_only.current_position_tilt_percent100ths = 2_000_u16
     expect_success(invoke(tilt_only, Covering::CMD_GO_TO_TILT_PERCENTAGE,
       Covering::GoToTiltPercentageRequest.new(8_000_u16)))
@@ -86,6 +92,7 @@ describe "Window Covering Matter 1.6 state and feature composition" do
 
   it "settles lift motion only when the reported position reaches its target" do
     cluster = build(Covering)
+    cluster.on_move { |_request| Matter::InteractionModel::Status.success }
     cluster.current_position_lift_percent100ths = 0_u16
     expect_success(invoke(cluster, Covering::CMD_DOWN_OR_CLOSE))
     cluster.operational_status.should eq(Covering::OperationalStatus::GlobalClosing | Covering::OperationalStatus::LiftClosing)
@@ -104,6 +111,7 @@ describe "Window Covering Matter 1.6 state and feature composition" do
     cluster = build(Covering,
       feature_map: Covering::Feature::Lift | Covering::Feature::Tilt |
                    Covering::Feature::PositionAwareLift | Covering::Feature::PositionAwareTilt)
+    cluster.on_move { |_request| Matter::InteractionModel::Status.success }
     cluster.current_position_lift_percent100ths = 0_u16
     cluster.current_position_tilt_percent100ths = 0_u16
     expect_success(invoke(cluster, Covering::CMD_DOWN_OR_CLOSE))
