@@ -4,6 +4,8 @@ require "./support/main"
 # Opt-in Crystal peer for the regular reverse-commissioning E2E. Its static
 # test identity lets the host bind approval to attested VendorID/ProductID.
 module MatterReverseTarget
+  TARGET_ENDPOINT_ID = 1_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -20,7 +22,7 @@ module MatterReverseTarget
 
     storage yaml: "matter_reverse_target_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::ON_OFF_LIGHT do
+    endpoint TARGET_ENDPOINT_ID, device_type: Matter::DeviceType::ON_OFF_LIGHT do
       cluster Matter::Cluster::OnOff, feature_map: :lighting
       cluster Matter::Cluster::Identify, identify_type: :visible_light
       cluster Matter::Cluster::Groups
