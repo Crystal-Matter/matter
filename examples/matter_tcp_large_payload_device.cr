@@ -4,6 +4,8 @@ require "./support/main"
 # A dedicated interoperability fixture: 96 spec-conformant FixedLabel entries
 # make one ReadResponse larger than the standard UDP Matter packet budget.
 module MatterTcpLargePayload
+  DEVICE_ENDPOINT_ID = 1_u16
+
   LABEL_COUNT = 96
 
   def self.update_labels : Array(Matter::Cluster::LabelStruct)
@@ -29,7 +31,7 @@ module MatterTcpLargePayload
 
     identity vendor: "Spider-Gazelle", product: "Crystal TCP Large Payload",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: rand(0x0001_u16..0xFFFF_u16),
+      product_id: rand(Examples::RANDOM_PRODUCT_ID_RANGE),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ON_OFF_LIGHT,
@@ -37,7 +39,7 @@ module MatterTcpLargePayload
 
     storage yaml: "matter_tcp_large_payload_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::ON_OFF_LIGHT do
+    endpoint DEVICE_ENDPOINT_ID, device_type: Matter::DeviceType::ON_OFF_LIGHT do
       cluster Matter::Cluster::OnOff, feature_map: :lighting
       cluster Matter::Cluster::Identify, identify_type: :visible_light
       cluster Matter::Cluster::Groups
@@ -64,7 +66,7 @@ module MatterTcpLargePayload
         if File.exists?(path)
           nonce = File.read(path).strip
           File.delete(path)
-          node.get_cluster!(1_u16, Matter::Cluster::UserLabel).label_list = MatterTcpLargePayload.update_labels
+          node.get_cluster!(DEVICE_ENDPOINT_ID, Matter::Cluster::UserLabel).label_list = MatterTcpLargePayload.update_labels
           File.write("#{path}.ack", nonce)
         end
         sleep 100.milliseconds

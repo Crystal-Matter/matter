@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic speed and flow pumps. A hardware host uses on_apply_mode to reject
 # requests it cannot fulfill, then reports the observed effective mode.
 module MatterPump
+  EXAMPLE_PRODUCT_ID = 0x0200_u16
+
   alias Pump = Matter::Cluster::PumpConfigurationControl
 
   class Device < Matter::Device
@@ -11,7 +13,7 @@ module MatterPump
 
     identity vendor: "Spider-Gazelle", product: "Crystal Pump",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0200_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

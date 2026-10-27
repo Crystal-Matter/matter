@@ -5,12 +5,14 @@ require "./support/main"
 # with official chip-tool. It is not a Thread Border Router or a production
 # Network Infrastructure Manager.
 module MatterThreadDirectory
+  EXAMPLE_PRODUCT_ID = 0x1235_u16
+
   class Device < Matter::Device
     include Examples::Console
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Thread Directory",
       vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
-      product_id: 0x1235_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

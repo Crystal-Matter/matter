@@ -4,6 +4,9 @@ require "./support/main"
 # Synthetic host consent fixture. Production hosts must make their own durable,
 # token-correlated decision before changing an Access Restriction List.
 module MatterManagedRestrictions
+  PRIMARY_ENDPOINT_ID =      1_u16
+  EXAMPLE_PRODUCT_ID  = 0x8131_u16
+
   alias AccessControl = Matter::Cluster::AccessControl
   alias WiFiManagement = Matter::Cluster::WiFiNetworkManagement
 
@@ -16,7 +19,7 @@ module MatterManagedRestrictions
 
     identity vendor: "Spider-Gazelle", product: "Managed Restriction Test",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x8131_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
@@ -24,12 +27,12 @@ module MatterManagedRestrictions
     storage yaml: "matter_managed_restrictions_storage.yml"
     managed_restrictions requested: :review_requested, updated: :review_updated
 
-    endpoint 1, device_type: Matter::DeviceType::AGGREGATOR do
+    endpoint PRIMARY_ENDPOINT_ID, device_type: Matter::DeviceType::AGGREGATOR do
       cluster WiFiManagement
     end
 
     protected def before_start : Nil
-      node.endpoint!(1_u16).get_cluster!(WiFiManagement)
+      node.endpoint!(PRIMARY_ENDPOINT_ID).get_cluster!(WiFiManagement)
         .update_credentials(TEST_SSID.to_slice, TEST_PASSPHRASE.to_slice, TEST_SURROGATE)
       super
     end

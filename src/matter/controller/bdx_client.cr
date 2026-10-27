@@ -210,7 +210,8 @@ module Matter
       private def send_status(session : Session::SecureContext, peer : Socket::IPAddress,
                               exchange : UInt16, status : Protocol::Bdx::Transfer::StatusCode) : Nil
         report = Session::Pase::Definitions::StatusReport.new(
-          general_status: 1_u16, protocol_id: Protocol::ProtocolId::Bdx.value,
+          general_status: Session::Pase::Definitions::StatusReport::GENERAL_STATUS_FAILURE,
+          protocol_id: Protocol::ProtocolId::Bdx.value,
           protocol_status: status.value)
         @client.send_encrypted_request(session, peer, Protocol::ProtocolId::SecureChannel.value,
           Protocol::SecureChannelMessageType::StatusReport.value, report.to_bytes,

@@ -183,7 +183,7 @@ module Matter
 
       private def pending?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::Pending ||
-          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == 0_u8)
+          (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == Store::NO_FAILURE_CODE)
       end
 
       private def fail_pending(node_id : UInt64) : Nil

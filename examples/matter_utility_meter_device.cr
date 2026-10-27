@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic electricity meter identity. A real host obtains these identifiers
 # and contractual limits from its metering backend.
 module MatterUtilityMeter
+  EXAMPLE_PRODUCT_ID = 0x0511_u16
+
   alias Meter = Matter::Cluster::MeterIdentification
   alias Grid = Matter::Cluster::ElectricalGridConditions
   alias Price = Matter::Cluster::CommodityPrice
@@ -21,7 +23,7 @@ module MatterUtilityMeter
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Utility Meter",
       vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
-      product_id: 0x0511_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

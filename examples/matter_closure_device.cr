@@ -5,6 +5,11 @@ require "./support/main"
 # acknowledge actuator admission; a real host reports actual motion through
 # report_state when its sensors observe completion.
 module MatterClosure
+  CLOSURE_ENDPOINT_ID = 1_u16
+  PANEL_ENDPOINT_ID   = 2_u16
+
+  EXAMPLE_PRODUCT_ID = 0x0230_u16
+
   alias Control = Matter::Cluster::ClosureControl
   alias Dimension = Matter::Cluster::ClosureDimension
   PANEL_TAG_NAMESPACE = 0x45_u8
@@ -15,14 +20,14 @@ module MatterClosure
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Closure",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0230_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE
 
     storage yaml: "matter_closure_storage.yml"
 
-    endpoint 1, device_type: Matter::DeviceType::CLOSURE do
+    endpoint CLOSURE_ENDPOINT_ID, device_type: Matter::DeviceType::CLOSURE do
       cluster Matter::Cluster::Identify, identify_type: Matter::Cluster::Identify::IdentifyType::Actuator
       cluster Control,
         feature_map: Control::Feature::Positioning | Control::Feature::Calibration,
@@ -31,8 +36,8 @@ module MatterClosure
         as: :closure_control
     end
 
-    endpoint 2, device_type: Matter::DeviceType::CLOSURE_PANEL,
-      parent_endpoint: 1_u16,
+    endpoint PANEL_ENDPOINT_ID, device_type: Matter::DeviceType::CLOSURE_PANEL,
+      parent_endpoint: CLOSURE_ENDPOINT_ID,
       tag_list: [Matter::Cluster::Descriptor::SemanticTag.new(nil, PANEL_TAG_NAMESPACE, PANEL_LIFT_TAG)] do
       cluster Dimension,
         feature_map: Dimension::Feature::Positioning | Dimension::Feature::Translation,

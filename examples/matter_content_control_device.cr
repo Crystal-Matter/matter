@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic Basic Video Player. A production player calls playback_allowed?
 # before starting and while continuing media playback.
 module MatterContentControl
+  EXAMPLE_PRODUCT_ID = 0x050F_u16
+
   alias Control = Matter::Cluster::ContentControl
   alias Playback = Matter::Cluster::MediaPlayback
 
@@ -12,7 +14,7 @@ module MatterContentControl
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Content Control Player",
       vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
-      product_id: 0x050F_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

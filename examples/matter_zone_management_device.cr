@@ -4,6 +4,8 @@ require "./support/main"
 # Synthetic region sensor on an Aggregator endpoint. A production Camera host
 # must implement privacy masking and feed real activity into report_motion.
 module MatterZoneManagement
+  EXAMPLE_PRODUCT_ID = 0x0550_u16
+
   alias Zone = Matter::Cluster::ZoneManagement
 
   class Device < Matter::Device
@@ -11,7 +13,7 @@ module MatterZoneManagement
 
     identity vendor: "Spider-Gazelle", product: "Crystal Zone Sensor",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0550_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

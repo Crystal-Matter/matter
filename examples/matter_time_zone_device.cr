@@ -5,6 +5,8 @@ require "../src/matter/controller"
 # Synthetic root-node Time Synchronization server for official chip-tool E2E.
 # It has no time-zone database; commissioners supply standard and DST offsets.
 module MatterTimeZone
+  EXAMPLE_PRODUCT_ID = 0x1236_u16
+
   class Device < Matter::Device
     include Examples::Console
 
@@ -12,7 +14,7 @@ module MatterTimeZone
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Time Zone",
       vendor_id: Matter::Fabric::DEFAULT_VENDOR_ID,
-      product_id: 0x1236_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::ROOT_NODE

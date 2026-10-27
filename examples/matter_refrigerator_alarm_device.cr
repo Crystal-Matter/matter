@@ -4,6 +4,10 @@ require "./support/main"
 # Synthetic cabinet door alarm. A real appliance reports the door condition
 # after its vendor-defined open duration has elapsed.
 module MatterRefrigeratorAlarm
+  DEVICE_ENDPOINT_ID = 1_u16
+
+  EXAMPLE_PRODUCT_ID = 0x0057_u16
+
   alias Alarm = Matter::Cluster::RefrigeratorAlarm
   alias Mode = Matter::Cluster::RefrigeratorAndTemperatureControlledCabinetMode
   alias ModeBase = Matter::Cluster::ModeBase
@@ -19,25 +23,25 @@ module MatterRefrigeratorAlarm
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Refrigerator Alarm",
       vendor_id: Matter::SetupPayload.test_vendor_id,
-      product_id: 0x0057_u16,
+      product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
       pin: Matter::SetupPayload.generate_random_pin,
       device_type: Matter::DeviceType::REFRIGERATOR
 
     storage yaml: "matter_refrigerator_alarm_storage.yml"
 
-    endpoint 1, device_type: [Matter::DeviceType::REFRIGERATOR,
-                              Matter::DeviceType::TEMPERATURE_CONTROLLED_CABINET] do
+    endpoint DEVICE_ENDPOINT_ID, device_type: [Matter::DeviceType::REFRIGERATOR,
+                                               Matter::DeviceType::TEMPERATURE_CONTROLLED_CABINET] do
       cluster Alarm
-      cluster Mode, supported_modes: MODES, current_mode: 0_u8
+      cluster Mode, supported_modes: MODES, current_mode: MODES.first.mode
       cluster TemperatureControl
     end
 
     protected def before_start : Nil
-      node.get_cluster!(1_u16, TemperatureControl).on_set_temperature do |target, _level|
+      node.get_cluster!(DEVICE_ENDPOINT_ID, TemperatureControl).on_set_temperature do |target, _level|
         target ? Matter::InteractionModel::Status.success : Matter::InteractionModel::Status.invalid_command
       end
-      node.get_cluster!(1_u16, Alarm).report_alarms(Alarm::AlarmBitmap::DoorOpen)
+      node.get_cluster!(DEVICE_ENDPOINT_ID, Alarm).report_alarms(Alarm::AlarmBitmap::DoorOpen)
       super
     end
   end
