@@ -38,7 +38,8 @@ module Matter
     # * `endpoint number, device_type: do ... end` — an endpoint and its
     #   clusters. The block holds `cluster` declarations; the endpoint's device
     #   type goes into `endpoint_device_types`, and `Endpoint#validate` holds
-    #   the endpoint to it.
+    #   the endpoint to it. An array advertises multiple device types on one
+    #   endpoint, with the first as its primary type.
     # * `cluster Klass, *args, **options, as: :name` — one cluster of the
     #   enclosing endpoint, built as `Klass.new(endpoint_number, *args,
     #   **options)`. `as:` adds a typed accessor for it (`switch : OnOff`),
@@ -251,7 +252,7 @@ module Matter
 
       # One endpoint of the device and the clusters it serves.
       macro endpoint(number, device_type, parent_endpoint = nil, tag_list = nil, &block)
-        {% raise "#{@type}: endpoint #{number} device_type: takes one device type id" if device_type.is_a?(ArrayLiteral) %}
+        {% raise "#{@type}: endpoint #{number} device_type: requires at least one id" if device_type.is_a?(ArrayLiteral) && device_type.empty? %}
         {% if @type.constant("ENDPOINT_DECLS").any? { |decl| decl[:kind] == :endpoint && decl[:number] == number } %}
           {% raise "#{@type}: endpoint #{number} declared twice" %}
         {% end %}
@@ -396,9 +397,27 @@ module Matter
           protected def endpoint_device_types : Hash(UInt16, UInt32)
             {
               {% for decl in statics %}
-                ({{ decl[:number] }}).to_u16 => ({{ decl[:device_type] }}).to_u32,
+                {% if decl[:device_type].is_a?(ArrayLiteral) %}
+                  ({{ decl[:number] }}).to_u16 => ({{ decl[:device_type][0] }}).to_u32,
+                {% else %}
+                  ({{ decl[:number] }}).to_u16 => ({{ decl[:device_type] }}).to_u32,
+                {% end %}
               {% end %}
             }
+          end
+
+          protected def endpoint_additional_device_types : Hash(UInt16, Array(UInt32))
+            {
+              {% for decl in statics %}
+                {% if decl[:device_type].is_a?(ArrayLiteral) %}
+                  ({{ decl[:number] }}).to_u16 => [
+                    {% for id, index in decl[:device_type] %}
+                      {% if index > 0 %}({{ id }}).to_u32,{% end %}
+                    {% end %}
+                  ] of UInt32,
+                {% end %}
+              {% end %}
+            } of UInt16 => Array(UInt32)
           end
         {% end %}
 

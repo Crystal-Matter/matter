@@ -52,10 +52,12 @@ module Matter
       # Network receive must remain free while a cluster handler performs a
       # controller exchange through the same socket. One worker preserves the
       # device's inbound message ordering.
-      INBOUND_QUEUE_LIMIT = 256
-      BDX_QUEUE_LIMIT     =  16
-      BDX_WORKER_LIMIT    = Bdx::Responder::MAX_ACTIVE_TRANSFERS
-      BDX_SHUTDOWN_GRACE  = 100.milliseconds
+      INBOUND_QUEUE_LIMIT        = 256
+      BDX_QUEUE_LIMIT            =  16
+      BDX_WORKER_LIMIT           = Bdx::Responder::MAX_ACTIVE_TRANSFERS
+      BDX_SHUTDOWN_GRACE         = 100.milliseconds
+      UNSENT_INVOKE_RETRY_WINDOW = 10.seconds
+      MAX_UNSENT_INVOKE_RETRIES  = 64
       @inbound_messages : Channel(Tuple(Codec::MessageCodec::Message, Socket::IPAddress))
       @inbound_done : Channel(Nil)
 
@@ -64,6 +66,9 @@ module Matter
         opcode : Bdx::Wire::Opcode
       private record BdxAbort, session : Session::SecureContext, exchange_id : UInt16
       private alias BdxWork = BdxTask | BdxAbort
+      private record UnsentInvokeRetry, session : Session::SecureContext,
+        exchange_id : UInt16, payload : Bytes, expires_at : Time::Instant
+      @unsent_invoke_retries = {} of Tuple(UInt64, UInt32) => UnsentInvokeRetry
 
       private class BdxLane
         getter session : Session::SecureContext
@@ -197,6 +202,7 @@ module Matter
         @registry.add_session_cleanup_hook(->(id : UInt16) { queue_bdx_session_cleanup(id) })
         @registry.add_session_cleanup_hook(->(id : UInt16) { @bdx_initiator.forget_session(id) })
         @registry.add_sweep_hook(-> { @bdx_initiator.sweep })
+        @registry.add_sweep_hook(-> { @unsent_invoke_retries.reject! { |_, retry| retry.expires_at < Time.instant } })
         @subscriptions = SubscriptionManager.new(@registry, @node, @sender)
         @registry.add_sweep_hook(-> { @subscriptions.tick })
         @secure_channel = SecureChannel.new(@fabric_table, @registry, @sender, setup_pin, iterations, salt)
@@ -206,9 +212,22 @@ module Matter
           start_pending_sleeps(session_identity, exchange_id)
           @bdx_initiator.start_pending
         end
-        @router.on_invoke_response_failed = ->(session_identity : UInt64, exchange_id : UInt16) do
+        @router.on_invoke_response_failed = ->(session : Session::SecureContext, request : Codec::MessageCodec::Message) do
           @bdx_initiator.discard_pending
-          discard_pending_commissions(session_identity, exchange_id)
+          session_identity = session.object_id.to_u64
+          exchange_id = request.payload_header.exchange_id
+          if discard_pending_commissions(session_identity, exchange_id) &&
+             sole_commission_node_invoke?(request.payload)
+            now = Time.instant
+            @unsent_invoke_retries.reject! { |_, retry| retry.expires_at < now }
+            if @unsent_invoke_retries.size >= MAX_UNSENT_INVOKE_RETRIES
+              oldest = @unsent_invoke_retries.min_by? { |_, retry| retry.expires_at }
+              @unsent_invoke_retries.delete(oldest[0]) if oldest
+            end
+            @unsent_invoke_retries[{session_identity, request.packet_header.message_id}] =
+              UnsentInvokeRetry.new(session, exchange_id, request.payload.dup,
+                now + UNSENT_INVOKE_RETRY_WINDOW)
+          end
           discard_pending_sleeps(session_identity, exchange_id)
         end
         @group_packets = Session::GroupSecurePacket.new([] of Session::GroupSecurePacket::Key)
@@ -347,8 +366,22 @@ module Matter
         end
       end
 
-      private def discard_pending_commissions(session_identity : UInt64, exchange_id : UInt16) : Nil
-        commissioner_controls.each(&.discard_pending_commissions(session_identity, exchange_id))
+      private def discard_pending_commissions(session_identity : UInt64, exchange_id : UInt16) : Bool
+        discarded = false
+        commissioner_controls.each do |control|
+          discarded = control.discard_pending_commissions(session_identity, exchange_id) || discarded
+        end
+        discarded
+      end
+
+      # Re-execution is safe only when CommissionNode was the sole command.
+      # Another command in the InvokeRequest may have succeeded before send.
+      private def sole_commission_node_invoke?(payload : Bytes) : Bool
+        request = IMHandler.parse_invoke_request(payload)
+        return false unless request && request.invoke_requests.size == 1
+        path = request.invoke_requests.first.command_path
+        path.cluster == Cluster::CommissionerControl::CLUSTER_ID &&
+          path.command == Cluster::CommissionerControl::CMD_COMMISSION_NODE
       end
 
       private def start_pending_sleeps(session_identity : UInt64, exchange_id : UInt16) : Nil
@@ -551,20 +584,41 @@ module Matter
             end
 
             message_counter = msg.packet_header.message_id
+            authenticated_retry = nil.as(Codec::MessageCodec::Message?)
             case session.check_peer_message_counter(message_counter)
             when Transport::MessageCounter::CheckResult::Duplicate
               # The peer retransmitted; answer from the cache rather than
               # re-running cluster logic.
-              unless @mrp_cache.resend?(session_id, message_counter, peer)
-                Log.trace { "Dropping duplicate message with no cached response: session_id=#{session_id}, counter=#{message_counter}" }
+              return if @mrp_cache.resend?(session_id, message_counter, peer)
+              retry_key = {session.object_id.to_u64, message_counter}
+              if retry_entry = @unsent_invoke_retries[retry_key]?
+                if retry_entry.session.same?(session) && Time.instant <= retry_entry.expires_at
+                  begin
+                    candidate = decrypt_message(msg, session)
+                    header = candidate.payload_header
+                    if header.protocol_id == ProtocolId::InteractionModel.value &&
+                       header.message_type == InteractionModel::MessageType::InvokeRequest.value &&
+                       header.exchange_id == retry_entry.exchange_id && candidate.payload == retry_entry.payload
+                      authenticated_retry = candidate
+                      @unsent_invoke_retries.delete(retry_key)
+                    end
+                  rescue ex
+                    Log.debug(exception: ex) { "Invalid retransmission of unsent Commissioner Control response" }
+                  end
+                else
+                  @unsent_invoke_retries.delete(retry_key)
+                end
               end
-              return
+              unless authenticated_retry
+                Log.trace { "Dropping duplicate message with no cached response: session_id=#{session_id}, counter=#{message_counter}" }
+                return
+              end
             when Transport::MessageCounter::CheckResult::Stale
               Log.trace { "Dropping stale message outside the receive window: session_id=#{session_id}, counter=#{message_counter}" }
               return
             end
 
-            msg = decrypt_message(msg, session)
+            msg = authenticated_retry || decrypt_message(msg, session)
             @transport.mark_mrp_peer_active(peer, session_id)
             if ack = msg.payload_header.acknowledged_message_id
               @transport.acknowledge_reliable(session_id,
