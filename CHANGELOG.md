@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Diagnostic Logs response bounds
+
+- Enforce the Matter 1.6 32-byte file-designator limit and return Interaction
+  Model errors for missing or oversized BDX designators. Bound inline log
+  content to the specified 1024 bytes, report Exhausted for BDX fallback,
+  and retain the full log for an authenticated BDX transfer.
+
 ### Commissioner Control response retry
 
 - Allow a previously approved `CommissionNode` request to retry when its
