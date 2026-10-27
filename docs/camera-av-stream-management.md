@@ -9,6 +9,16 @@ asks the host to admit the stream, and returns a monotonically advancing
 reference count; deallocation releases host media only when the count reaches
 zero. `SetStreamPriorities` rejects changes while any stream is allocated.
 
+An ADO endpoint may opt into the Matter 1.6 Speaker (SPKR) feature. It then
+declares fixed speaker codec, channel, rate and depth capabilities and a fixed
+two-way-talk support mode, plus Manage-privileged mute and bounded volume
+settings. The settings persist across restart. Register
+`on_speaker_settings_changed` to apply the restored state and admit each
+controller write before it is committed; writes return `InvalidInState` until
+the host is attached. The host owns speaker hardware and media transport.
+The synthetic audio example sets `TwoWayTalkSupport` to `NotSupported` and
+checks the attribute wire format without sending speaker media.
+
 For VDO, the host advertises sensor size and frame rate, viewport minimum,
 codec/rate distortion points, encoder count and encoded pixel rate. The
 mandatory `Viewport` attribute is writable with Manage privilege, bounded by

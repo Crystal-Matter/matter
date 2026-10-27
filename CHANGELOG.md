@@ -38,6 +38,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Persist the next event number before publishing each journal record. Restored
   subscriptions from older stores advance the counter past their saved cursor,
   so events remain visible after a process restart without reusing numbers.
+### Camera speaker controls
+
+- Add the opt-in Matter 1.6 Speaker feature to Camera AV Stream Management
+  with fixed capabilities, two-way-talk metadata, persistent mute and bounded
+  volume settings. A host callback admits changes before they are committed.
+  The synthetic audio fixture checks the official attribute wire format.
 
 ### Joint Fabric completion durability
 

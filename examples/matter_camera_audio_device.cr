@@ -23,10 +23,13 @@ module MatterCameraAudio
       cluster CameraAv,
         microphone_capabilities: CameraAv::AudioCapabilities.new(2_u8,
           [CameraAv::AudioCodec::Opus], [16_000_u32, 48_000_u32], [16_u8]),
+        speaker_capabilities: CameraAv::AudioCapabilities.new(1_u8,
+          [CameraAv::AudioCodec::Opus], [48_000_u32], [16_u8]),
+        two_way_talk_support: CameraAv::TwoWayTalkSupport::NotSupported,
         supported_stream_usages: [CameraAv::StreamUsage::LiveView, CameraAv::StreamUsage::Recording],
         max_content_buffer_size: 65_536_u32,
         max_network_bandwidth: 96_000_u32,
-        feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Privacy
+        feature_map: CameraAv::Feature::Audio | CameraAv::Feature::Privacy | CameraAv::Feature::Speaker
     end
 
     protected def before_start : Nil
@@ -35,6 +38,9 @@ module MatterCameraAudio
         Matter::InteractionModel::Status.success
       end
       camera.on_audio_deallocate do |_id|
+        Matter::InteractionModel::Status.success
+      end
+      camera.on_speaker_settings_changed do |_muted, _volume|
         Matter::InteractionModel::Status.success
       end
       super
