@@ -1,4 +1,5 @@
 require "./cluster"
+require "./identify"
 require "tlv"
 
 module Matter
@@ -192,6 +193,7 @@ module Matter
       @fabric_groups : Hash(UInt8, Hash(UInt16, String))
       property on_group_added : Proc(UInt16, UInt16, String, UInt8, Nil)?
       property on_group_removed : Proc(UInt16, UInt16, UInt8, Nil)?
+      @identify : Identify?
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
@@ -202,6 +204,12 @@ module Matter
         @groups = Hash(UInt16, String).new
         @fabric_groups = Hash(UInt8, Hash(UInt16, String)).new
         @name_support = @feature_map.group_names? ? NameSupport::GroupNames : NameSupport::None
+      end
+
+      # Endpoint binds the co-located Identify server regardless of cluster
+      # insertion order. Without one, this endpoint cannot be identifying.
+      def bind_identify(identify : Identify?) : Nil
+        @identify = identify
       end
 
       # ------------------------------------------------------------------------
@@ -252,6 +260,8 @@ module Matter
 
       # No response struct is defined for this command, so the outcome is the command status.
       def add_group_if_identifying(request : AddGroupIfIdentifyingRequest) : InteractionModel::Status
+        return InteractionModel::Status.success unless @identify.try(&.identifying?)
+
         InteractionModel::Status.new(store_group(request.group_id.id, request.group_name))
       end
 

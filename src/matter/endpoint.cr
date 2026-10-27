@@ -5,6 +5,8 @@ require "./cluster/cluster"
 require "./cluster/color_control"
 require "./cluster/descriptor"
 require "./cluster/level_control"
+require "./cluster/groups"
+require "./cluster/identify"
 require "./cluster/on_off"
 require "./cluster/mode_select"
 require "./cluster/scenes_management"
@@ -59,6 +61,10 @@ module Matter
         )
       end
 
+      if previous = @clusters[cluster.cluster_id.id]?
+        previous.as?(Cluster::Identify).try(&.close) unless previous.same?(cluster)
+      end
+      cluster.as?(Cluster::Identify).try(&.reopen)
       @clusters[cluster.cluster_id.id] = cluster
       if level = get_cluster(Cluster::LevelControl)
         level.bind_on_off(get_cluster(Cluster::OnOff))
@@ -69,6 +75,9 @@ module Matter
       end
       if mode = get_cluster(Cluster::ModeSelect)
         mode.bind_on_off(get_cluster(Cluster::OnOff))
+      end
+      if groups = get_cluster(Cluster::Groups)
+        groups.bind_identify(get_cluster(Cluster::Identify))
       end
       cluster
     end

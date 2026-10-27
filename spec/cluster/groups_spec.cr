@@ -186,11 +186,66 @@ describe Matter::Cluster::Groups do
     cluster.data_version.should eq(version + 1)
   end
 
-  it "decodes AddGroupIfIdentifying" do
-    cluster = build(Matter::Cluster::Groups)
+  [true, false].each do |identify_first|
+    it "adds a group only while identifying when Identify is added #{identify_first ? "first" : "second"}" do
+      device_endpoint = Matter::Endpoint.new(endpoint(1))
+      groups = build(Matter::Cluster::Groups)
+      identify = build(Matter::Cluster::Identify)
+      clusters = identify_first ? [identify.as(Matter::Cluster::Base), groups.as(Matter::Cluster::Base)] : [groups.as(Matter::Cluster::Base), identify.as(Matter::Cluster::Base)]
+      clusters.each { |cluster| device_endpoint.add_cluster(cluster) }
+
+      additions = [] of UInt16
+      groups.on_group_added = ->(id : UInt16, _endpoint : UInt16, _name : String, _fabric : UInt8) do
+        additions << id
+        nil
+      end
+
+      first = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(32_u16), "Office")
+      before_version = groups.data_version
+      before_state = groups.save_state
+      expect_success(invoke(groups, GroupsDef::CMD_ADD_GROUP_IF_IDENTIFYING, first, fabric_index: 1_u8))
+      groups.data_version.should eq(before_version)
+      groups.save_state.should eq(before_state)
+      additions.should be_empty
+
+      identify.identify(Matter::Cluster::Identify::Request.new(30_u16))
+      expect_success(invoke(groups, GroupsDef::CMD_ADD_GROUP_IF_IDENTIFYING, first, fabric_index: 1_u8))
+      additions.should eq([32_u16])
+      groups.with_request_context do
+        groups.request_fabric_index = 1_u8
+        groups.member_of?(32_u16).should be_true
+      end
+
+      identify.identify(Matter::Cluster::Identify::Request.new(0_u16))
+      second = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(33_u16), "Hall")
+      before_version = groups.data_version
+      before_state = groups.save_state
+      expect_success(invoke(groups, GroupsDef::CMD_ADD_GROUP_IF_IDENTIFYING, second, fabric_index: 1_u8))
+      groups.data_version.should eq(before_version)
+      groups.save_state.should eq(before_state)
+      additions.should eq([32_u16])
+      groups.with_request_context do
+        groups.request_fabric_index = 1_u8
+        groups.member_of?(33_u16).should be_false
+      end
+    end
+  end
+
+  it "does not add a group after IdentifyTime expires" do
+    device_endpoint = Matter::Endpoint.new(endpoint(1))
+    groups = build(Matter::Cluster::Groups)
+    identify = build(Matter::Cluster::Identify)
+    device_endpoint.add_cluster(groups)
+    device_endpoint.add_cluster(identify)
+    identify.identify(Matter::Cluster::Identify::Request.new(1_u16))
+    sleep 1.2.seconds
+
     request = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(32_u16), "Office")
-    expect_success(invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP_IF_IDENTIFYING, request))
-    cluster.groups[32_u16].should eq("Office")
+    before_state = groups.save_state
+    before_version = groups.data_version
+    expect_success(invoke(groups, GroupsDef::CMD_ADD_GROUP_IF_IDENTIFYING, request, fabric_index: 1_u8))
+    groups.save_state.should eq(before_state)
+    groups.data_version.should eq(before_version)
   end
 
   it "rejects AddGroup when the name field is missing" do
@@ -250,6 +305,9 @@ describe Matter::Cluster::Groups do
 
     it "answers AddGroupIfIdentifying constraint violations with ConstraintError" do
       cluster = build(Matter::Cluster::Groups)
+      identify = build(Matter::Cluster::Identify)
+      cluster.bind_identify(identify)
+      identify.identify(Matter::Cluster::Identify::Request.new(30_u16))
       command = Matter::Cluster::Groups::CMD_ADD_GROUP_IF_IDENTIFYING
       request = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(reserved_group), "Kitchen")
       expect_status(invoke(cluster, command, request), GroupsStatus::ConstraintError)

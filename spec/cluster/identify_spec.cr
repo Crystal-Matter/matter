@@ -189,6 +189,209 @@ describe Matter::Cluster::Identify do
   end
 
   describe "identify state" do
+    it "lets a callback wait for a concurrent Identify command" do
+      cluster = build(Matter::Cluster::Identify)
+      completed = Channel(Nil).new
+      stopped = 0
+      cluster.on_identify_started do
+        spawn do
+          cluster.identify(Matter::Cluster::Identify::Request.new(0_u16))
+          completed.send(nil)
+        end
+        select
+        when completed.receive
+        when timeout(0.5.seconds)
+          fail "Identify command blocked behind the start callback"
+        end
+      end
+      cluster.on_identify_stopped { stopped += 1 }
+
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      cluster.identifying?.should be_false
+      stopped.should eq(1)
+    end
+
+    it "delivers a final stop after closing during a start callback" do
+      cluster = build(Matter::Cluster::Identify)
+      entered = Channel(Nil).new
+      release = Channel(Nil).new
+      stopped = Channel(Nil).new
+      events = [] of Symbol
+      cluster.on_identify_started do
+        events << :started
+        entered.send(nil)
+        release.receive
+      end
+      cluster.on_identify_stopped do
+        events << :stopped
+        stopped.send(nil)
+      end
+
+      spawn { cluster.identify(Matter::Cluster::Identify::Request.new(1_u16)) }
+      entered.receive
+      cluster.close
+      release.send(nil)
+      select
+      when stopped.receive
+      when timeout(0.5.seconds)
+        fail "Close did not deliver a final stop"
+      end
+      events.should eq([:started, :stopped])
+    end
+
+    it "discards a queued start across rapid close and reopen" do
+      cluster = build(Matter::Cluster::Identify)
+      starts = 0
+      cluster.on_identify_started { starts += 1 }
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, _attribute : UInt32) do
+        cluster.close
+        cluster.reopen
+        nil
+      end
+
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      cluster.identify_time.should eq(0_u16)
+      starts.should eq(0)
+    end
+
+    it "delivers the final stop when a start callback raises" do
+      cluster = build(Matter::Cluster::Identify)
+      stopped = 0
+      cluster.on_identify_started do
+        cluster.close
+        raise "host start failed"
+      end
+      cluster.on_identify_stopped { stopped += 1 }
+
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      cluster.identify_time.should eq(0_u16)
+      stopped.should eq(1)
+    end
+
+    it "refreshes the active window when Identify receives the same duration" do
+      cluster = build(Matter::Cluster::Identify)
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      sleep 0.7.seconds
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      sleep 0.5.seconds
+      cluster.identifying?.should be_true
+      sleep 0.6.seconds
+      cluster.identifying?.should be_false
+    end
+
+    it "keeps a reentrant Identify start after a stop notification" do
+      cluster = build(Matter::Cluster::Identify)
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      restart = true
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) do
+        if restart && attribute == Matter::Cluster::Identify::ATTR_IDENTIFY_TIME && cluster.identify_time.zero?
+          restart = false
+          cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+        end
+        nil
+      end
+      cluster.identify(Matter::Cluster::Identify::Request.new(0_u16))
+      cluster.identifying?.should be_true
+      sleep 1.2.seconds
+      cluster.identifying?.should be_false
+    end
+
+    it "serializes an Identify start interleaved with a stop notification" do
+      cluster = build(Matter::Cluster::Identify)
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      entered = Channel(Nil).new
+      release = Channel(Nil).new
+      stopped = Channel(Nil).new
+      restarted = Channel(Nil).new
+      pause = true
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) do
+        if pause && attribute == Matter::Cluster::Identify::ATTR_IDENTIFY_TIME && cluster.identify_time.zero?
+          pause = false
+          entered.send(nil)
+          release.receive
+        end
+        nil
+      end
+
+      spawn do
+        cluster.identify(Matter::Cluster::Identify::Request.new(0_u16))
+        stopped.send(nil)
+      end
+      entered.receive
+      spawn do
+        cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+        restarted.send(nil)
+      end
+      release.send(nil)
+      stopped.receive
+      restarted.receive
+      cluster.identifying?.should be_true
+      sleep 1.2.seconds
+      cluster.identifying?.should be_false
+    end
+
+    it "resumes expiry after its endpoint is removed and reattached" do
+      model = Matter::Node.new
+      device_endpoint = Matter::Endpoint.new(endpoint(1))
+      cluster = build(Matter::Cluster::Identify)
+      device_endpoint.add_cluster(cluster)
+      model.add_endpoint(device_endpoint)
+      stopped = 0
+      cluster.on_identify_stopped { stopped += 1 }
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+
+      model.remove_endpoint(device_endpoint.number)
+      cluster.identify_time.should eq(0_u16)
+      stopped.should eq(1)
+      model.add_endpoint(device_endpoint)
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      sleep 1.2.seconds
+      cluster.identifying?.should be_false
+    end
+
+    it "ignores Identify commands from a stop callback after removal" do
+      model = Matter::Node.new
+      device_endpoint = Matter::Endpoint.new(endpoint(1))
+      cluster = build(Matter::Cluster::Identify)
+      device_endpoint.add_cluster(cluster)
+      model.add_endpoint(device_endpoint)
+      cluster.on_identify_stopped do
+        cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      end
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+
+      model.remove_endpoint(device_endpoint.number)
+      cluster.identify_time.should eq(0_u16)
+      cluster.on_identify_stopped { }
+      model.add_endpoint(device_endpoint)
+      cluster.identify_time.should eq(0_u16)
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      sleep 1.2.seconds
+      cluster.identifying?.should be_false
+    end
+
+    it "expires IdentifyTime without an application tick and reports the stop" do
+      cluster = build(Matter::Cluster::Identify)
+      stopped = 0
+      changes = [] of UInt32
+      cluster.on_identify_stopped { stopped += 1 }
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) do
+        changes << attribute
+        nil
+      end
+
+      cluster.identify(Matter::Cluster::Identify::Request.new(1_u16))
+      changes.clear
+      version = cluster.data_version
+      sleep 1.2.seconds
+
+      cluster.identifying?.should be_false
+      read(cluster, Matter::Cluster::Identify::ATTR_IDENTIFY_TIME).should eq(0_u16)
+      cluster.data_version.should eq(version + 1)
+      changes.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+      stopped.should eq(1)
+    end
+
     it "tracks identifying state" do
       cluster = build(Matter::Cluster::Identify)
 
@@ -322,7 +525,7 @@ describe Matter::Cluster::Identify do
   end
 
   describe "data versioning" do
-    it "increments data version without reporting intermediate countdown ticks" do
+    it "increments data version and reports each elapsed countdown tick" do
       cluster = build(Matter::Cluster::Identify)
       changed = [] of UInt32
       cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster_id : UInt32, attribute_id : UInt32) {
@@ -330,24 +533,50 @@ describe Matter::Cluster::Identify do
         nil
       }
 
+      started = Time.instant
       invoke(cluster, Matter::Cluster::Identify::CMD_IDENTIFY, encode_identify_command(3_u16))
       changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
       changed.clear
       version = cluster.data_version
 
       cluster.tick
+      cluster.identify_time.should eq(3_u16)
+      cluster.data_version.should eq(version)
+      changed.should be_empty
+
+      cluster.advance_identify_time(started + 1.1.seconds)
       cluster.identify_time.should eq(2_u16)
       cluster.data_version.should eq(version + 1)
-      changed.should be_empty
+      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+      changed.clear
 
-      cluster.tick
+      cluster.advance_identify_time(started + 2.1.seconds)
       cluster.identify_time.should eq(1_u16)
       cluster.data_version.should eq(version + 2)
-      changed.should be_empty
+      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+      changed.clear
 
-      cluster.tick
+      cluster.advance_identify_time(started + 3.1.seconds)
       cluster.identify_time.should eq(0_u16)
       cluster.data_version.should eq(version + 3)
+      changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
+    end
+
+    it "coalesces notification after a long scheduler delay" do
+      cluster = build(Matter::Cluster::Identify)
+      changed = [] of UInt32
+      cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) do
+        changed << attribute
+        nil
+      end
+      started = Time.instant
+      cluster.identify(Matter::Cluster::Identify::Request.new(UInt16::MAX))
+      changed.clear
+      version = cluster.data_version
+
+      cluster.advance_identify_time(started + (UInt16::MAX.to_i64 + 1_i64).seconds)
+      cluster.identify_time.should eq(0_u16)
+      cluster.data_version.should eq(version &+ UInt16::MAX.to_u32)
       changed.should eq([Matter::Cluster::Identify::ATTR_IDENTIFY_TIME])
     end
 
