@@ -82,17 +82,20 @@ module Matter
       attribute 0x000B, :bat_voltage, UInt32, nullable: true, optional: true, omit_changes: true, requires: :battery, present_if: :bat_voltage
       attribute 0x000C, :bat_percent_remaining, UInt8, nullable: true, optional: true, max: BAT_PERCENT_REMAINING_MAX, requires: :battery, present_if: :bat_percent_remaining
       attribute 0x000D, :bat_time_remaining, UInt32, nullable: true, optional: true, requires: :battery, present_if: :bat_time_remaining
-      attribute 0x000E, :bat_charge_level, BatChargeLevel, nullable: true, requires: :battery, present_if: :bat_charge_level
-      attribute 0x000F, :bat_replacement_needed, Bool, nullable: true, requires: :battery, present_if: :bat_replacement_needed
-      attribute 0x0010, :bat_replaceability, BatReplaceability, nullable: true, fixed: true, requires: :battery, present_if: :bat_replaceability
+      # These initializers satisfy the DSL's nonnullable storage requirement.
+      # Constructor admission below requires explicit host values for every
+      # enabled feature before this cluster can be registered or read.
+      attribute 0x000E, :bat_charge_level, BatChargeLevel, default: BatChargeLevel::Ok, requires: :battery
+      attribute 0x000F, :bat_replacement_needed, Bool, default: false, requires: :battery
+      attribute 0x0010, :bat_replaceability, BatReplaceability, default: BatReplaceability::Unspecified, fixed: true, requires: :battery
       attribute 0x0011, :bat_present, Bool, nullable: true, optional: true, requires: :battery, present_if: :bat_present
 
-      attribute 0x0013, :bat_replacement_description, String, nullable: true, fixed: true, requires: :replaceable, present_if: :bat_replacement_description
-      attribute 0x0019, :bat_quantity, UInt8, nullable: true, fixed: true, requires: :replaceable, present_if: :bat_quantity
+      attribute 0x0013, :bat_replacement_description, String, default: "", fixed: true, requires: :replaceable
+      attribute 0x0019, :bat_quantity, UInt8, default: 0_u8, fixed: true, requires: :replaceable
 
-      attribute 0x001A, :bat_charge_state, BatChargeState, nullable: true, optional: true, requires: :rechargeable, present_if: :bat_charge_state
+      attribute 0x001A, :bat_charge_state, BatChargeState, default: BatChargeState::Unknown, requires: :rechargeable
       attribute 0x001B, :bat_time_to_full_charge, UInt32, nullable: true, optional: true, requires: :rechargeable, present_if: :bat_time_to_full_charge
-      attribute 0x001C, :bat_functional_while_charging, Bool, nullable: true, optional: true, requires: :rechargeable, present_if: :bat_functional_while_charging
+      attribute 0x001C, :bat_functional_while_charging, Bool, default: false, requires: :rechargeable
 
       # The endpoint numbers powered by this source are required on every
       # Power Source instance, regardless of its feature map.
@@ -112,17 +115,17 @@ module Matter
                      @bat_voltage : UInt32? = nil,
                      @bat_percent_remaining : UInt8? = nil,
                      @bat_time_remaining : UInt32? = nil,
-                     @bat_charge_level : BatChargeLevel? = nil,
-                     @bat_replacement_needed : Bool? = nil,
-                     @bat_replaceability : BatReplaceability? = nil,
+                     bat_charge_level : BatChargeLevel? = nil,
+                     bat_replacement_needed : Bool? = nil,
+                     bat_replaceability : BatReplaceability? = nil,
                      @bat_present : Bool? = nil,
                      # Replaceable feature
-                     @bat_replacement_description : String? = nil,
-                     @bat_quantity : UInt8? = nil,
+                     bat_replacement_description : String? = nil,
+                     bat_quantity : UInt8? = nil,
                      # Rechargeable feature
-                     @bat_charge_state : BatChargeState? = nil,
+                     bat_charge_state : BatChargeState? = nil,
                      @bat_time_to_full_charge : UInt32? = nil,
-                     @bat_functional_while_charging : Bool? = nil,
+                     bat_functional_while_charging : Bool? = nil,
                      @endpoint_list : Array(UInt16) = [] of UInt16)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
@@ -131,16 +134,16 @@ module Matter
 
         raise ArgumentError.new("description must be <= #{DESCRIPTION_MAX_LENGTH} characters") if @description.size > DESCRIPTION_MAX_LENGTH
 
-        if desc = @bat_replacement_description
+        if desc = bat_replacement_description
           raise ArgumentError.new("bat_replacement_description must be <= #{DESCRIPTION_MAX_LENGTH} characters") if desc.size > DESCRIPTION_MAX_LENGTH
         end
 
-        # A feature's mandatory attributes are supplied together or not at all
+        # A feature's mandatory attributes are supplied by the device host.
+        # They must not disappear from AttributeList when a feature is enabled.
         if @feature_map.battery?
-          battery_attrs = [@bat_charge_level, @bat_replacement_needed, @bat_replaceability]
-          if battery_attrs.any?(Nil) && battery_attrs.any?(&.!=(nil))
-            raise ArgumentError.new("Battery feature requires bat_charge_level, bat_replacement_needed, and bat_replaceability")
-          end
+          @bat_charge_level = bat_charge_level || raise ArgumentError.new("Battery feature requires bat_charge_level, bat_replacement_needed, and bat_replaceability")
+          @bat_replacement_needed = bat_replacement_needed.nil? ? raise ArgumentError.new("Battery feature requires bat_charge_level, bat_replacement_needed, and bat_replaceability") : bat_replacement_needed
+          @bat_replaceability = bat_replaceability || raise ArgumentError.new("Battery feature requires bat_charge_level, bat_replacement_needed, and bat_replaceability")
         end
 
         if @feature_map.replaceable? && !@feature_map.battery?
@@ -148,15 +151,21 @@ module Matter
         end
 
         if @feature_map.replaceable?
-          replaceable_attrs = [@bat_replacement_description, @bat_quantity]
-          if replaceable_attrs.any?(Nil) && replaceable_attrs.any?(&.!=(nil))
-            raise ArgumentError.new("Replaceable feature requires bat_replacement_description and bat_quantity")
-          end
+          @bat_replacement_description = bat_replacement_description || raise ArgumentError.new("Replaceable feature requires bat_replacement_description and bat_quantity")
+          @bat_quantity = bat_quantity || raise ArgumentError.new("Replaceable feature requires bat_replacement_description and bat_quantity")
         end
 
         if @feature_map.rechargeable? && !@feature_map.battery?
           raise ArgumentError.new("Rechargeable feature requires Battery feature")
         end
+        if @feature_map.rechargeable?
+          @bat_charge_state = bat_charge_state || raise ArgumentError.new("Rechargeable feature requires bat_charge_state")
+          @bat_functional_while_charging = bat_functional_while_charging.nil? ? raise ArgumentError.new("Rechargeable feature requires bat_functional_while_charging") : bat_functional_while_charging
+        end
+      end
+
+      protected def validate_feature_map_change(value : Feature) : Nil
+        raise ArgumentError.new("Power Source feature map is fixed after construction") unless value == @feature_map
       end
 
       # Update the remaining battery percentage (0-200 half-percent units,
@@ -203,12 +212,12 @@ module Matter
       end
 
       # Called with the previous and the new value when the charge level changes
-      def on_charge_level_changed(&block : BatChargeLevel?, BatChargeLevel? -> Nil) : Nil
+      def on_charge_level_changed(&block : BatChargeLevel, BatChargeLevel -> Nil) : Nil
         on_bat_charge_level_changed(&block)
       end
 
       # Called with the previous and the new value when replacement-needed changes
-      def on_replacement_needed_changed(&block : Bool?, Bool? -> Nil) : Nil
+      def on_replacement_needed_changed(&block : Bool, Bool -> Nil) : Nil
         on_bat_replacement_needed_changed(&block)
       end
     end

@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Power Source required battery attributes
+
+- Require host values for the nonnullable Battery, Rechargeable, and Replaceable
+  feature attributes before constructing a Power Source, and keep its feature
+  profile fixed afterward. The Smoke/CO Alarm fixture now verifies those
+  attributes with the official chip-tool on a synthetic backup battery.
+
 ### Commissioner Control response retry
 
 - Allow a previously approved `CommissionNode` request to retry when its
