@@ -2,6 +2,7 @@ require "option_parser"
 require "json"
 require "file_utils"
 require "colorize"
+require "../src/matter/setup_payload"
 
 module DeviceValidationProtocolIds
   GLOBAL_GENERATED_COMMAND_LIST = 0xFFF8_u32
@@ -429,7 +430,7 @@ end
 endpoint_u16 = endpoint_id.to_u16? || DeviceValidationProtocolIds::DEFAULT_DEVICE_ENDPOINT_ID
 
 pairing_code = pairing_code_override
-window_discriminator = Random.rand(0..4095).to_s
+window_discriminator = Random.rand(0..Matter::SetupPayload::MAX_DISCRIMINATOR.to_i).to_s
 begin
   Dir.mkdir_p(File.dirname(storage_dir_b))
 rescue

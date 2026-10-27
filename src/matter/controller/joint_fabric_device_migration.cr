@@ -196,7 +196,7 @@ module Matter
           window = Commissioning::CommissioningWindowOpener.new(@crypto).open_enhanced(
             ImClient.new(@client, @timeout), old_session, @device_peer,
             DEFAULT_WINDOW_SECONDS, DEFAULT_PBKDF_ITERATIONS,
-            Random::Secure.rand(0_u16..4095_u16))
+            Random::Secure.rand(0_u16..SetupPayload::MAX_DISCRIMINATOR))
           deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
           hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
             @crypto, -> { persist_commissioning_ack! }, deadline_callback)

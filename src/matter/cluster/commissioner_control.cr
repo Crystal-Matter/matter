@@ -1,5 +1,6 @@
 require "./cluster"
 require "../commissioning/window_service"
+require "../setup_payload"
 
 module Matter
   module Cluster
@@ -352,7 +353,7 @@ module Matter
       private def valid_window?(response : ReverseOpenCommissioningWindowResponse) : Bool
         response.commissioning_timeout >= Commissioning::WindowService::MINIMUM_COMMISSIONING_TIMEOUT &&
           response.pake_passcode_verifier.size == Commissioning::WindowService::PAKE_PASSCODE_VERIFIER_LENGTH &&
-          response.discriminator <= 4095 &&
+          response.discriminator <= SetupPayload::MAX_DISCRIMINATOR &&
           (Commissioning::WindowService::PBKDF2_MIN_ITERATIONS..Commissioning::WindowService::PBKDF2_MAX_ITERATIONS).includes?(response.iterations) &&
           (Commissioning::WindowService::PAKE_SALT_MIN_LENGTH..Commissioning::WindowService::PAKE_SALT_MAX_LENGTH).includes?(response.salt.size)
       end

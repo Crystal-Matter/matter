@@ -3,6 +3,7 @@ require "../cluster/joint_fabric_datastore"
 require "../datatype/node_id"
 require "../crypto/certificate_validation"
 require "../crypto/pkcs10"
+require "../setup_payload"
 require "./remote_icac_csr_provider"
 
 module Matter
@@ -326,7 +327,7 @@ module Matter
 
       private def valid_window_parameters?(request : WindowRequest) : Bool
         request.commissioning_timeout > 0 && request.commissioning_timeout < UInt16::MAX &&
-          request.pake_passcode_verifier.size == 97 && request.discriminator <= 4095 &&
+          request.pake_passcode_verifier.size == 97 && request.discriminator <= SetupPayload::MAX_DISCRIMINATOR &&
           request.iterations >= 1000 && request.iterations <= 100_000 &&
           request.salt.size >= 16 && request.salt.size <= 32
       end

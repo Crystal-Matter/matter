@@ -1,4 +1,5 @@
 require "../error"
+require "../setup_payload"
 require "./btp_central_handshake"
 
 module Matter
@@ -7,9 +8,9 @@ module Matter
       SERVICE_UUID       = "0000fff6-0000-1000-8000-00805f9b34fb"
       C1_UUID            = "18ee2ef5-263d-4559-959f-4f9c429f9d11"
       C2_UUID            = "18ee2ef5-263d-4559-959f-4f9c429f9d12"
-      SERVICE_DATA_SIZE  =          8
-      SERVICE_DATA_TYPE  =       0_u8
-      MAX_DISCRIMINATOR  = 0x0fff_u16
+      SERVICE_DATA_SIZE  =    8
+      SERVICE_DATA_TYPE  = 0_u8
+      MAX_DISCRIMINATOR  = SetupPayload::MAX_DISCRIMINATOR
       SCAN_POLL_INTERVAL = 50.milliseconds
 
       record Device, path : String, address : String, service_data : Bytes

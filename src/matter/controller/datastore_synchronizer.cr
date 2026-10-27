@@ -185,7 +185,7 @@ module Matter
 
       private def apply(& : -> Nil) : UInt8
         yield
-        0_u8
+        Store::NO_FAILURE_CODE
       rescue ex : Matter::ClusterError
         Log.error(exception: ex) { "Failed to synchronize Joint Fabric Datastore entry" }
         ex.status.value

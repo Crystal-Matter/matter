@@ -709,9 +709,9 @@ module MatterJointFabricAdministrator
           end
         end
       end
-      { {joint_fabric_administrator, joint_fabric_datastore, 1_u16,
+      { {joint_fabric_administrator, joint_fabric_datastore, ANCHOR_JFA_ENDPOINT_ID,
          APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_BINDING_DOCUMENT, APP_ROLE_DOCUMENT, APP_ICAC_DOCUMENT},
-       {bootstrap_joint_fabric_administrator, bootstrap_joint_fabric_datastore, 2_u16,
+       {bootstrap_joint_fabric_administrator, bootstrap_joint_fabric_datastore, BOOTSTRAP_JFA_ENDPOINT_ID,
         APP_BOOTSTRAP_BINDING_DOCUMENT, APP_FABRIC_BINDING_DOCUMENT, APP_BOOTSTRAP_ROLE_DOCUMENT, APP_BOOTSTRAP_ICAC_DOCUMENT} }.each do |administrator, datastore, endpoint_id, document_name, other_document_name, role_document, icac_document|
         next if persistence.app_document(document_name)
 
@@ -1351,10 +1351,10 @@ module MatterJointFabricAdministrator
 
     private def seed_joint_fabric_groups(datastore : Datastore) : Nil
       unless datastore.group_list.any?(&.group_cat.==(ADMINISTRATOR_CAT_ID))
-        datastore.seed_reserved_cat_group(ADMIN_GROUP_ID, "Administrators", ADMINISTRATOR_CAT_ID, 1_u16)
+        datastore.seed_reserved_cat_group(ADMIN_GROUP_ID, "Administrators", ADMINISTRATOR_CAT_ID, Datastore::FIRST_GROUP_CAT_VERSION)
       end
       unless datastore.group_list.any?(&.group_cat.==(ANCHOR_CAT_ID))
-        datastore.seed_reserved_cat_group(ANCHOR_GROUP_ID, "Anchors", ANCHOR_CAT_ID, 1_u16)
+        datastore.seed_reserved_cat_group(ANCHOR_GROUP_ID, "Anchors", ANCHOR_CAT_ID, Datastore::FIRST_GROUP_CAT_VERSION)
       end
     end
 
