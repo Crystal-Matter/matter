@@ -327,6 +327,9 @@ item below as covered only to the extent of its cited tests.
   until authenticated reconciliation; the worker does not remove that entry.
   Retry delivery and foreground registrar mutations are serialized through the
   journal save, so a delayed retry cannot overwrite a newer completion stage.
+  Journal mutations use short atomic StateStore updates; network delivery stays
+  outside the storage transaction. Each retry resolves its fabric from fresh
+  state before sending a command, so a removed controller identity is skipped.
   A Joint Commissioning workflow owns its worker while its inner Commissioner
   uses the same registrar. Closing the owner wakes an idle worker immediately
   and waits for any active delivery before the controller client closes.

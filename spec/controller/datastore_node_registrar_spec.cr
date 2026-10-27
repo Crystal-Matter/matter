@@ -44,6 +44,26 @@ private class BlockingRetryDelivery < Matter::Controller::DatastoreNodeRegistrar
   end
 end
 
+private class BlockingFirstRetryDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  getter entered = Channel(Nil).new
+  getter release = Channel(Nil).new
+  getter calls = [] of UInt64
+
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+    @calls << node_id
+    if @calls.size == 1
+      @entered.send(nil)
+      @release.receive
+    end
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+end
+
 private class NodeLifecycleIm < Matter::Controller::ImClient
   alias Datastore = Matter::Cluster::JointFabricDatastore
 
@@ -195,6 +215,39 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     foreground_finished.receive unless finished_early
     finished_early.should be_false
     store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Completing)
+  end
+
+  it "does not retry a node on a fabric removed after the retry scan" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    first = registrar_fabric
+    second = Matter::Controller::FabricInfo.new(
+      fabric_id: 0x124_u64, controller_node_id: 0x101_u64,
+      ipk_value: Bytes.new(16), root_cert: Bytes[1], root_public_key: Bytes[5],
+      controller_noc: Bytes[3], controller_private_key: Bytes[4])
+    store.update do |state|
+      state.install_fabric(first)
+      state.install_fabric(second)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        first.fabric_id, first.root_public_key.dup, first.controller_node_id,
+        0x200_u64, "First", Time.utc.to_unix + 60_i64)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        second.fabric_id, second.root_public_key.dup, second.controller_node_id,
+        0x201_u64, "Second", Time.utc.to_unix + 60_i64)
+    end
+    delivery = BlockingFirstRetryDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    finished = Channel(Nil).new
+    spawn do
+      registrar.retry_pending_once
+      finished.send(nil)
+    end
+    delivery.entered.receive
+    store.update { |state| state.remove_fabric(second.fabric_id, second.root_public_key, second.controller_node_id) }
+    delivery.release.send(nil)
+    finished.receive
+
+    delivery.calls.should eq([0x200_u64])
+    store.load.pending_datastore_nodes.last.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Pending)
   end
 
   it "retains acknowledged completion until RefreshNode succeeds after restart" do
