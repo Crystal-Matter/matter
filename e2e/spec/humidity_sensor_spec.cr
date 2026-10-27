@@ -10,7 +10,7 @@ describe "matter_humidity_sensor example" do
 
   it "is a humidity sensor" do
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x0307_i64
-    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Humidity Sensor"]
+    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Humidity"]
   end
 
   it "reads the measured humidity within the configured range" do
