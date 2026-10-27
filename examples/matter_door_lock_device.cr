@@ -57,7 +57,7 @@ module MatterDoorLock
         default_pin_code: DEFAULT_PIN_CODE,
         as: :door_lock
       cluster Matter::Cluster::Identify, identify_type: :visible_led
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Door Lock")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example DoorLock")]
     end
 
     on(:door_lock, :lock_state_changed) do |_old_state, new_state|

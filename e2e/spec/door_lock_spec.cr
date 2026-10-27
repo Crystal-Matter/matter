@@ -18,7 +18,7 @@ describe "matter_door_lock example" do
 
   it "is a door lock" do
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x000A_i64
-    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Door Lock"]
+    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example DoorLock"]
   end
 
   it "reads the lock state" do

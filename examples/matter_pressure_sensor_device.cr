@@ -38,7 +38,7 @@ module MatterPressureSensor
         scale: PRESSURE_SCALE,
         as: :pressure
       cluster Matter::Cluster::Identify, identify_type: :visible_light
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Pressure Sensor")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Pressure")]
     end
 
     def console_notes : Array(String)

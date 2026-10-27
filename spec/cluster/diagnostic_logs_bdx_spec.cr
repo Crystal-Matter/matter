@@ -48,7 +48,7 @@ describe Matter::Cluster::DiagnosticLogs do
       String.new(designator).should eq(expected_designator)
       String.new(content).should contain("A" * 1100)
       queued = true
-      true
+      Matter::Cluster::DiagnosticLogs::TransferStartResult::Queued
     end
 
     response = cluster.retrieve_logs_request(
@@ -116,7 +116,7 @@ describe Matter::Cluster::DiagnosticLogs do
     response.log_content.size.should eq(Matter::Cluster::DiagnosticLogs::MAX_INLINE_LOG_BYTES)
   end
 
-  it "falls back to bounded inline logs when the BDX sender cannot queue" do
+  it "reports Busy when a live BDX sender cannot queue another transfer" do
     cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
     cluster.log("Q" * 1100)
     cluster.request_session_id = 12_u64
@@ -124,13 +124,37 @@ describe Matter::Cluster::DiagnosticLogs do
     cluster.request_peer_node_id = 53_u64
     cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
     cluster.request_is_case_session = true
-    cluster.on_bdx_transfer = ->(_session : UInt16, _fabric : UInt8, _node : UInt64, _peer : Socket::IPAddress, _designator : Bytes, _content : Bytes) { false }
+    cluster.on_bdx_transfer = ->(_session : UInt16, _fabric : UInt8, _node : UInt64, _peer : Socket::IPAddress, _designator : Bytes, _content : Bytes) do
+      Matter::Cluster::DiagnosticLogs::TransferStartResult::Busy
+    end
 
     response = cluster.retrieve_logs_request(
       Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
         Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
         Matter::Cluster::DiagnosticLogs::TransferProtocol::BDX,
         "fallback-log"))
+      .as(Matter::Cluster::DiagnosticLogs::RetrieveLogsResponse)
+    response.status.should eq(Matter::Cluster::DiagnosticLogs::LogsStatus::Busy)
+    response.log_content.should be_empty
+  end
+
+  it "falls back to bounded inline logs when a BDX sender is unavailable" do
+    cluster = Matter::Cluster::DiagnosticLogs.new(Matter::DataType::EndpointNumber.new(0_u16))
+    cluster.log("U" * 1100)
+    cluster.request_session_id = 12_u64
+    cluster.request_fabric_index = 2_u8
+    cluster.request_peer_node_id = 53_u64
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+    cluster.request_is_case_session = true
+    cluster.on_bdx_transfer = ->(_session : UInt16, _fabric : UInt8, _node : UInt64, _peer : Socket::IPAddress, _designator : Bytes, _content : Bytes) do
+      Matter::Cluster::DiagnosticLogs::TransferStartResult::Unavailable
+    end
+
+    response = cluster.retrieve_logs_request(
+      Matter::Cluster::DiagnosticLogs::RetrieveLogsRequest.new(
+        Matter::Cluster::DiagnosticLogs::Intent::EndUserSupport,
+        Matter::Cluster::DiagnosticLogs::TransferProtocol::BDX,
+        "unavailable-log"))
       .as(Matter::Cluster::DiagnosticLogs::RetrieveLogsResponse)
     response.status.should eq(Matter::Cluster::DiagnosticLogs::LogsStatus::Exhausted)
     response.log_content.size.should eq(Matter::Cluster::DiagnosticLogs::MAX_INLINE_LOG_BYTES)

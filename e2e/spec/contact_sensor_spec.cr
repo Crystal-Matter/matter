@@ -10,7 +10,7 @@ describe "matter_contact_sensor example" do
 
   it "is a contact sensor" do
     expect_success(device.read("descriptor", "device-type-list", 1)).int("DeviceType").should eq 0x0015_i64
-    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Contact Sensor"]
+    expect_success(device.read("fixedlabel", "label-list")).values("Value").should eq ["Example Contact"]
   end
 
   it "reads the boolean state" do

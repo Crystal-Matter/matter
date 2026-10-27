@@ -21,7 +21,7 @@ private def chunked_write_fixture
   {handler, transport, session, labels}
 end
 
-private def chunked_write_payload(packet : Bytes, session : Matter::Session::SecureContext) : Bytes
+private def chunked_write_message(packet : Bytes, session : Matter::Session::SecureContext) : Matter::Codec::MessageCodec::Message
   decoded = Matter::Codec::MessageCodec::Base.decode_packet(packet)
   header_bytes = packet[0, packet.size - decoded.payload.size]
   nonce = Matter::Session::SecureMessage.build_nonce(
@@ -31,7 +31,11 @@ private def chunked_write_payload(packet : Bytes, session : Matter::Session::Sec
   )
   plaintext = Matter::Crypto::StandardCrypto.new.decrypt(session.encryption_key, decoded.payload, nonce, header_bytes)
   Matter::Codec::MessageCodec::Base.decode_payload(
-    Matter::Codec::MessageCodec::Packet.new(decoded.header, plaintext)).payload
+    Matter::Codec::MessageCodec::Packet.new(decoded.header, plaintext))
+end
+
+private def chunked_write_payload(packet : Bytes, session : Matter::Session::SecureContext) : Bytes
+  chunked_write_message(packet, session).payload
 end
 
 private def chunked_write_response(packet : Bytes, session : Matter::Session::SecureContext) : Matter::InteractionModel::WriteResponseMessage
@@ -118,7 +122,7 @@ describe "chunked WriteRequest" do
     append = Matter::InteractionModel::AttributeDataIB.new(append_path,
       Matter::Cluster::LabelStruct.new("room", "office").to_tlv)
     first = Matter::InteractionModel::WriteRequestMessage.new(write_requests: [clear], more_chunked_messages: true)
-    # A unicast write sends WriteResponse even when the final chunk requests suppression.
+    # The final chunk suppresses its WriteResponse; reliable delivery still needs an ACK.
     second = Matter::InteractionModel::WriteRequestMessage.new(
       suppress_response: true, write_requests: [append], more_chunked_messages: false)
 
@@ -137,14 +141,74 @@ describe "chunked WriteRequest" do
       ), WRITE_PEER)
     end
 
-    statuses = transport.sent_packets.map { |packet, _| chunked_write_response(packet, session).write_responses.first.status.status }
-    statuses.should eq([
-      Matter::InteractionModel::StatusCode::Success.value,
-      Matter::InteractionModel::StatusCode::Busy.value,
-      Matter::InteractionModel::StatusCode::Success.value,
-      Matter::InteractionModel::StatusCode::Busy.value,
-    ])
+    transport.sent_packets.size.should eq(4)
+    chunked_write_response(transport.sent_packets.first[0], session).write_responses.first.status.status.should eq(
+      Matter::InteractionModel::StatusCode::Success.value)
+    transport.sent_packets[1..].each do |packet, _|
+      header = chunked_write_message(packet, session).payload_header
+      header.protocol_id.should eq(Matter::Protocol::ProtocolId::SecureChannel.value)
+      header.message_type.should eq(Matter::Protocol::SecureChannelMessageType::StandaloneAck.value)
+    end
     labels.label_list.should eq([Matter::Cluster::LabelStruct.new("room", "office")])
+    handler.close
+  end
+
+  it "suppresses a unicast WriteResponse while applying the attribute write" do
+    handler, transport, session, labels = chunked_write_fixture
+    path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST)
+    item = Matter::Cluster::LabelStruct.new("room", "office")
+    data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Any.from_tlv([item].to_tlv))
+    request = Matter::InteractionModel::WriteRequestMessage.new(
+      suppress_response: true, write_requests: [data])
+
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+      payload: request.to_slice, message_counter: 90_u32,
+      exchange_id: WRITE_EXCHANGE), WRITE_PEER)
+
+    labels.label_list.should eq([item])
+    transport.sent_packets.size.should eq(1)
+    packet = transport.sent_packets.first[0]
+    response = chunked_write_message(packet, session)
+    response.payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::SecureChannel.value)
+    response.payload_header.message_type.should eq(Matter::Protocol::SecureChannelMessageType::StandaloneAck.value)
+    response.payload_header.acknowledged_message_id.should eq(90_u32)
+
+    # A retransmission gets the cached ACK and must not apply the write again.
+    version_after_write = labels.data_version
+    retry = Matter::Spec::ProtocolMessages.from_peer(
+      session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+      payload: request.to_slice, message_counter: 90_u32,
+      exchange_id: WRITE_EXCHANGE)
+    handler.handle_message(retry, WRITE_PEER)
+    labels.data_version.should eq(version_after_write)
+    transport.sent_packets.size.should eq(2)
+    transport.sent_packets.last[0].should eq(packet)
+
+    handler.close
+  end
+
+  it "suppresses WriteResponse even when an individual attribute write fails" do
+    handler, transport, session, labels = chunked_write_fixture
+    # Suppression applies to the action regardless of individual path status.
+    invalid_path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: UInt32::MAX)
+    invalid_data = Matter::InteractionModel::AttributeDataIB.new(invalid_path, TLV::Any.new(7_u8))
+    invalid_request = Matter::InteractionModel::WriteRequestMessage.new(
+      suppress_response: true, write_requests: [invalid_data])
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+      payload: invalid_request.to_slice, message_counter: 91_u32,
+      exchange_id: WRITE_EXCHANGE + 1_u16), WRITE_PEER)
+    labels.label_list.should be_empty
+    transport.sent_packets.size.should eq(1)
+    error_ack = chunked_write_message(transport.sent_packets.last[0], session).payload_header
+    error_ack.protocol_id.should eq(Matter::Protocol::ProtocolId::SecureChannel.value)
+    error_ack.message_type.should eq(Matter::Protocol::SecureChannelMessageType::StandaloneAck.value)
+    error_ack.acknowledged_message_id.should eq(91_u32)
     handler.close
   end
 
@@ -177,6 +241,31 @@ describe "chunked WriteRequest" do
     labels.label_list.should be_empty
     payload = chunked_write_payload(transport.sent_packets.last[0], session)
     Matter::InteractionModel::StatusResponseMessage.from_slice(payload).status.should eq(
+      Matter::InteractionModel::StatusCode::InvalidAction.value)
+    handler.close
+  end
+
+  it "rejects response suppression on a non-final write chunk before mutation" do
+    handler, transport, session, labels = chunked_write_fixture
+    item = Matter::Cluster::LabelStruct.new("room", "office")
+    path = Matter::InteractionModel::AttributePath.new(
+      endpoint: 1_u16, cluster: Matter::Cluster::UserLabel::CLUSTER_ID,
+      attribute: Matter::Cluster::UserLabel::ATTR_LABEL_LIST)
+    data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Any.from_tlv([item].to_tlv))
+    request = Matter::InteractionModel::WriteRequestMessage.new(
+      suppress_response: true, write_requests: [data], more_chunked_messages: true)
+
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(
+      session: session, message_type: Matter::InteractionModel::MessageType::WriteRequest.value,
+      payload: request.to_slice, message_counter: 92_u32,
+      exchange_id: WRITE_EXCHANGE), WRITE_PEER)
+
+    labels.label_list.should be_empty
+    transport.sent_packets.size.should eq(1)
+    response = chunked_write_message(transport.sent_packets.first[0], session)
+    response.payload_header.protocol_id.should eq(Matter::Protocol::ProtocolId::InteractionModel.value)
+    response.payload_header.message_type.should eq(Matter::InteractionModel::MessageType::StatusResponse.value)
+    Matter::InteractionModel::StatusResponseMessage.from_slice(response.payload).status.should eq(
       Matter::InteractionModel::StatusCode::InvalidAction.value)
     handler.close
   end

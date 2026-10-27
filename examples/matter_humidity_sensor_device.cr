@@ -33,7 +33,7 @@ module MatterHumiditySensor
         tolerance: TOLERANCE,
         as: :humidity
       cluster Matter::Cluster::Identify, identify_type: :visible_led
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Humidity Sensor")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Example Humidity")]
     end
 
     # A second endpoint exercises the standard Air Quality Sensor device type

@@ -140,6 +140,30 @@ module Matter
         end
       end
 
+      # CurrentMode is the Mode Select sceneable attribute. Scenes Management
+      # stores it as valueUnsigned8 and restores only advertised modes.
+      def store_scene_extension_field_set : ScenesManagement::ExtensionFieldSet?
+        ScenesManagement::ExtensionFieldSet.new(
+          cluster_id: CLUSTER_ID,
+          attribute_list: [{ATTR_CURRENT_MODE, TLV::Any.new(@current_mode)}]
+        )
+      end
+
+      def apply_scene_extension_field_set(field_set : ScenesManagement::ExtensionFieldSet) : Bool
+        return false unless field_set.cluster_id == CLUSTER_ID
+
+        field_set.attribute_value_list.each do |attribute_id, value|
+          next unless attribute_id == ATTR_CURRENT_MODE
+          mode = value.value.as?(UInt8)
+          next unless mode && mode_supported?(mode)
+
+          self.current_mode = mode
+          return true
+        end
+
+        false
+      end
+
       private def mode_supported?(mode : UInt8) : Bool
         @supported_modes.any? { |option| option.mode == mode }
       end

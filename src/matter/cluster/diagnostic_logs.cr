@@ -33,6 +33,12 @@ module Matter
         BDX             = 1 # Use BDX protocol
       end
 
+      enum TransferStartResult
+        Queued
+        Busy
+        Unavailable
+      end
+
       # Request struct for RetrieveLogsRequest command
       struct RetrieveLogsRequest
         include TLV::Serializable
@@ -86,9 +92,9 @@ module Matter
       MAX_INLINE_LOG_BYTES      = 1024
       MAX_FILE_DESIGNATOR_BYTES =   32
 
-      # Queues a sender-initiated BDX transfer after the InvokeResponse has
-      # been emitted. The device runtime installs this callback.
-      property on_bdx_transfer : Proc(UInt16, UInt8, UInt64, Socket::IPAddress, Bytes, Bytes, Bool)?
+      # Queues a sender-initiated BDX transfer. The protocol layer defers the
+      # InvokeResponse until the peer accepts or rejects SendInit.
+      property on_bdx_transfer : Proc(UInt16, UInt8, UInt64, Socket::IPAddress, Bytes, Bytes, TransferStartResult)?
 
       def retrieve_logs_request(request : RetrieveLogsRequest) : RetrieveLogsResponse | InteractionModel::Status
         designator = request.transfer_file_designator
@@ -114,11 +120,18 @@ module Matter
             fabric_index = request_fabric_index
             peer_node_id = request_peer_node_id
             peer = request_peer_address
-            if callback && request_is_case_session? && session_id && fabric_index && peer_node_id && peer &&
-               callback.call(session_id.to_u16, fabric_index, peer_node_id, peer, bdx_designator.to_slice, content.dup)
-              return RetrieveLogsResponse.new(LogsStatus::Success, Bytes.empty)
+            unless request_is_case_session? && session_id && fabric_index && peer_node_id && peer
+              return RetrieveLogsResponse.new(LogsStatus::Exhausted, inline_content(content))
             end
-            return RetrieveLogsResponse.new(LogsStatus::Exhausted, inline_content(content))
+            case callback.call(session_id.to_u16, fabric_index, peer_node_id, peer,
+              bdx_designator.to_slice, content.dup)
+            in TransferStartResult::Queued
+              return RetrieveLogsResponse.new(LogsStatus::Success, Bytes.empty)
+            in TransferStartResult::Busy
+              return RetrieveLogsResponse.new(LogsStatus::Busy, Bytes.empty)
+            in TransferStartResult::Unavailable
+              return RetrieveLogsResponse.new(LogsStatus::Exhausted, inline_content(content))
+            end
           end
 
           return RetrieveLogsResponse.new(LogsStatus::Exhausted, inline_content(content))

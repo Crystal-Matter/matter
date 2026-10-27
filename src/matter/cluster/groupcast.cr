@@ -507,7 +507,7 @@ module Matter
       private def ensure_key_set(fabric : UInt8, id : UInt16, key : Bytes?) : InteractionModel::Status
         if key
           return InteractionModel::Status.constraint_error unless key.size == KEY_BYTES
-          return InteractionModel::Status.constraint_error if @group_keys.get_key_set(id, fabric)
+          return InteractionModel::Status.already_exists if @group_keys.get_key_set(id, fabric)
           set = GroupKeyManagement::GroupKeySetStruct.new(id, epoch_key0: key,
             epoch_start_time0: 1_u64)
           @group_keys.handle_key_set_write(GroupKeyManagement::KeySetWriteRequest.new(set), fabric)

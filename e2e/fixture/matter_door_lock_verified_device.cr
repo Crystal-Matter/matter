@@ -46,7 +46,7 @@ module MatterDoorLockVerifiedFixture
         local_credential_verifier: Reader.new,
         as: :door_lock
       cluster Matter::Cluster::Identify, identify_type: :visible_led
-      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Verified RFID Test Lock")]
+      cluster Matter::Cluster::FixedLabel, [Matter::Cluster::LabelStruct.new("name", "Verified RFID")]
     end
 
     protected def on_started : Nil

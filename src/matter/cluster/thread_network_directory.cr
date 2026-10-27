@@ -131,7 +131,6 @@ module Matter
       end
 
       def preferred_extended_pan_id=(value : Bytes?) : Nil
-        value = nil if value && value.empty?
         if value && (value.size != EXTENDED_PAN_ID_LENGTH || !@networks.any? { |entry| entry.network.extended_pan_id == value })
           raise ClusterError.new("Preferred Extended PAN ID must identify a stored network", InteractionModel::StatusCode::ConstraintError)
         end
