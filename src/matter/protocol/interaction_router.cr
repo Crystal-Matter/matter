@@ -370,8 +370,16 @@ module Matter
           timed_interaction: request.timed_request == true
         )
         @write_list_states[exchange_key] = {list_state, now + WRITE_CHUNK_TIMEOUT} if request.more_chunked_messages
-        Log.debug { "WriteResponse: #{write_responses.size} status(es)" }
 
+        # SuppressResponse applies to unicast writes as well as group writes.
+        # Reliable delivery still needs an MRP acknowledgement when no IM
+        # response carries it (Core 8.7.2.3).
+        if request.suppress_response
+          @sender.send_encrypted_ack(original_msg, peer, session, cache_for_mrp: true) if original_msg.payload_header.requires_acknowledge?
+          return
+        end
+
+        Log.debug { "WriteResponse: #{write_responses.size} status(es)" }
         @sender.send_im_response(
           original_msg: original_msg,
           peer: peer,
