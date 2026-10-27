@@ -80,6 +80,32 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def durable_anchor_old_credential_for_spec(fabric : Matter::Fabric) : Matter::Fabric
     verify_durable_anchor_old_credential!(fabric)
   end
+
+  def finalize_anchor_rotation_no_effect_for_spec(journal : Matter::Controller::AdministratorRemoval::Journal,
+                                                  datastore : Matter::Cluster::JointFabricDatastore,
+                                                  fabric : Matter::Fabric, document_name : String) : Nil
+    finalize_anchor_rotation_no_effect!(journal, datastore, fabric, fabric.operational_cert, document_name)
+  end
+
+  def inbound_arm_failsafe_for_spec(fabric_index : UInt8) : Matter::Commissioning::ErrorCode
+    @message_handler.registry.synchronize do
+      general_commissioning.arm_failsafe(
+        Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64),
+        fabric_index, false).error_code
+    end
+  end
+end
+
+private class PausingJfaRecoveryYaml < Matter::Storage::YamlFile
+  property on_removal_journal_write : Proc(Nil)?
+
+  def write(collection : String, id : String, document : Matter::Storage::Document) : Nil
+    if collection == Matter::Storage::Collections::APP &&
+       id.starts_with?(MatterJointFabricAdministrator::Device::APP_REMOVAL_PREFIX)
+      @on_removal_journal_write.try(&.call)
+    end
+    super
+  end
 end
 
 class InterruptedJfaCommitYaml < Matter::Storage::YamlFile
@@ -209,6 +235,67 @@ private class FailingJfaMemory < Matter::Storage::Memory
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "serializes the final old-NOC journal write against inbound ArmFailSafe" do
+    path = File.join(Dir.tempdir, "matter-jfa-anchor-race-#{Random::Secure.hex(6)}.yml")
+    backend = PausingJfaRecoveryYaml.new(path)
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64)
+    device.fabric_table.add_fabric(fabric).should be_true
+    datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    datastore.anchor_root_ca = fabric.root_cert.as(Bytes)
+    datastore.anchor_node_id = fabric.node_id
+    datastore.joint_fabric_index = fabric.fabric_index
+    datastore.admin_list = [
+      Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+        fabric.node_id, "Anchor", 0xFFF2_u16, Bytes[1]),
+    ]
+    datastore.group_list = [Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct.new(
+      1_u64, "Administrators", nil, Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT,
+      2_u16, Matter::Cluster::JointFabricDatastore::DatastoreAccessControlEntryPrivilegeEnum::Administer)]
+    datastore.status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    backend.write(Matter::Storage::Collections::CLUSTERS, datastore.persistence_key, datastore.save_state.as(Matter::Storage::Document))
+    outgoing_node_id = 0xA103_u64
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(outgoing_node_id,
+      Matter::Controller::AdministratorRemoval::Stage::RotatingAnchor,
+      administrator_cat_version: 2_u16, prior_administrator_cat_version: 1_u16,
+      fabric_id: fabric.fabric_id, root_public_key: fabric.root_public_key,
+      anchor_node_id: fabric.node_id, outgoing_admin_entry: Bytes[2],
+      remaining_admin_entries: datastore.admin_list.map(&.to_slice),
+      anchor_pre_rotation_noc: fabric.operational_cert)
+    document_name = "#{MatterJointFabricAdministrator::Device::APP_REMOVAL_PREFIX}#{outgoing_node_id.to_s(16)}"
+    attempted = Channel(Nil).new(1)
+    finished = Channel(Matter::Commissioning::ErrorCode).new(1)
+    backend.on_removal_journal_write = -> do
+      spawn do
+        attempted.send(nil)
+        result = device.inbound_arm_failsafe_for_spec(fabric.fabric_index)
+        finished.send(result)
+      end
+      attempted.receive
+      select
+      when finished.receive
+        fail "Inbound ArmFailSafe interleaved with the removal journal write"
+      when timeout(200.milliseconds)
+      end
+    end
+
+    device.finalize_anchor_rotation_no_effect_for_spec(journal, datastore, fabric, document_name)
+    saved = backend.read(Matter::Storage::Collections::APP, document_name).as(Matter::Storage::Document)
+    Matter::Controller::AdministratorRemoval::Journal.from_document(saved).stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::DatastoreRemoved)
+    select
+    when result = finished.receive
+      result.ok?.should be_true
+    when timeout(1.second)
+      fail "Inbound ArmFailSafe deadlocked behind recovery"
+    end
+  ensure
+    device.try(&.shutdown!)
+    File.delete?(path) if path
+  end
+
   it "requires durable storage for old-NOC recovery" do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
