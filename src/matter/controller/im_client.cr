@@ -99,11 +99,12 @@ module Matter
           requires_ack: true
         )
 
-        read_report_data(session, peer, exchange_id, attribute_paths.size == 1 ? attribute_paths.first : nil)
+        read_report_data(session, peer, exchange_id, attribute_paths, event_paths)
       end
 
       private def read_report_data(session : Session::SecureContext, peer : Socket::IPAddress,
-                                   exchange_id : UInt16, path : InteractionModel::AttributePath?) : InteractionModel::ReportDataMessage
+                                   exchange_id : UInt16, attribute_paths : Array(InteractionModel::AttributePath),
+                                   event_paths : Array(InteractionModel::EventPath)) : InteractionModel::ReportDataMessage
         deadline = Time.instant + @timeout
         attributes = [] of InteractionModel::AttributeReportIB
         events = [] of InteractionModel::EventReportIB
@@ -136,8 +137,11 @@ module Matter
           if report.subscription_id
             raise Matter::ProtocolError.new("IM: Read response carried a subscription ID (exchange=#{exchange_id})")
           end
-          attributes.concat(report.attribute_reports || [] of InteractionModel::AttributeReportIB)
-          events.concat(report.event_reports || [] of InteractionModel::EventReportIB)
+          chunk_attributes = report.attribute_reports || [] of InteractionModel::AttributeReportIB
+          chunk_events = report.event_reports || [] of InteractionModel::EventReportIB
+          validate_read_report_paths!(chunk_attributes, chunk_events, attribute_paths, event_paths)
+          attributes.concat(chunk_attributes)
+          events.concat(chunk_events)
           if report.more_chunked_messages || !report.suppress_response
             @client.send_encrypted_request(session, peer, Client::PROTOCOL_INTERACTION_MODEL,
               MSG_STATUS_RESPONSE,
@@ -147,7 +151,7 @@ module Matter
               acknowledged_message_id: message.packet_header.message_id)
           end
           unless report.more_chunked_messages
-            normalized = path ? normalize_read_attribute(attributes, path) : attributes
+            normalized = attribute_paths.size == 1 ? normalize_read_attribute(attributes, attribute_paths.first) : attributes
             return InteractionModel::ReportDataMessage.new(attribute_reports: normalized,
               event_reports: events, more_chunked_messages: false,
               suppress_response: report.suppress_response,
@@ -156,28 +160,81 @@ module Matter
         end
       end
 
+      private def validate_read_report_paths!(
+        attributes : Array(InteractionModel::AttributeReportIB),
+        events : Array(InteractionModel::EventReportIB),
+        attribute_paths : Array(InteractionModel::AttributePath),
+        event_paths : Array(InteractionModel::EventPath),
+      ) : Nil
+        last_full_path : InteractionModel::AttributePath? = nil
+        attributes.each do |report|
+          if report.attribute_data.nil? == report.attribute_status.nil?
+            raise Matter::ProtocolError.new("IM: Read response attribute report must have one data or status path")
+          end
+          candidate = report.attribute_data.try(&.path) || report.attribute_status.try(&.path)
+          raise Matter::ProtocolError.new("IM: Read response path differs from request") unless candidate
+
+          inherited = candidate.enable_tag_compression == true ? last_full_path : nil
+          if candidate.enable_tag_compression == true && !inherited
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+          resolved = InteractionModel::AttributePath.new(
+            endpoint: candidate.endpoint || inherited.try(&.endpoint),
+            cluster: candidate.cluster || inherited.try(&.cluster),
+            attribute: candidate.attribute || inherited.try(&.attribute),
+            list_index: candidate.list_index,
+            node: candidate.node || inherited.try(&.node))
+          if candidate.enable_tag_compression == true && !resolved.concrete?
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+          unless attribute_paths.any? { |requested| read_attribute_path_matches?(requested, resolved) }
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+          if report.attribute_data && !resolved.concrete?
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+          if candidate.enable_tag_compression != true
+            last_full_path = resolved.concrete? ? resolved : nil
+          end
+        end
+
+        events.each do |report|
+          if report.event_data.nil? == report.event_status.nil?
+            raise Matter::ProtocolError.new("IM: Read response event report must have one data or status path")
+          end
+          candidate = report.event_data.try(&.path) || report.event_status.try(&.path)
+          raise Matter::ProtocolError.new("IM: Read response path differs from request") unless candidate
+          unless event_paths.any? { |requested| read_event_path_matches?(requested, candidate) }
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+          if report.event_data && candidate.wildcard?
+            raise Matter::ProtocolError.new("IM: Read response path differs from request")
+          end
+        end
+      end
+
+      private def read_attribute_path_matches?(requested : InteractionModel::AttributePath,
+                                               reported : InteractionModel::AttributePath) : Bool
+        (requested.node.nil? || reported.node.nil? || requested.node == reported.node) &&
+          (requested.endpoint.nil? || requested.endpoint == reported.endpoint) &&
+          (requested.cluster.nil? || requested.cluster == reported.cluster) &&
+          (requested.attribute.nil? || requested.attribute == reported.attribute) &&
+          (requested.list_index.nil? || requested.list_index == reported.list_index)
+      end
+
+      private def read_event_path_matches?(requested : InteractionModel::EventPath,
+                                           reported : InteractionModel::EventPath) : Bool
+        (requested.node.nil? || reported.node.nil? || requested.node == reported.node) &&
+          (requested.endpoint.nil? || requested.endpoint == reported.endpoint) &&
+          (requested.cluster.nil? || requested.cluster == reported.cluster) &&
+          (requested.event.nil? || requested.event == reported.event)
+      end
+
       # Matter may report a list as an initial Array value followed by
       # list-index item reports on later chunks. Preserve the existing
       # single-report API by folding those items into one Array value.
       private def normalize_read_attribute(reports : Array(InteractionModel::AttributeReportIB),
                                            path : InteractionModel::AttributePath) : Array(InteractionModel::AttributeReportIB)
-        last_full_path : InteractionModel::AttributePath? = nil
-        reports.each do |report|
-          candidate = report.attribute_data.try(&.path) || report.attribute_status.try(&.path)
-          raise Matter::ProtocolError.new("IM: Read response path differs from request") unless candidate
-          inherited = candidate.enable_tag_compression == true ? last_full_path : nil
-          endpoint = candidate.endpoint || inherited.try(&.endpoint)
-          cluster = candidate.cluster || inherited.try(&.cluster)
-          attribute = candidate.attribute || inherited.try(&.attribute)
-          unless (path.endpoint.nil? || endpoint == path.endpoint) &&
-                 (path.cluster.nil? || cluster == path.cluster) &&
-                 (path.attribute.nil? || attribute == path.attribute)
-            raise Matter::ProtocolError.new("IM: Read response path differs from request")
-          end
-          unless candidate.enable_tag_compression == true
-            last_full_path = candidate.endpoint && candidate.cluster && candidate.attribute ? candidate : nil
-          end
-        end
         return reports if reports.size < 2
         data = reports.compact_map(&.attribute_data)
         return reports unless data.size == reports.size

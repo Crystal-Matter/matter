@@ -103,6 +103,233 @@ describe Matter::Controller::ImClient do
     client.try(&.close)
   end
 
+  it "rejects an unrelated event data path in a read response" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    requested = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 0_u32)
+    unrelated = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 1_u32)
+    event = Matter::InteractionModel::EventDataIB.new(unrelated, 8_u64,
+      Matter::InteractionModel::EventPriority::Info)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(
+        event_reports: [Matter::InteractionModel::EventReportIB.new(event_data: event)],
+        suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_events(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), [requested])
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an unrelated event status path in a read response" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    requested = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 0_u32)
+    unrelated = Matter::InteractionModel::EventPath.new(endpoint: 2_u16, cluster: 6_u32, event: 0_u32)
+    status = Matter::InteractionModel::EventStatusIB.new(unrelated,
+      Matter::InteractionModel::StatusIB.new(Matter::InteractionModel::StatusCode::UnsupportedEvent.value))
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(
+        event_reports: [Matter::InteractionModel::EventReportIB.new(event_status: status)],
+        suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_events(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), [requested])
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an unrelated attribute in a multi-path read response" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    requested = [
+      Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32, attribute: 0_u32),
+      Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32, attribute: 1_u32),
+    ]
+    unrelated = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 2_u32)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(unrelated,
+            TLV::Any.from_slice(1_u8.to_tlv))),
+      ], suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), attribute_paths: requested)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects an unsolicited attribute report in an event-only read" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    event_path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16, cluster: 6_u32, event: 0_u32)
+    attribute_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(attribute_path,
+            TLV::Any.from_slice(1_u8.to_tlv))),
+      ], suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_events(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), [event_path])
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "accepts concrete reports selected by wildcard and multi-path reads" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    wildcard = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32)
+    other = Matter::InteractionModel::AttributePath.new(endpoint: 2_u16,
+      cluster: 8_u32, attribute: 0_u32)
+    first = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 1_u32)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [first, other].map do |path|
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(path,
+            TLV::Any.from_slice(1_u8.to_tlv)))
+      end, suppress_response: true).to_slice)
+
+    report = Matter::Controller::ImClient.new(client).read(chunked_read_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), attribute_paths: [wildcard, other])
+    report.attribute_reports.try(&.size).should eq(2)
+  ensure
+    client.try(&.close)
+  end
+
+  it "accepts a compressed attribute path selected by a multi-path read" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    first = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    second = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 1_u32)
+    compressed = Matter::InteractionModel::AttributePath.new(attribute: 1_u32,
+      enable_tag_compression: true)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [first, compressed].map do |path|
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(path,
+            TLV::Any.from_slice(1_u8.to_tlv)))
+      end, suppress_response: true).to_slice)
+
+    report = Matter::Controller::ImClient.new(client).read(chunked_read_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), attribute_paths: [first, second])
+    report.attribute_reports.try(&.size).should eq(2)
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects a compressed attribute report without a resolved endpoint in a multi-path read" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    requested = [
+      Matter::InteractionModel::AttributePath.new(endpoint: 1_u16, cluster: 6_u32, attribute: 0_u32),
+      Matter::InteractionModel::AttributePath.new(endpoint: 2_u16, cluster: 6_u32, attribute: 0_u32),
+    ]
+    compressed = Matter::InteractionModel::AttributePath.new(cluster: 6_u32,
+      attribute: 0_u32, enable_tag_compression: true)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(compressed,
+            TLV::Any.from_slice(1_u8.to_tlv))),
+      ], suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), attribute_paths: requested)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "does not inherit tag compression across ReportData chunk boundaries" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    compressed = Matter::InteractionModel::AttributePath.new(cluster: 6_u32,
+      attribute: 0_u32, enable_tag_compression: true)
+    [path, compressed].each_with_index do |reported_path, index|
+      client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+        Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
+          Matter::InteractionModel::AttributeReportIB.new(
+            attribute_data: Matter::InteractionModel::AttributeDataIB.new(reported_path,
+              TLV::Any.from_slice(1_u8.to_tlv))),
+        ], more_chunked_messages: index == 0, suppress_response: index == 1).to_slice)
+    end
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "rejects tag compression on the first report even with all path fields" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    compressed = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32, enable_tag_compression: true)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
+        Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(compressed,
+            TLV::Any.from_slice(1_u8.to_tlv))),
+      ], suppress_response: true).to_slice)
+
+    expect_raises(Matter::ProtocolError, /Read response path/) do
+      Matter::Controller::ImClient.new(client).read_attribute(chunked_read_session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16, 6_u32, 0_u32)
+    end
+  ensure
+    client.try(&.close)
+  end
+
+  it "accepts matching attribute and event reports in one mixed read" do
+    require_udp_sockets!
+    client = ChunkedReadClient.new
+    attribute_path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: 6_u32, attribute: 0_u32)
+    event_path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16,
+      cluster: 6_u32, event: 0_u32, is_urgent: true)
+    # IsUrgent selects delivery timing and is omitted from EventDataIB paths.
+    reported_event_path = Matter::InteractionModel::EventPath.new(endpoint: 1_u16,
+      cluster: 6_u32, event: 0_u32)
+    client.queue(Matter::Controller::ImClient::MSG_REPORT_DATA,
+      Matter::InteractionModel::ReportDataMessage.new(
+        attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(
+          attribute_data: Matter::InteractionModel::AttributeDataIB.new(attribute_path,
+            TLV::Any.from_slice(1_u8.to_tlv)))],
+        event_reports: [Matter::InteractionModel::EventReportIB.new(
+          event_data: Matter::InteractionModel::EventDataIB.new(reported_event_path, 8_u64,
+            Matter::InteractionModel::EventPriority::Info))],
+        suppress_response: true).to_slice)
+
+    report = Matter::Controller::ImClient.new(client).read(chunked_read_session,
+      Socket::IPAddress.new("127.0.0.1", 5540), attribute_paths: [attribute_path],
+      event_paths: [event_path])
+    report.attribute_reports.try(&.size).should eq(1)
+    report.event_reports.try(&.size).should eq(1)
+  ensure
+    client.try(&.close)
+  end
+
   it "leaves ReportData for the IM acknowledgement ladder without an early MRP ACK" do
     require_udp_sockets!
     client = ReportAckClient.new
