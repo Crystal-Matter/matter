@@ -76,6 +76,10 @@ class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator
   def controller_store_for_spec : Matter::Controller::StateStore?
     @controller_store
   end
+
+  def durable_anchor_old_credential_for_spec(fabric : Matter::Fabric) : Matter::Fabric
+    verify_durable_anchor_old_credential!(fabric)
+  end
 end
 
 class InterruptedJfaCommitYaml < Matter::Storage::YamlFile
@@ -205,6 +209,52 @@ private class FailingJfaMemory < Matter::Storage::Memory
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "requires durable storage for old-NOC recovery" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64)
+    device.fabric_table.add_fabric(fabric).should be_true
+    expect_raises(Matter::StorageError, /durable storage/) do
+      device.durable_anchor_old_credential_for_spec(fabric)
+    end
+  ensure
+    device.try(&.shutdown!)
+  end
+
+  it "rejects an old-NOC recovery while fail-safe, credential journal, or fabric state is uncertain" do
+    path = File.join(Dir.tempdir, "matter-jfa-anchor-old-noc-#{Random::Secure.hex(6)}.yml")
+    backend = Matter::Storage::YamlFile.new(path)
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA102_u64)
+    device.fabric_table.add_fabric(fabric).should be_true
+    device.durable_anchor_old_credential_for_spec(fabric).operational_cert.should eq(fabric.operational_cert)
+
+    device.general_commissioning.arm_failsafe(
+      Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64), 1_u8, false
+    ).error_code.ok?.should be_true
+    expect_raises(Matter::CommissioningError, /provisional/) do
+      device.durable_anchor_old_credential_for_spec(fabric)
+    end
+    device.general_commissioning.arm_failsafe(
+      Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(0_u16, 0_u64), 1_u8, false
+    ).error_code.ok?.should be_true
+
+    Matter::Commissioning::CredentialJournal.begin_update(backend, fabric)
+    expect_raises(Matter::CommissioningError, /provisional/) do
+      device.durable_anchor_old_credential_for_spec(fabric)
+    end
+    Matter::Commissioning::CredentialJournal.clear(backend)
+
+    fabric.operational_cert = Bytes[1_u8]
+    expect_raises(Matter::AuthenticationError, /live and durable/) do
+      device.durable_anchor_old_credential_for_spec(fabric)
+    end
+  ensure
+    device.try(&.shutdown!)
+    File.delete?(path) if path
+  end
+
   it "restores a managed restriction review alongside a committed joined JFA" do
     path = File.join(Dir.tempdir, "matter-jfa-managed-completion-#{Random::Secure.hex(6)}.yml")
     backend = InterruptedJfaCommitYaml.new(path)
@@ -865,6 +915,7 @@ describe MatterJointFabricAdministrator::Device do
     document = request.to_document
     document.delete("interrupt_after_remove_admin")
     document.delete("interrupt_before_remove_admin")
+    document.delete("interrupt_before_anchor_noc")
     backend = Matter::Storage::YamlFile.new(path)
     backend.open
     backend.write(MatterJointFabricAdministrator::Device::COMMAND_RPC_COLLECTION, "request", document)
@@ -879,10 +930,18 @@ describe MatterJointFabricAdministrator::Device do
     restored.node_id.should eq(0xA102_u64)
     restored.interrupt_after_remove_admin?.should be_false
     restored.interrupt_before_remove_admin?.should be_false
+    restored.interrupt_before_anchor_noc?.should be_false
   ensure
     backend.try(&.close) if backend.try(&.open?)
     reopened.try(&.close) if reopened.try(&.open?)
     File.delete?(path) if path
+  end
+
+  it "round-trips the fault hook for interruption after Anchor Datastore persistence" do
+    request = MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64,
+      interrupt_before_anchor_noc: true)
+    restored = MatterJointFabricAdministrator::Device::CommandRequest.from_document(request.to_document)
+    restored.interrupt_before_anchor_noc?.should be_true
   end
 
   it "round-trips the transfer follow-up interruption flag and defaults old commands to false" do
