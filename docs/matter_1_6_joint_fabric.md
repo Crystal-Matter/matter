@@ -544,7 +544,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    the separate matter.js device test covers the live VVS certificate path.
 2. Exercise interruption at each remaining Anchor transfer and administrator
    removal journal transition. The Docker three-administrator scenario covers
-   A-to-B transfer with B restart before participant follow-up, A removal,
+   A-to-B transfer with B restarts after durable Datastore copy and participant
+   credential rotation, and before participant follow-up; it checks the copied
+   Administrator entries and C's new-fabric NOC across those restarts. It also covers A removal,
    B restart after lost RemoveFabric, RemoveAdmin, Anchor rotation, and
    participant rotation acknowledgements, and B/C registration. Recovery of
    an old-CAT observation remains deliberately blocked until the fail-safe

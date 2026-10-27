@@ -169,6 +169,8 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_first_transfer_follow_up : Bool = false
       getter? interrupt_after_next_transfer_cross_sign : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
+      getter? interrupt_after_transfer_copy : Bool = false
+      getter? interrupt_after_transfer_rotation : Bool = false
       getter? interrupt_after_transfer_complete : Bool = false
       getter? interrupt_after_anchor_rotation : Bool = false
       getter? interrupt_before_anchor_noc : Bool = false
@@ -195,6 +197,8 @@ module MatterJointFabricAdministrator
                      @interrupt_after_first_transfer_follow_up : Bool = false,
                      @interrupt_after_next_transfer_cross_sign : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
+                     @interrupt_after_transfer_copy : Bool = false,
+                     @interrupt_after_transfer_rotation : Bool = false,
                      @interrupt_after_transfer_complete : Bool = false,
                      @interrupt_after_anchor_rotation : Bool = false,
                      @interrupt_before_anchor_noc : Bool = false,
@@ -962,7 +966,18 @@ module MatterJointFabricAdministrator
       datastore = joint_fabric_datastore
       @datastore_propagator.try(&.stop!)
       @datastore_propagator = nil
-      datastore.clear_fabric_state if datastore.joint_fabric_index != fabric.fabric_index
+      if datastore.joint_fabric_index != fabric.fabric_index
+        # The fabric index is runtime-only. On restart, retain a copied store
+        # only when its saved binding and root still identify this exact fabric.
+        saved_binding_matches = if document = persistence.app_document(APP_FABRIC_BINDING_DOCUMENT)
+                                  FabricBindingState.from_document(document).matches?(fabric)
+                                else
+                                  false
+                                end
+        restored_store_matches = datastore.joint_fabric_index.nil? &&
+                                 datastore.anchor_root_ca == root && saved_binding_matches
+        datastore.clear_fabric_state unless restored_store_matches
+      end
       datastore.joint_fabric_index = fabric.fabric_index
       datastore.access_mode = @anchor_role ? Datastore::AccessMode::Active : Datastore::AccessMode::Inactive
       administrator = joint_fabric_administrator
@@ -1525,6 +1540,8 @@ module MatterJointFabricAdministrator
                                      interrupt_before_follow_up : Bool = false,
                                      interrupt_after_first_follow_up : Bool = false,
                                      interrupt_after_request : Bool = false,
+                                     interrupt_after_copy : Bool = false,
+                                     interrupt_after_rotation : Bool = false,
                                      interrupt_after_complete : Bool = false,
                                      interrupt_after_next_cross_sign : Bool = false) : Nil
       raise Matter::ConfigurationError.new("Anchor transfer already running") if @transfer_in_progress
@@ -1672,6 +1689,14 @@ module MatterJointFabricAdministrator
           ->(state : Matter::Controller::AnchorTransfer::Journal) {
             persistence.write_app_document(APP_TRANSFER_DOCUMENT, state.to_document)
             persistence.flush
+            # Test-only lost acknowledgement after the copied Datastore and
+            # Copied journal have both reached durable storage.
+            if interrupt_after_copy && state.stage.copied?
+              raise Matter::TransportError.new("Injected interruption after durable Anchor Datastore copy")
+            end
+            if interrupt_after_rotation && state.stage.rotated?
+              raise Matter::TransportError.new("Injected interruption after durable Administrator rotations")
+            end
             nil
           }, journal)
         workflow.reconcile_request!(preflight.status.state) if journal.stage.requesting?
@@ -2525,7 +2550,9 @@ module MatterJointFabricAdministrator
           when "transfer-anchor"
             transfer_anchor_from(request.node_id, request.interrupt_before_transfer_follow_up?,
               request.interrupt_after_first_transfer_follow_up?, request.interrupt_after_transfer_request?,
-              request.interrupt_after_transfer_complete?, request.interrupt_after_next_transfer_cross_sign?)
+              request.interrupt_after_transfer_copy?, request.interrupt_after_transfer_rotation?,
+              request.interrupt_after_transfer_complete?,
+              request.interrupt_after_next_transfer_cross_sign?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,

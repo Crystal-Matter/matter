@@ -235,6 +235,104 @@ private class FailingJfaMemory < Matter::Storage::Memory
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "keeps a copied joined Datastore when its saved fabric binding still matches after restart" do
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    backend = Matter::Storage::Memory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    icac = fabric.intermediate_cert || raise Matter::ConfigurationError.new("Joined ICAC missing")
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(icac).to_document)
+    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = File.join(Dir.tempdir, "jfa-copied-#{Random::Secure.hex(6)}")
+    first.install_test_fabric(fabric)
+    datastore = first.joint_fabric_datastore
+    datastore.anchor_root_ca = fabric.root_cert.as(Bytes)
+    datastore.anchor_node_id = 0xB102_u64
+    datastore.admin_list = [0xA102_u64, 0xA104_u64, 0xB102_u64].map do |node_id|
+      Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+        node_id, "Copied Administrator", 0xFFF1_u16, icac)
+    end
+    first.persistence.save_cluster(datastore).should be_true
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_DOCUMENT,
+      Matter::Controller::AnchorTransfer::Journal.new(fabric.node_id,
+        Matter::Controller::AnchorTransfer::Stage::Copied).to_document)
+    first.persistence.flush
+    binding_document = first.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT) ||
+                       raise Matter::StorageError.new("Joined fabric binding missing")
+    MatterJointFabricAdministrator::Device::FabricBindingState.from_document(binding_document).matches?(fabric).should be_true
+
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.joint_fabric_datastore.joint_fabric_index.should be_nil
+    restored.prepare_for_start
+    restored.joint_fabric_datastore.admin_list.map(&.node_id).sort!.should eq([0xA102_u64, 0xA104_u64, 0xB102_u64])
+    restored.joint_fabric_datastore.anchor_node_id.should eq(0xB102_u64)
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+  end
+
+  it "clears a copied joined Datastore when its fabric index is reused by another identity" do
+    previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
+    previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
+    ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = File.join(Dir.tempdir, "jfa-reused-#{Random::Secure.hex(6)}")
+    backend = Matter::Storage::Memory.new
+    first = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
+    icac = old_fabric.intermediate_cert || raise Matter::ConfigurationError.new("Joined ICAC missing")
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_ICAC_DOCUMENT,
+      MatterJointFabricAdministrator::Device::IcacCertificateState.new(icac).to_document)
+    first.install_test_fabric(old_fabric)
+    first.joint_fabric_datastore.anchor_root_ca = old_fabric.root_cert.as(Bytes)
+    first.joint_fabric_datastore.admin_list = [
+      Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct.new(
+        0xA104_u64, "Stale Administrator", 0xFFF1_u16, icac),
+    ]
+    first.persistence.save_cluster(first.joint_fabric_datastore).should be_true
+    first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_DOCUMENT,
+      Matter::Controller::AnchorTransfer::Journal.new(old_fabric.node_id,
+        Matter::Controller::AnchorTransfer::Stage::Copied).to_document)
+    first.persistence.flush
+    first.fabric_table.remove_fabric(old_fabric.fabric_index).should be_true
+    replacement = jfa_reuse_test_fabric(0xB200_u64, 0xB203_u64)
+    first.fabric_table.add_fabric(replacement).should be_true
+
+    restored = InspectableJointFabricAdministratorDevice.new(storage: backend,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    restored.prepare_for_start
+    restored.joint_fabric_datastore.admin_list.map(&.node_id).should_not contain(0xA104_u64)
+    restored.persistence.app_document(MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT).should be_nil
+  ensure
+    first.try(&.shutdown!)
+    restored.try(&.shutdown!)
+    if previous_anchor
+      ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = previous_anchor
+    else
+      ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
+    end
+    if previous_csr
+      ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = previous_csr
+    else
+      ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
+    end
+  end
+
   it "serializes the final old-NOC journal write against inbound ArmFailSafe" do
     path = File.join(Dir.tempdir, "matter-jfa-anchor-race-#{Random::Secure.hex(6)}.yml")
     backend = PausingJfaRecoveryYaml.new(path)
