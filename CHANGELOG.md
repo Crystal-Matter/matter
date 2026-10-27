@@ -7,12 +7,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Camera response-safe signaling
+
+- Let a WebRTC Provider media peer queue outbound Requestor signaling while
+  handling a CASE command. The queue dispatches only after the final encrypted
+  InvokeResponse chunk is sent, and is discarded on response failure, chunk
+  rejection, timeout, session removal, or fabric removal. A fabric-bound CASE
+  Requestor sink still requires a host media engine; no decoded media is claimed.
+
 ### Camera host signaling path
 
 - Add an opt-in Requestor signaling sink that binds Provider session metadata
   to a host-resolved CASE peer and forwards SDP/ICE/End commands. On outbound
   failure, tear down only the matching Provider session and notify the host
-  media peer. Real WebRTC media and response-sent dispatch remain host work.
+  media peer. Real WebRTC media remains host work.
 
 ### Joint Fabric completion durability
 

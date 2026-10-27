@@ -53,6 +53,27 @@ module Matter
 
       # An InvokeRequest whose command responses span multiple messages.
       class PendingInvoke < PendingChunks
+        property last_progress_at : Time::Span
+        @finished = false
+
+        def initialize(peer : Socket::IPAddress, session : Session::SecureContext,
+                       remaining_chunks : Array(Bytes), @on_sent : Proc(Nil)? = nil,
+                       @on_failed : Proc(Nil)? = nil)
+          super(peer, session, remaining_chunks)
+          @last_progress_at = Time.monotonic
+        end
+
+        def sent : Nil
+          return if @finished
+          @finished = true
+          @on_sent.try(&.call)
+        end
+
+        def failed : Nil
+          return if @finished
+          @finished = true
+          @on_failed.try(&.call)
+        end
       end
 
       # One active subscription Report transaction. Its dirty attribute keys
@@ -145,7 +166,27 @@ module Matter
       end
 
       def await_invoke(exchange_id : UInt16, pending : PendingInvoke) : Nil
-        @registry.synchronize { @pending_invokes[{pending.session.session_id, exchange_id}] = pending }
+        @registry.synchronize do
+          key = {pending.session.session_id, exchange_id}
+          @pending_invokes[key]?.try(&.failed)
+          @pending_invokes[key] = pending
+        end
+      end
+
+      def abandon_invoke(exchange_id : UInt16, session_id : UInt16) : Nil
+        @registry.synchronize do
+          @pending_invokes.delete({session_id, exchange_id}).try(&.failed)
+        end
+      end
+
+      def forget_invoke_session(session_id : UInt16) : Nil
+        @registry.synchronize do
+          @pending_invokes.reject! do |key, pending|
+            next false unless key[0] == session_id
+            pending.failed
+            true
+          end
+        end
       end
 
       # Advances the chunked exchange *exchange_id*, returning whether it was
@@ -226,21 +267,39 @@ module Matter
           end
 
           if pending = @pending_invokes[key]?
+            unless @registry.sessions[key[0]]?.same?(pending.session) &&
+                   trigger.packet_header.session_id == pending.session.session_id
+              @pending_invokes.delete(key)
+              pending.failed
+              return false
+            end
             # InvokeResponse chunking requires an IM Status.Success. A transport
             # MRP acknowledgement only confirms datagram delivery.
             return false unless trigger.payload_header.protocol_id == ProtocolId::InteractionModel.value &&
                                 trigger.payload_header.message_type == InteractionModel::MessageType::StatusResponse.value
             unless success
               @pending_invokes.delete(key)
+              pending.failed
               Log.warn { "Invoke response aborted: peer rejected a chunk (exchange=#{exchange_id})" }
               return true
             end
 
-            if chunk = pending.next_chunk
+            if chunk = pending.remaining_chunks.first?
               Log.debug { "Invoke response: sending next chunk (#{pending.remaining_chunks.size} remaining)" }
-              send_chunk(pending, trigger, chunk)
+              begin
+                send_chunk(pending, trigger, chunk)
+                pending.next_chunk
+                pending.last_progress_at = Time.monotonic
+              rescue ex
+                @pending_invokes.delete(key)
+                pending.failed
+                raise ex
+              end
             end
-            @pending_invokes.delete(key) unless pending.more_chunks?
+            unless pending.more_chunks?
+              @pending_invokes.delete(key)
+              pending.sent
+            end
 
             return true
           end
@@ -293,6 +352,11 @@ module Matter
       # a ReportData at MaxInterval, while dirty values wait for MinInterval.
       def tick(now : Time = Time.utc, monotonic_now : Time::Span = Time.monotonic) : Nil
         @registry.synchronize do
+          @pending_invokes.reject! do |_key, pending|
+            next false if monotonic_now - pending.last_progress_at < REPORT_STATUS_TIMEOUT
+            pending.failed
+            true
+          end
           subscriptions = @registry.active_subscriptions
           prune_inflight_updates(subscriptions, monotonic_now)
           @dirty_attributes.reject! { |id, _| !subscriptions.has_key?(id) }
