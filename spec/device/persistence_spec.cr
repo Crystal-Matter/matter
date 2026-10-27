@@ -31,6 +31,25 @@ private class PausingClusterMemory < Matter::Storage::Memory
   end
 end
 
+private class PausingTransactionMemory < Matter::Storage::Memory
+  property? pause_next_transaction = false
+  property? transaction_completed = false
+  getter transaction_started = Channel(Nil).new(1)
+  getter transaction_resume = Channel(Nil).new(1)
+
+  def transaction(& : -> Nil) : Nil
+    super do
+      if pause_next_transaction?
+        @pause_next_transaction = false
+        @transaction_started.send(nil)
+        @transaction_resume.receive
+      end
+      yield
+    end
+    @transaction_completed = true
+  end
+end
+
 private CLUSTERS = Matter::Storage::Collections::CLUSTERS
 private DEVICE   = Matter::Storage::Collections::DEVICE
 private APP      = Matter::Storage::Collections::APP
@@ -206,6 +225,50 @@ describe Matter::Device::Persistence do
       cluster.on = true
       persistence.flush
       storage.read(CLUSTERS, cluster.persistence_key).as(Matter::Storage::Document)["on_off"].should be_true
+    end
+
+    it "holds the protocol lock before a deferred fabric flush enters storage" do
+      storage = PausingTransactionMemory.new
+      persistence = Matter::Device::Persistence.new(storage)
+      persistence.fabric_table.add_fabric(build_fabric(1_u8))
+      persistence.fabric_table.protocol_lock = Mutex.new(:reentrant)
+      cluster = on_off_cluster
+      persistence.track(cluster)
+      cluster.on = true
+
+      entered_before_completion = false
+      persistence.fabric_table.on_before_fabric_change = ->(_mutation : Matter::FabricTable::FabricMutation, _index : UInt8) do
+        unless storage.transaction_completed?
+          entered_before_completion = true
+          raise Matter::StorageError.new("Fabric removal entered before the deferred flush completed")
+        end
+      end
+
+      storage.transaction_completed = false
+      storage.pause_next_transaction = true
+      flush_done = Channel(Nil).new(1)
+      spawn do
+        persistence.flush
+        flush_done.send(nil)
+      end
+      storage.transaction_started.receive
+
+      removal_started = Channel(Nil).new(1)
+      removal_done = Channel(Bool).new(1)
+      spawn do
+        removal_started.send(nil)
+        removal_done.send(persistence.fabric_table.remove_fabric(1_u8))
+      rescue
+        removal_done.send(false)
+      end
+      removal_started.receive
+      sleep 100.milliseconds
+
+      storage.transaction_resume.send(nil)
+      flush_done.receive
+      removal_done.receive.should be_true
+      entered_before_completion.should be_false
+      persistence.close
     end
 
     it "saves and restores clusters explicitly" do

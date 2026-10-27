@@ -2,6 +2,19 @@ require "../support/group_key_management_helpers"
 
 module Matter::Cluster
   describe GroupKeyManagement do
+    it "rejects direct group-map and state restoration while fenced" do
+      cluster = build(GroupKeyManagement, 0)
+      prior = cluster.save_state
+      cluster.on_before_direct_mutation = -> {
+        raise Matter::ClusterError.new("Participant recovery fence is held",
+          Matter::InteractionModel::StatusCode::Busy)
+      }
+
+      expect_raises(Matter::ClusterError, /recovery fence/) { cluster.remove_group_key_map(1_u16, 1_u8) }
+      expect_raises(Matter::ClusterError, /recovery fence/) { cluster.restore_state(prior.as(Matter::Storage::Document)) }
+      cluster.group_key_map(1_u8).should be_empty
+    end
+
     it "rejects a direct IPK key-set write before mutation when a recovery fence is held" do
       cluster = build(GroupKeyManagement, 0)
       cluster.on_before_key_set_change = ->(_fabric_index : UInt8, _key_set_id : UInt16) do

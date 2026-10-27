@@ -221,15 +221,17 @@ item below as covered only to the extent of its cited tests.
   witness, then asks C to release the exact lease after the rewind is
   durably saved. A failed B save or lost release acknowledgement leaves the
   lease in place or lets B retry release idempotently from its journaled ID.
-  This implementation serializes Matter invokes and the example's private
-  credential exchange loop with lease acquisition. Its supported direct credential,
-  fail-safe, fabric, and key-set API hooks reject calls begun while the lease
-  is held, but they do not serialize an
-  arbitrary host call that began before acquisition and finishes afterward.
-  An embedding host that calls those APIs concurrently must serialize its
-  calls with the device protocol lock; whole-call API synchronization remains
-  future work. Raw backend writes and mutable returned objects are trusted
-  host capabilities outside the fence.
+  This implementation serializes Matter invokes, the example's private
+  credential exchange loop, and the full fail-safe, credential,
+  fabric-table, and group-key mutation calls used by the example. They hold
+  the device's reentrant protocol lock during lease acquisition. A direct
+  host call that entered before acquisition must finish before C can inspect
+  and install the lease. A persisted lease paired with a pending credential
+  undo journal stops startup before the journal can roll back the credential.
+  A conflicting saved fabric binding also stops startup before
+  reconciliation can erase recovery evidence.
+  Raw backend writes, mutable returned objects, direct configuration setters,
+  and replacing guard callbacks remain trusted host capabilities outside the fence.
   Leases have no timeout and never release automatically; a stranded lease
   requires authenticated B recovery or operator repair after checking B's
   durable journal. The host must restrict the private command channel to the

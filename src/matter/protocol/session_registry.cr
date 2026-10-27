@@ -133,6 +133,12 @@ module Matter
         @mutex.synchronize { yield }
       end
 
+      # Shared by device services that need to serialize a complete direct
+      # host mutation with inbound protocol requests and recovery decisions.
+      def protocol_mutex : Mutex
+        @mutex
+      end
+
       # Internal protocol users can release exchange state when a secure
       # session disappears without replacing the application's event callback.
       def add_session_cleanup_hook(callback : Proc(UInt16, Nil)) : Nil

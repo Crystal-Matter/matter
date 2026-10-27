@@ -53,6 +53,21 @@ end
 
 module Matter::Commissioning
   describe CredentialService do
+    it "rejects direct attestation replacement and pending-state changes while fenced" do
+      service = credential_service(RecordingCredentialTarget.new)
+      service.on_before_credential_change = ->(_mutation : CredentialService::CredentialMutation) {
+        raise Matter::ClusterError.new("Participant recovery lease", Matter::InteractionModel::StatusCode::Busy)
+      }
+
+      expect_raises(Matter::ClusterError) do
+        service.set_attestation_credentials(Bytes[1], Bytes[2], Matter::Crypto::Key.generate_key_pair)
+      end
+      expect_raises(Matter::ClusterError) { service.set_attestation_from_manager(0xFFF1_u16, 1_u16) }
+      expect_raises(Matter::ClusterError) { service.reset_pending }
+      expect_raises(Matter::ClusterError) { service.rollback_pending }
+      expect_raises(Matter::ClusterError) { service.commit_pending }
+    end
+
     it "rejects a direct CSR before pending credentials change" do
       service = credential_service(RecordingCredentialTarget.new)
       service.on_before_credential_change = ->(_mutation : CredentialService::CredentialMutation) {

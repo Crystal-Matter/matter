@@ -4,6 +4,42 @@ require "../../src/matter/commissioning/failsafe_service"
 module Matter::Commissioning
   # The service on its own: no cluster, no wire, just the state machine.
   describe FailsafeService do
+    it "holds the protocol lock through a host arm after its prehook" do
+      service = FailsafeService.new(RecordingRollbackTarget.new)
+      protocol_lock = Mutex.new(:reentrant)
+      service.protocol_lock = protocol_lock
+      entered = Channel(Nil).new(1)
+      resume = Channel(Nil).new(1)
+      finished = Channel(Nil).new(1)
+      attempting = Channel(Nil).new(1)
+      acquired = Channel(Nil).new(1)
+      service.on_before_arm_timer = ->(_expiry : UInt16) { entered.send(nil); resume.receive; nil }
+
+      spawn do
+        service.arm_timer(60_u16)
+        finished.send(nil)
+      end
+      entered.receive
+      spawn do
+        attempting.send(nil)
+        protocol_lock.synchronize { acquired.send(nil) }
+      end
+      attempting.receive
+      select
+      when acquired.receive
+        fail "the lease acquired the protocol lock during an unfinished host arm"
+      when timeout(50.milliseconds)
+      end
+      resume.send(nil)
+      finished.receive
+      select
+      when acquired.receive
+      when timeout(2.seconds)
+        fail "the lease could not acquire the protocol lock after the host arm"
+      end
+      service.disarm
+    end
+
     describe "#arm" do
       it "rejects an arm before creating a failsafe context" do
         service = FailsafeService.new(RecordingRollbackTarget.new)

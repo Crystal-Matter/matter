@@ -29,6 +29,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its final witness, blocks Matter credential mutations until the Anchor
   durably rewinds its journal, and restores the lease across restart. The
   Anchor resumes release from its journal after a lost save acknowledgement.
+  Direct host calls hold the protocol lock through their complete fail-safe,
+  credential, fabric-table, and group-key mutations, closing the gap between
+  a pre-mutation guard and the final write. Startup refuses a persisted lease
+  that conflicts with a pending credential undo journal.
 
 ### Joint Fabric journal recovery
 

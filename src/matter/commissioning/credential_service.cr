@@ -118,12 +118,17 @@ module Matter
       Log = ::Log.for("matter.commissioning.credential_service")
 
       enum CredentialMutation
+        SetAttestationCredentials
+        SetAttestationFromManager
         CreateCsr
         AddTrustedRootCertificate
         AddNoc
         UpdateNoc
         UpdateFabricLabel
         RemoveFabric
+        ResetPending
+        RollbackPending
+        CommitPending
       end
 
       private struct NocUpdateSnapshot
@@ -226,6 +231,9 @@ module Matter
       # journal is written. Startup and expiry rollback remain available.
       property on_before_credential_change : Proc(CredentialMutation, Nil)?
 
+      # The device's reentrant protocol mutex, installed before transport starts.
+      property protocol_lock : Mutex? = nil
+
       @attestation_key : Crypto::Key?
       @pending_noc_key : Crypto::Key?
       @pending_added_fabric_index : UInt8?
@@ -246,13 +254,21 @@ module Matter
 
       # Install factory attestation credentials
       def set_attestation_credentials(dac : Bytes, pai : Bytes, attestation_key : Crypto::Key) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_credential_change.try(&.call(CredentialMutation::SetAttestationCredentials))
         @dac = dac
         @pai = pai
         @attestation_key = attestation_key
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Generate the DAC and PAI of a vendor / product from the certificate manager
       def set_attestation_from_manager(vendor_id : UInt16, product_id : UInt16) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_credential_change.try(&.call(CredentialMutation::SetAttestationFromManager))
         @vendor_id = vendor_id
         @product_id = product_id
 
@@ -266,6 +282,8 @@ module Matter
         @attestation_key = dac_key
         Log.debug { "set_attestation_from_manager: Set attestation_key to DAC key" }
         Log.debug { "  Public key (full #{PUBLIC_KEY_SIZE} bytes): #{dac_key.public_key.hexstring}" }
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -292,6 +310,8 @@ module Matter
         is_for_update_noc : Bool,
         pase_session : Bool,
       ) : Tuple(Bytes, Bytes)?
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::CreateCsr))
         return unless failsafe_armed?
 
@@ -310,6 +330,8 @@ module Matter
         @pending.set_csr(session_id, is_for_update_noc)
 
         {elements, signature}
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -318,6 +340,8 @@ module Matter
 
       # Store the root certificate the NOC of this commissioning will chain to
       def add_trusted_root_certificate(root_certificate : Bytes) : NocOutcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::AddTrustedRootCertificate))
         Log.debug { "Received AddTrustedRootCertificate: #{root_certificate.size} bytes" }
         Log.trace { "Root cert hex (first #{CERTIFICATE_LOG_PREFIX}): #{certificate_prefix(root_certificate, CERTIFICATE_LOG_PREFIX)}" }
@@ -365,13 +389,19 @@ module Matter
         @target.credentials_changed
 
         NocOutcome.new(NocStatus::Ok)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Restore a root certificate from persisted fabric data at startup
       def restore_root_cert(root_cert : Bytes) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::AddTrustedRootCertificate))
         certificates = @target.trusted_root_certificates
         certificates << root_cert unless certificates.includes?(root_cert)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -387,6 +417,8 @@ module Matter
         admin_vendor_id : UInt16,
         session_id : UInt64,
       ) : NocOutcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::AddNoc))
         unless failsafe_armed?
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failsafe not armed")
@@ -505,6 +537,8 @@ module Matter
         end
 
         NocOutcome.new(NocStatus::Ok, fabric.fabric_index)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -518,6 +552,8 @@ module Matter
         session_fabric_index : UInt8,
         session_id : UInt64,
       ) : NocOutcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::UpdateNoc))
         unless failsafe_armed?
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Failsafe not armed")
@@ -591,6 +627,8 @@ module Matter
         notify_fabric_updated(fabric)
 
         NocOutcome.new(NocStatus::Ok, fabric.fabric_index)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -599,6 +637,8 @@ module Matter
 
       # Name the accessing fabric, which must be unique across the device
       def update_fabric_label(label : String, fabric_index : UInt8?) : NocOutcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::UpdateFabricLabel))
         unless fabric_index
           return NocOutcome.new(NocStatus::InvalidFabricIndex, debug_text: "Invalid fabric index")
@@ -621,6 +661,8 @@ module Matter
         @target.credentials_changed
 
         NocOutcome.new(NocStatus::Ok, fabric.fabric_index)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -629,6 +671,8 @@ module Matter
 
       # Leave a fabric, dropping every piece of data scoped to it
       def remove_fabric(fabric_index : UInt8) : NocOutcome
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::RemoveFabric))
         Log.debug { "RemoveFabric: fabric_index=#{fabric_index}" }
 
@@ -710,6 +754,8 @@ module Matter
         @target.credentials_changed
 
         NocOutcome.new(NocStatus::Ok, fabric_index)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ======================================================================
@@ -719,15 +765,23 @@ module Matter
       # A new failsafe was armed, the previous one expired, or commissioning
       # completed: either way nothing stays pending.
       def reset_pending : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_credential_change.try(&.call(CredentialMutation::ResetPending))
         @pending.reset
         @pending_noc_key = nil
         @pending_added_fabric_index = nil
         @pending_noc_update = nil
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Undo the NOC change made under an expired fail-safe. The table write
       # persists the restored CASE identity before the next session arrives.
       def rollback_pending : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_credential_change.try(&.call(CredentialMutation::RollbackPending))
         if index = @pending_added_fabric_index
           if @fabric_table.get_fabric(index)
             remove_fabric(index)
@@ -747,6 +801,8 @@ module Matter
         end
         CredentialJournal.clear(@fabric_table.backend)
         reset_pending
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       private def restore_noc_update(fabric : Fabric, snapshot : NocUpdateSnapshot) : Nil
@@ -761,8 +817,13 @@ module Matter
       # record is removed. A crash before this point rolls back on restart;
       # a crash after it preserves the committed identity.
       def commit_pending(journal_cleared : Bool = false) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_credential_change.try(&.call(CredentialMutation::CommitPending))
         CredentialJournal.clear(@fabric_table.backend) unless journal_cleared
         reset_pending
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       private def notify_fabric_updated(fabric : Fabric) : Nil

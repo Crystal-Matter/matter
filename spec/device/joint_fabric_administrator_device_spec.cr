@@ -253,6 +253,58 @@ class InterruptedJfaCommitSqlite < Matter::Storage::Sqlite
 end
 
 describe "Joint Fabric participant recovery command fence" do
+  it "preserves a conflicting binding for operator recovery instead of erasing the leased witness" do
+    path = File.join(Dir.tempdir, "matter-jfa-fenced-binding-#{Random::Secure.hex(6)}.sqlite3")
+    backend = Matter::Storage::Sqlite.new(path)
+    backend.open
+    fence = MatterJointFabricAdministrator::Device::ParticipantRecoveryFence.new(
+      "cd" * Matter::Controller::VidVerification::CHALLENGE_SIZE,
+      0xA102_u64, 0xA101_u64, 0xA104_u64, 0x1111_u64,
+      Bytes[1], Bytes[2])
+    backend.write(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_PARTICIPANT_RECOVERY_FENCE,
+      fence.to_document)
+    binding = MatterJointFabricAdministrator::Device::FabricBindingState.new(1_u8, 0x2222_u64, Bytes[3])
+    backend.write(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT,
+      binding.to_document)
+    backend.close
+    restarted = Matter::Storage::Sqlite.new(path)
+    device = InspectableJointFabricAdministratorDevice.new(storage: restarted,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+
+    expect_raises(Matter::StorageError, /binding reconciliation/) { device.prepare_for_start }
+    restarted.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_FABRIC_BINDING_DOCUMENT).should eq(binding.to_document)
+    restarted.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_PARTICIPANT_RECOVERY_FENCE).should eq(fence.to_document)
+  ensure
+    device.try(&.shutdown!)
+    backend.try(&.destroy!) if backend
+  end
+
+  it "refuses startup recovery that would roll back a credential beneath a durable lease" do
+    backend = Matter::Storage::Memory.new
+    backend.open
+    fence = MatterJointFabricAdministrator::Device::ParticipantRecoveryFence.new(
+      "cd" * Matter::Controller::VidVerification::CHALLENGE_SIZE,
+      0xA102_u64, 0xA101_u64, 0xA104_u64, 0x1111_u64,
+      Bytes[1], Bytes[2])
+    backend.write(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_PARTICIPANT_RECOVERY_FENCE,
+      fence.to_document)
+    Matter::Commissioning::CredentialJournal.begin_add(backend, 1_u8)
+
+    expect_raises(Matter::StorageError, /conflicts with a pending credential undo journal/) do
+      MatterJointFabricAdministrator::Device.new(storage: backend,
+        ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    end
+    backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should_not be_nil
+    backend.read(Matter::Storage::Collections::APP,
+      MatterJointFabricAdministrator::Device::APP_PARTICIPANT_RECOVERY_FENCE).should_not be_nil
+  end
+
   it "permits only the authenticated read-only VID signature while a lease is restored" do
     backend = Matter::Storage::Memory.new
     backend.open
@@ -266,7 +318,19 @@ describe "Joint Fabric participant recovery command fence" do
     device = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     device.prepare_for_start
+    protocol_lock = device.message_handler.registry.protocol_mutex
+    device.general_commissioning.failsafe.protocol_lock.should be(protocol_lock)
+    device.operational_credentials.credentials.protocol_lock.should be(protocol_lock)
+    device.fabric_table.protocol_lock.should be(protocol_lock)
+    keys = device.node.get_cluster(Matter::Cluster::GroupKeyManagement).as(Matter::Cluster::GroupKeyManagement)
+    keys.protocol_lock.should be(protocol_lock)
+    expect_raises(Matter::ClusterError) { device.general_commissioning.failsafe.arm_timer(60_u16) }
+    device.general_commissioning.failsafe.context.should be_nil
     credentials = device.operational_credentials
+    expect_raises(Matter::ClusterError) do
+      credentials.credentials.set_attestation_from_manager(0x1234_u16, 0x0001_u16)
+    end
+    expect_raises(Matter::ClusterError) { credentials.credentials.reset_pending }
     hook = credentials.on_before_command ||
            raise Matter::ConfigurationError.new("Missing participant recovery command guard")
     credentials.request_is_case_session = true

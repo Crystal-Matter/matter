@@ -57,6 +57,25 @@ private def round_trips_through(backend : Matter::Storage::Backend) : Nil
 end
 
 describe Matter::FabricTable do
+  it "fences direct clear, write, and quarantine calls before fabric changes" do
+    storage = Matter::Storage::Memory.new
+    table = Matter::FabricTable.new(storage)
+    fabric = build_fabric(1_u8)
+    table.add_fabric(fabric).should be_true
+    before = storage.read(Matter::FabricTable::COLLECTION, fabric.fabric_index.to_s)
+    table.on_before_clear = -> { raise Matter::ClusterError.new("Recovery lease", Matter::InteractionModel::StatusCode::Busy) }
+    table.on_before_fabric_change = ->(_mutation : Matter::FabricTable::FabricMutation, _index : UInt8) {
+      raise Matter::ClusterError.new("Recovery lease", Matter::InteractionModel::StatusCode::Busy)
+    }
+
+    expect_raises(Matter::ClusterError) { table.clear_all }
+    expect_raises(Matter::ClusterError) { table.write_fabric(fabric) }
+    expect_raises(Matter::ClusterError) { table.quarantine(fabric.fabric_index) }
+    table.quarantined?(fabric.fabric_index).should be_false
+    table.get_fabric(1_u8).should_not be_nil
+    storage.read(Matter::FabricTable::COLLECTION, fabric.fabric_index.to_s).should eq(before)
+  end
+
   it "rejects public fabric mutations before writing storage" do
     storage = Matter::Storage::Memory.new
     table = Matter::FabricTable.new(storage)

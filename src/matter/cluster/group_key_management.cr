@@ -377,6 +377,10 @@ module Matter
       # Applications that expose a credential recovery fence can reject direct
       # key-set API calls before they mutate the IPK or operational group keys.
       property on_before_key_set_change : Proc(UInt8, UInt16, Nil)?
+      property on_before_direct_mutation : Proc(Nil)?
+
+      # The device's reentrant protocol mutex, installed before transport starts.
+      property protocol_lock : Mutex? = nil
 
       def initialize(
         endpoint_id : DataType::EndpointNumber,
@@ -390,6 +394,9 @@ module Matter
 
       # Replaces the accessing fabric's GroupKeyMap entries.
       def group_key_map=(entries : Array(GroupKeyMapStruct)) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         fabric_index = accessing_fabric_index
         if groupcast_adopted?(fabric_index)
           raise Matter::ClusterError.new("GroupKeyMap is read-only after Groupcast adoption", InteractionModel::StatusCode::InvalidInState)
@@ -401,6 +408,8 @@ module Matter
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index }
         @group_key_map.concat(entries)
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # ------------------------------------------------------------------------
@@ -408,10 +417,15 @@ module Matter
       # ------------------------------------------------------------------------
 
       def key_set_write(request : KeySetWriteRequest) : InteractionModel::Status
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         handle_key_set_write(request, accessing_fabric_index)
         InteractionModel::Status.success
       rescue ex : EpochKeyLengthError
         raise Matter::ClusterError.new(ex.message || "Invalid epoch key length", InteractionModel::StatusCode::ConstraintError)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       def key_set_read(request : KeySetReadRequest) : KeySetReadResponse
@@ -420,8 +434,13 @@ module Matter
       end
 
       def key_set_remove(request : KeySetRemoveRequest) : InteractionModel::Status
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         handle_key_set_remove(request, accessing_fabric_index)
         InteractionModel::Status.success
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       def key_set_read_all_indices : KeySetReadAllIndicesResponse
@@ -462,6 +481,9 @@ module Matter
       end
 
       def groupcast_adoption=(entries : Array(GroupcastAdoptionStruct)) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         fabric_index = accessing_fabric_index
         if entries.size > 1
           raise Matter::ClusterError.new("Only one GroupcastAdoption entry is allowed per fabric", InteractionModel::StatusCode::ConstraintError)
@@ -473,6 +495,8 @@ module Matter
         increment_version_and_notify(ATTR_GROUPCAST_ADOPTION)
         notify_changed(ATTR_GROUP_KEY_MAP)
         notify_changed(ATTR_GROUP_TABLE)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Groupcast owns the operational mapping even after adoption makes the
@@ -480,6 +504,9 @@ module Matter
       # for authenticated group packets and local multicast joins.
       def replace_groupcast_membership(group_id : UInt16, endpoints : Array(UInt16),
                                        key_set_id : UInt16, fabric_index : UInt8) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
         @group_table.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
         unless endpoints.empty?
@@ -488,6 +515,8 @@ module Matter
         end
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
         notify_changed(ATTR_GROUP_TABLE)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # KeySetWrite command handler
@@ -501,6 +530,9 @@ module Matter
       def handle_key_set_write(cmd : KeySetWriteRequest, fabric_index : UInt8,
                                allow_zero_ipk_start_time : Bool = false,
                                notify_version_change : Bool = true) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         key_set = cmd.group_key_set
         @on_before_key_set_change.try(&.call(fabric_index, key_set.group_key_set_id))
 
@@ -540,6 +572,8 @@ module Matter
         else
           increment_version
         end
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # KeySetRead command handler
@@ -577,6 +611,9 @@ module Matter
       # - Removes any group key map entries referencing this key set
       # - Returns error if key set not found
       def handle_key_set_remove(cmd : KeySetRemoveRequest, fabric_index : UInt8) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         @on_before_key_set_change.try(&.call(fabric_index, cmd.group_key_set_id))
         # IPK Protection: Cannot remove key set 0 (Identity Protection Key)
         if cmd.group_key_set_id == IPK_KEY_SET_ID
@@ -601,6 +638,8 @@ module Matter
             entry.group_key_set_id == cmd.group_key_set_id
         end
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # KeySetReadAllIndices command handler
@@ -627,6 +666,9 @@ module Matter
         group_key_set_id : UInt16,
         fabric_index : UInt8,
       ) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         # Validate group ID
         if group_id == RESERVED_GROUP_ID
           raise Matter::ClusterError.new("Group ID 0 is invalid", InteractionModel::StatusCode::ConstraintError)
@@ -659,11 +701,16 @@ module Matter
           @group_key_map << GroupKeyMapStruct.new(group_id, group_key_set_id, fabric_index)
         end
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Handles a complete list replacement or chip-tool's empty-list clear
       # followed by list-item appends. FabricIndex on the wire is ignored.
       def write_group_key_map(value : TLV::Any, fabric_index : UInt8) : InteractionModel::Status
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         return InteractionModel::Status.invalid_in_state if groupcast_adopted?(fabric_index)
         if list = value.as_list?
           return InteractionModel::Status.resource_exhausted if list.size > max_groups_per_fabric
@@ -684,14 +731,21 @@ module Matter
         ex.to_status
       rescue TLV::DeserializationError | TypeCastError | ArgumentError
         InteractionModel::Status.invalid_data_type
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Remove a group key map entry
       def remove_group_key_map(group_id : UInt16, fabric_index : UInt8) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         @group_key_map.reject! do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id
         end
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Add a group to the group table
@@ -705,6 +759,9 @@ module Matter
         group_name : String?,
         fabric_index : UInt8,
       ) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         # Find or create group info
         existing = @group_table.find do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id
@@ -735,11 +792,16 @@ module Matter
           )
         end
         increment_version_and_notify(ATTR_GROUP_TABLE)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Remove an endpoint from a group
       # Called by Groups cluster when RemoveGroup command is executed
       def remove_group(group_id : UInt16, endpoint_id : UInt16, fabric_index : UInt8) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         existing_index = @group_table.index do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id
         end
@@ -760,6 +822,8 @@ module Matter
           )
         end
         increment_version_and_notify(ATTR_GROUP_TABLE)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Indexes with stored keys or group mappings, including crashed removals.
@@ -771,6 +835,9 @@ module Matter
 
       # Remove all groups for a fabric (fabric removal).
       def remove_fabric(fabric_index : UInt8) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         @on_before_key_set_change.try(&.call(fabric_index, IPK_KEY_SET_ID))
         @key_sets.delete(fabric_index)
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index }
@@ -779,6 +846,8 @@ module Matter
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
         notify_changed(ATTR_GROUP_TABLE)
         notify_changed(ATTR_GROUPCAST_ADOPTION) if @feature_map.groupcast?
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Get a key set by ID (for cryptographic operations)
@@ -795,6 +864,9 @@ module Matter
       def restore_ipk_key_set_after_failed_write(fabric_index : UInt8,
                                                  previous : GroupKeySetStruct?,
                                                  previous_version : UInt32) : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         @on_before_key_set_change.try(&.call(fabric_index, IPK_KEY_SET_ID))
         sets = @key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new
         if previous
@@ -803,10 +875,17 @@ module Matter
           sets.delete(IPK_KEY_SET_ID)
         end
         @data_version = previous_version
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       def notify_persisted_ipk_key_set_write : Nil
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
         @on_version_changed.try(&.call)
+      ensure
+        protocol_lock.try(&.unlock)
       end
 
       # Check if a group exists for a fabric
@@ -918,23 +997,30 @@ module Matter
       end
 
       def restore_state(document : Storage::Document) : Nil
-        state = PersistedState.from_document(document)
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
+        begin
+          state = PersistedState.from_document(document)
 
-        @key_sets.clear
-        state.key_sets.each do |fabric_index, key_sets|
-          fabric_key_sets = (@key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new)
-          key_sets.each do |key_set|
-            fabric_key_sets[key_set.group_key_set_id] = key_set.to_key_set
+          @key_sets.clear
+          state.key_sets.each do |fabric_index, key_sets|
+            fabric_key_sets = (@key_sets[fabric_index] ||= Hash(UInt16, GroupKeySetStruct).new)
+            key_sets.each do |key_set|
+              fabric_key_sets[key_set.group_key_set_id] = key_set.to_key_set
+            end
           end
+
+          @group_key_map = state.group_key_map
+          @group_table = state.group_table
+          @groupcast_adoption = state.groupcast_adoption
+
+          @data_version = state.data_version
+        rescue ex
+          Log.error(exception: ex) { "GroupKeyManagement restore_state failed; starting fresh" }
         end
-
-        @group_key_map = state.group_key_map
-        @group_table = state.group_table
-        @groupcast_adoption = state.groupcast_adoption
-
-        @data_version = state.data_version
-      rescue ex
-        Log.error(exception: ex) { "GroupKeyManagement restore_state failed; starting fresh" }
+      ensure
+        protocol_lock.try(&.unlock)
       end
     end
   end

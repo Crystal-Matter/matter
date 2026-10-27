@@ -235,6 +235,7 @@ module Matter
       end
       @ip_addresses = ip_addresses || default_ip_addresses
 
+      before_storage_recovery(storage)
       @persistence = Persistence.new(storage, max_fabrics: max_fabrics)
       @fabric_table = @persistence.fabric_table
       @hostname = hostname || @persistence.commissioning_hostname
@@ -723,6 +724,9 @@ module Matter
     # ------------------------------------------------------------------------
     # Hooks (override as needed)
     # ------------------------------------------------------------------------
+    protected def before_storage_recovery(_storage : Storage::Backend) : Nil
+    end
+
     protected def before_start : Nil
     end
 

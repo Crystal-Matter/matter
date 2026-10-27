@@ -535,9 +535,19 @@ module MatterJointFabricAdministrator
       reject_fenced_mutation!
     end
 
+    protected def before_storage_recovery(storage : Matter::Storage::Backend) : Nil
+      storage.open unless storage.open?
+      if storage.read(Matter::Storage::Collections::APP, APP_PARTICIPANT_RECOVERY_FENCE) &&
+         storage.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+           Matter::Commissioning::CredentialJournal::ID)
+        raise Matter::StorageError.new("Participant recovery fence conflicts with a pending credential undo journal")
+      end
+    end
+
     protected def before_start : Nil
       super
       restore_participant_recovery_fence!
+      install_participant_recovery_protocol_locks!
       reconcile_saved_fabric_bindings
       # The second endpoint is a retained bootstrap JFA only when explicitly
       # provisioned. A wildcard JCM read must not discover a second JFA with
@@ -576,6 +586,16 @@ module MatterJointFabricAdministrator
       end
     end
 
+    private def install_participant_recovery_protocol_locks! : Nil
+      protocol_lock = @message_handler.registry.protocol_mutex
+      general_commissioning.failsafe.protocol_lock = protocol_lock
+      operational_credentials.credentials.protocol_lock = protocol_lock
+      fabric_table.protocol_lock = protocol_lock
+      @message_handler.clusters.values.each do |cluster|
+        cluster.as?(Matter::Cluster::GroupKeyManagement).try(&.protocol_lock=(protocol_lock))
+      end
+    end
+
     private def install_participant_recovery_guards! : Nil
       @message_handler.clusters.values.each do |cluster|
         cluster.on_before_command = ->(command_id : UInt32) do
@@ -592,16 +612,19 @@ module MatterJointFabricAdministrator
         if keys = cluster.as?(Matter::Cluster::GroupKeyManagement)
           keys.on_before_key_set_change =
             ->(_fabric_index : UInt8, _key_set_id : UInt16) { reject_fenced_mutation! }
+          keys.on_before_direct_mutation = -> { reject_fenced_mutation! }
         end
       end
       general_commissioning.failsafe.on_before_arm =
         ->(_seconds : UInt16, _fabric_index : UInt8?, _pase : Bool) { reject_fenced_mutation! }
       general_commissioning.failsafe.on_before_arm_timer =
         ->(_seconds : UInt16) { reject_fenced_mutation! }
+      general_commissioning.failsafe.on_before_state_change = -> { reject_fenced_mutation! }
       operational_credentials.credentials.on_before_credential_change =
         ->(_mutation : Matter::Commissioning::CredentialService::CredentialMutation) { reject_fenced_mutation! }
       fabric_table.on_before_fabric_change =
         ->(_mutation : Matter::FabricTable::FabricMutation, _fabric_index : UInt8) { reject_fenced_mutation! }
+      fabric_table.on_before_clear = -> { reject_fenced_mutation! }
     end
 
     protected def fabric_added(fabric : Matter::Fabric) : Nil
@@ -668,7 +691,10 @@ module MatterJointFabricAdministrator
         if document = persistence.app_document(document_name)
           binding = FabricBindingState.from_document(document)
           fabric = fabric_table.get_fabric(binding.fabric_index)
-          fabric_removed(binding.fabric_index) unless fabric && binding.matches?(fabric)
+          unless fabric && binding.matches?(fabric)
+            reject_binding_reconciliation_under_fence!
+            fabric_removed(binding.fabric_index)
+          end
         end
       end
       { {joint_fabric_administrator, joint_fabric_datastore, 1_u16,
@@ -683,8 +709,10 @@ module MatterJointFabricAdministrator
         # new FabricID under the same root at a reused index. A partially
         # erased store may lack the JFA index while retaining JFD lists.
         if index = administrator.administrator_fabric_index
+          reject_binding_reconciliation_under_fence!
           fabric_removed(index)
         elsif !datastore.anchor_root_ca.empty?
+          reject_binding_reconciliation_under_fence!
           datastore.clear_fabric_state
           administrator.service = nil
           persistence.forget_cluster(endpoint_id, Datastore::CLUSTER_ID)
@@ -692,6 +720,12 @@ module MatterJointFabricAdministrator
           persistence.delete_app_document(icac_document)
           persistence.delete_app_document(APP_KEY_DOCUMENT) unless persistence.app_document(other_document_name)
         end
+      end
+    end
+
+    private def reject_binding_reconciliation_under_fence! : Nil
+      if recovery_fenced?
+        raise Matter::StorageError.new("Participant recovery fence blocks destructive binding reconciliation")
       end
     end
 
@@ -3019,7 +3053,9 @@ module MatterJointFabricAdministrator
       unless persistence.backend.durable?
         raise Matter::StorageError.new("Anchor rotation recovery requires durable storage")
       end
-      if general_commissioning.failsafe_armed? ||
+      # An expired timer can stop reporting armed before its rollback fiber
+      # clears the context. Do not lease across that pending callback.
+      if general_commissioning.failsafe_context ||
          persistence.backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
            Matter::Commissioning::CredentialJournal::ID)
         raise Matter::CommissioningError.new("Anchor credential rotation may still be provisional")
