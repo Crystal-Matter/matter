@@ -445,7 +445,6 @@ module Matter::Cluster
           case index
           when 1_u8 then 0x1111_u16
           when 2_u8 then 0x2222_u16
-          else           nil
           end
         end
 
