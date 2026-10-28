@@ -13,6 +13,7 @@ private class ManagedRestrictionSpecDevice < Matter::Device
 
   def release : Nil
     message_handler.close
+    access_control.shutdown_restriction_review_workers
     persistence.close
     transport.close
   end
@@ -40,6 +41,7 @@ private class ManagedRestrictionDslSpecDevice < Matter::Device
 
   def release : Nil
     message_handler.close
+    access_control.shutdown_restriction_review_workers
     persistence.close
     transport.close
   end

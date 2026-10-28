@@ -338,6 +338,9 @@ module Matter
       @pending_restriction_review_deadlines = {} of UInt64 => Time
       @reviews_needing_replay = [] of UInt64
       @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
+      @review_worker_shutdown = ::Channel(Nil).new
+      @review_worker_done = Set(::Channel(Nil)).new
+      @review_workers_stopped = false
       @next_restriction_review_token = 0_u64
       @review_requests_in_progress = [] of UInt64
       @deferred_restriction_review_decisions = {} of UInt64 => Proc(Bool)
@@ -625,6 +628,7 @@ module Matter
 
       # Host lifecycle shared by the opt-in wire command and direct host reviews.
       def request_restriction_review(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : UInt64
+        raise Matter::ConfigurationError.new("Restriction review service is stopped") if @review_workers_stopped
         if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
            entries.any? { |entry| invalid_access_restriction_entry?(entry) }
           raise Matter::ConfigurationError.new("Invalid restriction review request")
@@ -878,11 +882,19 @@ module Matter
       end
 
       private def schedule_restriction_review_delivery_retry(token : UInt64, fabric_index : UInt8) : Nil
+        return if @review_workers_stopped
         return unless @review_delivery_retry_scheduled.add?(token)
         generation = @review_generations[token]?
+        done = ::Channel(Nil).new
+        @review_worker_done.add(done)
         spawn do
           loop do
-            sleep @review_delivery_retry_interval
+            select
+            when @review_worker_shutdown.receive?
+              break
+            when timeout(@review_delivery_retry_interval)
+            end
+            break if @review_workers_stopped
             break unless @reviews_awaiting_delivery.has_key?(token) &&
                          current_restriction_review?(fabric_index, token, generation)
             begin
@@ -893,7 +905,20 @@ module Matter
           end
         ensure
           @review_delivery_retry_scheduled.delete(token)
+          @review_worker_done.delete(done)
+          done.close
         end
+      end
+
+      # Stop review retry fibers before their persistence backend is closed.
+      # Pending review state remains durable for replay on the next startup.
+      def shutdown_restriction_review_workers : Nil
+        return if @review_workers_stopped
+        @review_workers_stopped = true
+        @review_worker_shutdown.close
+        @restriction_review_timers.each_value(&.close)
+        @restriction_review_timers.clear
+        @review_worker_done.to_a.each(&.receive?)
       end
 
       # A host denial leaves the fabric's restrictions in place. The Matter
@@ -1117,17 +1142,23 @@ module Matter
 
       private def schedule_restriction_review_timer(fabric_index : UInt8, token : UInt64,
                                                     duration : Time::Span) : Nil
+        return if @review_workers_stopped
         return if @restriction_review_timers.has_key?(token)
         timer = ::Channel(Nil).new
         @restriction_review_timers[token] = timer
         generation = @review_generations[token]?
+        done = ::Channel(Nil).new
+        @review_worker_done.add(done)
         spawn do
           delay = duration
           loop do
             select
+            when @review_worker_shutdown.receive?
+              break
             when timer.receive?
               break
             when timeout(delay)
+              break if @review_workers_stopped
               break unless current_restriction_review?(fabric_index, token, generation)
               begin
                 break if complete_restriction_review(fabric_index, token)
@@ -1140,6 +1171,8 @@ module Matter
           end
         ensure
           @restriction_review_timers.delete(token) if @restriction_review_timers[token]? == timer
+          @review_worker_done.delete(done)
+          done.close
         end
       end
 

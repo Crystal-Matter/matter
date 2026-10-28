@@ -579,6 +579,7 @@ module Matter
       # Stop the session sweep before the store closes under it.
       @message_handler.close
 
+      @access_control.try(&.shutdown_restriction_review_workers)
       @persistence.flush
       @persistence.close
       @transport.close
