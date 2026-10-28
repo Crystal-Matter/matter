@@ -37,6 +37,21 @@ private class FlakyDatastoreDelivery < Matter::Controller::DatastorePropagator::
   end
 end
 
+private class BusyDatastoreDelivery < Matter::Controller::DatastorePropagator::Delivery
+  getter attempts = 0
+
+  def initialize(@failures_before_success : Int32)
+  end
+
+  def deliver(store : Matter::Cluster::JointFabricDatastore, node_id : UInt64) : Nil
+    @attempts += 1
+    failure_code = @attempts <= @failures_before_success ?
+                   Matter::InteractionModel::StatusCode::Busy.value :
+                   Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE
+    store.complete_node(node_id, failure_code)
+  end
+end
+
 private class BlockingDatastoreDelivery < Matter::Controller::DatastorePropagator::Delivery
   def initialize(@started : Channel(Nil), @resume_delivery : Channel(Nil))
   end
@@ -125,5 +140,61 @@ describe Matter::Controller::DatastorePropagator do
 
     delivery.attempts.should eq(2)
     store.node_list.first.commissioning_status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::CommitFailed)
+  end
+
+  it "retries a persisted temporary transport failure on the next propagation pass" do
+    original = pending_datastore
+    delivery = FlakyDatastoreDelivery.new(2)
+    first = Matter::Controller::DatastorePropagator.new(original, delivery,
+      max_attempts: 2, retry_delay: 0.seconds)
+
+    first.run_pending
+    delivery.attempts.should eq(2)
+    original.node_list.first.commissioning_status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::CommitFailed)
+
+    restored = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    restored.restore_state(original.save_state.as(Matter::Storage::Document))
+    next_pass = Matter::Controller::DatastorePropagator.new(restored, delivery,
+      max_attempts: 2, retry_delay: 0.seconds)
+    next_pass.run_pending
+
+    delivery.attempts.should eq(3)
+    restored.node_list.first.commissioning_status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
+  end
+
+  it "re-arms a persisted Busy result without replacing its failure code on a bounded pass" do
+    original = pending_datastore
+    delivery = BusyDatastoreDelivery.new(2)
+    first = Matter::Controller::DatastorePropagator.new(original, delivery,
+      max_attempts: 2, retry_delay: 0.seconds)
+
+    first.run_pending
+    delivery.attempts.should eq(2)
+    original.node_list.first.commissioning_status_entry.failure_code.should eq(Matter::InteractionModel::StatusCode::Busy.value)
+
+    restored = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    restored.restore_state(original.save_state.as(Matter::Storage::Document))
+    next_pass = Matter::Controller::DatastorePropagator.new(restored, delivery,
+      max_attempts: 2, retry_delay: 0.seconds)
+    next_pass.run_pending
+
+    delivery.attempts.should eq(3)
+    restored.node_list.first.commissioning_status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
+  end
+
+  it "does not automatically retry unrecoverable node failures" do
+    [Matter::InteractionModel::StatusCode::ResourceExhausted.value,
+     Matter::InteractionModel::StatusCode::ConstraintError.value].each do |failure_code|
+      store = pending_datastore
+      store.complete_node(0x100_u64, failure_code)
+      delivery = FlakyDatastoreDelivery.new(0)
+      propagator = Matter::Controller::DatastorePropagator.new(store, delivery,
+        max_attempts: 2, retry_delay: 0.seconds)
+
+      propagator.run_pending
+
+      delivery.attempts.should eq(0)
+      store.node_list.first.commissioning_status_entry.failure_code.should eq(failure_code)
+    end
   end
 end
