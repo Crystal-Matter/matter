@@ -54,14 +54,7 @@ module Matter
         return false unless fabric_index && peer_subject_ids && peer_subject_ids.size > 0
 
         acl = access_control_cluster(clusters)
-        return true unless acl
-
-        # Recovery path: if a fabric has no ACL entries (e.g., legacy devices that
-        # didn't persist ACLs), allow AccessControl reads/writes so the fabric can
-        # re-establish its ACL and regain access.
-        if acl.get_acl_for_fabric(fabric_index).empty?
-          return true if cluster_id == Cluster::AccessControl::CLUSTER_ID
-        end
+        return false unless acl
 
         peer_subject_ids.any? do |subject_id|
           acl.check_access(

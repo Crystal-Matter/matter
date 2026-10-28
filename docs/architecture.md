@@ -292,6 +292,11 @@ list becomes an empty replacement plus null-ListIndex appends; all chunks use
 one exchange and each WriteResponse is read before the next chunk is sent.
 One list item that cannot fit in a chunk is rejected before network I/O.
 
+CASE authorization evaluates the accessing fabric's ACL for every IM path.
+An empty ACL grants no CASE privileges, including access to the Access Control
+cluster itself. Commissioning over PASE uses its separate implicit privilege;
+fabricless PASE writes to ACL and Extension are rejected.
+
 ## Node, endpoints and clusters
 
 `Endpoint` (`endpoint.cr`) owns `clusters : Hash(UInt32, Cluster::Base)`. `Node#add_endpoint`
