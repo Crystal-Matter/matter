@@ -1519,18 +1519,11 @@ describe "three provisioned Joint Fabric Administrators" do
     Matter::Crypto::MatterCertificate.subject_ids_from_tlv(renewed_controller.controller_noc)
       .should contain(renewed_subject)
 
-    # New transport clients force CASE with the old revoked and new survivor
-    # NOCs; an already established secure session cannot prove revocation.
-    revoked_controller_client.close
-    revoked_controller_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: revoked_controller.controller_node_id)
-    revoked_controller_im = Matter::Controller::ImClient.new(revoked_controller_client, E2E::COMMAND_TIMEOUT)
+    # Pair again to create fresh CASE sessions with the old revoked and new
+    # survivor NOCs. Retain each Client's unsecured counter across Sigma1.
     revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
       migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
     assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, false)
-    b_controller_client.close
-    b_controller_client = Matter::Controller::Client.new(unsecured_source_node_id: b_controller_node_id)
-    b_controller_im = Matter::Controller::ImClient.new(b_controller_client, E2E::COMMAND_TIMEOUT)
     b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
       migration_peer, renewed_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
     assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
