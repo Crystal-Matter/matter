@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric ICAC correction
+
+- A rejected AddICAC certificate no longer consumes the fail-safe window's
+  single successful cross-signing operation. The initiator may correct the
+  certificate and retry; a second successful AddICAC remains rejected.
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store
