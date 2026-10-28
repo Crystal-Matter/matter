@@ -1887,7 +1887,7 @@ describe MatterJointFabricAdministrator::Device do
     backend = durable_jfa_backend
     device = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
-    device.prepare_for_start
+    Matter::Controller::StateStore.new(backend).bind_transport_counter(device.message_handler.transport.message_counter)
     client = device.anchor_verification_client_for_spec(9_u64)
     client.transport.should be(device.transport)
     client.transport.port.should eq(device.port)

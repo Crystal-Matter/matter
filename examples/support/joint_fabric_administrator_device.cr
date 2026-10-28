@@ -4319,8 +4319,9 @@ module MatterJointFabricAdministrator
     private def anchor_verification_client(node_id : UInt64) : Matter::Controller::Client
       store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
       Matter::Controller::Client.new(
-        shared_message_counter: message_handler.transport.message_counter,
-        counter_lease: store.counter_lease(node_id)
+        transport: message_handler.transport,
+        counter_lease: store.counter_lease(node_id),
+        session_id_in_use: ->(id : UInt16) { message_handler.sessions.has_key?(id) }
       )
     end
 
