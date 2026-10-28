@@ -232,7 +232,7 @@ module Matter
         def cleanup!(journal : Journal) : Nil
           raise Matter::CommissioningError.new("Joint Fabric node cleanup snapshot is missing") unless journal.cleanup_recorded?
           with_anchor(journal) do |im, session|
-            validate_removable!(im, session, journal, allow_cleanup: true)
+            validate_removable!(im, session, journal, allow_cleanup: true, allow_uncommitted: true)
             current_groups = read_list(Datastore::DatastoreEndpointGroupIDEntryStruct,
               im, session, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
             current_bindings = read_list(Datastore::DatastoreEndpointBindingEntryStruct,
@@ -271,6 +271,14 @@ module Matter
             if failed_keys.any?
               invoke!(im, session, Datastore::CMD_REFRESH_NODE,
                 Datastore::RefreshNodeRequest.new(journal.node_id).to_slice)
+            elsif current_groups.none?(&.node_id.==(journal.node_id)) &&
+                  current_bindings.none? { |entry| self.class.cleanup_binding?(entry, journal.node_id) } &&
+                  key_sets.none? { |entry| self.class.cleanup_key_set?(entry, journal.node_id) }
+              node = node_entry(im, session, journal)
+              if node && node.commissioning_status_entry.state == Datastore::DatastoreStateEnum::CommitFailed
+                invoke!(im, session, Datastore::CMD_REFRESH_NODE,
+                  Datastore::RefreshNodeRequest.new(journal.node_id).to_slice)
+              end
             end
           end
         end
@@ -278,7 +286,7 @@ module Matter
         def cleanup_complete?(journal : Journal) : Bool
           raise Matter::CommissioningError.new("Joint Fabric node cleanup snapshot is missing") unless journal.cleanup_recorded?
           with_anchor(journal) do |im, session|
-            validate_removable!(im, session, journal, allow_cleanup: true)
+            validate_removable!(im, session, journal, allow_cleanup: true, allow_uncommitted: true)
             groups = read_list(Datastore::DatastoreEndpointGroupIDEntryStruct,
               im, session, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
             bindings = read_list(Datastore::DatastoreEndpointBindingEntryStruct,
@@ -366,10 +374,12 @@ module Matter
         end
 
         private def validate_removable!(im : ImClient, session : Session::SecureContext,
-                                        journal : Journal, allow_cleanup : Bool = false) : Nil
+                                        journal : Journal, allow_cleanup : Bool = false,
+                                        allow_uncommitted : Bool = false) : Nil
           entry = node_entry(im, session, journal) ||
                   raise Matter::CommissioningError.new("Committed Joint Fabric node is absent")
-          unless entry.friendly_name == journal.friendly_name && entry.commissioning_status_entry.state.committed?
+          unless entry.friendly_name == journal.friendly_name &&
+                 (allow_uncommitted || entry.commissioning_status_entry.state.committed?)
             raise Matter::CommissioningError.new("Joint Fabric node identity or committed state changed")
           end
           admins = read_list(Datastore::DatastoreAdministratorInformationEntryStruct,

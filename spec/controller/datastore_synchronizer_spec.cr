@@ -2,6 +2,45 @@ require "../spec_helper"
 require "../../src/matter/controller"
 
 private alias Datastore = Matter::Cluster::JointFabricDatastore
+private alias RemovalWorkflow = Matter::Controller::JointFabricNodeRemoval
+
+private class DatastoreRemovalGate < RemovalWorkflow::Port
+  getter remove_count = 0
+
+  def initialize(@store : Datastore)
+  end
+
+  def snapshot_cleanup(journal : RemovalWorkflow::Journal) : RemovalWorkflow::CleanupSnapshot
+    RemovalWorkflow::CleanupSnapshot.new([] of RemovalWorkflow::GroupCleanup,
+      [] of RemovalWorkflow::BindingCleanup, [] of UInt16)
+  end
+
+  def cleanup!(journal : RemovalWorkflow::Journal) : Nil
+  end
+
+  def cleanup_complete?(journal : RemovalWorkflow::Journal) : Bool
+    @store.endpoint_group_id_list.none?(&.node_id.==(journal.node_id)) &&
+      @store.endpoint_binding_list.none? { |entry| RemovalWorkflow::NetworkPort.cleanup_binding?(entry, journal.node_id) } &&
+      @store.node_key_set_list.none? { |entry| RemovalWorkflow::NetworkPort.cleanup_key_set?(entry, journal.node_id) }
+  end
+
+  def revoke_direct_access!(journal : RemovalWorkflow::Journal) : Nil
+  end
+
+  def access_revoked?(journal : RemovalWorkflow::Journal) : Bool
+    true
+  end
+
+  def remove_node!(journal : RemovalWorkflow::Journal) : Nil
+    @remove_count += 1
+    status = @store.remove_node(Datastore::RemoveNodeRequest.new(journal.node_id))
+    raise Matter::CommissioningError.new("Node removal failed") unless status.success?
+  end
+
+  def node_absent?(journal : RemovalWorkflow::Journal) : Bool
+    @store.node_list.none?(&.node_id.==(journal.node_id))
+  end
+end
 
 private class DatastoreImClient < Matter::Controller::ImClient
   getter commands = [] of UInt32
@@ -185,6 +224,104 @@ private def datastore_session : Matter::Session::SecureContext
 end
 
 describe Matter::Controller::DatastoreSynchronizer do
+  it "delivers node-removal cleanup to the target and incoming-binding owner before NodeList deletion" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    target_id = 0x100_u64
+    peer_id = 0x200_u64
+    group_id = 5_u16
+    key_set_id = 7_u16
+    status = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed,
+      0_u32, Datastore::NO_FAILURE_CODE)
+    store.node_list = [
+      Datastore::DatastoreNodeInformationEntryStruct.new(target_id, "Target", status),
+      Datastore::DatastoreNodeInformationEntryStruct.new(peer_id, "Peer", status),
+    ]
+    store.node_endpoint_list = [
+      Datastore::DatastoreEndpointEntryStruct.new(1_u16, target_id, "Target endpoint"),
+      Datastore::DatastoreEndpointEntryStruct.new(1_u16, peer_id, "Peer endpoint"),
+    ]
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(group_id.to_u64,
+      "Shared", key_set_id, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    store.node_key_set_list = [
+      Datastore::DatastoreNodeKeySetEntryStruct.new(target_id, Datastore::IPK_KEY_SET_ID, status),
+      Datastore::DatastoreNodeKeySetEntryStruct.new(target_id, key_set_id, status),
+    ]
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      target_id, 1_u16, group_id, status)]
+    own_target = Datastore::DatastoreBindingTargetStruct.new(node: peer_id, endpoint: 1_u16)
+    incoming_target = Datastore::DatastoreBindingTargetStruct.new(node: target_id, endpoint: 1_u16)
+    store.endpoint_binding_list = [
+      Datastore::DatastoreEndpointBindingEntryStruct.new(target_id, 1_u16, 11_u16, own_target, status),
+      Datastore::DatastoreEndpointBindingEntryStruct.new(peer_id, 1_u16, 12_u16, incoming_target, status),
+    ]
+
+    store.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(
+      target_id, 1_u16, group_id)).success?.should be_true
+    store.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(
+      11_u16, 1_u16, target_id)).success?.should be_true
+    store.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(
+      12_u16, 1_u16, peer_id)).success?.should be_true
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    store.node_key_set_list.find(&.group_key_set_id.==(key_set_id)).try(&.status_entry.state)
+      .should eq(Datastore::DatastoreStateEnum::DeletePending)
+    store.endpoint_binding_list.all?(&.status_entry.state.delete_pending?).should be_true
+
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: peer_id, endpoint: 1_u16)]
+    synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    im.response_code = Matter::InteractionModel::StatusCode::Busy
+    synchronizer.sync_node(store, target_id, datastore_session, peer)
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    store.endpoint_group_id_list.first.status_entry.failure_code.should eq(
+      Matter::InteractionModel::StatusCode::Busy.value)
+    store.node_key_set_list.find(&.group_key_set_id.==(key_set_id)).try(&.status_entry.failure_code)
+      .should eq(Matter::InteractionModel::StatusCode::Busy.value)
+    store.endpoint_binding_list.find(&.node_id.==(target_id)).try(&.status_entry.failure_code)
+      .should eq(Matter::InteractionModel::StatusCode::Busy.value)
+    store.node_list.size.should eq(2)
+
+    im.response_code = nil
+    store.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(
+      target_id, 1_u16, group_id)).success?.should be_true
+    store.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(
+      11_u16, 1_u16, target_id)).success?.should be_true
+    store.refresh_node(Datastore::RefreshNodeRequest.new(target_id)).success?.should be_true
+    im.parts_list = [1_u16]
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
+    synchronizer.sync_node(store, target_id, datastore_session, peer)
+    store.endpoint_group_id_list.should be_empty
+    store.node_key_set_list.map(&.group_key_set_id).should eq([Datastore::IPK_KEY_SET_ID])
+    store.endpoint_binding_list.map(&.node_id).should eq([peer_id])
+    im.command_paths.should contain({Matter::Cluster::Groups::CLUSTER_ID,
+                                     Matter::Cluster::Groups::CMD_REMOVE_GROUP})
+    im.command_paths.should contain({Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+                                     Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_REMOVE})
+    im.binding_entries[1_u16].should be_empty
+
+    removal_store = RemovalWorkflow::JournalStore.new(Matter::Storage::Memory.new)
+    removal_journal = removal_store.load_or_create(RemovalWorkflow::Journal.new(
+      1_u64, Bytes[1], 2_u64, 3_u64, target_id, "Target", Bytes[4]))
+    gate = DatastoreRemovalGate.new(store)
+    removal = RemovalWorkflow::Workflow.new(removal_journal, gate, removal_store)
+    expect_raises(Matter::CommissioningError, /cleanup is pending/) { removal.run }
+    gate.remove_count.should eq(0)
+    store.node_list.map(&.node_id).should contain(target_id)
+
+    im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: target_id, endpoint: 1_u16)]
+    synchronizer.sync_node(store, peer_id, datastore_session, peer)
+    store.endpoint_binding_list.should be_empty
+    im.binding_entries[1_u16].should be_empty
+    store.node_list.size.should eq(2)
+    removal.run
+    gate.remove_count.should eq(1)
+    store.node_list.map(&.node_id).should eq([peer_id])
+    store.node_key_set_list.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
   it "rejects another response command while refreshing Groups membership" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)
