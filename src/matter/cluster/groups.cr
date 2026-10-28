@@ -191,6 +191,7 @@ module Matter
       # Group storage: GroupId => GroupName
       property groups : Hash(UInt16, String)
       @fabric_groups : Hash(UInt8, Hash(UInt16, String))
+      @legacy_unscoped_state : Bool = false
       property on_group_added : Proc(UInt16, UInt16, String, UInt8, Nil)?
       property on_group_removed : Proc(UInt16, UInt16, UInt8, Nil)?
       @identify : Identify?
@@ -327,6 +328,7 @@ module Matter
         state = PersistedState.from_document(document)
         @groups = state.groups
         @fabric_groups = state.fabric_groups
+        @legacy_unscoped_state = !document.has_key?("fabric_groups")
         @data_version = state.data_version
       rescue ex
         Log.warn(exception: ex) { "Groups restore_state failed; starting fresh" }
@@ -344,6 +346,27 @@ module Matter
       # Indexes with stored group names, including any orphaned after a crash.
       def fabric_indices : Array(UInt8)
         @fabric_groups.keys
+      end
+
+      # Used to rebuild the operational group table after all cluster state
+      # has restored. The copy cannot mutate this cluster's fabric state.
+      def group_names_for_fabric(fabric_index : UInt8) : Hash(UInt16, String)
+        (@fabric_groups[fabric_index]? || Hash(UInt16, String).new).dup
+      end
+
+      # Old documents stored all Groups memberships without a fabric index.
+      # Import only a membership that the old GroupTable explicitly tied to
+      # this endpoint and fabric. A current document always has fabric_groups,
+      # so an intentionally removed membership cannot reappear on restart.
+      def migrate_unscoped_group(group_id : UInt16, fabric_index : UInt8) : Bool
+        return false unless @legacy_unscoped_state
+        return false unless name = @groups[group_id]?
+        fabric_groups = @fabric_groups[fabric_index] ||= Hash(UInt16, String).new
+        return false if fabric_groups.has_key?(group_id)
+
+        fabric_groups[group_id] = name
+        increment_version
+        true
       end
 
       # Fabric indexes can be reused after RemoveFabric. Discard the removed

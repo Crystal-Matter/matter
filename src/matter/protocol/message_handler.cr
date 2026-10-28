@@ -1067,11 +1067,9 @@ module Matter
                       end
             addresses_for_fabric << address
           end
-          groupcast_ids = groupcast_memberships.map(&.group_id)
           mapped = group_keys.operational_group_key_map(fabric.fabric_index).map(&.group_id)
-          group_keys.operational_group_table(fabric.fabric_index).each do |group|
+          group_keys.operational_legacy_group_table(fabric.fabric_index).each do |group|
             next unless mapped.includes?(group.group_id)
-            next if groupcast_ids.includes?(group.group_id)
             addresses_for_fabric << Transport::GroupMulticast.address(fabric.fabric_id,
               group.group_id, @transport.port)
           end

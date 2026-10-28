@@ -553,6 +553,10 @@ blocked removal for operator reconciliation.
   restart, B refuses to replay RefreshNode. Reconciliation rejects a missing
   Anchor NodeList entry while B still owns the device, then accepts the
   restored committed entry and completes the handoff.
+  Before device RemoveFabric, the fixture also interrupts after B durably
+  records RemovingOldFabric, restarts B and the device, verifies both fabrics
+  and NodeLists remain, and requires authenticated no-effect reconciliation
+  before retrying the removal.
   It also restarts B after the migrated device commits RemoveFabric and after
   B's Datastore commits RemoveNode, with each acknowledgement lost before the
   migration journal advances. The first reconciliation rejects a missing

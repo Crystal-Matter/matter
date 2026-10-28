@@ -483,6 +483,7 @@ module Matter
       end
 
       restore_dynamic_endpoints
+      reconcile_restored_group_sources
       ensure_joint_fabric_add_noc_guard
     end
 
@@ -1636,6 +1637,61 @@ module Matter
       @persistence.restore_clusters(endpoint.clusters.values)
     rescue error
       Log.error(exception: error) { "failed to restore a dynamic endpoint" }
+    end
+
+    private def reconcile_restored_group_sources : Nil
+      keys = @node.get_cluster(Cluster::GroupKeyManagement)
+      return unless keys
+      # Older Groups documents had only an unscoped map. Their GroupTable is
+      # the sole durable evidence of the endpoint's fabric membership. Copy
+      # that intersection into fabric-scoped Groups state before rebuilding
+      # the operational table from Groups, and persist it before proceeding.
+      @message_handler.clusters.each_value do |cluster|
+        next unless groups = cluster.as?(Cluster::Groups)
+        changed = false
+        @fabric_table.all_fabrics.each do |fabric|
+          keys.operational_legacy_group_table(fabric.fabric_index).each do |entry|
+            next unless entry.endpoints.includes?(groups.endpoint_id.number)
+            changed = groups.migrate_unscoped_group(entry.group_id, fabric.fabric_index) || changed
+          end
+        end
+        if changed
+          raise StorageError.new("Could not persist migrated Groups fabric membership") unless @persistence.save_cluster(groups)
+        end
+      end
+      entries = [] of Cluster::GroupKeyManagement::GroupInfoMapStruct
+      @message_handler.clusters.each_value do |cluster|
+        next unless groups = cluster.as?(Cluster::Groups)
+        groups.fabric_indices.each do |fabric_index|
+          groups.group_names_for_fabric(fabric_index).each do |group_id, name|
+            entries << Cluster::GroupKeyManagement::GroupInfoMapStruct.new(
+              group_id, [groups.endpoint_id.number], name, fabric_index)
+          end
+        end
+      end
+      merged = entries.group_by { |entry| {entry.fabric_index, entry.group_id} }.map do |identity, memberships|
+        Cluster::GroupKeyManagement::GroupInfoMapStruct.new(identity[1],
+          memberships.flat_map(&.endpoints).uniq!.sort!, memberships.first.group_name, identity[0])
+      end.sort_by! { |entry| {entry.fabric_index, entry.group_id} }
+      changed = keys.reconcile_legacy_groups(merged)
+      groupcast_entries = [] of Cluster::GroupKeyManagement::GroupInfoMapStruct
+      groupcast_key_ids = Hash(Tuple(UInt8, UInt16), UInt16).new
+      if groupcast = @node.get_cluster(Cluster::Groupcast)
+        @fabric_table.all_fabrics.each do |fabric|
+          groupcast.membership(fabric.fabric_index).each do |member|
+            next if member.endpoints.empty?
+            groupcast_entries << Cluster::GroupKeyManagement::GroupInfoMapStruct.new(
+              member.group_id, member.endpoints, nil, fabric.fabric_index)
+            groupcast_key_ids[{fabric.fabric_index, member.group_id}] = member.key_set_id
+          end
+        end
+      end
+      groupcast_entries.sort_by! { |entry| {entry.fabric_index, entry.group_id} }
+      changed = keys.reconcile_groupcast_groups(groupcast_entries, groupcast_key_ids) || changed
+      if changed
+        raise StorageError.new("Could not persist restored group membership sources") unless @persistence.save_cluster(keys)
+        @message_handler.refresh_group_memberships
+      end
     end
 
     private def save_dynamic_endpoints : Nil

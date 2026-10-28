@@ -576,6 +576,7 @@ module Matter
                        @case_opener : CaseOpener? = nil,
                        @endpoint_resolver : EndpointResolver? = nil,
                        @on_committed_icac : CommitIcac? = nil,
+                       @after_old_fabric_removed : Proc(Nil)? = nil,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
           @journal = journal || Journal.new(@target_node_id)
           unless @journal.target_node_id == @target_node_id && @target_node_id != DataType::NodeId::UNSPECIFIED && @icac_id != JointCommissioning::UNSPECIFIED_ICAC_ID
@@ -662,6 +663,7 @@ module Matter
           if @journal.stage.cross_signed? || @journal.stage.removing_old?
             advance(Stage::RemovingOld) unless @journal.stage.removing_old?
             remove_old_fabric(session, old_index)
+            @after_old_fabric_removed.try(&.call)
             advance(Stage::Completed)
           end
         end

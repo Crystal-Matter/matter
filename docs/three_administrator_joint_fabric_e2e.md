@@ -40,8 +40,10 @@ witness. A later interruption resumes only the participant follow-up from
 ICAC, while B stops after durably saving the `CrossSigned` stage and before
 sending RemoveFabric. B restarts again and resumes C's old-fabric removal;
 C's new-fabric NOC is unchanged. C still has A's fabric before that resume,
-and B's NOC and Administrator CAT version stay unchanged. The test checks
-that the new Anchor Datastore contains A, B, and C,
+and B's NOC and Administrator CAT version stay unchanged. A second interruption
+after C accepts RemoveFabric leaves B's durable `RemovingOld` journal across a
+B/C restart. B then finishes without changing C's new-fabric NOC or
+cross-signed ICAC. The test also checks that the new Anchor Datastore contains A, B, and C,
 and that C removes its A fabric and installs B's fabric. A follows B's
 Datastore over a verified CASE session. Its
 subscription discovers Descriptor endpoints carrying the Datastore cluster,
@@ -57,8 +59,11 @@ Finally, B removes A. The test interrupts after the remote RemoveFabric
 acknowledgement is lost, restarts B, and verifies that the persisted removal
 journal blocks replay until the operator reconciles A's fabric state. It also
 restarts B after a lost RemoveAdmin acknowledgement and verifies the persisted
-AdminList before reconciliation. B then completes removal and retains B and C
-in its Administrator list. A repeated removal is idempotent.
+AdminList before reconciliation. After C's credential rotation is reconciled,
+the test restarts B and C while B's removal journal is still `AnchorRotated`.
+B completes removal without repeating C's rotation or changing either
+Administrator's NOC, ICAC, CAT version, or the Datastore AdminList. B retains
+B and C in its Administrator list. A repeated removal is idempotent.
 
 Run just this scenario with `./test --e2e-only --
 e2e/spec/joint_fabric_two_jfa_spec.cr`.

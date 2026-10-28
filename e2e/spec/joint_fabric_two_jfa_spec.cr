@@ -100,6 +100,34 @@ private def candidate_admin_icac(client : Matter::Controller::Client,
     .from_tlv(data.to_slice).find!(&.node_id.==(administrator_node_id)).icac
 end
 
+private def administrator_datastore_snapshot(client : Matter::Controller::Client,
+                                             peer : Socket::IPAddress,
+                                             fabric : Matter::Controller::FabricInfo,
+                                             node_id : UInt64) : NamedTuple(admin_entries: Array(Bytes), cat_version: UInt16)
+  session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, fabric,
+    peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
+  im = Matter::Controller::ImClient.new(client, E2E::COMMAND_TIMEOUT)
+  admins = im.read_attribute(session: session, peer: peer,
+    endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
+    cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+    attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+  admin_data = admins.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  entries = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+    .from_tlv(admin_data.to_slice).map(&.to_slice)
+  groups = im.read_attribute(session: session, peer: peer,
+    endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
+    cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+    attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+  group_data = groups.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  version = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+    .from_tlv(group_data.to_slice)
+    .find!(&.group_cat.==(Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT))
+    .group_cat_version || raise Matter::ProtocolError.new("Administrator CAT version is absent")
+  {admin_entries: entries, cat_version: version}
+end
+
 private def administrator_noc(client : Matter::Controller::Client,
                               peer : Socket::IPAddress,
                               fabric : Matter::Controller::FabricInfo,
@@ -1312,6 +1340,72 @@ describe "three provisioned Joint Fabric Administrators" do
         nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     reconciled_registration.status.should eq("ok"), reconciled_registration.error.to_s
+    a_nodes_before_no_effect = jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
+      .map { |entry| {entry.node_id, entry.commissioning_status_entry.state} }
+    b_nodes_before_no_effect = jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16)
+      .map { |entry| {entry.node_id, entry.commissioning_status_entry.state} }
+    interrupted_before_fabric_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
+        interrupt_before_migration_old_fabric_removed: true))
+    interrupted_before_fabric_removal.status.should eq("error")
+    interrupted_before_fabric_removal.error.to_s.should contain("Injected interruption before device RemoveFabric")
+    joiner.restart!
+    migration_target.restart!
+    b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    no_effect_fabric_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64))
+    no_effect_fabric_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldFabric.value)
+    jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
+      .map { |entry| {entry.node_id, entry.commissioning_status_entry.state} }.should eq(a_nodes_before_no_effect)
+    jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16)
+      .map { |entry| {entry.node_id, entry.commissioning_status_entry.state} }.should eq(b_nodes_before_no_effect)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      migration_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    no_effect_fabrics_report = joiner_im.read_attribute(session: b_target_session, peer: migration_peer,
+      endpoint_id: 0_u16, cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+      fabric_filtered: false)
+    no_effect_fabrics_data = no_effect_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    no_effect_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+      .from_tlv(no_effect_fabrics_data.to_slice)
+    no_effect_fabrics.map { |fabric| {fabric.fabric_id, fabric.root_public_key, fabric.node_id, fabric.fabric_index} }
+      .should eq(b_fabrics.map { |fabric| {fabric.fabric_id, fabric.root_public_key, fabric.node_id, fabric.fabric_index} })
+    no_effect_fabrics.any?(&.fabric_id.==(anchor_bootstrap.fabric.fabric_id)).should be_true
+    no_effect_fabrics.any?(&.fabric_id.==(joiner_bootstrap.fabric.fabric_id)).should be_true
+    blocked_no_effect_replay = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    blocked_no_effect_replay.status.should eq("error")
+    blocked_no_effect_replay.error.to_s.should contain("needs authenticated reconciliation")
+    reconciled_no_effect_fabric_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration-no-effect", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
+    reconciled_no_effect_fabric_removal.status.should eq("ok"), reconciled_no_effect_fabric_removal.error.to_s
+    no_effect_reconciled_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64))
+    no_effect_reconciled_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::AnchorNodeAdded.value)
     interrupted_fabric_removal = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
@@ -2374,8 +2468,58 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
       counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
-    # The resumed command must remove only C's old fabric, not replay either
-    # participant cross-sign, rotate B's credentials, or recopy the Datastore.
+    # C accepts RemoveFabric, but B loses the acknowledgement before saving
+    # Completed. The durable RemovingOld stage must survive both restarts.
+    interrupted_old_fabric_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_next_transfer_old_fabric_removed: true))
+    interrupted_old_fabric_removal.status.should eq("error")
+    interrupted_old_fabric_removal.error.to_s.should contain("Injected lost Anchor participant RemoveFabric acknowledgement")
+    removing_old_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    removing_old_stage.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::RemovingOld.value)
+    c_old_after_remove = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_after_remove.fabric_present.should be_false
+    c_new_after_remove = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_new_after_remove.fabric_present.should be_true
+    c_credentials_after_remove = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_credentials_after_remove.noc.should eq(c_new_credentials_before_restart.noc)
+    c_credentials_after_remove.icac.should eq(c_new_credentials_before_restart.icac)
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
+    persisted_removing_old = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    persisted_removing_old.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::RemovingOld.value)
+    c_old_after_removal_restart = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_after_removal_restart.fabric_present.should be_false
+    c_new_after_removal_restart = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_new_after_removal_restart.fabric_present.should be_true
+    c_credentials_after_removal_restart = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_credentials_after_removal_restart.noc.should eq(c_new_credentials_before_restart.noc)
+    c_credentials_after_removal_restart.icac.should eq(c_new_credentials_before_restart.icac)
+    candidate_admin_icac(joiner_client, joiner_peer, joiner_bootstrap.fabric,
+      0xB102_u64, 0xA104_u64).should eq(c_cross_signed_before_restart)
+    # Recovery must recognize the absent old fabric and complete without
+    # replaying participant cross-signing or rotating any credential.
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
@@ -2801,7 +2945,6 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
       counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
-    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
     participant_rotation_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     participant_rotation_retry.status.should eq("error")
@@ -2811,9 +2954,59 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotated", 0xA102_u64,
         nonce: participant_rotation_nonce))
     reconciled_participant_rotation.status.should eq("ok"), reconciled_participant_rotation.error.to_s
+    # C's rotation is now journaled, but removal has not reached Completed.
+    # Restart both peers at this durable boundary so B must skip C's UpdateNOC.
+    reconciled_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-removal-stage", 0xA102_u64))
+    reconciled_removal_stage.inspected_removal_stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::AnchorRotated.value)
+    reconciled_removal_stage.inspected_removal_rotated_nodes.should eq([0xA104_u64])
+    b_before_completion = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    c_before_completion = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    datastore_before_completion = administrator_datastore_snapshot(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    datastore_before_completion[:cat_version].should eq(before_removal_cat_version + 1_u16)
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
+    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    persisted_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-removal-stage", 0xA102_u64))
+    persisted_removal_stage.inspected_removal_stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::AnchorRotated.value)
+    persisted_removal_stage.inspected_removal_rotated_nodes.should eq([0xA104_u64])
+    b_after_reconciliation_restart = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    b_after_reconciliation_restart.noc.should eq(b_before_completion.noc)
+    b_after_reconciliation_restart.icac.should eq(b_before_completion.icac)
+    c_after_reconciliation_restart = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_after_reconciliation_restart.noc.should eq(c_before_completion.noc)
+    c_after_reconciliation_restart.icac.should eq(c_before_completion.icac)
+    administrator_datastore_snapshot(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64).should eq(datastore_before_completion)
     removed = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     removed.status.should eq("ok"), removed.error.to_s
+    completed_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-removal-stage", 0xA102_u64))
+    completed_removal_stage.inspected_removal_stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::Completed.value)
+    completed_removal_stage.inspected_removal_rotated_nodes.should eq([0xA104_u64])
+    b_after_completion = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    b_after_completion.noc.should eq(b_before_completion.noc)
+    b_after_completion.icac.should eq(b_before_completion.icac)
+    c_after_completion = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_after_completion.noc.should eq(c_before_completion.noc)
+    c_after_completion.icac.should eq(c_before_completion.icac)
+    administrator_datastore_snapshot(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64).should eq(datastore_before_completion)
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
     final_admins = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,

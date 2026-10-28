@@ -94,6 +94,94 @@ describe "Matter 1.6 Groupcast Listener" do
     recovered_acl.auxiliary_acl(1_u8).should be_empty
   end
 
+  it "keeps legacy and Groupcast recipients separate across rotation, leave, and restore" do
+    root = Matter::DataType::EndpointNumber::ROOT
+    keys = GroupKeys.new(root, feature_map: GroupKeys::Feature::Groupcast)
+    acl = GroupAcl.new(root, feature_map: GroupAcl::Feature::Extension | GroupAcl::Feature::Auxiliary)
+    listener = GroupcastServer.new(root, keys, acl)
+    group_id = 0x1234_u16
+    fabric = 1_u8
+    old_key_id = 7_u16
+    new_key_id = 8_u16
+    acl.acl = [GroupAcl::AccessControlEntry.new(GroupAcl::AccessControlEntryPrivilege::Administer,
+      GroupAcl::AccessControlEntryAuthMode::CASE, [10_u64], nil, fabric)]
+    [old_key_id, new_key_id].each do |key_id|
+      keys.handle_key_set_write(GroupKeys::KeySetWriteRequest.new(
+        GroupKeys::GroupKeySetStruct.new(key_id, epoch_key0: Bytes.new(16, key_id.to_u8),
+          epoch_start_time0: 1_u64)), fabric)
+    end
+    keys.add_group_key_map(group_id, old_key_id, fabric)
+    keys.add_group(group_id, 1_u16, "Legacy", fabric)
+
+    as_fabric(listener, fabric) do
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(group_id, [2_u16], old_key_id))
+        .should eq(Matter::InteractionModel::Status.success)
+      keys.operational_group_table(fabric).first.endpoints.sort!.should eq([1_u16, 2_u16])
+
+      listener.update_group_key(GroupcastServer::UpdateGroupKeyRequest.new(group_id, new_key_id))
+        .should eq(Matter::InteractionModel::Status.success)
+      keys.operational_group_key_map(fabric).first.group_key_set_id.should eq(new_key_id)
+      keys.operational_group_table(fabric).first.endpoints.sort!.should eq([1_u16, 2_u16])
+      keys.handle_key_set_remove(GroupKeys::KeySetRemoveRequest.new(old_key_id), fabric)
+
+      listener.leave_group(GroupcastServer::LeaveGroupRequest.new(group_id, [2_u16]))
+        .as(GroupcastServer::LeaveGroupResponse)
+      keys.operational_group_table(fabric).first.endpoints.should eq([1_u16])
+      keys.operational_group_key_map(fabric).first.group_key_set_id.should eq(new_key_id)
+
+      listener.join_group(GroupcastServer::JoinGroupRequest.new(group_id, [1_u16, 2_u16], new_key_id))
+        .should eq(Matter::InteractionModel::Status.success)
+      keys.remove_group(group_id, 1_u16, fabric)
+      keys.operational_group_table(fabric).first.endpoints.sort!.should eq([1_u16, 2_u16])
+      keys.add_group(group_id, 1_u16, "Legacy", fabric)
+      listener.leave_group(GroupcastServer::LeaveGroupRequest.new(group_id, [1_u16, 2_u16]))
+        .as(GroupcastServer::LeaveGroupResponse)
+      keys.operational_group_table(fabric).first.endpoints.should eq([1_u16])
+      keys.operational_group_key_map(fabric).first.group_key_set_id.should eq(new_key_id)
+    end
+
+    saved_keys = keys.save_state.as(Matter::Storage::Document)
+    saved_listener = listener.save_state.as(Matter::Storage::Document)
+    recovered_keys = GroupKeys.new(root, feature_map: GroupKeys::Feature::Groupcast)
+    recovered_acl = GroupAcl.new(root, feature_map: GroupAcl::Feature::Extension | GroupAcl::Feature::Auxiliary)
+    recovered = GroupcastServer.new(root, recovered_keys, recovered_acl)
+    recovered_keys.restore_state(saved_keys)
+    recovered.restore_state(saved_listener)
+    recovered_keys.operational_group_table(fabric).first.endpoints.should eq([1_u16])
+    recovered_keys.operational_group_key_map(fabric).first.group_key_set_id.should eq(new_key_id)
+    recovered_keys.get_key_set(old_key_id, fabric).should be_nil
+    recovered_keys.get_key_set(new_key_id, fabric).should_not be_nil
+    recovered_acl.auxiliary_acl(fabric).should be_empty
+    recovered_keys.remove_group(group_id, 1_u16, fabric)
+    recovered_keys.operational_group_table(fabric).should be_empty
+  end
+
+  it "migrates an older combined table using restored Groups and Groupcast sources" do
+    root = Matter::DataType::EndpointNumber::ROOT
+    fabric = 1_u8
+    group_id = 0x1234_u16
+    key_id = 7_u16
+    keys = GroupKeys.new(root, feature_map: GroupKeys::Feature::Groupcast)
+    keys.add_group(group_id, 1_u16, "Legacy", fabric)
+    keys.replace_groupcast_membership(group_id, [2_u16], key_id, fabric)
+    old_document = keys.save_state.as(Matter::Storage::Document)
+    old_document.delete("legacy_group_table")
+    old_document.delete("groupcast_group_table")
+
+    recovered = GroupKeys.new(root, feature_map: GroupKeys::Feature::Groupcast)
+    recovered.restore_state(old_document)
+    recovered.reconcile_legacy_groups([
+      GroupKeys::GroupInfoMapStruct.new(group_id, [1_u16], "Legacy", fabric),
+    ]).should be_true
+    recovered.reconcile_groupcast_groups([
+      GroupKeys::GroupInfoMapStruct.new(group_id, [2_u16], nil, fabric),
+    ], { {fabric, group_id} => key_id }).should be_true
+    recovered.operational_group_table(fabric).first.endpoints.sort!.should eq([1_u16, 2_u16])
+    recovered.replace_groupcast_membership(group_id, [] of UInt16, key_id, fabric)
+    recovered.operational_group_table(fabric).first.endpoints.should eq([1_u16])
+    recovered.operational_group_key_map(fabric).first.group_key_set_id.should eq(key_id)
+  end
+
   it "keeps LeaveGroupResponse within its 20-endpoint wire bound" do
     listener, keys, acl = listener_fixture
     acl.acl = [GroupAcl::AccessControlEntry.new(GroupAcl::AccessControlEntryPrivilege::Administer,

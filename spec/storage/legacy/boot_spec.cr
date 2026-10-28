@@ -218,6 +218,52 @@ describe "Booting a device from a legacy import" do
     end
   end
 
+  it "migrates legacy unscoped Groups membership to its authenticated fabric and keeps it after restart" do
+    LegacyBootSpec.with_temp_file do |path|
+      LegacyBootSpec.import(path)
+      device = LegacyBootDevice.new(Matter::Storage::YamlFile.new(path))
+      begin
+        device.groups.group_names_for_fabric(LegacyBootSpec::FABRIC_INDEX).should eq({LegacyBootSpec::GROUP_ID => LegacyBootSpec::GROUP_NAME})
+        device.groups.group_names_for_fabric(LegacyBootSpec::OPERATE_FABRIC).should be_empty
+        device.groups.with_request_context do
+          device.groups.request_is_case_session = true
+          device.groups.request_fabric_index = LegacyBootSpec::FABRIC_INDEX
+          device.groups.view_group(Matter::Cluster::Groups::ViewGroupRequest.new(
+            Matter::DataType::GroupId.new(LegacyBootSpec::GROUP_ID))).status_code.should eq(Matter::InteractionModel::StatusCode::Success)
+          device.groups.request_fabric_index = LegacyBootSpec::OPERATE_FABRIC
+          device.groups.view_group(Matter::Cluster::Groups::ViewGroupRequest.new(
+            Matter::DataType::GroupId.new(LegacyBootSpec::GROUP_ID))).status_code.should eq(Matter::InteractionModel::StatusCode::NotFound)
+        end
+      ensure
+        device.release
+      end
+
+      restarted = LegacyBootDevice.new(Matter::Storage::YamlFile.new(path))
+      begin
+        restarted.groups.group_names_for_fabric(LegacyBootSpec::FABRIC_INDEX).should eq({LegacyBootSpec::GROUP_ID => LegacyBootSpec::GROUP_NAME})
+        restarted.groups.group_names_for_fabric(LegacyBootSpec::OPERATE_FABRIC).should be_empty
+        restarted.group_key_management.group_table(LegacyBootSpec::FABRIC_INDEX).first.endpoints.should eq([LegacyBootDevice::LIGHT_ENDPOINT])
+        restarted.groups.with_request_context do
+          restarted.groups.request_is_case_session = true
+          restarted.groups.request_fabric_index = LegacyBootSpec::FABRIC_INDEX
+          restarted.groups.remove_group(Matter::Cluster::Groups::RemoveGroupRequest.new(
+            Matter::DataType::GroupId.new(LegacyBootSpec::GROUP_ID))).status_code.should eq(Matter::InteractionModel::StatusCode::Success)
+        end
+        restarted.persistence.save_cluster(restarted.groups).should be_true
+      ensure
+        restarted.release
+      end
+
+      removed = LegacyBootDevice.new(Matter::Storage::YamlFile.new(path))
+      begin
+        removed.groups.group_names_for_fabric(LegacyBootSpec::FABRIC_INDEX).should be_empty
+        removed.group_key_management.group_table(LegacyBootSpec::FABRIC_INDEX).should be_empty
+      ensure
+        removed.release
+      end
+    end
+  end
+
   it "keeps the device identity" do
     LegacyBootSpec.with_imported_device do |device|
       device.hostname.should eq(LegacyBootSpec::HOSTNAME)
