@@ -45,7 +45,6 @@ end
 
 private def wire_preset_write(cluster : PresetThermostat, data : Array(Matter::InteractionModel::AttributeDataIB),
                               *, subject : UInt64 = 11_u64) : Array(PresetCode)
-  endpoint = cluster.endpoint_id.number
   Matter::Protocol::IMHandler.write_attributes(data,
     case_im_clusters(cluster, subject_id: subject),
     session_id: 9_u16, is_case_session: true, fabric_index: 1_u8,

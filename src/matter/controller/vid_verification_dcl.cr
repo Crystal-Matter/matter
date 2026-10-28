@@ -97,8 +97,8 @@ module Matter
             record = item.as_h
             type = case record["certificateType"].raw
                    when "OperationalPKI", DclCertificate::Type::OperationalPKI.value then DclCertificate::Type::OperationalPKI
-                   when "VIDSignerPKI", DclCertificate::Type::VIDSignerPKI.value   then DclCertificate::Type::VIDSignerPKI
-                   else                          raise Matter::AuthenticationError.new("Unknown DCL certificate type")
+                   when "VIDSignerPKI", DclCertificate::Type::VIDSignerPKI.value     then DclCertificate::Type::VIDSignerPKI
+                   else                                                                   raise Matter::AuthenticationError.new("Unknown DCL certificate type")
                    end
             vendor_id = record["vid"].raw.to_s.to_u16
             pem = record["pemCert"].as_s

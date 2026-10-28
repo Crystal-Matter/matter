@@ -48,7 +48,8 @@ module Matter
       def observe_failsafe_arm(session_id : UInt64?, window_fabric_index : UInt8?,
                                joint_window : Bool, case_session : Bool) : Nil
         reset
-        return unless joint_window && !case_session && session_id && window_fabric_index
+        return unless joint_window && session_id && window_fabric_index
+        return if case_session
         @active_session_id = session_id
         candidates = @administrators.call.compact_map do |administrator|
           next unless administrator.administrator_fabric_index == window_fabric_index

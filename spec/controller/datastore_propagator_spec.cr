@@ -45,9 +45,7 @@ private class BusyDatastoreDelivery < Matter::Controller::DatastorePropagator::D
 
   def deliver(store : Matter::Cluster::JointFabricDatastore, node_id : UInt64) : Nil
     @attempts += 1
-    failure_code = @attempts <= @failures_before_success ?
-                   Matter::InteractionModel::StatusCode::Busy.value :
-                   Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE
+    failure_code = @attempts <= @failures_before_success ? Matter::InteractionModel::StatusCode::Busy.value : Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE
     store.complete_node(node_id, failure_code)
   end
 end
@@ -217,12 +215,12 @@ describe Matter::Controller::DatastorePropagator do
     original.node_key_set_list = [
       Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct.new(
         0x100_u64, 1_u16, Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
-          Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 0_u32,
-          Matter::InteractionModel::StatusCode::Busy.value)),
+        Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 0_u32,
+        Matter::InteractionModel::StatusCode::Busy.value)),
       Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct.new(
         0x100_u64, 2_u16, Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
-          Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::CommitFailed, 0_u32,
-          Matter::InteractionModel::StatusCode::ResourceExhausted.value)),
+        Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::CommitFailed, 0_u32,
+        Matter::InteractionModel::StatusCode::ResourceExhausted.value)),
     ]
     restored = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(0_u16))
     restored.restore_state(original.save_state.as(Matter::Storage::Document))

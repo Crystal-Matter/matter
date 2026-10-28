@@ -1018,7 +1018,7 @@ module Matter
       # endpoint in AnnounceJointFabricAdministrator, not to another JFA
       # endpoint that happens to be discoverable on the same Anchor node.
       def read_announced_administrator_fabric_index(im : ImClient, session : Session::SecureContext,
-                                                     peer : Socket::IPAddress, endpoint : UInt16) : UInt8
+                                                    peer : Socket::IPAddress, endpoint : UInt16) : UInt8
         types = read_descriptor_list(Cluster::Descriptor::DeviceTypeStruct, im, session, peer,
           endpoint, Cluster::Descriptor::ATTR_DEVICE_TYPE_LIST)
         servers = read_descriptor_list(UInt32, im, session, peer,

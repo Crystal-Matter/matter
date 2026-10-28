@@ -2537,15 +2537,16 @@ module MatterJointFabricAdministrator
       role = JointFabricRoleState.from_document(role_document)
       durable_administrator = durable_transfer_administrator(ANCHOR_JFA_ENDPOINT_ID)
       durable_datastore = durable_transfer_datastore
-      unless !role.anchor? && !role.transfer_complete? &&
-             FabricBindingState.from_document(binding_document).matches?(old_fabric) &&
-             joined_icac_matches_fabric?(certificate, old_fabric) &&
-             !joined_icac_matches_fabric?(certificate, new_fabric) &&
-             joint_fabric_service.try(&.cross_signed_icac) == certificate &&
-             joint_fabric_administrator.administrator_fabric_index == old_fabric.fabric_index &&
-             durable_administrator.administrator_fabric_index == old_fabric.fabric_index &&
-             joint_fabric_datastore.joint_fabric_index == old_fabric.fabric_index &&
-             joint_fabric_datastore.save_state == durable_datastore.save_state
+      valid_old_binding = !role.anchor? && !role.transfer_complete? &&
+                          FabricBindingState.from_document(binding_document).matches?(old_fabric) &&
+                          joined_icac_matches_fabric?(certificate, old_fabric) &&
+                          !joined_icac_matches_fabric?(certificate, new_fabric) &&
+                          joint_fabric_service.try(&.cross_signed_icac) == certificate &&
+                          joint_fabric_administrator.administrator_fabric_index == old_fabric.fabric_index &&
+                          durable_administrator.administrator_fabric_index == old_fabric.fabric_index &&
+                          joint_fabric_datastore.joint_fabric_index == old_fabric.fabric_index &&
+                          joint_fabric_datastore.save_state == durable_datastore.save_state
+      unless valid_old_binding
         raise Matter::AuthenticationError.new("Participant old JFA binding or ICAC changed during cross-sign recovery")
       end
       CommandResult.new("ok", nonce: nonce,

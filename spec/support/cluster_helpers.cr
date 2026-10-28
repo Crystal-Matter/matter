@@ -31,7 +31,7 @@ def case_im_clusters(cluster : Matter::Cluster::Base, *, fabric_index : UInt8 = 
     [subject_id], nil, fabric_index)
   {
     {Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::AccessControl::CLUSTER_ID} => acl.as(Matter::Cluster::Base),
-    {cluster.endpoint_id.number, cluster.cluster_id.id} => cluster,
+    {cluster.endpoint_id.number, cluster.cluster_id.id}                          => cluster,
   }
 end
 

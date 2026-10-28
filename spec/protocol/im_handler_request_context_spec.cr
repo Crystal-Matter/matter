@@ -64,7 +64,7 @@ describe "IMHandler request context" do
         fabric_index: 2_u8, is_case_session: true, session_id: 20_u64,
         peer_subject_ids: [0x202_u64])
       writer_done.send(response.first.command_status.try(&.status.status) ==
-        Matter::InteractionModel::StatusCode::Success.value)
+                       Matter::InteractionModel::StatusCode::Success.value)
     end
     select
     when writer_started.receive
