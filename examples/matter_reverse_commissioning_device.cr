@@ -24,6 +24,7 @@ module MatterReverseCommissioning
     ITERATIONS                     = 1000_u32
     SALT_LENGTH                    =       32
     COMMISSION_TIMEOUT             = 90.seconds
+    WINDOW_READY_POLL              = 50.milliseconds
     SDK_ROOT_ENV                   = "MATTER_REVERSE_SDK_ROOT"
     SDK_PAA_CERT                   = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
     SDK_CD_CERT_GLOB               = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
@@ -97,6 +98,7 @@ module MatterReverseCommissioning
       return unless crystal_target?
       path = ENV["MATTER_REVERSE_WINDOW_PATH"]? ||
              raise Matter::ConfigurationError.new("Missing Crystal reverse-window handoff path")
+      File.delete("#{path}.ready") if File.exists?("#{path}.ready")
       File.write(path, {
         "commissioning_timeout" => window.commissioning_timeout.to_i64,
         "verifier"              => window.pake_passcode_verifier.hexstring,
@@ -104,6 +106,24 @@ module MatterReverseCommissioning
         "iterations"            => window.iterations.to_i64,
         "salt"                  => window.salt.hexstring,
       }.to_json)
+    end
+
+    # The host's deferred commission task can run before chip-tool has opened
+    # the target's enhanced window. The E2E runner signals readiness with the
+    # verifier from this exact response only after OpenCommissioningWindow succeeds.
+    private def wait_for_crystal_target_window(window : Control::ReverseOpenCommissioningWindowResponse) : Nil
+      return unless crystal_target?
+      path = ENV["MATTER_REVERSE_WINDOW_PATH"]? ||
+             raise Matter::ConfigurationError.new("Missing Crystal reverse-window handoff path")
+      ready_path = "#{path}.ready"
+      expected_verifier = window.pake_passcode_verifier.hexstring
+      deadline = Time.instant + COMMISSION_TIMEOUT
+      until File.exists?(ready_path) && File.read(ready_path) == expected_verifier
+        if Time.instant >= deadline
+          raise Matter::TimeoutError.new("Crystal reverse target window was not opened")
+        end
+        sleep WINDOW_READY_POLL
+      end
     end
 
     protected def before_start : Nil
@@ -137,6 +157,7 @@ module MatterReverseCommissioning
           publish_test_window(window)
           task = -> do
             puts "Reverse commissioning response sent: request=#{approval.request_id}"
+            wait_for_crystal_target_window(window)
             client = Matter::Controller::Client.new
             begin
               store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(state_path))
