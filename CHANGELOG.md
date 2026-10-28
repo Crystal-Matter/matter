@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric keyed group revocation
+
+- Shared group revocation now accepts an explicit fresh key set for groups with
+  a GroupKeySetID. It stages the replacement key set and rotates the key set ID
+  and GroupCATVersion together, then tracks target key, group, and ACL delivery
+  before reporting revocation effective. Hosts must distribute the new epoch
+  key to surviving groupcast controllers.
+
 ### Joint Fabric Datastore removals
 
 - `RemoveGroupIDFromEndpointForNode` now checks that the endpoint exists and

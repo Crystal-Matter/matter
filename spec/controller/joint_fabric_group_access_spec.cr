@@ -23,6 +23,8 @@ private class JointGroupImClient < Matter::Controller::ImClient
             when JointStore::ATTR_ANCHOR_ROOT_CA         then @store.anchor_root_ca.to_tlv
             when JointStore::ATTR_ANCHOR_NODE_ID         then (@reported_anchor_node_id || @store.anchor_node_id).to_tlv
             when JointStore::ATTR_GROUP_LIST             then @store.group_list.to_tlv
+            when JointStore::ATTR_GROUP_KEY_SET_LIST     then @store.group_key_set_list.to_tlv
+            when JointStore::ATTR_NODE_KEY_SET_LIST      then @store.node_key_set_list.to_tlv
             when JointStore::ATTR_ENDPOINT_GROUP_ID_LIST then @store.endpoint_group_id_list.to_tlv
             when JointStore::ATTR_NODE_ACL_LIST          then @store.node_acl_list.to_tlv
             else                                              raise Matter::ProtocolError.new("Unexpected Joint Fabric Datastore read")
@@ -38,6 +40,8 @@ private class JointGroupImClient < Matter::Controller::ImClient
              timed_request_timeout : Time::Span = DEFAULT_TIMED_REQUEST_TIMEOUT) : Matter::InteractionModel::InvokeResponseMessage
     @commands << command_id
     result = case command_id
+             when JointStore::CMD_ADD_KEY_SET
+               @store.add_key_set(JointStore::AddKeySetRequest.from_slice(fields))
              when JointStore::CMD_ADD_GROUP
                @store.add_group(JointStore::AddGroupRequest.from_slice(fields))
              when JointStore::CMD_ADD_GROUP_ID_TO_ENDPOINT_FOR_NODE
@@ -230,6 +234,155 @@ describe "Joint Fabric shared group revocation" do
     receipt.current_version.should eq(3_u16)
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+  ensure
+    im.try(&.close)
+  end
+
+  it "rotates the key set and CAT together for a keyed View group" do
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(0x1234_u64, 0x100_u64, 0xFFF1_u16)
+    authority = bootstrap.fabric
+    revoked = Matter::Controller::SharedFabric.delegate_joint(authority, 0x101_u64, 0x1234_u16, 2_u16)
+    survivor = Matter::Controller::SharedFabric.delegate_joint(authority, 0x102_u64, 0x1234_u16, 2_u16)
+    survivor_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    Matter::Controller::SharedFabric.install(survivor_store, survivor)
+    datastore = JointStore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    datastore.configure_anchor(authority.root_cert, 0x100_u64, 0xFFF1_u16, "Anchor")
+    old_key = JointStore::DatastoreGroupKeySetStruct.new(10_u16,
+      JointStore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(JointStore::EPOCH_KEY_BYTES, 0x11_u8), 1_u64, nil, nil, nil, nil)
+    replacement = JointStore::DatastoreGroupKeySetStruct.new(11_u16,
+      JointStore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(JointStore::EPOCH_KEY_BYTES, 0x22_u8), 2_u64, nil, nil, nil, nil)
+    view = JointStore::DatastoreAccessControlEntryPrivilegeEnum::View
+    datastore.add_key_set(JointStore::AddKeySetRequest.new(old_key)).success?.should be_true
+    datastore.add_group(JointStore::AddGroupRequest.new(10_u16, "Viewers", 10_u16, 0x1234_u16,
+      2_u16, view)).success?.should be_true
+    datastore.add_pending_node(JointStore::AddPendingNodeRequest.new(0x200_u64, "Lamp"))
+    datastore.record_endpoint(0x200_u64, 1_u16, "Light")
+    datastore.add_group_id_to_endpoint_for_node(JointStore::AddGroupIDToEndpointForNodeRequest.new(
+      0x200_u64, 1_u16, 10_u16)).success?.should be_true
+    datastore.complete_node_key_set(0x200_u64, 10_u16).should be_true
+    datastore.complete_group_membership(0x200_u64, 1_u16, 10_u16).should be_true
+    subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(0x1234_u16, 2_u16)).id
+    acl = JointStore::DatastoreAccessControlEntryStruct.new(view,
+      JointStore::DatastoreAccessControlEntryAuthModeEnum::CASE, [subject], nil)
+    datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, acl)).success?.should be_true
+    acl_id = datastore.node_acl_list.last.list_id
+    datastore.complete_acl(0x200_u64, acl_id).should be_true
+    im = JointGroupImClient.new(datastore)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16), case_session: true,
+      peer_node_id: Matter::DataType::NodeId.new(0x100_u64))
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+
+    expect_raises(Matter::ConfigurationError, /explicit key rotation/) do
+      Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+        datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+        survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+        anchor_node_id: 0x100_u64)
+    end
+    reused = JointStore::DatastoreGroupKeySetStruct.new(11_u16,
+      JointStore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      old_key.epoch_key0, 2_u64, nil, nil, nil, nil)
+    expect_raises(Matter::ConfigurationError, /reuses a revoked epoch key/) do
+      Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+        datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+        survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+        anchor_node_id: 0x100_u64,
+        key_rotation: Matter::Controller::SharedFabric::JointGroupKeyRotation.new(10_u16, reused))
+    end
+    im.commands.should be_empty
+
+    rotation = Matter::Controller::SharedFabric::JointGroupKeyRotation.new(10_u16, replacement)
+    im.lose_update_response = true
+    expect_raises(Matter::ProtocolError, /lost UpdateGroup response/) do
+      Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+        datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+        survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+        anchor_node_id: 0x100_u64, key_rotation: rotation)
+    end
+    im.commands.should eq([JointStore::CMD_ADD_KEY_SET, JointStore::CMD_UPDATE_GROUP])
+    receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+      datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+      survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+      anchor_node_id: 0x100_u64, key_rotation: rotation)
+    im.commands.should eq([JointStore::CMD_ADD_KEY_SET, JointStore::CMD_UPDATE_GROUP])
+    datastore.group_list.last.group_key_set_id.should eq(11_u16)
+    datastore.group_list.last.group_cat_version.should eq(3_u16)
+    receipt = Matter::Controller::SharedFabric::JointGroupRevocation.from_document(receipt.to_document)
+    receipt.previous_key_set_id.should eq(10_u16)
+    receipt.current_key_set_id.should eq(11_u16)
+    receipt.group_permission.should eq(view)
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.complete_node_key_set(0x200_u64, 11_u16, 1_u8).should be_true
+    Matter::Controller::SharedFabric.retry_failed_joint_group_revocation(im, session, peer, 1_u16, receipt)
+    im.commands.last.should eq(JointStore::CMD_REFRESH_NODE)
+    datastore.complete_node_key_set(0x200_u64, 11_u16).should be_true
+    datastore.complete_group_membership(0x200_u64, 1_u16, 10_u16).should be_true
+    datastore.complete_acl(0x200_u64, acl_id).should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.complete_node_key_set(0x200_u64, 10_u16).should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
+  ensure
+    im.try(&.close)
+  end
+
+  it "keeps a shared former key set when another group still needs it" do
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(0x1234_u64, 0x100_u64, 0xFFF1_u16)
+    authority = bootstrap.fabric
+    datastore = JointStore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    datastore.configure_anchor(authority.root_cert, 0x100_u64, 0xFFF1_u16, "Anchor")
+    view = JointStore::DatastoreAccessControlEntryPrivilegeEnum::View
+    old_key = JointStore::DatastoreGroupKeySetStruct.new(10_u16,
+      JointStore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(JointStore::EPOCH_KEY_BYTES, 0x11_u8), 1_u64, nil, nil, nil, nil)
+    replacement = JointStore::DatastoreGroupKeySetStruct.new(11_u16,
+      JointStore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(JointStore::EPOCH_KEY_BYTES, 0x22_u8), 2_u64, nil, nil, nil, nil)
+    datastore.add_key_set(JointStore::AddKeySetRequest.new(old_key)).success?.should be_true
+    datastore.add_key_set(JointStore::AddKeySetRequest.new(replacement)).success?.should be_true
+    datastore.add_group(JointStore::AddGroupRequest.new(10_u16, "Rotated", 11_u16, 0x1234_u16,
+      3_u16, view)).success?.should be_true
+    datastore.add_group(JointStore::AddGroupRequest.new(20_u16, "Still keyed", 10_u16, nil,
+      nil, view)).success?.should be_true
+    datastore.add_pending_node(JointStore::AddPendingNodeRequest.new(0x200_u64, "Lamp"))
+    datastore.record_endpoint(0x200_u64, 1_u16, "Light")
+    {10_u16, 20_u16}.each do |group_id|
+      datastore.add_group_id_to_endpoint_for_node(JointStore::AddGroupIDToEndpointForNodeRequest.new(
+        0x200_u64, 1_u16, group_id)).success?.should be_true
+      datastore.complete_group_membership(0x200_u64, 1_u16, group_id).should be_true
+    end
+    datastore.complete_node_key_set(0x200_u64, 10_u16).should be_true
+    datastore.complete_node_key_set(0x200_u64, 11_u16).should be_true
+    subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(0x1234_u16, 3_u16)).id
+    acl = JointStore::DatastoreAccessControlEntryStruct.new(view,
+      JointStore::DatastoreAccessControlEntryAuthModeEnum::CASE, [subject], nil)
+    datastore.add_acl_to_node(JointStore::AddACLToNodeRequest.new(0x200_u64, acl)).success?.should be_true
+    acl_id = datastore.node_acl_list.last.list_id
+    datastore.complete_acl(0x200_u64, acl_id).should be_true
+    im = JointGroupImClient.new(datastore)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16), case_session: true,
+      peer_node_id: Matter::DataType::NodeId.new(0x100_u64))
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    receipt = Matter::Controller::SharedFabric::JointGroupRevocation.new(10_u16, 0x1234_u16,
+      2_u16, 3_u16, [0x200_u64],
+      [Matter::Controller::SharedFabric::JointGroupACLTarget.new(0x200_u64, acl_id)],
+      authority.root_cert, 0x100_u64, view, 10_u16, 11_u16,
+      Matter::Crypto::StandardCrypto.new.compute_sha256(replacement.to_slice),
+      [Matter::Controller::SharedFabric::JointGroupMembershipTarget.new(0x200_u64, 1_u16)])
+    datastore.node_key_set_list.map(&.group_key_set_id).should contain(10_u16)
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
   ensure
     im.try(&.close)
   end

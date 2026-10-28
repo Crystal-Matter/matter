@@ -91,6 +91,16 @@ blocked removal for operator reconciliation.
   Anchor, recognizes the already rotated CAT version and ACLs, and returns a
   new Pending receipt without issuing another UpdateGroup. Keep the original
   revoked NOC available until the receipt is obtained.
+  For a group with `GroupKeySetID`, supply a `JointGroupKeyRotation` containing
+  the previous key set ID and a new, unused `DatastoreGroupKeySetStruct` with
+  fresh epoch keys. The method stages `AddKeySet` before one `UpdateGroup`
+  carrying both the replacement key set ID and next CAT version, as required
+  by Core §11.24.4.5. The host must retain the rotation input for retries and
+  securely install the new epoch key on every surviving groupcast controller;
+  the Datastore only distributes it to target devices. A keyed receipt remains
+  Pending until the replacement key set and group mapping are committed on
+  every target and an unneeded prior key set has been removed. Never treat a
+  queued Datastore update as proof of revoked unicast or groupcast access.
 - After JCM, a joining Administrator can use
   `JointFabricDeviceMigration.cross_signed_issuer` with its original ICAC
   private key and A's cross-signed ICAC. The resulting issuer's
