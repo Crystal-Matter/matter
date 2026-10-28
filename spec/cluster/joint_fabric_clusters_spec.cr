@@ -850,6 +850,39 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.data_version.should eq(version)
   end
 
+  it "requires an endpoint for binding removal and treats an absent binding as a no-op" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    missing_request = Datastore::RemoveBindingFromEndpointForNodeRequest.new(1_u16, 1_u16, 42_u64)
+    cluster.remove_binding_from_endpoint_for_node(missing_request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    cluster.remove_binding_from_endpoint_for_node(missing_request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.record_endpoint(42_u64, 1_u16, "Light").success?.should be_true
+
+    first_binding = Datastore::DatastoreBindingTargetStruct.new(node: 43_u64, endpoint: 1_u16)
+    second_binding = Datastore::DatastoreBindingTargetStruct.new(node: 44_u64, endpoint: 1_u16)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, first_binding)).success?.should be_true
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(42_u64, 1_u16, second_binding)).success?.should be_true
+    first_id = cluster.endpoint_binding_list.find!(&.binding.node.==(43_u64)).list_id
+    second_id = cluster.endpoint_binding_list.find!(&.binding.node.==(44_u64)).list_id
+    request = Datastore::RemoveBindingFromEndpointForNodeRequest.new(first_id, 1_u16, 42_u64)
+
+    cluster.remove_binding_from_endpoint_for_node(request).success?.should be_true
+    cluster.endpoint_binding_list.find!(&.list_id.==(first_id)).status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_binding_from_endpoint_for_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+
+    cluster.complete_binding(42_u64, 1_u16, first_id).should be_true
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_binding_from_endpoint_for_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+    cluster.endpoint_binding_list.map(&.list_id).should eq([second_id])
+  end
+
   it "preserves pending group removal when the group's friendly name changes" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
