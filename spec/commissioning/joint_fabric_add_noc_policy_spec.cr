@@ -74,6 +74,22 @@ describe Matter::Commissioning::JointFabricAddNocPolicy do
       Matter::Commissioning::CredentialJournal::ID).should be_nil
   end
 
+  it "rejects stale CAT versions even when the reserved CAT identities match" do
+    stale_admin = Matter::DataType::CaseAuthenticatedTag.create(admin_id, 1_u16).value
+    service, key = jcm_add_noc_service(jcm_datastore, 42_u64)
+    service.add_noc(jcm_noc(key, stale_admin), nil, Bytes.new(16, 0_u8),
+      anchor_subject, 0xFFF1_u16, 42_u64).status
+      .should eq(Matter::Commissioning::NocStatus::InvalidNoc)
+    service.fabric_table.size.should eq(0)
+
+    stale_anchor_subject = jcm_subject(anchor_id, 2_u16)
+    another, another_key = jcm_add_noc_service(jcm_datastore, 42_u64)
+    another.add_noc(jcm_noc(another_key, admin_cat), nil, Bytes.new(16, 0_u8),
+      stale_anchor_subject, 0xFFF1_u16, 42_u64).status
+      .should eq(Matter::Commissioning::NocStatus::InvalidAdminSubject)
+    another.fabric_table.size.should eq(0)
+  end
+
   it "accepts the current JCM CAT pair and preserves ordinary AddNOC on a non-JCM session" do
     service, key = jcm_add_noc_service(jcm_datastore, 42_u64)
     service.add_noc(jcm_noc(key, admin_cat), nil, Bytes.new(16, 0_u8),
