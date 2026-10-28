@@ -25,8 +25,8 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
       3840_u16, RootAdmin::PBKDF2_MIN_ITERATIONS.to_u32,
       Bytes.new(RootAdmin::PAKE_SALT_MIN_LENGTH))
 
-    cluster.get_command_metadata(Admin::CMD_OPEN_COMMISSIONING_WINDOW).not_nil!.timed?.should be_true
-    cluster.get_command_metadata(Admin::CMD_REVOKE_COMMISSIONING).not_nil!.timed?.should be_true
+    cluster.get_command_metadata(Admin::CMD_OPEN_COMMISSIONING_WINDOW).try(&.timed?).should be_true
+    cluster.get_command_metadata(Admin::CMD_REVOKE_COMMISSIONING).try(&.timed?).should be_true
     cluster.invoke_command(Admin::CMD_OPEN_COMMISSIONING_WINDOW, request.to_tlv(nil),
       is_case_session: true, fabric_index: 1_u8).should eq(Status.success)
     cluster.invoke_command(Admin::CMD_REVOKE_COMMISSIONING,
