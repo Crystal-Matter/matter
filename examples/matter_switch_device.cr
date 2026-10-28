@@ -92,22 +92,35 @@ Examples.main("Matter Switch Device") do
   end
   if drop_path = ENV["MATTER_SWITCH_E2E_DROP_REMOVE_FABRIC_RESPONSE"]?
     device.message_handler.on_im_response_packet = ->(request_message : Matter::Codec::MessageCodec::Message, response_type : UInt8, _packet : Bytes) do
-      next false unless response_type == Matter::InteractionModel::MessageType::InvokeResponse.value
-      request = Matter::Protocol::IMHandler.parse_invoke_request(request_message.payload)
-      next false unless request && request.invoke_requests.size == 1
-      path = request.invoke_requests.first.command_path
-      next false unless path.endpoint == Matter::Node::ROOT_ENDPOINT_ID &&
-                        path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
-                        path.command == Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC
+      remove_fabric_request = if response_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+                                if request = Matter::Protocol::IMHandler.parse_invoke_request(request_message.payload)
+                                  if request.invoke_requests.size == 1
+                                    path = request.invoke_requests.first.command_path
+                                    path.endpoint == Matter::Node::ROOT_ENDPOINT_ID &&
+                                    path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
+                                    path.command == Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC
+                                  else
+                                    false
+                                  end
+                                else
+                                  false
+                                end
+                              else
+                                false
+                              end
 
-      count_path = "#{drop_path}.count"
-      count = (File.exists?(count_path) ? File.read(count_path).to_i? : nil) || 0
-      count += 1
-      File.write(count_path, count.to_s)
-      if File.exists?("#{drop_path}.armed")
-        File.delete("#{drop_path}.armed")
-        File.write("#{drop_path}.dropped", count.to_s)
-        true
+      if remove_fabric_request
+        count_path = "#{drop_path}.count"
+        count = (File.exists?(count_path) ? File.read(count_path).to_i? : nil) || 0
+        count += 1
+        File.write(count_path, count.to_s)
+        if File.exists?("#{drop_path}.armed")
+          File.delete("#{drop_path}.armed")
+          File.write("#{drop_path}.dropped", count.to_s)
+          true
+        else
+          false
+        end
       else
         false
       end
