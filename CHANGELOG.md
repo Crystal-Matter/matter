@@ -105,6 +105,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and authenticated group writes and commands. Dynamic endpoint composition is
   evaluated on each request, and a missing Descriptor cannot grant a type target.
 
+### Timed Interaction Model requests
+
+- Reject malformed or repeated TimedRequest actions with `InvalidAction`,
+  discard the exchange's pending timed state, and start valid deadlines when
+  their successful StatusResponse is sent.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the

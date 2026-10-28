@@ -107,23 +107,32 @@ module Matter
         session : Session::SecureContext,
       ) : Nil
         exchange_id = original_msg.payload_header.exchange_id
+        key = {session.session_id, exchange_id}
 
-        timeout_ms = 0_u16
-        begin
-          timeout_ms = InteractionModel::TimedRequestMessage.from_slice(decrypted).timeout
+        # A TimedRequest starts a transaction. Another one while its deadline
+        # is live is not a valid next action. An expired exchange id can be
+        # reused for a new transaction.
+        previous_deadline = @timed_request_deadlines.delete(key)
+        if previous_deadline && Time.instant <= previous_deadline
+          Log.warn { "TimedRequest: unexpected second request (session_id=#{session.session_id} exchange=#{exchange_id})" }
+          send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
+          return
+        end
+
+        timeout_ms = begin
+          InteractionModel::TimedRequestMessage.from_slice(decrypted).timeout
         rescue ex
           Log.error(exception: ex) do
             "TimedRequest: failed to parse request (session_id=#{session.session_id} exchange=#{exchange_id} bytes=#{decrypted.hexstring})"
           end
+          send_status(original_msg, peer, session, InteractionModel::StatusCode::InvalidAction)
+          return
         end
 
-        # Even an unparseable request is answered SUCCESS: some controllers
-        # abort the interaction outright without a StatusResponse here.
-        # The spec-defined timeout is a UInt16 of milliseconds, so at most ~65s.
-        @timed_request_deadlines[{session.session_id, exchange_id}] = Time.instant + timeout_ms.milliseconds
-        Log.info { "TimedRequest: timeout_ms=#{timeout_ms} (session_id=#{session.session_id} exchange=#{exchange_id})" }
-
         send_status(original_msg, peer, session, InteractionModel::StatusCode::Success)
+        # Matter 1.6 Core §8.7.4 starts the interval when SUCCESS is sent.
+        @timed_request_deadlines[key] = Time.instant + timeout_ms.milliseconds
+        Log.info { "TimedRequest: timeout_ms=#{timeout_ms} (session_id=#{session.session_id} exchange=#{exchange_id})" }
       end
 
       # The request's timed flag must match whether this secure exchange was

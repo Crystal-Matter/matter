@@ -285,8 +285,12 @@ Timed writes cannot be chunked.
 For unicast InvokeRequest and WriteRequest, `InteractionRouter` first checks
 that a request with the timed flag consumes a live TimedRequest on the same
 secure session and exchange. A flag/prelude mismatch returns
-`TimedRequestMismatch`; an expired prelude returns `Timeout`. `IMHandler`
-then checks each addressed command or
+`TimedRequestMismatch`; an expired prelude returns `Timeout`.
+The router answers a malformed TimedRequest or a second TimedRequest on a
+still armed exchange with `InvalidAction` and discards that exchange's timed
+state. An expired exchange ID can be reused. A valid timeout begins when its
+`Success` StatusResponse is sent.
+`IMHandler` then checks each addressed command or
 writable attribute's `timed` metadata after access control. An untimed request
 to a timed operation returns `NeedsTimedInteraction` for that path without
 running its handler or writer. Commands and attributes without that metadata
