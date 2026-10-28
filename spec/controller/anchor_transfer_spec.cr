@@ -4,6 +4,15 @@ require "../../src/matter/controller/anchor_transfer"
 private alias TransferDatastore = Matter::Cluster::JointFabricDatastore
 private alias TransferStage = Matter::Controller::AnchorTransfer::Stage
 
+private def authenticated_follow_up_session : Matter::Session::SecureContext
+  session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+    session_type: Matter::Session::SessionType::Unicast,
+    encryption_key: Bytes.new(16), decryption_key: Bytes.new(16), case_session: true)
+  session.peer_subject_ids = [Matter::Controller::JointCommissioning.cat_subject(
+    Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 1_u16)]
+  session
+end
+
 private class FakeAnchorPort < Matter::Controller::AnchorTransfer::Port
   getter calls = [] of String
   property result = Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK
@@ -1233,6 +1242,35 @@ describe Matter::Controller::AnchorTransfer::RotationMigration do
 end
 
 describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
+  it "rejects a CASE peer without Administrator CAT before endpoint discovery" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    session = authenticated_follow_up_session
+    session.peer_subject_ids = [0x300_u64]
+    discovered = false
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) { nil },
+      consent: -> { true },
+      case_opener: ->(_identity : Matter::Controller::FabricInfo, _node : UInt64) { session },
+      endpoint_resolver: ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) {
+        discovered = true
+        1_u16
+      })
+    expect_raises(Matter::AuthenticationError, /Administrator CAT/) { runner.run }
+    discovered.should be_false
+    im.commands.should be_empty
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
   it "keeps Ready when saving CrossSigning fails before any command" do
     new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
@@ -1240,9 +1278,7 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
       0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
     im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
     client = Matter::Controller::Client.new
-    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
-      session_type: Matter::Session::SessionType::Unicast,
-      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    session = authenticated_follow_up_session
     journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64)
     runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
       client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
@@ -1298,9 +1334,7 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
       0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
     im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
     client = Matter::Controller::Client.new
-    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
-      session_type: Matter::Session::SessionType::Unicast,
-      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    session = authenticated_follow_up_session
     saved_count = 0
     journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64)
     runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
@@ -1408,9 +1442,7 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
     im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
     im.reject_complete = true
     client = Matter::Controller::Client.new
-    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
-      session_type: Matter::Session::SessionType::Unicast,
-      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    session = authenticated_follow_up_session
     runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
       client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
       new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
@@ -1434,9 +1466,7 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
       0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
     im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
     client = Matter::Controller::Client.new
-    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
-      session_type: Matter::Session::SessionType::Unicast,
-      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    session = authenticated_follow_up_session
     saved = [] of Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage
     pending = [] of Bool
     committed_icac = nil.as(Bytes?)
@@ -1490,9 +1520,7 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
       0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
     im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
     client = Matter::Controller::Client.new
-    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
-      session_type: Matter::Session::SessionType::Unicast,
-      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    session = authenticated_follow_up_session
     journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(0x300_u64, Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::RemovingOld)
     saved = [] of Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage
     runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(client, im, Socket::IPAddress.new("127.0.0.1", 5540),

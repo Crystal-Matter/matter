@@ -70,10 +70,11 @@ module ChipTool
 
           store = ctx.state_store
           state = store.load
-          controller = Matter::Controller::Client.new(
-            unsecured_source_node_id: state.commissioner_node_id,
-            initial_unsecured_message_counter: state.unsecured_message_counter
-          )
+          controller = if state.commissioner_node_id == Matter::DataType::NodeId::UNSPECIFIED
+                         Matter::Controller::Client.new
+                       else
+                         Matter::Controller::Client.new(counter_lease: store.counter_lease(state.commissioner_node_id))
+                       end
           verifier = if allow_test_attestation
                        Matter::Controller::DeviceAttestationVerifier.new(
                          Matter::Controller::AttestationTrustStore.matter_test_fixture)
@@ -85,9 +86,6 @@ module ChipTool
           begin
             commissioner.pairing_code(node_id, manual_code, peer: peer, new_fabric: new_fabric)
           ensure
-            latest = store.load
-            latest.unsecured_message_counter = controller.transport.message_counter.counter
-            store.save(latest)
             commissioner.close
           end
 
@@ -123,13 +121,14 @@ module ChipTool
           peer = Matter::Controller::OperationalPeerResolver.new.resolve(state, fabric, node_id, ctx.timeout)
 
           controller = Matter::Controller::Client.new(
-            unsecured_source_node_id: state.commissioner_node_id,
-            initial_unsecured_message_counter: state.unsecured_message_counter
+            counter_lease: store.counter_lease(state.commissioner_node_id)
           )
           begin
             session = ctx.case_pairing.pair(controller, peer, fabric, peer_node_id: node_id, timeout: ctx.timeout)
-            state.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(node_id, Matter::Controller::OperationalPeerResolver.address_hint(peer), peer.port),
-              fabric.root_public_key, fabric.controller_node_id)
+            store.update do |current|
+              current.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(node_id, Matter::Controller::OperationalPeerResolver.address_hint(peer), peer.port),
+                fabric.root_public_key, fabric.controller_node_id)
+            end
             im = Matter::Controller::ImClient.new(controller, ctx.timeout)
 
             case option
@@ -169,8 +168,6 @@ module ChipTool
               2
             end
           ensure
-            state.unsecured_message_counter = controller.transport.message_counter.counter
-            store.save(state)
             controller.close
           end
         end

@@ -12,8 +12,8 @@ module Matter
     class BridgedAdministratorCommissioning < Base
       alias OpenRequest = AdministratorCommissioning::OpenCommissioningWindowRequest
       alias WindowStatus = AdministratorCommissioning::CommissioningWindowStatus
-      alias OpenCallback = Proc(UInt8, UInt64, UInt8, OpenRequest, InteractionModel::Status)
-      alias RevokeCallback = Proc(UInt8, UInt64, UInt8, InteractionModel::Status)
+      alias OpenCallback = Proc(UInt8, UInt64, UInt8, UInt64, OpenRequest, InteractionModel::Status)
+      alias RevokeCallback = Proc(UInt8, UInt64, UInt8, UInt64, InteractionModel::Status)
 
       cluster AdministratorCommissioning::CLUSTER_ID, revision: AdministratorCommissioning::CLUSTER_REVISION,
         name: "AdministratorCommissioning"
@@ -51,14 +51,16 @@ module Matter
 
       def open_commissioning_window(request : OpenRequest) : InteractionModel::Status
         caller_fabric = authenticated_caller_fabric
-        return InteractionModel::Status.unsupported_access unless caller_fabric
-        @on_open.call(@target_fabric_index, @target_node_id, caller_fabric, request)
+        caller_node = request_peer_node_id
+        return InteractionModel::Status.unsupported_access unless caller_fabric && caller_node
+        @on_open.call(@target_fabric_index, @target_node_id, caller_fabric, caller_node, request)
       end
 
       def revoke_commissioning : InteractionModel::Status
         caller_fabric = authenticated_caller_fabric
-        return InteractionModel::Status.unsupported_access unless caller_fabric
-        @on_revoke.call(@target_fabric_index, @target_node_id, caller_fabric)
+        caller_node = request_peer_node_id
+        return InteractionModel::Status.unsupported_access unless caller_fabric && caller_node
+        @on_revoke.call(@target_fabric_index, @target_node_id, caller_fabric, caller_node)
       end
 
       # The host calls this after observing the remote node. Successful command

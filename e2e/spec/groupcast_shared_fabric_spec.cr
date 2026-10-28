@@ -37,10 +37,7 @@ describe "Groupcast Listener on a shared Matter fabric" do
     File.delete?(delegate_path)
     authority_backend = Matter::Storage::YamlFile.new(authority_path)
     authority_store = Matter::Controller::StateStore.new(authority_backend)
-    authority_state = authority_store.load
-    authority_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: authority_state.commissioner_node_id,
-      initial_unsecured_message_counter: authority_state.unsecured_message_counter)
+    authority_client = Matter::Controller::Client.new
     peer = Socket::IPAddress.new(device.address, E2E::DEVICE_PORT)
     node_id = 0x7411_u64
     delegate_id = 0x7412_u64
@@ -65,8 +62,7 @@ describe "Groupcast Listener on a shared Matter fabric" do
     Matter::Controller::SharedFabric.install(delegate_store, delegated)
     delegate_state = delegate_store.load
     delegate_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: delegate_state.commissioner_node_id,
-      initial_unsecured_message_counter: delegate_state.unsecured_message_counter)
+      counter_lease: delegate_store.counter_lease(delegate_state.commissioner_node_id))
     delegate_session = Matter::Controller::Pairing::CasePairing.new.pair(
       delegate_client, peer, delegated, peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
     delegate_im = Matter::Controller::ImClient.new(delegate_client, E2E::COMMAND_TIMEOUT)

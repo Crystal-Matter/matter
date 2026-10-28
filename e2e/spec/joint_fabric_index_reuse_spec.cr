@@ -61,7 +61,7 @@ describe "Joint Fabric Administrator fabric index reuse" do
       commissioner_node_id: old_bootstrap.fabric.controller_node_id))
     peer = Socket::IPAddress.new(anchor.address, E2E::DEVICE_PORT)
     old_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: old_bootstrap.fabric.controller_node_id)
+      counter_lease: store.counter_lease(old_bootstrap.fabric.controller_node_id))
     old_issuer = ->(fabric_id : UInt64, node_id : UInt64, key : Bytes) do
       raise Matter::ConfigurationError.new("Wrong initial Anchor fabric") unless fabric_id == old_bootstrap.fabric.fabric_id
       old_bootstrap.issue_anchor_administrator_noc(node_id, key)
@@ -97,7 +97,7 @@ describe "Joint Fabric Administrator fabric index reuse" do
     new_code = anchor.restart_log.match(E2E::PAIRING_CODE_RE).try(&.[1]) ||
                raise Matter::ProtocolError.new("Restarted JFA did not print a pairing code")
     new_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: new_bootstrap.fabric.controller_node_id)
+      counter_lease: store.counter_lease(new_bootstrap.fabric.controller_node_id))
     new_issuer = ->(fabric_id : UInt64, node_id : UInt64, key : Bytes) do
       raise Matter::ConfigurationError.new("Wrong replacement Anchor fabric") unless fabric_id == new_bootstrap.fabric.fabric_id
       new_bootstrap.issue_anchor_administrator_noc(node_id, key)

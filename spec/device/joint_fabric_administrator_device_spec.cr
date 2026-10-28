@@ -2,6 +2,20 @@ require "../spec_helper"
 require "../../examples/support/joint_fabric_administrator_device"
 require "../../src/matter/storage/sqlite"
 
+private def durable_jfa_path : String
+  File.join(Dir.tempdir, "matter-jfa-spec-#{Random::Secure.hex(8)}.yml")
+end
+
+private def durable_jfa_backend : Matter::Storage::YamlFile
+  Matter::Storage::YamlFile.new(durable_jfa_path)
+end
+
+private def cleanup_durable_jfa_backend(backend : Matter::Storage::YamlFile?) : Nil
+  return unless backend
+  backend.destroy!
+  File.delete?("#{backend.path}.counter.lock")
+end
+
 class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator::Device
   def prepare_for_start : Nil
     before_start
@@ -306,7 +320,7 @@ describe "Joint Fabric participant recovery command fence" do
   end
 
   it "permits only the authenticated read-only VID signature while a lease is restored" do
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     backend.open
     fence = MatterJointFabricAdministrator::Device::ParticipantRecoveryFence.new(
       "ab" * Matter::Controller::VidVerification::CHALLENGE_SIZE,
@@ -343,6 +357,9 @@ describe "Joint Fabric participant recovery command fence" do
     expect_raises(Matter::ClusterError) do
       hook.call(Matter::Cluster::OperationalCredentials::CMD_SIGN_VID_VERIFICATION_REQUEST)
     end
+  ensure
+    device.try(&.shutdown!)
+    cleanup_durable_jfa_backend(backend)
   end
 end
 
@@ -806,13 +823,25 @@ private class FailingJfaMemory < Matter::Storage::Memory
   end
 end
 
+private class FailingJfaYaml < Matter::Storage::YamlFile
+  property? fail_next_fabric_delete : Bool = false
+
+  def delete(collection : String, id : String) : Nil
+    if @fail_next_fabric_delete && collection == Matter::FabricTable::COLLECTION
+      @fail_next_fabric_delete = false
+      raise Matter::StorageError.new("Injected fabric document deletion failure")
+    end
+    super
+  end
+end
+
 describe MatterJointFabricAdministrator::Device do
   it "keeps a copied joined Datastore when its saved fabric binding still matches after restart" do
     previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
     ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
@@ -856,6 +885,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "clears copied joined Datastore state and its transfer journal when a fabric index is reused" do
@@ -863,7 +893,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV.delete("MATTER_JFA_PROVISIONED_ANCHOR")
     ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = File.join(Dir.tempdir, "jfa-reused-#{Random::Secure.hex(6)}")
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA103_u64)
@@ -904,10 +934,11 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "clears a stale transfer journal when the joined fabric binding and Datastore are absent" do
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_TRANSFER_DOCUMENT,
@@ -924,6 +955,7 @@ describe MatterJointFabricAdministrator::Device do
   ensure
     first.try(&.shutdown!)
     restored.try(&.shutdown!)
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "serializes the final old-NOC journal write against inbound ArmFailSafe" do
@@ -1344,7 +1376,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
@@ -1391,6 +1423,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "retains Anchor credentials when fabric document deletion fails, then reattaches on restart" do
@@ -1401,7 +1434,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
-    backend = FailingJfaMemory.new
+    backend = FailingJfaYaml.new(durable_jfa_path)
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.persistence.write_app_document(MatterJointFabricAdministrator::Device::APP_KEY_DOCUMENT,
@@ -1469,6 +1502,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "fails closed for a legacy Anchor with no binding when the same root reuses its index" do
@@ -1481,7 +1515,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{Dir.tempdir}/jfa-index-#{Random::Secure.hex(6)}"
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.install_test_fabric(old_fabric)
@@ -1510,6 +1544,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "discards a legacy Datastore with no binding or saved AdministratorFabricIndex" do
@@ -1521,7 +1556,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{Dir.tempdir}/jfa-index-#{Random::Secure.hex(6)}"
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.install_test_fabric(old_fabric)
@@ -1551,6 +1586,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "reserves a fabric index when durable JFA cleanup fails before RemoveFabric" do
@@ -1590,7 +1626,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{Dir.tempdir}/jfa-index-#{Random::Secure.hex(6)}"
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.fabric_table.add_fabric(fabric).should be_true
@@ -1617,6 +1653,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "does not bind an abandoned Anchor Datastore to a different fabric reusing its index" do
@@ -1626,7 +1663,7 @@ describe MatterJointFabricAdministrator::Device do
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?
     ENV["MATTER_JFA_PROVISIONED_ANCHOR"] = "1"
     ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"] = "#{Dir.tempdir}/jfa-index-#{Random::Secure.hex(6)}"
-    backend = Matter::Storage::Memory.new
+    backend = durable_jfa_backend
     first = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     first.fabric_table.add_fabric(old_fabric).should be_true
@@ -1657,6 +1694,7 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_ICAC_CSR_MAILBOX_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "selects an explicit test DCL trust source without falling back to a static root" do
@@ -1846,8 +1884,10 @@ describe MatterJointFabricAdministrator::Device do
   end
 
   it "starts Anchor verification from the operational listener without taking ownership of it" do
-    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+    backend = durable_jfa_backend
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
+    Matter::Controller::StateStore.new(backend).bind_transport_counter(device.message_handler.transport.message_counter)
     client = device.anchor_verification_client_for_spec(9_u64)
     client.transport.should be(device.transport)
     client.transport.port.should eq(device.port)
@@ -1856,6 +1896,7 @@ describe MatterJointFabricAdministrator::Device do
   ensure
     client.try(&.close)
     device.try(&.shutdown!)
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "uses the authenticated Anchor CASE source when operational discovery misses" do
@@ -1880,7 +1921,8 @@ describe MatterJointFabricAdministrator::Device do
     gate = File.join(Dir.tempdir, "matter-jfa-discovery-#{Random::Secure.hex(6)}")
     previous = ENV["MATTER_JFA_DISCOVERY_GATE_PATH"]?
     ENV["MATTER_JFA_DISCOVERY_GATE_PATH"] = gate
-    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+    backend = durable_jfa_backend
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     device.start
     device.responder.advertised_commissioning_info.should be_nil
@@ -1898,19 +1940,22 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_DISCOVERY_GATE_PATH")
     end
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "does not expose an unprovisioned second JFA to wildcard commissioning reads" do
     previous = ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"]?
     ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
-    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+    backend = durable_jfa_backend
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     device.prepare_for_start
     device.endpoint_ids.should eq([1_u16])
     device.node.clusters.keys.should_not contain({2_u16, Matter::Cluster::JointFabricAdministrator::CLUSTER_ID})
 
     ENV["MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE"] = "1"
-    retained = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+    retained_backend = durable_jfa_backend
+    retained = InspectableJointFabricAdministratorDevice.new(storage: retained_backend,
       ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
     retained.prepare_for_start
     retained.endpoint_ids.should eq([1_u16, 2_u16])
@@ -1920,6 +1965,8 @@ describe MatterJointFabricAdministrator::Device do
     else
       ENV.delete("MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE")
     end
+    cleanup_durable_jfa_backend(backend)
+    cleanup_durable_jfa_backend(retained_backend)
   end
 
   it "serves JFA status commands on a newly commissioned non-Anchor fabric" do
