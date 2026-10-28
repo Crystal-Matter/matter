@@ -421,9 +421,9 @@ module Matter
             fabric.intermediate_private_key, fabric.ipk_epoch_keys)
           replacements << {store, replacement}
         end
-        replacements.each do |store, replacement|
+        replacements.each do |store, updated_fabric|
           state = store.load
-          state.replace_fabric(replacement)
+          state.replace_fabric(updated_fabric)
           store.save(state)
         end
         unless recovered
@@ -483,7 +483,7 @@ module Matter
             return JointGroupRevocation::Status::Pending unless installed &&
                                                                 installed.status_entry.state == Datastore::DatastoreStateEnum::Committed
           end
-          receipt.target_memberships.map(&.node_id).uniq.each do |node_id|
+          receipt.target_memberships.map(&.node_id).uniq!.each do |node_id|
             old_needed = groups.any? do |candidate|
               candidate.group_id != receipt.group_id.to_u64 && candidate.group_key_set_id == old_id &&
                 memberships.any? do |membership|
