@@ -43,6 +43,8 @@ module Matter
         property? commissioning_acknowledged : Bool = false
         property fail_safe_deadline_unix : Int64? = nil
         property fail_safe_max_seconds : UInt16? = nil
+        property attempt_id : String = ""
+        property previous_attempt_id : String = ""
 
         def initialize(@old_fabric_id : UInt64, @anchor_fabric_id : UInt64,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
@@ -50,7 +52,9 @@ module Matter
                        @stage : Stage = Stage::Ready,
                        @commissioning_acknowledged : Bool = false,
                        @fail_safe_deadline_unix : Int64? = nil,
-                       @fail_safe_max_seconds : UInt16? = nil)
+                       @fail_safe_max_seconds : UInt16? = nil,
+                       @attempt_id : String = Random::Secure.random_bytes(16).hexstring,
+                       @previous_attempt_id : String = "")
         end
       end
 
@@ -64,7 +68,20 @@ module Matter
 
         def save(journal : Journal) : Nil
           @backend.open unless @backend.open?
-          @backend.write(COLLECTION, document_id(journal), journal.to_document)
+          @backend.transaction do
+            current_document = @backend.read(COLLECTION, document_id(journal))
+            if current_document
+              current = Journal.from_document(current_document)
+              if current.attempt_id != journal.attempt_id &&
+                 !(current.stage.commissioning_anchor? && journal.stage.ready? &&
+                 journal.previous_attempt_id == current.attempt_id)
+                raise Matter::StorageError.new("Migration journal attempt changed since load")
+              end
+            end
+            unless @backend.compare_and_swap(COLLECTION, document_id(journal), current_document, journal.to_document)
+              raise Matter::StorageError.new("Migration journal changed since load")
+            end
+          end
         end
 
         def load(old_fabric_id : UInt64, old_root_public_key : Bytes,
@@ -220,7 +237,9 @@ module Matter
           delivery = DatastoreNodeRegistrar::NetworkDelivery.new(@store, @client,
             @anchor_datastore_node_id, @anchor_datastore_endpoint, @timeout,
             @crypto, @anchor_datastore_peer)
-          DatastoreNodeRegistrar.new(@store, delivery)
+          attempt_id = @journal.try(&.attempt_id) ||
+                       raise Matter::ConfigurationError.new("Migration journal is required for Datastore registration")
+          DatastoreNodeRegistrar.new(@store, delivery, attempt_id, @anchor_node_id)
         end
 
         private def verify_anchor_material! : Nil
@@ -301,23 +320,21 @@ module Matter
         end
 
         def cleanup_failed_anchor_registration! : Nil
-          return unless owned_pending_registration?
-          if entry = anchor_node_entry
-            unless entry.friendly_name == @friendly_name
-              raise Matter::AuthenticationError.new("Anchor Datastore migrated node identity changed")
-            end
-            session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
-            response = ImClient.new(@client, @timeout).invoke(session, @anchor_datastore_peer,
-              @anchor_datastore_endpoint, Cluster::JointFabricDatastore::CLUSTER_ID,
-              Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
-              Cluster::JointFabricDatastore::RemoveNodeRequest.new(@anchor_node_id).to_slice)
-            assert_status_success!(response, "RemoveNode after failed commissioning")
+          pending = @store.load.pending_datastore_nodes.find do |item|
+            item.fabric_id == @anchor_fabric.fabric_id &&
+              item.root_public_key == @anchor_fabric.root_public_key &&
+              item.controller_node_id == @anchor_fabric.controller_node_id &&
+              item.node_id == @anchor_node_id
           end
-          @store.update do |state|
-            unless state.pending_datastore_nodes.any? { |item| owned_pending_registration?(item) }
-              raise Matter::CommissioningError.new("Staged Anchor registration changed during cleanup")
-            end
-            state.pending_datastore_nodes.reject! { |item| owned_pending_registration?(item) }
+          return unless pending
+          unless owned_pending_registration?(pending)
+            raise Matter::CommissioningError.new("Staged Anchor registration belongs to another attempt")
+          end
+          registrar = datastore_registrar
+          if pending.stage.removing?
+            registrar.reconcile_removal(@anchor_fabric, @anchor_node_id)
+          else
+            registrar.abort(@anchor_fabric, @anchor_node_id, confirmed_failure: true)
           end
         end
 
@@ -614,6 +631,7 @@ module Matter
             item.controller_node_id == @anchor_fabric.controller_node_id &&
             item.node_id == @anchor_node_id &&
             item.friendly_name == @friendly_name &&
+            item.attempt_id == (@journal.try(&.attempt_id) || "") &&
             item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
             item.peer_port == @device_peer.port
         end
@@ -1013,8 +1031,13 @@ module Matter
           @port.finalize_rollback! if stage.rolled_back?
           updated = @journal
           updated.stage = stage
+          if @journal.stage.commissioning_anchor? && stage.ready?
+            updated.previous_attempt_id = updated.attempt_id
+            updated.attempt_id = Random::Secure.random_bytes(16).hexstring
+          end
           @save.call(updated)
           @journal = updated
+          @port.validate_journal!(updated)
         end
       end
     end

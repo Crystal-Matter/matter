@@ -180,6 +180,24 @@ describe Migration do
     saved.last.stage.should eq(Migration::Stage::Ready)
   end
 
+  it "rejects a stale journal attempt after no-effect cleanup rotates ownership" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    store.save(journal)
+    stale = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    port = MigrationPort.new
+    workflow = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+      -> { true }, ->(entry : Migration::Journal) { store.save(entry) })
+    workflow.reconcile_no_effect!
+    workflow.journal.attempt_id.should_not eq(journal.attempt_id)
+    stale.stage = Migration::Stage::Ready
+    expect_raises(Matter::StorageError, /attempt changed/) { store.save(stale) }
+  end
+
   it "recovers a restarted journal only after proof that each command had no effect" do
     boundaries = {
       {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::Ready},

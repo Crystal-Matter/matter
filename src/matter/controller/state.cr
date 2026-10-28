@@ -50,6 +50,7 @@ module Matter
         Registered
         Completing
         Completed
+        Removing
       end
 
       getter fabric_id : UInt64
@@ -61,11 +62,12 @@ module Matter
       getter peer_address : String?
       getter peer_port : Int32
       property stage : Stage
+      getter attempt_id : String = ""
 
       def initialize(@fabric_id, @root_public_key, @controller_node_id, @node_id,
                      @friendly_name, @expires_at_unix : Int64 = 0_i64,
                      @peer_address : String? = nil, @peer_port : Int32 = NodeInfo::DEFAULT_PORT,
-                     @stage : Stage = Stage::Pending)
+                     @stage : Stage = Stage::Pending, @attempt_id : String = "")
       end
     end
 

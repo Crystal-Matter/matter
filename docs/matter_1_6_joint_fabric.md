@@ -367,6 +367,15 @@ item below as covered only to the extent of its cited tests.
   failure removes the pending entry; an ambiguous result retains it until
   authenticated recovery proves whether A committed. Only after the A
   NodeList commits does migration remove B from the device and B's NodeList.
+  Each local Datastore registration carries a durable attempt ID. Before
+  cleanup sends RemoveNode, it changes that registration to Removing in the
+  shared controller store. Other library writers cannot stage the same Node ID
+  until removal succeeds or an authenticated NodeList read proves it absent.
+  An uncertain RemoveNode result remains Removing across restarts and is not
+  replayed automatically. The guard coordinates writers using the same
+  controller store; a separate JFA that writes the Anchor Datastore directly
+  must be excluded by deployment policy because RemoveNode has no conditional
+  attempt ID on the wire.
   A per-device journal blocks automatic replay of uncertain commands;
   authenticated CASE and Datastore reads allow explicit reconciliation when a
   command took effect or provably had no effect. The latter restores the prior

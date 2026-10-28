@@ -8,6 +8,8 @@ private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar
   property? fail_add = false
   property? fail_refresh = false
   property? fail_remove = false
+  property? remote_absent = false
+  property before_remove : Proc(Nil)?
 
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "add:#{node_id}:#{friendly_name}"
@@ -21,7 +23,13 @@ private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar
 
   def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "remove:#{node_id}:#{friendly_name}"
+    @before_remove.try(&.call)
     raise Matter::TransportError.new("offline") if @fail_remove
+    @remote_absent = true
+  end
+
+  def node_absent?(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Bool
+    @remote_absent
   end
 end
 
@@ -314,8 +322,67 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     expect_raises(Matter::TransportError, /offline/) { registrar.resume(fabric, 200_i64) }
     store.load.pending_datastore_nodes.size.should eq(1)
     delivery.fail_remove = false
+    expect_raises(Matter::CommissioningError, /absence reconciliation/) { registrar.resume(fabric, 200_i64) }
+    delivery.remote_absent = true
     registrar.resume(fabric, 200_i64)
     store.load.pending_datastore_nodes.should be_empty
+  end
+
+  it "fences a delayed RemoveNode against a new writer and a same-identity retry" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update { |state| state.install_fabric(fabric) }
+    delivery = RecordingNodeDelivery.new
+    owner = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    replacement = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    owner.add_pending(fabric, 0x200_u64, "Lamp")
+
+    delivery.before_remove = -> do
+      expect_raises(Matter::CommissioningError, /previous attempt/) do
+        replacement.add_pending(fabric, 0x200_u64, "Lamp")
+      end
+      nil
+    end
+    owner.abort(fabric, 0x200_u64)
+    delivery.before_remove = nil
+    replacement.add_pending(fabric, 0x200_u64, "Lamp")
+    stale = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery, owner.attempt_id)
+    expect_raises(Matter::CommissioningError, /another attempt/) do
+      stale.abort(fabric, 0x200_u64)
+    end
+    second_store.load.pending_datastore_nodes.first.attempt_id.should eq(replacement.attempt_id)
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+  end
+
+  it "holds a durable removal guard after a lost response until authenticated absence" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update { |state| state.install_fabric(fabric) }
+    delivery = RecordingNodeDelivery.new
+    first = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    first.add_pending(fabric, 0x200_u64, "Lamp")
+    delivery.fail_remove = true
+    expect_raises(Matter::TransportError, /offline/) { first.abort(fabric, 0x200_u64) }
+    second_store.load.pending_datastore_nodes.first.stage.should eq(
+      Matter::Controller::PendingDatastoreNode::Stage::Removing)
+
+    second = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    expect_raises(Matter::CommissioningError, /previous attempt/) do
+      second.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    recovered = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery, first.attempt_id)
+    expect_raises(Matter::CommissioningError, /absence reconciliation/) do
+      recovered.reconcile_removal(fabric, 0x200_u64)
+    end
+    delivery.remote_absent = true
+    recovered.reconcile_removal(fabric, 0x200_u64)
+    second.add_pending(fabric, 0x200_u64, "Lamp")
+    second_store.load.pending_datastore_nodes.first.attempt_id.should eq(second.attempt_id)
+    delivery.calls.count("remove:512:Lamp").should eq(1)
   end
 
   it "recovers an acknowledged completion from saved controller state" do
