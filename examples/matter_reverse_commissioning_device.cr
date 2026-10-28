@@ -76,7 +76,7 @@ module MatterReverseCommissioning
     # devices can share it, so the opt-in Crystal fixture pins the intended
     # target address while the commissioner still verifies its attestation.
     private def crystal_target_peer : Socket::IPAddress?
-      return nil unless crystal_target?
+      return unless crystal_target?
       host = ENV["MATTER_REVERSE_CRYSTAL_TARGET_HOST"]? ||
              raise Matter::ConfigurationError.new("Missing approved Crystal reverse-commissioning target host")
       Socket::Addrinfo.udp(host, Matter::Transport::UDPTransport::MATTER_PORT,
