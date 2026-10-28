@@ -314,13 +314,10 @@ module Matter
             assert_status_success!(response, "RemoveNode after failed commissioning")
           end
           @store.update do |state|
-            state.pending_datastore_nodes.reject! do |item|
-              item.fabric_id == @anchor_fabric.fabric_id &&
-                item.root_public_key == @anchor_fabric.root_public_key &&
-                item.controller_node_id == @anchor_fabric.controller_node_id &&
-                item.node_id == @anchor_node_id &&
-                item.friendly_name == @friendly_name
+            unless state.pending_datastore_nodes.any? { |item| owned_pending_registration?(item) }
+              raise Matter::CommissioningError.new("Staged Anchor registration changed during cleanup")
             end
+            state.pending_datastore_nodes.reject! { |item| owned_pending_registration?(item) }
           end
         end
 
@@ -608,15 +605,17 @@ module Matter
         end
 
         private def owned_pending_registration? : Bool
-          @store.load.pending_datastore_nodes.any? do |item|
-            item.fabric_id == @anchor_fabric.fabric_id &&
-              item.root_public_key == @anchor_fabric.root_public_key &&
-              item.controller_node_id == @anchor_fabric.controller_node_id &&
-              item.node_id == @anchor_node_id &&
-              item.friendly_name == @friendly_name &&
-              item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
-              item.peer_port == @device_peer.port
-          end
+          @store.load.pending_datastore_nodes.any? { |item| owned_pending_registration?(item) }
+        end
+
+        private def owned_pending_registration?(item : PendingDatastoreNode) : Bool
+          item.fabric_id == @anchor_fabric.fabric_id &&
+            item.root_public_key == @anchor_fabric.root_public_key &&
+            item.controller_node_id == @anchor_fabric.controller_node_id &&
+            item.node_id == @anchor_node_id &&
+            item.friendly_name == @friendly_name &&
+            item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
+            item.peer_port == @device_peer.port
         end
 
         private def anchor_node_entry : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct?
