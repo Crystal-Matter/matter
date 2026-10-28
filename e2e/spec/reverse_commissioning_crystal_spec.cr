@@ -130,7 +130,10 @@ describe "real Crystal target reverse commissioning" do
                                 wire.iterations.to_s,
                                 "hex:#{wire.salt_hex}",
                                 target.node, "0", "--timedInteractionTimeoutMs", "10000"]))
-    File.write(ReverseCommissioningCrystalE2E::WINDOW_READY_PATH, wire.verifier_hex.downcase)
+    ready_path = ReverseCommissioningCrystalE2E::WINDOW_READY_PATH
+    pending_path = "#{ready_path}.pending"
+    File.write(pending_path, wire.verifier_hex.downcase)
+    File.rename(pending_path, ready_path)
 
     ReverseCommissioningCrystalE2E.wait_for_completion(host)
     state = Matter::Controller::StateStore.new(
