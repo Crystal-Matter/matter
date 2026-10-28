@@ -961,6 +961,29 @@ module Matter
         verified
       end
 
+      # CASE pairing verifies the peer NOC through the presented ICAC and
+      # records its authenticated CAT subjects and ICAC on the session. Check
+      # that this issuer is the fabric's root-signed Anchor ICAC before any
+      # Joint Fabric Interaction Model request uses the session.
+      def verify_anchor_case_peer!(session : Session::SecureContext,
+                                   root_certificate : Bytes, fabric_id : UInt64) : Nil
+        anchor_cat = session.peer_subject_ids.any? do |subject|
+          cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+          cat && cat.identity_value == Cluster::JointFabricDatastore::ANCHOR_CAT
+        end
+        unless session.case_session? && anchor_cat
+          raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks the Anchor CAT")
+        end
+        icac = session.peer_icac
+        unless icac && Crypto::MatterCertificate.anchor_icac?(icac)
+          raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks an Anchor ICAC")
+        end
+        Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, fabric_id)
+        Crypto::MatterCertificate::Validation.verify_issued_by(icac, root_certificate)
+        Crypto::MatterCertificate::Validation.verify_signature(icac,
+          Crypto::MatterCertificate.public_key_from_tlv(root_certificate))
+      end
+
       # Joining Administrator adapter. It opens a fresh outbound CASE session
       # using the NOC just installed on the Anchor fabric, then verifies the
       # Anchor Administrator's original fabric Vendor ID and fabric binding.
@@ -987,6 +1010,7 @@ module Matter
         begin
           session = Pairing::CasePairing.new(crypto).pair(client, peer, identity,
             peer_node_id: peer_node_id, timeout: timeout)
+          verify_anchor_case_peer!(session, root, fabric.fabric_id)
           verified = verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
             fabric.root_public_key, fabric.fabric_id, trust, crypto)
           # Retain this CASE session only after the Anchor's operational VID and

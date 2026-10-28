@@ -96,7 +96,12 @@ item below as covered only to the extent of its cited tests.
   ICAC exchange; the returned certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
-  persist across restart. For AddICAC or a deferred handoff interrupted before
+  persist across restart. On the joining side, outbound CASE to a discovered
+  Anchor must carry an Anchor CAT in the authenticated peer subjects and an
+  Anchor ICAC issued by the accessing fabric's root before the first Joint
+  Fabric attribute read. CASE validates the peer NOC through that ICAC; this
+  additional check rejects ordinary administrators that advertise an Anchor.
+  For AddICAC or a deferred handoff interrupted before
   CommissioningComplete, the pending record also retains the observed
   cumulative fail-safe deadline and the joiner's original fabric identity.
   `JointCommissioning::Workflow#recover_abandoned_pending` can clear that
