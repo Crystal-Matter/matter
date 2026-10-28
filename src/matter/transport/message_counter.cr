@@ -50,7 +50,7 @@ module Matter
               assigned = @counter
             end
           end
-          return value if value = assigned
+          return assigned.not_nil! unless assigned.nil?
 
           # Storage may hold its own transaction lock. Reserve outside the
           # send mutex so a transaction attempting to send cannot deadlock a
