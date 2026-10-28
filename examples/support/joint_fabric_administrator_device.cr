@@ -200,6 +200,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_transfer_follow_up : Bool = false
       getter? interrupt_after_first_transfer_follow_up : Bool = false
       getter? interrupt_after_next_transfer_cross_sign : Bool = false
+      getter? interrupt_after_next_transfer_old_fabric_removed : Bool = false
       getter? interrupt_before_next_transfer_cross_sign_journal : Bool = false
       getter? interrupt_before_next_transfer_pending_icac_journal : Bool = false
       getter? interrupt_after_transfer_request : Bool = false
@@ -253,6 +254,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_transfer_follow_up : Bool = false,
                      @interrupt_after_first_transfer_follow_up : Bool = false,
                      @interrupt_after_next_transfer_cross_sign : Bool = false,
+                     @interrupt_after_next_transfer_old_fabric_removed : Bool = false,
                      @interrupt_before_next_transfer_cross_sign_journal : Bool = false,
                      @interrupt_before_next_transfer_pending_icac_journal : Bool = false,
                      @interrupt_after_transfer_request : Bool = false,
@@ -1825,6 +1827,7 @@ module MatterJointFabricAdministrator
                                      interrupt_after_next_cross_sign : Bool = false,
                                      interrupt_before_next_cross_sign_journal : Bool = false,
                                      interrupt_before_next_pending_icac_journal : Bool = false,
+                                     interrupt_after_next_old_fabric_removed : Bool = false,
                                      reconcile_promoting : Bool = false,
                                      reconcile_rotating_administrator : Bool = false,
                                      reconcile_copying : Bool = false,
@@ -1901,6 +1904,7 @@ module MatterJointFabricAdministrator
           follow_up_administrators(joint_fabric_datastore, old_fabric, scanner, own_client, own_im,
             interrupt_after_first_follow_up, interrupt_after_next_cross_sign,
             interrupt_before_next_cross_sign_journal,
+            interrupt_after_next_old_fabric_removed: interrupt_after_next_old_fabric_removed,
             interrupt_before_next_pending_icac_journal: interrupt_before_next_pending_icac_journal)
           journal.stage = Matter::Controller::AnchorTransfer::Stage::Completed
           persistence.write_app_document(APP_TRANSFER_DOCUMENT, journal.to_document)
@@ -2006,6 +2010,7 @@ module MatterJointFabricAdministrator
             follow_up_administrators(preflight, old_fabric, scanner, own_client, own_im,
               interrupt_after_first_follow_up, interrupt_after_next_cross_sign,
               interrupt_before_next_cross_sign_journal,
+              interrupt_after_next_old_fabric_removed: interrupt_after_next_old_fabric_removed,
               interrupt_before_next_pending_icac_journal: interrupt_before_next_pending_icac_journal)
             nil
           })
@@ -2375,6 +2380,7 @@ module MatterJointFabricAdministrator
                                          interrupt_after_first : Bool = false,
                                          interrupt_after_next_cross_sign : Bool = false,
                                          interrupt_before_next_cross_sign_journal : Bool = false,
+                                         interrupt_after_next_old_fabric_removed : Bool = false,
                                          reconcile_target_node_id : UInt64? = nil,
                                          reconcile_no_effect : Bool = false,
                                          interrupt_before_next_pending_icac_journal : Bool = false) : Nil
@@ -2421,6 +2427,12 @@ module MatterJointFabricAdministrator
             end
             nil
           }, journal, consent: -> { true },
+          after_old_fabric_removed: -> {
+            if interrupt_after_next_old_fabric_removed
+              raise Matter::TransportError.new("Injected lost Anchor participant RemoveFabric acknowledgement")
+            end
+            nil
+          },
           on_committed_icac: ->(node_id : UInt64, certificate : Bytes) {
             entries = joint_fabric_datastore.admin_list
             unless entries.any?(&.node_id.==(node_id))
@@ -3795,7 +3807,8 @@ module MatterJointFabricAdministrator
               request.interrupt_after_transfer_complete?,
               request.interrupt_after_next_transfer_cross_sign?,
               request.interrupt_before_next_transfer_cross_sign_journal?,
-              request.interrupt_before_next_transfer_pending_icac_journal?)
+              request.interrupt_before_next_transfer_pending_icac_journal?,
+              interrupt_after_next_old_fabric_removed: request.interrupt_after_next_transfer_old_fabric_removed?)
             CommandResult.new("ok")
           when "remove-administrator"
             remove_administrator(request.node_id, request.interrupt_after_remove_fabric?,

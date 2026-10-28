@@ -40,8 +40,10 @@ witness. A later interruption resumes only the participant follow-up from
 ICAC, while B stops after durably saving the `CrossSigned` stage and before
 sending RemoveFabric. B restarts again and resumes C's old-fabric removal;
 C's new-fabric NOC is unchanged. C still has A's fabric before that resume,
-and B's NOC and Administrator CAT version stay unchanged. The test checks
-that the new Anchor Datastore contains A, B, and C,
+and B's NOC and Administrator CAT version stay unchanged. A second interruption
+after C accepts RemoveFabric leaves B's durable `RemovingOld` journal across a
+B/C restart. B then finishes without changing C's new-fabric NOC or
+cross-signed ICAC. The test also checks that the new Anchor Datastore contains A, B, and C,
 and that C removes its A fabric and installs B's fabric. A follows B's
 Datastore over a verified CASE session. Its
 subscription discovers Descriptor endpoints carrying the Datastore cluster,

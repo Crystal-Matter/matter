@@ -2374,8 +2374,58 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
       counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
-    # The resumed command must remove only C's old fabric, not replay either
-    # participant cross-sign, rotate B's credentials, or recopy the Datastore.
+    # C accepts RemoveFabric, but B loses the acknowledgement before saving
+    # Completed. The durable RemovingOld stage must survive both restarts.
+    interrupted_old_fabric_removal = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_after_next_transfer_old_fabric_removed: true))
+    interrupted_old_fabric_removal.status.should eq("error")
+    interrupted_old_fabric_removal.error.to_s.should contain("Injected lost Anchor participant RemoveFabric acknowledgement")
+    removing_old_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    removing_old_stage.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::RemovingOld.value)
+    c_old_after_remove = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_after_remove.fabric_present.should be_false
+    c_new_after_remove = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_new_after_remove.fabric_present.should be_true
+    c_credentials_after_remove = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_credentials_after_remove.noc.should eq(c_new_credentials_before_restart.noc)
+    c_credentials_after_remove.icac.should eq(c_new_credentials_before_restart.icac)
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
+    persisted_removing_old = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    persisted_removing_old.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::RemovingOld.value)
+    c_old_after_removal_restart = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_after_removal_restart.fabric_present.should be_false
+    c_new_after_removal_restart = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_new_after_removal_restart.fabric_present.should be_true
+    c_credentials_after_removal_restart = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_credentials_after_removal_restart.noc.should eq(c_new_credentials_before_restart.noc)
+    c_credentials_after_removal_restart.icac.should eq(c_new_credentials_before_restart.icac)
+    candidate_admin_icac(joiner_client, joiner_peer, joiner_bootstrap.fabric,
+      0xB102_u64, 0xA104_u64).should eq(c_cross_signed_before_restart)
+    # Recovery must recognize the absent old fabric and complete without
+    # replaying participant cross-signing or rotating any credential.
     transferred = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64))
     transferred.status.should eq("ok"), transferred.error.to_s
