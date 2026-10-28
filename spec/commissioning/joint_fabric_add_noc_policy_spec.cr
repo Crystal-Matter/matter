@@ -59,6 +59,8 @@ describe Matter::Commissioning::JointFabricAddNocPolicy do
     outcome.status.should eq(Matter::Commissioning::NocStatus::InvalidNoc)
     service.fabric_table.size.should eq(0)
     service.pending.noc_added_or_updated?.should be_false
+    service.fabric_table.backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should be_nil
   end
 
   it "rejects an AddNOC without the Datastore's Anchor CAT CaseAdminSubject" do
@@ -68,6 +70,8 @@ describe Matter::Commissioning::JointFabricAddNocPolicy do
     outcome.status.should eq(Matter::Commissioning::NocStatus::InvalidAdminSubject)
     service.fabric_table.size.should eq(0)
     service.pending.noc_added_or_updated?.should be_false
+    service.fabric_table.backend.read(Matter::Commissioning::CredentialJournal::COLLECTION,
+      Matter::Commissioning::CredentialJournal::ID).should be_nil
   end
 
   it "accepts the current JCM CAT pair and preserves ordinary AddNOC on a non-JCM session" do
