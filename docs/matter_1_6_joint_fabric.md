@@ -425,6 +425,12 @@ item below as covered only to the extent of its cited tests.
   B ownership, and the recorded device peer before staging the missing entry.
   The staging intent is durable before the Anchor command, and the local
   guard is released only after a Committed NodeList read.
+  An old `AddingAnchorNode` journal uses the explicit
+  `resume-anchor-registration` command for the same recovery. If the prior
+  AddPendingNode request never reached the Anchor, this command reuses its
+  durable local attempt and stages the missing entry after authenticated A
+  and B checks; ordinary `migrate-device` still refuses to replay an
+  uncertain command automatically.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and

@@ -373,6 +373,40 @@ describe Migration do
     end
   end
 
+  it "resumes an old-format AddingAnchorNode journal through explicit registration recovery" do
+    path = File.join(Dir.tempdir, "matter-legacy-migration-#{Random::Secure.hex(8)}.json")
+    begin
+      first_backend = Matter::Storage::JsonFile.new(path)
+      first_backend.open
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AddingAnchorNode)
+      legacy = journal.to_document
+      legacy.delete("attempt_id")
+      legacy.delete("stage_version")
+      legacy.delete("legacy_registration_order")
+      first_backend.write(Migration::JournalStore::COLLECTION,
+        "b001-01-b002-a001-02-a002", legacy)
+      first_backend.close
+
+      reopened_backend = Matter::Storage::JsonFile.new(path)
+      store = Migration::JournalStore.new(reopened_backend)
+      recovered = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      recovered.legacy_registration_order?.should be_true
+      recovered.stage.should eq(Migration::Stage::AddingAnchorNode)
+      port = MigrationPort.new
+      workflow = Migration::Workflow.new(recovered, port, -> { true },
+        ->(item : Migration::Journal) { store.save(item) })
+      workflow.resume_anchor_registration!
+      port.calls.should eq(["refresh-anchor", "reconcile-AnchorNodeAdded"])
+      store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(Migration::Stage::AnchorNodeAdded)
+      reopened_backend.close
+    ensure
+      File.delete?(path)
+    end
+  end
+
   it "persists the CommissioningComplete acknowledgement before local node recovery" do
     backend = Matter::Storage::Memory.new
     store = Migration::JournalStore.new(backend)

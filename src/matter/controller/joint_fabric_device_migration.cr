@@ -323,20 +323,8 @@ module Matter
           session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
           im = ImClient.new(@client, @timeout)
           entry = datastore_nodes(im, session, @anchor_datastore_peer,
-            @anchor_datastore_endpoint).find(&.node_id.==(@anchor_node_id))
-          unless entry
-            unless @journal.try(&.legacy_registration_order?)
-              raise Matter::CommissioningError.new("Anchor Datastore has no staged migrated node")
-            end
-            verify_anchor!
-            require_old_fabric_present!
-            verify_handoff_baseline!
-            registrar = datastore_registrar
-            registrar.add_pending(@anchor_fabric, @anchor_node_id, @friendly_name,
-              peer: @device_peer, allow_commissioned: true)
-            entry = anchor_node_entry ||
-                    raise Matter::CommissioningError.new("Legacy Anchor registration is absent after AddPendingNode")
-          end
+            @anchor_datastore_endpoint).find(&.node_id.==(@anchor_node_id)) ||
+                  stage_legacy_anchor_registration!
           unless entry.friendly_name == @friendly_name
             raise Matter::AuthenticationError.new("Anchor Datastore migrated node identity changed")
           end
@@ -349,8 +337,7 @@ module Matter
         def refresh_anchor_registration! : Nil
           verify_anchor!
           require_old_fabric_present!
-          entry = anchor_node_entry ||
-                  raise Matter::CommissioningError.new("Anchor Datastore has no pending migrated node to refresh")
+          entry = anchor_node_entry || stage_legacy_anchor_registration!
           if entry.commissioning_status_entry.state.committed?
             confirm_legacy_registration_if_committed!
             return
@@ -364,6 +351,19 @@ module Matter
           assert_status_success!(response, "RefreshNode")
           wait_anchor_node_committed!(im, session)
           confirm_legacy_registration_if_committed!
+        end
+
+        private def stage_legacy_anchor_registration! : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct
+          unless @journal.try(&.legacy_registration_order?)
+            raise Matter::CommissioningError.new("Anchor Datastore has no staged migrated node")
+          end
+          verify_anchor!
+          require_old_fabric_present!
+          verify_handoff_baseline!
+          datastore_registrar.add_pending(@anchor_fabric, @anchor_node_id, @friendly_name,
+            peer: @device_peer, allow_commissioned: true)
+          anchor_node_entry ||
+            raise Matter::CommissioningError.new("Legacy Anchor registration is absent after AddPendingNode")
         end
 
         private def confirm_legacy_registration_if_committed! : Nil
