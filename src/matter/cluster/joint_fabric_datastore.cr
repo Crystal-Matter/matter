@@ -11,8 +11,9 @@ module Matter
     class JointFabricDatastore < Base
       cluster 0x0752, revision: 1
 
-      UNSPECIFIED_ANCHOR_VENDOR_ID  = 0_u16
-      UNSPECIFIED_GROUP_CAT         = 0_u16
+      UNSPECIFIED_ANCHOR_VENDOR_ID  =      0_u16
+      UNSPECIFIED_GROUP_CAT         =      0_u16
+      MAX_ORDINARY_GROUP_CAT        = 0xEFFF_u16
       RESERVED_GROUP_CAT            = UInt16::MAX
       UNSPECIFIED_GROUP_CAT_VERSION = 0_u16
       FIRST_GROUP_CAT_VERSION       = 1_u16
@@ -1661,7 +1662,7 @@ module Matter
       end
 
       private def valid_group_cat?(cat : UInt16?) : Bool
-        cat.nil? || (cat > UNSPECIFIED_GROUP_CAT && cat < RESERVED_GROUP_CAT)
+        cat.nil? || (cat > UNSPECIFIED_GROUP_CAT && cat <= MAX_ORDINARY_GROUP_CAT)
       end
 
       private def valid_group_cat_version?(version : UInt16?) : Bool
