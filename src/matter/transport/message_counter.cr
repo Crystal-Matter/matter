@@ -45,17 +45,22 @@ module Matter
               else
                 @counter += 1
               end
-              @remaining_messages = @remaining_messages.not_nil! - 1_u32 if @remaining_messages
+              if remaining = @remaining_messages
+                @remaining_messages = remaining - 1_u32
+              end
               @issued_messages = @issued_messages &+ 1_u64
               assigned = @counter
             end
           end
-          return assigned.not_nil! unless assigned.nil?
+          if value = assigned
+            return value
+          end
 
           # Storage may hold its own transaction lock. Reserve outside the
           # send mutex so a transaction attempting to send cannot deadlock a
           # concurrent renewal. An overlapping renewal may leave a safe gap.
-          start, count = refill.not_nil!.call
+          refill_callback = refill || raise Matter::SessionError.new("Reserved message counter range is exhausted")
+          start, count = refill_callback.call
           raise Matter::SessionError.new("Counter lease returned an empty range") if count == 0_u32
           @send_mutex.synchronize do
             @lease_validity.try(&.call)

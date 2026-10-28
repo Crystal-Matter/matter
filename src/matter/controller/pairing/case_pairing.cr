@@ -138,7 +138,9 @@ module Matter
         private def pair_with_ipk(client : Client, peer : Socket::IPAddress,
                                   fabric : FabricInfo, peer_node_id : UInt64,
                                   timeout : Time::Span, epoch_key : Bytes) : Session::SecureContext
+          # ameba:disable Lint/UselessAssign -- Rescue must handle failures before allocation.
           reserved_session_id : UInt16? = nil
+          # ameba:enable Lint/UselessAssign
           controller_key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
           controller_key.private_bits = fabric.controller_private_key
           controller_key.public_bits = Crypto::MatterCertificate.from_slice(fabric.controller_noc).ec_public_key

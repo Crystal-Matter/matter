@@ -146,7 +146,7 @@ module Matter
           # commissioning/CASE handshakes to be ignored as duplicates/stale.
           if @owns_transport
             if range = reserved
-              lease = counter_lease.not_nil!
+              lease = counter_lease || raise Matter::ConfigurationError.new("Reserved counter range has no lease")
               refill = lease.renewable? ? -> { lease.reserve } : nil
               @transport.message_counter.bind_lease(lease.store.backend, range[0], range[1], refill,
                 lease.store.backend.counter_lease_validity)
@@ -200,8 +200,8 @@ module Matter
           if @owns_transport
             begin
               @transport.close
-            rescue cleanup_error
-              Log.warn(exception: cleanup_error) { "Could not close Client transport after constructor failure" }
+            rescue cleanup_ex
+              Log.warn(exception: cleanup_ex) { "Could not close Client transport after constructor failure" }
             end
           end
           release_fixed_source_ownership

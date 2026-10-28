@@ -28,7 +28,9 @@ module Matter
           pin_code : UInt32,
           timeout : Time::Span = 10.seconds,
         ) : Session::SecureContext
+          # ameba:disable Lint/UselessAssign -- Rescue must handle failures before allocation.
           reserved_session_id : UInt16? = nil
+          # ameba:enable Lint/UselessAssign
           initiator_random = @crypto.random_bytes(32)
           initiator_session_id = client.allocate_session_id("PASE") { @crypto.random_uint16 }
           reserved_session_id = initiator_session_id
