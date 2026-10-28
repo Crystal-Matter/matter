@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/commissioning/joint_fabric_add_noc_policy"
+require "../../src/matter/commissioning/joint_fabric_add_noc_guard"
 require "../../src/matter/controller/certificate_util"
 
 private def jcm_subject(identity : UInt16, version : UInt16) : UInt64
@@ -8,8 +9,9 @@ private def jcm_subject(identity : UInt16, version : UInt16) : UInt64
 end
 
 private def jcm_datastore(admin_version : UInt16 = 2_u16,
-                          anchor_version : UInt16 = 3_u16) : Matter::Cluster::JointFabricDatastore
-  store = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+                          anchor_version : UInt16 = 3_u16,
+                          endpoint_id : UInt16 = 1_u16) : Matter::Cluster::JointFabricDatastore
+  store = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(endpoint_id))
   store.seed_reserved_cat_group(1_u16, "Administrators",
     Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, admin_version).success?.should be_true
   store.seed_reserved_cat_group(2_u16, "Anchors",
@@ -99,5 +101,60 @@ describe Matter::Commissioning::JointFabricAddNocPolicy do
     ordinary.add_noc(jcm_noc(ordinary_key, nil), nil, Bytes.new(16, 0_u8),
       TestCertificateAuthority::DEFAULT_NODE_ID, 0xFFF1_u16, 42_u64).status
       .should eq(Matter::Commissioning::NocStatus::Ok)
+  end
+end
+
+describe Matter::Commissioning::JointFabricAddNocGuard do
+  it "binds multiple JFA endpoints to their own Datastore and tracks the selected JCM session" do
+    admin_a = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    admin_b = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(2_u16))
+    admin_a.administrator_fabric_index = 1_u8
+    admin_b.administrator_fabric_index = 2_u8
+    store_a = jcm_datastore(4_u16, 5_u16)
+    store_b = jcm_datastore(2_u16, 3_u16, 2_u16)
+    store_a.joint_fabric_index = 1_u8
+    store_b.joint_fabric_index = 2_u8
+    store_a.access_mode = Matter::Cluster::JointFabricDatastore::AccessMode::Active
+    store_b.access_mode = Matter::Cluster::JointFabricDatastore::AccessMode::Active
+    service, key = jcm_add_noc_service(store_b, nil)
+    guard = Matter::Commissioning::JointFabricAddNocGuard.new(service,
+      -> { [admin_a, admin_b] },
+      ->(endpoint : UInt16) { endpoint == 1_u16 ? store_a : endpoint == 2_u16 ? store_b : nil })
+    guard.install!
+    admin_a.jcm_add_noc_guard_ready?.should be_true
+    admin_b.jcm_add_noc_guard_ready?.should be_true
+    guard.observe_failsafe_arm(42_u64, 2_u8, joint_window: true, case_session: false)
+
+    service.add_noc(jcm_noc(key, nil), nil, Bytes.new(16, 0_u8),
+      jcm_subject(Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 3_u16),
+      0xFFF1_u16, 42_u64).status.should eq(Matter::Commissioning::NocStatus::InvalidNoc)
+    service.fabric_table.size.should eq(0)
+
+    stale_admin = Matter::DataType::CaseAuthenticatedTag.create(
+      Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 1_u16).value
+    service.add_noc(jcm_noc(key, stale_admin), nil, Bytes.new(16, 0_u8),
+      jcm_subject(Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 3_u16),
+      0xFFF1_u16, 42_u64).status.should eq(Matter::Commissioning::NocStatus::InvalidNoc)
+    service.fabric_table.size.should eq(0)
+
+    guard.reset
+    service.add_noc(jcm_noc(key, nil), nil, Bytes.new(16, 0_u8),
+      TestCertificateAuthority::DEFAULT_NODE_ID, 0xFFF1_u16, 42_u64).status
+      .should eq(Matter::Commissioning::NocStatus::Ok)
+  end
+
+  it "fails closed for an unpaired or ambiguous JFA endpoint" do
+    admin = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    admin.administrator_fabric_index = 1_u8
+    service, key = jcm_add_noc_service(jcm_datastore, nil)
+    guard = Matter::Commissioning::JointFabricAddNocGuard.new(service,
+      -> { [admin] }, ->(_endpoint : UInt16) { nil.as(Matter::Cluster::JointFabricDatastore?) })
+    guard.install!
+    admin.jcm_add_noc_guard_ready?.should be_false
+    guard.observe_failsafe_arm(42_u64, 1_u8, joint_window: true, case_session: false)
+    service.add_noc(jcm_noc(key, nil), nil, Bytes.new(16, 0_u8),
+      TestCertificateAuthority::DEFAULT_NODE_ID, 0xFFF1_u16, 42_u64).status
+      .should eq(Matter::Commissioning::NocStatus::InvalidNoc)
+    service.fabric_table.size.should eq(0)
   end
 end

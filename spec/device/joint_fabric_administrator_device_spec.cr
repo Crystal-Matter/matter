@@ -2187,6 +2187,7 @@ describe MatterJointFabricAdministrator::Device do
     promoted_admin.request_is_case_session = true
     promoted_admin.request_fabric_index = 1_u8
     promoted_admin.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
+    promoted_admin.jcm_add_noc_guard_ready = -> { true }
     window_request = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
       400_u16, Bytes.new(97, 0_u8), 3839_u16, 1000_u32, Bytes.new(16, 0_u8))
     begin
