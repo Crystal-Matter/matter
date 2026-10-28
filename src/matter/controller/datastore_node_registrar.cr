@@ -230,6 +230,7 @@ module Matter
           raise Matter::ConfigurationError.new("Datastore pending node needs a Node ID and friendly name")
         end
         @store.update do |state|
+          state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
           if commissioned = state.nodes_for(fabric.fabric_id, fabric.root_public_key,
                fabric.controller_node_id)[node_id]?
             unless allow_commissioned && peer &&
