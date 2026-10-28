@@ -285,6 +285,7 @@ private def commission_third_administrator(anchor_store : Matter::Controller::St
     ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
     registrar.callback, anchor_exchange, client: anchor_client,
     anchor_finalize: anchor_finalize, handoff_result: handoff_result,
+    node_list_check: registrar.node_list_check,
     attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
       Matter::Controller::AttestationTrustStore.matter_test_fixture))
   workflow.commission(0xA104_u64,
@@ -598,6 +599,10 @@ describe "three provisioned Joint Fabric Administrators" do
     recovered_client = Matter::Controller::Client.new(
       counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
       shared_message_counter: anchor_client.transport.message_counter)
+    recovered_registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, recovered_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     recovered = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -606,6 +611,7 @@ describe "three provisioned Joint Fabric Administrators" do
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
       anchor_exchange, client: recovered_client,
+      node_list_check: recovered_registrar.node_list_check,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
         Matter::Controller::AttestationTrustStore.matter_test_fixture))
     recovered.hooks.pending.as(Matter::Controller::JointCommissioning::PendingRegistration)
@@ -667,6 +673,10 @@ describe "three provisioned Joint Fabric Administrators" do
       counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
       shared_message_counter: anchor_client.transport.message_counter)
     # Endpoint 1 belonged to the rolled-back A fabric; B's live JFA is on 2.
+    deferred_registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, deferred_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     deferred = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -675,6 +685,7 @@ describe "three provisioned Joint Fabric Administrators" do
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
       anchor_exchange, client: deferred_client,
+      node_list_check: deferred_registrar.node_list_check,
       anchor_finalize: ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64, _nonce : String) do
         raise Matter::TransportError.new("Injected interruption before deferred Anchor finalization")
       end,
@@ -714,6 +725,10 @@ describe "three provisioned Joint Fabric Administrators" do
           entry.root_public_key == anchor_bootstrap.fabric.root_public_key
       end.should be_true
 
+    restarted_registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     deferred_restarted = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -722,6 +737,7 @@ describe "three provisioned Joint Fabric Administrators" do
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
       anchor_exchange,
+      node_list_check: restarted_registrar.node_list_check,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
         Matter::Controller::AttestationTrustStore.matter_test_fixture))
     deferred_restarted.hooks.pending.as(Matter::Controller::JointCommissioning::PendingRegistration)
@@ -798,6 +814,7 @@ describe "three provisioned Joint Fabric Administrators" do
       registrar.callback,
       anchor_exchange,
       client: anchor_client, anchor_finalize: anchor_finalize,
+      node_list_check: registrar.node_list_check,
       handoff_result: handoff_result,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
         Matter::Controller::AttestationTrustStore.matter_test_fixture))

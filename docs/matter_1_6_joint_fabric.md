@@ -353,8 +353,11 @@ item below as covered only to the extent of its cited tests.
   The read and subsequent AddPendingNode are not atomic across Administrators,
   so hosts should coordinate Node ID allocation. The current wire schema has
   no attempt token to distinguish concurrent same-name AddPendingNode calls. A Joint
-  Commissioning workflow without this opt-in registrar does not perform the
-  remote NodeList check and must arrange it through its host. Known failures
+  Commissioning workflow without this opt-in registrar requires an authenticated
+  Anchor `node_list_check` callback and fails closed when it is absent. The
+  `RemoteDatastoreRegistrar#node_list_check` adapter uses the same CASE NodeList
+  reader as device registration; its lookup and a later AddAdmin are not atomic
+  across Administrators. Known failures
   remove the pending entry. A lost CommissioningComplete result requires
   explicit reconciliation before removal. An opt-in Commissioner starts a
   retry worker that scans the durable controller journal immediately at startup
