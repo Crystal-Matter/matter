@@ -200,8 +200,8 @@ module Matter
           if @owns_transport
             begin
               @transport.close
-            rescue cleanup_ex
-              Log.warn(exception: cleanup_ex) { "Could not close Client transport after constructor failure" }
+            rescue error
+              Log.warn(exception: error) { "Could not close Client transport after constructor failure" }
             end
           end
           release_fixed_source_ownership
