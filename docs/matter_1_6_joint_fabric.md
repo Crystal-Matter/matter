@@ -94,9 +94,13 @@ item below as covered only to the extent of its cited tests.
   operational VID proof, NOC chain, and Administrator CAT before issuing a
   NOC. A wildcard AdministratorFabricIndex discovery result must also expose
   the Joint Fabric Administrator device type and server cluster on its
-  Descriptor endpoint, even when PartsList omits that endpoint. The reachable
-  Anchor Administrator device performs Announce and the ICAC exchange; the
-  returned certificate is checked against the previously
+  Descriptor endpoint, even when PartsList omits that endpoint. The pinned
+  SDK v1.6.0.0 JFA example hosts the JFA server on endpoint 1 but advertises
+  only Color Temperature Light as its device type. The official interop
+  workflow corrects that example's DeviceTypeList before building it; Crystal
+  rejects the unpatched example at JCM discovery. The reachable Anchor
+  Administrator device performs Announce and the ICAC exchange; the returned
+  certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
   persist across restart. For AddICAC or a deferred handoff interrupted before
