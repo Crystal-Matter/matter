@@ -3,6 +3,7 @@ require "./im_client"
 require "./operational_peer_resolver"
 require "./pairing/case_pairing"
 require "./state_store"
+require "./joint_fabric_peer_authentication"
 
 module Matter
   module Controller
@@ -69,6 +70,8 @@ module Matter
           peer = Socket::IPAddress.new(address, node.port)
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, installed,
             peer_node_id: @anchor_node_id, timeout: @timeout)
+          JointFabricPeerAuthentication.verify_anchor!(session,
+            installed.root_cert, installed.fabric_id)
           yield ImClient.new(@client, @timeout), session, peer
         end
 

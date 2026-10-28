@@ -102,6 +102,9 @@ item below as covered only to the extent of its cited tests.
   before the first Joint
   Fabric attribute read. CASE validates the peer NOC through that ICAC; this
   additional check rejects ordinary administrators that advertise an Anchor.
+  Participant Administrator follow-up checks the authenticated Administrator
+  CAT before endpoint discovery. Known-address Anchor Datastore registration
+  paths apply both role checks before reading or changing the Datastore.
   For AddICAC or a deferred handoff interrupted before
   CommissioningComplete, the pending record also retains the observed
   cumulative fail-safe deadline and the joiner's original fabric identity.

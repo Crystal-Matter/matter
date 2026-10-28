@@ -9,6 +9,7 @@ require "./im_client"
 require "./vid_verification"
 require "./commissioning/commissioner"
 require "./pairing/case_pairing"
+require "./joint_fabric_peer_authentication"
 
 module Matter
   module Controller
@@ -778,6 +779,8 @@ module Matter
           peer = Socket::IPAddress.new(address, node.port)
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, fabric,
             peer_node_id: @anchor_node_id, timeout: @timeout)
+          JointFabricPeerAuthentication.verify_anchor!(session,
+            fabric.root_cert, fabric.fabric_id)
           im = ImClient.new(@client, @timeout)
           report = im.read_attribute(session: session, peer: peer,
             endpoint_id: @datastore_endpoint,
@@ -968,24 +971,7 @@ module Matter
       # Joint Fabric Interaction Model request uses the session.
       def verify_anchor_case_peer!(session : Session::SecureContext,
                                    root_certificate : Bytes, fabric_id : UInt64) : Nil
-        cats = session.peer_subject_ids.compact_map do |subject|
-          DataType::NodeId.case_authenticated_tag_from_subject?(subject)
-        end
-        anchor_cat = cats.any?(&.identity_value.==(Cluster::JointFabricDatastore::ANCHOR_CAT))
-        unless session.case_session? && anchor_cat
-          raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks the Anchor CAT")
-        end
-        unless cats.any?(&.identity_value.==(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT))
-          raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks the Administrator CAT")
-        end
-        icac = session.peer_icac
-        unless icac && Crypto::MatterCertificate.anchor_icac?(icac)
-          raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks an Anchor ICAC")
-        end
-        Crypto::MatterCertificate::Validation.verify_intermediate_profile(icac, fabric_id)
-        Crypto::MatterCertificate::Validation.verify_issued_by(icac, root_certificate)
-        Crypto::MatterCertificate::Validation.verify_signature(icac,
-          Crypto::MatterCertificate.public_key_from_tlv(root_certificate))
+        JointFabricPeerAuthentication.verify_anchor!(session, root_certificate, fabric_id)
       end
 
       # Joining Administrator adapter. It opens a fresh outbound CASE session
