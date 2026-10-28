@@ -152,6 +152,7 @@ module SdkJfcJcmDriver
         ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
         ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { consent },
         registrar.callback, anchor_exchange, client: client, anchor_finalize: anchor_finalize,
+        node_list_check: registrar.node_list_check,
         attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
           Matter::Controller::AttestationTrustStore.matter_test_fixture))
       if !consent

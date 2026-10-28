@@ -89,7 +89,24 @@ private class RegulatoryCommissioner < Matter::Controller::Commissioning::Commis
 end
 
 private class RegulatoryNodeDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  getter add_calls = 0
+  getter retry_calls = 0
+  @acknowledged = Set(Tuple(UInt64, String, UInt64, UInt64, String)).new
+
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+    key = {fabric.fabric_id, fabric.root_public_key.hexstring, fabric.controller_node_id, node_id, friendly_name}
+    raise Matter::CommissioningError.new("Regulatory test added the same pending node twice") if @acknowledged.includes?(key)
+    @acknowledged << key
+    @add_calls += 1
+  end
+
+  def retry_acknowledged_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
+                                      friendly_name : String) : Nil
+    key = {fabric.fabric_id, fabric.root_public_key.hexstring, fabric.controller_node_id, node_id, friendly_name}
+    unless @acknowledged.includes?(key)
+      raise Matter::CommissioningError.new("Regulatory test retried an unacknowledged pending node")
+    end
+    @retry_calls += 1
   end
 
   def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
@@ -209,7 +226,8 @@ describe Matter::Controller::Commissioning::Commissioner do
     state = store.load
     state.install_fabric(fabric)
     store.save(state)
-    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, RegulatoryNodeDelivery.new)
+    delivery = RegulatoryNodeDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
     commissioner = RegulatoryCommissioner.new(store, datastore_registrar: registrar)
     peer = Socket::IPAddress.new("fe80::1234%1", 5540)
     now = Time.utc.to_unix
@@ -221,6 +239,8 @@ describe Matter::Controller::Commissioning::Commissioner do
     saved.pending_datastore_nodes.first.peer_address.should eq("fe80::1234%1")
     saved.pending_handoffs.first.address.should eq("fe80::1234%1")
     registrar.add_pending(fabric, 0x201_u64, "Test node", window.expires_at_unix, peer)
+    delivery.add_calls.should eq(1)
+    delivery.retry_calls.should eq(1)
     commissioner.record_handoff_success(fabric.fabric_id, fabric.root_public_key,
       fabric.controller_node_id, 0x201_u64, saved.pending_handoffs.first.nonce)
     saved_node = store.load.nodes_for(fabric.fabric_id, fabric.root_public_key,

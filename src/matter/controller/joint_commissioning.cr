@@ -467,6 +467,7 @@ module Matter
         DEFAULT_FAIL_SAFE_EXPIRY_SECONDS = 900_u16
         record HandoffResult, nonce : String, certificate : Bytes
         alias HandoffResultLookup = Proc(String, HandoffResult?)
+        alias NodeListCheck = Proc(FabricInfo, UInt64, Nil)
 
         getter hooks : CommissionerHooks
 
@@ -492,6 +493,7 @@ module Matter
           @handoff_result : HandoffResultLookup? = nil,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
           @datastore_registrar : DatastoreNodeRegistrar? = nil,
+          @node_list_check : NodeListCheck? = nil,
           @fail_safe_expiry_seconds : UInt16 = DEFAULT_FAIL_SAFE_EXPIRY_SECONDS,
         )
           fabric = @store.load.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
@@ -539,6 +541,12 @@ module Matter
                handoff.controller_node_id == @controller_node_id
              end
             raise Matter::CommissioningError.new("A Joint Commissioning Anchor handoff needs reconciliation")
+          end
+          unless @datastore_registrar
+            check = @node_list_check ||
+                    raise Matter::ConfigurationError.new("Joint Commissioning requires an authenticated Anchor NodeList check")
+            fabric = state.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
+            check.call(fabric, node_id)
           end
           commissioner = Commissioning::Commissioner.new(@store, @client,
             crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: @fail_safe_expiry_seconds,
@@ -777,6 +785,23 @@ module Matter
 
         def callback : CommissionerHooks::RegisterAdmin
           ->(request : Cluster::JointFabricDatastore::AddAdminRequest) { register(request) }
+        end
+
+        def node_list_check : Workflow::NodeListCheck
+          ->(fabric : FabricInfo, node_id : UInt64) { assert_node_id_available(fabric, node_id) }
+        end
+
+        # A CASE-authenticated read is required even if the caller already
+        # checked its local StateStore. FriendlyName cannot prove ownership of
+        # a NodeList entry allocated by a different Administrator.
+        def assert_node_id_available(selected : FabricInfo, node_id : UInt64) : Nil
+          unless selected.fabric_id == @fabric_id &&
+                 selected.root_public_key == @root_public_key &&
+                 selected.controller_node_id == @controller_node_id
+            raise Matter::AuthenticationError.new("NodeList check selected another Anchor fabric")
+          end
+          DatastoreNodeRegistrar::NetworkDelivery.new(@store, @client, @anchor_node_id,
+            @datastore_endpoint, @timeout, @crypto).assert_node_id_available(selected, node_id)
         end
 
         def register(request : Cluster::JointFabricDatastore::AddAdminRequest) : Nil

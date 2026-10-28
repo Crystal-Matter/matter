@@ -15,8 +15,22 @@ module Matter
       alias Datastore = Cluster::JointFabricDatastore
       DEFAULT_RETRY_INTERVAL = 30.seconds
 
+      class NodeIdCollision < Matter::CommissioningError
+      end
+
       abstract class Delivery
+        # A newly allocated Node ID must be absent from the Anchor's NodeList.
+        # Implementations which cannot inspect that list must fail closed.
+        def assert_node_id_available(fabric : FabricInfo, node_id : UInt64) : Nil
+          raise Matter::ConfigurationError.new("Datastore delivery cannot verify NodeList uniqueness")
+        end
+
         abstract def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+
+        def retry_acknowledged_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          raise Matter::ConfigurationError.new("Datastore delivery cannot verify an acknowledged pending registration")
+        end
+
         abstract def refresh_node(fabric : FabricInfo, node_id : UInt64) : Nil
         abstract def remove_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
 
@@ -40,14 +54,31 @@ module Matter
 
         def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
           with_datastore(fabric) do |interaction, session, peer|
-            if entry = find_node(interaction, session, peer, node_id)
-              unless entry.friendly_name == friendly_name && pending_node?(entry)
-                raise Matter::CommissioningError.new("Datastore Node ID already belongs to a different or completed registration")
-              end
-              next
-            end
+            assert_node_absent!(interaction, session, peer, node_id)
             invoke(interaction, session, peer, Datastore::CMD_ADD_PENDING_NODE,
               Datastore::AddPendingNodeRequest.new(node_id, friendly_name).to_slice)
+          end
+        end
+
+        def retry_acknowledged_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          with_datastore(fabric) do |interaction, session, peer|
+            entry = find_node(interaction, session, peer, node_id)
+            unless entry && entry.friendly_name == friendly_name && pending_node?(entry)
+              raise Matter::CommissioningError.new("Acknowledged Datastore registration changed or disappeared")
+            end
+          end
+        end
+
+        def assert_node_id_available(fabric : FabricInfo, node_id : UInt64) : Nil
+          with_datastore(fabric) do |interaction, session, peer|
+            assert_node_absent!(interaction, session, peer, node_id)
+          end
+        end
+
+        private def assert_node_absent!(im : ImClient, session : Session::SecureContext,
+                                        peer : Socket::IPAddress, node_id : UInt64) : Nil
+          if find_node(im, session, peer, node_id)
+            raise NodeIdCollision.new("Node ID already exists in Anchor Datastore NodeList")
           end
         end
 
@@ -226,13 +257,29 @@ module Matter
         end
       end
 
+      # Called before AddNOC for a new commissioning attempt. The caller
+      # chooses a fresh Node ID when the authenticated Anchor NodeList has a
+      # collision, even when the existing entry has the same friendly name.
+      def assert_node_id_available(fabric : FabricInfo, node_id : UInt64) : Nil
+        @operation_lock.synchronize do
+          state = @store.load
+          state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+          if state.nodes_for(fabric.fabric_id, fabric.root_public_key,
+               fabric.controller_node_id).has_key?(node_id) ||
+             entry_for(state, fabric, node_id)
+            raise Matter::CommissioningError.new("Joint Fabric Node ID is already allocated locally")
+          end
+          @delivery.assert_node_id_available(fabric, node_id)
+        end
+      end
+
       private def add_pending_unlocked(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
                                        expires_at_unix : Int64, peer : Socket::IPAddress?,
                                        allow_commissioned : Bool) : Nil
         if node_id == DataType::NodeId::UNSPECIFIED || friendly_name.empty?
           raise Matter::ConfigurationError.new("Datastore pending node needs a Node ID and friendly name")
         end
-        @store.update do |state|
+        acknowledged_attempt, new_record = @store.update do |state|
           state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
           if commissioned = state.nodes_for(fabric.fabric_id, fabric.root_public_key,
                fabric.controller_node_id)[node_id]?
@@ -248,14 +295,27 @@ module Matter
                    (peer.nil? || (entry.peer_address == OperationalPeerResolver.address_hint(peer) && entry.peer_port == peer.port))
               raise Matter::CommissioningError.new("Datastore node registration conflicts with a previous attempt")
             end
+            {entry.stage.registered?, false}
           else
             state.pending_datastore_nodes << PendingDatastoreNode.new(fabric.fabric_id,
               fabric.root_public_key.dup, fabric.controller_node_id, node_id, friendly_name, expires_at_unix,
               peer.try { |address| OperationalPeerResolver.address_hint(address) },
               peer.try(&.port) || NodeInfo::DEFAULT_PORT, attempt_id: @attempt_id)
+            {false, true}
           end
         end
-        @delivery.add_pending_node(fabric, node_id, friendly_name)
+        begin
+          if acknowledged_attempt
+            @delivery.retry_acknowledged_pending_node(fabric, node_id, friendly_name)
+          else
+            @delivery.add_pending_node(fabric, node_id, friendly_name)
+          end
+        rescue ex : NodeIdCollision
+          # The first AddPendingNode was never sent, so its local intent may
+          # be discarded without touching another Administrator's entry.
+          clear(fabric, node_id, PendingDatastoreNode::Stage::Pending) if new_record
+          raise ex
+        end
         set_stage(fabric, node_id, PendingDatastoreNode::Stage::Registered)
       end
 

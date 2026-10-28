@@ -15,6 +15,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ACL entry is absent. Repeated removals already awaiting device delivery keep
   their DeletePending status without advancing DataVersion.
 
+### Joint Fabric Node ID allocation
+
+- Commissioners using the opt-in Datastore registrar now check the authenticated
+  Anchor NodeList before AddNOC and reject an existing Node ID even if its
+  friendly name matches. A new registration will not claim or remove that
+  existing entry. A durable acknowledged attempt may reread its own pending
+  registration; an unacknowledged add remains pending for reconciliation.
+- Custom Datastore delivery adapters must implement an authenticated NodeList
+  availability check before commissioning and verify an acknowledged pending
+  entry before treating it as a retry. Joint Commissioning hosts that do not
+  configure a registrar remain responsible for the NodeList check.
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store

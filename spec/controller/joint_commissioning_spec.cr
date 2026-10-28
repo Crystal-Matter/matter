@@ -565,6 +565,47 @@ describe Matter::Controller::JointCommissioning do
     workflow.close
   end
 
+  it "fails closed without an Anchor NodeList lookup and rejects a remote same-name collision" do
+    joint = Matter::Controller::JointCommissioning
+    fabric = joint.bootstrap_anchor_fabric(0x4571_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.update(&.install_fabric(fabric))
+    datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    datastore.node_list = [Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct.new(
+      9_u64, "Joining Administrator", status)]
+    build_workflow = ->(check : Matter::Controller::JointCommissioning::Workflow::NodeListCheck?) {
+      Matter::Controller::JointCommissioning::Workflow.new(store, fabric.fabric_id, fabric.root_public_key,
+        fabric.controller_node_id, 1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16,
+        2_u64, JointTestTrust.new,
+        ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
+        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+        node_list_check: check)
+    }
+    missing = build_workflow.call(nil)
+    expect_raises(Matter::ConfigurationError, /authenticated Anchor NodeList/) do
+      missing.commission(9_u64, "invalid manual code")
+    end
+    missing.close
+    lookup = ->(selected : Matter::Controller::FabricInfo, node_id : UInt64) do
+      selected.fabric_id.should eq(fabric.fabric_id)
+      if datastore.node_list.any?(&.node_id.==(node_id))
+        raise Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision.new("Anchor NodeList already contains Node ID")
+      end
+      nil
+    end
+    collided = build_workflow.call(lookup)
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision, /already contains/) do
+      collided.commission(9_u64, "invalid manual code")
+    end
+    datastore.node_list.size.should eq(1)
+    store.load.pending_datastore_nodes.should be_empty
+    collided.close
+  end
+
   it "recovers an acknowledged completion when controller node storage failed" do
     joint = Matter::Controller::JointCommissioning
     fabric = joint.bootstrap_anchor_fabric(0x4568_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
@@ -586,7 +627,10 @@ describe Matter::Controller::JointCommissioning do
       ->(request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) {
         joint.add_admin_once(datastore, request); nil
       },
-      ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+      ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+      node_list_check: ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64) {
+        raise Matter::CommissioningError.new("Pending retry must not allocate its Node ID again")
+      })
 
     # A retry of the same commissioned Node ID reconciles the saved result
     # and must not reopen PASE or send AddNOC again.
@@ -781,7 +825,8 @@ describe Matter::Controller::JointCommissioning do
         ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
         ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
         ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
-        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+        node_list_check: ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64) { nil })
     }
     workflow = build_workflow.call(reopened)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)

@@ -202,6 +202,7 @@ module Matter
             raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
           end
           @store.update(&.install_fabric(fabric)) if created_fabric
+          @datastore_registrar.try(&.assert_node_id_available(fabric, node_id))
 
           peer_addr = if peer
                         peer
@@ -438,7 +439,7 @@ module Matter
             registrar.try(&.refresh(fabric, node_id))
             nil
           rescue ex
-            if registration_attempted
+            if registration_attempted && !ex.is_a?(DatastoreNodeRegistrar::NodeIdCollision)
               begin
                 registrar.try(&.abort(fabric, node_id))
               rescue error

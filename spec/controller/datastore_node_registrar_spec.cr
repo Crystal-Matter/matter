@@ -137,6 +137,21 @@ private def registrar_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::DatastoreNodeRegistrar do
+  it "does not let a custom delivery claim an acknowledged entry without a retry verifier" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    expect_raises(Matter::ConfigurationError, /verify an acknowledged/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    delivery.calls.should eq(["add:512:Lamp"])
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+  end
+
   it "persists AddPendingNode before final CASE and removes it on pre-completion failure" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = registrar_fabric
@@ -553,15 +568,42 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     store.load.pending_datastore_nodes.should be_empty
   end
 
-  it "uses NodeList to retry Anchor commands without duplicating or deleting a completed node" do
+  it "rejects an existing same-name Node ID for a new attempt and preserves its remote entry" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    client = Matter::Controller::Client.new
+    interaction = NodeLifecycleIm.new(client)
+    delivery = TestNetworkNodeDelivery.new(store, client, interaction)
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    status = JfdDatastore::DatastoreStatusEntryStruct.new(JfdDatastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    interaction.nodes = [JfdDatastore::DatastoreNodeInformationEntryStruct.new(0x200_u64, "Lamp", status)]
+
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision) do
+      registrar.assert_node_id_available(fabric, 0x200_u64)
+    end
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    interaction.commands.should be_empty
+    interaction.nodes.size.should eq(1)
+    store.load.pending_datastore_nodes.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "reuses an acknowledged durable attempt without duplicating or deleting its NodeList entry" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     client = Matter::Controller::Client.new
     interaction = NodeLifecycleIm.new(client)
     delivery = TestNetworkNodeDelivery.new(store, client, interaction)
     fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
 
-    delivery.add_pending_node(fabric, 0x200_u64, "Lamp")
-    delivery.add_pending_node(fabric, 0x200_u64, "Lamp")
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
     interaction.commands.should eq([JfdDatastore::CMD_ADD_PENDING_NODE])
     delivery.refresh_node(fabric, 0x200_u64)
     interaction.commands.last.should eq(JfdDatastore::CMD_REFRESH_NODE)
@@ -577,6 +619,34 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     delivery.remove_committed_node(fabric, 0x200_u64, "Lamp")
     interaction.nodes.should be_empty
     interaction.commands.last.should eq(JfdDatastore::CMD_REMOVE_NODE)
+  ensure
+    client.try(&.close)
+  end
+
+  it "keeps an ambiguous Pending journal when a matching NodeList entry appears after an unacknowledged add" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    client = Matter::Controller::Client.new
+    interaction = NodeLifecycleIm.new(client)
+    delivery = TestNetworkNodeDelivery.new(store, client, interaction)
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    status = JfdDatastore::DatastoreStatusEntryStruct.new(JfdDatastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.update do |state|
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+        0x200_u64, "Lamp", Time.utc.to_unix + 60_i64, nil,
+        Matter::Controller::NodeInfo::DEFAULT_PORT,
+        Matter::Controller::PendingDatastoreNode::Stage::Pending,
+        registrar.attempt_id)
+    end
+    interaction.nodes = [JfdDatastore::DatastoreNodeInformationEntryStruct.new(0x200_u64, "Lamp", status)]
+
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Pending)
+    interaction.commands.should be_empty
   ensure
     client.try(&.close)
   end

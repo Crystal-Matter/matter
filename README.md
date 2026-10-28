@@ -1270,7 +1270,13 @@ confirmed_failure: true)` if the device did not join. A known failed
 CommissioningComplete response is cleaned up automatically.
 `JointCommissioning::Workflow` accepts the same registrar through its
 `datastore_registrar:` option and uses the Administrator name as the node's
-friendly name.
+friendly name. When a JCM host uses its own AddAdmin callback instead, it must
+also pass `node_list_check:`. Construct
+`JointCommissioning::RemoteDatastoreRegistrar` with the Anchor's node ID and
+Datastore endpoint, then pass `remote_registrar.node_list_check`. The callback
+reads the Anchor's NodeList over authenticated CASE and rejects an occupied
+Node ID before JCM starts PASE. Without a registrar or lookup, JCM fails
+closed.
 
 To remove a committed Joint Fabric node, use the separate durable
 `JointFabricNodeRemoval` workflow. Its network port authenticates the Anchor
