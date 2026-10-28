@@ -83,6 +83,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   has no node members. `RemoveKeySet` succeeds after the group is removed and
   any remaining node references are pending deletion.
 
+### Joint Fabric Administrator discovery
+
+- Verify the Descriptor device type and server cluster of an Administrator
+  endpoint found through a wildcard attribute read before Joint Commissioning.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the

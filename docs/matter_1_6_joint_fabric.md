@@ -120,8 +120,15 @@ blocked removal for operator reconciliation.
   memberships count their destination policy without joining a receive socket.
 - The Joint Commissioning workflow verifies the joining administrator's
   operational VID proof, NOC chain, and Administrator CAT before issuing a
-  NOC. The reachable Anchor Administrator device performs Announce and the
-  ICAC exchange; the returned certificate is checked against the previously
+  NOC. A wildcard AdministratorFabricIndex discovery result must also expose
+  the Joint Fabric Administrator device type and server cluster on its
+  Descriptor endpoint, even when PartsList omits that endpoint. The pinned
+  SDK v1.6.0.0 JFA example hosts the JFA server on endpoint 1 but advertises
+  only Color Temperature Light as its device type. The official interop
+  workflow corrects that example's DeviceTypeList before building it; Crystal
+  rejects the unpatched example at JCM discovery. The reachable Anchor
+  Administrator device performs Announce and the ICAC exchange; the returned
+  certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
   persist across restart. On the joining side, outbound CASE to a discovered
@@ -130,6 +137,10 @@ blocked removal for operator reconciliation.
   before the first Joint
   Fabric attribute read. CASE validates the peer NOC through that ICAC; this
   additional check rejects ordinary administrators that advertise an Anchor.
+  The joining Administrator verifies the exact endpoint named in
+  AnnounceJointFabricAdministrator. Its Descriptor device type and server list,
+  AdministratorFabricIndex, operational Vendor ID, and accessing-fabric
+  identity must agree; another valid JFA endpoint cannot stand in for it.
   Participant Administrator follow-up checks the authenticated Administrator
   CAT before endpoint discovery. Known-address Anchor Datastore registration
   paths apply both role checks before reading or changing the Datastore.

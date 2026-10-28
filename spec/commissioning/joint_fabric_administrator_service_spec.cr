@@ -9,7 +9,7 @@ private def jfa_icac_install_status(certificate : Bytes, root : Bytes,
     -> { true }, ->(_index : UInt8) { true },
     ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
     ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil },
-    verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+    verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
     failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
   cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
   cluster.administrator_fabric_index = 1_u8
@@ -59,6 +59,42 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     icac_key.public_key, fabric_id, 3_u64, root_key, 1_u64, Bytes[0x06], crypto, anchor: true
   )
 
+  it "verifies only the Anchor endpoint named by Announce before issuing an ICAC CSR" do
+    observed_endpoint = nil.as(UInt16?)
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, endpoint : UInt16) {
+        observed_endpoint = endpoint
+        endpoint == 1_u16
+      },
+      failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_peer_subject_ids = [Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 1_u16)).id]
+    cluster.request_peer_icac = anchor_icac
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 2_u8
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+
+    service.announce_joint_fabric_administrator(cluster,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(2_u16)).should eq(
+      Matter::InteractionModel::Status.success)
+    observed_endpoint.should eq(2_u16)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+    service.announce_joint_fabric_administrator(cluster,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16)).should eq(
+      Matter::InteractionModel::Status.success)
+    observed_endpoint.should eq(1_u16)
+    service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+  end
+
   it "rejects expired, non-signing, and wrong-fabric cross-signed ICACs" do
     # The official SDK issues ICACs whose subject contains ICAC ID alone.
     certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
@@ -90,7 +126,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
     cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.administrator_fabric_index = 1_u8
@@ -136,7 +172,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(_index : UInt8?) { true },
       existing_icac_certificate: anchor_icac,
       icac_csr_provider: provider
@@ -161,7 +197,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(_index : UInt8?) { true },
       existing_icac_certificate: anchor_icac,
       icac_csr_provider: bad_provider
@@ -197,7 +233,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { armed }, ->(_index : UInt8) { verified },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(index : UInt8?) { failsafe_owner_matches && index == 2_u8 }
     )
     cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
@@ -279,7 +315,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
         -> { true }, ->(index : UInt8) { checked_fabrics << index; index == verified_fabric },
         ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
         ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-        verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+        verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
         failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
       )
       service.announce_joint_fabric_administrator(cluster,
@@ -545,7 +581,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       persist_icac: ->(value : Bytes?) { saved = value; nil },
       failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
     )
@@ -591,7 +627,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       resolve_accessing_fabric: ->(index : UInt8) {
         index == 2_u8 ? Matter::Commissioning::JointFabricAdministratorService::FabricIdentity.new(anchor_root, anchor_fabric_id) : nil
       },
@@ -638,7 +674,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       resolve_accessing_fabric: ->(index : UInt8) {
         index == 2_u8 ? Matter::Commissioning::JointFabricAdministratorService::FabricIdentity.new(anchor_root, anchor_fabric_id) : nil
       },
