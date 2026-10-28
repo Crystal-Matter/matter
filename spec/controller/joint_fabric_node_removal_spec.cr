@@ -58,6 +58,21 @@ private class RemovalPort < Removal::Port
 end
 
 describe Removal do
+  it "restores pre-cleanup removal journals with an unrecorded snapshot" do
+    original = Removal::Journal.new(0xA001_u64, Bytes[1],
+      0xA101_u64, 0xA102_u64, 0xA201_u64, "Lamp", Bytes[2])
+    legacy = original.to_document
+    legacy.delete("cleanup_recorded")
+    legacy.delete("cleanup_groups")
+    legacy.delete("cleanup_bindings")
+    legacy.delete("cleanup_key_set_ids")
+    restored = Removal::Journal.from_document(legacy)
+    restored.cleanup_recorded?.should be_false
+    restored.cleanup_groups.should be_empty
+    restored.cleanup_bindings.should be_empty
+    restored.cleanup_key_set_ids.should be_empty
+  end
+
   it "includes bindings owned by or pointing to the removed node" do
     status = Datastore::DatastoreStatusEntryStruct.new(
       Datastore::DatastoreStateEnum::Committed, 1_u32, Datastore::NO_FAILURE_CODE)

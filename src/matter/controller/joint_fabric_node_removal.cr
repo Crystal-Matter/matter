@@ -65,10 +65,10 @@ module Matter
         getter friendly_name : String
         getter target_noc : Bytes
         getter group_revocations : Array(SharedFabric::JointGroupRevocation)
-        property? cleanup_recorded : Bool
-        property cleanup_groups : Array(GroupCleanup)
-        property cleanup_bindings : Array(BindingCleanup)
-        property cleanup_key_set_ids : Array(UInt16)
+        property? cleanup_recorded : Bool = false
+        property cleanup_groups : Array(GroupCleanup) = [] of GroupCleanup
+        property cleanup_bindings : Array(BindingCleanup) = [] of BindingCleanup
+        property cleanup_key_set_ids : Array(UInt16) = [] of UInt16
         property stage : Stage
         property stage_version : UInt64
 
