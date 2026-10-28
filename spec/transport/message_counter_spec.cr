@@ -3,6 +3,66 @@ require "../../src/matter/transport/message_counter"
 
 describe Matter::Transport::MessageCounter do
   describe "#next" do
+    it "renews a committed range before assigning another counter" do
+      counter = Matter::Transport::MessageCounter.new
+      owner = "lease-owner"
+      reservations = 0
+      counter.bind_lease(owner, UInt32::MAX - 1_u32, 2_u32, -> {
+        reservations += 1
+        {0_u32, 2_u32}
+      })
+
+      counter.next.should eq(UInt32::MAX)
+      counter.next.should eq(0_u32)
+      counter.next.should eq(1_u32)
+      counter.next.should eq(2_u32)
+      reservations.should eq(1)
+    end
+
+    it "fails closed when renewal cannot commit" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.bind_lease("lease-owner", 40_u32, 1_u32, -> { raise Matter::StorageError.new("reservation failed") })
+      counter.next.should eq(41_u32)
+      expect_raises(Matter::StorageError, /reservation failed/) { counter.next }
+      counter.counter.should eq(41_u32)
+    end
+
+    it "renews outside the send lock and discards an overlapping reserved block" do
+      counter = Matter::Transport::MessageCounter.new
+      started = Channel(Nil).new(1)
+      release = Channel(Nil).new(1)
+      result = Channel(UInt32).new(1)
+      next_start = 1_u32
+      cursor_mutex = Mutex.new
+      counter.bind_lease("lease-owner", 0_u32, 1_u32, -> {
+        start = cursor_mutex.synchronize do
+          current = next_start
+          next_start += 2_u32
+          current
+        end
+        if start == 1_u32
+          started.send(nil)
+          release.receive
+        end
+        {start, 2_u32}
+      })
+      counter.next.should eq(1_u32)
+      spawn { result.send(counter.next) }
+      started.receive
+      counter.next.should eq(4_u32)
+      counter.next.should eq(5_u32)
+      release.send(nil)
+      result.receive.should eq(6_u32)
+    end
+
+    it "refuses to attach a lease after an unsecured packet was assigned" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.next
+      expect_raises(Matter::ConfigurationError, /after a message was sent/) do
+        counter.bind_lease("lease-owner", 10_u32, 2_u32)
+      end
+    end
+
     it "refuses to emit a counter outside a reserved range even at wrap" do
       counter = Matter::Transport::MessageCounter.new(UInt32::MAX - 1_u32)
       counter.limit_messages(2_u32)

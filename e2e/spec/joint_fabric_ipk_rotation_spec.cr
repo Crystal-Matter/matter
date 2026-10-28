@@ -62,7 +62,7 @@ describe "Joint Fabric Anchor IPK rotation" do
       File.join(E2E::LOG_DIR, "matter_joint_fabric_ipk_anchor.bootstrap.yml")))
     store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
       commissioner_node_id: bootstrap.fabric.controller_node_id))
-    client = Matter::Controller::Client.new(unsecured_source_node_id: bootstrap.fabric.controller_node_id)
+    client = Matter::Controller::Client.new(counter_lease: store.counter_lease(bootstrap.fabric.controller_node_id))
     peer = Socket::IPAddress.new(anchor.address, E2E::DEVICE_PORT)
     issuer = ->(fabric_id : UInt64, requested_node_id : UInt64, key : Bytes) do
       raise Matter::ConfigurationError.new("Wrong Anchor fabric") unless fabric_id == bootstrap.fabric.fabric_id
@@ -120,7 +120,9 @@ describe "Joint Fabric Anchor IPK rotation" do
     # accepts only the old one. CASE must retry that retained epoch.
     transitional = store.load.fabric.as(Matter::Controller::FabricInfo)
     transitional.ipk_epoch_keys = [bootstrap.fabric.ipk_value, next_key, future_key]
-    fallback_client = Matter::Controller::Client.new(unsecured_source_node_id: transitional.controller_node_id)
+    fallback_client = Matter::Controller::Client.new(
+      counter_lease: store.counter_lease(transitional.controller_node_id),
+      shared_message_counter: client.transport.message_counter)
     fallback_session = Matter::Controller::Pairing::CasePairing.new.pair(fallback_client,
       target_peer, transitional, peer_node_id: target_node_id, timeout: E2E::COMMAND_TIMEOUT)
     Matter::Controller::ImClient.new(fallback_client, E2E::COMMAND_TIMEOUT).read_attribute(
@@ -161,7 +163,9 @@ describe "Joint Fabric Anchor IPK rotation" do
     anchor.restart!
     target.restart!
     rotated = store.load.fabric.as(Matter::Controller::FabricInfo)
-    fresh_client = Matter::Controller::Client.new(unsecured_source_node_id: rotated.controller_node_id)
+    fresh_client = Matter::Controller::Client.new(
+      counter_lease: store.counter_lease(rotated.controller_node_id),
+      shared_message_counter: client.transport.message_counter)
     fresh_session = Matter::Controller::Pairing::CasePairing.new.pair(fresh_client, peer,
       rotated, peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
     fresh_im = Matter::Controller::ImClient.new(fresh_client, E2E::COMMAND_TIMEOUT)

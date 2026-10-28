@@ -36,6 +36,7 @@ module Matter
           @root_public_key : Bytes? = nil,
           @controller_node_id : UInt64? = nil,
           @peer_hints : Hash(UInt64, Socket::IPAddress) = {} of UInt64 => Socket::IPAddress,
+          @shared_message_counter : Transport::MessageCounter? = nil,
         )
         end
 
@@ -48,12 +49,8 @@ module Matter
                    end
           peer = OperationalPeerResolver.new.resolve(state, fabric, node_id,
             @timeout, @peer_hints[node_id]?)
-          counter_start, counter_count = reserve_case_counters(fabric)
-          client = Client.new(
-            unsecured_source_node_id: fabric.controller_node_id,
-            initial_unsecured_message_counter: counter_start,
-            unsecured_message_counter_limit: counter_count
-          )
+          client = Client.new(counter_lease: counter_lease_for(fabric),
+            shared_message_counter: @shared_message_counter)
           delivered = false
           begin
             session = Pairing::CasePairing.new.pair(client, peer, fabric, peer_node_id: node_id, timeout: @timeout)
@@ -66,21 +63,21 @@ module Matter
                   NodeInfo.new(node_id, OperationalPeerResolver.address_hint(peer), peer.port),
                   fabric.root_public_key, fabric.controller_node_id)
               end
-              current.advance_unsecured_message_counter(client.transport.message_counter.counter)
             end
             client.close
           end
         end
 
-        protected def reserve_case_counters(fabric : FabricInfo) : {UInt32, UInt32}
+        protected def counter_lease_for(fabric : FabricInfo) : StateStore::CounterLease
           # Full CASE sends Sigma1 and Sigma3, plus ACKs for Sigma2 and
           # StatusReport. Each inbound response may be retried up to the
           # transport's MRP bound; duplicate reception emits another ACK.
-          # Resumption uses fewer. Unused counters stay spent after crash.
+          # This bounds standalone delivery. A supplied listener counter uses
+          # its renewable range instead. Unused counters stay spent after crash.
           preferred = fabric.case_ipk_value
           candidate_count = 1_u32 + fabric.ipk_epoch_keys.count { |key| key != preferred }.to_u32
           counter_count = candidate_count * CASE_UNSECURED_MESSAGES_PER_CANDIDATE
-          {@state_store.reserve_unsecured_message_counters(counter_count), counter_count}
+          @state_store.counter_lease(fabric.controller_node_id, counter_count, renewable: false)
         end
       end
 

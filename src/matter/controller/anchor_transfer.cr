@@ -601,6 +601,7 @@ module Matter
                       Pairing::CasePairing.new(@crypto).pair(@client, @peer,
                         @new_anchor_fabric, peer_node_id: @target_node_id)
                     end
+          JointFabricPeerAuthentication.verify_administrator!(session)
           endpoint = if resolver = @endpoint_resolver
                        resolver.call(@im, session, @peer)
                      else

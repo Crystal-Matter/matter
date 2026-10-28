@@ -350,11 +350,11 @@ describe "three provisioned Joint Fabric Administrators" do
     end
 
     anchor_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+      counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id))
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     third_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: third_bootstrap.fabric.controller_node_id)
+      counter_lease: third_store.counter_lease(third_bootstrap.fabric.controller_node_id))
     anchor_peer = Socket::IPAddress.new(anchor.address, E2E::DEVICE_PORT)
     joiner_peer = Socket::IPAddress.new(joiner.address, E2E::DEVICE_PORT)
     third_peer = Socket::IPAddress.new(third.address, E2E::DEVICE_PORT)
@@ -564,7 +564,8 @@ describe "three provisioned Joint Fabric Administrators" do
       end
     end
     interrupted_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+      counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
+      shared_message_counter: anchor_client.transport.message_counter)
     interrupted = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -591,7 +592,8 @@ describe "three provisioned Joint Fabric Administrators" do
     interrupted.close
 
     recovered_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+      counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
+      shared_message_counter: anchor_client.transport.message_counter)
     recovered = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -658,7 +660,8 @@ describe "three provisioned Joint Fabric Administrators" do
       fields: recovery_open_request.to_slice)
     Matter::Controller::JointCommissioning.assert_status_success(recovery_window)
     deferred_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: anchor_bootstrap.fabric.controller_node_id)
+      counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
+      shared_message_counter: anchor_client.transport.message_counter)
     # Endpoint 1 belonged to the rolled-back A fabric; B's live JFA is on 2.
     deferred = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
@@ -1423,9 +1426,11 @@ describe "three provisioned Joint Fabric Administrators" do
       anchor_bootstrap.fabric.root_cert)
     b_controller.intermediate_cert.should eq(cross_signed_icac)
     b_controller.intermediate_cert.should_not eq(joined_identity.intermediate_cert)
-    b_controller_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    b_controller_path = File.join(E2E::LOG_DIR, "joint-fabric-b-controller.yml")
+    File.delete?(b_controller_path)
+    b_controller_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(b_controller_path))
     Matter::Controller::SharedFabric.install(b_controller_store, b_controller)
-    b_controller_client = Matter::Controller::Client.new(unsecured_source_node_id: b_controller_node_id)
+    b_controller_client = Matter::Controller::Client.new(counter_lease: b_controller_store.counter_lease(b_controller_node_id))
     b_controller_im = Matter::Controller::ImClient.new(b_controller_client, E2E::COMMAND_TIMEOUT)
     b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
       migration_peer, b_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -1529,7 +1534,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_copy = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     persisted_copy.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Copying.value)
@@ -1583,7 +1588,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_active_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     persisted_active_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating.value)
@@ -1629,7 +1634,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_second_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     persisted_second_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotating.value)
@@ -1682,7 +1687,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_rotation = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     persisted_rotation.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Rotated.value)
@@ -1709,7 +1714,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_promotion = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-transfer-stage", 0xA102_u64))
     persisted_promotion.inspected_transfer_stage.should eq(Matter::Controller::AnchorTransfer::Stage::Promoting.value)
@@ -1812,7 +1817,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     assert_joiner_vvs(joiner_client, joiner_peer, joiner_bootstrap.fabric,
       signed_statement, joiner_bootstrap.fabric.intermediate_cert.as(Bytes))
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
@@ -1865,7 +1870,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_first_follow_up = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
     persisted_first_follow_up.inspected_follow_up_stage.should eq(
@@ -1913,7 +1918,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     persisted_cross_signed = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
     persisted_cross_signed.inspected_follow_up_stage.should eq(
@@ -1983,7 +1988,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     # The resumed command must remove only C's old fabric, not replay either
     # participant cross-sign, rotate B's credentials, or recopy the Datastore.
     transferred = jfa_command("matter_joint_fabric_joiner",
@@ -2138,7 +2143,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     uncertain_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     uncertain_retry.status.should eq("error")
@@ -2173,7 +2178,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
     no_effect_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
@@ -2233,7 +2238,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
     uncertain_datastore_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
@@ -2260,7 +2265,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     no_effect_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     no_effect_retry.status.should eq("error")
@@ -2277,7 +2282,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     anchor_rotation_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     anchor_rotation_retry.status.should eq("error")
@@ -2302,7 +2307,7 @@ describe "three provisioned Joint Fabric Administrators" do
     third.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     administrator_noc(joiner_client, third_peer, joiner_bootstrap.fabric, 0xA104_u64)
       .noc.should eq(c_before_removal_rotation.noc)
     blocked_participant_retry = jfa_command("matter_joint_fabric_joiner",
@@ -2351,7 +2356,7 @@ describe "three provisioned Joint Fabric Administrators" do
     third.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     expect_participant_recovery_fence_busy(joiner_client, third_peer,
       joiner_bootstrap.fabric, 0xA104_u64)
     restarted_participant_fence = jfa_command("matter_joint_fabric_third",
@@ -2378,7 +2383,7 @@ describe "three provisioned Joint Fabric Administrators" do
     third.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     expect_participant_recovery_fence_busy(joiner_client, third_peer,
       joiner_bootstrap.fabric, 0xA104_u64)
     ambiguous_save_fence = jfa_command("matter_joint_fabric_third",
@@ -2410,7 +2415,7 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner.restart!
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: joiner_bootstrap.fabric.controller_node_id)
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
     promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
     participant_rotation_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))

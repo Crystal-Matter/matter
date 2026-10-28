@@ -560,6 +560,7 @@ module MatterJointFabricAdministrator
 
     protected def before_start : Nil
       super
+      Matter::Controller::StateStore.new(persistence.backend).bind_transport_counter(message_handler.transport.message_counter)
       restore_participant_recovery_fence!
       install_participant_recovery_protocol_locks!
       reconcile_saved_fabric_bindings
@@ -1127,7 +1128,8 @@ module MatterJointFabricAdministrator
         fabric_id: fabric.fabric_id,
         root_public_key: fabric.root_public_key,
         controller_node_id: fabric.node_id,
-        peer_hints: configured_peer_hints
+        peer_hints: configured_peer_hints,
+        shared_message_counter: message_handler.transport.message_counter
       )
       @bootstrap_datastore_propagator = Matter::Controller::DatastorePropagator.new(datastore, delivery)
       @controller_store = store
@@ -1343,7 +1345,8 @@ module MatterJointFabricAdministrator
         fabric_id: fabric.fabric_id,
         root_public_key: fabric.root_public_key,
         controller_node_id: fabric.node_id,
-        peer_hints: configured_peer_hints
+        peer_hints: configured_peer_hints,
+        shared_message_counter: message_handler.transport.message_counter
       )
       @datastore_propagator = Matter::Controller::DatastorePropagator.new(joint_fabric_datastore, delivery)
       @controller_store = store
@@ -1711,6 +1714,8 @@ module MatterJointFabricAdministrator
           subscription = Matter::Controller::AnchorDatastoreSubscription.new(
             scanner, identity, new_anchor_node_id, nil,
             ->(_im : Matter::Controller::ImClient, session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { verify_new_anchor_session!(session) },
+            counter_store: @controller_store || Matter::Controller::StateStore.new(persistence.backend),
+            shared_message_counter: message_handler.transport.message_counter,
             address_hint: configured_transfer_peer(new_anchor_node_id))
           @new_anchor_subscription = subscription
           @subscribed_fabric_id = fabric.fabric_id
@@ -1808,8 +1813,8 @@ module MatterJointFabricAdministrator
         intermediate_cert: old_fabric.intermediate_cert,
         ipk_epoch_keys: old_fabric.ipk_epoch_keys)
       scanner = Matter::Controller::Scanner.new
-      old_client = Matter::Controller::Client.new(unsecured_source_node_id: old_fabric.node_id)
-      own_client = Matter::Controller::Client.new(unsecured_source_node_id: bootstrap.fabric.controller_node_id)
+      old_client = leased_case_client(old_fabric.node_id)
+      own_client = leased_case_client(bootstrap.fabric.controller_node_id)
       own_im = Matter::Controller::ImClient.new(own_client)
       journal = if document = persistence.app_document(APP_TRANSFER_DOCUMENT)
                   Matter::Controller::AnchorTransfer::Journal.from_document(document)
@@ -2519,7 +2524,7 @@ module MatterJointFabricAdministrator
         backend.close if backend.open?
       end
       scanner = Matter::Controller::Scanner.new
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       begin
         scanner.start
         scanner.query_operational
@@ -2614,7 +2619,7 @@ module MatterJointFabricAdministrator
       scanner = Matter::Controller::Scanner.new
       controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
       identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       im = Matter::Controller::ImClient.new(client)
       @removal_in_progress = true
       begin
@@ -3020,7 +3025,7 @@ module MatterJointFabricAdministrator
       end
       verify_durable_anchor_rotation_datastore!(datastore)
 
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       begin
         controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
         identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key,
@@ -3325,7 +3330,7 @@ module MatterJointFabricAdministrator
       controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
       identity = controller_store.load.fabric_for(own_fabric.fabric_id,
         own_fabric.root_public_key, own_fabric.node_id)
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       begin
         scanner.start
         scanner.query_operational
@@ -3508,7 +3513,7 @@ module MatterJointFabricAdministrator
       scanner = Matter::Controller::Scanner.new
       controller_store = @controller_store || raise Matter::ConfigurationError.new("Anchor controller identity is unavailable")
       identity = controller_store.load.fabric_for(own_fabric.fabric_id, own_fabric.root_public_key, own_fabric.node_id)
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       begin
         scanner.start
         scanner.query_operational
@@ -4075,7 +4080,7 @@ module MatterJointFabricAdministrator
       end
 
       scanner = Matter::Controller::Scanner.new
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       cross_signed_icac = nil
       begin
         scanner.start
@@ -4158,7 +4163,7 @@ module MatterJointFabricAdministrator
       end
       identity.certificate_authority_key
       peer = Socket::IPAddress.new(request.peer_address, request.peer_port)
-      client = Matter::Controller::Client.new(unsecured_source_node_id: own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id)
       begin
         session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
           identity, peer_node_id: request.joining_node_id)
@@ -4275,6 +4280,7 @@ module MatterJointFabricAdministrator
             # SDK Administrators can reuse this newly authenticated CASE
             # session for ICACCSRRequest immediately after Announce. The
             # listener must continue to receive it once this client closes.
+            client.relinquish_session(session)
             message_handler.registry.establish_session(session, preserve_existing: true)
           })
       ensure
@@ -4312,11 +4318,16 @@ module MatterJointFabricAdministrator
     end
 
     private def anchor_verification_client(node_id : UInt64) : Matter::Controller::Client
+      store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
       Matter::Controller::Client.new(
         transport: message_handler.transport,
-        unsecured_source_node_id: node_id,
+        counter_lease: store.counter_lease(node_id),
         session_id_in_use: ->(id : UInt16) { message_handler.sessions.has_key?(id) }
       )
+    end
+
+    private def leased_case_client(node_id : UInt64) : Matter::Controller::Client
+      anchor_verification_client(node_id)
     end
 
     # Announce arrived over an authenticated CASE session. Its UDP source is

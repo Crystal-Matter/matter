@@ -29,8 +29,8 @@ describe "FabricSynchronizedNode Bridged Node composition" do
     endpoint.add_cluster(Matter::Cluster::BridgedDeviceBasicInformation.new(endpoint_id, unique_id: "synchronized-bridge"))
     endpoint.add_cluster(Admin.new(endpoint_id,
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
-      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
-      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success }))
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { Status.success }))
     endpoint.populate_descriptor
     endpoint.validate.join.should contain("Ecosystem Information")
     endpoint.add_cluster(Matter::Cluster::EcosystemInformation.new(endpoint_id))

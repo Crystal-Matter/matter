@@ -143,7 +143,8 @@ module Matter
       getter message_counter : MessageCounter
       getter exchange_manager : ExchangeManager
 
-      def initialize(@port : Int32 = MATTER_PORT)
+      def initialize(@port : Int32 = MATTER_PORT,
+                     shared_message_counter : MessageCounter? = nil)
         # Create dual-stack IPv6 socket (accepts both IPv4 and IPv6)
         @socket = UDPSocket.new(Socket::Family::INET6)
         @socket.ipv6_only = false
@@ -155,7 +156,7 @@ module Matter
         # Support ephemeral ports: update @port with actual bound port
         @port = @socket.local_address.port if @port == 0
 
-        @message_counter = MessageCounter.new
+        @message_counter = shared_message_counter || MessageCounter.new
         @unsecured_counters = Hash(Tuple(UInt64?, Socket::IPAddress), Tuple(MessageCounter, Time::Instant)).new
         @unsecured_replay = {} of Tuple(UInt64?, Socket::IPAddress, UInt32) => UnsecuredReplayEntry
         @last_unsecured_counter_sweep = Time.instant

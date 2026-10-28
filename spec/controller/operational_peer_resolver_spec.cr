@@ -142,7 +142,9 @@ describe Matter::Controller::OperationalPeerResolver do
     pairing.paired_peer.should eq(peer)
     store.load.nodes_for(fabric.fabric_id, fabric.root_public_key,
       fabric.controller_node_id)[0x200_u64].address.should eq("192.0.2.2")
-    store.load.unsecured_message_counter.should eq(client.transport.message_counter.counter)
+    # The random, ephemeral Client source must not advance the durable
+    # watermark reserved for a fixed operational source.
+    store.load.unsecured_message_counter.should eq(0_u32)
   ensure
     client.try(&.close)
   end
@@ -188,7 +190,7 @@ describe Matter::Controller::OperationalPeerResolver do
     end
     store.load.nodes_for(fabric.fabric_id, fabric.root_public_key,
       fabric.controller_node_id)[0x200_u64].address.should eq("192.0.2.1")
-    store.load.unsecured_message_counter.should eq(client.transport.message_counter.counter)
+    store.load.unsecured_message_counter.should eq(0_u32)
   ensure
     client.try(&.close)
   end

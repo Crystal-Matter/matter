@@ -1,4 +1,5 @@
 require "../spec_helper"
+require "../support/counter_store_fixture"
 require "../../src/matter/controller/state_store"
 require "../../src/matter/storage/sqlite"
 require "../../examples/chip-tool/context"
@@ -160,6 +161,90 @@ describe Matter::Controller::StateStore do
     done.receive
     [first, second].sort.should eq([0_u32, 2_u32])
     store.load.unsecured_message_counter.should eq(4_u32)
+  end
+
+  it "binds the first lease to the commissioner identity and shares one counter across source IDs" do
+    fixture = Matter::Spec::CounterStoreFixture.new
+    store = fixture.store
+    backend = store.backend
+    source = store.load.commissioner_node_id
+    first = store.counter_lease(source, 2_u32)
+    second = Matter::Controller::StateStore.new(backend).counter_lease(0xA101_u64, 2_u32)
+
+    first.reserve.should eq({0_u32, 2_u32})
+    store.load.commissioner_node_id.should eq(source)
+    second.reserve.should eq({2_u32, 2_u32})
+    store.load.unsecured_message_counter.should eq(4_u32)
+  ensure
+    fixture.try(&.close)
+  end
+
+  it "refuses a rollbackable nested counter reservation" do
+    fixture = Matter::Spec::CounterStoreFixture.new
+    store = fixture.store
+    lease = store.counter_lease(0xA101_u64, 1_u32)
+    lease.reserve.should eq({0_u32, 1_u32})
+
+    store.backend.transaction do
+      expect_raises(Matter::StorageError, /inside an open storage transaction/) do
+        lease.reserve
+      end
+    end
+    store.load.unsecured_message_counter.should eq(1_u32)
+    lease.reserve.should eq({1_u32, 1_u32})
+  ensure
+    fixture.try(&.close)
+  end
+
+  it "rejects a second live file backend counter owner for the same path" do
+    fixture = Matter::Spec::CounterStoreFixture.new
+    store = fixture.store
+    source = 0xA101_u64
+    store.counter_lease(source).reserve
+    second = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(store.backend.path.as(String)))
+
+    expect_raises(Matter::StorageError, /owned by another writer/) { second.counter_lease(source).reserve }
+  ensure
+    second.try(&.backend.close)
+    fixture.try(&.close)
+  end
+
+  it "reclaims file ownership before renewing a lease after backend close" do
+    fixture = Matter::Spec::CounterStoreFixture.new
+    store = fixture.store
+    lease = store.counter_lease(0xA101_u64, 2_u32)
+    lease.reserve.should eq({0_u32, 2_u32})
+    store.backend.close
+
+    second = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(store.backend.path.as(String)))
+    second_lease = second.counter_lease(0xA101_u64, 2_u32)
+    second_lease.reserve.should eq({2_u32, 2_u32})
+    expect_raises(Matter::StorageError, /owned by another writer/) { lease.reserve }
+
+    second.backend.close
+    lease.reserve.should eq({4_u32, 2_u32})
+  ensure
+    second.try(&.backend.close)
+    fixture.try(&.close)
+  end
+
+  it "refuses even an unspent leased counter after another file owner takes over" do
+    fixture = Matter::Spec::CounterStoreFixture.new
+    store = fixture.store
+    outgoing = Matter::Transport::MessageCounter.new
+    store.bind_transport_counter(outgoing, 2_u32)
+    outgoing.next.should eq(1_u32)
+    store.backend.close
+
+    second = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(fixture.path))
+    second_outgoing = Matter::Transport::MessageCounter.new
+    second.bind_transport_counter(second_outgoing, 2_u32)
+    expect_raises(Matter::StorageError, /owner was closed/) { outgoing.next }
+    outgoing.counter.should eq(1_u32)
+    second_outgoing.next.should eq(3_u32)
+  ensure
+    second.try(&.backend.close)
+    fixture.try(&.close)
   end
 
   it "persists the reservation end across reload and wrap" do

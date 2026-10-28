@@ -431,7 +431,6 @@ module Matter
               current.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id,
                 address: OperationalPeerResolver.address_hint(peer_addr), port: peer_addr.port),
                 fabric.root_public_key, fabric.controller_node_id)
-              current.advance_unsecured_message_counter(@client.transport.message_counter.counter)
             end
             if hooks = @hooks
               hooks.after_complete(fabric, node_id, im, case_session, peer_addr)
@@ -532,7 +531,6 @@ module Matter
             window.expires_at_unix, @crypto.random_bytes(16).hexstring)
           @store.update do |current|
             current.add_pending_handoff(handoff)
-            current.advance_unsecured_message_counter(@client.transport.message_counter.counter)
           end
           {window, handoff}
         end

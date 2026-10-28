@@ -2,6 +2,7 @@ require "log"
 require "../storage/backend"
 require "../fabric"
 require "../session/case/resumption_store"
+require "../transport/message_counter"
 require "./icd_peer_store"
 require "./state"
 
@@ -20,8 +21,65 @@ module Matter
 
       COLLECTION                           = "controller"
       DOCUMENT_ID                          = "state"
-      LOAD_CONFLICT_RETRIES                = 8
-      COUNTER_RESERVATION_CONFLICT_RETRIES = 8
+      LOAD_CONFLICT_RETRIES                =      8
+      COUNTER_RESERVATION_CONFLICT_RETRIES =      8
+      DEFAULT_UNSECURED_COUNTER_LEASE_SIZE = 64_u32
+
+      # A fixed unsecured source Node ID must spend counters from one durable
+      # StateStore. Each reservation is committed before Client sends a packet;
+      # a crash deliberately leaves the rest of that range unused.
+      class CounterLease
+        getter store : StateStore
+        getter source_node_id : UInt64
+        getter block_size : UInt32
+        getter? renewable : Bool
+
+        def initialize(@store : StateStore, @source_node_id : UInt64,
+                       @block_size : UInt32 = DEFAULT_UNSECURED_COUNTER_LEASE_SIZE,
+                       @renewable : Bool = true)
+          unless @store.backend.durable?
+            raise Matter::ConfigurationError.new("A fixed source counter lease requires durable storage")
+          end
+          unless (DataType::NodeId::OPERATIONAL_MINIMUM..DataType::NodeId::OPERATIONAL_MAXIMUM).includes?(@source_node_id)
+            raise Matter::ConfigurationError.new("Counter lease requires an operational source Node ID")
+          end
+          if @block_size == 0_u32 || @block_size >= State::UNSECURED_COUNTER_HALF_RANGE
+            raise Matter::ConfigurationError.new("Counter lease block size is outside the serial half-range")
+          end
+        end
+
+        def reserve : Tuple(UInt32, UInt32)
+          {@store.reserve_unsecured_message_counters_for(@source_node_id, @block_size), @block_size}
+        end
+
+        def owns?(counter : Transport::MessageCounter) : Bool
+          counter.leased_by?(@store.backend)
+        end
+
+        def ownership_key : Tuple(String, UInt64)
+          {@store.backend.counter_lease_namespace, @source_node_id}
+        end
+      end
+
+      def counter_lease(source_node_id : UInt64,
+                        block_size : UInt32 = DEFAULT_UNSECURED_COUNTER_LEASE_SIZE,
+                        renewable : Bool = true) : CounterLease
+        CounterLease.new(self, source_node_id, block_size, renewable)
+      end
+
+      # A device listener and its shared controller Clients use one outgoing
+      # counter. Call before the listener starts sending; all source Node IDs on
+      # that transport then draw from the same durable reservation sequence.
+      def bind_transport_counter(counter : Transport::MessageCounter,
+                                 block_size : UInt32 = DEFAULT_UNSECURED_COUNTER_LEASE_SIZE) : Nil
+        raise Matter::ConfigurationError.new("A shared transport counter lease requires durable storage") unless @backend.durable?
+        @backend.claim_counter_lease_owner!
+        return if counter.leased_by?(@backend)
+        start = reserve_unsecured_message_counters(block_size, claim_owner: true)
+        counter.bind_lease(@backend, start, block_size,
+          -> { {reserve_unsecured_message_counters(block_size, claim_owner: true), block_size} },
+          @backend.counter_lease_validity)
+      end
 
       getter backend : Storage::Backend
 
@@ -126,13 +184,38 @@ module Matter
 
       # A SQL adapter may lose a cross-instance compare-and-swap race. Retry
       # only that conflict after reloading the new high watermark.
-      def reserve_unsecured_message_counters(count : UInt32) : UInt32
+      def reserve_unsecured_message_counters(count : UInt32, claim_owner : Bool = false) : UInt32
+        @backend.claim_counter_lease_owner! if claim_owner
+        reject_nested_counter_reservation!
         attempts = 0
         loop do
           return update(&.reserve_unsecured_message_counters(count))
         rescue ex : ConflictError
           attempts += 1
           raise ex if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
+        end
+      end
+
+      # When the store is still empty, keep the first leased source identity
+      # aligned with the commissioner identity that commissioning will persist.
+      def reserve_unsecured_message_counters_for(source_node_id : UInt64, count : UInt32) : UInt32
+        @backend.claim_counter_lease_owner!
+        reject_nested_counter_reservation!
+        attempts = 0
+        loop do
+          return update do |state|
+            state.commissioner_node_id = source_node_id if state.storage_snapshot.nil?
+            state.reserve_unsecured_message_counters(count)
+          end
+        rescue ex : ConflictError
+          attempts += 1
+          raise ex if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
+        end
+      end
+
+      private def reject_nested_counter_reservation! : Nil
+        if @backend.transaction_open?
+          raise Matter::StorageError.new("Counter reservation cannot commit inside an open storage transaction")
         end
       end
 
@@ -200,10 +283,7 @@ module Matter
       end
 
       private def random_nonzero_u64 : UInt64
-        loop do
-          id = Random::Secure.rand(UInt64)
-          return id unless id == DataType::NodeId::UNSPECIFIED
-        end
+        DataType::NodeId.random_operational.id
       end
     end
   end

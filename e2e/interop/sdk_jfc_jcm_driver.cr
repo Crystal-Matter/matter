@@ -102,7 +102,7 @@ module SdkJfcJcmDriver
     bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(fabric, bootstrap_key)
     a_peer = Socket::IPAddress.new("127.0.0.1", a_port)
     b_peer = Socket::IPAddress.new("127.0.0.1", b_port)
-    client = Matter::Controller::Client.new(unsecured_source_node_id: A_CONTROLLER_ID)
+    client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(A_CONTROLLER_ID))
     begin
       issuer = ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
         raise Matter::ConfigurationError.new("Wrong A fabric") unless fabric_id == A_FABRIC_ID

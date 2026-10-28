@@ -150,6 +150,18 @@ module Matter
         new(StatusCode::Failure, code.value.to_u8)
       end
 
+      # Preserve a remote Interaction Model result when bridging a command.
+      # Unknown wire codes cannot be represented by StatusCode and fail closed.
+      def self.from_remote(code : UInt8, cluster_status : UInt8? = nil) : Status
+        status = StatusCode.from_value?(code) || return failure
+        {% for member in StatusCode.constants %}
+          {% if member.stringify.starts_with?("Deprecated") || member.stringify.starts_with?("Reserved") %}
+            return failure if status == StatusCode::{{ member }}
+          {% end %}
+        {% end %}
+        new(status, cluster_status)
+      end
+
       def success?
         @status.success?
       end

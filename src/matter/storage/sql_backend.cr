@@ -58,6 +58,13 @@ module Matter
         true
       end
 
+      def claim_counter_lease_owner! : Nil
+      end
+
+      def counter_lease_namespace : String
+        "sql:#{@database_url}"
+      end
+
       protected abstract def bind(index : Int32) : String
 
       # Driver exceptions need not inherit DB::Error. Keep their recognition in
@@ -230,6 +237,10 @@ module Matter
             end
           end
         end
+      end
+
+      def transaction_open? : Bool
+        @mutex.synchronize { !@current_transaction.nil? }
       end
 
       private def read_sql : String

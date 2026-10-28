@@ -63,7 +63,7 @@ module SdkJfaInverseDriver
     state_store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
       commissioner_node_id: CONTROLLER_ID))
     peer = Socket::IPAddress.new(address, SDK_JFA_PORT)
-    client = Matter::Controller::Client.new(unsecured_source_node_id: CONTROLLER_ID)
+    client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(CONTROLLER_ID))
     begin
       issuer = ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
         unless fabric_id == FABRIC_ID && node_id == SDK_JFA_ID
