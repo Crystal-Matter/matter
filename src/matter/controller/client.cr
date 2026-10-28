@@ -42,6 +42,8 @@ module Matter
       getter transport : Transport::PacketTransport
       getter crypto : Crypto::CryptoBase
 
+      # Constructor cleanup uses a rescue clause; initialize this before it can run.
+      @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new
       @sessions = {} of UInt16 => Session::SecureContext
       @ack_packets = {} of {UInt16, UInt32} => Bytes
       @inbox : Channel(ReceivedMessage)
