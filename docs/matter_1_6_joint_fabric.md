@@ -398,9 +398,22 @@ blocked removal for operator reconciliation.
   against B's original ICAC key, the
   current Administrator CAT on B's authenticated Datastore, and A's root and
   IPK on A's authenticated Datastore. It then opens an enhanced commissioning
-  window over B CASE, attests and commissions A, verifies A CASE, waits for A
-  NodeList to commit, removes B from the device, and removes the B NodeList
-  entry. A per-device journal blocks automatic replay of uncertain commands;
+  window over B CASE, attests the target, adds a pending A NodeList entry after
+  AddNOC and before CommissioningComplete, then verifies A CASE and refreshes
+  the A NodeList entry after successful completion. A confirmed commissioning
+  failure removes the pending entry; an ambiguous result retains it until
+  authenticated recovery proves whether A committed. Only after the A
+  NodeList commits does migration remove B from the device and B's NodeList.
+  Each local Datastore registration carries a durable attempt ID. Before
+  cleanup sends RemoveNode, it changes that registration to Removing in the
+  shared controller store. Other library writers cannot stage the same Node ID
+  until removal succeeds or an authenticated NodeList read proves it absent.
+  An uncertain RemoveNode result remains Removing across restarts and is not
+  replayed automatically. The guard coordinates writers using the same
+  controller store; a separate JFA that writes the Anchor Datastore directly
+  must be excluded by deployment policy because RemoveNode has no conditional
+  attempt ID on the wire.
+  A per-device journal blocks automatic replay of uncertain commands;
   authenticated CASE and Datastore reads allow explicit reconciliation when a
   command took effect or provably had no effect. The latter restores the prior
   journal stage so an operator can retry. A partially applied command remains
@@ -423,8 +436,8 @@ blocked removal for operator reconciliation.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
   crashes in that window, recovery validates both fabric CASE sessions, B's
-  committed NodeList entry, A's absent NodeList entry, and the A fabric
-  descriptor before restoring the local node record. The journal also records
+  committed NodeList entry, A's matching staged NodeList entry, and the A
+  fabric descriptor before restoring the local node record. The journal also records
   the device's reported maximum cumulative fail-safe duration immediately
   after ArmFailSafe. If CommissioningComplete's reply is lost, recovery waits
   that full duration plus a safety margin using a fresh monotonic interval,
@@ -436,6 +449,25 @@ blocked removal for operator reconciliation.
   other uncertain mutation stages still require explicit reconciliation.
   Older journals lacking the reported duration remain uncertain and require
   manual repair rather than adopting A from a UTC timestamp alone.
+  Recovery atomically assigns attempt IDs to older journals and matching
+  staged Datastore records that predate attempt tracking. A failed
+  CommissioningComplete may leave the A Datastore entry Committed while the
+  device's A fabric rolls back under fail-safe. After authenticated proof that
+  the A fabric is absent, cleanup can remove that matching Committed entry.
+  A lost RemoveNode result retains the durable removal guard until an
+  authenticated NodeList read proves absence.
+  Journals saved before AddPendingNode moved ahead of CommissioningComplete
+  are marked as legacy during load. If such a journal resumes after A was
+  commissioned and no A Datastore entry exists, migration verifies A CASE,
+  B ownership, and the recorded device peer before staging the missing entry.
+  The staging intent is durable before the Anchor command, and the local
+  guard is released only after a Committed NodeList read.
+  An old `AddingAnchorNode` journal uses the explicit
+  `resume-anchor-registration` command for the same recovery. If the prior
+  AddPendingNode request never reached the Anchor, this command reuses its
+  durable local attempt and stages the missing entry after authenticated A
+  and B checks; ordinary `migrate-device` still refuses to replay an
+  uncertain command automatically.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and
@@ -462,8 +494,8 @@ blocked removal for operator reconciliation.
   bound and verifies both fabrics before continuing. This tests the ambiguous
   persisted result; it does not drop a UDP packet on the wire.
   The same scenario then interrupts B after the Anchor Datastore commits
-  AddPendingNode but before B advances its durable per-device journal. After
-  restart, B refuses to replay AddPendingNode. Reconciliation rejects a missing
+  the refreshed node but before B advances its durable per-device journal. After
+  restart, B refuses to replay RefreshNode. Reconciliation rejects a missing
   Anchor NodeList entry while B still owns the device, then accepts the
   restored committed entry and completes the handoff.
   It also restarts B after the migrated device commits RemoveFabric and after

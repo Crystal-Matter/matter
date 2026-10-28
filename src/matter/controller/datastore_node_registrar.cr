@@ -19,6 +19,14 @@ module Matter
         abstract def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
         abstract def refresh_node(fabric : FabricInfo, node_id : UInt64) : Nil
         abstract def remove_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+
+        def remove_committed_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          remove_node(fabric, node_id, friendly_name)
+        end
+
+        def node_absent?(fabric : FabricInfo, node_id : UInt64) : Bool
+          false
+        end
       end
 
       # Sends the lifecycle commands to the Anchor's Datastore over CASE.
@@ -26,7 +34,8 @@ module Matter
       class NetworkDelivery < Delivery
         def initialize(@store : StateStore, @client : Client, @anchor_node_id : UInt64,
                        @datastore_endpoint : UInt16, @timeout : Time::Span = 15.seconds,
-                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
+                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                       @anchor_peer : Socket::IPAddress? = nil)
         end
 
         def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
@@ -53,10 +62,20 @@ module Matter
         end
 
         def remove_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          remove_matching_node(fabric, node_id, friendly_name, allow_committed: false)
+        end
+
+        def remove_committed_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          remove_matching_node(fabric, node_id, friendly_name, allow_committed: true)
+        end
+
+        private def remove_matching_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
+                                         allow_committed : Bool) : Nil
           with_datastore(fabric) do |interaction, session, peer|
             entry = find_node(interaction, session, peer, node_id)
             next unless entry
-            unless entry.friendly_name == friendly_name && pending_node?(entry)
+            unless entry.friendly_name == friendly_name &&
+                   (pending_node?(entry) || (allow_committed && entry.commissioning_status_entry.state.committed?))
               raise Matter::CommissioningError.new("Refusing to remove a different or completed Datastore node")
             end
             invoke(interaction, session, peer, Datastore::CMD_REMOVE_NODE,
@@ -64,13 +83,23 @@ module Matter
           end
         end
 
+        def node_absent?(fabric : FabricInfo, node_id : UInt64) : Bool
+          absent = false
+          with_datastore(fabric) do |interaction, session, peer|
+            absent = find_node(interaction, session, peer, node_id).nil?
+          end
+          absent
+        end
+
         protected def with_datastore(fabric : FabricInfo, & : ImClient, Session::SecureContext, Socket::IPAddress ->) : Nil
           state = @store.load
           installed = state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
-          node = state.nodes_for(installed.fabric_id, installed.root_public_key, installed.controller_node_id)[@anchor_node_id]? ||
-                 raise Matter::ConfigurationError.new("Anchor Administrator is absent from controller state")
-          address = node.address || raise Matter::ConfigurationError.new("Anchor Administrator address is missing")
-          peer = Socket::IPAddress.new(address, node.port)
+          peer = @anchor_peer || begin
+            node = state.nodes_for(installed.fabric_id, installed.root_public_key, installed.controller_node_id)[@anchor_node_id]? ||
+                   raise Matter::ConfigurationError.new("Anchor Administrator is absent from controller state")
+            address = node.address || raise Matter::ConfigurationError.new("Anchor Administrator address is missing")
+            Socket::IPAddress.new(address, node.port)
+          end
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, installed,
             peer_node_id: @anchor_node_id, timeout: @timeout)
           JointFabricPeerAuthentication.verify_anchor!(session,
@@ -105,6 +134,8 @@ module Matter
         end
       end
 
+      getter attempt_id : String
+
       @retry_running = false
       @retry_owners = 0
       @retry_done : Channel(Nil)?
@@ -112,14 +143,15 @@ module Matter
       @retry_lifecycle_lock = Mutex.new
       @operation_lock = Mutex.new
 
-      def initialize(@store : StateStore, @delivery : Delivery,
+      def initialize(@store : StateStore, @delivery : Delivery, attempt_id : String? = nil,
+                     @target_node_id : UInt64? = nil,
                      @retry_interval : Time::Span = DEFAULT_RETRY_INTERVAL)
         raise Matter::ConfigurationError.new("Datastore retry interval must be positive") unless @retry_interval > Time::Span.zero
+        @fixed_attempt_id = !attempt_id.nil?
+        @attempt_id = attempt_id || Random::Secure.random_bytes(16).hexstring
       end
 
-      # A long-lived commissioner starts this on construction, including after
-      # restart. Each pass reads the durable journal, so a failed delivery is
-      # retried without keeping an in-memory copy of the pending operation.
+      # A long-lived commissioner retries the durable registration journal.
       def start_retrying : Nil
         @retry_lifecycle_lock.synchronize { start_retrying_unlocked }
       end
@@ -170,12 +202,11 @@ module Matter
         @retry_wake = nil
       end
 
-      # Run each persisted operation independently. One offline fabric must not
-      # block delivery for another; an ambiguous Completing stage is reported
-      # and retained for authenticated operator reconciliation.
+      # Reload under the process lock so foreground commissioning and retry
+      # never write the same registration stage concurrently.
       def retry_pending_once(now_unix : Int64 = Time.utc.to_unix) : Nil
-        state = @store.load
-        state.pending_datastore_nodes.each do |saved|
+        @store.load.pending_datastore_nodes.each do |saved|
+          next if @target_node_id && saved.node_id != @target_node_id
           @operation_lock.synchronize do
             latest = @store.load
             fabric = latest.fabric_for(saved.fabric_id, saved.root_public_key, saved.controller_node_id)
@@ -189,25 +220,31 @@ module Matter
 
       def add_pending(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
                       expires_at_unix : Int64 = Time.utc.to_unix,
-                      peer : Socket::IPAddress? = nil) : Nil
+                      peer : Socket::IPAddress? = nil, allow_commissioned : Bool = false) : Nil
         @operation_lock.synchronize do
-          add_pending_unlocked(fabric, node_id, friendly_name, expires_at_unix, peer)
+          add_pending_unlocked(fabric, node_id, friendly_name, expires_at_unix, peer, allow_commissioned)
         end
       end
 
       private def add_pending_unlocked(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
-                                       expires_at_unix : Int64, peer : Socket::IPAddress?) : Nil
+                                       expires_at_unix : Int64, peer : Socket::IPAddress?,
+                                       allow_commissioned : Bool) : Nil
         if node_id == DataType::NodeId::UNSPECIFIED || friendly_name.empty?
           raise Matter::ConfigurationError.new("Datastore pending node needs a Node ID and friendly name")
         end
         @store.update do |state|
           state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
-          if state.nodes_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id).has_key?(node_id)
-            raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
+          if commissioned = state.nodes_for(fabric.fabric_id, fabric.root_public_key,
+               fabric.controller_node_id)[node_id]?
+            unless allow_commissioned && peer &&
+                   commissioned.address == OperationalPeerResolver.address_hint(peer) &&
+                   commissioned.port == peer.port
+              raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
+            end
           end
           if entry = entry_for(state, fabric, node_id)
-            unless entry.friendly_name == friendly_name && entry.stage.in?(PendingDatastoreNode::Stage::Pending,
-                     PendingDatastoreNode::Stage::Registered) &&
+            unless entry.attempt_id == @attempt_id && entry.friendly_name == friendly_name &&
+                   entry.stage.in?(PendingDatastoreNode::Stage::Pending, PendingDatastoreNode::Stage::Registered) &&
                    (peer.nil? || (entry.peer_address == OperationalPeerResolver.address_hint(peer) && entry.peer_port == peer.port))
               raise Matter::CommissioningError.new("Datastore node registration conflicts with a previous attempt")
             end
@@ -215,7 +252,7 @@ module Matter
             state.pending_datastore_nodes << PendingDatastoreNode.new(fabric.fabric_id,
               fabric.root_public_key.dup, fabric.controller_node_id, node_id, friendly_name, expires_at_unix,
               peer.try { |address| OperationalPeerResolver.address_hint(address) },
-              peer.try(&.port) || NodeInfo::DEFAULT_PORT)
+              peer.try(&.port) || NodeInfo::DEFAULT_PORT, attempt_id: @attempt_id)
           end
         end
         @delivery.add_pending_node(fabric, node_id, friendly_name)
@@ -234,22 +271,37 @@ module Matter
 
       private def extend_deadline_unlocked(fabric : FabricInfo, node_id : UInt64, expires_at_unix : Int64) : Nil
         @store.update do |state|
-          index = state.pending_datastore_nodes.index do |entry|
-            same_fabric?(entry, fabric) && entry.node_id == node_id
-          end
-          if index
-            entry = state.pending_datastore_nodes[index]
-            if expires_at_unix > entry.expires_at_unix
-              entry.expires_at_unix = expires_at_unix
-              state.pending_datastore_nodes[index] = entry
-            end
+          index = entry_index(state, fabric, node_id)
+          next unless index
+          entry = state.pending_datastore_nodes[index]
+          require_attempt!(entry)
+          if expires_at_unix > entry.expires_at_unix
+            entry.expires_at_unix = expires_at_unix
+            state.pending_datastore_nodes[index] = entry
           end
         end
-        nil
       end
 
       def complete(fabric : FabricInfo, node_id : UInt64) : Nil
         @operation_lock.synchronize { set_stage(fabric, node_id, PendingDatastoreNode::Stage::Completed) }
+      end
+
+      # Call only after an authenticated Datastore NodeList read shows the
+      # matching legacy registration is Committed. No RefreshNode is replayed.
+      def confirm_remote_committed(fabric : FabricInfo, node_id : UInt64) : Nil
+        @operation_lock.synchronize { confirm_remote_committed_unlocked(fabric, node_id) }
+      end
+
+      private def confirm_remote_committed_unlocked(fabric : FabricInfo, node_id : UInt64) : Nil
+        @store.update do |state|
+          entry = entry_for(state, fabric, node_id) ||
+                  raise Matter::CommissioningError.new("Datastore node registration is missing")
+          require_attempt!(entry)
+          if entry.stage.removing?
+            raise Matter::CommissioningError.new("Datastore removal already started")
+          end
+          state.pending_datastore_nodes.reject! { |item| same_fabric?(item, fabric) && item.node_id == node_id }
+        end
       end
 
       def refresh(fabric : FabricInfo, node_id : UInt64) : Nil
@@ -259,28 +311,57 @@ module Matter
       private def refresh_unlocked(fabric : FabricInfo, node_id : UInt64) : Nil
         state = @store.load
         entry = entry_for(state, fabric, node_id) || raise Matter::CommissioningError.new("Datastore node registration is missing")
+        require_attempt!(entry)
         unless entry.stage == PendingDatastoreNode::Stage::Completed
           raise Matter::CommissioningError.new("Datastore node completion has not been acknowledged")
         end
         record_completed_node(fabric, entry)
         @delivery.refresh_node(fabric, node_id)
-        clear(fabric, node_id)
+        clear(fabric, node_id, PendingDatastoreNode::Stage::Completed)
       end
 
-      def abort(fabric : FabricInfo, node_id : UInt64, confirmed_failure : Bool = false) : Nil
-        @operation_lock.synchronize { abort_unlocked(fabric, node_id, confirmed_failure) }
+      def abort(fabric : FabricInfo, node_id : UInt64, confirmed_failure : Bool = false,
+                allow_committed : Bool = false) : Nil
+        @operation_lock.synchronize { abort_unlocked(fabric, node_id, confirmed_failure, allow_committed) }
       end
 
-      private def abort_unlocked(fabric : FabricInfo, node_id : UInt64, confirmed_failure : Bool) : Nil
-        state = @store.load
-        entry = entry_for(state, fabric, node_id)
-        return unless entry
-        unless entry.stage.in?(PendingDatastoreNode::Stage::Pending, PendingDatastoreNode::Stage::Registered) ||
-               (confirmed_failure && entry.stage == PendingDatastoreNode::Stage::Completing)
-          raise Matter::CommissioningError.new("Datastore node completion is ambiguous; refusing RemoveNode")
+      private def abort_unlocked(fabric : FabricInfo, node_id : UInt64, confirmed_failure : Bool,
+                                 allow_committed : Bool) : Nil
+        entry = @store.update do |state|
+          index = entry_index(state, fabric, node_id)
+          next unless index
+          current = state.pending_datastore_nodes[index]
+          require_attempt!(current)
+          unless current.stage.in?(PendingDatastoreNode::Stage::Pending, PendingDatastoreNode::Stage::Registered) ||
+                 (confirmed_failure && current.stage == PendingDatastoreNode::Stage::Completing)
+            raise Matter::CommissioningError.new("Datastore node completion is ambiguous; refusing RemoveNode")
+          end
+          current.stage = PendingDatastoreNode::Stage::Removing
+          state.pending_datastore_nodes[index] = current
+          current
         end
-        @delivery.remove_node(fabric, node_id, entry.friendly_name)
-        clear(fabric, node_id)
+        return unless entry
+        if allow_committed
+          @delivery.remove_committed_node(fabric, node_id, entry.friendly_name)
+        else
+          @delivery.remove_node(fabric, node_id, entry.friendly_name)
+        end
+        clear(fabric, node_id, PendingDatastoreNode::Stage::Removing)
+      end
+
+      # A lost RemoveNode result is never replayed. An authenticated absent
+      # NodeList entry proves that releasing the durable removal guard is safe.
+      def reconcile_removal(fabric : FabricInfo, node_id : UInt64) : Nil
+        @operation_lock.synchronize { reconcile_removal_unlocked(fabric, node_id) }
+      end
+
+      private def reconcile_removal_unlocked(fabric : FabricInfo, node_id : UInt64) : Nil
+        entry = entry_for(@store.load, fabric, node_id) || return
+        require_attempt!(entry)
+        unless entry.stage.removing? && @delivery.node_absent?(fabric, node_id)
+          raise Matter::CommissioningError.new("Datastore removal needs authenticated absence reconciliation")
+        end
+        clear(fabric, node_id, PendingDatastoreNode::Stage::Removing)
       end
 
       # Reconcile entries after restart. A completing exchange may have
@@ -289,6 +370,7 @@ module Matter
       def resume(fabric : FabricInfo, now_unix : Int64 = Time.utc.to_unix) : Nil
         entries = @store.load.pending_datastore_nodes.select { |entry| same_fabric?(entry, fabric) }
         entries.each do |entry|
+          next if @target_node_id && entry.node_id != @target_node_id
           @operation_lock.synchronize do
             latest = @store.load
             installed = latest.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
@@ -299,16 +381,35 @@ module Matter
       end
 
       private def resume_entry(fabric : FabricInfo, entry : PendingDatastoreNode, now_unix : Int64) : Nil
+        unless @fixed_attempt_id
+          # Recovery owns one saved attempt at a time. Its identity must never
+          # replace the active commissioner's foreground attempt ID.
+          if entry.attempt_id.empty?
+            claimant = DatastoreNodeRegistrar.new(@store, @delivery, target_node_id: entry.node_id)
+            claimant.claim_legacy(fabric, entry.node_id, entry.friendly_name, entry.peer_address, entry.peer_port)
+            attempt_id = claimant.attempt_id
+          else
+            attempt_id = entry.attempt_id
+          end
+          DatastoreNodeRegistrar.new(@store, @delivery, attempt_id, entry.node_id).resume(fabric, now_unix)
+          return
+        end
+        if entry.attempt_id.empty?
+          raise Matter::CommissioningError.new("Legacy Datastore registration needs identity claim")
+        end
+        if entry.attempt_id != @attempt_id
+          raise Matter::CommissioningError.new("Datastore registration belongs to another attempt")
+        end
         case entry.stage
         when PendingDatastoreNode::Stage::Pending
           if now_unix >= entry.expires_at_unix
-            abort_unlocked(fabric, entry.node_id, false)
+            abort_unlocked(fabric, entry.node_id, false, false)
           else
             @delivery.add_pending_node(fabric, entry.node_id, entry.friendly_name)
             set_stage(fabric, entry.node_id, PendingDatastoreNode::Stage::Registered)
           end
         when PendingDatastoreNode::Stage::Registered
-          abort_unlocked(fabric, entry.node_id, false) if now_unix >= entry.expires_at_unix
+          abort_unlocked(fabric, entry.node_id, false, false) if now_unix >= entry.expires_at_unix
         when PendingDatastoreNode::Stage::Completed
           refresh_unlocked(fabric, entry.node_id)
         when PendingDatastoreNode::Stage::Completing
@@ -319,18 +420,47 @@ module Matter
           else
             raise Matter::CommissioningError.new("Datastore node completion is ambiguous; reconcile before retry")
           end
+        when PendingDatastoreNode::Stage::Removing
+          reconcile_removal_unlocked(fabric, entry.node_id)
+        end
+      end
+
+      # Claim a pre-attempt-ID record once, under the backend transaction.
+      # The caller supplies its full saved identity before using the claim.
+      def claim_legacy(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
+                       peer_address : String?, peer_port : Int32) : Nil
+        @store.update do |state|
+          index = entry_index(state, fabric, node_id) ||
+                  raise Matter::CommissioningError.new("Legacy Datastore registration is missing")
+          entry = state.pending_datastore_nodes[index]
+          unless entry.friendly_name == friendly_name && entry.peer_address == peer_address &&
+                 entry.peer_port == peer_port
+            raise Matter::CommissioningError.new("Legacy Datastore registration identity changed")
+          end
+          if entry.attempt_id.empty?
+            if entry.stage.removing?
+              raise Matter::CommissioningError.new("Legacy Datastore removal needs manual reconciliation")
+            end
+            state.pending_datastore_nodes[index] = PendingDatastoreNode.new(entry.fabric_id,
+              entry.root_public_key.dup, entry.controller_node_id, entry.node_id,
+              entry.friendly_name, entry.expires_at_unix, entry.peer_address,
+              entry.peer_port, entry.stage, @attempt_id)
+          else
+            require_attempt!(entry)
+          end
         end
       end
 
       private def set_stage(fabric : FabricInfo, node_id : UInt64, stage : PendingDatastoreNode::Stage) : Nil
         @store.update do |state|
-          index = state.pending_datastore_nodes.index { |entry| same_fabric?(entry, fabric) && entry.node_id == node_id } ||
+          index = entry_index(state, fabric, node_id) ||
                   raise Matter::CommissioningError.new("Datastore node registration is missing")
           entry = state.pending_datastore_nodes[index]
+          require_attempt!(entry)
+          raise Matter::CommissioningError.new("Datastore removal already started") if entry.stage.removing?
           entry.stage = stage
           state.pending_datastore_nodes[index] = entry
         end
-        nil
       end
 
       private def record_completed_node(fabric : FabricInfo, entry : PendingDatastoreNode) : Nil
@@ -346,17 +476,30 @@ module Matter
         nil
       end
 
-      private def clear(fabric : FabricInfo, node_id : UInt64) : Nil
+      private def clear(fabric : FabricInfo, node_id : UInt64, expected_stage : PendingDatastoreNode::Stage) : Nil
         @store.update do |state|
-          state.pending_datastore_nodes = state.pending_datastore_nodes.reject do |entry|
-            same_fabric?(entry, fabric) && entry.node_id == node_id
+          entry = entry_for(state, fabric, node_id) ||
+                  raise Matter::CommissioningError.new("Datastore node registration is missing")
+          require_attempt!(entry)
+          unless entry.stage == expected_stage
+            raise Matter::CommissioningError.new("Datastore node registration changed during cleanup")
           end
+          state.pending_datastore_nodes.reject! { |item| same_fabric?(item, fabric) && item.node_id == node_id }
         end
-        nil
+      end
+
+      private def require_attempt!(entry : PendingDatastoreNode) : Nil
+        if @attempt_id.empty? || entry.attempt_id != @attempt_id
+          raise Matter::CommissioningError.new("Datastore registration belongs to another attempt")
+        end
       end
 
       private def entry_for(state : State, fabric : FabricInfo, node_id : UInt64) : PendingDatastoreNode?
         state.pending_datastore_nodes.find { |entry| same_fabric?(entry, fabric) && entry.node_id == node_id }
+      end
+
+      private def entry_index(state : State, fabric : FabricInfo, node_id : UInt64) : Int32?
+        state.pending_datastore_nodes.index { |entry| same_fabric?(entry, fabric) && entry.node_id == node_id }
       end
 
       private def same_fabric?(entry : PendingDatastoreNode, fabric : FabricInfo) : Bool

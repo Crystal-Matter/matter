@@ -981,7 +981,7 @@ describe "three provisioned Joint Fabric Administrators" do
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
         interrupt_after_migration_anchor_node_committed: true))
     interrupted_rollback_registration.status.should eq("error")
-    interrupted_rollback_registration.error.to_s.should contain("Injected interruption after Anchor AddPendingNode committed")
+    interrupted_rollback_registration.error.to_s.should contain("Injected interruption after Anchor NodeList committed")
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16).any? do |entry|
       entry.node_id == ROLLBACK_ANCHOR_NODE_ID && entry.commissioning_status_entry.state.committed?
     end.should be_true
@@ -1148,6 +1148,10 @@ describe "three provisioned Joint Fabric Administrators" do
     provisional_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(provisional_fabrics_data.to_slice)
     provisional_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
     provisional_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_true
+    # AddPendingNode precedes CommissioningComplete. A lost completion
+    # acknowledgement leaves the target on A but must not leave it unlisted.
+    jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
+      .any?(&.node_id.==(0xA201_u64)).should be_true
 
     joiner.restart!
     b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
@@ -1162,7 +1166,7 @@ describe "three provisioned Joint Fabric Administrators" do
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
         interrupt_after_migration_anchor_node_committed: true))
     interrupted_registration.status.should eq("error")
-    interrupted_registration.error.to_s.should contain("Injected interruption after Anchor AddPendingNode committed")
+    interrupted_registration.error.to_s.should contain("Injected interruption after Anchor NodeList committed")
     (Time.instant - recovery_started).should be >= MIGRATION_RECOVERY_MIN_WAIT
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16).any? do |entry|
       entry.node_id == 0xA201_u64 && entry.commissioning_status_entry.state.committed?
@@ -1171,8 +1175,8 @@ describe "three provisioned Joint Fabric Administrators" do
       entry.node_id == 0xB201_u64 && entry.commissioning_status_entry.state.committed?
     end.should be_true
 
-    # A committed its NodeList entry, but B lost the result while its durable
-    # journal still says AddingAnchorNode. Restarting cannot replay AddPendingNode.
+    # A committed its staged NodeList entry, but B lost the result while its
+    # journal still says AddingAnchorNode. Restarting must inspect the entry.
     joiner.restart!
     b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       joiner_peer, joiner_bootstrap.fabric,
