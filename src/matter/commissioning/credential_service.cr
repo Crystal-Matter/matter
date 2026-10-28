@@ -235,6 +235,13 @@ module Matter
       # journal or table changes. A nil result accepts the ordinary NOC path.
       property on_validate_add_noc : Proc(Bytes, UInt64, UInt64, NocOutcome?)?
 
+      # Device-installed protocol guards run independently of application policy.
+      @add_noc_guards = [] of Proc(Bytes, UInt64, UInt64, NocOutcome?)
+
+      def register_add_noc_guard(guard : Proc(Bytes, UInt64, UInt64, NocOutcome?)) : Nil
+        @add_noc_guards << guard
+      end
+
       # The device's reentrant protocol mutex, installed before transport starts.
       property protocol_lock : Mutex? = nil
 
@@ -495,6 +502,10 @@ module Matter
 
         unless Crypto::MatterCertificate.public_key_from_tlv(noc) == @pending_noc_key.as(Crypto::Key).public_key
           return NocOutcome.new(NocStatus::InvalidPublicKey, debug_text: "NOC public key does not match CSR")
+        end
+
+        @add_noc_guards.each do |guard|
+          return rejected if rejected = guard.call(noc, case_admin_subject, session_id)
         end
 
         if validator = @on_validate_add_noc

@@ -13,14 +13,19 @@ module Matter
 
       alias Datastore = Cluster::JointFabricDatastore
 
+      def current_versions(datastore : Datastore) : {UInt16, UInt16}?
+        admin_version = current_version(datastore, Datastore::ADMINISTRATOR_CAT)
+        anchor_version = current_version(datastore, Datastore::ANCHOR_CAT)
+        {admin_version, anchor_version} if admin_version && anchor_version
+      end
+
       def validate(noc : Bytes, case_admin_subject : UInt64,
                    datastore : Datastore?) : NocOutcome?
         return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Joint Fabric Datastore is unavailable") unless datastore
-        admin_version = current_version(datastore, Datastore::ADMINISTRATOR_CAT)
-        anchor_version = current_version(datastore, Datastore::ANCHOR_CAT)
-        unless admin_version && anchor_version
+        unless versions = current_versions(datastore)
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Joint Fabric CAT versions are unavailable")
         end
+        admin_version, anchor_version = versions
         admin_subject = cat_subject(Datastore::ADMINISTRATOR_CAT, admin_version)
         unless Crypto::MatterCertificate.subject_ids_from_tlv(noc).includes?(admin_subject)
           return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "JCM NOC lacks the current Administrator CAT")

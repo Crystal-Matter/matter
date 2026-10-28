@@ -244,6 +244,7 @@ module Matter
         return InteractionModel::Status.cluster_failure(Admin::ICACCSRResponseStatusCodeEnum::InvalidAdministratorFabricIndex) unless cluster.administrator_fabric_index
         return InteractionModel::Status.unsupported_access unless administrator_control_principal?(cluster)
         return InteractionModel::Status.invalid_command unless valid_window_parameters?(request)
+        return InteractionModel::Status.unsupported_access unless cluster.jcm_add_noc_guard_ready?
         result = @open_window.call(request)
         if result.status == InteractionModel::StatusCode::Busy
           InteractionModel::Status.cluster_failure(Admin::ICACCSRResponseStatusCodeEnum::Busy)
