@@ -7,6 +7,7 @@ module ReverseCommissioningCrystalE2E
   TARGET_PRODUCT_ID  = "4661"
   SOURCE_TARGET_ID   = 0xA103_u64
   WINDOW_PATH        = "/e2e/logs/reverse-window.json"
+  WINDOW_READY_PATH  = "#{WINDOW_PATH}.ready"
   CONTROLLER_PATH    = "/e2e/logs/reverse-controller.yml"
   COMPLETION_TIMEOUT = 90.seconds
   COMPLETION_POLL    = 0.5.seconds
@@ -102,6 +103,7 @@ describe "real Crystal target reverse commissioning" do
     host.commission!
     target.commission!
     File.delete(ReverseCommissioningCrystalE2E::WINDOW_PATH) if File.exists?(ReverseCommissioningCrystalE2E::WINDOW_PATH)
+    File.delete(ReverseCommissioningCrystalE2E::WINDOW_READY_PATH) if File.exists?(ReverseCommissioningCrystalE2E::WINDOW_READY_PATH)
 
     expect_success(host.invoke("commissionercontrol", "request-commissioning-approval",
       [ReverseCommissioningCrystalE2E::REQUEST_ID,
@@ -128,6 +130,7 @@ describe "real Crystal target reverse commissioning" do
                                 wire.iterations.to_s,
                                 "hex:#{wire.salt_hex}",
                                 target.node, "0", "--timedInteractionTimeoutMs", "10000"]))
+    File.write(ReverseCommissioningCrystalE2E::WINDOW_READY_PATH, wire.verifier_hex.downcase)
 
     ReverseCommissioningCrystalE2E.wait_for_completion(host)
     state = Matter::Controller::StateStore.new(
