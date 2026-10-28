@@ -516,7 +516,7 @@ describe Matter::Controller::DatastoreSynchronizer do
 
     store.node_list = [Datastore::DatastoreNodeInformationEntryStruct.new(0x100_u64, "Light", pending)]
     synchronizer.sync_node(store, 0x100_u64, datastore_session, Socket::IPAddress.new("127.0.0.1", 5540))
-    store.endpoint_group_id_list.map(&.group_id).sort.should eq([11_u16, 12_u16])
+    store.endpoint_group_id_list.map(&.group_id).sort!.should eq([11_u16, 12_u16])
     store.endpoint_group_id_list.all?(&.status_entry.state.committed?).should be_true
 
     store.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(
