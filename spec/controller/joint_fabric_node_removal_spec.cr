@@ -2,6 +2,7 @@ require "../spec_helper"
 require "../../src/matter/controller/joint_fabric_node_removal"
 
 private alias Removal = Matter::Controller::JointFabricNodeRemoval
+private alias Datastore = Matter::Cluster::JointFabricDatastore
 
 private class RemovalPort < Removal::Port
   getter calls = [] of String
@@ -31,6 +32,20 @@ private class RemovalPort < Removal::Port
 end
 
 describe Removal do
+  it "never treats a numeric Group subject as a direct Node ID grant" do
+    node_id = 0xA201_u64
+    group_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::Group,
+      [node_id], nil)
+    case_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [node_id], nil)
+    Removal::NetworkPort.direct_grant?(group_acl, node_id).should be_false
+    Removal::NetworkPort.direct_grant?(case_acl, node_id).should be_true
+  end
+
   it "waits for access revocation before sending RemoveNode" do
     backend = Matter::Storage::Memory.new
     store = Removal::JournalStore.new(backend)

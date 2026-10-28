@@ -62,20 +62,22 @@ module Matter
           end
           @backend.open unless @backend.open?
           id = document_id(journal)
+          result = nil.as(Journal?)
           @backend.transaction do
             if document = @backend.read(COLLECTION, id)
               current = Journal.from_document(document)
               unless same_identity?(current, journal)
                 raise Matter::StorageError.new("Joint Fabric node removal identity changed")
               end
-              current
+              result = current
             else
               unless @backend.compare_and_swap(COLLECTION, id, nil, journal.to_document)
                 raise Matter::StorageError.new("Joint Fabric node removal was created concurrently")
               end
-              journal
+              result = journal
             end
           end
+          result.not_nil!
         end
 
         def save(journal : Journal) : Nil
@@ -239,6 +241,9 @@ module Matter
             next if acl.node_id == journal.node_id
             subjects = acl.acl_entry.subjects
             raise Matter::CommissioningError.new("Wildcard ACL grants require explicit removal") unless subjects && !subjects.empty?
+            if subjects.includes?(journal.node_id) && acl.acl_entry.auth_mode != Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
+              raise Matter::CommissioningError.new("Non-CASE ACL subject collides with the removed Node ID")
+            end
             if subjects.includes?(journal.node_id) && subjects != [journal.node_id]
               raise Matter::CommissioningError.new("Shared direct ACL must be split before node removal")
             end
@@ -298,8 +303,18 @@ module Matter
         private def direct_grants(im : ImClient, session : Session::SecureContext,
                                   journal : Journal) : Array(Datastore::DatastoreACLEntryStruct)
           read_list(Datastore::DatastoreACLEntryStruct, im, session, Datastore::ATTR_NODE_ACL_LIST).select do |entry|
-            entry.node_id != journal.node_id && entry.acl_entry.subjects == [journal.node_id]
+            entry.node_id != journal.node_id && direct_grant?(entry.acl_entry, journal.node_id)
           end
+        end
+
+        def self.direct_grant?(acl : Datastore::DatastoreAccessControlEntryStruct,
+                               node_id : UInt64) : Bool
+          acl.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE && acl.subjects == [node_id]
+        end
+
+        private def direct_grant?(acl : Datastore::DatastoreAccessControlEntryStruct,
+                                  node_id : UInt64) : Bool
+          self.class.direct_grant?(acl, node_id)
         end
 
         private def node_entry(im : ImClient, session : Session::SecureContext,
