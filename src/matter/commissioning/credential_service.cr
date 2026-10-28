@@ -505,7 +505,9 @@ module Matter
         end
 
         @add_noc_guards.each do |guard|
-          return rejected if rejected = guard.call(noc, case_admin_subject, session_id)
+          if rejected = guard.call(noc, case_admin_subject, session_id)
+            return rejected
+          end
         end
 
         if validator = @on_validate_add_noc
