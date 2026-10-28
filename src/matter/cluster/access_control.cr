@@ -1731,7 +1731,8 @@ module Matter
       # Supports CaseAuthenticatedTag (CAT) subject matching per Matter spec
       def check_access(subject : UInt64, fabric_index : UInt8, privilege : AccessControlEntryPrivilege,
                        cluster : UInt32? = nil, endpoint : UInt16? = nil, device_type : UInt32? = nil,
-                       auth_mode : AccessControlEntryAuthMode = AccessControlEntryAuthMode::CASE) : Bool
+                       auth_mode : AccessControlEntryAuthMode = AccessControlEntryAuthMode::CASE,
+                       device_types : Array(UInt32)? = nil) : Bool
         # Find matching ACL entries for this fabric
         matching_entries = (@acl + @auxiliary_acl).select do |entry|
           subjects = entry.subjects
@@ -1749,9 +1750,13 @@ module Matter
           has_target_access = if targets = entry.targets
                                 # Per spec, an empty targets list is a wildcard (all targets).
                                 targets.empty? || targets.any? do |target|
+                                  type_matches = if target_type = target.device_type
+                                                   target_type == device_type || device_types.try(&.includes?(target_type)) == true
+                                                 else
+                                                   true
+                                                 end
                                   (!target.cluster || target.cluster == cluster) &&
-                                    (!target.endpoint || target.endpoint == endpoint) &&
-                                    (!target.device_type || target.device_type == device_type)
+                                    (!target.endpoint || target.endpoint == endpoint) && type_matches
                                 end
                               else
                                 true # nil targets means all targets
@@ -1764,7 +1769,8 @@ module Matter
       # Convenience wrapper for the generated cluster metadata privilege enum.
       def check_access(subject : UInt64, fabric_index : UInt8, privilege : InteractionModel::EntryPrivilege,
                        cluster : UInt32? = nil, endpoint : UInt16? = nil, device_type : UInt32? = nil,
-                       auth_mode : InteractionModel::EntryAuthMode = InteractionModel::EntryAuthMode::Case) : Bool
+                       auth_mode : InteractionModel::EntryAuthMode = InteractionModel::EntryAuthMode::Case,
+                       device_types : Array(UInt32)? = nil) : Bool
         check_access(
           subject: subject,
           fabric_index: fabric_index,
@@ -1772,6 +1778,7 @@ module Matter
           cluster: cluster,
           endpoint: endpoint,
           device_type: device_type,
+          device_types: device_types,
           auth_mode: AccessControlEntryAuthMode.from_value(auth_mode.value)
         )
       end
