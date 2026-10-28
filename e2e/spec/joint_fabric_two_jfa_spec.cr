@@ -2879,7 +2879,6 @@ describe "three provisioned Joint Fabric Administrators" do
     joiner_client.close
     joiner_client = Matter::Controller::Client.new(
       counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
-    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
     participant_rotation_retry = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     participant_rotation_retry.status.should eq("error")
