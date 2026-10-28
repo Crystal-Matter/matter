@@ -1546,7 +1546,7 @@ describe "three provisioned Joint Fabric Administrators" do
     revoked_controller = b_issuer.delegate_controller(joined_identity,
       b_revoked_controller_node_id, b_group_cat, b_group_version, crypto)
     revoked_controller_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: revoked_controller.controller_node_id)
+      counter_lease: b_controller_store.counter_lease(revoked_controller.controller_node_id))
     revoked_controller_im = Matter::Controller::ImClient.new(revoked_controller_client, E2E::COMMAND_TIMEOUT)
     revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
       migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
