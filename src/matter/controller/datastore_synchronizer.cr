@@ -427,6 +427,14 @@ module Matter
                                session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         current = read_list(Cluster::Binding::Target, session, peer, entry.endpoint_id, Cluster::Binding::CLUSTER_ID, Cluster::Binding::ATTR_BINDING)
         source = entry.binding
+        if entry.status_entry.state != Store::DatastoreStateEnum::DeletePending && (cluster_id = source.cluster)
+          client_clusters = read_list(UInt32, session, peer, entry.endpoint_id,
+            Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_CLIENT_LIST)
+          unless client_clusters.includes?(cluster_id)
+            raise Matter::ClusterError.new("Binding client cluster is absent from the local endpoint",
+              InteractionModel::StatusCode::ConstraintError)
+          end
+        end
         wanted = Cluster::Binding::Target.new(source.node, source.group, source.endpoint, source.cluster)
         another_active_binding = store.endpoint_binding_list.any? do |other|
           other.node_id == entry.node_id && other.endpoint_id == entry.endpoint_id &&
