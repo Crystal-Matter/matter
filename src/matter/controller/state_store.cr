@@ -129,12 +129,10 @@ module Matter
       def reserve_unsecured_message_counters(count : UInt32) : UInt32
         attempts = 0
         loop do
-          begin
-            return update { |state| state.reserve_unsecured_message_counters(count) }
-          rescue ex : ConflictError
-            attempts += 1
-            raise ex if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
-          end
+          return update(&.reserve_unsecured_message_counters(count))
+        rescue ex : ConflictError
+          attempts += 1
+          raise ex if attempts >= COUNTER_RESERVATION_CONFLICT_RETRIES
         end
       end
 
