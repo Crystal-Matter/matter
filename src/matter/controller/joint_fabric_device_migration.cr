@@ -1029,9 +1029,10 @@ module Matter
         private def advance(stage : Stage) : Nil
           @port.finalize_migration! if stage.complete?
           @port.finalize_rollback! if stage.rolled_back?
-          updated = @journal
+          previous_stage = @journal.stage
+          updated = Journal.from_document(@journal.to_document)
           updated.stage = stage
-          if @journal.stage.commissioning_anchor? && stage.ready?
+          if previous_stage.commissioning_anchor? && stage.ready?
             updated.previous_attempt_id = updated.attempt_id
             updated.attempt_id = Random::Secure.random_bytes(16).hexstring
           end
