@@ -55,6 +55,10 @@ private class MigrationPort < Migration::Port
     raise Matter::CommissioningError.new("operation took effect") unless @no_effect
   end
 
+  def cleanup_failed_anchor_registration! : Nil
+    call("cleanup-anchor-pending")
+  end
+
   def rollback_anchor!(anchor_registered : Bool) : Nil
     call("rollback-#{anchor_registered}")
   end
@@ -148,6 +152,91 @@ describe Migration do
     runner.journal.stage.should eq(Migration::Stage::RemovingOldFabric)
     expect_raises(Matter::CommissioningError) { runner.run }
     port.calls.count("remove-fabric").should eq(1)
+  end
+
+  it "cleans a staged Anchor node only after proving commissioning had no effect" do
+    port = MigrationPort.new
+    port.fail_at = "commission"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+    saved = [] of Migration::Journal
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { saved << item })
+    expect_raises(Matter::TransportError) { runner.run }
+    runner.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+
+    port.no_effect = false
+    expect_raises(Matter::CommissioningError) { runner.reconcile_no_effect! }
+    port.calls.should_not contain("cleanup-anchor-pending")
+
+    port.no_effect = true
+    port.fail_at = "cleanup-anchor-pending"
+    expect_raises(Matter::TransportError) { runner.reconcile_no_effect! }
+    runner.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+
+    port.fail_at = nil
+    runner.reconcile_no_effect!
+    runner.journal.stage.should eq(Migration::Stage::Ready)
+    saved.last.stage.should eq(Migration::Stage::Ready)
+  end
+
+  it "rejects a stale journal attempt after no-effect cleanup rotates ownership" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    store.save(journal)
+    stale = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    port = MigrationPort.new
+    workflow = Migration::Workflow.new(store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal), port,
+      -> { true }, ->(entry : Migration::Journal) { store.save(entry) })
+    workflow.reconcile_no_effect!
+    workflow.journal.attempt_id.should_not eq(journal.attempt_id)
+    stale.stage = Migration::Stage::Ready
+    expect_raises(Matter::StorageError, /attempt changed/) { store.save(stale) }
+  end
+
+  it "rejects a stale same-attempt stage write without losing an acknowledgement" do
+    store = Migration::JournalStore.new(Matter::Storage::Memory.new)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+    store.save(journal)
+    stale = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    acknowledged = stale
+    acknowledged.commissioning_acknowledged = true
+    store.save(acknowledged)
+    stale.stage = Migration::Stage::CommissioningAnchor
+    stale.stage_version += 1_u64
+    store.save(stale)
+    current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    current.commissioning_acknowledged?.should be_true
+    stale.stage = Migration::Stage::Ready
+    expect_raises(Matter::StorageError, /stage changed/) { store.save(stale) }
+  end
+
+  it "atomically claims a persisted pre-attempt-ID journal once" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    legacy = journal.to_document
+    legacy.delete("attempt_id")
+    legacy.delete("stage_version")
+    backend.open
+    backend.write(Migration::JournalStore::COLLECTION,
+      "b001-01-b002-a001-02-a002", legacy)
+    first = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    second = Migration::JournalStore.new(backend).load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    first.attempt_id.should_not be_empty
+    second.attempt_id.should eq(first.attempt_id)
+    first.legacy_registration_order?.should be_true
+    second.legacy_registration_order?.should be_true
   end
 
   it "recovers a restarted journal only after proof that each command had no effect" do
@@ -278,6 +367,40 @@ describe Migration do
       restarted.run
       reopened_store.load(0xB001_u64, Bytes[1], 0xB002_u64,
         0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(Migration::Stage::Complete)
+      reopened_backend.close
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "resumes an old-format AddingAnchorNode journal through explicit registration recovery" do
+    path = File.join(Dir.tempdir, "matter-legacy-migration-#{Random::Secure.hex(8)}.json")
+    begin
+      first_backend = Matter::Storage::JsonFile.new(path)
+      first_backend.open
+      journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+        0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::AddingAnchorNode)
+      legacy = journal.to_document
+      legacy.delete("attempt_id")
+      legacy.delete("stage_version")
+      legacy.delete("legacy_registration_order")
+      first_backend.write(Migration::JournalStore::COLLECTION,
+        "b001-01-b002-a001-02-a002", legacy)
+      first_backend.close
+
+      reopened_backend = Matter::Storage::JsonFile.new(path)
+      store = Migration::JournalStore.new(reopened_backend)
+      recovered = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+      recovered.legacy_registration_order?.should be_true
+      recovered.stage.should eq(Migration::Stage::AddingAnchorNode)
+      port = MigrationPort.new
+      workflow = Migration::Workflow.new(recovered, port, -> { true },
+        ->(item : Migration::Journal) { store.save(item) })
+      workflow.resume_anchor_registration!
+      port.calls.should eq(["refresh-anchor", "reconcile-AnchorNodeAdded"])
+      store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+        0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal).stage.should eq(Migration::Stage::AnchorNodeAdded)
       reopened_backend.close
     ensure
       File.delete?(path)

@@ -8,6 +8,8 @@ private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar
   property? fail_add = false
   property? fail_refresh = false
   property? fail_remove = false
+  property? remote_absent = false
+  property before_remove : Proc(Nil)?
 
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "add:#{node_id}:#{friendly_name}"
@@ -21,7 +23,13 @@ private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar
 
   def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "remove:#{node_id}:#{friendly_name}"
+    @before_remove.try(&.call)
     raise Matter::TransportError.new("offline") if @fail_remove
+    @remote_absent = true
+  end
+
+  def node_absent?(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Bool
+    @remote_absent
   end
 end
 
@@ -129,6 +137,21 @@ private def registrar_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::DatastoreNodeRegistrar do
+  it "does not let a custom delivery claim an acknowledged entry without a retry verifier" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    expect_raises(Matter::ConfigurationError, /verify an acknowledged/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    delivery.calls.should eq(["add:512:Lamp"])
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+  end
+
   it "persists AddPendingNode before final CASE and removes it on pre-completion failure" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = registrar_fabric
@@ -314,8 +337,215 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     expect_raises(Matter::TransportError, /offline/) { registrar.resume(fabric, 200_i64) }
     store.load.pending_datastore_nodes.size.should eq(1)
     delivery.fail_remove = false
+    expect_raises(Matter::CommissioningError, /absence reconciliation/) { registrar.resume(fabric, 200_i64) }
+    delivery.remote_absent = true
     registrar.resume(fabric, 200_i64)
     store.load.pending_datastore_nodes.should be_empty
+  end
+
+  it "fences a delayed RemoveNode against a new writer and a same-identity retry" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    owner = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    replacement = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    owner.add_pending(fabric, 0x200_u64, "Lamp")
+
+    delivery.before_remove = -> do
+      expect_raises(Matter::CommissioningError, /previous attempt/) do
+        replacement.add_pending(fabric, 0x200_u64, "Lamp")
+      end
+      nil
+    end
+    owner.abort(fabric, 0x200_u64)
+    delivery.before_remove = nil
+    replacement.add_pending(fabric, 0x200_u64, "Lamp")
+    stale = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery, owner.attempt_id)
+    expect_raises(Matter::CommissioningError, /another attempt/) do
+      stale.abort(fabric, 0x200_u64)
+    end
+    second_store.load.pending_datastore_nodes.first.attempt_id.should eq(replacement.attempt_id)
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+  end
+
+  it "holds a durable removal guard after a lost response until authenticated absence" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    first = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    first.add_pending(fabric, 0x200_u64, "Lamp")
+    delivery.fail_remove = true
+    expect_raises(Matter::TransportError, /offline/) { first.abort(fabric, 0x200_u64) }
+    second_store.load.pending_datastore_nodes.first.stage.should eq(
+      Matter::Controller::PendingDatastoreNode::Stage::Removing)
+
+    second = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    expect_raises(Matter::CommissioningError, /previous attempt/) do
+      second.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    recovered = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery, first.attempt_id)
+    expect_raises(Matter::CommissioningError, /absence reconciliation/) do
+      recovered.reconcile_removal(fabric, 0x200_u64)
+    end
+    delivery.remote_absent = true
+    recovered.reconcile_removal(fabric, 0x200_u64)
+    second.add_pending(fabric, 0x200_u64, "Lamp")
+    second_store.load.pending_datastore_nodes.first.attempt_id.should eq(second.attempt_id)
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+  end
+
+  it "retries a guarded removal by checking absence without replaying RemoveNode" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    owner = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    owner.add_pending(fabric, 0x200_u64, "Lamp")
+    delivery.fail_remove = true
+    expect_raises(Matter::TransportError, /offline/) { owner.abort(fabric, 0x200_u64) }
+
+    restarted = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    restarted.retry_pending_once
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+    second_store.load.pending_datastore_nodes.first.stage.should eq(
+      Matter::Controller::PendingDatastoreNode::Stage::Removing)
+
+    delivery.remote_absent = true
+    restarted.retry_pending_once
+    second_store.load.pending_datastore_nodes.should be_empty
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+  end
+
+  it "keeps the foreground attempt while retrying another saved node" do
+    backend = Matter::Storage::Memory.new
+    old_store = Matter::Controller::StateStore.new(backend)
+    current_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    old_store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    old = Matter::Controller::DatastoreNodeRegistrar.new(old_store, delivery)
+    delivery.fail_add = true
+    expect_raises(Matter::TransportError, /offline/) do
+      old.add_pending(fabric, 0x200_u64, "Old", Time.utc.to_unix + 60_i64)
+    end
+
+    delivery.fail_add = false
+    current = Matter::Controller::DatastoreNodeRegistrar.new(current_store, delivery)
+    peer = Socket::IPAddress.new("127.0.0.1", Matter::Controller::NodeInfo::DEFAULT_PORT)
+    current.add_pending(fabric, 0x201_u64, "New", Time.utc.to_unix + 60_i64, peer: peer)
+    foreground_attempt = current.attempt_id
+    current.retry_pending_once
+
+    current.attempt_id.should eq(foreground_attempt)
+    current.completing(fabric, 0x201_u64)
+    current.complete(fabric, 0x201_u64)
+    current.refresh(fabric, 0x201_u64)
+    current_store.load.pending_datastore_nodes.map(&.node_id).should eq([0x200_u64])
+    delivery.calls.should contain("add:512:Old")
+    delivery.calls.should contain("refresh:513")
+  end
+
+  it "claims a legacy pending record once across two StateStore writers" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update do |state|
+      state.install_fabric(fabric)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+        0x200_u64, "Lamp", Time.utc.to_unix - 1_i64)
+    end
+    delivery = RecordingNodeDelivery.new
+    first = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    second = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    first.claim_legacy(fabric, 0x200_u64, "Lamp", nil, Matter::Controller::NodeInfo::DEFAULT_PORT)
+    expect_raises(Matter::CommissioningError, /another attempt/) do
+      second.claim_legacy(fabric, 0x200_u64, "Lamp", nil, Matter::Controller::NodeInfo::DEFAULT_PORT)
+    end
+    second_store.load.pending_datastore_nodes.first.attempt_id.should eq(first.attempt_id)
+    first.resume(fabric)
+    second_store.load.pending_datastore_nodes.should be_empty
+  end
+
+  it "recovers a legacy completed record through RefreshNode" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update do |state|
+      state.install_fabric(fabric)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+        0x200_u64, "Lamp", Time.utc.to_unix, "127.0.0.1",
+        Matter::Controller::NodeInfo::DEFAULT_PORT,
+        Matter::Controller::PendingDatastoreNode::Stage::Completed)
+    end
+    delivery = RecordingNodeDelivery.new
+    Matter::Controller::DatastoreNodeRegistrar.new(store, delivery).resume(fabric)
+    delivery.calls.should eq(["refresh:512"])
+    store.load.pending_datastore_nodes.should be_empty
+  end
+
+  it "recovers legacy registered and completing records" do
+    [Matter::Controller::PendingDatastoreNode::Stage::Registered,
+     Matter::Controller::PendingDatastoreNode::Stage::Completing].each do |stage|
+      store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+      fabric = registrar_fabric
+      store.update do |state|
+        state.install_fabric(fabric)
+        state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+          fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+          0x200_u64, "Lamp", Time.utc.to_unix - 1_i64, "127.0.0.1",
+          Matter::Controller::NodeInfo::DEFAULT_PORT, stage)
+        if stage.completing?
+          state.record_node(fabric.fabric_id,
+            Matter::Controller::NodeInfo.new(0x200_u64, "127.0.0.1"),
+            fabric.root_public_key, fabric.controller_node_id)
+        end
+      end
+      delivery = RecordingNodeDelivery.new
+      Matter::Controller::DatastoreNodeRegistrar.new(store, delivery).resume(fabric)
+      if stage.registered?
+        delivery.calls.should eq(["remove:512:Lamp"])
+      else
+        delivery.calls.should eq(["refresh:512"])
+      end
+      store.load.pending_datastore_nodes.should be_empty
+    end
+  end
+
+  it "stages a pre-ordering migrated node only with its verified commissioned peer" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update do |state|
+      state.install_fabric(fabric)
+      state.record_node(fabric.fabric_id,
+        Matter::Controller::NodeInfo.new(0x200_u64, "127.0.0.1"),
+        fabric.root_public_key, fabric.controller_node_id)
+    end
+    delivery = RecordingNodeDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery, "legacy-migration")
+    peer = Socket::IPAddress.new("127.0.0.1", Matter::Controller::NodeInfo::DEFAULT_PORT)
+    expect_raises(Matter::CommissioningError, /already has a commissioned/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp", peer: peer)
+    end
+    wrong_peer = Socket::IPAddress.new("127.0.0.2", Matter::Controller::NodeInfo::DEFAULT_PORT)
+    expect_raises(Matter::CommissioningError, /already has a commissioned/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp", peer: wrong_peer, allow_commissioned: true)
+    end
+    registrar.add_pending(fabric, 0x200_u64, "Lamp", peer: peer, allow_commissioned: true)
+    delivery.calls.should eq(["add:512:Lamp"])
+    registrar.confirm_remote_committed(fabric, 0x200_u64)
+    store.load.pending_datastore_nodes.should be_empty
+    store.load.nodes_for(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id).has_key?(0x200_u64).should be_true
   end
 
   it "recovers an acknowledged completion from saved controller state" do
@@ -338,15 +568,42 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     store.load.pending_datastore_nodes.should be_empty
   end
 
-  it "uses NodeList to retry Anchor commands without duplicating or deleting a completed node" do
+  it "rejects an existing same-name Node ID for a new attempt and preserves its remote entry" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    client = Matter::Controller::Client.new
+    interaction = NodeLifecycleIm.new(client)
+    delivery = TestNetworkNodeDelivery.new(store, client, interaction)
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    status = JfdDatastore::DatastoreStatusEntryStruct.new(JfdDatastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    interaction.nodes = [JfdDatastore::DatastoreNodeInformationEntryStruct.new(0x200_u64, "Lamp", status)]
+
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision) do
+      registrar.assert_node_id_available(fabric, 0x200_u64)
+    end
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    interaction.commands.should be_empty
+    interaction.nodes.size.should eq(1)
+    store.load.pending_datastore_nodes.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "reuses an acknowledged durable attempt without duplicating or deleting its NodeList entry" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     client = Matter::Controller::Client.new
     interaction = NodeLifecycleIm.new(client)
     delivery = TestNetworkNodeDelivery.new(store, client, interaction)
     fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
 
-    delivery.add_pending_node(fabric, 0x200_u64, "Lamp")
-    delivery.add_pending_node(fabric, 0x200_u64, "Lamp")
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
     interaction.commands.should eq([JfdDatastore::CMD_ADD_PENDING_NODE])
     delivery.refresh_node(fabric, 0x200_u64)
     interaction.commands.last.should eq(JfdDatastore::CMD_REFRESH_NODE)
@@ -359,6 +616,37 @@ describe Matter::Controller::DatastoreNodeRegistrar do
       delivery.remove_node(fabric, 0x200_u64, "Lamp")
     end
     interaction.commands.should eq([JfdDatastore::CMD_ADD_PENDING_NODE, JfdDatastore::CMD_REFRESH_NODE])
+    delivery.remove_committed_node(fabric, 0x200_u64, "Lamp")
+    interaction.nodes.should be_empty
+    interaction.commands.last.should eq(JfdDatastore::CMD_REMOVE_NODE)
+  ensure
+    client.try(&.close)
+  end
+
+  it "keeps an ambiguous Pending journal when a matching NodeList entry appears after an unacknowledged add" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    client = Matter::Controller::Client.new
+    interaction = NodeLifecycleIm.new(client)
+    delivery = TestNetworkNodeDelivery.new(store, client, interaction)
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    status = JfdDatastore::DatastoreStatusEntryStruct.new(JfdDatastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.update do |state|
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+        0x200_u64, "Lamp", Time.utc.to_unix + 60_i64, nil,
+        Matter::Controller::NodeInfo::DEFAULT_PORT,
+        Matter::Controller::PendingDatastoreNode::Stage::Pending,
+        registrar.attempt_id)
+    end
+    interaction.nodes = [JfdDatastore::DatastoreNodeInformationEntryStruct.new(0x200_u64, "Lamp", status)]
+
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Pending)
+    interaction.commands.should be_empty
   ensure
     client.try(&.close)
   end
@@ -378,6 +666,33 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     expect_raises(Matter::CommissioningError, /Datastore command/) do
       delivery.add_pending_node(fabric, 0x200_u64, "Lamp")
     end
+  ensure
+    client.try(&.close)
+  end
+
+  it "removes a matching Committed entry after confirmed commissioning failure" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    client = Matter::Controller::Client.new
+    interaction = NodeLifecycleIm.new(client)
+    delivery = TestNetworkNodeDelivery.new(store, client, interaction)
+    fabric = registrar_fabric
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    store.update do |state|
+      state.install_fabric(fabric)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
+        0x200_u64, "Lamp", Time.utc.to_unix, nil,
+        Matter::Controller::NodeInfo::DEFAULT_PORT,
+        Matter::Controller::PendingDatastoreNode::Stage::Completing,
+        registrar.attempt_id)
+    end
+    status = JfdDatastore::DatastoreStatusEntryStruct.new(JfdDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    interaction.nodes = [JfdDatastore::DatastoreNodeInformationEntryStruct.new(0x200_u64, "Lamp", status)]
+    expect_raises(Matter::CommissioningError, /ambiguous/) { registrar.abort(fabric, 0x200_u64) }
+    registrar.abort(fabric, 0x200_u64, confirmed_failure: true, allow_committed: true)
+    interaction.commands.should eq([JfdDatastore::CMD_REMOVE_NODE])
+    interaction.nodes.should be_empty
+    store.load.pending_datastore_nodes.should be_empty
   ensure
     client.try(&.close)
   end

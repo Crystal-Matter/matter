@@ -72,13 +72,27 @@ end
 # report. A participant can expose that path even when Descriptor traversal
 # does not enumerate its Administrator endpoint to this fabric.
 private class JointSparseDescriptorIm < JointDescriptorIm
-  def initialize(client : Matter::Controller::Client, @extra_endpoint : UInt16? = nil)
+  def initialize(client : Matter::Controller::Client, @extra_endpoint : UInt16? = nil,
+                 @missing_device_type : Bool = false, @missing_server_cluster : Bool = false)
     super(client)
   end
 
   def read_attribute(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
                      endpoint_id : UInt16, cluster_id : UInt32, attribute_id : UInt32,
                      fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
+    if endpoint_id == 1_u16 && cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID
+      value = if attribute_id == Matter::Cluster::Descriptor::ATTR_DEVICE_TYPE_LIST && @missing_device_type
+                [Matter::Cluster::Descriptor::DeviceTypeStruct.new(Matter::DeviceType::ROOT_NODE, 1_u16)].to_tlv
+              elsif attribute_id == Matter::Cluster::Descriptor::ATTR_SERVER_LIST && @missing_server_cluster
+                [Matter::Cluster::Descriptor::CLUSTER_ID].to_tlv
+              end
+      if value
+        path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id)
+        data = Matter::InteractionModel::AttributeDataIB.new(path: path, data: TLV::Any.from_slice(value))
+        return Matter::InteractionModel::ReportDataMessage.new(
+          attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)])
+      end
+    end
     if endpoint_id == 0_u16 && cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID &&
        attribute_id == Matter::Cluster::Descriptor::ATTR_PARTS_LIST
       path = Matter::InteractionModel::AttributePath.new(endpoint: 0_u16, cluster: cluster_id, attribute: attribute_id)
@@ -294,6 +308,27 @@ describe Matter::Controller::JointCommissioning do
     client.close
   end
 
+  it "uses the exact announced Anchor endpoint rather than another valid Administrator" do
+    client = Matter::Controller::Client.new
+    im = JointStaleDescriptorIm.new(client)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer).should eq(2_u16)
+    expect_raises(Matter::AuthenticationError, /AdministratorFabricIndex is invalid/) do
+      Matter::Controller::JointCommissioning.read_announced_administrator_fabric_index(im, session, peer, 1_u16)
+    end
+    expect_raises(Matter::AuthenticationError, /not a Joint Fabric Administrator/) do
+      Matter::Controller::JointCommissioning.read_announced_administrator_fabric_index(im, session, peer, 0_u16)
+    end
+    Matter::Controller::JointCommissioning.read_announced_administrator_fabric_index(
+      im, session, peer, 2_u16).should eq(2_u8)
+    client.close
+  end
+
   it "discovers an SDK Administrator from a wildcard JFA attribute when Descriptor traversal misses it" do
     client = Matter::Controller::Client.new
     im = JointSparseDescriptorIm.new(client)
@@ -304,6 +339,36 @@ describe Matter::Controller::JointCommissioning do
     )
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer).should eq(1_u16)
+    client.close
+  end
+
+  it "rejects a wildcard Administrator endpoint without the JFA device type" do
+    client = Matter::Controller::Client.new
+    im = JointSparseDescriptorIm.new(client, missing_device_type: true)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    expect_raises(Matter::AuthenticationError, /no Joint Fabric Administrator endpoint/) do
+      Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
+    end
+    client.close
+  end
+
+  it "rejects a wildcard Administrator endpoint without the JFA server cluster" do
+    client = Matter::Controller::Client.new
+    im = JointSparseDescriptorIm.new(client, missing_server_cluster: true)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    expect_raises(Matter::AuthenticationError, /no Joint Fabric Administrator endpoint/) do
+      Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
+    end
     client.close
   end
 
@@ -565,6 +630,47 @@ describe Matter::Controller::JointCommissioning do
     workflow.close
   end
 
+  it "fails closed without an Anchor NodeList lookup and rejects a remote same-name collision" do
+    joint = Matter::Controller::JointCommissioning
+    fabric = joint.bootstrap_anchor_fabric(0x4571_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.update(&.install_fabric(fabric))
+    datastore = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    status = Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+      Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    datastore.node_list = [Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct.new(
+      9_u64, "Joining Administrator", status)]
+    build_workflow = ->(check : Matter::Controller::JointCommissioning::Workflow::NodeListCheck?) {
+      Matter::Controller::JointCommissioning::Workflow.new(store, fabric.fabric_id, fabric.root_public_key,
+        fabric.controller_node_id, 1_u8, 1_u16, "Joining Administrator", 1_u16, 1_u16,
+        2_u64, JointTestTrust.new,
+        ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
+        ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
+        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+        node_list_check: check)
+    }
+    missing = build_workflow.call(nil)
+    expect_raises(Matter::ConfigurationError, /authenticated Anchor NodeList/) do
+      missing.commission(9_u64, "invalid manual code")
+    end
+    missing.close
+    lookup = ->(selected : Matter::Controller::FabricInfo, node_id : UInt64) do
+      selected.fabric_id.should eq(fabric.fabric_id)
+      if datastore.node_list.any?(&.node_id.==(node_id))
+        raise Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision.new("Anchor NodeList already contains Node ID")
+      end
+      nil
+    end
+    collided = build_workflow.call(lookup)
+    expect_raises(Matter::Controller::DatastoreNodeRegistrar::NodeIdCollision, /already contains/) do
+      collided.commission(9_u64, "invalid manual code")
+    end
+    datastore.node_list.size.should eq(1)
+    store.load.pending_datastore_nodes.should be_empty
+    collided.close
+  end
+
   it "recovers an acknowledged completion when controller node storage failed" do
     joint = Matter::Controller::JointCommissioning
     fabric = joint.bootstrap_anchor_fabric(0x4568_u64, 5_u64, 0xFFF1_u16, crypto: crypto).fabric
@@ -586,7 +692,10 @@ describe Matter::Controller::JointCommissioning do
       ->(request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) {
         joint.add_admin_once(datastore, request); nil
       },
-      ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+      ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+      node_list_check: ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64) {
+        raise Matter::CommissioningError.new("Pending retry must not allocate its Node ID again")
+      })
 
     # A retry of the same commissioned Node ID reconciles the saved result
     # and must not reopen PASE or send AddNOC again.
@@ -781,7 +890,8 @@ describe Matter::Controller::JointCommissioning do
         ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress, _joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
         ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
         ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
-        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty })
+        ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64) { Bytes.empty },
+        node_list_check: ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64) { nil })
     }
     workflow = build_workflow.call(reopened)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)

@@ -21,9 +21,9 @@ private def low_power_fixture
   handler = Matter::Protocol::MessageHandler.new(transport,
     setup_pin: 20202021_u32, discriminator: 3840_u16,
     fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
-  handler.clusters.delete({0_u16, Matter::Cluster::AccessControl::CLUSTER_ID})
   session = Matter::Spec::ProtocolMessages.case_session(242_u16)
   handler.sessions[session.session_id] = session
+  Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
   cluster = DeferredLowPower.new(Matter::DataType::EndpointNumber.new(1_u16))
   handler.clusters[{1_u16, DeferredLowPower::CLUSTER_ID}] = cluster
   {handler, transport, session, cluster}

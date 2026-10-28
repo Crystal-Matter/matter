@@ -9,7 +9,7 @@ private def jfa_icac_install_status(certificate : Bytes, root : Bytes,
     -> { true }, ->(_index : UInt8) { true },
     ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
     ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil },
-    verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+    verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
     failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
   cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
   cluster.administrator_fabric_index = 1_u8
@@ -59,6 +59,42 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     icac_key.public_key, fabric_id, 3_u64, root_key, 1_u64, Bytes[0x06], crypto, anchor: true
   )
 
+  it "verifies only the Anchor endpoint named by Announce before issuing an ICAC CSR" do
+    observed_endpoint = nil.as(UInt16?)
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, endpoint : UInt16) {
+        observed_endpoint = endpoint
+        endpoint == 1_u16
+      },
+      failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_peer_subject_ids = [Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 1_u16)).id]
+    cluster.request_peer_icac = anchor_icac
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_fabric_index = 2_u8
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+
+    service.announce_joint_fabric_administrator(cluster,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(2_u16)).should eq(
+      Matter::InteractionModel::Status.success)
+    observed_endpoint.should eq(2_u16)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+    service.announce_joint_fabric_administrator(cluster,
+      Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16)).should eq(
+      Matter::InteractionModel::Status.success)
+    observed_endpoint.should eq(1_u16)
+    service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+  end
+
   it "rejects expired, non-signing, and wrong-fabric cross-signed ICACs" do
     # The official SDK issues ICACs whose subject contains ICAC ID alone.
     certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
@@ -84,13 +120,13 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     jfa_icac_install_status(wrong_fabric, root, icac_key, anchor_icac).should eq(invalid)
   end
 
-  it "allows only one authenticated AddICAC attempt per armed fail-safe" do
+  it "permits corrected AddICAC after a rejected ICAC but only one successful AddICAC per fail-safe" do
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
     cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.administrator_fabric_index = 1_u8
@@ -115,18 +151,14 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(invalid))
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidICAC)
-    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
-    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid)).should eq(
-      Matter::InteractionModel::Status.constraint_error)
-    service.cross_signed_icac.should be_nil
-
-    service.reset_failsafe
-    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
     service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid))
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid)).should eq(
+      Matter::InteractionModel::Status.constraint_error)
   end
 
   it "checks remote CSR proof and pinned existing ICAC before returning bytes" do
@@ -136,7 +168,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(_index : UInt8?) { true },
       existing_icac_certificate: anchor_icac,
       icac_csr_provider: provider
@@ -161,7 +193,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(_index : UInt8?) { true },
       existing_icac_certificate: anchor_icac,
       icac_csr_provider: bad_provider
@@ -197,7 +229,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { armed }, ->(_index : UInt8) { verified },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       failsafe_fabric_matches: ->(index : UInt8?) { failsafe_owner_matches && index == 2_u8 }
     )
     cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
@@ -279,7 +311,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
         -> { true }, ->(index : UInt8) { checked_fabrics << index; index == verified_fabric },
         ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
         ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-        verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+        verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
         failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
       )
       service.announce_joint_fabric_administrator(cluster,
@@ -391,6 +423,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       180_u16, Bytes.new(96, 0_u8), 3839_u16, 2000_u32, Bytes.new(16, 0_u8))
     service.open_joint_commissioning_window(cluster, invalid).should eq(Matter::InteractionModel::Status.invalid_command)
     opened.should eq(0)
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.unsupported_access)
+    opened.should eq(0)
+    cluster.jcm_add_noc_guard_ready = -> { true }
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::Busy))
@@ -435,6 +470,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     transferred.should eq(0)
 
     cluster.request_fabric_index = fabrics.get_fabric(1_u8).as(Matter::Fabric).fabric_index
+    cluster.jcm_add_noc_guard_ready = -> { true }
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
     service.transfer_anchor_request(cluster).as(Matter::Cluster::JointFabricAdministrator::TransferAnchorResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK)
@@ -453,6 +489,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     opened.should eq(1)
     transferred.should eq(1)
     restored.request_fabric_index = fabrics.get_fabric(1_u8).as(Matter::Fabric).fabric_index
+    restored.jcm_add_noc_guard_ready = -> { true }
     service.open_joint_commissioning_window(restored, valid).should eq(Matter::InteractionModel::Status.success)
     opened.should eq(2)
   end
@@ -512,9 +549,13 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidPublicKey)
     service.cross_signed_icac.should be_nil
+    # TC_JFADMIN_1_2 treats a status-only, out-of-flow AddICAC as consuming
+    # the fail-safe's one-command allowance, unlike an authenticated JCM
+    # certificate validation failure.
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
-    # A status-only attempt on another fabric must not consume this fabric's
-    # sole AddICAC attempt during the same fail-safe period.
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(certificate)).should eq(
+      Matter::InteractionModel::Status.constraint_error)
+    # The attempt is scoped to the accessing fabric.
     cluster.request_fabric_index = 2_u8
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
@@ -540,7 +581,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       persist_icac: ->(value : Bytes?) { saved = value; nil },
       failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 }
     )
@@ -586,7 +627,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       resolve_accessing_fabric: ->(index : UInt8) {
         index == 2_u8 ? Matter::Commissioning::JointFabricAdministratorService::FabricIdentity.new(anchor_root, anchor_fabric_id) : nil
       },
@@ -633,7 +674,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       -> { true }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
       ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
-      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress) { true },
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { true },
       resolve_accessing_fabric: ->(index : UInt8) {
         index == 2_u8 ? Matter::Commissioning::JointFabricAdministratorService::FabricIdentity.new(anchor_root, anchor_fabric_id) : nil
       },

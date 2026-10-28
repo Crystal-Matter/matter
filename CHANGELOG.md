@@ -7,6 +7,57 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric keyed group revocation
+
+- Shared group revocation now accepts an explicit fresh key set for groups with
+  a GroupKeySetID. It stages the replacement key set and rotates the key set ID
+  and GroupCATVersion together, then tracks target key, group, and ACL delivery
+  before reporting revocation effective. Hosts must distribute the new epoch
+  key to surviving groupcast controllers.
+
+### Joint Fabric Datastore removals
+
+- `RemoveGroupIDFromEndpointForNode` now checks that the endpoint exists and
+  succeeds without changing Datastore state when its group membership is
+  already absent. `RemoveACLFromNode` does the same for an existing node whose
+  ACL entry is absent. Repeated removals already awaiting device delivery keep
+  their DeletePending status without advancing DataVersion.
+
+### Joint Fabric Node ID allocation
+
+- Commissioners using the opt-in Datastore registrar now check the authenticated
+  Anchor NodeList before AddNOC and reject an existing Node ID even if its
+  friendly name matches. A new registration will not claim or remove that
+  existing entry. A durable acknowledged attempt may reread its own pending
+  registration; an unacknowledged add remains pending for reconciliation.
+- Custom Datastore delivery adapters must implement an authenticated NodeList
+  availability check before commissioning and verify an acknowledged pending
+  entry before treating it as a retry. Joint Commissioning hosts that do not
+  configure a registrar remain responsible for the NodeList check.
+
+### Joint Commissioning AddNOC validation
+
+- A Joint Fabric Administrator now rejects a joining NOC without the current
+  Administrator CAT or without the current Anchor CAT as CaseAdminSubject
+  before adding a fabric. Ordinary commissioning keeps its existing AddNOC
+  behavior.
+
+### TCP and UDP shared ports
+
+- Retry ephemeral shared-port allocation by choosing a UDP port first, then
+  binding TCP to it. This handles Windows hosts with different TCP and UDP
+  ephemeral port exclusions.
+
+
+### Joint Fabric ICAC correction
+
+- An authenticated Joint Commissioning Method AddICAC validation failure no
+  longer consumes the fail-safe window's single successful cross-signing
+  operation. The initiator may correct the certificate and retry. Status-only
+  AddICAC outside that flow retains the official TC_JFADMIN_1_2 one-attempt
+  behavior.
+
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store
@@ -28,6 +79,53 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AnchorDatastoreSubscription.new` now requires `counter_store:`. Pass the
   StateStore that owns the installed controller fabric and its counter lease.
 
+### Joint Fabric committed node removal
+
+- Add a durable, opt-in removal workflow for a committed ordinary Joint Fabric
+  node. It removes direct Node ID ACL grants on other nodes and waits for their
+  delivery before issuing Datastore RemoveNode. A lost RemoveNode response is
+  reconciled by an authenticated NodeList read without replaying the command.
+- A CAT-bearing controller requires a saved group revocation receipt that is
+  `Effective` for each authenticated CASE CAT before removal can proceed.
+  The workflow now journals group, key-set, and binding cleanup, including
+  peer bindings pointing to the removed Node ID. It waits for confirmed
+  deletion before ACL revocation and RemoveNode. Administrator nodes,
+  wildcard or shared direct ACLs, and an unreachable target remain blocked.
+
+### Joint Fabric Datastore
+
+- Propagate a key-only `UpdateGroup` to legacy GroupKeyMap and Groupcast
+  memberships before removing the previous key; keep the old key for a
+  subsequent refresh if the replacement write or mapping update fails.
+- Keep a group key set while any group still references it, even if the group
+  has no node members. `RemoveKeySet` succeeds after the group is removed and
+  any remaining node references are pending deletion.
+
+### Joint Fabric Administrator discovery
+
+- Verify the Descriptor device type and server cluster of an Administrator
+  endpoint found through a wildcard attribute read before Joint Commissioning.
+
+### Access Control DeviceType targets
+
+- Match ACL `Target.DeviceType` against every advertised type in each endpoint's
+  current Descriptor `DeviceTypeList` for CASE reads, writes, events, commands,
+  and authenticated group writes and commands. Dynamic endpoint composition is
+  evaluated on each request, and a missing Descriptor cannot grant a type target.
+
+### Timed Interaction Model requests
+
+- Reject malformed or repeated TimedRequest actions with `InvalidAction`,
+  discard the exchange's pending timed state, and start valid deadlines when
+  their successful StatusResponse is sent.
+
+### Access Control authorization
+
+- Deny CASE reads, writes, invokes, and event access when the accessing fabric
+  has no matching ACL grant. An empty ACL cannot be used by a former controller
+  to restore its own Administrator entry. PASE commissioning retains its
+  implicit privilege, while fabricless PASE ACL writes remain rejected.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the
@@ -42,6 +140,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   acknowledgement using a fresh witness from the trusted participant host.
   The candidate checks the exact pending ICAC, fabric identities, and prior
   rotation state before advancing its journal without repeating AddICAC.
+- Rewind an uncommitted participant cross-sign after a lost pending-ICAC
+  journal save only when the trusted participant host proves both durable
+  fabric identities, the old JFA binding and ICAC, and cleared fail-safe and
+  credential undo state. The candidate checks the witness over fresh CASE
+  before retrying follow-up; its Docker scenario restarts both participants.
 - Reconcile a participant Administrator CAT rotation that did not start after
   removal only when its pre-rotation credential was journaled, the participant
   host confirms durable old credentials with a clear fail-safe and credential

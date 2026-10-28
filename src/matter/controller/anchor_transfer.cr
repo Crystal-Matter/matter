@@ -578,7 +578,7 @@ module Matter
                        @on_committed_icac : CommitIcac? = nil,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
           @journal = journal || Journal.new(@target_node_id)
-          unless @journal.target_node_id == @target_node_id && @target_node_id != DataType::NodeId::UNSPECIFIED && @icac_id != 0_u64
+          unless @journal.target_node_id == @target_node_id && @target_node_id != DataType::NodeId::UNSPECIFIED && @icac_id != JointCommissioning::UNSPECIFIED_ICAC_ID
             raise Matter::ConfigurationError.new("Invalid Anchor follow-up identity")
           end
           if @new_anchor_fabric.fabric_id == @old_fabric_id &&
@@ -619,6 +619,11 @@ module Matter
             return
           end
           if @journal.stage.ready?
+            current_index = JointCommissioning.read_administrator_fabric_index(
+              @im, session, @peer, @administrator_endpoint)
+            unless current_index == old_index
+              raise Matter::AuthenticationError.new("Participant JFA no longer belongs to the old Anchor fabric")
+            end
             advance(Stage::CrossSigning)
             arm_fail_safe(session, FAIL_SAFE_SECONDS)
             begin

@@ -18,6 +18,7 @@ module Matter
 
       CERTIFICATE_SERIAL_BYTES = 8
       KEY_PROOF_MESSAGE        = "Matter shared fabric controller key".to_slice
+      INVALID_GROUP_KEY_SET_ID = UInt16::MAX
 
       # Persist this receipt until `joint_group_revocation_status` reports
       # Effective. UpdateGroup itself only queues target ACL delivery.
@@ -28,6 +29,27 @@ module Matter
         getter list_id : UInt16
 
         def initialize(@node_id, @list_id)
+        end
+      end
+
+      # The host supplies fresh key material and keeps it available to the
+      # surviving controllers. The previous ID makes a lost UpdateGroup
+      # response recoverable after the Datastore has switched to the new ID.
+      struct JointGroupKeyRotation
+        getter previous_key_set_id : UInt16
+        getter replacement : Datastore::DatastoreGroupKeySetStruct
+
+        def initialize(@previous_key_set_id, @replacement)
+        end
+      end
+
+      struct JointGroupMembershipTarget
+        include Storage::Record
+
+        getter node_id : UInt64
+        getter endpoint_id : UInt16
+
+        def initialize(@node_id, @endpoint_id)
         end
       end
 
@@ -47,9 +69,18 @@ module Matter
         getter target_acls : Array(JointGroupACLTarget)
         getter anchor_root_cert : Bytes
         getter anchor_node_id : UInt64
+        getter group_permission : Datastore::DatastoreAccessControlEntryPrivilegeEnum = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer
+        getter previous_key_set_id : UInt16? = nil
+        getter current_key_set_id : UInt16? = nil
+        getter replacement_key_set_digest : Bytes? = nil
+        getter target_memberships : Array(JointGroupMembershipTarget) = [] of JointGroupMembershipTarget
 
         def initialize(@group_id, @group_cat, @previous_version, @current_version,
-                       @target_node_ids, @target_acls, @anchor_root_cert, @anchor_node_id)
+                       @target_node_ids, @target_acls, @anchor_root_cert, @anchor_node_id,
+                       @group_permission = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer,
+                       @previous_key_set_id = nil, @current_key_set_id = nil,
+                       @replacement_key_set_digest = nil,
+                       @target_memberships = [] of JointGroupMembershipTarget)
         end
       end
 
@@ -244,6 +275,9 @@ module Matter
       # Every survivor store must be supplied; its existing operational key is
       # kept while its NOC is reissued with the next group CAT version. The
       # Anchor then rotates target ACLs without deleting group membership.
+      # For a keyed group, the host must provide a fresh replacement key set
+      # and securely distribute its epoch key to surviving groupcast controllers.
+      # The Datastore distributes that key set only to member devices.
       # This returns a pending receipt, never proof that devices deny the old
       # CAT. Save the receipt and poll `joint_group_revocation_status` after
       # the Anchor synchronizer has delivered the ACLs.
@@ -252,6 +286,7 @@ module Matter
                                             group_id : UInt16, revoked : FabricInfo,
                                             survivors : Array({StateStore, UInt64}), authority : FabricInfo,
                                             anchor_node_id : UInt64,
+                                            key_rotation : JointGroupKeyRotation? = nil,
                                             crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : JointGroupRevocation
         verify_joint_anchor!(im, session, peer, datastore_endpoint, anchor_node_id, authority.root_cert)
         icac = authority.intermediate_cert || raise Matter::ConfigurationError.new("Joint Fabric authority requires an ICAC")
@@ -266,8 +301,7 @@ module Matter
                 raise Matter::ConfigurationError.new("Joint Fabric group does not exist")
         cat = group.group_cat || raise Matter::ConfigurationError.new("Joint Fabric group has no CAT")
         version = group.group_cat_version || raise Matter::ConfigurationError.new("Joint Fabric group has no CAT version")
-        unless group.group_permission == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
-               group.group_key_set_id.nil? && version < Datastore::RESERVED_GROUP_CAT_VERSION
+        if version >= Datastore::RESERVED_GROUP_CAT_VERSION
           raise Matter::ConfigurationError.new("Joint Fabric group cannot rotate its CAT version")
         end
         recovered = false
@@ -282,6 +316,57 @@ module Matter
                              raise Matter::ConfigurationError.new("Revoked controller CAT does not match the current or preceding group version")
                            end
         next_version = previous_version + 1_u16
+        current_key_set_id = group.group_key_set_id
+        previous_key_set_id : UInt16? = nil
+        replacement_digest : Bytes? = nil
+        replacement_available = false
+        if rotation = key_rotation
+          replacement = rotation.replacement
+          previous_key_set_id = rotation.previous_key_set_id
+          if rotation.previous_key_set_id == Datastore::IPK_KEY_SET_ID ||
+             replacement.group_key_set_id == Datastore::IPK_KEY_SET_ID ||
+             replacement.group_key_set_id == INVALID_GROUP_KEY_SET_ID ||
+             replacement.group_key_set_id == rotation.previous_key_set_id
+            raise Matter::ConfigurationError.new("Joint Fabric group rotation requires a fresh non-reserved key set ID")
+          end
+          if current_key_set_id != (recovered ? replacement.group_key_set_id : rotation.previous_key_set_id)
+            raise Matter::ConfigurationError.new("Joint Fabric group key set changed during revocation")
+          end
+          key_sets = read_datastore_list(Datastore::DatastoreGroupKeySetStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_GROUP_KEY_SET_LIST)
+          previous = key_sets.find(&.group_key_set_id.==(rotation.previous_key_set_id)) ||
+                     raise Matter::ConfigurationError.new("Joint Fabric group's previous key set is missing")
+          validate_replacement_key_set!(replacement, previous)
+          replacement_keys = {replacement.epoch_key0, replacement.epoch_key1, replacement.epoch_key2}.to_a.compact
+          key_sets.each do |other|
+            next if other.group_key_set_id == replacement.group_key_set_id
+            old_keys = {other.epoch_key0, other.epoch_key1, other.epoch_key2}.to_a.compact
+            if replacement_keys.any? { |key| old_keys.any?(&.==(key)) }
+              raise Matter::ConfigurationError.new("Joint Fabric replacement key set reuses an existing epoch key")
+            end
+          end
+          existing = key_sets.find(&.group_key_set_id.==(replacement.group_key_set_id))
+          if existing && existing != replacement
+            raise Matter::ConfigurationError.new("Joint Fabric replacement key set differs from Datastore")
+          end
+          replacement_available = !existing.nil?
+          if !recovered && groups.any? { |candidate| candidate.group_key_set_id == replacement.group_key_set_id }
+            raise Matter::ConfigurationError.new("Joint Fabric replacement key set is already assigned to a group")
+          end
+          raise Matter::ConfigurationError.new("Joint Fabric rotated key set is missing") if recovered && !existing
+          replacement_digest = crypto.compute_sha256(replacement.to_slice)
+        elsif current_key_set_id
+          raise Matter::ConfigurationError.new("Joint Fabric keyed group requires an explicit key rotation")
+        end
+        memberships = if key_rotation
+                        read_datastore_list(Datastore::DatastoreEndpointGroupIDEntryStruct, im, session, peer,
+                          datastore_endpoint, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST).select do |entry|
+                          entry.group_id == group_id && entry.status_entry.state != Datastore::DatastoreStateEnum::DeletePending
+                        end
+                      else
+                        [] of Datastore::DatastoreEndpointGroupIDEntryStruct
+                      end
+        membership_targets = memberships.map { |entry| JointGroupMembershipTarget.new(entry.node_id, entry.endpoint_id) }
         target_acls = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         new_subject = DataType::NodeId.from_case_authenticated_tag(
@@ -290,14 +375,16 @@ module Matter
           next false if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending
           if recovered
             entry.acl_entry.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
-              entry.acl_entry.privilege == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+              entry.acl_entry.privilege == group.group_permission &&
               entry.acl_entry.subjects == [new_subject]
           else
             acl_grants_cat_version?(entry.acl_entry, cat, previous_version)
           end
         end
-        raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if selected_acls.empty?
-        target_ids = selected_acls.map(&.node_id).uniq!
+        if selected_acls.empty? && memberships.empty?
+          raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs or memberships")
+        end
+        target_ids = (selected_acls.map(&.node_id) + memberships.map(&.node_id)).uniq!
         target_refs = selected_acls.map { |entry| JointGroupACLTarget.new(entry.node_id, entry.list_id) }
 
         seen = [revoked.controller_node_id]
@@ -334,17 +421,26 @@ module Matter
             fabric.intermediate_private_key, fabric.ipk_epoch_keys)
           replacements << {store, replacement}
         end
-        replacements.each do |store, replacement|
+        replacements.each do |store, updated_fabric|
           state = store.load
-          state.replace_fabric(replacement)
+          state.replace_fabric(updated_fabric)
           store.save(state)
         end
         unless recovered
-          request = Datastore::UpdateGroupRequest.new(group_id, nil, nil, nil, next_version, nil)
+          if rotation = key_rotation
+            replacement = rotation.replacement
+            unless replacement_available
+              invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_ADD_KEY_SET,
+                Datastore::AddKeySetRequest.new(replacement).to_slice)
+            end
+          end
+          request = Datastore::UpdateGroupRequest.new(group_id, nil,
+            key_rotation.try(&.replacement.group_key_set_id), nil, next_version, nil)
           invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_UPDATE_GROUP, request.to_slice)
         end
         JointGroupRevocation.new(group_id, cat, previous_version, next_version, target_ids, target_refs,
-          authority.root_cert.dup, anchor_node_id)
+          authority.root_cert.dup, anchor_node_id, group.group_permission, previous_key_set_id,
+          key_rotation.try(&.replacement.group_key_set_id), replacement_digest, membership_targets)
       end
 
       # A pending receipt becomes effective only after every target ACL is
@@ -360,8 +456,48 @@ module Matter
         return JointGroupRevocation::Status::Pending unless group &&
                                                             group.group_cat == receipt.group_cat &&
                                                             group.group_cat_version == receipt.current_version &&
-                                                            group.group_permission == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
-                                                            group.group_key_set_id.nil?
+                                                            group.group_permission == receipt.group_permission &&
+                                                            group.group_key_set_id == receipt.current_key_set_id
+        if key_set_id = receipt.current_key_set_id
+          old_id = receipt.previous_key_set_id || return JointGroupRevocation::Status::Pending
+          digest = receipt.replacement_key_set_digest || return JointGroupRevocation::Status::Pending
+          key_sets = read_datastore_list(Datastore::DatastoreGroupKeySetStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_GROUP_KEY_SET_LIST)
+          key_set = key_sets.find(&.group_key_set_id.==(key_set_id))
+          return JointGroupRevocation::Status::Pending unless key_set &&
+                                                              Crypto::StandardCrypto.new.compute_sha256(key_set.to_slice) == digest
+          memberships = read_datastore_list(Datastore::DatastoreEndpointGroupIDEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+          node_keys = read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
+          receipt.target_memberships.each do |target|
+            membership = memberships.find do |entry|
+              entry.node_id == target.node_id && entry.endpoint_id == target.endpoint_id &&
+                entry.group_id == receipt.group_id
+            end
+            return JointGroupRevocation::Status::Pending unless membership &&
+                                                                membership.status_entry.state == Datastore::DatastoreStateEnum::Committed
+            installed = node_keys.find do |entry|
+              entry.node_id == target.node_id && entry.group_key_set_id == key_set_id
+            end
+            return JointGroupRevocation::Status::Pending unless installed &&
+                                                                installed.status_entry.state == Datastore::DatastoreStateEnum::Committed
+          end
+          receipt.target_memberships.map(&.node_id).uniq!.each do |node_id|
+            old_needed = groups.any? do |candidate|
+              candidate.group_id != receipt.group_id.to_u64 && candidate.group_key_set_id == old_id &&
+                memberships.any? do |membership|
+                  membership.node_id == node_id && membership.group_id.to_u64 == candidate.group_id &&
+                    membership.status_entry.state != Datastore::DatastoreStateEnum::DeletePending
+                end
+            end
+            next if old_needed
+            old_key_present = node_keys.any? do |entry|
+              entry.node_id == node_id && entry.group_key_set_id == old_id
+            end
+            return JointGroupRevocation::Status::Pending if old_key_present
+          end
+        end
         entries = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         new_subject = DataType::NodeId.from_case_authenticated_tag(
@@ -375,7 +511,7 @@ module Matter
           return JointGroupRevocation::Status::Pending unless entry &&
                                                               entry.acl_entry.subjects == [new_subject] &&
                                                               entry.acl_entry.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
-                                                              entry.acl_entry.privilege == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+                                                              entry.acl_entry.privilege == receipt.group_permission &&
                                                               entry.status_entry.state == Datastore::DatastoreStateEnum::Committed
         end
         JointGroupRevocation::Status::Effective
@@ -390,13 +526,38 @@ module Matter
           receipt.anchor_node_id, receipt.anchor_root_cert)
         entries = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
+        memberships = if receipt.current_key_set_id
+                        read_datastore_list(Datastore::DatastoreEndpointGroupIDEntryStruct, im, session, peer,
+                          datastore_endpoint, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+                      else
+                        [] of Datastore::DatastoreEndpointGroupIDEntryStruct
+                      end
+        node_keys = if receipt.current_key_set_id
+                      read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
+                        datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
+                    else
+                      [] of Datastore::DatastoreNodeKeySetEntryStruct
+                    end
         new_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
         receipt.target_node_ids.each do |node_id|
-          next unless entries.any? do |entry|
-                        entry.node_id == node_id && entry.acl_entry.subjects == [new_subject] &&
-                        entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed
-                      end
+          failed_acl = entries.any? do |entry|
+            entry.node_id == node_id && entry.acl_entry.subjects == [new_subject] &&
+              entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed
+          end
+          failed_membership = memberships.any? do |entry|
+            entry.node_id == node_id && entry.group_id == receipt.group_id &&
+              entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed
+          end
+          failed_key = node_keys.any? do |entry|
+            entry.node_id == node_id &&
+              (entry.group_key_set_id == receipt.current_key_set_id ||
+                entry.group_key_set_id == receipt.previous_key_set_id) &&
+              (entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed ||
+                (entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending &&
+                  entry.status_entry.failure_code != Datastore::NO_FAILURE_CODE))
+          end
+          next unless failed_acl || failed_membership || failed_key
           request = Datastore::RefreshNodeRequest.new(node_id)
           invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_REFRESH_NODE, request.to_slice)
         end
@@ -418,6 +579,25 @@ module Matter
           DataType::NodeId.case_authenticated_tag_from_subject?(id) != nil
         end
         subjects.includes?(subject) && cat_subject_count == 1
+      end
+
+      private def self.validate_replacement_key_set!(replacement : Datastore::DatastoreGroupKeySetStruct,
+                                                     previous : Datastore::DatastoreGroupKeySetStruct) : Nil
+        unless replacement.group_key_security_policy == Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst
+          raise Matter::ConfigurationError.new("Joint Fabric replacement key set needs TrustFirst policy")
+        end
+        keys = {replacement.epoch_key0, replacement.epoch_key1, replacement.epoch_key2}
+        times = {replacement.epoch_start_time0, replacement.epoch_start_time1, replacement.epoch_start_time2}
+        unless keys.zip(times).all? { |key, time| key.nil? == time.nil? && (key.nil? || key.size == Datastore::EPOCH_KEY_BYTES) } &&
+               replacement.epoch_key0 && replacement.epoch_start_time0.try(&.>(0_u64)) &&
+               (replacement.epoch_key2.nil? || replacement.epoch_key1) &&
+               times.to_a.compact.each_with_index.all? { |time, index| index == 0 || times.to_a.compact[index - 1] < time }
+          raise Matter::ConfigurationError.new("Joint Fabric replacement key set has invalid epochs")
+        end
+        old_keys = {previous.epoch_key0, previous.epoch_key1, previous.epoch_key2}.to_a.compact
+        unless keys.to_a.compact.all? { |key| old_keys.none?(&.==(key)) }
+          raise Matter::ConfigurationError.new("Joint Fabric replacement key set reuses a revoked epoch key")
+        end
       end
 
       private def self.acl_grants_cat_version?(acl : Datastore::DatastoreAccessControlEntryStruct,

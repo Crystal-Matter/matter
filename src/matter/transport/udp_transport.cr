@@ -704,13 +704,7 @@ module Matter
                     end
 
                     # Create a dummy payload header - it will be ignored and replaced after decryption
-                    dummy_payload_header = Codec::MessageCodec::PayloadHeader.new(
-                      exchange_id: 0_u16,
-                      protocol_id: 0_u16,
-                      message_type: 0_u8,
-                      initiator_message: false,
-                      requires_acknowledge: false
-                    )
+                    dummy_payload_header = Codec::MessageCodec::PayloadHeader.encrypted_placeholder
 
                     Codec::MessageCodec::Message.new(
                       packet_header: packet.header,

@@ -35,6 +35,9 @@ require "../cluster/time_synchronization"
 require "../cluster/thermostat"
 require "../cluster/mode_select"
 require "../cluster/bridged_device_basic_information"
+require "../cluster/joint_fabric_administrator"
+require "../cluster/joint_fabric_datastore"
+require "../commissioning/joint_fabric_add_noc_guard"
 
 module Matter
   # A Matter device application.
@@ -132,6 +135,7 @@ module Matter
     @groupcast_outbound : GroupcastSender? = nil
     @groupcast_sender_enabled : Bool = false
     @prepared_fabric_cleanup : Hash(UInt8, String) = {} of UInt8 => String
+    @joint_fabric_add_noc_guard : Commissioning::JointFabricAddNocGuard?
 
     # Endpoints added from a template, by endpoint number: the template name
     # and the parameters it was built from.
@@ -479,6 +483,7 @@ module Matter
       end
 
       restore_dynamic_endpoints
+      ensure_joint_fabric_add_noc_guard
     end
 
     # Starts mDNS and the configured transport and syncs advertisements for the current fabric set.
@@ -574,6 +579,7 @@ module Matter
       # Stop the session sweep before the store closes under it.
       @message_handler.close
 
+      @access_control.try(&.shutdown_restriction_review_workers)
       @persistence.flush
       @persistence.close
       @transport.close
@@ -1396,6 +1402,7 @@ module Matter
       end
       client_clusters.each { |id| endpoint.add_client_cluster(id) }
       @node.add_endpoint(endpoint)
+      ensure_joint_fabric_add_noc_guard
       if device_types.any? { |type| type.device_type_id.id == DeviceType::CAMERA }
         composition_errors = CameraComposition.validate(@node, endpoint_id)
         unless composition_errors.empty?
@@ -1407,6 +1414,38 @@ module Matter
       refresh_parts_lists(notify_subscribers)
       start_time_zone_polling if @started
       true
+    end
+
+    private def ensure_joint_fabric_add_noc_guard : Nil
+      administrators = @node.clusters.values.compact_map(&.as?(Cluster::JointFabricAdministrator))
+      return if administrators.empty?
+      unless guard = @joint_fabric_add_noc_guard
+        guard = Commissioning::JointFabricAddNocGuard.new(
+          operational_credentials.credentials,
+          -> { @node.clusters.values.compact_map(&.as?(Cluster::JointFabricAdministrator)) },
+          ->(endpoint_id : UInt16) { @node.get_cluster(endpoint_id, Cluster::JointFabricDatastore) })
+        guard.install!
+        @joint_fabric_add_noc_guard = guard
+        armed = general_commissioning.on_failsafe_armed
+        expired = general_commissioning.on_failsafe_expired
+        succeeded = general_commissioning.on_failsafe_success
+        general_commissioning.on_failsafe_armed = -> do
+          armed.try(&.call)
+          guard.observe_failsafe_arm(general_commissioning.request_session_id,
+            administrator_commissioning.window.admin_fabric_index,
+            joint_window: administrator_commissioning.window.joint_window?,
+            case_session: general_commissioning.request_is_case_session?)
+        end
+        general_commissioning.on_failsafe_expired = -> do
+          guard.reset
+          expired.try(&.call)
+        end
+        general_commissioning.on_failsafe_success = -> do
+          succeeded.try(&.call)
+          guard.reset
+        end
+      end
+      guard.bind_administrators
     end
 
     private def wire_ecosystem_information(cluster : Cluster::Base) : Nil

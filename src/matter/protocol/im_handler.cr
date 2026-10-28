@@ -6,6 +6,7 @@ require "../event_journal"
 require "../node"
 require "../session/context"
 require "../cluster/access_control"
+require "../cluster/descriptor"
 require "../cluster/group_key_management"
 require "../cluster/thermostat"
 require "../cluster/icd_management"
@@ -41,6 +42,17 @@ module Matter
         clusters[{Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
       end
 
+      # Read the current Descriptor composition on each authorization. The
+      # cluster index changes with dynamic endpoint insertion and removal.
+      def self.device_type_ids_for_endpoint(
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        endpoint_id : UInt16,
+      ) : Array(UInt32)
+        descriptor = clusters[{endpoint_id, Cluster::Descriptor::CLUSTER_ID}]?.as?(Cluster::Descriptor)
+        return [] of UInt32 unless descriptor
+        descriptor.device_type_list.map(&.device_type)
+      end
+
       private def self.authorized?(
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
         required : InteractionModel::EntryPrivilege,
@@ -54,14 +66,7 @@ module Matter
         return false unless fabric_index && peer_subject_ids && peer_subject_ids.size > 0
 
         acl = access_control_cluster(clusters)
-        return true unless acl
-
-        # Recovery path: if a fabric has no ACL entries (e.g., legacy devices that
-        # didn't persist ACLs), allow AccessControl reads/writes so the fabric can
-        # re-establish its ACL and regain access.
-        if acl.get_acl_for_fabric(fabric_index).empty?
-          return true if cluster_id == Cluster::AccessControl::CLUSTER_ID
-        end
+        return false unless acl
 
         peer_subject_ids.any? do |subject_id|
           acl.check_access(
@@ -70,6 +75,7 @@ module Matter
             privilege: required,
             cluster: cluster_id,
             endpoint: endpoint_id,
+            device_types: device_type_ids_for_endpoint(clusters, endpoint_id),
             auth_mode: InteractionModel::EntryAuthMode::Case
           )
         end

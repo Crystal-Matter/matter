@@ -8,6 +8,43 @@ item below as covered only to the extent of its cited tests.
 
 ## Available building blocks
 
+`Controller::JointFabricNodeRemoval` implements the committed ordinary-node
+subset of Core §11.24.4.2. `NetworkPort#initial_journal` authenticates the
+target over CASE and pins its current NOC. Persist that journal with
+`JournalStore#load_or_create` on the controller's durable backend, then call
+`Workflow#run`. After restart, call `JournalStore#load` before trying to reach
+the target, since a completed removal makes its NOC unreadable. The workflow
+first saves a snapshot of target-owned group memberships, target-owned
+bindings, incoming bindings from other nodes, and non-IPK key sets. It sends
+the corresponding JFDS membership and binding removal commands, waits until
+all those entries disappear after target delivery, then removes direct Node ID
+ACL grants on other nodes. Only after those grants disappear does it send
+`RemoveNode`. The IPK key-set entry is fabric bootstrap state and is removed
+with the node itself. A lost response leaves the
+durable journal at `Removing`; after restart, call `reconcile_removed!` to
+advance only if an authenticated Anchor NodeList read proves the node absent.
+The workflow never automatically repeats an uncertain `RemoveNode`.
+
+For a CASE ACL that names the departing Node ID alongside other subjects,
+the workflow journals the original ACL and stages an otherwise identical ACL
+for the remaining subjects. It waits for that replacement to reach Committed
+before removing the original, and verifies both conditions before RemoveNode.
+An interrupted or lost AddACL response is reconciled by matching the exact
+replacement content; a changed original or a replacement missing after the
+original disappears stops removal.
+Wildcard ACLs cannot be attributed to one Node ID and require an explicit
+host policy decision before removal.
+
+CAT-bearing controller targets require an `Effective` receipt from
+`SharedFabric.stage_joint_group_revocation` for every CAT authenticated in the
+target's current CASE session. The receipt is saved in the removal journal and
+rechecked against the Anchor before each removal step. This path rejects
+Administrator nodes and wildcard ACL grants. A host must address unsupported grants
+and ensure the target remains reachable before starting this workflow. If the
+Datastore is unavailable or the target identity changes, removal stops without
+deleting its NodeList entry. The host must retain journals and present a
+blocked removal for operator reconciliation.
+
 - Controller state stores multiple fabrics and scopes known nodes to a fabric.
   Commissioning and chip-tool selection accept explicit fabric identity.
 - Device AddNOC and UpdateNOC bind the issued NOC to the CSR public key. CASE
@@ -31,6 +68,12 @@ item below as covered only to the extent of its cited tests.
   callers should observe its status before assuming the controller can access
   that node. Existing `grant_admin` remains available for fabrics that do
   not use the Joint Fabric Datastore.
+  The Anchor propagation worker revisits recoverable target delivery failures
+  on later polling passes, including after restart, by rearming the node
+  through RefreshNode. Each pass retains a bounded retry count; target-side
+  ResourceExhausted and ConstraintError remain terminal for automatic retry.
+  When a recoverable entry shares a node with a terminal entry, RefreshNode
+  prunes that terminal entry as specified in Core §11.24.7.11.
 - `SharedFabric.stage_joint_group_revocation` removes one controller from a
   shared group by reissuing every surviving controller NOC on its existing
   operational key at the next GroupCATVersion, then invoking Datastore
@@ -48,6 +91,16 @@ item below as covered only to the extent of its cited tests.
   Anchor, recognizes the already rotated CAT version and ACLs, and returns a
   new Pending receipt without issuing another UpdateGroup. Keep the original
   revoked NOC available until the receipt is obtained.
+  For a group with `GroupKeySetID`, supply a `JointGroupKeyRotation` containing
+  the previous key set ID and a new, unused `DatastoreGroupKeySetStruct` with
+  fresh epoch keys. The method stages `AddKeySet` before one `UpdateGroup`
+  carrying both the replacement key set ID and next CAT version, as required
+  by Core §11.24.4.5. The host must retain the rotation input for retries and
+  securely install the new epoch key on every surviving groupcast controller;
+  the Datastore only distributes it to target devices. A keyed receipt remains
+  Pending until the replacement key set and group mapping are committed on
+  every target and an unneeded prior key set has been removed. Never treat a
+  queued Datastore update as proof of revoked unicast or groupcast access.
 - After JCM, a joining Administrator can use
   `JointFabricDeviceMigration.cross_signed_issuer` with its original ICAC
   private key and A's cross-signed ICAC. The resulting issuer's
@@ -92,8 +145,15 @@ item below as covered only to the extent of its cited tests.
   memberships count their destination policy without joining a receive socket.
 - The Joint Commissioning workflow verifies the joining administrator's
   operational VID proof, NOC chain, and Administrator CAT before issuing a
-  NOC. The reachable Anchor Administrator device performs Announce and the
-  ICAC exchange; the returned certificate is checked against the previously
+  NOC. A wildcard AdministratorFabricIndex discovery result must also expose
+  the Joint Fabric Administrator device type and server cluster on its
+  Descriptor endpoint, even when PartsList omits that endpoint. The pinned
+  SDK v1.6.0.0 JFA example hosts the JFA server on endpoint 1 but advertises
+  only Color Temperature Light as its device type. The official interop
+  workflow corrects that example's DeviceTypeList before building it; Crystal
+  rejects the unpatched example at JCM discovery. The reachable Anchor
+  Administrator device performs Announce and the ICAC exchange; the returned
+  certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
   persist across restart. On the joining side, outbound CASE to a discovered
@@ -102,9 +162,18 @@ item below as covered only to the extent of its cited tests.
   before the first Joint
   Fabric attribute read. CASE validates the peer NOC through that ICAC; this
   additional check rejects ordinary administrators that advertise an Anchor.
+  The joining Administrator verifies the exact endpoint named in
+  AnnounceJointFabricAdministrator. Its Descriptor device type and server list,
+  AdministratorFabricIndex, operational Vendor ID, and accessing-fabric
+  identity must agree; another valid JFA endpoint cannot stand in for it.
   Participant Administrator follow-up checks the authenticated Administrator
   CAT before endpoint discovery. Known-address Anchor Datastore registration
   paths apply both role checks before reading or changing the Datastore.
+  During the joining Administrator's JCM fail-safe session, AddNOC requires
+  the current Administrator CAT in the NOC and the current Anchor CAT as
+  CaseAdminSubject, using the local Datastore GroupList. A host using the JFA
+  service outside the worked example must wire
+  `CredentialService#on_validate_add_noc` with the same JCM-scoped policy.
   For AddICAC or a deferred handoff interrupted before
   CommissioningComplete, the pending record also retains the observed
   cumulative fail-safe deadline and the joiner's original fabric identity.
@@ -343,7 +412,21 @@ item below as covered only to the extent of its cited tests.
   callers using it directly are responsible for safe rollout.
 - Opt-in controller Datastore registration journals AddPendingNode before the
   device's final CASE, then RefreshNode after acknowledged commissioning. The
-  Anchor CASE adapter reads NodeList before retrying a command; known failures
+  Anchor CASE adapter checks NodeList before AddNOC and rejects an occupied
+  Node ID even when its FriendlyName matches. A first AddPendingNode also
+  rejects any existing entry; only a durably acknowledged local registration
+  may treat a matching Pending entry as a retry. If AddPendingNode's response
+  is lost, the journal remains Pending because NodeList has no attempt token
+  that proves ownership against a concurrent Administrator. The host must
+  reconcile that entry; automated retry cannot safely claim or remove it.
+  The read and subsequent AddPendingNode are not atomic across Administrators,
+  so hosts should coordinate Node ID allocation. The current wire schema has
+  no attempt token to distinguish concurrent same-name AddPendingNode calls. A Joint
+  Commissioning workflow without this opt-in registrar requires an authenticated
+  Anchor `node_list_check` callback and fails closed when it is absent. The
+  `RemoteDatastoreRegistrar#node_list_check` adapter uses the same CASE NodeList
+  reader as device registration; its lookup and a later AddAdmin are not atomic
+  across Administrators. Known failures
   remove the pending entry. A lost CommissioningComplete result requires
   explicit reconciliation before removal. An opt-in Commissioner starts a
   retry worker that scans the durable controller journal immediately at startup
@@ -370,9 +453,22 @@ item below as covered only to the extent of its cited tests.
   against B's original ICAC key, the
   current Administrator CAT on B's authenticated Datastore, and A's root and
   IPK on A's authenticated Datastore. It then opens an enhanced commissioning
-  window over B CASE, attests and commissions A, verifies A CASE, waits for A
-  NodeList to commit, removes B from the device, and removes the B NodeList
-  entry. A per-device journal blocks automatic replay of uncertain commands;
+  window over B CASE, attests the target, adds a pending A NodeList entry after
+  AddNOC and before CommissioningComplete, then verifies A CASE and refreshes
+  the A NodeList entry after successful completion. A confirmed commissioning
+  failure removes the pending entry; an ambiguous result retains it until
+  authenticated recovery proves whether A committed. Only after the A
+  NodeList commits does migration remove B from the device and B's NodeList.
+  Each local Datastore registration carries a durable attempt ID. Before
+  cleanup sends RemoveNode, it changes that registration to Removing in the
+  shared controller store. Other library writers cannot stage the same Node ID
+  until removal succeeds or an authenticated NodeList read proves it absent.
+  An uncertain RemoveNode result remains Removing across restarts and is not
+  replayed automatically. The guard coordinates writers using the same
+  controller store; a separate JFA that writes the Anchor Datastore directly
+  must be excluded by deployment policy because RemoveNode has no conditional
+  attempt ID on the wire.
+  A per-device journal blocks automatic replay of uncertain commands;
   authenticated CASE and Datastore reads allow explicit reconciliation when a
   command took effect or provably had no effect. The latter restores the prior
   journal stage so an operator can retry. A partially applied command remains
@@ -395,8 +491,8 @@ item below as covered only to the extent of its cited tests.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
   crashes in that window, recovery validates both fabric CASE sessions, B's
-  committed NodeList entry, A's absent NodeList entry, and the A fabric
-  descriptor before restoring the local node record. The journal also records
+  committed NodeList entry, A's matching staged NodeList entry, and the A
+  fabric descriptor before restoring the local node record. The journal also records
   the device's reported maximum cumulative fail-safe duration immediately
   after ArmFailSafe. If CommissioningComplete's reply is lost, recovery waits
   that full duration plus a safety margin using a fresh monotonic interval,
@@ -408,6 +504,25 @@ item below as covered only to the extent of its cited tests.
   other uncertain mutation stages still require explicit reconciliation.
   Older journals lacking the reported duration remain uncertain and require
   manual repair rather than adopting A from a UTC timestamp alone.
+  Recovery atomically assigns attempt IDs to older journals and matching
+  staged Datastore records that predate attempt tracking. A failed
+  CommissioningComplete may leave the A Datastore entry Committed while the
+  device's A fabric rolls back under fail-safe. After authenticated proof that
+  the A fabric is absent, cleanup can remove that matching Committed entry.
+  A lost RemoveNode result retains the durable removal guard until an
+  authenticated NodeList read proves absence.
+  Journals saved before AddPendingNode moved ahead of CommissioningComplete
+  are marked as legacy during load. If such a journal resumes after A was
+  commissioned and no A Datastore entry exists, migration verifies A CASE,
+  B ownership, and the recorded device peer before staging the missing entry.
+  The staging intent is durable before the Anchor command, and the local
+  guard is released only after a Committed NodeList read.
+  An old `AddingAnchorNode` journal uses the explicit
+  `resume-anchor-registration` command for the same recovery. If the prior
+  AddPendingNode request never reached the Anchor, this command reuses its
+  durable local attempt and stages the missing entry after authenticated A
+  and B checks; ordinary `migrate-device` still refuses to replay an
+  uncertain command automatically.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and
@@ -434,8 +549,8 @@ item below as covered only to the extent of its cited tests.
   bound and verifies both fabrics before continuing. This tests the ambiguous
   persisted result; it does not drop a UDP packet on the wire.
   The same scenario then interrupts B after the Anchor Datastore commits
-  AddPendingNode but before B advances its durable per-device journal. After
-  restart, B refuses to replay AddPendingNode. Reconciliation rejects a missing
+  the refreshed node but before B advances its durable per-device journal. After
+  restart, B refuses to replay RefreshNode. Reconciliation rejects a missing
   Anchor NodeList entry while B still owns the device, then accepts the
   restored committed entry and completes the handoff.
   It also restarts B after the migrated device commits RemoveFabric and after
@@ -502,6 +617,16 @@ CASE and compares the result with the pending ICAC and B fabric before saving
 `CrossSigned`. A nonce supplies freshness but does not authenticate the host
 channel. An independent JFA without an equivalent trusted host witness must
 remain at `CrossSigning` rather than infer commitment from Matter wire reads.
+The three-JFA scenario also interrupts B after C receives AddICAC but before
+B can save the pending ICAC. B and C restart; C's private host channel proves
+that its fail-safe and credential undo journal are clear, both selected fabric
+records remain durable, its JFA endpoint and committed ICAC still belong to
+the old fabric, and no new-root ICAC committed. B verifies that fresh witness
+against C's live CASE identity and both fabric descriptors, then durably
+rewinds `CrossSigning` to `Ready`. A missing or mismatched witness leaves the
+journal blocked and C's old fabric in place. Before a Ready retry, B re-reads
+C's JFA AdministratorFabricIndex over CASE and requires the old fabric index;
+a concurrent cross-sign that changed C's JFA binding fails closed.
 
 ## Official certification scenario mirrors
 

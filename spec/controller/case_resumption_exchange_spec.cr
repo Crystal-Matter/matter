@@ -219,6 +219,7 @@ describe "controller and device CASE resumption exchange" do
     handler = Matter::Protocol::MessageHandler.new(capture, 20202021_u32,
       3840_u16, table)
     handler.sessions[device_session.session_id] = device_session
+    Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, device_session)
     client.handler = handler
     report = Matter::Controller::ImClient.new(client).read_attribute(session, peer,
       0_u16, Matter::Cluster::BasicInformation::CLUSTER_ID,

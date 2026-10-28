@@ -19,6 +19,7 @@ private def wildcard_event_list_report(subscribe : Bool) : Matter::InteractionMo
   handler.node.add_endpoint(appliance)
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
   handler.sessions[session.session_id] = session
+  Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
 
   path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16)
   request = if subscribe
@@ -69,6 +70,7 @@ describe "Interaction Model wildcard EventList" do
     clusters = { {1_u16, Matter::Cluster::OnOff::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) }
     session = Matter::Spec::ProtocolMessages.case_session(1_u16)
     session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
+    Matter::Spec::ProtocolMessages.grant_case_access(clusters, session)
     path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
       cluster: Matter::Cluster::OnOff::CLUSTER_ID,
       attribute: Matter::Cluster::Base::GLOBAL_EVENT_LIST)

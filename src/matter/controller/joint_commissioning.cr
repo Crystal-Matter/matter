@@ -23,6 +23,7 @@ module Matter
       CERTIFICATE_SERIAL_BYTES =     8
       BOOTSTRAP_RCAC_ID        = 1_u64
       BOOTSTRAP_ICAC_ID        = 3_u64
+      UNSPECIFIED_ICAC_ID      = 0_u64
       BOOTSTRAP_SERIAL_BYTES   =     8
 
       def cat_subject(identity : UInt16, version : UInt16) : UInt64
@@ -232,7 +233,7 @@ module Matter
         )
           @pending = initial_pending
           if @administrator_fabric_index == DataType::NO_FABRIC || @administrator_cat_version == 0_u16 ||
-             @anchor_cat_version == 0_u16 || @icac_id == 0_u64
+             @anchor_cat_version == 0_u16 || @icac_id == UNSPECIFIED_ICAC_ID
             raise Matter::ConfigurationError.new("Invalid Joint Commissioning fabric index, CAT version or ICAC ID")
           end
         end
@@ -467,6 +468,7 @@ module Matter
         DEFAULT_FAIL_SAFE_EXPIRY_SECONDS = 900_u16
         record HandoffResult, nonce : String, certificate : Bytes
         alias HandoffResultLookup = Proc(String, HandoffResult?)
+        alias NodeListCheck = Proc(FabricInfo, UInt64, Nil)
 
         getter hooks : CommissionerHooks
 
@@ -492,6 +494,7 @@ module Matter
           @handoff_result : HandoffResultLookup? = nil,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
           @datastore_registrar : DatastoreNodeRegistrar? = nil,
+          @node_list_check : NodeListCheck? = nil,
           @fail_safe_expiry_seconds : UInt16 = DEFAULT_FAIL_SAFE_EXPIRY_SECONDS,
         )
           fabric = @store.load.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
@@ -539,6 +542,12 @@ module Matter
                handoff.controller_node_id == @controller_node_id
              end
             raise Matter::CommissioningError.new("A Joint Commissioning Anchor handoff needs reconciliation")
+          end
+          unless @datastore_registrar
+            check = @node_list_check ||
+                    raise Matter::ConfigurationError.new("Joint Commissioning requires an authenticated Anchor NodeList check")
+            fabric = state.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
+            check.call(fabric, node_id)
           end
           commissioner = Commissioning::Commissioner.new(@store, @client,
             crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: @fail_safe_expiry_seconds,
@@ -779,6 +788,23 @@ module Matter
           ->(request : Cluster::JointFabricDatastore::AddAdminRequest) { register(request) }
         end
 
+        def node_list_check : Workflow::NodeListCheck
+          ->(fabric : FabricInfo, node_id : UInt64) { assert_node_id_available(fabric, node_id) }
+        end
+
+        # A CASE-authenticated read is required even if the caller already
+        # checked its local StateStore. FriendlyName cannot prove ownership of
+        # a NodeList entry allocated by a different Administrator.
+        def assert_node_id_available(selected : FabricInfo, node_id : UInt64) : Nil
+          unless selected.fabric_id == @fabric_id &&
+                 selected.root_public_key == @root_public_key &&
+                 selected.controller_node_id == @controller_node_id
+            raise Matter::AuthenticationError.new("NodeList check selected another Anchor fabric")
+          end
+          DatastoreNodeRegistrar::NetworkDelivery.new(@store, @client, @anchor_node_id,
+            @datastore_endpoint, @timeout, @crypto).assert_node_id_available(selected, node_id)
+        end
+
         def register(request : Cluster::JointFabricDatastore::AddAdminRequest) : Nil
           state = @store.load
           fabric = state.fabric_for(@fabric_id, @root_public_key, @controller_node_id)
@@ -896,8 +922,8 @@ module Matter
         # Some Administrators expose the JFA attribute in a wildcard read even
         # when their Descriptor PartsList does not enumerate the endpoint to
         # this fabric. The official SDK uses that attribute path to locate the
-        # service. Require one concrete, non-null endpoint and re-read its
-        # AdministratorFabricIndex before relying on it.
+        # service. Require one concrete, non-null endpoint with the mandatory
+        # JFA Descriptor composition and re-read its AdministratorFabricIndex.
         path = InteractionModel::AttributePath.new(
           cluster: Cluster::JointFabricAdministrator::CLUSTER_ID,
           attribute: Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX)
@@ -912,7 +938,17 @@ module Matter
           endpoint if index != DataType::NO_FABRIC
         end
         endpoints.uniq!
-        return endpoints.first if endpoints.size == 1
+        if endpoints.size == 1
+          endpoint = endpoints.first
+          types = read_descriptor_list(Cluster::Descriptor::DeviceTypeStruct, im, session, peer,
+            endpoint, Cluster::Descriptor::ATTR_DEVICE_TYPE_LIST)
+          servers = read_descriptor_list(UInt32, im, session, peer,
+            endpoint, Cluster::Descriptor::ATTR_SERVER_LIST)
+          if types.any?(&.device_type.==(DeviceType::JOINT_FABRIC_ADMINISTRATOR)) &&
+             servers.includes?(Cluster::JointFabricAdministrator::CLUSTER_ID)
+            return endpoint if optional_administrator_fabric_index(im, session, peer, endpoint)
+          end
+        end
         raise Matter::AuthenticationError.new("Joining node has no Joint Fabric Administrator endpoint")
       end
 
@@ -962,15 +998,36 @@ module Matter
                                   peer : Socket::IPAddress, accessing_root_public_key : Bytes,
                                   accessing_fabric_id : UInt64,
                                   trust : VidVerification::OperationalTrustAnchors,
-                                  crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : VidVerification::VerifiedFabric
-        endpoint = discover_administrator_endpoint(im, session, peer)
-        fabric_index = read_administrator_fabric_index(im, session, peer, endpoint)
+                                  crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                                  administrator_endpoint : UInt16? = nil) : VidVerification::VerifiedFabric
+        fabric_index = if endpoint = administrator_endpoint
+                         read_announced_administrator_fabric_index(im, session, peer, endpoint)
+                       else
+                         endpoint = discover_administrator_endpoint(im, session, peer)
+                         read_administrator_fabric_index(im, session, peer, endpoint)
+                       end
         verified = VidVerification.verify(im, session, peer, fabric_index, trust, crypto)
         unless verified.descriptor.root_public_key == accessing_root_public_key &&
                verified.descriptor.fabric_id == accessing_fabric_id
           raise Matter::AuthenticationError.new("Verified Anchor fabric differs from accessing CASE fabric")
         end
         verified
+      end
+
+      # JCM step 6 binds the joining Administrator's trust check to the exact
+      # endpoint in AnnounceJointFabricAdministrator, not to another JFA
+      # endpoint that happens to be discoverable on the same Anchor node.
+      def read_announced_administrator_fabric_index(im : ImClient, session : Session::SecureContext,
+                                                    peer : Socket::IPAddress, endpoint : UInt16) : UInt8
+        types = read_descriptor_list(Cluster::Descriptor::DeviceTypeStruct, im, session, peer,
+          endpoint, Cluster::Descriptor::ATTR_DEVICE_TYPE_LIST)
+        servers = read_descriptor_list(UInt32, im, session, peer,
+          endpoint, Cluster::Descriptor::ATTR_SERVER_LIST)
+        unless types.any?(&.device_type.==(DeviceType::JOINT_FABRIC_ADMINISTRATOR)) &&
+               servers.includes?(Cluster::JointFabricAdministrator::CLUSTER_ID)
+          raise Matter::AuthenticationError.new("Announced endpoint is not a Joint Fabric Administrator")
+        end
+        read_administrator_fabric_index(im, session, peer, endpoint)
       end
 
       # CASE pairing verifies the peer NOC through the presented ICAC and
@@ -992,7 +1049,8 @@ module Matter
                                     timeout : Time::Span = 10.seconds,
                                     crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                                     client : Client? = nil,
-                                    on_verified_session : Proc(Session::SecureContext, Nil)? = nil) : VidVerification::VerifiedFabric
+                                    on_verified_session : Proc(Session::SecureContext, Nil)? = nil,
+                                    administrator_endpoint : UInt16? = nil) : VidVerification::VerifiedFabric
         root = fabric.root_cert || raise Matter::ConfigurationError.new("Joining fabric has no RCAC")
         identity = FabricInfo.new(fabric_id: fabric.fabric_id,
           controller_node_id: fabric.node_id,
@@ -1011,7 +1069,7 @@ module Matter
             peer_node_id: peer_node_id, timeout: timeout)
           verify_anchor_case_peer!(session, root, fabric.fabric_id)
           verified = verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
-            fabric.root_public_key, fabric.fabric_id, trust, crypto)
+            fabric.root_public_key, fabric.fabric_id, trust, crypto, administrator_endpoint)
           # Retain this CASE session only after the Anchor's operational VID and
           # original-fabric binding have both been verified. A peer may reuse
           # the newest CASE session for its following JCM command.

@@ -18,6 +18,7 @@ private def chunked_write_fixture
   handler.node.add_endpoint(endpoint)
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
   handler.sessions[session.session_id] = session
+  Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
   {handler, transport, session, labels}
 end
 

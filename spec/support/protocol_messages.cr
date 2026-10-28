@@ -1,4 +1,5 @@
 require "../../src/matter/codec/message_codec"
+require "../../src/matter/cluster/access_control"
 require "../../src/matter/crypto/crypto"
 require "../../src/matter/protocol/message_type"
 require "../../src/matter/session/secure_message"
@@ -24,6 +25,23 @@ module Matter
           case_session: true,
           fabric_index: 1_u8
         )
+      end
+
+      # Give a synthetic CASE peer the ACL it would receive during commissioning.
+      # Protocol fixtures must opt in explicitly so empty-ACL denial stays testable.
+      def grant_case_access(clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+                            session : Session::SecureContext,
+                            privilege : Cluster::AccessControl::AccessControlEntryPrivilege = Cluster::AccessControl::AccessControlEntryPrivilege::Administer) : Cluster::AccessControl
+        acl = clusters[{Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl) ||
+              Cluster::AccessControl.new(DataType::EndpointNumber.new(Node::ROOT_ENDPOINT_ID))
+        subject = session.peer_node_id.as(DataType::NodeId).id
+        session.peer_subject_ids = [subject] if session.peer_subject_ids.empty?
+        acl.acl << Cluster::AccessControl::AccessControlEntry.new(
+          privilege,
+          Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+          [subject], nil, session.fabric_index.as(UInt8))
+        clusters[{Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID}] = acl
+        acl
       end
 
       # Encrypts *payload* as though the peer of *session* had sent it.

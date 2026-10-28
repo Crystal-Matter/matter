@@ -57,6 +57,12 @@ module Matter
       end
 
       @binding = [] of Target
+      @local_client_cluster_ids : Array(UInt32)? = nil
+
+      # Endpoint supplies its live ClientList when this cluster is installed.
+      # A detached Binding cluster cannot verify a cluster-specific target.
+      def bind_client_clusters(@local_client_cluster_ids : Array(UInt32)) : Nil
+      end
 
       def binding : Array(Target)
         if fabric_index = request_fabric_index
@@ -94,6 +100,9 @@ module Matter
       end
 
       private def valid_target?(entry : Target) : Bool
+        if cluster_id = entry.cluster
+          return false unless @local_client_cluster_ids.try(&.includes?(cluster_id))
+        end
         unicast = !entry.node.nil? && !entry.endpoint.nil? && entry.group.nil?
         group = entry.group
         multicast = entry.node.nil? && entry.endpoint.nil? && !group.nil? && group > DataType::GroupId::RESERVED.id

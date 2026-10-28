@@ -45,9 +45,8 @@ end
 
 private def wire_preset_write(cluster : PresetThermostat, data : Array(Matter::InteractionModel::AttributeDataIB),
                               *, subject : UInt64 = 11_u64) : Array(PresetCode)
-  endpoint = cluster.endpoint_id.number
   Matter::Protocol::IMHandler.write_attributes(data,
-    { {endpoint, PresetThermostat::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster, subject_id: subject),
     session_id: 9_u16, is_case_session: true, fabric_index: 1_u8,
     peer_subject_ids: [subject]).map { |status| PresetCode.new(status.status.status) }
 end
@@ -66,7 +65,7 @@ private def wire_preset_read(cluster : PresetThermostat, *, fabric : UInt8 = 1_u
   path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint,
     cluster: PresetThermostat::CLUSTER_ID, attribute: PresetThermostat::ATTR_PRESETS)
   reports = Matter::Protocol::IMHandler.read_attributes([path],
-    { {endpoint, PresetThermostat::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster, fabric_index: fabric, subject_id: subject),
     fabric_index: fabric, is_case_session: true, peer_subject_ids: [subject])
   data = reports.first.attribute_data || raise "expected Presets data"
   TLV::Serializable.deserialize_value(data.data, Array(PresetThermostat::Preset))
@@ -78,7 +77,7 @@ private def wire_preset_invoke(cluster : PresetThermostat, command_id : UInt32, 
   path = Matter::InteractionModel::CommandPath.new(endpoint, PresetThermostat::CLUSTER_ID, command_id)
   command = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Serializable.serialize_value(request, nil))
   Matter::Protocol::IMHandler.invoke_commands([command],
-    { {endpoint, PresetThermostat::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster, subject_id: subject),
     session_id: 9_u64, is_case_session: true, fabric_index: 1_u8,
     peer_subject_ids: [subject]).first
 end

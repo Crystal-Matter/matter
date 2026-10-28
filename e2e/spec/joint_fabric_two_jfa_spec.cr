@@ -8,12 +8,18 @@ private alias JfaRollout = Matter::Controller::IpkRollout
 MIGRATION_RECOVERY_MIN_WAIT       = 120.seconds
 MIGRATION_REMOVE_FABRIC_DROP_PATH = File.join(E2E::LOG_DIR,
   "matter_joint_fabric_migration_target.remove_fabric_response")
+MIGRATION_COMPLETION_DROP_PATH = File.join(E2E::LOG_DIR,
+  "matter_joint_fabric_migration_target.commissioning_complete_response")
 ROLLBACK_ANCHOR_NODE_ID = 0xA202_u64
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
 
 private class JcmInterruptedDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  def assert_node_id_available(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+    # This fault-injection fixture deliberately has no Anchor delivery.
+  end
+
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
                        friendly_name : String) : Nil
   end
@@ -144,6 +150,22 @@ private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
     return if entry && entry.status_entry.state.committed?
     raise Matter::TimeoutError.new("B controller ACL did not commit for migrated A node") if Time.instant >= deadline
     sleep 1.second
+  end
+end
+
+private def assert_two_jfa_on_off_access(im : Matter::Controller::ImClient,
+                                         session : Matter::Session::SecureContext,
+                                         peer : Socket::IPAddress, allowed : Bool) : Nil
+  report = im.read_attribute(session: session, peer: peer,
+    endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+    attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+  entry = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first
+  if allowed
+    data = entry.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(data.to_slice).should be_true
+  else
+    entry.attribute_status.as(Matter::InteractionModel::AttributeStatusIB)
+      .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
   end
 end
 
@@ -281,6 +303,7 @@ private def commission_third_administrator(anchor_store : Matter::Controller::St
     ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
     registrar.callback, anchor_exchange, client: anchor_client,
     anchor_finalize: anchor_finalize, handoff_result: handoff_result,
+    node_list_check: registrar.node_list_check,
     attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
       Matter::Controller::AttestationTrustStore.matter_test_fixture))
   workflow.commission(0xA104_u64,
@@ -594,6 +617,10 @@ describe "three provisioned Joint Fabric Administrators" do
     recovered_client = Matter::Controller::Client.new(
       counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
       shared_message_counter: anchor_client.transport.message_counter)
+    recovered_registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, recovered_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     recovered = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -602,6 +629,7 @@ describe "three provisioned Joint Fabric Administrators" do
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
       anchor_exchange, client: recovered_client,
+      node_list_check: recovered_registrar.node_list_check,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
         Matter::Controller::AttestationTrustStore.matter_test_fixture))
     recovered.hooks.pending.as(Matter::Controller::JointCommissioning::PendingRegistration)
@@ -663,6 +691,10 @@ describe "three provisioned Joint Fabric Administrators" do
       counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
       shared_message_counter: anchor_client.transport.message_counter)
     # Endpoint 1 belonged to the rolled-back A fabric; B's live JFA is on 2.
+    deferred_registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, deferred_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     deferred = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -671,6 +703,7 @@ describe "three provisioned Joint Fabric Administrators" do
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
       anchor_exchange, client: deferred_client,
+      node_list_check: deferred_registrar.node_list_check,
       anchor_finalize: ->(_fabric : Matter::Controller::FabricInfo, _node : UInt64, _peer : Socket::IPAddress, _endpoint : UInt16, _key : Bytes, _icac_id : UInt64, _nonce : String) do
         raise Matter::TransportError.new("Injected interruption before deferred Anchor finalization")
       end,
@@ -710,6 +743,10 @@ describe "three provisioned Joint Fabric Administrators" do
           entry.root_public_key == anchor_bootstrap.fabric.root_public_key
       end.should be_true
 
+    restarted_registrar = Matter::Controller::JointCommissioning::RemoteDatastoreRegistrar.new(
+      anchor_store, anchor_client, anchor_bootstrap.fabric.fabric_id,
+      anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
+      0xA102_u64, 1_u16)
     deferred_restarted = Matter::Controller::JointCommissioning::Workflow.new(
       anchor_store, anchor_bootstrap.fabric.fabric_id,
       anchor_bootstrap.fabric.root_public_key, anchor_bootstrap.fabric.controller_node_id,
@@ -718,6 +755,7 @@ describe "three provisioned Joint Fabric Administrators" do
       ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { true },
       ->(_request : Matter::Cluster::JointFabricDatastore::AddAdminRequest) { nil },
       anchor_exchange,
+      node_list_check: restarted_registrar.node_list_check,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
         Matter::Controller::AttestationTrustStore.matter_test_fixture))
     deferred_restarted.hooks.pending.as(Matter::Controller::JointCommissioning::PendingRegistration)
@@ -794,6 +832,7 @@ describe "three provisioned Joint Fabric Administrators" do
       registrar.callback,
       anchor_exchange,
       client: anchor_client, anchor_finalize: anchor_finalize,
+      node_list_check: registrar.node_list_check,
       handoff_result: handoff_result,
       attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
         Matter::Controller::AttestationTrustStore.matter_test_fixture))
@@ -981,7 +1020,7 @@ describe "three provisioned Joint Fabric Administrators" do
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
         interrupt_after_migration_anchor_node_committed: true))
     interrupted_rollback_registration.status.should eq("error")
-    interrupted_rollback_registration.error.to_s.should contain("Injected interruption after Anchor AddPendingNode committed")
+    interrupted_rollback_registration.error.to_s.should contain("Injected interruption after Anchor NodeList committed")
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16).any? do |entry|
       entry.node_id == ROLLBACK_ANCHOR_NODE_ID && entry.commissioning_status_entry.state.committed?
     end.should be_true
@@ -1122,18 +1161,22 @@ describe "three provisioned Joint Fabric Administrators" do
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
       .any?(&.node_id.==(ROLLBACK_ANCHOR_NODE_ID)).should be_false
 
-    # The target commits A's fabric, but B loses the result before recording
-    # durable acknowledgement or a local node record. Recovery must observe
-    # the full advertised fail-safe bound before trusting that fabric.
+    # The real target commits A's fabric and encodes CommissioningComplete's
+    # InvokeResponse, then drops that packet before UDP enqueue or MRP replay.
+    # B cannot record an acknowledgement or a local node until it observes
+    # the target after a restart and the full fail-safe recovery interval.
+    File.delete?("#{MIGRATION_COMPLETION_DROP_PATH}.count")
+    File.delete?("#{MIGRATION_COMPLETION_DROP_PATH}.dropped")
+    File.write("#{MIGRATION_COMPLETION_DROP_PATH}.armed", "1")
     interrupted_migration = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
-        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
-        interrupt_after_migration_complete_before_ack: true))
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     interrupted_migration.status.should eq("error")
-    interrupted_migration.error.to_s.should contain("Injected interruption after device CommissioningComplete")
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.dropped").should eq("1")
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
 
     provisional_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
       migration_peer, anchor_bootstrap.fabric,
@@ -1146,13 +1189,37 @@ describe "three provisioned Joint Fabric Administrators" do
     provisional_fabrics_data = provisional_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     provisional_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(provisional_fabrics_data.to_slice)
-    provisional_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
-    provisional_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_true
+    provisional_fabrics.size.should eq(2)
+    provisional_fabrics.any? do |fabric|
+      fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+        fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+        fabric.node_id == 0xA201_u64
+    end.should be_true
+    provisional_fabrics.any? do |fabric|
+      fabric.fabric_id == joiner_bootstrap.fabric.fabric_id &&
+        fabric.root_public_key == joiner_bootstrap.fabric.root_public_key &&
+        fabric.node_id == 0xB201_u64
+    end.should be_true
+    # AddPendingNode precedes CommissioningComplete. A lost completion
+    # acknowledgement leaves the target on A but must not leave it unlisted.
+    jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
+      .any?(&.node_id.==(0xA201_u64)).should be_true
+    jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16)
+      .any?(&.node_id.==(0xB201_u64)).should be_true
 
     joiner.restart!
     b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       joiner_peer, joiner_bootstrap.fabric,
       peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    lost_completion_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64))
+    lost_completion_stage.status.should eq("ok"), lost_completion_stage.error.to_s
+    lost_completion_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor.value)
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
     recovery_started = Time.instant
     interrupted_registration = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
@@ -1162,8 +1229,9 @@ describe "three provisioned Joint Fabric Administrators" do
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
         interrupt_after_migration_anchor_node_committed: true))
     interrupted_registration.status.should eq("error")
-    interrupted_registration.error.to_s.should contain("Injected interruption after Anchor AddPendingNode committed")
+    interrupted_registration.error.to_s.should contain("Injected interruption after Anchor NodeList committed")
     (Time.instant - recovery_started).should be >= MIGRATION_RECOVERY_MIN_WAIT
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16).any? do |entry|
       entry.node_id == 0xA201_u64 && entry.commissioning_status_entry.state.committed?
     end.should be_true
@@ -1171,8 +1239,8 @@ describe "three provisioned Joint Fabric Administrators" do
       entry.node_id == 0xB201_u64 && entry.commissioning_status_entry.state.committed?
     end.should be_true
 
-    # A committed its NodeList entry, but B lost the result while its durable
-    # journal still says AddingAnchorNode. Restarting cannot replay AddPendingNode.
+    # A committed its staged NodeList entry, but B lost the result while its
+    # journal still says AddingAnchorNode. Restarting must inspect the entry.
     joiner.restart!
     b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       joiner_peer, joiner_bootstrap.fabric,
@@ -1377,8 +1445,14 @@ describe "three provisioned Joint Fabric Administrators" do
     fabrics_data = fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     target_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(fabrics_data.to_slice)
-    target_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
+    target_fabrics.size.should eq(1)
+    target_fabrics.any? do |fabric|
+      fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+        fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+        fabric.node_id == 0xA201_u64
+    end.should be_true
     target_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_false
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
     a_nodes_report = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST)
@@ -1413,6 +1487,8 @@ describe "three provisioned Joint Fabric Administrators" do
       joiner_bootstrap.fabric, joined_identity, cross_signed_icac,
       joiner_bootstrap.fabric.intermediate_private_key.as(Bytes))
     b_controller_node_id = 0xA105_u64
+    b_revoked_controller_node_id = 0xA106_u64
+    b_group_id = 11_u16
     b_group_cat = 0x1235_u16
     b_group_version = 2_u16
     b_controller = b_issuer.delegate_controller(joined_identity,
@@ -1438,7 +1514,7 @@ describe "three provisioned Joint Fabric Administrators" do
       .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
 
     Matter::Controller::SharedFabric.grant_joint_admin(anchor_im, anchor_session, anchor_peer,
-      1_u16, 0xA102_u64, 0xA201_u64, 1_u16, 11_u16, "B ecosystem controllers", b_controller)
+      1_u16, 0xA102_u64, 0xA201_u64, 1_u16, b_group_id, "B ecosystem controllers", b_controller)
     b_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(b_group_cat, b_group_version)).id
     wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
@@ -1463,6 +1539,261 @@ describe "three provisioned Joint Fabric Administrators" do
     persisted_data = persisted.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     Bool.from_tlv(persisted_data.to_slice).should be_true
+
+    # Two B-issued controllers initially share the same group CAT. Rotate its
+    # version through A's Anchor to revoke only the second controller, while
+    # B's original controller keeps its operational key and receives a new NOC.
+    revoked_controller = b_issuer.delegate_controller(joined_identity,
+      b_revoked_controller_node_id, b_group_cat, b_group_version, crypto)
+    revoked_controller_client = Matter::Controller::Client.new(
+      counter_lease: b_controller_store.counter_lease(revoked_controller.controller_node_id))
+    revoked_controller_im = Matter::Controller::ImClient.new(revoked_controller_client, E2E::COMMAND_TIMEOUT)
+    revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
+      migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, true)
+    assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
+
+    b_signing_authority = Matter::Controller::FabricInfo.new(
+      b_controller.fabric_id, b_controller.controller_node_id, b_controller.ipk_value,
+      b_controller.root_cert, b_controller.root_public_key, b_controller.controller_noc,
+      b_controller.controller_private_key, admin_vendor_id: b_controller.admin_vendor_id,
+      intermediate_cert: cross_signed_icac,
+      intermediate_private_key: joiner_bootstrap.fabric.intermediate_private_key.as(Bytes),
+      ipk_epoch_keys: b_controller.ipk_epoch_keys)
+    revocation = Matter::Controller::SharedFabric.stage_joint_group_revocation(
+      anchor_im, anchor_session, anchor_peer, 1_u16, b_group_id, revoked_controller,
+      [{b_controller_store, b_controller_node_id}], b_signing_authority, 0xA102_u64)
+    revocation.previous_version.should eq(b_group_version)
+    revocation.current_version.should eq(b_group_version + 1_u16)
+    revocation.target_node_ids.should contain(0xA201_u64)
+    revocation_deadline = Time.instant + 120.seconds
+    loop do
+      status = Matter::Controller::SharedFabric.joint_group_revocation_status(
+        anchor_im, anchor_session, anchor_peer, 1_u16, revocation)
+      break if status.effective?
+      raise Matter::TimeoutError.new("Joint Fabric group ACL revocation did not commit") if Time.instant >= revocation_deadline
+      sleep 1.second
+    end
+    renewed_controller = b_controller_store.load.fabric_for(
+      b_controller.fabric_id, b_controller.root_public_key, b_controller_node_id)
+    renewed_controller.controller_private_key.should eq(b_controller.controller_private_key)
+    renewed_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(b_group_cat, b_group_version + 1_u16)).id
+    Matter::Crypto::MatterCertificate.subject_ids_from_tlv(renewed_controller.controller_noc)
+      .should contain(renewed_subject)
+
+    # Pair again to create fresh CASE sessions with the old revoked and new
+    # survivor NOCs. Retain each Client's unsecured counter across Sigma1.
+    revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
+      migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, false)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
+      migration_peer, renewed_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
+
+    migration_target.restart!
+    revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
+      migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, false)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
+      migration_peer, renewed_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
+    a_target_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+      migration_peer, anchor_bootstrap.fabric, peer_node_id: 0xA201_u64,
+      timeout: E2E::COMMAND_TIMEOUT)
+
+    # Exercise keyed group revocation against the migrated device itself. A
+    # separate group keeps its Operate CAT and group key distinct from the
+    # unkeyed Administrator group above.
+    keyed_group_id = 12_u16
+    keyed_group_cat = 0x1236_u16
+    keyed_group_version = 2_u16
+    old_key_set_id = 12_u16
+    new_key_set_id = 13_u16
+    old_epoch_key = crypto.random_bytes(JfaRolloutDatastore::EPOCH_KEY_BYTES)
+    new_epoch_key = crypto.random_bytes(JfaRolloutDatastore::EPOCH_KEY_BYTES)
+    keyed_survivor_id = 0xA107_u64
+    keyed_revoked_id = 0xA108_u64
+    keyed_survivor = b_issuer.delegate_controller(joined_identity,
+      keyed_survivor_id, keyed_group_cat, keyed_group_version, crypto)
+    keyed_revoked = b_issuer.delegate_controller(joined_identity,
+      keyed_revoked_id, keyed_group_cat, keyed_group_version, crypto)
+    keyed_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
+      File.join(E2E::LOG_DIR, "joint-fabric-keyed-survivor.yml")))
+    keyed_revoked_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
+      File.join(E2E::LOG_DIR, "joint-fabric-keyed-revoked.yml")))
+    Matter::Controller::SharedFabric.install(keyed_store, keyed_survivor)
+    Matter::Controller::SharedFabric.install(keyed_revoked_store, keyed_revoked)
+    keyed_client = Matter::Controller::Client.new(counter_lease: keyed_store.counter_lease(keyed_survivor_id))
+    keyed_revoked_client = Matter::Controller::Client.new(counter_lease: keyed_revoked_store.counter_lease(keyed_revoked_id))
+    keyed_invoker = Matter::Controller::GroupInvoker.new(keyed_client, keyed_store)
+    keyed_revoked_invoker = Matter::Controller::GroupInvoker.new(keyed_revoked_client, keyed_revoked_store)
+    keyed_invoker.install_epoch_key(keyed_survivor.fabric_id, keyed_survivor.root_public_key,
+      keyed_group_id, old_epoch_key)
+    keyed_revoked_invoker.install_epoch_key(keyed_revoked.fabric_id, keyed_revoked.root_public_key,
+      keyed_group_id, old_epoch_key)
+    old_key_set = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(old_key_set_id,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      old_epoch_key, 1_u64, nil, nil, nil, nil)
+    new_key_set = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(new_key_set_id,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      new_epoch_key, 2_u64, nil, nil, nil, nil)
+    add_key = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_KEY_SET,
+      fields: JfaRolloutDatastore::AddKeySetRequest.new(old_key_set).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_key)
+    add_group = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_GROUP,
+      fields: JfaRolloutDatastore::AddGroupRequest.new(keyed_group_id, "Keyed B controllers",
+        old_key_set_id, keyed_group_cat, keyed_group_version,
+        JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_group)
+    add_membership = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_GROUP_ID_TO_ENDPOINT_FOR_NODE,
+      fields: JfaRolloutDatastore::AddGroupIDToEndpointForNodeRequest.new(
+        0xA201_u64, 1_u16, keyed_group_id).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_membership)
+    keyed_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(keyed_group_cat, keyed_group_version)).id
+    keyed_acl = JfaRolloutDatastore::DatastoreAccessControlEntryStruct.new(
+      JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      JfaRolloutDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [keyed_cat_subject], nil)
+    add_keyed_acl = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_ACL_TO_NODE,
+      fields: JfaRolloutDatastore::AddACLToNodeRequest.new(0xA201_u64, keyed_acl).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_keyed_acl)
+    wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
+      0xA201_u64, keyed_cat_subject, 120.seconds)
+
+    key_delivery_deadline = Time.instant + 120.seconds
+    loop do
+      node_keys = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
+        anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
+      memberships = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreEndpointGroupIDEntryStruct),
+        anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+      break if node_keys.any? { |entry| entry.node_id == 0xA201_u64 && entry.group_key_set_id == old_key_set_id && entry.status_entry.state.committed? } &&
+               memberships.any? { |entry| entry.node_id == 0xA201_u64 && entry.endpoint_id == 1_u16 && entry.group_id == keyed_group_id && entry.status_entry.state.committed? }
+      raise Matter::TimeoutError.new("Initial keyed group did not reach the migrated device") if Time.instant >= key_delivery_deadline
+      sleep 1.second
+    end
+    keyed_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_client,
+      migration_peer, keyed_survivor, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    keyed_im = Matter::Controller::ImClient.new(keyed_client, E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(keyed_im, keyed_session, migration_peer, true)
+    key_indices = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      command_id: Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES,
+      fields: Bytes.empty)
+    key_index_fields = key_indices.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+      .command_fields.as(TLV::Any)
+    Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(key_index_fields.to_slice)
+      .group_key_set_i_ds.should contain(old_key_set_id)
+    initial_membership_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
+      attribute_id: Matter::Cluster::Groupcast::ATTR_MEMBERSHIP)
+    initial_membership_data = initial_membership_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::Groupcast::MembershipStruct).from_tlv(initial_membership_data.to_slice)
+      .any? { |entry| entry.group_id == keyed_group_id && entry.key_set_id == old_key_set_id }.should be_true
+    auxiliary = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
+      command_id: Matter::Cluster::Groupcast::CMD_CONFIGURE_AUXILIARY_ACL,
+      fields: Matter::Cluster::Groupcast::ConfigureAuxiliaryAclRequest.new(keyed_group_id, true).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(auxiliary)
+    off = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(off)
+    keyed_invoker.invoke(keyed_survivor.fabric_id, keyed_group_id,
+      Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+      root_public_key: keyed_survivor.root_public_key, iana_address: true)
+    sleep 1.second
+    initial_groupcast_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    initial_groupcast_data = initial_groupcast_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(initial_groupcast_data.to_slice).should be_true
+
+    keyed_rotation = Matter::Controller::SharedFabric::JointGroupKeyRotation.new(old_key_set_id, new_key_set)
+    keyed_receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(
+      anchor_im, anchor_session, anchor_peer, 1_u16, keyed_group_id, keyed_revoked,
+      [{keyed_store, keyed_survivor_id}], b_signing_authority, 0xA102_u64,
+      key_rotation: keyed_rotation)
+    keyed_deadline = Time.instant + 120.seconds
+    loop do
+      break if Matter::Controller::SharedFabric.joint_group_revocation_status(
+                 anchor_im, anchor_session, anchor_peer, 1_u16, keyed_receipt).effective?
+      raise Matter::TimeoutError.new("Keyed Joint Fabric revocation did not reach the migrated device") if Time.instant >= keyed_deadline
+      sleep 1.second
+    end
+    keyed_receipt.current_key_set_id.should eq(new_key_set_id)
+    keyed_receipt.previous_key_set_id.should eq(old_key_set_id)
+    keyed_invoker.install_epoch_key(keyed_survivor.fabric_id, keyed_survivor.root_public_key,
+      keyed_group_id, new_epoch_key)
+    key_indices = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      command_id: Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES,
+      fields: Bytes.empty)
+    key_index_fields = key_indices.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+      .command_fields.as(TLV::Any)
+    installed_key_ids = Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(
+      key_index_fields.to_slice).group_key_set_i_ds
+    installed_key_ids.should contain(new_key_set_id)
+    installed_key_ids.should_not contain(old_key_set_id)
+    rotated_membership_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
+      attribute_id: Matter::Cluster::Groupcast::ATTR_MEMBERSHIP)
+    rotated_membership_data = rotated_membership_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    rotated_memberships = Array(Matter::Cluster::Groupcast::MembershipStruct).from_tlv(rotated_membership_data.to_slice)
+    rotated_memberships.any? { |entry| entry.group_id == keyed_group_id && entry.key_set_id == new_key_set_id }.should be_true
+    rotated_memberships.any? { |entry| entry.group_id == keyed_group_id && entry.key_set_id == old_key_set_id }.should be_false
+    keyed_revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_revoked_client,
+      migration_peer, keyed_revoked, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    keyed_revoked_im = Matter::Controller::ImClient.new(keyed_revoked_client, E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(keyed_revoked_im, keyed_revoked_session, migration_peer, false)
+    renewed_keyed_survivor = keyed_store.load.fabric_for(keyed_survivor.fabric_id,
+      keyed_survivor.root_public_key, keyed_survivor_id)
+    keyed_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_client,
+      migration_peer, renewed_keyed_survivor, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(keyed_im, keyed_session, migration_peer, true)
+    off = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(off)
+    keyed_revoked_invoker.invoke(keyed_revoked.fabric_id, keyed_group_id,
+      Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+      root_public_key: keyed_revoked.root_public_key, iana_address: true)
+    sleep 1.second
+    # The stale key has no delivery acknowledgement; observe that the target
+    # remained Off before a fresh-key groupcast turns it On.
+    stale_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    stale_data = stale_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(stale_data.to_slice).should be_false
+    keyed_invoker.invoke(keyed_survivor.fabric_id, keyed_group_id,
+      Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+      root_public_key: keyed_survivor.root_public_key, iana_address: true)
+    sleep 1.second
+    fresh_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    fresh_data = fresh_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(fresh_data.to_slice).should be_true
 
     before_transfer = jfa_command("matter_joint_fabric_anchor",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-new-anchor", 0xA102_u64,
@@ -1871,6 +2202,64 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
     persisted_first_follow_up.inspected_follow_up_stage.should eq(
       Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
+    # C receives AddICAC, but B loses the pending-certificate journal save
+    # before CommissioningComplete. After C rolls back its fail-safe, B must
+    # prove no effect before it can retry; C's old fabric must stay installed.
+    c_icac_before_no_effect = candidate_admin_icac(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64, 0xA104_u64)
+    interrupted_pending_icac = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_before_next_transfer_pending_icac_journal: true))
+    interrupted_pending_icac.status.should eq("error")
+    interrupted_pending_icac.error.to_s.should contain("Injected interruption before participant pending ICAC journal save")
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
+    no_effect_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    no_effect_stage.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
+    c_old_no_effect = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_no_effect.fabric_present.should be_true
+    no_effect_nonce = Random::Secure.hex(32)
+    no_effect_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-cross-sign-no-effect", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        nonce: no_effect_nonce,
+        old_fabric_id: anchor_bootstrap.fabric.fabric_id,
+        old_root_public_key: anchor_bootstrap.fabric.root_public_key))
+    no_effect_witness.status.should eq("ok"), no_effect_witness.error.to_s
+    no_effect_witness.inspected_no_committed_cross_sign.should be_true
+    no_effect_witness.inspected_failsafe_clear.should be_true
+    no_effect_witness.inspected_credential_journal_clear.should be_true
+    unwitnessed_no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-sign-no-effect", 0xA104_u64,
+        nonce: Random::Secure.hex(32)))
+    unwitnessed_no_effect.status.should eq("error")
+    still_uncertain = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    still_uncertain.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
+    reconciled_no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-sign-no-effect", 0xA104_u64,
+        nonce: no_effect_nonce))
+    reconciled_no_effect.status.should eq("ok"), reconciled_no_effect.error.to_s
+    candidate_admin_icac(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64, 0xA104_u64).should eq(c_icac_before_no_effect)
+    c_old_after_no_effect = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_after_no_effect.fabric_present.should be_true
+    no_effect_ready = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    no_effect_ready.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready.value)
     # C commits B's cross-signed ICAC, but B loses the CrossSigned save after
     # durably updating its own AdminList. A restart must not replay AddICAC.
     interrupted_cross_signed = jfa_command("matter_joint_fabric_joiner",
@@ -2457,6 +2846,9 @@ describe "three provisioned Joint Fabric Administrators" do
     mirror.try(&.wait)
     mirror_log.try(&.close)
     b_controller_client.try(&.close)
+    revoked_controller_client.try(&.close)
+    keyed_client.try(&.close)
+    keyed_revoked_client.try(&.close)
     anchor_client.try(&.close)
     joiner_client.try(&.close)
     third_client.try(&.close)

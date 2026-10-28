@@ -70,7 +70,7 @@ describe OtaProvider do
     path = Matter::InteractionModel::CommandPath.new(0_u16,
       OtaProvider::CLUSTER_ID, OtaProvider::CMD_QUERY_IMAGE)
     command = Matter::InteractionModel::CommandDataIBTlv.new(path, ota_query.to_tlv(nil))
-    clusters = { {0_u16, OtaProvider::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) }
+    clusters = case_im_clusters(cluster, fabric_index: 2_u8, subject_id: 0x1234_u64)
     responses = Matter::Protocol::IMHandler.invoke_commands([command], clusters,
       is_case_session: true, fabric_index: 2_u8, peer_subject_ids: [0x1234_u64])
     response = responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)

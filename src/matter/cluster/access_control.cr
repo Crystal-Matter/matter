@@ -338,6 +338,9 @@ module Matter
       @pending_restriction_review_deadlines = {} of UInt64 => Time
       @reviews_needing_replay = [] of UInt64
       @restriction_review_timers = {} of UInt64 => ::Channel(Nil)
+      @review_worker_shutdown = ::Channel(Nil).new
+      @review_worker_done = Set(::Channel(Nil)).new
+      @review_workers_stopped = false
       @next_restriction_review_token = 0_u64
       @review_requests_in_progress = [] of UInt64
       @deferred_restriction_review_decisions = {} of UInt64 => Proc(Bool)
@@ -345,6 +348,7 @@ module Matter
       @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
       @review_callbacks_needing_replay = Set(UInt64).new
       @review_delivery_inflight = Set(UInt64).new
+      @review_callbacks_active = Set(UInt64).new
       @review_events_emitted = Set(UInt64).new
       @review_delivery_retry_scheduled = Set(UInt64).new
       @restriction_fabric_generations = {} of UInt8 => UInt64
@@ -624,6 +628,7 @@ module Matter
 
       # Host lifecycle shared by the opt-in wire command and direct host reviews.
       def request_restriction_review(fabric_index : UInt8, entries : Array(AccessRestrictionEntry)) : UInt64
+        raise Matter::ConfigurationError.new("Restriction review service is stopped") if @review_workers_stopped
         if fabric_index == 0 || fabric_index > MAX_VALID_FABRIC_INDEX ||
            entries.any? { |entry| invalid_access_restriction_entry?(entry) }
           raise Matter::ConfigurationError.new("Invalid restriction review request")
@@ -656,7 +661,12 @@ module Matter
         begin
           persist_access_control_state
           ensure_current_restriction_review!(fabric_index, token, generation)
-          callback.call(request)
+          @review_callbacks_active.add(token)
+          begin
+            callback.call(request)
+          ensure
+            @review_callbacks_active.delete(token)
+          end
           ensure_current_restriction_review!(fabric_index, token, generation)
         rescue ex
           @deferred_restriction_review_decisions.delete(token)
@@ -762,7 +772,12 @@ module Matter
           begin
             persist_access_control_state
             ensure_current_restriction_review!(fabric_index, token, generation)
-            callback.call(fabric_index, update)
+            @review_callbacks_active.add(token)
+            begin
+              callback.call(fabric_index, update)
+            ensure
+              @review_callbacks_active.delete(token)
+            end
             ensure_current_restriction_review!(fabric_index, token, generation)
           rescue ex
             unless current_restriction_review?(fabric_index, token, generation)
@@ -802,13 +817,18 @@ module Matter
         delivery = @reviews_awaiting_delivery[token]? || return false
         return false unless current_restriction_review?(delivery[0], token)
         generation = @review_generations[token]
-        return false if @review_delivery_inflight.includes?(token)
+        return false if @review_delivery_inflight.includes?(token) || @review_callbacks_active.includes?(token)
         @review_delivery_inflight.add(token)
         begin
           fabric_index, update, arl_notification_required = delivery
           if @review_callbacks_needing_replay.includes?(token)
             callback = @on_restriction_review_updated || return false
-            callback.call(fabric_index, update)
+            @review_callbacks_active.add(token)
+            begin
+              callback.call(fabric_index, update)
+            ensure
+              @review_callbacks_active.delete(token)
+            end
             return false unless current_restriction_review?(fabric_index, token, generation)
             @review_callbacks_needing_replay.delete(token)
           end
@@ -862,11 +882,19 @@ module Matter
       end
 
       private def schedule_restriction_review_delivery_retry(token : UInt64, fabric_index : UInt8) : Nil
+        return if @review_workers_stopped
         return unless @review_delivery_retry_scheduled.add?(token)
         generation = @review_generations[token]?
+        done = ::Channel(Nil).new
+        @review_worker_done.add(done)
         spawn do
           loop do
-            sleep @review_delivery_retry_interval
+            select
+            when @review_worker_shutdown.receive?
+              break
+            when timeout(@review_delivery_retry_interval)
+            end
+            break if @review_workers_stopped
             break unless @reviews_awaiting_delivery.has_key?(token) &&
                          current_restriction_review?(fabric_index, token, generation)
             begin
@@ -877,7 +905,20 @@ module Matter
           end
         ensure
           @review_delivery_retry_scheduled.delete(token)
+          @review_worker_done.delete(done)
+          done.close
         end
+      end
+
+      # Stop review retry fibers before their persistence backend is closed.
+      # Pending review state remains durable for replay on the next startup.
+      def shutdown_restriction_review_workers : Nil
+        return if @review_workers_stopped
+        @review_workers_stopped = true
+        @review_worker_shutdown.close
+        @restriction_review_timers.each_value(&.close)
+        @restriction_review_timers.clear
+        @review_worker_done.to_a.each(&.receive?)
       end
 
       # A host denial leaves the fabric's restrictions in place. The Matter
@@ -905,7 +946,12 @@ module Matter
         callback = @on_restriction_review_updated ||
                    raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
         update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
-        callback.call(fabric_index, update)
+        @review_callbacks_active.add(token)
+        begin
+          callback.call(fabric_index, update)
+        ensure
+          @review_callbacks_active.delete(token)
+        end
         return false unless current_restriction_review?(fabric_index, token, generation) && @pending_restriction_reviews.has_key?(token)
         emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
         current_restriction_review?(fabric_index, token, generation)
@@ -1096,17 +1142,23 @@ module Matter
 
       private def schedule_restriction_review_timer(fabric_index : UInt8, token : UInt64,
                                                     duration : Time::Span) : Nil
+        return if @review_workers_stopped
         return if @restriction_review_timers.has_key?(token)
         timer = ::Channel(Nil).new
         @restriction_review_timers[token] = timer
         generation = @review_generations[token]?
+        done = ::Channel(Nil).new
+        @review_worker_done.add(done)
         spawn do
           delay = duration
           loop do
             select
+            when @review_worker_shutdown.receive?
+              break
             when timer.receive?
               break
             when timeout(delay)
+              break if @review_workers_stopped
               break unless current_restriction_review?(fabric_index, token, generation)
               begin
                 break if complete_restriction_review(fabric_index, token)
@@ -1119,6 +1171,8 @@ module Matter
           end
         ensure
           @restriction_review_timers.delete(token) if @restriction_review_timers[token]? == timer
+          @review_worker_done.delete(done)
+          done.close
         end
       end
 
@@ -1126,6 +1180,7 @@ module Matter
         requested = @on_restriction_review_requested || return
         return unless @on_restriction_review_updated
         @review_callbacks_needing_replay.to_a.each do |token|
+          next if @review_callbacks_active.includes?(token)
           delivery = @reviews_awaiting_delivery[token]? || next
           schedule_restriction_review_delivery_retry(token, delivery[0])
           begin
@@ -1135,6 +1190,9 @@ module Matter
           end
         end
         @reviews_needing_replay.dup.each do |token|
+          # A host callback may restore a previous document while this token
+          # is completing. Replaying it here would reenter that callback.
+          next if @review_delivery_inflight.includes?(token) || @review_callbacks_active.includes?(token)
           request = @pending_restriction_reviews[token]?
           next unless request
           deadline = @pending_restriction_review_deadlines[token]
@@ -1148,7 +1206,12 @@ module Matter
               end
             else
               schedule_restriction_review_timer(request.fabric_index, token, deadline - Time.utc)
-              requested.call(request)
+              @review_callbacks_active.add(token)
+              begin
+                requested.call(request)
+              ensure
+                @review_callbacks_active.delete(token)
+              end
               @reviews_needing_replay.delete(token)
             end
           rescue ex
@@ -1731,7 +1794,8 @@ module Matter
       # Supports CaseAuthenticatedTag (CAT) subject matching per Matter spec
       def check_access(subject : UInt64, fabric_index : UInt8, privilege : AccessControlEntryPrivilege,
                        cluster : UInt32? = nil, endpoint : UInt16? = nil, device_type : UInt32? = nil,
-                       auth_mode : AccessControlEntryAuthMode = AccessControlEntryAuthMode::CASE) : Bool
+                       auth_mode : AccessControlEntryAuthMode = AccessControlEntryAuthMode::CASE,
+                       device_types : Array(UInt32)? = nil) : Bool
         # Find matching ACL entries for this fabric
         matching_entries = (@acl + @auxiliary_acl).select do |entry|
           subjects = entry.subjects
@@ -1749,9 +1813,13 @@ module Matter
           has_target_access = if targets = entry.targets
                                 # Per spec, an empty targets list is a wildcard (all targets).
                                 targets.empty? || targets.any? do |target|
+                                  type_matches = if target_type = target.device_type
+                                                   target_type == device_type || device_types.try(&.includes?(target_type)) == true
+                                                 else
+                                                   true
+                                                 end
                                   (!target.cluster || target.cluster == cluster) &&
-                                    (!target.endpoint || target.endpoint == endpoint) &&
-                                    (!target.device_type || target.device_type == device_type)
+                                    (!target.endpoint || target.endpoint == endpoint) && type_matches
                                 end
                               else
                                 true # nil targets means all targets
@@ -1764,7 +1832,8 @@ module Matter
       # Convenience wrapper for the generated cluster metadata privilege enum.
       def check_access(subject : UInt64, fabric_index : UInt8, privilege : InteractionModel::EntryPrivilege,
                        cluster : UInt32? = nil, endpoint : UInt16? = nil, device_type : UInt32? = nil,
-                       auth_mode : InteractionModel::EntryAuthMode = InteractionModel::EntryAuthMode::Case) : Bool
+                       auth_mode : InteractionModel::EntryAuthMode = InteractionModel::EntryAuthMode::Case,
+                       device_types : Array(UInt32)? = nil) : Bool
         check_access(
           subject: subject,
           fabric_index: fabric_index,
@@ -1772,6 +1841,7 @@ module Matter
           cluster: cluster,
           endpoint: endpoint,
           device_type: device_type,
+          device_types: device_types,
           auth_mode: AccessControlEntryAuthMode.from_value(auth_mode.value)
         )
       end

@@ -130,6 +130,7 @@ jobs:
             os: ubuntu-latest
             crystal: nightly
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     continue-on-error: ${{ matrix.experimental }}
     steps:
       - uses: actions/checkout@v5

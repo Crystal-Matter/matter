@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/controller/pairing/case_pairing"
 require "../../src/matter/controller/im_client"
+require "../../src/matter/cluster/access_control"
 require "../../src/matter/protocol/message_handler"
 require "../../src/matter/transport/tcp_enabled_transport"
 
@@ -30,6 +31,14 @@ describe "controller and device CASE over Matter TCP" do
     handler = Matter::Protocol::MessageHandler.new(device_transport,
       setup_pin: 20202021_u32, discriminator: 3840_u16,
       fabric_table: table)
+    root = handler.node.endpoint!(Matter::Node::ROOT_ENDPOINT_ID)
+    acl = Matter::Cluster::AccessControl.new(root.endpoint_id)
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      privilege: Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View,
+      auth_mode: Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+      subjects: [controller_node], targets: nil, fabric_index: device_fabric.fabric_index)
+    root.add_cluster(acl)
+    handler.node.add_endpoint(root)
     device_transport.start
     controller = Matter::Controller::Client.new(tcp_enabled: true)
     begin

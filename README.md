@@ -1270,7 +1270,27 @@ confirmed_failure: true)` if the device did not join. A known failed
 CommissioningComplete response is cleaned up automatically.
 `JointCommissioning::Workflow` accepts the same registrar through its
 `datastore_registrar:` option and uses the Administrator name as the node's
-friendly name.
+friendly name. When a JCM host uses its own AddAdmin callback instead, it must
+also pass `node_list_check:`. Construct
+`JointCommissioning::RemoteDatastoreRegistrar` with the Anchor's node ID and
+Datastore endpoint, then pass `remote_registrar.node_list_check`. The callback
+reads the Anchor's NodeList over authenticated CASE and rejects an occupied
+Node ID before JCM starts PASE. Without a registrar or lookup, JCM fails
+closed.
+
+To remove a committed Joint Fabric node, use the separate durable
+`JointFabricNodeRemoval` workflow. Its network port authenticates the Anchor
+and target, saves the target NOC and a durable cleanup snapshot, then removes
+target group memberships, key sets and both outgoing and incoming bindings.
+It waits for the Datastore to confirm those removals and direct Node ID grant
+revocation before `RemoveNode`.
+Persist the journal on the controller backend before calling `run`. If a
+`RemoveNode` response is lost, reopen the same journal and call
+`reconcile_removed!` after an authenticated NodeList read; `run` never replays
+an uncertain removal. Group CAT controllers require an effective
+`SharedFabric::JointGroupRevocation` receipt. See the
+[Joint Fabric status](docs/matter_1_6_joint_fabric.md) for the supported
+removal cases and blocked cases.
 
 Grant each controller access to the new device with `SharedFabric.grant_admin`
 over the commissioning controller's CASE session. The ACL has a minimum of

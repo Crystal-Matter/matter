@@ -153,13 +153,14 @@ module Matter
       end
 
       def run_pending(respect_stop : Bool = false) : Nil
-        pending_node_ids.each do |node_id|
+        work_node_ids.each do |node_id|
           break if respect_stop && !@running
           @max_attempts.times do |attempt|
             break if respect_stop && !@running
             begin
+              rearm_recoverable_failure(node_id)
               @delivery.deliver(@store, node_id)
-              break unless pending_for?(node_id)
+              break unless work_for?(node_id)
             rescue ex
               Log.warn { "Datastore propagation attempt #{attempt + 1}/#{@max_attempts} failed for node 0x#{node_id.to_s(16)}: #{ex.message}" }
             end
@@ -189,23 +190,45 @@ module Matter
         end
       end
 
-      private def pending_node_ids : Array(UInt64)
+      private def work_node_ids : Array(UInt64)
         ids = [] of UInt64
-        @store.node_list.each { |entry| ids << entry.node_id if pending?(entry.commissioning_status_entry) }
-        @store.node_key_set_list.each { |entry| ids << entry.node_id if pending?(entry.status_entry) }
-        @store.endpoint_group_id_list.each { |entry| ids << entry.node_id if pending?(entry.status_entry) }
-        @store.node_acl_list.each { |entry| ids << entry.node_id if pending?(entry.status_entry) }
-        @store.endpoint_binding_list.each { |entry| ids << entry.node_id if pending?(entry.status_entry) }
+        @store.node_list.each { |entry| ids << entry.node_id if work?(entry.commissioning_status_entry) }
+        @store.node_key_set_list.each { |entry| ids << entry.node_id if work?(entry.status_entry) }
+        @store.endpoint_group_id_list.each { |entry| ids << entry.node_id if work?(entry.status_entry) }
+        @store.node_acl_list.each { |entry| ids << entry.node_id if work?(entry.status_entry) }
+        @store.endpoint_binding_list.each { |entry| ids << entry.node_id if work?(entry.status_entry) }
         ids.uniq
       end
 
-      private def pending_for?(node_id : UInt64) : Bool
-        pending_node_ids.includes?(node_id)
+      private def work_for?(node_id : UInt64) : Bool
+        work_node_ids.includes?(node_id)
+      end
+
+      private def work?(status : Store::DatastoreStatusEntryStruct) : Bool
+        pending?(status) || recoverable_failure?(status)
       end
 
       private def pending?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::Pending ||
           (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == Store::NO_FAILURE_CODE)
+      end
+
+      private def recoverable_failure?(status : Store::DatastoreStatusEntryStruct) : Bool
+        failed = status.state == Store::DatastoreStateEnum::CommitFailed ||
+                 (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code != Store::NO_FAILURE_CODE)
+        failed && status.failure_code != InteractionModel::StatusCode::ResourceExhausted.value &&
+          status.failure_code != InteractionModel::StatusCode::ConstraintError.value
+      end
+
+      private def rearm_recoverable_failure(node_id : UInt64) : Nil
+        return unless @store.node_list.any? { |entry| entry.node_id == node_id }
+        return unless @store.node_list.any? { |entry| entry.node_id == node_id && recoverable_failure?(entry.commissioning_status_entry) } ||
+                      @store.node_key_set_list.any? { |entry| entry.node_id == node_id && recoverable_failure?(entry.status_entry) } ||
+                      @store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && recoverable_failure?(entry.status_entry) } ||
+                      @store.node_acl_list.any? { |entry| entry.node_id == node_id && recoverable_failure?(entry.status_entry) } ||
+                      @store.endpoint_binding_list.any? { |entry| entry.node_id == node_id && recoverable_failure?(entry.status_entry) }
+        status = @store.refresh_node(Store::RefreshNodeRequest.new(node_id))
+        raise Matter::ClusterError.new("Datastore retry RefreshNode failed", status.status, status.cluster_status) unless status.success?
       end
 
       private def fail_pending(node_id : UInt64) : Nil

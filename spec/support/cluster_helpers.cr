@@ -19,6 +19,22 @@ def build(klass : T.class, endpoint : Int = 1, **kwargs) forall T
   klass.new(endpoint(endpoint), **kwargs)
 end
 
+# Build the IM cluster index for a CASE fixture with an explicit administrator
+# grant. Tests of cluster behavior use this to satisfy the mandatory ACL gate;
+# access-control tests construct their own ACL and grants instead.
+def case_im_clusters(cluster : Matter::Cluster::Base, *, fabric_index : UInt8 = 1_u8,
+                     subject_id : UInt64 = 11_u64) : Hash(Tuple(UInt16, UInt32), Matter::Cluster::Base)
+  acl = Matter::Cluster::AccessControl.new(Matter::DataType::EndpointNumber::ROOT)
+  acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+    Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+    Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+    [subject_id], nil, fabric_index)
+  {
+    {Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::AccessControl::CLUSTER_ID} => acl.as(Matter::Cluster::Base),
+    {cluster.endpoint_id.number, cluster.cluster_id.id}                          => cluster,
+  }
+end
+
 # Reads an attribute and returns it as a `TLV::Any`, for lists and structures
 # (`read_tlv(cluster, id).as_list`, `LabelStruct.from_tlv(read_tlv(...))`).
 # Raises when the cluster answers with a status instead of a value.

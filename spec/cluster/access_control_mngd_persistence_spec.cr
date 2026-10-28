@@ -34,6 +34,43 @@ private def stored_callbacks(acl : StoredAcl, requested : Array(StoredAcl::Restr
 end
 
 describe "Access Control managed restriction persistence" do
+  it "stops an expired review timer before its storage closes" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice,
+      review_timeout: 50.milliseconds, review_delivery_retry_interval: 5.milliseconds)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    acl.request_restriction_review(1_u8, [stored_entry])
+    writes_after_close = 0
+    acl.shutdown_restriction_review_workers
+    acl.on_persist = -> do
+      writes_after_close += 1
+      raise Matter::StorageError.new("storage is closed")
+    end
+    sleep 100.milliseconds
+    writes_after_close.should eq(0)
+    expect_raises(Matter::ConfigurationError, /stopped/) do
+      acl.request_restriction_review(1_u8, [stored_entry])
+    end
+  end
+
+  it "stops a durable review delivery retry before its storage closes" do
+    acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice,
+      review_delivery_retry_interval: 50.milliseconds)
+    acl.on_restriction_review_requested { |_request| }
+    acl.on_restriction_review_updated { |_fabric, _update| }
+    token = acl.request_restriction_review(1_u8, [stored_entry])
+    attempts = 0
+    acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, _id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, _fabric : UInt8?) do
+      attempts += 1
+      raise Matter::EventJournalError.new("storage is closed")
+    end
+    expect_raises(Matter::EventJournalError) { acl.deny_restriction_review(1_u8, token) }
+    acl.shutdown_restriction_review_workers
+    attempts_after_shutdown = attempts
+    sleep 100.milliseconds
+    attempts.should eq(attempts_after_shutdown)
+  end
+
   it "allows an inline host approval and saves a restartable completed token" do
     acl = StoredAcl.new(endpoint(0), StoredAcl::Feature::ManagedDevice)
     saved = acl.save_state.as(Matter::Storage::Document)

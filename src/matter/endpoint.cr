@@ -2,6 +2,7 @@ require "./device_type"
 require "./error"
 require "./hex"
 require "./cluster/cluster"
+require "./cluster/binding"
 require "./cluster/color_control"
 require "./cluster/descriptor"
 require "./cluster/level_control"
@@ -65,6 +66,7 @@ module Matter
         previous.as?(Cluster::Identify).try(&.close) unless previous.same?(cluster)
       end
       cluster.as?(Cluster::Identify).try(&.reopen)
+      cluster.as?(Cluster::Binding).try(&.bind_client_clusters(@client_cluster_ids))
       @clusters[cluster.cluster_id.id] = cluster
       if level = get_cluster(Cluster::LevelControl)
         level.bind_on_off(get_cluster(Cluster::OnOff))

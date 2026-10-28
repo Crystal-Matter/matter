@@ -254,6 +254,15 @@ module Matter
 
       property service : Service?
 
+      # Installed by Device when a matching Joint Fabric Datastore and the
+      # credential guard are available. The service checks this before JCM.
+      property jcm_add_noc_guard_ready : Proc(Bool)?
+      property jcm_window_opened : Proc(Nil)?
+
+      def jcm_add_noc_guard_ready? : Bool
+        @jcm_add_noc_guard_ready.try(&.call) || false
+      end
+
       def icaccsr_request : ICACCSRResponse | InteractionModel::Status
         service = @service
         return InteractionModel::Status.failure unless service
@@ -269,7 +278,9 @@ module Matter
       def open_joint_commissioning_window(request : OpenJointCommissioningWindowRequest) : InteractionModel::Status
         service = @service
         return InteractionModel::Status.failure unless service
-        service.open_joint_commissioning_window(self, request)
+        status = service.open_joint_commissioning_window(self, request)
+        @jcm_window_opened.try(&.call) if status.success?
+        status
       end
 
       def transfer_anchor_request : TransferAnchorResponse | InteractionModel::Status

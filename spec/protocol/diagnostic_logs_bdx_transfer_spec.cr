@@ -23,6 +23,7 @@ private def diagnostic_bdx_fixture
     fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
   session = Matter::Spec::ProtocolMessages.case_session(181_u16)
   handler.sessions[session.session_id] = session
+  Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
   {handler, transport, session}
 end
 

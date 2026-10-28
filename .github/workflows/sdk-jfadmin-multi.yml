@@ -48,6 +48,40 @@ jobs:
           git clone --depth 1 --branch v1.6.0.0 \
             https://github.com/project-chip/connectedhomeip.git tmp/connectedhomeip
           cd tmp/connectedhomeip
+          # The pinned JFA example hosts the JFA server on endpoint 1 but
+          # advertises only Color Temperature Light in its DeviceTypeList.
+          # Correct that SDK fixture before generation; fail if its shape changes.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          zap = Path("examples/jf-admin-app/jfa-common/jfa-app.zap")
+          data = json.loads(zap.read_text())
+          jfa_endpoint_id = 1
+          color_temperature_light_type = 0x010C
+          jfa_device_type = 0x0130
+          jfa_cluster_id = 0x0753
+          matter_profile_id = 0x0103
+          endpoints = [endpoint for endpoint in data["endpoints"]
+                       if endpoint["endpointId"] == jfa_endpoint_id]
+          assert len(endpoints) == 1, "Expected one SDK JFA endpoint"
+          endpoint_type = data["endpointTypes"][endpoints[0]["endpointTypeIndex"]]
+          assert endpoint_type["deviceIdentifiers"] == [color_temperature_light_type]
+          assert endpoint_type["deviceVersions"] == [4]
+          assert [device["code"] for device in endpoint_type["deviceTypes"]] == [color_temperature_light_type]
+          assert any(cluster["code"] == jfa_cluster_id and cluster["side"] == "server"
+                     and cluster["enabled"] == 1 for cluster in endpoint_type["clusters"])
+          endpoint_type["deviceTypes"].append({
+              "code": jfa_device_type,
+              "profileId": matter_profile_id,
+              "label": "MA-joint-fabric-administrator",
+              "name": "MA-joint-fabric-administrator",
+              "deviceTypeOrder": 1,
+          })
+          endpoint_type["deviceIdentifiers"].append(jfa_device_type)
+          endpoint_type["deviceVersions"].append(1)
+          zap.write_text(json.dumps(data, indent=2) + "\n")
+          PY
           ./scripts/checkout_submodules.py --shallow --platform linux
           python3 - <<'PY'
           import json

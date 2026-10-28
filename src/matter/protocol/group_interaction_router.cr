@@ -65,6 +65,7 @@ module Matter
                           privilege: metadata.access,
                           cluster: path.cluster,
                           endpoint: endpoint,
+                          device_types: IMHandler.device_type_ids_for_endpoint(@clusters, endpoint),
                           auth_mode: InteractionModel::EntryAuthMode::Group)
             next if acl.command_restricted?(fabric_index, endpoint, path.cluster, path.command)
 
@@ -120,6 +121,7 @@ module Matter
                           privilege: metadata.write_access,
                           cluster: cluster_id,
                           endpoint: endpoint,
+                          device_types: IMHandler.device_type_ids_for_endpoint(@clusters, endpoint),
                           auth_mode: InteractionModel::EntryAuthMode::Group)
             next if acl.attribute_write_restricted?(fabric_index, endpoint, cluster_id, attribute_id)
 

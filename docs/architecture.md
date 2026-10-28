@@ -217,6 +217,10 @@ parsing commands, replay checks, or ACL evaluation. A group command path
 without an Endpoint tag expands over member endpoints; an explicit Endpoint
 tag is invalid on a group command path. Each expansion passes
 its own Group ACL check. No group response or acknowledgement is sent.
+Both CASE and group authorization compare an ACL `Target.DeviceType` against
+every entry in the endpoint's current Descriptor `DeviceTypeList`; this includes
+secondary device types and endpoints added or removed at runtime. An endpoint
+without a Descriptor has no device types for ACL matching.
 Authenticated group WriteRequests fan out over the same member endpoints and
 Group ACL, reject timed/chunked writes, endpoint and node paths, and
 DataVersion, and emit no response. The sender sets SuppressResponse as required
@@ -281,8 +285,12 @@ Timed writes cannot be chunked.
 For unicast InvokeRequest and WriteRequest, `InteractionRouter` first checks
 that a request with the timed flag consumes a live TimedRequest on the same
 secure session and exchange. A flag/prelude mismatch returns
-`TimedRequestMismatch`; an expired prelude returns `Timeout`. `IMHandler`
-then checks each addressed command or
+`TimedRequestMismatch`; an expired prelude returns `Timeout`.
+The router answers a malformed TimedRequest or a second TimedRequest on a
+still armed exchange with `InvalidAction` and discards that exchange's timed
+state. An expired exchange ID can be reused. A valid timeout begins when its
+`Success` StatusResponse is sent.
+`IMHandler` then checks each addressed command or
 writable attribute's `timed` metadata after access control. An untimed request
 to a timed operation returns `NeedsTimedInteraction` for that path without
 running its handler or writer. Commands and attributes without that metadata
@@ -291,6 +299,11 @@ The controller budgets each WriteRequest to 1,100 TLV bytes. An oversized
 list becomes an empty replacement plus null-ListIndex appends; all chunks use
 one exchange and each WriteResponse is read before the next chunk is sent.
 One list item that cannot fit in a chunk is rejected before network I/O.
+
+CASE authorization evaluates the accessing fabric's ACL for every IM path.
+An empty ACL grants no CASE privileges, including access to the Access Control
+cluster itself. Commissioning over PASE uses its separate implicit privilege;
+fabricless PASE writes to ACL and Extension are rejected.
 
 ## Node, endpoints and clusters
 

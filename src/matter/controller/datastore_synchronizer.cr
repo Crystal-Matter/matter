@@ -56,6 +56,9 @@ module Matter
             (!has_node_record || entry.endpoint_id == Node::ROOT_ENDPOINT_ID || current_endpoint_ids.includes?(entry.endpoint_id))
         end
         pending_groups.each do |entry|
+          # Keep the existing mapping until the replacement key is installed.
+          # A failed KeySetWrite remains CommitFailed for RefreshNode to retry.
+          next unless group_key_ready?(store, entry)
           status = apply do
             adopt_groupcast(session, peer) if groupcast_target
             sync_group(store, entry, session, peer, groupcast_target)
@@ -63,11 +66,27 @@ module Matter
           store.complete_group_membership(node_id, entry.endpoint_id, entry.group_id, status)
         end
 
-        store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && entry.status_entry.failure_code == Store::NO_FAILURE_CODE }.each do |entry|
-          status = apply do
-            sync_key_set(store, entry, session, peer)
+        # A key-only UpdateGroup stages the old key for deletion at the same
+        # time as the new key and group mapping. Never remove it until both
+        # replacement operations have succeeded on this target node. This is
+        # deliberately node-wide: without a wire-visible transition ID, an
+        # unrelated failed entry may delay cleanup until RefreshNode, but it
+        # cannot cause a still-needed group key to be removed.
+        replacement_pending = store.node_key_set_list.any? do |entry|
+          entry.node_id == node_id && (entry.status_entry.state == Store::DatastoreStateEnum::Pending ||
+            entry.status_entry.state == Store::DatastoreStateEnum::CommitFailed)
+        end
+        mapping_pending = store.endpoint_group_id_list.any? do |entry|
+          entry.node_id == node_id && (entry.status_entry.state == Store::DatastoreStateEnum::Pending ||
+            entry.status_entry.state == Store::DatastoreStateEnum::CommitFailed)
+        end
+        unless replacement_pending || mapping_pending
+          store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && entry.status_entry.failure_code == Store::NO_FAILURE_CODE }.each do |entry|
+            status = apply do
+              sync_key_set(store, entry, session, peer)
+            end
+            store.complete_node_key_set(node_id, entry.group_key_set_id, status)
           end
-          store.complete_node_key_set(node_id, entry.group_key_set_id, status)
         end
 
         store.node_acl_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }.each do |entry|
@@ -185,6 +204,14 @@ module Matter
       private def pending?(status : Store::DatastoreStatusEntryStruct) : Bool
         status.state == Store::DatastoreStateEnum::Pending ||
           (status.state == Store::DatastoreStateEnum::DeletePending && status.failure_code == Store::NO_FAILURE_CODE)
+      end
+
+      private def group_key_ready?(store : Store, membership : Store::DatastoreEndpointGroupIDEntryStruct) : Bool
+        return true if membership.status_entry.state == Store::DatastoreStateEnum::DeletePending
+        group = store.group_list.find(&.group_id.==(membership.group_id.to_u64))
+        return true unless group && (key_set_id = group.group_key_set_id)
+        entry = store.node_key_set_list.find { |item| item.node_id == membership.node_id && item.group_key_set_id == key_set_id }
+        !entry.nil? && entry.status_entry.state == Store::DatastoreStateEnum::Committed
       end
 
       private def failed?(status : Store::DatastoreStatusEntryStruct) : Bool
@@ -400,6 +427,14 @@ module Matter
                                session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         current = read_list(Cluster::Binding::Target, session, peer, entry.endpoint_id, Cluster::Binding::CLUSTER_ID, Cluster::Binding::ATTR_BINDING)
         source = entry.binding
+        if entry.status_entry.state != Store::DatastoreStateEnum::DeletePending && (cluster_id = source.cluster)
+          client_clusters = read_list(UInt32, session, peer, entry.endpoint_id,
+            Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_CLIENT_LIST)
+          unless client_clusters.includes?(cluster_id)
+            raise Matter::ClusterError.new("Binding client cluster is absent from the local endpoint",
+              InteractionModel::StatusCode::ConstraintError)
+          end
+        end
         wanted = Cluster::Binding::Target.new(source.node, source.group, source.endpoint, source.cluster)
         another_active_binding = store.endpoint_binding_list.any? do |other|
           other.node_id == entry.node_id && other.endpoint_id == entry.endpoint_id &&

@@ -33,7 +33,7 @@ describe Ota do
     )
     parsed = Matter::Protocol::IMHandler.parse_write_request(request.to_slice).as(Matter::InteractionModel::WriteRequestMessage)
     statuses = Matter::Protocol::IMHandler.write_attributes(parsed.write_requests,
-      { {0_u16, Ota::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+      case_im_clusters(cluster, subject_id: 0x123_u64),
       is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [0x123_u64])
     statuses.first.status.status.should eq(IMStatus::Success.value)
 

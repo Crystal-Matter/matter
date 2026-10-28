@@ -31,6 +31,7 @@ private def router_fixture : RouterFixture
 
   session = Matter::Spec::ProtocolMessages.case_session(1_u16)
   handler.sessions[session.session_id] = session
+  Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
   transport.sent_packets.clear
 
   RouterFixture.new(handler, transport, session, lock)
