@@ -409,6 +409,35 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     delivery.calls.count("remove:512:Lamp").should eq(1)
   end
 
+  it "keeps the foreground attempt while retrying another saved node" do
+    backend = Matter::Storage::Memory.new
+    old_store = Matter::Controller::StateStore.new(backend)
+    current_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    old_store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    old = Matter::Controller::DatastoreNodeRegistrar.new(old_store, delivery)
+    delivery.fail_add = true
+    expect_raises(Matter::TransportError, /offline/) do
+      old.add_pending(fabric, 0x200_u64, "Old", Time.utc.to_unix + 60_i64)
+    end
+
+    delivery.fail_add = false
+    current = Matter::Controller::DatastoreNodeRegistrar.new(current_store, delivery)
+    peer = Socket::IPAddress.new("127.0.0.1", Matter::Controller::NodeInfo::DEFAULT_PORT)
+    current.add_pending(fabric, 0x201_u64, "New", Time.utc.to_unix + 60_i64, peer: peer)
+    foreground_attempt = current.attempt_id
+    current.retry_pending_once
+
+    current.attempt_id.should eq(foreground_attempt)
+    current.completing(fabric, 0x201_u64)
+    current.complete(fabric, 0x201_u64)
+    current.refresh(fabric, 0x201_u64)
+    current_store.load.pending_datastore_nodes.map(&.node_id).should eq([0x200_u64])
+    delivery.calls.should contain("add:512:Old")
+    delivery.calls.should contain("refresh:513")
+  end
+
   it "claims a legacy pending record once across two StateStore writers" do
     backend = Matter::Storage::Memory.new
     first_store = Matter::Controller::StateStore.new(backend)

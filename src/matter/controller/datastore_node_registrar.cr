@@ -378,18 +378,25 @@ module Matter
       end
 
       private def resume_entry(fabric : FabricInfo, entry : PendingDatastoreNode, now_unix : Int64) : Nil
-        if entry.attempt_id.empty?
-          if @fixed_attempt_id
-            raise Matter::CommissioningError.new("Legacy Datastore registration needs identity claim")
+        unless @fixed_attempt_id
+          # Recovery owns one saved attempt at a time. Its identity must never
+          # replace the active commissioner's foreground attempt ID.
+          if entry.attempt_id.empty?
+            claimant = DatastoreNodeRegistrar.new(@store, @delivery, target_node_id: entry.node_id)
+            claimant.claim_legacy(fabric, entry.node_id, entry.friendly_name, entry.peer_address, entry.peer_port)
+            attempt_id = claimant.attempt_id
+          else
+            attempt_id = entry.attempt_id
           end
-          claim_legacy(fabric, entry.node_id, entry.friendly_name, entry.peer_address, entry.peer_port)
-          entry = entry_for(@store.load, fabric, entry.node_id) ||
-                  raise Matter::CommissioningError.new("Datastore registration disappeared during legacy claim")
+          DatastoreNodeRegistrar.new(@store, @delivery, attempt_id, entry.node_id).resume(fabric, now_unix)
+          return
         end
-        if @fixed_attempt_id && entry.attempt_id != @attempt_id
+        if entry.attempt_id.empty?
+          raise Matter::CommissioningError.new("Legacy Datastore registration needs identity claim")
+        end
+        if entry.attempt_id != @attempt_id
           raise Matter::CommissioningError.new("Datastore registration belongs to another attempt")
         end
-        @attempt_id = entry.attempt_id unless @fixed_attempt_id
         case entry.stage
         when PendingDatastoreNode::Stage::Pending
           if now_unix >= entry.expires_at_unix

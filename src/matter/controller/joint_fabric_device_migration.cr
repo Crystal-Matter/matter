@@ -257,7 +257,7 @@ module Matter
           registrar = datastore_registrar
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
             @crypto, hooks: hooks, attestation_verifier: @attestation_verifier,
-            datastore_registrar: registrar)
+            datastore_registrar: registrar, start_datastore_retry: false)
           commissioner.pairing_code(@anchor_node_id, window.manual_pairing_code,
             peer: @device_peer, fabric_id: @anchor_fabric.fabric_id,
             root_public_key: @anchor_fabric.root_public_key,
