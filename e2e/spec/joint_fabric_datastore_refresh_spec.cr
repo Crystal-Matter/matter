@@ -200,7 +200,7 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
       .as(IM::AttributeStatusIB).status.status.should eq(IM::StatusCode::UnsupportedAccess.value)
 
     Matter::Controller::SharedFabric.grant_joint_admin(im, anchor_session, anchor_peer,
-      1_u16, target_node_id, 1_u16, 10_u16, "Joint controllers", delegated)
+      1_u16, anchor_node_id, target_node_id, 1_u16, 10_u16, "Joint controllers", delegated)
     cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(group_cat, group_version)).id
     wait_joint_acl(im, anchor_session, anchor_peer, target_node_id, cat_subject, 120.seconds)

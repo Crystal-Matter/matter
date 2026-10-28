@@ -22,8 +22,8 @@ item below as covered only to the extent of its cited tests.
   entry. See `SharedFabric` in the controller library.
 - For a Joint Fabric whose ICAC signing key is available locally,
   `SharedFabric.delegate_joint` issues a controller NOC with a non-reserved
-  group CAT. `SharedFabric.grant_joint_admin` verifies that identity and the
-  Anchor Datastore root, then uses AddGroup,
+  group CAT. `SharedFabric.grant_joint_admin` verifies that identity, the
+  expected Anchor CASE peer, and the Datastore root and AnchorNodeID, then uses AddGroup,
   AddGroupIDToEndpointForNode, and AddACLToNode as needed. Repeating the
   grant checks existing Datastore entries before sending commands and calls
   RefreshNode when a matching membership or ACL has CommitFailed. The

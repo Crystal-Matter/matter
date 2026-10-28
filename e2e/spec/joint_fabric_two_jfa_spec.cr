@@ -1433,7 +1433,7 @@ describe "three provisioned Joint Fabric Administrators" do
       .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
 
     Matter::Controller::SharedFabric.grant_joint_admin(anchor_im, anchor_session, anchor_peer,
-      1_u16, 0xA201_u64, 1_u16, 11_u16, "B ecosystem controllers", b_controller)
+      1_u16, 0xA102_u64, 0xA201_u64, 1_u16, 11_u16, "B ecosystem controllers", b_controller)
     b_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(b_group_cat, b_group_version)).id
     wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,

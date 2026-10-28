@@ -6,6 +6,7 @@ private alias JointStore = Matter::Cluster::JointFabricDatastore
 private class JointGroupImClient < Matter::Controller::ImClient
   getter commands = [] of UInt32
   property? lose_update_response = false
+  property reported_anchor_node_id : UInt64? = nil
 
   def initialize(@store : JointStore)
     super(Matter::Controller::Client.new)
@@ -20,7 +21,7 @@ private class JointGroupImClient < Matter::Controller::ImClient
                      fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
     value = case attribute_id
             when JointStore::ATTR_ANCHOR_ROOT_CA         then @store.anchor_root_ca.to_tlv
-            when JointStore::ATTR_ANCHOR_NODE_ID         then @store.anchor_node_id.to_tlv
+            when JointStore::ATTR_ANCHOR_NODE_ID         then (@reported_anchor_node_id || @store.anchor_node_id).to_tlv
             when JointStore::ATTR_GROUP_LIST             then @store.group_list.to_tlv
             when JointStore::ATTR_ENDPOINT_GROUP_ID_LIST then @store.endpoint_group_id_list.to_tlv
             when JointStore::ATTR_NODE_ACL_LIST          then @store.node_acl_list.to_tlv
@@ -83,7 +84,8 @@ describe "Joint Fabric shared group revocation" do
       peer_node_id: Matter::DataType::NodeId.new(0x100_u64))
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-      datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+      datastore_endpoint: 1_u16, anchor_node_id: authority.controller_node_id,
+      device_node_id: 0x200_u64, device_endpoint: 1_u16,
       group_id: 10_u16, group_name: "Controllers", controller: survivor)
     membership = datastore.endpoint_group_id_list.last
     acl = datastore.node_acl_list.last
@@ -207,7 +209,8 @@ describe "Joint Fabric shared group revocation" do
       peer_node_id: Matter::DataType::NodeId.new(0x100_u64))
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-      datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+      datastore_endpoint: 1_u16, anchor_node_id: authority.controller_node_id,
+      device_node_id: 0x200_u64, device_endpoint: 1_u16,
       group_id: 10_u16, group_name: "Controllers", controller: survivor)
     im.lose_update_response = true
     expect_raises(Matter::ProtocolError, /lost UpdateGroup response/) do
@@ -258,11 +261,41 @@ describe Matter::Controller::SharedFabric do
       session_type: Matter::Session::SessionType::Unicast,
       encryption_key: Bytes.new(16), decryption_key: Bytes.new(16),
       # Initiator CASE contexts do not know the remote fabric index.
-      case_session: true)
+      case_session: true, peer_node_id: Matter::DataType::NodeId.new(0x100_u64))
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
 
+    wrong_peer_session = Matter::Session::SecureContext.new(
+      session_id: 2_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16),
+      case_session: true, peer_node_id: Matter::DataType::NodeId.new(0x103_u64))
+    expect_raises(Matter::AuthenticationError, /expected Anchor/) do
+      Matter::Controller::SharedFabric.grant_joint_admin(im, wrong_peer_session, peer,
+        datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+        device_node_id: 0x200_u64, device_endpoint: 1_u16,
+        group_id: 10_u16, group_name: "Controllers", controller: delegated)
+    end
+    im.commands.should be_empty
+    datastore.group_list.should be_empty
+    datastore.endpoint_group_id_list.should be_empty
+    datastore.node_acl_list.should be_empty
+
+    im.reported_anchor_node_id = 0x103_u64
+    expect_raises(Matter::AuthenticationError, /AnchorNodeID/) do
+      Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
+        datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+        device_node_id: 0x200_u64, device_endpoint: 1_u16,
+        group_id: 10_u16, group_name: "Controllers", controller: delegated)
+    end
+    im.commands.should be_empty
+    datastore.group_list.should be_empty
+    datastore.endpoint_group_id_list.should be_empty
+    datastore.node_acl_list.should be_empty
+    im.reported_anchor_node_id = nil
+
     Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-      datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+      datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+      device_node_id: 0x200_u64, device_endpoint: 1_u16,
       group_id: 10_u16, group_name: "Controllers", controller: delegated)
     im.commands.should eq([JointStore::CMD_ADD_GROUP,
                            JointStore::CMD_ADD_GROUP_ID_TO_ENDPOINT_FOR_NODE, JointStore::CMD_ADD_ACL_TO_NODE])
@@ -271,14 +304,16 @@ describe Matter::Controller::SharedFabric do
     datastore.node_acl_list.last.acl_entry.subjects.should eq([0xFFFF_FFFD_1234_0002_u64])
 
     Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-      datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+      datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+      device_node_id: 0x200_u64, device_endpoint: 1_u16,
       group_id: 10_u16, group_name: "Controllers", controller: delegated)
     im.commands.size.should eq(3)
 
     datastore.complete_group_membership(0x200_u64, 1_u16, 10_u16, 1_u8).should be_true
     datastore.complete_acl(0x200_u64, datastore.node_acl_list.last.list_id, 1_u8).should be_true
     Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-      datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+      datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+      device_node_id: 0x200_u64, device_endpoint: 1_u16,
       group_id: 10_u16, group_name: "Controllers", controller: delegated)
     im.commands.last.should eq(JointStore::CMD_REFRESH_NODE)
     datastore.node_acl_list.last.status_entry.state.should eq(JointStore::DatastoreStateEnum::Pending)
@@ -287,12 +322,14 @@ describe Matter::Controller::SharedFabric do
       1_u16, JointStore::DatastoreAccessControlEntryPrivilegeEnum::Administer))
     expect_raises(Matter::CommissioningError, /different CAT/) do
       Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-        datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+        datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+        device_node_id: 0x200_u64, device_endpoint: 1_u16,
         group_id: 11_u16, group_name: "Controllers", controller: delegated)
     end
     expect_raises(Matter::CertificateError, /group CAT/) do
       Matter::Controller::SharedFabric.grant_joint_admin(im, session, peer,
-        datastore_endpoint: 1_u16, device_node_id: 0x200_u64, device_endpoint: 1_u16,
+        datastore_endpoint: 1_u16, anchor_node_id: 0x100_u64,
+        device_node_id: 0x200_u64, device_endpoint: 1_u16,
         group_id: 12_u16, group_name: "Controllers", controller: authority)
     end
     im.commands.size.should eq(4)
