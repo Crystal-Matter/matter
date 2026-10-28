@@ -385,6 +385,30 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     delivery.calls.count("remove:512:Lamp").should eq(1)
   end
 
+  it "retries a guarded removal by checking absence without replaying RemoveNode" do
+    backend = Matter::Storage::Memory.new
+    first_store = Matter::Controller::StateStore.new(backend)
+    second_store = Matter::Controller::StateStore.new(backend)
+    fabric = registrar_fabric
+    first_store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    owner = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
+    owner.add_pending(fabric, 0x200_u64, "Lamp")
+    delivery.fail_remove = true
+    expect_raises(Matter::TransportError, /offline/) { owner.abort(fabric, 0x200_u64) }
+
+    restarted = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
+    restarted.retry_pending_once
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+    second_store.load.pending_datastore_nodes.first.stage.should eq(
+      Matter::Controller::PendingDatastoreNode::Stage::Removing)
+
+    delivery.remote_absent = true
+    restarted.retry_pending_once
+    second_store.load.pending_datastore_nodes.should be_empty
+    delivery.calls.count("remove:512:Lamp").should eq(1)
+  end
+
   it "claims a legacy pending record once across two StateStore writers" do
     backend = Matter::Storage::Memory.new
     first_store = Matter::Controller::StateStore.new(backend)
