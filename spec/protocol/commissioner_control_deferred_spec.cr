@@ -43,11 +43,9 @@ private def reverse_fixture
   handler = Matter::Protocol::MessageHandler.new(transport,
     setup_pin: 20202021_u32, discriminator: 3840_u16,
     fabric_table: Matter::FabricTable.new(Matter::Storage::Memory.new))
-  # This focused transport fixture tests the handoff itself; ACL policy is
-  # covered by the cluster's Manage privilege and separate ACL tests.
-  handler.clusters.delete({0_u16, Matter::Cluster::AccessControl::CLUSTER_ID})
   session = Matter::Spec::ProtocolMessages.case_session(241_u16)
   handler.sessions[session.session_id] = session
+  Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
   control = ReverseControl.new(Matter::DataType::EndpointNumber.new(0_u16))
   handler.clusters[{0_u16, ReverseControl::CLUSTER_ID}] = control
   {handler, transport, session, control}

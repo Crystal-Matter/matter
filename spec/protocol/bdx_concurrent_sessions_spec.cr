@@ -90,6 +90,7 @@ describe "BDX concurrent CASE sessions" do
     read_session = Matter::Spec::ProtocolMessages.case_session(282_u16)
     handler.sessions[bdx_session.session_id] = bdx_session
     handler.sessions[read_session.session_id] = read_session
+    Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, read_session)
 
     endpoint = Matter::Endpoint.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster = ConcurrentReadOnOff.new(Matter::DataType::EndpointNumber.new(1_u16))

@@ -73,6 +73,7 @@ describe "controller and device multi-chunk list read" do
     session = Matter::Spec::ProtocolMessages.case_session(1_u16)
     session.peer_session_id = session.session_id
     handler.sessions[session.session_id] = session
+    Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     client = ListReadExchangeClient.new(handler, capture, session)
 

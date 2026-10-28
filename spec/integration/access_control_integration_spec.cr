@@ -387,8 +387,7 @@ describe "Access Control Integration" do
       new_acl_list.each { |entry| acl_cluster.acl << entry }
       encoded_new_acl = read_tlv(acl_cluster, Matter::Cluster::AccessControl::ATTR_ACL)
 
-      # Write the updated ACL list
-      acl_cluster.acl.clear
+      # The issuing administrator remains authorized until the write commits.
       status = write(acl_cluster, Matter::Cluster::AccessControl::ATTR_ACL, encoded_new_acl,
         is_case_session: true, fabric_index: fabric_index, peer_subject_ids: [admin_subject])
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
@@ -450,6 +449,10 @@ describe "Access Control Integration" do
 
       # Decode into new cluster
       cluster2 = Matter::Cluster::AccessControl.new(endpoint_id)
+      cluster2.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+        privilege: Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+        auth_mode: Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+        subjects: [0x1111_u64], targets: nil, fabric_index: 1_u8)
       status = write(cluster2, Matter::Cluster::AccessControl::ATTR_ACL, encoded,
         is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [0x1111_u64])
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)

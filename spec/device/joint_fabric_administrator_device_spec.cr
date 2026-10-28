@@ -911,6 +911,7 @@ describe MatterJointFabricAdministrator::Device do
     window.on_configure_pase_server = nil
     window.open_enhanced(180_u16, Bytes.new(97, 0_u8), 3839_u16, 2000_u32,
       Bytes.new(16, 0_u8), 1_u8, Matter::SetupPayload.test_vendor_id, joint: true)
+    administrator.jcm_window_opened.try(&.call)
     device.general_commissioning.request_session_id = 42_u64
     device.general_commissioning.request_is_case_session = false
     device.general_commissioning.arm_failsafe(

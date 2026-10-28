@@ -39,6 +39,9 @@ describe "Protocol concurrency" do
     session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
     handler.sessions[session.session_id] = session
 
+    Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session,
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::View)
+
     path = Matter::InteractionModel::AttributePath.new(
       endpoint: 1_u16,
       cluster: Matter::Cluster::OnOff::CLUSTER_ID,
