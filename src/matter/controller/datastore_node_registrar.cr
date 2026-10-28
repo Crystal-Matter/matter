@@ -138,13 +138,18 @@ module Matter
 
       def add_pending(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
                       expires_at_unix : Int64 = Time.utc.to_unix,
-                      peer : Socket::IPAddress? = nil) : Nil
+                      peer : Socket::IPAddress? = nil, allow_commissioned : Bool = false) : Nil
         if node_id == DataType::NodeId::UNSPECIFIED || friendly_name.empty?
           raise Matter::ConfigurationError.new("Datastore pending node needs a Node ID and friendly name")
         end
         @store.update do |state|
-          if state.nodes_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id).has_key?(node_id)
-            raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
+          if commissioned = state.nodes_for(fabric.fabric_id, fabric.root_public_key,
+               fabric.controller_node_id)[node_id]?
+            unless allow_commissioned && peer &&
+                   commissioned.address == OperationalPeerResolver.address_hint(peer) &&
+                   commissioned.port == peer.port
+              raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
+            end
           end
           if entry = entry_for(state, fabric, node_id)
             unless entry.attempt_id == @attempt_id && entry.friendly_name == friendly_name &&
@@ -184,6 +189,20 @@ module Matter
 
       def complete(fabric : FabricInfo, node_id : UInt64) : Nil
         set_stage(fabric, node_id, PendingDatastoreNode::Stage::Completed)
+      end
+
+      # Call only after an authenticated Datastore NodeList read shows the
+      # matching legacy registration is Committed. No RefreshNode is replayed.
+      def confirm_remote_committed(fabric : FabricInfo, node_id : UInt64) : Nil
+        @store.update do |state|
+          entry = entry_for(state, fabric, node_id) ||
+                  raise Matter::CommissioningError.new("Datastore node registration is missing")
+          require_attempt!(entry)
+          if entry.stage.removing?
+            raise Matter::CommissioningError.new("Datastore removal already started")
+          end
+          state.pending_datastore_nodes.reject! { |item| same_fabric?(item, fabric) && item.node_id == node_id }
+        end
       end
 
       def refresh(fabric : FabricInfo, node_id : UInt64) : Nil

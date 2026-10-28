@@ -453,6 +453,33 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     end
   end
 
+  it "stages a pre-ordering migrated node only with its verified commissioned peer" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update do |state|
+      state.install_fabric(fabric)
+      state.record_node(fabric.fabric_id,
+        Matter::Controller::NodeInfo.new(0x200_u64, "127.0.0.1"),
+        fabric.root_public_key, fabric.controller_node_id)
+    end
+    delivery = RecordingNodeDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery, "legacy-migration")
+    peer = Socket::IPAddress.new("127.0.0.1", Matter::Controller::NodeInfo::DEFAULT_PORT)
+    expect_raises(Matter::CommissioningError, /already has a commissioned/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp", peer: peer)
+    end
+    wrong_peer = Socket::IPAddress.new("127.0.0.2", Matter::Controller::NodeInfo::DEFAULT_PORT)
+    expect_raises(Matter::CommissioningError, /already has a commissioned/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp", peer: wrong_peer, allow_commissioned: true)
+    end
+    registrar.add_pending(fabric, 0x200_u64, "Lamp", peer: peer, allow_commissioned: true)
+    delivery.calls.should eq(["add:512:Lamp"])
+    registrar.confirm_remote_committed(fabric, 0x200_u64)
+    store.load.pending_datastore_nodes.should be_empty
+    store.load.nodes_for(fabric.fabric_id, fabric.root_public_key,
+      fabric.controller_node_id).has_key?(0x200_u64).should be_true
+  end
+
   it "recovers an acknowledged completion from saved controller state" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = registrar_fabric

@@ -235,6 +235,8 @@ describe Migration do
       0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
     first.attempt_id.should_not be_empty
     second.attempt_id.should eq(first.attempt_id)
+    first.legacy_registration_order?.should be_true
+    second.legacy_registration_order?.should be_true
   end
 
   it "recovers a restarted journal only after proof that each command had no effect" do

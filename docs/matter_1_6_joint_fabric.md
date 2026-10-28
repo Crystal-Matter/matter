@@ -419,6 +419,12 @@ item below as covered only to the extent of its cited tests.
   the A fabric is absent, cleanup can remove that matching Committed entry.
   A lost RemoveNode result retains the durable removal guard until an
   authenticated NodeList read proves absence.
+  Journals saved before AddPendingNode moved ahead of CommissioningComplete
+  are marked as legacy during load. If such a journal resumes after A was
+  commissioned and no A Datastore entry exists, migration verifies A CASE,
+  B ownership, and the recorded device peer before staging the missing entry.
+  The staging intent is durable before the Anchor command, and the local
+  guard is released only after a Committed NodeList read.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and
