@@ -42,6 +42,19 @@ services:
       E2E_DEVICE: matter_shared_switch
       E2E_BINARY: matter_switch
 
+  fabric-sync-target:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_fabric_sync_target
+      E2E_BINARY: matter_switch
+
+  fabric-sync-bridge:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_fabric_sync_bridge
+      MATTER_FABRIC_SYNC_CONTROLLER_STATE: /e2e/logs/matter_fabric_sync_bridge.controller.yml
+      MATTER_FABRIC_SYNC_CONSENT_PATH: /e2e/logs/matter_fabric_sync_bridge.consent
+
   resource-monitoring:
     <<: *device
     environment:
@@ -673,6 +686,8 @@ services:
     depends_on:
       switch: { condition: service_healthy }
       shared-switch: { condition: service_healthy }
+      fabric-sync-target: { condition: service_healthy }
+      fabric-sync-bridge: { condition: service_healthy }
       time-zone: { condition: service_healthy }
       time-zone-peer: { condition: service_healthy }
       tcp-large-payload: { condition: service_healthy }
