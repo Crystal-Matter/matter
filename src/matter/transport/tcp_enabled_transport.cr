@@ -121,15 +121,13 @@ module Matter
 
       private def reserve_ephemeral_port_pair : TCPServer
         EPHEMERAL_BIND_ATTEMPTS.times do
-          server = listen_tcp(0)
           begin
-            rebind_ephemeral_port(server.local_address.port)
-            return server
+            # TCP and UDP ephemeral allocations can have different exclusions.
+            # Select the UDP port first, then try to bind TCP to that port.
+            rebind_ephemeral_port(0)
+            return listen_tcp(port)
           rescue Socket::BindError
-            server.close unless server.closed?
-          rescue ex
-            server.close unless server.closed?
-            raise ex
+            next
           end
         end
         raise Matter::TransportError.new("Could not allocate a shared ephemeral UDP/TCP port")

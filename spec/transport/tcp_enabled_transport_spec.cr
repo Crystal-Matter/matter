@@ -24,6 +24,11 @@ private class TcpTransportWithInitialBindFailureSpec < TcpTransport
     @reject_initial_tcp_bind = true
   end
 
+  def keep_selected_port_fixed_for_spec : Int32
+    @ephemeral_port = false
+    port
+  end
+
   protected def listen_tcp(port : Int32) : TCPServer
     if @reject_initial_tcp_bind && port != 0
       @reject_initial_tcp_bind = false
@@ -61,18 +66,15 @@ describe TcpTransport do
     end
   end
 
-  it "keeps a fixed port when its TCP listener is already occupied" do
-    blocker = TCPServer.new(Socket::Family::INET6)
-    blocker.ipv6_only = false
-    blocker.bind("::", 0)
-    blocker.listen
-    transport = TcpTransport.new(port: blocker.local_address.port)
+  it "keeps a fixed port when its TCP listener cannot bind" do
+    transport = TcpTransportWithInitialBindFailureSpec.new(port: 0)
+    fixed_port = transport.keep_selected_port_fixed_for_spec
     begin
       expect_raises(Socket::BindError) { transport.start }
-      transport.port.should eq(blocker.local_address.port)
+      transport.injected_bind_failures.should eq(1)
+      transport.port.should eq(fixed_port)
     ensure
       transport.close
-      blocker.close
     end
   end
 

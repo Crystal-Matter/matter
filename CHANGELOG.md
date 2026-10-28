@@ -14,6 +14,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before adding a fabric. Ordinary commissioning keeps its existing AddNOC
   behavior.
 
+### TCP and UDP shared ports
+
+- Retry ephemeral shared-port allocation by choosing a UDP port first, then
+  binding TCP to it. This handles Windows hosts with different TCP and UDP
+  ephemeral port exclusions.
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store
