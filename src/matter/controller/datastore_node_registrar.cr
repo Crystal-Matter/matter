@@ -16,6 +16,10 @@ module Matter
         abstract def refresh_node(fabric : FabricInfo, node_id : UInt64) : Nil
         abstract def remove_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
 
+        def remove_committed_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          remove_node(fabric, node_id, friendly_name)
+        end
+
         def node_absent?(fabric : FabricInfo, node_id : UInt64) : Bool
           false
         end
@@ -54,10 +58,20 @@ module Matter
         end
 
         def remove_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          remove_matching_node(fabric, node_id, friendly_name, allow_committed: false)
+        end
+
+        def remove_committed_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+          remove_matching_node(fabric, node_id, friendly_name, allow_committed: true)
+        end
+
+        private def remove_matching_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
+                                         allow_committed : Bool) : Nil
           with_datastore(fabric) do |interaction, session, peer|
             entry = find_node(interaction, session, peer, node_id)
             next unless entry
-            unless entry.friendly_name == friendly_name && pending_node?(entry)
+            unless entry.friendly_name == friendly_name &&
+                   (pending_node?(entry) || (allow_committed && entry.commissioning_status_entry.state.committed?))
               raise Matter::CommissioningError.new("Refusing to remove a different or completed Datastore node")
             end
             invoke(interaction, session, peer, Datastore::CMD_REMOVE_NODE,
@@ -184,7 +198,8 @@ module Matter
         clear(fabric, node_id, PendingDatastoreNode::Stage::Completed)
       end
 
-      def abort(fabric : FabricInfo, node_id : UInt64, confirmed_failure : Bool = false) : Nil
+      def abort(fabric : FabricInfo, node_id : UInt64, confirmed_failure : Bool = false,
+                allow_committed : Bool = false) : Nil
         entry = @store.update do |state|
           index = entry_index(state, fabric, node_id)
           next nil unless index
@@ -199,7 +214,11 @@ module Matter
           current
         end
         return unless entry
-        @delivery.remove_node(fabric, node_id, entry.friendly_name)
+        if allow_committed
+          @delivery.remove_committed_node(fabric, node_id, entry.friendly_name)
+        else
+          @delivery.remove_node(fabric, node_id, entry.friendly_name)
+        end
         clear(fabric, node_id, PendingDatastoreNode::Stage::Removing)
       end
 
@@ -221,6 +240,14 @@ module Matter
         entries = @store.load.pending_datastore_nodes.select { |entry| same_fabric?(entry, fabric) }
         entries.each do |entry|
           next if @target_node_id && entry.node_id != @target_node_id
+          if entry.attempt_id.empty?
+            if @fixed_attempt_id
+              raise Matter::CommissioningError.new("Legacy Datastore registration needs identity claim")
+            end
+            claim_legacy(fabric, entry.node_id, entry.friendly_name, entry.peer_address, entry.peer_port)
+            entry = entry_for(@store.load, fabric, entry.node_id) ||
+                    raise Matter::CommissioningError.new("Datastore registration disappeared during legacy claim")
+          end
           if @fixed_attempt_id && entry.attempt_id != @attempt_id
             raise Matter::CommissioningError.new("Datastore registration belongs to another attempt")
           end
@@ -240,6 +267,32 @@ module Matter
             end
           when PendingDatastoreNode::Stage::Removing
             reconcile_removal(fabric, entry.node_id)
+          end
+        end
+      end
+
+      # Claim a pre-attempt-ID record once, under the backend transaction.
+      # The caller supplies its full saved identity before using the claim.
+      def claim_legacy(fabric : FabricInfo, node_id : UInt64, friendly_name : String,
+                       peer_address : String?, peer_port : Int32) : Nil
+        @store.update do |state|
+          index = entry_index(state, fabric, node_id) ||
+                  raise Matter::CommissioningError.new("Legacy Datastore registration is missing")
+          entry = state.pending_datastore_nodes[index]
+          unless entry.friendly_name == friendly_name && entry.peer_address == peer_address &&
+                 entry.peer_port == peer_port
+            raise Matter::CommissioningError.new("Legacy Datastore registration identity changed")
+          end
+          if entry.attempt_id.empty?
+            if entry.stage.removing?
+              raise Matter::CommissioningError.new("Legacy Datastore removal needs manual reconciliation")
+            end
+            state.pending_datastore_nodes[index] = PendingDatastoreNode.new(entry.fabric_id,
+              entry.root_public_key.dup, entry.controller_node_id, entry.node_id,
+              entry.friendly_name, entry.expires_at_unix, entry.peer_address,
+              entry.peer_port, entry.stage, @attempt_id)
+          else
+            require_attempt!(entry)
           end
         end
       end

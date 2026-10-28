@@ -198,6 +198,45 @@ describe Migration do
     expect_raises(Matter::StorageError, /attempt changed/) { store.save(stale) }
   end
 
+  it "rejects a stale same-attempt stage write without losing an acknowledgement" do
+    store = Migration::JournalStore.new(Matter::Storage::Memory.new)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+    store.save(journal)
+    stale = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    acknowledged = stale
+    acknowledged.commissioning_acknowledged = true
+    store.save(acknowledged)
+    stale.stage = Migration::Stage::CommissioningAnchor
+    stale.stage_version += 1_u64
+    store.save(stale)
+    current = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    current.commissioning_acknowledged?.should be_true
+    stale.stage = Migration::Stage::Ready
+    expect_raises(Matter::StorageError, /stage changed/) { store.save(stale) }
+  end
+
+  it "atomically claims a persisted pre-attempt-ID journal once" do
+    backend = Matter::Storage::Memory.new
+    store = Migration::JournalStore.new(backend)
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2], Migration::Stage::CommissioningAnchor)
+    legacy = journal.to_document
+    legacy.delete("attempt_id")
+    legacy.delete("stage_version")
+    backend.open
+    backend.write(Migration::JournalStore::COLLECTION,
+      "b001-01-b002-a001-02-a002", legacy)
+    first = store.load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    second = Migration::JournalStore.new(backend).load(0xB001_u64, Bytes[1], 0xB002_u64,
+      0xA001_u64, Bytes[2], 0xA002_u64).as(Migration::Journal)
+    first.attempt_id.should_not be_empty
+    second.attempt_id.should eq(first.attempt_id)
+  end
+
   it "recovers a restarted journal only after proof that each command had no effect" do
     boundaries = {
       {"commission", Migration::Stage::CommissioningAnchor, Migration::Stage::Ready},

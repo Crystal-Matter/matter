@@ -45,6 +45,7 @@ module Matter
         property fail_safe_max_seconds : UInt16? = nil
         property attempt_id : String = ""
         property previous_attempt_id : String = ""
+        property stage_version : UInt64 = 0_u64
 
         def initialize(@old_fabric_id : UInt64, @anchor_fabric_id : UInt64,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
@@ -70,15 +71,31 @@ module Matter
           @backend.open unless @backend.open?
           @backend.transaction do
             current_document = @backend.read(COLLECTION, document_id(journal))
+            updated = journal
             if current_document
               current = Journal.from_document(current_document)
-              if current.attempt_id != journal.attempt_id &&
-                 !(current.stage.commissioning_anchor? && journal.stage.ready? &&
-                 journal.previous_attempt_id == current.attempt_id)
+              rotation = current.attempt_id != journal.attempt_id &&
+                         current.stage.commissioning_anchor? && journal.stage.ready? &&
+                         journal.previous_attempt_id == current.attempt_id
+              if current.attempt_id != journal.attempt_id && !rotation
                 raise Matter::StorageError.new("Migration journal attempt changed since load")
               end
+              if current.stage == journal.stage
+                unless !rotation && journal.stage_version == current.stage_version
+                  raise Matter::StorageError.new("Migration journal stage changed since load")
+                end
+              elsif journal.stage_version != current.stage_version + 1_u64
+                raise Matter::StorageError.new("Migration journal stage changed since load")
+              end
+              updated.commissioning_acknowledged = current.commissioning_acknowledged? || journal.commissioning_acknowledged?
+              if current_deadline = current.fail_safe_deadline_unix
+                if !journal.fail_safe_deadline_unix || current_deadline >= journal.fail_safe_deadline_unix.as(Int64)
+                  updated.fail_safe_deadline_unix = current_deadline
+                  updated.fail_safe_max_seconds = current.fail_safe_max_seconds
+                end
+              end
             end
-            unless @backend.compare_and_swap(COLLECTION, document_id(journal), current_document, journal.to_document)
+            unless @backend.compare_and_swap(COLLECTION, document_id(journal), current_document, updated.to_document)
               raise Matter::StorageError.new("Migration journal changed since load")
             end
           end
@@ -90,7 +107,18 @@ module Matter
           @backend.open unless @backend.open?
           id = identity_key(old_fabric_id, old_root_public_key, old_node_id,
             anchor_fabric_id, anchor_root_public_key, anchor_node_id)
-          @backend.read(COLLECTION, id).try { |document| Journal.from_document(document) }
+          @backend.transaction do
+            document = @backend.read(COLLECTION, id)
+            next nil unless document
+            journal = Journal.from_document(document)
+            if journal.attempt_id.empty?
+              journal.attempt_id = Random::Secure.random_bytes(16).hexstring
+              unless @backend.compare_and_swap(COLLECTION, id, document, journal.to_document)
+                raise Matter::StorageError.new("Legacy migration journal claim changed since load")
+              end
+            end
+            journal
+          end
         end
 
         private def document_id(journal : Journal) : String
@@ -327,6 +355,13 @@ module Matter
               item.node_id == @anchor_node_id
           end
           return unless pending
+          claim_legacy_anchor_registration!(pending)
+          pending = @store.load.pending_datastore_nodes.find do |item|
+            item.fabric_id == @anchor_fabric.fabric_id &&
+              item.root_public_key == @anchor_fabric.root_public_key &&
+              item.controller_node_id == @anchor_fabric.controller_node_id &&
+              item.node_id == @anchor_node_id
+          end || raise Matter::CommissioningError.new("Staged Anchor registration disappeared during claim")
           unless owned_pending_registration?(pending)
             raise Matter::CommissioningError.new("Staged Anchor registration belongs to another attempt")
           end
@@ -334,7 +369,7 @@ module Matter
           if pending.stage.removing?
             registrar.reconcile_removal(@anchor_fabric, @anchor_node_id)
           else
-            registrar.abort(@anchor_fabric, @anchor_node_id, confirmed_failure: true)
+            registrar.abort(@anchor_fabric, @anchor_node_id, confirmed_failure: true, allow_committed: true)
           end
         end
 
@@ -481,11 +516,11 @@ module Matter
                     port: @device_peer.port), @anchor_fabric.root_public_key,
                   @anchor_fabric.controller_node_id)
               end
-              datastore_registrar.resume(@anchor_fabric)
+              resume_pending_datastore_registration!
               return
             end
             verify_anchor!
-            datastore_registrar.resume(@anchor_fabric)
+            resume_pending_datastore_registration!
           when Stage::AnchorVerified
             verify_anchor!
           when Stage::AnchorNodeAdded
@@ -622,7 +657,50 @@ module Matter
         end
 
         private def owned_pending_registration? : Bool
-          @store.load.pending_datastore_nodes.any? { |item| owned_pending_registration?(item) }
+          item = @store.load.pending_datastore_nodes.find do |entry|
+            entry.node_id == @anchor_node_id &&
+              entry.fabric_id == @anchor_fabric.fabric_id &&
+              entry.root_public_key == @anchor_fabric.root_public_key &&
+              entry.controller_node_id == @anchor_fabric.controller_node_id
+          end
+          return false unless item
+          if item.attempt_id.empty?
+            claim_legacy_anchor_registration!(item)
+            item = @store.load.pending_datastore_nodes.find do |entry|
+              entry.node_id == @anchor_node_id &&
+                entry.fabric_id == @anchor_fabric.fabric_id &&
+                entry.root_public_key == @anchor_fabric.root_public_key &&
+                entry.controller_node_id == @anchor_fabric.controller_node_id
+            end || return false
+          end
+          owned_pending_registration?(item)
+        end
+
+        private def claim_legacy_anchor_registration!(item : PendingDatastoreNode) : Nil
+          return unless item.attempt_id.empty?
+          unless item.fabric_id == @anchor_fabric.fabric_id &&
+                 item.root_public_key == @anchor_fabric.root_public_key &&
+                 item.controller_node_id == @anchor_fabric.controller_node_id &&
+                 item.node_id == @anchor_node_id &&
+                 item.friendly_name == @friendly_name &&
+                 item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
+                 item.peer_port == @device_peer.port
+            raise Matter::CommissioningError.new("Legacy Anchor registration identity changed")
+          end
+          datastore_registrar.claim_legacy(@anchor_fabric, @anchor_node_id,
+            @friendly_name, item.peer_address, item.peer_port)
+        end
+
+        private def resume_pending_datastore_registration! : Nil
+          if item = @store.load.pending_datastore_nodes.find do |entry|
+               entry.fabric_id == @anchor_fabric.fabric_id &&
+               entry.root_public_key == @anchor_fabric.root_public_key &&
+               entry.controller_node_id == @anchor_fabric.controller_node_id &&
+               entry.node_id == @anchor_node_id
+             end
+            claim_legacy_anchor_registration!(item)
+          end
+          datastore_registrar.resume(@anchor_fabric)
         end
 
         private def owned_pending_registration?(item : PendingDatastoreNode) : Bool
@@ -1030,8 +1108,9 @@ module Matter
           @port.finalize_migration! if stage.complete?
           @port.finalize_rollback! if stage.rolled_back?
           previous_stage = @journal.stage
-          updated = Journal.from_document(@journal.to_document)
+          updated = @journal
           updated.stage = stage
+          updated.stage_version += 1_u64
           if previous_stage.commissioning_anchor? && stage.ready?
             updated.previous_attempt_id = updated.attempt_id
             updated.attempt_id = Random::Secure.random_bytes(16).hexstring

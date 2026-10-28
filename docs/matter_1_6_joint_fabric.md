@@ -412,6 +412,13 @@ item below as covered only to the extent of its cited tests.
   other uncertain mutation stages still require explicit reconciliation.
   Older journals lacking the reported duration remain uncertain and require
   manual repair rather than adopting A from a UTC timestamp alone.
+  Recovery atomically assigns attempt IDs to older journals and matching
+  staged Datastore records that predate attempt tracking. A failed
+  CommissioningComplete may leave the A Datastore entry Committed while the
+  device's A fabric rolls back under fail-safe. After authenticated proof that
+  the A fabric is absent, cleanup can remove that matching Committed entry.
+  A lost RemoveNode result retains the durable removal guard until an
+  authenticated NodeList read proves absence.
   The local command channel accepts `reconcile-device-migration` after an
   authenticated completed postcondition, `reconcile-device-migration-no-effect`
   after authenticated proof that the command had no effect, and
