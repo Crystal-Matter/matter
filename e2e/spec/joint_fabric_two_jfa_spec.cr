@@ -1658,7 +1658,7 @@ describe "three provisioned Joint Fabric Administrators" do
     Matter::Controller::JointCommissioning.assert_status_success(add_membership)
     keyed_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(keyed_group_cat, keyed_group_version)).id
-    keyed_acl = JfaRolloutDatastore::DatastoreACLEntryStruct.new(
+    keyed_acl = JfaRolloutDatastore::DatastoreAccessControlEntryStruct.new(
       JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
       JfaRolloutDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
       [keyed_cat_subject], nil)
@@ -1694,14 +1694,14 @@ describe "three provisioned Joint Fabric Administrators" do
       .command_fields.as(TLV::Any)
     Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(key_index_fields.to_slice)
       .group_key_set_i_ds.should contain(old_key_set_id)
-    initial_map_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+    initial_membership_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
       endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
-      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
-      attribute_id: Matter::Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
-    initial_map_data = initial_map_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
+      attribute_id: Matter::Cluster::Groupcast::ATTR_MEMBERSHIP)
+    initial_membership_data = initial_membership_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
-    Array(Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).from_tlv(initial_map_data.to_slice)
-      .any? { |entry| entry.group_id == keyed_group_id && entry.group_key_set_id == old_key_set_id }.should be_true
+    Array(Matter::Cluster::Groupcast::MembershipStruct).from_tlv(initial_membership_data.to_slice)
+      .any? { |entry| entry.group_id == keyed_group_id && entry.key_set_id == old_key_set_id }.should be_true
     auxiliary = anchor_im.invoke(session: a_target_session, peer: migration_peer,
       endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
       cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
@@ -1750,15 +1750,15 @@ describe "three provisioned Joint Fabric Administrators" do
       key_index_fields.to_slice).group_key_set_i_ds
     installed_key_ids.should contain(new_key_set_id)
     installed_key_ids.should_not contain(old_key_set_id)
-    rotated_map_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+    rotated_membership_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
       endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
-      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
-      attribute_id: Matter::Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
-    rotated_map_data = rotated_map_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
+      attribute_id: Matter::Cluster::Groupcast::ATTR_MEMBERSHIP)
+    rotated_membership_data = rotated_membership_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
-    rotated_maps = Array(Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).from_tlv(rotated_map_data.to_slice)
-    rotated_maps.any? { |entry| entry.group_id == keyed_group_id && entry.group_key_set_id == new_key_set_id }.should be_true
-    rotated_maps.any? { |entry| entry.group_id == keyed_group_id && entry.group_key_set_id == old_key_set_id }.should be_false
+    rotated_memberships = Array(Matter::Cluster::Groupcast::MembershipStruct).from_tlv(rotated_membership_data.to_slice)
+    rotated_memberships.any? { |entry| entry.group_id == keyed_group_id && entry.key_set_id == new_key_set_id }.should be_true
+    rotated_memberships.any? { |entry| entry.group_id == keyed_group_id && entry.key_set_id == old_key_set_id }.should be_false
     keyed_revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_revoked_client,
       migration_peer, keyed_revoked, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
     keyed_revoked_im = Matter::Controller::ImClient.new(keyed_revoked_client, E2E::COMMAND_TIMEOUT)
