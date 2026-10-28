@@ -73,28 +73,28 @@ module Matter
       def open(target_fabric_index : UInt8, target_node_id : UInt64, caller_fabric_index : UInt8,
                caller_node_id : UInt64,
                request : Cluster::AdministratorCommissioning::OpenCommissioningWindowRequest) : InteractionModel::Status
-        forward(target_fabric_index, target_node_id, caller_fabric_index, caller_node_id, :open) do |im, session, peer|
-          status = invoke_status!(im, session, peer, Cluster::AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
+        forward(target_fabric_index, target_node_id, caller_fabric_index, caller_node_id, :open) do |im_client, session, peer|
+          status = invoke_status!(im_client, session, peer, Cluster::AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
             request.to_slice)
           next status unless status.success?
-          observe_window!(im, session, peer, Cluster::AdministratorCommissioning::CommissioningWindowStatus::EnhancedWindowOpen)
+          observe_window!(im_client, session, peer, Cluster::AdministratorCommissioning::CommissioningWindowStatus::EnhancedWindowOpen)
           status
         end
       end
 
       def revoke(target_fabric_index : UInt8, target_node_id : UInt64, caller_fabric_index : UInt8,
                  caller_node_id : UInt64) : InteractionModel::Status
-        forward(target_fabric_index, target_node_id, caller_fabric_index, caller_node_id, :revoke) do |im, session, peer|
-          status = invoke_status!(im, session, peer, Cluster::AdministratorCommissioning::CMD_REVOKE_COMMISSIONING)
+        forward(target_fabric_index, target_node_id, caller_fabric_index, caller_node_id, :revoke) do |im_client, session, peer|
+          status = invoke_status!(im_client, session, peer, Cluster::AdministratorCommissioning::CMD_REVOKE_COMMISSIONING)
           next status unless status.success?
-          observe_window!(im, session, peer, Cluster::AdministratorCommissioning::CommissioningWindowStatus::WindowNotOpen)
+          observe_window!(im_client, session, peer, Cluster::AdministratorCommissioning::CommissioningWindowStatus::WindowNotOpen)
           status
         end
       end
 
       def refresh : Nil
-        with_target(binding!) do |im, session, peer|
-          observe_window!(im, session, peer)
+        with_target(binding!) do |im_client, session, peer|
+          observe_window!(im_client, session, peer)
         end
       end
 
@@ -110,7 +110,7 @@ module Matter
           return InteractionModel::Status.unsupported_access
         end
         result = InteractionModel::Status.failure
-        with_target(binding) { |im, session, peer| result = yield im, session, peer }
+        with_target(binding) { |im_client, session, peer| result = yield im_client, session, peer }
         result
       rescue ex
         Log.error(exception: ex) { "Bridged commissioning #{operation} failed for target #{target_node_id}" }
@@ -139,10 +139,13 @@ module Matter
           data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
                  raise Matter::AuthenticationError.new("Target Fabrics read returned no data")
           descriptors = Array(Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(data.to_slice)
-          unless descriptors.any? { |item| item.fabric_index == binding.target_fabric_index &&
-                 item.fabric_id == binding.fabric_id &&
-                 item.root_public_key == binding.root_public_key &&
-                 item.node_id == binding.target_node_id }
+          matches_binding = descriptors.any? do |item|
+            item.fabric_index == binding.target_fabric_index &&
+              item.fabric_id == binding.fabric_id &&
+              item.root_public_key == binding.root_public_key &&
+              item.node_id == binding.target_node_id
+          end
+          unless matches_binding
             raise Matter::AuthenticationError.new("Bridged target fabric identity changed")
           end
           yield im, session, peer
