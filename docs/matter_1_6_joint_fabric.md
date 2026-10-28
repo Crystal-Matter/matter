@@ -782,13 +782,26 @@ InvokeResponse send discards its pending task and permits another preparation.
 An authenticated retransmission of the same single-command `CommissionNode`
 request can retry on its original MRP counter; a multi-command request needs a
 fresh InvokeRequest so other commands cannot be executed twice. A successful
-send consumes the approval. Ordinary device and bridge examples
-do not advertise this cluster, and the current slice is not a complete
-reverse-commissioning flow.
+send consumes the approval. Ordinary device and bridge examples do not
+advertise this cluster.
 `examples/matter_commissioner_control_device.cr` is an opt-in synthetic
-Aggregator used only for chip-tool interoperability testing. It auto-approves
-one test VID/PID pair and returns dummy reverse-window bytes with a no-op
-deferred task; it does not open a target window or commission a node.
+Aggregator used for command and event interoperability testing. It returns
+dummy reverse-window bytes and does not commission a target.
+
+The regular Docker E2E also exercises a real Crystal target through
+`examples/matter_reverse_commissioning_device.cr` and
+`examples/matter_reverse_target_device.cr`. With explicit test consent, the
+host approves the target's fixed test VID/PID, generates a fresh SPAKE2+
+verifier, and returns it through Commissioner Control. The chip-tool requester
+opens that target's enhanced commissioning window after the response arrives.
+The host's deferred task then attests the target, checks the approved VID/PID,
+and commissions it onto its persisted test source fabric. The E2E verifies the
+target has two fabrics and the controller recorded its Node ID. The shared
+window-parameter file and test root are fixture-only facilities; production
+hosts must supply their own consent, trust policy and requester-to-target
+window delivery. This regular fixture does not enroll the Aggregator device
+onto the controller's source fabric; the SDK run below covers a full two-fabric
+Aggregator and bridge path.
 
 For a real two-fabric SDK interoperability run, use
 `e2e/interop/sdk_reverse_commissioning.sh` on Linux x64. It pins the official
