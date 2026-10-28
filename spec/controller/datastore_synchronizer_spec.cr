@@ -333,6 +333,7 @@ describe Matter::Controller::DatastoreSynchronizer do
       .should eq(Datastore::DatastoreStateEnum::DeletePending)
     store.endpoint_binding_list.all?(&.status_entry.state.delete_pending?).should be_true
 
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
     im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: peer_id, endpoint: 1_u16)]
     im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(group_id)]
     synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
@@ -355,7 +356,6 @@ describe Matter::Controller::DatastoreSynchronizer do
       11_u16, 1_u16, target_id)).success?.should be_true
     store.refresh_node(Datastore::RefreshNodeRequest.new(target_id)).success?.should be_true
     im.parts_list = [1_u16]
-    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
     synchronizer.sync_node(store, target_id, datastore_session, peer)
     store.endpoint_group_id_list.should be_empty
     store.node_key_set_list.map(&.group_key_set_id).should eq([Datastore::IPK_KEY_SET_ID])
@@ -1509,8 +1509,6 @@ describe Matter::Controller::DatastoreSynchronizer do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)
     im.group_response_id = Matter::DataType::GroupId.new(3_u16)
-    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID]
-    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(2_u16)]
     store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
     store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
       2_u64, "kitchen", 1_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
@@ -1531,6 +1529,8 @@ describe Matter::Controller::DatastoreSynchronizer do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)
     im.group_response_id = Matter::DataType::GroupId.new(3_u16)
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID]
+    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(2_u16)]
     store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
     deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
     store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(0x100_u64, 1_u16, 2_u16, deleting)]
