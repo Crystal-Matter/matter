@@ -4280,6 +4280,7 @@ module MatterJointFabricAdministrator
             # SDK Administrators can reuse this newly authenticated CASE
             # session for ICACCSRRequest immediately after Announce. The
             # listener must continue to receive it once this client closes.
+            client.relinquish_session(session)
             message_handler.registry.establish_session(session, preserve_existing: true)
           })
       ensure

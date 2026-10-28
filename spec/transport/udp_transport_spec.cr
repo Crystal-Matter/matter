@@ -250,6 +250,10 @@ class AuthenticationBoundaryTransport < Matter::Transport::UDPTransport
   def unsecured_counter_count_for_spec : Int32
     @unsecured_counters.size
   end
+
+  def observer_snapshot_for_spec : Array(Proc(Matter::Codec::MessageCodec::Message, Socket::IPAddress, Bool))
+    @observer_mutex.synchronize { @message_observers.values.to_a }
+  end
 end
 
 describe Matter::Transport::UDPTransport do
@@ -285,6 +289,46 @@ describe Matter::Transport::UDPTransport do
     next_response = Matter::Codec::MessageCodec::Base.encode_message(next_response_packet, response_header, Bytes.empty)
     transport.receive_for_spec(next_response, mapped_peer)
     received_by_device.should eq([exchange_id])
+  ensure
+    client.try(&.close)
+    transport.try(&.close)
+  end
+
+  it "lets the device receive a secure packet after a shared Client relinquishes its session" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    received_by_device = [] of UInt16
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) {
+      received_by_device << message.packet_header.session_id
+      nil
+    }
+    client = Matter::Controller::Client.new(transport: transport)
+    session = Matter::Session::SecureContext.new(7_u16, 8_u16,
+      Matter::Session::SessionType::Unicast, Bytes.new(16), Bytes.new(16))
+    client.register_session(session)
+    peer = Socket::IPAddress.new("127.0.0.1", transport.port)
+    payload_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 1_u16, protocol_id: Matter::Protocol::ProtocolId::InteractionModel.value,
+      message_type: Matter::InteractionModel::MessageType::InvokeRequest.value,
+      initiator_message: true, requires_acknowledge: false)
+    packet_header = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: session.session_id, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 1_u32)
+    first = Matter::Codec::MessageCodec::Base.encode_message(packet_header, payload_header, Bytes.empty)
+    transport.receive_for_spec(first, peer)
+    received_by_device.should be_empty
+
+    observer = transport.observer_snapshot_for_spec.first
+    client.relinquish_session(session)
+    packet_header = Matter::Codec::MessageCodec::PacketHeader.new(
+      session_id: session.session_id, session_type: Matter::Codec::MessageCodec::SessionType::Unicast,
+      message_id: 2_u32)
+    second = Matter::Codec::MessageCodec::Base.encode_message(packet_header, payload_header, Bytes.empty)
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(second)
+    message = Matter::Codec::MessageCodec::Message.new(packet.header, payload_header,
+      packet.payload, packet.header_bytes)
+    observer.call(message, peer).should be_false
+    transport.receive_for_spec(second, peer)
+    received_by_device.should eq([session.session_id])
   ensure
     client.try(&.close)
     transport.try(&.close)

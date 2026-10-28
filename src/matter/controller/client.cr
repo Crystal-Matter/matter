@@ -325,6 +325,19 @@ module Matter
         @sessions[session_id]?
       end
 
+      # Transfer a verified CASE session to a device sharing this transport.
+      # The observer may already be in a dispatch snapshot; removing its
+      # session claim before the device registers the session keeps the next
+      # secure packet on the device's receive path.
+      def relinquish_session(session : Session::SecureContext) : Nil
+        @@shared_registry_mutex.synchronize do
+          unless @sessions[session.session_id]?.same?(session)
+            raise Matter::ProtocolError.new("Controller does not own session #{session.session_id}")
+          end
+          @sessions.delete(session.session_id)
+        end
+      end
+
       def next_exchange_id : UInt16
         id = @next_exchange_id
         @next_exchange_id = @next_exchange_id &+ 1
@@ -353,7 +366,7 @@ module Matter
           !msg.payload_header.initiator_message? &&
             @owned_unsecured_exchanges.includes?({msg.payload_header.exchange_id, canonical_peer(peer)})
         else
-          @sessions.has_key?(msg.packet_header.session_id)
+          @@shared_registry_mutex.synchronize { @sessions.has_key?(msg.packet_header.session_id) }
         end
       end
 
