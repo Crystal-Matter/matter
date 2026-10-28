@@ -536,35 +536,6 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.node_acl_list.map(&.list_id).should eq([1_u16])
   end
 
-  it "makes ACL removal a no-op when the node exists but the entry is absent" do
-    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
-    request = Datastore::RemoveACLFromNodeRequest.new(7_u16, 42_u64)
-    cluster.remove_acl_from_node(request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
-    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
-    version = cluster.data_version
-    state = cluster.save_state
-    cluster.remove_acl_from_node(request).success?.should be_true
-    cluster.data_version.should eq(version)
-    cluster.save_state.should eq(state)
-
-    acl = Datastore::DatastoreAccessControlEntryStruct.new(
-      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
-      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [42_u64], nil)
-    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
-    existing = Datastore::RemoveACLFromNodeRequest.new(cluster.node_acl_list.first.list_id, 42_u64)
-    cluster.remove_acl_from_node(existing).success?.should be_true
-    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
-    version = cluster.data_version
-    state = cluster.save_state
-    cluster.remove_acl_from_node(existing).success?.should be_true
-    cluster.data_version.should eq(version)
-    cluster.save_state.should eq(state)
-    cluster.complete_acl(42_u64, existing.list_id).should be_true
-    version = cluster.data_version
-    cluster.remove_acl_from_node(existing).success?.should be_true
-    cluster.data_version.should eq(version)
-  end
-
   it "rejects oversized datastore ACL subjects and targets without changing state" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
@@ -990,6 +961,34 @@ describe Matter::Cluster::JointFabricDatastore do
     restored = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     restored.restore_state(cluster.save_state.as(Matter::Storage::Document))
     restored.status.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+  end
+  it "makes ACL removal a no-op when the node exists but the entry is absent" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    request = Datastore::RemoveACLFromNodeRequest.new(7_u16, 42_u64)
+    cluster.remove_acl_from_node(request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_acl_from_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [42_u64], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    existing = Datastore::RemoveACLFromNodeRequest.new(cluster.node_acl_list.first.list_id, 42_u64)
+    cluster.remove_acl_from_node(existing).success?.should be_true
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_acl_from_node(existing).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+    cluster.complete_acl(42_u64, existing.list_id).should be_true
+    version = cluster.data_version
+    cluster.remove_acl_from_node(existing).success?.should be_true
+    cluster.data_version.should eq(version)
   end
 end
 
