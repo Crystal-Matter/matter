@@ -209,6 +209,8 @@ describe "Matter 1.6 Joint Fabric certification parity" do
     ]
     invalid.each { |request| service.open_joint_commissioning_window(administrator, request).should eq(IMStatus.invalid_command) }
     opened.should eq(0)
+    service.open_joint_commissioning_window(administrator, valid).should eq(IMStatus.unsupported_access)
+    administrator.jcm_add_noc_guard_ready = -> { true }
     {16, 24, 32}.each do |size|
       request = JFA::OpenJointCommissioningWindowRequest.new(400_u16, valid.pake_passcode_verifier,
         valid.discriminator, 50_000_u32, Bytes.new(size, 0_u8))
