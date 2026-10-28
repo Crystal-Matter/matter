@@ -556,8 +556,10 @@ module Matter
         protocol_lock.try(&.lock)
         @on_before_direct_mutation.try(&.call)
         mapping_current = key_set_ids.all? do |identity, key_set_id|
-          @group_key_map.any? { |mapping| mapping.fabric_index == identity[0] &&
-            mapping.group_id == identity[1] && mapping.group_key_set_id == key_set_id }
+          @group_key_map.any? do |mapping|
+            mapping.fabric_index == identity[0] &&
+              mapping.group_id == identity[1] && mapping.group_key_set_id == key_set_id
+          end
         end
         return false if @groupcast_group_table == entries && mapping_current
 

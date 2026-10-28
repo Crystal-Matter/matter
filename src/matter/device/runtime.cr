@@ -1654,8 +1654,8 @@ module Matter
       end
       merged = entries.group_by { |entry| {entry.fabric_index, entry.group_id} }.map do |identity, memberships|
         Cluster::GroupKeyManagement::GroupInfoMapStruct.new(identity[1],
-          memberships.flat_map(&.endpoints).uniq.sort!, memberships.first.group_name, identity[0])
-      end.sort_by { |entry| {entry.fabric_index, entry.group_id} }
+          memberships.flat_map(&.endpoints).uniq!.sort!, memberships.first.group_name, identity[0])
+      end.sort_by! { |entry| {entry.fabric_index, entry.group_id} }
       changed = keys.reconcile_legacy_groups(merged)
       groupcast_entries = [] of Cluster::GroupKeyManagement::GroupInfoMapStruct
       groupcast_key_ids = Hash(Tuple(UInt8, UInt16), UInt16).new
