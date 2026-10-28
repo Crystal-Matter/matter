@@ -151,6 +151,22 @@ private def wait_two_jfa_acl(im : Matter::Controller::ImClient,
   end
 end
 
+private def assert_two_jfa_on_off_access(im : Matter::Controller::ImClient,
+                                         session : Matter::Session::SecureContext,
+                                         peer : Socket::IPAddress, allowed : Bool) : Nil
+  report = im.read_attribute(session: session, peer: peer,
+    endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+    attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+  entry = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).first
+  if allowed
+    data = entry.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(data.to_slice).should be_true
+  else
+    entry.attribute_status.as(Matter::InteractionModel::AttributeStatusIB)
+      .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
+  end
+end
+
 private def jfa_rollout_attribute(type : T.class, im : Matter::Controller::ImClient,
                                   session : Matter::Session::SecureContext,
                                   peer : Socket::IPAddress, attribute_id : UInt32) : T forall T
@@ -1438,6 +1454,8 @@ describe "three provisioned Joint Fabric Administrators" do
       joiner_bootstrap.fabric, joined_identity, cross_signed_icac,
       joiner_bootstrap.fabric.intermediate_private_key.as(Bytes))
     b_controller_node_id = 0xA105_u64
+    b_revoked_controller_node_id = 0xA106_u64
+    b_group_id = 11_u16
     b_group_cat = 0x1235_u16
     b_group_version = 2_u16
     b_controller = b_issuer.delegate_controller(joined_identity,
@@ -1463,7 +1481,7 @@ describe "three provisioned Joint Fabric Administrators" do
       .status.status.should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
 
     Matter::Controller::SharedFabric.grant_joint_admin(anchor_im, anchor_session, anchor_peer,
-      1_u16, 0xA102_u64, 0xA201_u64, 1_u16, 11_u16, "B ecosystem controllers", b_controller)
+      1_u16, 0xA102_u64, 0xA201_u64, 1_u16, b_group_id, "B ecosystem controllers", b_controller)
     b_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(b_group_cat, b_group_version)).id
     wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
@@ -1488,6 +1506,65 @@ describe "three provisioned Joint Fabric Administrators" do
     persisted_data = persisted.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     Bool.from_tlv(persisted_data.to_slice).should be_true
+
+    # Two B-issued controllers initially share the same group CAT. Rotate its
+    # version through A's Anchor to revoke only the second controller, while
+    # B's original controller keeps its operational key and receives a new NOC.
+    revoked_controller = b_issuer.delegate_controller(joined_identity,
+      b_revoked_controller_node_id, b_group_cat, b_group_version, crypto)
+    revoked_controller_client = Matter::Controller::Client.new(
+      unsecured_source_node_id: revoked_controller.controller_node_id)
+    revoked_controller_im = Matter::Controller::ImClient.new(revoked_controller_client, E2E::COMMAND_TIMEOUT)
+    revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
+      migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, true)
+    assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
+
+    b_signing_authority = Matter::Controller::FabricInfo.new(
+      b_controller.fabric_id, b_controller.controller_node_id, b_controller.ipk_value,
+      b_controller.root_cert, b_controller.root_public_key, b_controller.controller_noc,
+      b_controller.controller_private_key, admin_vendor_id: b_controller.admin_vendor_id,
+      intermediate_cert: cross_signed_icac,
+      intermediate_private_key: joiner_bootstrap.fabric.intermediate_private_key.as(Bytes),
+      ipk_epoch_keys: b_controller.ipk_epoch_keys)
+    revocation = Matter::Controller::SharedFabric.stage_joint_group_revocation(
+      anchor_im, anchor_session, anchor_peer, 1_u16, b_group_id, revoked_controller,
+      [{b_controller_store, b_controller_node_id}], b_signing_authority, 0xA102_u64)
+    revocation.previous_version.should eq(b_group_version)
+    revocation.current_version.should eq(b_group_version + 1_u16)
+    revocation.target_node_ids.should contain(0xA201_u64)
+    revocation_deadline = Time.instant + 120.seconds
+    loop do
+      status = Matter::Controller::SharedFabric.joint_group_revocation_status(
+        anchor_im, anchor_session, anchor_peer, 1_u16, revocation)
+      break if status.effective?
+      raise Matter::TimeoutError.new("Joint Fabric group ACL revocation did not commit") if Time.instant >= revocation_deadline
+      sleep 1.second
+    end
+    renewed_controller = b_controller_store.load.fabric_for(
+      b_controller.fabric_id, b_controller.root_public_key, b_controller_node_id)
+    renewed_controller.controller_private_key.should eq(b_controller.controller_private_key)
+    renewed_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(b_group_cat, b_group_version + 1_u16)).id
+    Matter::Crypto::MatterCertificate.subject_ids_from_tlv(renewed_controller.controller_noc)
+      .should contain(renewed_subject)
+
+    # Pair again to create fresh CASE sessions with the old revoked and new
+    # survivor NOCs. Retain each Client's unsecured counter across Sigma1.
+    revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
+      migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, false)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
+      migration_peer, renewed_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
+
+    migration_target.restart!
+    revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(revoked_controller_client,
+      migration_peer, revoked_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(revoked_controller_im, revoked_session, migration_peer, false)
+    b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
+      migration_peer, renewed_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
 
     before_transfer = jfa_command("matter_joint_fabric_anchor",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-new-anchor", 0xA102_u64,
@@ -2540,6 +2617,7 @@ describe "three provisioned Joint Fabric Administrators" do
     mirror.try(&.wait)
     mirror_log.try(&.close)
     b_controller_client.try(&.close)
+    revoked_controller_client.try(&.close)
     anchor_client.try(&.close)
     joiner_client.try(&.close)
     third_client.try(&.close)
