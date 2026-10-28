@@ -15,8 +15,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   existing entry. A durable acknowledged attempt may reread its own pending
   registration; an unacknowledged add remains pending for reconciliation.
 - Custom Datastore delivery adapters must implement an authenticated NodeList
-  availability check before commissioning. Joint Commissioning hosts that do
-  not configure a registrar remain responsible for this check.
+  availability check before commissioning and verify an acknowledged pending
+  entry before treating it as a retry. Joint Commissioning hosts that do not
+  configure a registrar remain responsible for the NodeList check.
 
 ### Controller unsecured counter leases
 

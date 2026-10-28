@@ -137,6 +137,21 @@ private def registrar_fabric : Matter::Controller::FabricInfo
 end
 
 describe Matter::Controller::DatastoreNodeRegistrar do
+  it "does not let a custom delivery claim an acknowledged entry without a retry verifier" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    store.update(&.install_fabric(fabric))
+    delivery = RecordingNodeDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+
+    registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    expect_raises(Matter::ConfigurationError, /verify an acknowledged/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp")
+    end
+    delivery.calls.should eq(["add:512:Lamp"])
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+  end
+
   it "persists AddPendingNode before final CASE and removes it on pre-completion failure" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = registrar_fabric

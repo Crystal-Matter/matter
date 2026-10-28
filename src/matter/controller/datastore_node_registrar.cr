@@ -28,7 +28,7 @@ module Matter
         abstract def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
 
         def retry_acknowledged_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
-          add_pending_node(fabric, node_id, friendly_name)
+          raise Matter::ConfigurationError.new("Datastore delivery cannot verify an acknowledged pending registration")
         end
 
         abstract def refresh_node(fabric : FabricInfo, node_id : UInt64) : Nil
