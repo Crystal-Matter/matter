@@ -40,6 +40,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   binding TCP to it. This handles Windows hosts with different TCP and UDP
   ephemeral port exclusions.
 
+
+### Joint Fabric ICAC correction
+
+- An authenticated Joint Commissioning Method AddICAC validation failure no
+  longer consumes the fail-safe window's single successful cross-signing
+  operation. The initiator may correct the certificate and retry. Status-only
+  AddICAC outside that flow retains the official TC_JFADMIN_1_2 one-attempt
+  behavior.
+
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store
