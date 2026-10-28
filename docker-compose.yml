@@ -564,6 +564,7 @@ services:
       MATTER_REVERSE_CONTROLLER_STATE: /e2e/logs/reverse-controller.yml
       MATTER_REVERSE_TEST_CONSENT: "1"
       MATTER_REVERSE_CRYSTAL_TARGET: "1"
+      MATTER_REVERSE_CRYSTAL_TARGET_HOST: reverse-target
       MATTER_REVERSE_WINDOW_PATH: /e2e/logs/reverse-window.json
 
   reverse-target:
