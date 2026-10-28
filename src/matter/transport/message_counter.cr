@@ -132,7 +132,7 @@ module Matter
       end
 
       def reset(value : UInt32 = 0_u32) : Nil
-        raise Matter::ConfigurationError.new("Cannot reset a leased message counter") if @lease_owner
+        raise Matter::ConfigurationError.new("Cannot reset a leased message counter") if @lease_owner_token
         @counter = value
         @remaining_messages = nil
         @received_window.clear
