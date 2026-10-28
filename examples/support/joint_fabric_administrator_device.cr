@@ -3921,7 +3921,7 @@ module MatterJointFabricAdministrator
         },
         anchor_registration_committed: -> {
           if request.interrupt_after_migration_anchor_node_committed?
-            raise Matter::TransportError.new("Injected interruption after Anchor AddPendingNode committed")
+            raise Matter::TransportError.new("Injected interruption after Anchor NodeList committed")
           end
         },
         anchor_node_removed: -> {

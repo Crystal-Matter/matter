@@ -55,6 +55,10 @@ private class MigrationPort < Migration::Port
     raise Matter::CommissioningError.new("operation took effect") unless @no_effect
   end
 
+  def cleanup_failed_anchor_registration! : Nil
+    call("cleanup-anchor-pending")
+  end
+
   def rollback_anchor!(anchor_registered : Bool) : Nil
     call("rollback-#{anchor_registered}")
   end
@@ -148,6 +152,32 @@ describe Migration do
     runner.journal.stage.should eq(Migration::Stage::RemovingOldFabric)
     expect_raises(Matter::CommissioningError) { runner.run }
     port.calls.count("remove-fabric").should eq(1)
+  end
+
+  it "cleans a staged Anchor node only after proving commissioning had no effect" do
+    port = MigrationPort.new
+    port.fail_at = "commission"
+    journal = Migration::Journal.new(0xB001_u64, 0xA001_u64,
+      0xB002_u64, 0xA002_u64, Bytes[1], Bytes[2])
+    saved = [] of Migration::Journal
+    runner = Migration::Workflow.new(journal, port, -> { true },
+      ->(item : Migration::Journal) { saved << item })
+    expect_raises(Matter::TransportError) { runner.run }
+    runner.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+
+    port.no_effect = false
+    expect_raises(Matter::CommissioningError) { runner.reconcile_no_effect! }
+    port.calls.should_not contain("cleanup-anchor-pending")
+
+    port.no_effect = true
+    port.fail_at = "cleanup-anchor-pending"
+    expect_raises(Matter::TransportError) { runner.reconcile_no_effect! }
+    runner.journal.stage.should eq(Migration::Stage::CommissioningAnchor)
+
+    port.fail_at = nil
+    runner.reconcile_no_effect!
+    runner.journal.stage.should eq(Migration::Stage::Ready)
+    saved.last.stage.should eq(Migration::Stage::Ready)
   end
 
   it "recovers a restarted journal only after proof that each command had no effect" do

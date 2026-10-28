@@ -361,9 +361,13 @@ item below as covered only to the extent of its cited tests.
   against B's original ICAC key, the
   current Administrator CAT on B's authenticated Datastore, and A's root and
   IPK on A's authenticated Datastore. It then opens an enhanced commissioning
-  window over B CASE, attests and commissions A, verifies A CASE, waits for A
-  NodeList to commit, removes B from the device, and removes the B NodeList
-  entry. A per-device journal blocks automatic replay of uncertain commands;
+  window over B CASE, attests the target, adds a pending A NodeList entry after
+  AddNOC and before CommissioningComplete, then verifies A CASE and refreshes
+  the A NodeList entry after successful completion. A confirmed commissioning
+  failure removes the pending entry; an ambiguous result retains it until
+  authenticated recovery proves whether A committed. Only after the A
+  NodeList commits does migration remove B from the device and B's NodeList.
+  A per-device journal blocks automatic replay of uncertain commands;
   authenticated CASE and Datastore reads allow explicit reconciliation when a
   command took effect or provably had no effect. The latter restores the prior
   journal stage so an operator can retry. A partially applied command remains
@@ -386,8 +390,8 @@ item below as covered only to the extent of its cited tests.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
   crashes in that window, recovery validates both fabric CASE sessions, B's
-  committed NodeList entry, A's absent NodeList entry, and the A fabric
-  descriptor before restoring the local node record. The journal also records
+  committed NodeList entry, A's matching staged NodeList entry, and the A
+  fabric descriptor before restoring the local node record. The journal also records
   the device's reported maximum cumulative fail-safe duration immediately
   after ArmFailSafe. If CommissioningComplete's reply is lost, recovery waits
   that full duration plus a safety margin using a fresh monotonic interval,
@@ -425,8 +429,8 @@ item below as covered only to the extent of its cited tests.
   bound and verifies both fabrics before continuing. This tests the ambiguous
   persisted result; it does not drop a UDP packet on the wire.
   The same scenario then interrupts B after the Anchor Datastore commits
-  AddPendingNode but before B advances its durable per-device journal. After
-  restart, B refuses to replay AddPendingNode. Reconciliation rejects a missing
+  the refreshed node but before B advances its durable per-device journal. After
+  restart, B refuses to replay RefreshNode. Reconciliation rejects a missing
   Anchor NodeList entry while B still owns the device, then accepts the
   restored committed entry and completes the handoff.
   It also restarts B after the migrated device commits RemoveFabric and after

@@ -25,7 +25,8 @@ module Matter
       class NetworkDelivery < Delivery
         def initialize(@store : StateStore, @client : Client, @anchor_node_id : UInt64,
                        @datastore_endpoint : UInt16, @timeout : Time::Span = 15.seconds,
-                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new)
+                       @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                       @anchor_peer : Socket::IPAddress? = nil)
         end
 
         def add_pending_node(fabric : FabricInfo, node_id : UInt64, friendly_name : String) : Nil
@@ -66,10 +67,12 @@ module Matter
         protected def with_datastore(fabric : FabricInfo, & : ImClient, Session::SecureContext, Socket::IPAddress ->) : Nil
           state = @store.load
           installed = state.fabric_for(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
-          node = state.nodes_for(installed.fabric_id, installed.root_public_key, installed.controller_node_id)[@anchor_node_id]? ||
-                 raise Matter::ConfigurationError.new("Anchor Administrator is absent from controller state")
-          address = node.address || raise Matter::ConfigurationError.new("Anchor Administrator address is missing")
-          peer = Socket::IPAddress.new(address, node.port)
+          peer = @anchor_peer || begin
+            node = state.nodes_for(installed.fabric_id, installed.root_public_key, installed.controller_node_id)[@anchor_node_id]? ||
+                   raise Matter::ConfigurationError.new("Anchor Administrator is absent from controller state")
+            address = node.address || raise Matter::ConfigurationError.new("Anchor Administrator address is missing")
+            Socket::IPAddress.new(address, node.port)
+          end
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, installed,
             peer_node_id: @anchor_node_id, timeout: @timeout)
           yield ImClient.new(@client, @timeout), session, peer

@@ -98,6 +98,10 @@ module Matter
         abstract def remove_old_node! : Nil
         abstract def verify_postcondition!(stage : Stage) : Nil
         abstract def verify_no_effect!(stage : Stage) : Nil
+
+        def cleanup_failed_anchor_registration! : Nil
+        end
+
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
         abstract def resume_rollback! : Nil
         abstract def finalize_rollback! : Nil
@@ -201,12 +205,22 @@ module Matter
           deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
           hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
             @crypto, -> { persist_commissioning_ack! }, deadline_callback)
+          registrar = datastore_registrar
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
-            @crypto, hooks: hooks, attestation_verifier: @attestation_verifier)
+            @crypto, hooks: hooks, attestation_verifier: @attestation_verifier,
+            datastore_registrar: registrar)
           commissioner.pairing_code(@anchor_node_id, window.manual_pairing_code,
             peer: @device_peer, fabric_id: @anchor_fabric.fabric_id,
             root_public_key: @anchor_fabric.root_public_key,
-            controller_node_id: @anchor_fabric.controller_node_id)
+            controller_node_id: @anchor_fabric.controller_node_id,
+            friendly_name: @friendly_name)
+        end
+
+        private def datastore_registrar : DatastoreNodeRegistrar
+          delivery = DatastoreNodeRegistrar::NetworkDelivery.new(@store, @client,
+            @anchor_datastore_node_id, @anchor_datastore_endpoint, @timeout,
+            @crypto, @anchor_datastore_peer)
+          DatastoreNodeRegistrar.new(@store, delivery)
         end
 
         private def verify_anchor_material! : Nil
@@ -259,11 +273,13 @@ module Matter
         def add_anchor_node! : Nil
           session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
           im = ImClient.new(@client, @timeout)
-          request = Cluster::JointFabricDatastore::AddPendingNodeRequest.new(@anchor_node_id, @friendly_name)
-          response = im.invoke(session, @anchor_datastore_peer, @anchor_datastore_endpoint,
-            Cluster::JointFabricDatastore::CLUSTER_ID,
-            Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE, request.to_slice)
-          assert_status_success!(response, "AddPendingNode")
+          entry = datastore_nodes(im, session, @anchor_datastore_peer,
+            @anchor_datastore_endpoint).find(&.node_id.==(@anchor_node_id)) ||
+                  raise Matter::CommissioningError.new("Anchor Datastore has no staged migrated node")
+          unless entry.friendly_name == @friendly_name
+            raise Matter::AuthenticationError.new("Anchor Datastore migrated node identity changed")
+          end
+          refresh_anchor_registration! unless entry.commissioning_status_entry.state.committed?
           wait_anchor_node_committed!(im, session)
           @anchor_registration_committed.try(&.call)
         end
@@ -282,6 +298,30 @@ module Matter
             Cluster::JointFabricDatastore::RefreshNodeRequest.new(@anchor_node_id).to_slice)
           assert_status_success!(response, "RefreshNode")
           wait_anchor_node_committed!(im, session)
+        end
+
+        def cleanup_failed_anchor_registration! : Nil
+          return unless owned_pending_registration?
+          if entry = anchor_node_entry
+            unless entry.friendly_name == @friendly_name
+              raise Matter::AuthenticationError.new("Anchor Datastore migrated node identity changed")
+            end
+            session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
+            response = ImClient.new(@client, @timeout).invoke(session, @anchor_datastore_peer,
+              @anchor_datastore_endpoint, Cluster::JointFabricDatastore::CLUSTER_ID,
+              Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
+              Cluster::JointFabricDatastore::RemoveNodeRequest.new(@anchor_node_id).to_slice)
+            assert_status_success!(response, "RemoveNode after failed commissioning")
+          end
+          @store.update do |state|
+            state.pending_datastore_nodes.reject! do |item|
+              item.fabric_id == @anchor_fabric.fabric_id &&
+                item.root_public_key == @anchor_fabric.root_public_key &&
+                item.controller_node_id == @anchor_fabric.controller_node_id &&
+                item.node_id == @anchor_node_id &&
+                item.friendly_name == @friendly_name
+            end
+          end
         end
 
         private def wait_anchor_node_committed!(im : ImClient,
@@ -427,9 +467,11 @@ module Matter
                     port: @device_peer.port), @anchor_fabric.root_public_key,
                   @anchor_fabric.controller_node_id)
               end
+              datastore_registrar.resume(@anchor_fabric)
               return
             end
             verify_anchor!
+            datastore_registrar.resume(@anchor_fabric)
           when Stage::AnchorVerified
             verify_anchor!
           when Stage::AnchorNodeAdded
@@ -488,16 +530,21 @@ module Matter
             if anchor_fabric_present_over_old_case?
               raise Matter::CommissioningError.new("Anchor fabric is present on the device")
             end
-            if anchor_node_entry
-              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            if anchor_entry = anchor_node_entry
+              unless anchor_entry.friendly_name == @friendly_name && owned_pending_registration?
+                raise Matter::CommissioningError.new("Anchor Datastore contains an unrelated migrated node")
+              end
             end
           when Stage::VerifyingAnchor
             verify_postcondition!(Stage::AnchorCommissioned)
           when Stage::AddingAnchorNode
             verify_anchor!
             require_old_fabric_present!
-            if anchor_node_entry
-              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            anchor_entry = anchor_node_entry ||
+                           raise Matter::CommissioningError.new("Staged Anchor Datastore node is missing")
+            unless anchor_entry.friendly_name == @friendly_name &&
+                   anchor_entry.commissioning_status_entry.state.pending?
+              raise Matter::CommissioningError.new("Anchor Datastore registration already changed")
             end
           when Stage::RemovingOldFabric
             verify_postcondition!(Stage::AnchorNodeAdded)
@@ -553,8 +600,22 @@ module Matter
           unless entry && entry.commissioning_status_entry.state.committed?
             raise Matter::CommissioningError.new("Fabric B Datastore no longer owns the committed device node")
           end
-          if anchor_node_entry
-            raise Matter::CommissioningError.new("Anchor Datastore already contains the device before registration")
+          if anchor_entry = anchor_node_entry
+            unless anchor_entry.friendly_name == @friendly_name && owned_pending_registration?
+              raise Matter::CommissioningError.new("Anchor Datastore contains an unrelated device registration")
+            end
+          end
+        end
+
+        private def owned_pending_registration? : Bool
+          @store.load.pending_datastore_nodes.any? do |item|
+            item.fabric_id == @anchor_fabric.fabric_id &&
+              item.root_public_key == @anchor_fabric.root_public_key &&
+              item.controller_node_id == @anchor_fabric.controller_node_id &&
+              item.node_id == @anchor_node_id &&
+              item.friendly_name == @friendly_name &&
+              item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
+              item.peer_port == @device_peer.port
           end
         end
 
@@ -944,6 +1005,7 @@ module Matter
                        raise Matter::ConfigurationError.new("Migration is not awaiting a command outcome")
                      end
           @port.verify_no_effect!(@journal.stage)
+          @port.cleanup_failed_anchor_registration! if @journal.stage.commissioning_anchor?
           advance(previous)
         end
 
