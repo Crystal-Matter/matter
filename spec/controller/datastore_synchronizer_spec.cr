@@ -468,6 +468,35 @@ describe Matter::Controller::DatastoreSynchronizer do
     client.try(&.close)
   end
 
+  it "delivers pending root endpoint groups and bindings without adding root to NodeEndpointList" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    root_endpoint = Matter::Node::ROOT_ENDPOINT_ID
+    node_id = 0x100_u64
+    im.parts_list = [1_u16]
+    im.server_lists[root_endpoint] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
+    im.group_memberships[root_endpoint] = [Matter::DataType::GroupId.new(5_u16)]
+    store = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.node_list = [Datastore::DatastoreNodeInformationEntryStruct.new(node_id, "Node", pending)]
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(5_u64, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(node_id, root_endpoint, 5_u16, pending)]
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
+    store.endpoint_binding_list = [Datastore::DatastoreEndpointBindingEntryStruct.new(node_id, root_endpoint, 7_u16, binding, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, node_id, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+
+    store.node_endpoint_list.map(&.endpoint_id).should eq([1_u16])
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    store.endpoint_binding_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    im.command_paths.should contain({Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Groups::CMD_ADD_GROUP})
+    im.writes.any? { |cluster, attribute, _| cluster == Matter::Cluster::Binding::CLUSTER_ID && attribute == Matter::Cluster::Binding::ATTR_BINDING }.should be_true
+  ensure
+    client.try(&.close)
+  end
+
   it "imports root endpoint groups and bindings without adding root to NodeEndpointList" do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)

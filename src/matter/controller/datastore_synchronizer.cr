@@ -53,7 +53,7 @@ module Matter
 
         pending_groups = store.endpoint_group_id_list.select do |entry|
           entry.node_id == node_id && pending?(entry.status_entry) &&
-            (!has_node_record || current_endpoint_ids.includes?(entry.endpoint_id))
+            (!has_node_record || entry.endpoint_id == Node::ROOT_ENDPOINT_ID || current_endpoint_ids.includes?(entry.endpoint_id))
         end
         pending_groups.each do |entry|
           status = apply do
@@ -79,7 +79,7 @@ module Matter
 
         store.endpoint_binding_list.select do |entry|
           entry.node_id == node_id && pending?(entry.status_entry) &&
-            (!has_node_record || current_endpoint_ids.includes?(entry.endpoint_id))
+            (!has_node_record || entry.endpoint_id == Node::ROOT_ENDPOINT_ID || current_endpoint_ids.includes?(entry.endpoint_id))
         end.each do |entry|
           status = apply do
             sync_binding(store, entry, session, peer)
