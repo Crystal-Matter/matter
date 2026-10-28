@@ -277,6 +277,9 @@ module Matter
         def self.reconcile_journal!(journal : Journal, stable_stage : Stage, save : SaveJournal,
                                     rotated_node_id : UInt64? = nil,
                                     participant_completed : Bool? = nil) : Journal
+          if !journal.stage.rotating_participant? && (rotated_node_id || !participant_completed.nil?)
+            raise Matter::ConfigurationError.new("Invalid Administrator removal reconciliation")
+          end
           valid = case journal.stage
                   when Stage::RemovingFabric      then stable_stage.in?(Stage::Ready, Stage::FabricRemoved)
                   when Stage::RemovingDatastore   then stable_stage.in?(Stage::FabricRemoved, Stage::DatastoreRemoved)
