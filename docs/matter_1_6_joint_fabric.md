@@ -133,6 +133,11 @@ blocked removal for operator reconciliation.
   Participant Administrator follow-up checks the authenticated Administrator
   CAT before endpoint discovery. Known-address Anchor Datastore registration
   paths apply both role checks before reading or changing the Datastore.
+  During the joining Administrator's JCM fail-safe session, AddNOC requires
+  the current Administrator CAT in the NOC and the current Anchor CAT as
+  CaseAdminSubject, using the local Datastore GroupList. A host using the JFA
+  service outside the worked example must wire
+  `CredentialService#on_validate_add_noc` with the same JCM-scoped policy.
   For AddICAC or a deferred handoff interrupted before
   CommissioningComplete, the pending record also retains the observed
   cumulative fail-safe deadline and the joiner's original fabric identity.

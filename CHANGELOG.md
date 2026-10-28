@@ -27,6 +27,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   entry before treating it as a retry. Joint Commissioning hosts that do not
   configure a registrar remain responsible for the NodeList check.
 
+### Joint Commissioning AddNOC validation
+
+- A Joint Fabric Administrator now rejects a joining NOC without the current
+  Administrator CAT or without the current Anchor CAT as CaseAdminSubject
+  before adding a fabric. Ordinary commissioning keeps its existing AddNOC
+  behavior.
+
+### TCP and UDP shared ports
+
+- Retry ephemeral shared-port allocation by choosing a UDP port first, then
+  binding TCP to it. This handles Windows hosts with different TCP and UDP
+  ephemeral port exclusions.
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store

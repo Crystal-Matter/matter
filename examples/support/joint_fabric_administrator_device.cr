@@ -1,6 +1,7 @@
 require "../../src/matter/node"
 require "./console"
 require "../../src/matter/commissioning/joint_fabric_administrator_service"
+require "../../src/matter/commissioning/joint_fabric_add_noc_policy"
 require "../../src/matter/controller/datastore_propagator"
 require "../../src/matter/controller/anchor_datastore_subscription"
 require "../../src/matter/controller/joint_commissioning"

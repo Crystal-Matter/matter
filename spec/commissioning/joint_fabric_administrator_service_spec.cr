@@ -391,6 +391,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       180_u16, Bytes.new(96, 0_u8), 3839_u16, 2000_u32, Bytes.new(16, 0_u8))
     service.open_joint_commissioning_window(cluster, invalid).should eq(Matter::InteractionModel::Status.invalid_command)
     opened.should eq(0)
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.unsupported_access)
+    opened.should eq(0)
+    cluster.jcm_add_noc_guard_ready = -> { true }
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::Busy))
@@ -435,6 +438,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     transferred.should eq(0)
 
     cluster.request_fabric_index = fabrics.get_fabric(1_u8).as(Matter::Fabric).fabric_index
+    cluster.jcm_add_noc_guard_ready = -> { true }
     service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
     service.transfer_anchor_request(cluster).as(Matter::Cluster::JointFabricAdministrator::TransferAnchorResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::TransferAnchorResponseStatusEnum::OK)
@@ -453,6 +457,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     opened.should eq(1)
     transferred.should eq(1)
     restored.request_fabric_index = fabrics.get_fabric(1_u8).as(Matter::Fabric).fabric_index
+    restored.jcm_add_noc_guard_ready = -> { true }
     service.open_joint_commissioning_window(restored, valid).should eq(Matter::InteractionModel::Status.success)
     opened.should eq(2)
   end
