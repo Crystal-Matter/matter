@@ -56,6 +56,17 @@ module Matter::InteractionModel
       end
     end
 
+    describe ".from_remote" do
+      it "preserves recognized remote IM and cluster statuses" do
+        Status.from_remote(StatusCode::ConstraintError.value).should eq(Status.constraint_error)
+        Status.from_remote(StatusCode::Failure.value, 0x02_u8).should eq(Status.cluster_failure(0x02_u8))
+      end
+
+      it "maps an unknown remote code to Failure" do
+        Status.from_remote(0xFE_u8).should eq(Status.failure)
+      end
+    end
+
     describe "#to_s" do
       it "interpolates the human readable label" do
         "#{Status.unsupported_attribute}".should eq("Unsupported Attribute")

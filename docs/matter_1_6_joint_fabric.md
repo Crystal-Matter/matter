@@ -754,8 +754,12 @@ authenticated check, forwards the command to the remote root endpoint, and
 publishes only the window state read back from that target. The example also
 polls the remote state so window expiry is reflected on the bridged endpoint.
 A denied decision returns UnsupportedAccess without contacting the target. The opt-in
-`matter_fabric_sync_bridge` example uses a one-use local consent file; its
-Docker E2E commissions a real Crystal switch, verifies a denied command,
+`matter_fabric_sync_bridge` example uses a one-use local consent file. A denied
+command writes the required grant to `<consent path>.request`; the local
+operator can inspect and copy that exact value to the configured consent path.
+The grant names the caller's Fabric ID, root public key, authenticated CASE
+Node ID, and local FabricIndex. Reusing an index cannot authorize another
+fabric. Its Docker E2E commissions a real Crystal switch, verifies a denied command,
 opens and revokes its enhanced window through the bridge, and restarts the
 bridge while the window is open. Deployments must provide their own user
 consent policy and controller identity provisioning.

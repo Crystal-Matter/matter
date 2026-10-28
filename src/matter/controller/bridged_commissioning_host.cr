@@ -34,10 +34,21 @@ module Matter
         end
       end
 
-      alias Consent = Proc(UInt8, UInt64, Symbol, Bool)
+      # The local fabric index can be reused after removal. Consent therefore
+      # names the fabric's durable identity and the authenticated CASE node.
+      record CallerIdentity, fabric_index : UInt8, fabric_id : UInt64,
+        root_public_key : Bytes, node_id : UInt64 do
+        def consent_token(target_node_id : UInt64, operation : Symbol) : String
+          "#{fabric_index}:#{fabric_id}:#{root_public_key.hexstring}:#{node_id}:#{target_node_id}:#{operation}"
+        end
+      end
+
+      alias CallerFabricLookup = Proc(UInt8, Tuple(UInt64, Bytes)?)
+      alias Consent = Proc(CallerIdentity, UInt64, Symbol, Bool)
 
       def initialize(@store : StateStore, @cluster : Cluster::BridgedAdministratorCommissioning,
-                     @consent : Consent, @timeout : Time::Span = 10.seconds)
+                     @caller_fabric : CallerFabricLookup, @consent : Consent,
+                     @timeout : Time::Span = 10.seconds)
       end
 
       # Provisioning is an explicit host decision. Verify the live target
@@ -60,8 +71,9 @@ module Matter
       end
 
       def open(target_fabric_index : UInt8, target_node_id : UInt64, caller_fabric_index : UInt8,
+               caller_node_id : UInt64,
                request : Cluster::AdministratorCommissioning::OpenCommissioningWindowRequest) : InteractionModel::Status
-        forward(target_fabric_index, target_node_id, caller_fabric_index, :open) do |im, session, peer|
+        forward(target_fabric_index, target_node_id, caller_fabric_index, caller_node_id, :open) do |im, session, peer|
           status = invoke_status!(im, session, peer, Cluster::AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
             request.to_slice)
           next status unless status.success?
@@ -70,8 +82,9 @@ module Matter
         end
       end
 
-      def revoke(target_fabric_index : UInt8, target_node_id : UInt64, caller_fabric_index : UInt8) : InteractionModel::Status
-        forward(target_fabric_index, target_node_id, caller_fabric_index, :revoke) do |im, session, peer|
+      def revoke(target_fabric_index : UInt8, target_node_id : UInt64, caller_fabric_index : UInt8,
+                 caller_node_id : UInt64) : InteractionModel::Status
+        forward(target_fabric_index, target_node_id, caller_fabric_index, caller_node_id, :revoke) do |im, session, peer|
           status = invoke_status!(im, session, peer, Cluster::AdministratorCommissioning::CMD_REVOKE_COMMISSIONING)
           next status unless status.success?
           observe_window!(im, session, peer, Cluster::AdministratorCommissioning::CommissioningWindowStatus::WindowNotOpen)
@@ -86,10 +99,14 @@ module Matter
       end
 
       private def forward(target_fabric_index : UInt8, target_node_id : UInt64,
-                          caller_fabric_index : UInt8, operation : Symbol, & : ImClient, Session::SecureContext, Socket::IPAddress -> InteractionModel::Status) : InteractionModel::Status
+                          caller_fabric_index : UInt8, caller_node_id : UInt64, operation : Symbol,
+                          & : ImClient, Session::SecureContext, Socket::IPAddress -> InteractionModel::Status) : InteractionModel::Status
         binding = binding!
-        unless binding.target_fabric_index == target_fabric_index && binding.target_node_id == target_node_id &&
-               @consent.call(caller_fabric_index, target_node_id, operation)
+        return InteractionModel::Status.unsupported_access unless binding.target_fabric_index == target_fabric_index && binding.target_node_id == target_node_id
+        fabric = @caller_fabric.call(caller_fabric_index)
+        return InteractionModel::Status.unsupported_access unless fabric
+        caller = CallerIdentity.new(caller_fabric_index, fabric[0], fabric[1], caller_node_id)
+        unless @consent.call(caller, target_node_id, operation)
           return InteractionModel::Status.unsupported_access
         end
         result = InteractionModel::Status.failure
@@ -142,10 +159,7 @@ module Matter
           timed_request: true)
         status = ImClient.single_invoke_response!(response, "Bridged commissioning").command_status.try(&.status)
         raise Matter::ProtocolError.new("Remote Administrator Commissioning omitted status") unless status
-        return InteractionModel::Status.success if status.status == InteractionModel::StatusCode::Success.value
-        return InteractionModel::Status.busy if status.status == InteractionModel::StatusCode::Busy.value
-        return InteractionModel::Status.cluster_failure(code) if code = status.cluster_status
-        InteractionModel::Status.failure
+        InteractionModel::Status.from_remote(status.status, status.cluster_status)
       end
 
       private def observe_window!(im : ImClient, session : Session::SecureContext, peer : Socket::IPAddress,

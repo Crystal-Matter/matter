@@ -10,11 +10,14 @@ describe "real target Fabric Synchronization bridge" do
   target = E2E::Device["matter_fabric_sync_target"]
   state_path = File.join(E2E::LOG_DIR, "matter_fabric_sync_bridge.controller.yml")
   consent_path = File.join(E2E::LOG_DIR, "matter_fabric_sync_bridge.consent")
+  consent_request_path = consent_path + ".request"
   target_node_id = 0xB801_u64
   target_fabric_index = 1_u8
   timed = ["--timedInteractionTimeoutMs", "30000"]
 
   it "forwards consented timed Open and Revoke to the CASE-verified target across restart" do
+    File.delete?(consent_path)
+    File.delete?(consent_request_path)
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0xB800_u64, 0xB802_u64, Matter::SetupPayload.test_vendor_id)
     store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(state_path))
@@ -35,11 +38,13 @@ describe "real target Fabric Synchronization bridge" do
     # Provisioning creates a persistent binding only after live CASE and an
     # unfiltered Fabrics read match the expected target and fabric index.
     endpoint = Matter::DataType::EndpointNumber.new(1_u16)
-    noop_open = ->(_fabric : UInt8, _node : UInt64, _caller : UInt8, _request : Admin::OpenCommissioningWindowRequest) { Matter::InteractionModel::Status.success }
-    noop_revoke = ->(_fabric : UInt8, _node : UInt64, _caller : UInt8) { Matter::InteractionModel::Status.success }
+    noop_open = ->(_fabric : UInt8, _node : UInt64, _caller : UInt8, _caller_node : UInt64, _request : Admin::OpenCommissioningWindowRequest) { Matter::InteractionModel::Status.success }
+    noop_revoke = ->(_fabric : UInt8, _node : UInt64, _caller : UInt8, _caller_node : UInt64) { Matter::InteractionModel::Status.success }
     cluster = BridgeCluster.new(endpoint, target_fabric_index, target_node_id, noop_open, noop_revoke)
     setup_host = BridgeHost.new(store, cluster,
-      ->(_fabric : UInt8, _node : UInt64, _operation : Symbol) { true }, E2E::COMMAND_TIMEOUT)
+      ->(_index : UInt8) { nil.as(Tuple(UInt64, Bytes)?) },
+      ->(_caller : BridgeHost::CallerIdentity, _node : UInt64, _operation : Symbol) { true },
+      E2E::COMMAND_TIMEOUT)
     setup_host.bind!(BridgeHost::Binding.new(bootstrap.fabric.fabric_id,
       bootstrap.fabric.root_public_key, bootstrap.fabric.controller_node_id,
       target_node_id, target_fabric_index, target.address, E2E::DEVICE_PORT))
@@ -57,7 +62,7 @@ describe "real target Fabric Synchronization bridge" do
 
     expect_failure(bridge.invoke("administratorcommissioning", "open-commissioning-window",
       open_args, endpoint: 1, options: timed), "UNSUPPORTED_ACCESS")
-    File.write(consent_path, "1:#{target_node_id}:open")
+    File.write(consent_path, File.read(consent_request_path))
     expect_success(bridge.invoke("administratorcommissioning", "open-commissioning-window",
       open_args, endpoint: 1, options: timed))
     read_int(bridge, "administratorcommissioning", "window-status", "WindowStatus", 1).should eq(
@@ -70,7 +75,9 @@ describe "real target Fabric Synchronization bridge" do
       raise Matter::TimeoutError.new("Bridge did not restore observed remote window status") if Time.instant >= deadline
       sleep 1.second
     end
-    File.write(consent_path, "1:#{target_node_id}:revoke")
+    expect_failure(bridge.invoke("administratorcommissioning", "revoke-commissioning",
+      endpoint: 1, options: timed), "UNSUPPORTED_ACCESS")
+    File.write(consent_path, File.read(consent_request_path))
     expect_success(bridge.invoke("administratorcommissioning", "revoke-commissioning",
       endpoint: 1, options: timed))
     read_int(bridge, "administratorcommissioning", "window-status", "WindowStatus", 1).should eq(

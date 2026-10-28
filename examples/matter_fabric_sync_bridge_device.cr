@@ -6,12 +6,13 @@ require "../src/matter/controller"
 # and verified target binding are provisioned separately by the host. Each
 # command needs a fresh, one-use consent file supplied by the local operator.
 module MatterFabricSyncBridge
-  TARGET_ENDPOINT_ID   =      1_u16
-  TARGET_FABRIC_INDEX  =       1_u8
-  TARGET_NODE_ID       = 0xB801_u64
-  CONTROLLER_STATE_ENV = "MATTER_FABRIC_SYNC_CONTROLLER_STATE"
-  CONSENT_PATH_ENV     = "MATTER_FABRIC_SYNC_CONSENT_PATH"
-  STATUS_POLL_INTERVAL = 30.seconds
+  TARGET_ENDPOINT_ID     =      1_u16
+  TARGET_FABRIC_INDEX    =       1_u8
+  TARGET_NODE_ID         = 0xB801_u64
+  CONTROLLER_STATE_ENV   = "MATTER_FABRIC_SYNC_CONTROLLER_STATE"
+  CONSENT_PATH_ENV       = "MATTER_FABRIC_SYNC_CONSENT_PATH"
+  CONSENT_REQUEST_SUFFIX = ".request"
+  STATUS_POLL_INTERVAL   = 30.seconds
 
   class Device < Matter::Device
     include Examples::Console
@@ -41,11 +42,11 @@ module MatterFabricSyncBridge
         product_name: "Remote Matter Switch", unique_id: "fabric-sync-switch"
       cluster Matter::Cluster::EcosystemInformation
       cluster BridgeCluster, TARGET_FABRIC_INDEX, TARGET_NODE_ID,
-        ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, request : Matter::Cluster::AdministratorCommissioning::OpenCommissioningWindowRequest) do
-          host.open(target_fabric, target_node, caller_fabric, request)
+        ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, caller_node : UInt64, request : Matter::Cluster::AdministratorCommissioning::OpenCommissioningWindowRequest) do
+          host.open(target_fabric, target_node, caller_fabric, caller_node, request)
         end,
-        ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8) do
-          host.revoke(target_fabric, target_node, caller_fabric)
+        ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, caller_node : UInt64) do
+          host.revoke(target_fabric, target_node, caller_fabric, caller_node)
         end,
         as: :bridged_administrator_commissioning
     end
@@ -60,14 +61,22 @@ module MatterFabricSyncBridge
                      raise Matter::ConfigurationError.new("Missing fabric-sync controller state path")
         consent_path = ENV[CONSENT_PATH_ENV]? ||
                        raise Matter::ConfigurationError.new("Missing fabric-sync consent path")
-        consent = ->(caller_fabric : UInt8, target_node : UInt64, operation : Symbol) do
-          expected = "#{caller_fabric}:#{target_node}:#{operation}"
+        caller_fabric = ->(index : UInt8) do
+          fabric_table.get_fabric(index).try { |fabric| {fabric.fabric_id, fabric.root_public_key} }
+        end
+        consent = ->(caller : Host::CallerIdentity, target_node : UInt64, operation : Symbol) do
+          expected = caller.consent_token(target_node, operation)
           approved = File.exists?(consent_path) && File.read(consent_path).strip == expected
-          File.delete?(consent_path) if approved
+          if approved
+            File.delete?(consent_path)
+            File.delete?(consent_path + CONSENT_REQUEST_SUFFIX)
+          else
+            File.write(consent_path + CONSENT_REQUEST_SUFFIX, expected)
+          end
           approved
         end
         Host.new(Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(state_path)),
-          bridged_administrator_commissioning, consent)
+          bridged_administrator_commissioning, caller_fabric, consent)
       end
     end
 
