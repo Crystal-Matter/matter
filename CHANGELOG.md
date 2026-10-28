@@ -102,6 +102,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   acknowledgement using a fresh witness from the trusted participant host.
   The candidate checks the exact pending ICAC, fabric identities, and prior
   rotation state before advancing its journal without repeating AddICAC.
+- Rewind an uncommitted participant cross-sign after a lost pending-ICAC
+  journal save only when the trusted participant host proves both durable
+  fabric identities, the old JFA binding and ICAC, and cleared fail-safe and
+  credential undo state. The candidate checks the witness over fresh CASE
+  before retrying follow-up; its Docker scenario restarts both participants.
 - Reconcile a participant Administrator CAT rotation that did not start after
   removal only when its pre-rotation credential was journaled, the participant
   host confirms durable old credentials with a clear fail-safe and credential

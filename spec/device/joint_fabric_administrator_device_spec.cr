@@ -467,6 +467,58 @@ describe "Joint Fabric participant cross-sign commit witness" do
   end
 end
 
+describe "Joint Fabric participant cross-sign no-effect witness" do
+  it "binds the old and new fabrics, the old ICAC, live fabric indexes and clear provisional state" do
+    old_fabric = jfa_reuse_test_fabric(0xA100_u64, 0xA104_u64)
+    new_fabric = jfa_reuse_test_fabric(0xB100_u64, 0xA104_u64)
+    node_id = 0xA104_u64
+    endpoint = MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID
+    nonce = "a" * MatterJointFabricAdministrator::Device::ROTATION_NONCE_HEX_LENGTH
+    icac = Bytes[1_u8, 2_u8, 3_u8]
+    result = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_no_committed_cross_sign: true,
+      inspected_fabric_id: new_fabric.fabric_id,
+      inspected_root_public_key: new_fabric.root_public_key,
+      inspected_old_fabric_id: old_fabric.fabric_id,
+      inspected_old_root_public_key: old_fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: 2_u8,
+      inspected_old_administrator_fabric_index: 1_u8,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: true,
+      inspected_credential_journal_clear: true)
+    result.proves_uncommitted_cross_sign?(nonce, icac, new_fabric, old_fabric,
+      node_id, endpoint, 2_u8, 1_u8).should be_true
+    MatterJointFabricAdministrator::Device::CommandResult.from_document(result.to_document)
+      .proves_uncommitted_cross_sign?(nonce, icac, new_fabric, old_fabric,
+        node_id, endpoint, 2_u8, 1_u8).should be_true
+    result.proves_uncommitted_cross_sign?("b" * nonce.size, icac, new_fabric, old_fabric,
+      node_id, endpoint, 2_u8, 1_u8).should be_false
+    result.proves_uncommitted_cross_sign?(nonce, Bytes[9_u8], new_fabric, old_fabric,
+      node_id, endpoint, 2_u8, 1_u8).should be_false
+    result.proves_uncommitted_cross_sign?(nonce, icac, old_fabric, new_fabric,
+      node_id, endpoint, 2_u8, 1_u8).should be_false
+    result.proves_uncommitted_cross_sign?(nonce, icac, new_fabric, old_fabric,
+      node_id, endpoint, 2_u8, 2_u8).should be_false
+    provisional = MatterJointFabricAdministrator::Device::CommandResult.new("ok",
+      nonce: nonce, inspected_cross_signed_icac: icac,
+      inspected_no_committed_cross_sign: true,
+      inspected_fabric_id: new_fabric.fabric_id,
+      inspected_root_public_key: new_fabric.root_public_key,
+      inspected_old_fabric_id: old_fabric.fabric_id,
+      inspected_old_root_public_key: old_fabric.root_public_key,
+      inspected_node_id: node_id,
+      inspected_administrator_fabric_index: 2_u8,
+      inspected_old_administrator_fabric_index: 1_u8,
+      inspected_jfa_endpoint_id: endpoint,
+      inspected_failsafe_clear: false,
+      inspected_credential_journal_clear: true)
+    provisional.proves_uncommitted_cross_sign?(nonce, icac, new_fabric, old_fabric,
+      node_id, endpoint, 2_u8, 1_u8).should be_false
+  end
+end
+
 describe "Joint Fabric Administrator saved candidate credential evidence" do
   it "rejects legacy journals and a same-CAT candidate NOC replacement" do
     device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,

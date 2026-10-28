@@ -1896,6 +1896,64 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA102_u64))
     persisted_first_follow_up.inspected_follow_up_stage.should eq(
       Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Completed.value)
+    # C receives AddICAC, but B loses the pending-certificate journal save
+    # before CommissioningComplete. After C rolls back its fail-safe, B must
+    # prove no effect before it can retry; C's old fabric must stay installed.
+    c_icac_before_no_effect = candidate_admin_icac(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64, 0xA104_u64)
+    interrupted_pending_icac = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("transfer-anchor", 0xA102_u64,
+        interrupt_before_next_transfer_pending_icac_journal: true))
+    interrupted_pending_icac.status.should eq("error")
+    interrupted_pending_icac.error.to_s.should contain("Injected interruption before participant pending ICAC journal save")
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
+    no_effect_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    no_effect_stage.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
+    c_old_no_effect = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_no_effect.fabric_present.should be_true
+    no_effect_nonce = Random::Secure.hex(32)
+    no_effect_witness = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-cross-sign-no-effect", 0xA104_u64,
+        joiner_bootstrap.fabric.fabric_id, joiner_bootstrap.fabric.root_public_key,
+        nonce: no_effect_nonce,
+        old_fabric_id: anchor_bootstrap.fabric.fabric_id,
+        old_root_public_key: anchor_bootstrap.fabric.root_public_key))
+    no_effect_witness.status.should eq("ok"), no_effect_witness.error.to_s
+    no_effect_witness.inspected_no_committed_cross_sign.should be_true
+    no_effect_witness.inspected_failsafe_clear.should be_true
+    no_effect_witness.inspected_credential_journal_clear.should be_true
+    unwitnessed_no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-sign-no-effect", 0xA104_u64,
+        nonce: Random::Secure.hex(32)))
+    unwitnessed_no_effect.status.should eq("error")
+    still_uncertain = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    still_uncertain.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning.value)
+    reconciled_no_effect = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-follow-up-cross-sign-no-effect", 0xA104_u64,
+        nonce: no_effect_nonce))
+    reconciled_no_effect.status.should eq("ok"), reconciled_no_effect.error.to_s
+    candidate_admin_icac(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64, 0xA104_u64).should eq(c_icac_before_no_effect)
+    c_old_after_no_effect = jfa_command("matter_joint_fabric_third",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-fabric", 0xA104_u64,
+        anchor_bootstrap.fabric.fabric_id, anchor_bootstrap.fabric.root_public_key,
+        Random::Secure.hex(8)))
+    c_old_after_no_effect.fabric_present.should be_true
+    no_effect_ready = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-follow-up-stage", 0xA104_u64))
+    no_effect_ready.inspected_follow_up_stage.should eq(
+      Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready.value)
     # C commits B's cross-signed ICAC, but B loses the CrossSigned save after
     # durably updating its own AdminList. A restart must not replay AddICAC.
     interrupted_cross_signed = jfa_command("matter_joint_fabric_joiner",

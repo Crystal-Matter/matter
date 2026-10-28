@@ -598,6 +598,16 @@ CASE and compares the result with the pending ICAC and B fabric before saving
 `CrossSigned`. A nonce supplies freshness but does not authenticate the host
 channel. An independent JFA without an equivalent trusted host witness must
 remain at `CrossSigning` rather than infer commitment from Matter wire reads.
+The three-JFA scenario also interrupts B after C receives AddICAC but before
+B can save the pending ICAC. B and C restart; C's private host channel proves
+that its fail-safe and credential undo journal are clear, both selected fabric
+records remain durable, its JFA endpoint and committed ICAC still belong to
+the old fabric, and no new-root ICAC committed. B verifies that fresh witness
+against C's live CASE identity and both fabric descriptors, then durably
+rewinds `CrossSigning` to `Ready`. A missing or mismatched witness leaves the
+journal blocked and C's old fabric in place. Before a Ready retry, B re-reads
+C's JFA AdministratorFabricIndex over CASE and requires the old fabric index;
+a concurrent cross-sign that changed C's JFA binding fails closed.
 
 ## Official certification scenario mirrors
 
