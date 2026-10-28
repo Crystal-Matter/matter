@@ -605,6 +605,11 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
     cluster.node_key_set_list.size.should eq(1)
     cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+    group_status = cluster.endpoint_group_id_list.first.status_entry.to_slice
+    cluster.node_key_set_list = [] of Datastore::DatastoreNodeKeySetEntryStruct
+    cluster.add_group_id_to_endpoint_for_node(group_request).success?.should be_true
+    cluster.endpoint_group_id_list.first.status_entry.to_slice.should eq(group_status)
+    cluster.node_key_set_list.size.should eq(1)
 
     binding = Datastore::DatastoreBindingTargetStruct.new(node: node_id, endpoint: endpoint_id)
     binding_request = Datastore::AddBindingToEndpointForNodeRequest.new(node_id, endpoint_id, binding)
@@ -628,6 +633,77 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.node_acl_list.size.should eq(1)
     cluster.node_acl_list.first.list_id.should eq(acl_id)
     cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+  end
+
+  it "recognizes equal binding and ACL values when refreshing an unchanged node" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    endpoint_id = 1_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 43_u64, endpoint: endpoint_id)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(node_id, endpoint_id, binding)).success?.should be_true
+    binding_id = cluster.endpoint_binding_list.first.list_id
+    cluster.complete_binding(node_id, endpoint_id, binding_id).should be_true
+    binding_copy = Datastore::DatastoreBindingTargetStruct.from_slice(binding.to_slice)
+    binding_version = cluster.data_version
+    cluster.reconcile_node_bindings(node_id, endpoint_id, [binding_copy, binding_copy]).success?.should be_true
+    cluster.endpoint_binding_list.size.should eq(1)
+    cluster.endpoint_binding_list.first.list_id.should eq(binding_id)
+    cluster.endpoint_binding_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    cluster.data_version.should eq(binding_version)
+
+    target = Datastore::DatastoreAccessControlTargetStruct.new(nil, endpoint_id, nil)
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [node_id], [target])
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(node_id, acl)).success?.should be_true
+    acl_id = cluster.node_acl_list.first.list_id
+    cluster.complete_acl(node_id, acl_id).should be_true
+    acl_copy = Datastore::DatastoreAccessControlEntryStruct.from_slice(acl.to_slice)
+    acl_version = cluster.data_version
+    cluster.reconcile_node_acls(node_id, [acl_copy, acl_copy]).success?.should be_true
+    cluster.node_acl_list.size.should eq(1)
+    cluster.node_acl_list.first.list_id.should eq(acl_id)
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    cluster.data_version.should eq(acl_version)
+  end
+
+  it "keeps unchanged key sets and group updates from advancing DataVersion" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    key_set = Datastore::DatastoreGroupKeySetStruct.new(11_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(Datastore::EPOCH_KEY_BYTES, 0xAA_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key_set)).success?.should be_true
+    cluster.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 11_u16,
+      Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, Datastore::NO_FAILURE_CODE))]
+    key_version = cluster.data_version
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(
+      Datastore::DatastoreGroupKeySetStruct.from_slice(key_set.to_slice))).success?.should be_true
+    cluster.data_version.should eq(key_version)
+    cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, nil, nil, privilege)).success?.should be_true
+    group_version = cluster.data_version
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, "Group", nil, nil, nil, privilege)).success?.should be_true
+    cluster.data_version.should eq(group_version)
+    cluster.group_list.first.friendly_name.should eq("Group")
+
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    unrelated_acl = Datastore::DatastoreAccessControlEntryStruct.new(privilege,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [42_u64], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, unrelated_acl)).success?.should be_true
+    acl_changes = 0
+    cluster.on_node_acl_list_changed do |_before, _after|
+      acl_changes += 1
+      nil
+    end
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)).success?.should be_true
+    acl_changes.should eq(0)
   end
 
   it "rejects oversized datastore ACL subjects and targets without changing state" do

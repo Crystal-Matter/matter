@@ -658,7 +658,10 @@ describe Matter::Controller::DatastoreSynchronizer do
       Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [0x200_u64], nil)
     request = Datastore::AddACLToNodeRequest.new(0x100_u64, acl)
     store.add_acl_to_node(request).success?.should be_true
-    store.add_acl_to_node(request).success?.should be_true
+    # A restored legacy datastore may still contain two ListIDs for one ACL.
+    first_acl = store.node_acl_list.first
+    store.node_acl_list = store.node_acl_list + [Datastore::DatastoreACLEntryStruct.new(
+      first_acl.node_id, first_acl.list_id + 1_u16, acl, first_acl.status_entry)]
     list_ids = store.node_acl_list.map(&.list_id)
     list_ids.uniq.size.should eq(2)
     synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
@@ -946,7 +949,10 @@ describe Matter::Controller::DatastoreSynchronizer do
     target = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64, endpoint: 1_u16)
     request = Datastore::AddBindingToEndpointForNodeRequest.new(0x100_u64, 1_u16, target)
     store.add_binding_to_endpoint_for_node(request).success?.should be_true
-    store.add_binding_to_endpoint_for_node(request).success?.should be_true
+    # A restored legacy datastore may still contain two ListIDs for one binding.
+    first_binding = store.endpoint_binding_list.first
+    store.endpoint_binding_list = store.endpoint_binding_list + [Datastore::DatastoreEndpointBindingEntryStruct.new(
+      first_binding.node_id, first_binding.endpoint_id, first_binding.list_id + 1_u16, target, first_binding.status_entry)]
     list_ids = store.endpoint_binding_list.map(&.list_id)
     list_ids.uniq.size.should eq(2)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
