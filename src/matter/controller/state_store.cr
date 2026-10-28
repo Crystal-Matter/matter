@@ -28,12 +28,10 @@ module Matter
         @backend.open unless @backend.open?
         attempts = 0
         loop do
-          begin
-            return load_once
-          rescue ex : LoadConflict
-            attempts += 1
-            raise ex if attempts >= LOAD_CONFLICT_RETRIES
-          end
+          return load_once
+        rescue ex : LoadConflict
+          attempts += 1
+          raise ex if attempts >= LOAD_CONFLICT_RETRIES
         end
       rescue ex : Matter::StorageError
         raise ex

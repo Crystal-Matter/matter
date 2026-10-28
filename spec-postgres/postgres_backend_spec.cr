@@ -14,7 +14,7 @@ private def fresh_postgres(url : String) : Matter::Storage::Postgres
 end
 
 private class PausedControllerPostgres < Matter::Storage::Postgres
-  property pause = false
+  property? pause = false
 
   def initialize(url : String, @ready : Channel(Nil), @release : Channel(Nil))
     super(url)

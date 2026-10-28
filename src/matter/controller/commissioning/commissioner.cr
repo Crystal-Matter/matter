@@ -191,7 +191,7 @@ module Matter
                fabric.controller_node_id).has_key?(node_id)
             raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
           end
-          @store.update { |current| current.install_fabric(fabric) } if created_fabric
+          @store.update(&.install_fabric(fabric)) if created_fabric
 
           peer_addr = if peer
                         peer

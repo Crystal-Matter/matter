@@ -618,12 +618,10 @@ describe Matter::Controller::JointCommissioning do
       })
     finished = Channel(Exception?).new
     spawn do
-      begin
-        workflow.resume_pending
-        finished.send(nil)
-      rescue ex
-        finished.send(ex)
-      end
+      workflow.resume_pending
+      finished.send(nil)
+    rescue ex
+      finished.send(ex)
     end
     entered.receive
     store.update do |current|

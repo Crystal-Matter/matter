@@ -162,7 +162,7 @@ describe Matter::Controller::StateStore do
   it "keeps the newer unsecured counter from concurrent clients across wraparound" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX - 1_u32))
-    store.update { |current| current.advance_unsecured_message_counter(1_u32) }
+    store.update(&.advance_unsecured_message_counter(1_u32))
     store.update { |current| current.advance_unsecured_message_counter(UInt32::MAX) }
 
     store.load.unsecured_message_counter.should eq(1_u32)
@@ -184,7 +184,7 @@ describe Matter::Controller::StateStore do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX))
 
-    store.update { |current| current.advance_unsecured_message_counter(0_u32) }
+    store.update(&.advance_unsecured_message_counter(0_u32))
     store.update { |current| current.advance_unsecured_message_counter(UInt32::MAX - 1_u32) }
 
     loaded = store.load
