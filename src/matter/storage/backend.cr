@@ -64,6 +64,31 @@ module Matter
       # transaction. Transactions may be nested.
       abstract def transaction(& : -> Nil) : Nil
 
+      # Counter leases must commit before network I/O. A reservation called
+      # inside an outer transaction would remain rollbackable after return.
+      def transaction_open? : Bool
+        true
+      end
+
+      # Durable counter leases require one writer for a file-backed state path.
+      # SQL backends coordinate through their row CAS; other custom backends
+      # must explicitly provide equivalent ownership before opting in.
+      def claim_counter_lease_owner! : Nil
+        raise Matter::StorageError.new("Storage backend does not support durable counter leases")
+      end
+
+      # A backend may invalidate already reserved counters when its lease
+      # ownership ends. The returned check runs before every new packet ID.
+      def counter_lease_validity : Proc(Nil)?
+        nil
+      end
+
+      # Identity used to exclude two live standalone counter owners in this
+      # process. Independent processes must coordinate source Node IDs too.
+      def counter_lease_namespace : String
+        "backend:#{object_id}"
+      end
+
       # Whether writes survive a process restart. Custom backends opt in only
       # when they can preserve the completed review journal durably.
       def durable? : Bool

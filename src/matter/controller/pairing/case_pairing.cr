@@ -103,14 +103,12 @@ module Matter
             record_peer = true
             {session, peer}
           ensure
-            # Sigma1 consumes an unsecured message counter even if CASE fails.
             store.update do |current|
               if record_peer
                 current.record_node(fabric.fabric_id,
                   NodeInfo.new(peer_node_id, OperationalPeerResolver.address_hint(peer), peer.port),
                   fabric.root_public_key, fabric.controller_node_id)
               end
-              current.advance_unsecured_message_counter(client.transport.message_counter.counter)
             end
           end
         end
@@ -140,6 +138,9 @@ module Matter
         private def pair_with_ipk(client : Client, peer : Socket::IPAddress,
                                   fabric : FabricInfo, peer_node_id : UInt64,
                                   timeout : Time::Span, epoch_key : Bytes) : Session::SecureContext
+          # ameba:disable Lint/UselessAssign -- Rescue must handle failures before allocation.
+          reserved_session_id : UInt16? = nil
+          # ameba:enable Lint/UselessAssign
           controller_key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
           controller_key.private_bits = fabric.controller_private_key
           controller_key.public_bits = Crypto::MatterCertificate.from_slice(fabric.controller_noc).ec_public_key
@@ -159,6 +160,7 @@ module Matter
 
           initiator_random = @crypto.random_bytes(32)
           initiator_session_id = client.allocate_session_id("CASE") { @crypto.random_uint16 }
+          reserved_session_id = initiator_session_id
 
           ephemeral_key = Crypto::ECDH.generate_key_pair
           initiator_eph_pub = ephemeral_key.public_key
@@ -315,6 +317,11 @@ module Matter
             verified_responder.subject_ids, verified_responder.icac,
             role: Session::Case::Role::Initiator))
           secure_context
+        rescue ex
+          if id = reserved_session_id
+            client.release_session_id_reservation(id)
+          end
+          raise ex
         end
 
         private def finish_resumed_case(client : Client, peer : Socket::IPAddress,

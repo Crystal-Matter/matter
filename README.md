@@ -1058,7 +1058,8 @@ scanner.close
 
 Commission one, then read an attribute over the operational session. Controller state — the
 fabric, its certificates, the known nodes and the unsecured message counter — lives in a storage
-backend, so the counter has to be written back before the process exits:
+backend. A fixed source Node ID needs a durable counter lease from that backend before the
+client sends any packet. The lease renews itself for a long-lived client:
 
 ```crystal
 require "matter/controller"
@@ -1071,8 +1072,7 @@ store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new("contro
 state = store.load
 
 client = Matter::Controller::Client.new(
-  unsecured_source_node_id: state.commissioner_node_id,
-  initial_unsecured_message_counter: state.unsecured_message_counter
+  counter_lease: store.counter_lease(state.commissioner_node_id)
 )
 
 begin
@@ -1121,12 +1121,29 @@ begin
     command_id: Matter::Cluster::OnOff::CMD_TOGGLE
   )
 ensure
-  persisted = store.load
-  persisted.unsecured_message_counter = client.transport.message_counter.counter
-  store.save(persisted)
   client.close
 end
 ```
+
+For a short-lived client with no stable source Node ID, `Client.new` selects an
+ephemeral operational Node ID. Existing callers that pass `unsecured_source_node_id:`
+must migrate to `counter_lease:`; a fixed source without a lease now raises
+`ConfigurationError`. If a client shares a device listener transport, bind that
+transport's outgoing counter once with `store.bind_transport_counter` before it
+starts, then give each outbound client a lease from the same store and pass
+`shared_message_counter: listener_transport.message_counter`. Each client keeps
+its own socket, exchanges, and secure sessions. Retransmissions
+keep their original message counter and do not spend another leased value.
+`Storage::Memory` cannot issue fixed-source leases. For a file backend, reuse one
+backend instance for every writer of that state path while clients are live; a
+second lease owner for the path is rejected by an advisory lock. SQLite and
+PostgreSQL backends use their conditional document update for independent writers.
+Only one live independent counter may use a given source Node ID and storage
+namespace in one process; additional clients may share its bound counter.
+Across processes, coordinate ownership so each live source Node ID has one
+outgoing counter, including when storage is SQL-backed.
+Custom durable backends must implement counter-lease ownership and report when
+a storage transaction is open before supporting leases.
 
 `OfflineAttestationRevocation` accepts DER CRLs provisioned by the host. It
 verifies the issuer, authority key identifier, CRL signature, signing usage,

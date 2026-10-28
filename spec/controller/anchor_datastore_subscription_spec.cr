@@ -27,7 +27,8 @@ describe Matter::Controller::AnchorDatastoreSubscription do
       0x1000_u64, 0x100_u64, 0xFFF1_u16).fabric
     verifier = ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { nil }
     expect_raises(Matter::ConfigurationError, /Node ID/) do
-      Matter::Controller::AnchorDatastoreSubscription.new(scanner, fabric, 0_u64, 1_u16, verifier)
+      Matter::Controller::AnchorDatastoreSubscription.new(scanner, fabric, 0_u64, 1_u16, verifier,
+        counter_store: Matter::Controller::StateStore.new(Matter::Storage::Memory.new))
     end
   ensure
     scanner.try(&.close)

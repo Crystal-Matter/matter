@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/matter/controller/joint_commissioning"
+require "../support/counter_store_fixture"
 
 private class JointTestTrust < Matter::Controller::VidVerification::OperationalTrustAnchors
   def trusted_root?(vendor_id : UInt16, root_certificate : Bytes) : Bool
@@ -343,7 +344,9 @@ describe Matter::Controller::JointCommissioning do
     )
     fabric = Matter::Fabric.new(fabric_id, 1_u8, 5_u64, root_key.public_key,
       noc, node_key, Bytes.new(16), root_cert: root)
-    client = Matter::Controller::Client.new(unsecured_source_node_id: fabric.node_id)
+    fixture = Matter::Spec::CounterStoreFixture.new
+    lease_store = fixture.store
+    client = Matter::Controller::Client.new(counter_lease: lease_store.counter_lease(fabric.node_id))
     listener = UDPSocket.new(Socket::Family::INET6)
     listener.bind("::1", 0)
     listener.read_timeout = 2.seconds
@@ -368,6 +371,7 @@ describe Matter::Controller::JointCommissioning do
   ensure
     listener.try(&.close)
     client.try(&.close)
+    fixture.try(&.close)
   end
 
   it "bootstraps an Anchor ICAC and Administrator identity with both CATs" do

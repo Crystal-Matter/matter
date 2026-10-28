@@ -11,9 +11,10 @@ module Matter
     # Participant-side Matter 1.6 §12.2.6 step 5(a) subscription. A caller
     # supplies the already installed new Anchor fabric and a verifier that
     # checks the peer's Anchor CAT and jf-anchor-icac certificate after CASE.
-    # The subscription uses its own Client so it cannot consume another IM
-    # interaction's messages. A lost subscription is an error to reconcile;
-    # callers must not resume commissioning on a stale Datastore view.
+    # The subscription uses its own Client session and exchange state. It may
+    # share a listener's durable outgoing counter. A lost
+    # subscription is an error to reconcile; callers must not resume
+    # commissioning on a stale Datastore view.
     class AnchorDatastoreSubscription
       alias Store = Cluster::JointFabricDatastore
       alias VerifyAnchor = Proc(ImClient, Session::SecureContext, Socket::IPAddress, Nil)
@@ -27,6 +28,8 @@ module Matter
       def initialize(@scanner : Scanner, @fabric : FabricInfo,
                      @anchor_node_id : UInt64, @endpoint_id : UInt16?,
                      @verify_anchor : VerifyAnchor,
+                     @counter_store : StateStore,
+                     @shared_message_counter : Transport::MessageCounter? = nil,
                      @address_hint : Socket::IPAddress? = nil,
                      @discovery_timeout : Time::Span = 10.seconds,
                      @timeout : Time::Span = 10.seconds)
@@ -41,7 +44,8 @@ module Matter
       end
 
       private def connect! : Nil
-        @client = Client.new(unsecured_source_node_id: @fabric.controller_node_id)
+        @client = Client.new(counter_lease: @counter_store.counter_lease(@fabric.controller_node_id),
+          shared_message_counter: @shared_message_counter)
         begin
           @session = Pairing::CasePairing.new.pair(@client, @peer, @fabric,
             peer_node_id: @anchor_node_id, timeout: @timeout)
