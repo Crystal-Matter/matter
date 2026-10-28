@@ -35,6 +35,8 @@ item below as covered only to the extent of its cited tests.
   on later polling passes, including after restart, by rearming the node
   through RefreshNode. Each pass retains a bounded retry count; target-side
   ResourceExhausted and ConstraintError remain terminal for automatic retry.
+  When a recoverable entry shares a node with a terminal entry, RefreshNode
+  prunes that terminal entry as specified in Core §11.24.7.11.
 - `SharedFabric.stage_joint_group_revocation` removes one controller from a
   shared group by reissuing every surviving controller NOC on its existing
   operational key at the next GroupCATVersion, then invoking Datastore

@@ -52,6 +52,19 @@ private class BusyDatastoreDelivery < Matter::Controller::DatastorePropagator::D
   end
 end
 
+private class KeySetDeletionDelivery < Matter::Controller::DatastorePropagator::Delivery
+  getter attempts = 0
+
+  def deliver(store : Matter::Cluster::JointFabricDatastore, node_id : UInt64) : Nil
+    @attempts += 1
+    entry = store.node_key_set_list.find(&.group_key_set_id.==(1_u16)).as(Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct)
+    entry.status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending)
+    entry.status_entry.failure_code.should eq(Matter::Cluster::JointFabricDatastore::NO_FAILURE_CODE)
+    store.complete_node_key_set(node_id, 1_u16)
+    store.complete_node(node_id)
+  end
+end
+
 private class BlockingDatastoreDelivery < Matter::Controller::DatastorePropagator::Delivery
   def initialize(@started : Channel(Nil), @resume_delivery : Channel(Nil))
   end
@@ -196,5 +209,31 @@ describe Matter::Controller::DatastorePropagator do
       delivery.attempts.should eq(0)
       store.node_list.first.commissioning_status_entry.failure_code.should eq(failure_code)
     end
+  end
+
+  it "retries a failed deletion after restart and prunes a terminal sibling during RefreshNode" do
+    original = pending_datastore
+    original.complete_node(0x100_u64)
+    original.node_key_set_list = [
+      Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct.new(
+        0x100_u64, 1_u16, Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+          Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::DeletePending, 0_u32,
+          Matter::InteractionModel::StatusCode::Busy.value)),
+      Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct.new(
+        0x100_u64, 2_u16, Matter::Cluster::JointFabricDatastore::DatastoreStatusEntryStruct.new(
+          Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::CommitFailed, 0_u32,
+          Matter::InteractionModel::StatusCode::ResourceExhausted.value)),
+    ]
+    restored = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    restored.restore_state(original.save_state.as(Matter::Storage::Document))
+    delivery = KeySetDeletionDelivery.new
+    propagator = Matter::Controller::DatastorePropagator.new(restored, delivery,
+      max_attempts: 2, retry_delay: 0.seconds)
+
+    propagator.run_pending
+
+    delivery.attempts.should eq(1)
+    restored.node_key_set_list.should be_empty
+    restored.node_list.first.commissioning_status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
   end
 end
