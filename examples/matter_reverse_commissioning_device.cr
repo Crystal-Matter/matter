@@ -72,6 +72,17 @@ module MatterReverseCommissioning
       ENV["MATTER_REVERSE_CRYSTAL_TARGET"]? == "1"
     end
 
+    # The manual code carries only a four-bit discriminator. Many other E2E
+    # devices can share it, so the opt-in Crystal fixture pins the intended
+    # target address while the commissioner still verifies its attestation.
+    private def crystal_target_peer : Socket::IPAddress?
+      return unless crystal_target?
+      host = ENV["MATTER_REVERSE_CRYSTAL_TARGET_HOST"]? ||
+             raise Matter::ConfigurationError.new("Missing approved Crystal reverse-commissioning target host")
+      Socket::Addrinfo.udp(host, Matter::Transport::UDPTransport::MATTER_PORT,
+        family: Socket::Family::INET6).first.ip_address
+    end
+
     private def prepare_crystal_source(path : String) : Nil
       return unless crystal_target?
       store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
@@ -134,7 +145,7 @@ module MatterReverseCommissioning
                 attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
                   crystal_target? ? Matter::Controller::AttestationTrustStore.matter_test_fixture : sdk_attestation_trust))
               code = Matter::SetupPayload.generate_manual_code(discriminator, pin)
-              commissioner.pairing_code(SOURCE_BRIDGE_NODE_ID, code,
+              commissioner.pairing_code(SOURCE_BRIDGE_NODE_ID, code, peer: crystal_target_peer,
                 expected_identity: {approval.vendor_id, approval.product_id})
               puts "Reverse commissioning complete: request=#{approval.request_id} node=#{SOURCE_BRIDGE_NODE_ID}"
             ensure

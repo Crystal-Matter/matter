@@ -5,7 +5,8 @@ module Matter
     # Shared outgoing counter and incoming replay window. Secure peers are only
     # recorded after authentication; checking a counter never changes the window.
     class MessageCounter
-      WINDOW_SIZE = 64
+      WINDOW_SIZE       = 64
+      SERIAL_HALF_RANGE = 1_u32 << 31
 
       enum CheckResult
         Accept
@@ -19,25 +20,40 @@ module Matter
       @received_window = Set(UInt32).new
       @max_received : UInt32? = nil
       @restored_floor : UInt32? = nil
+      @remaining_messages : UInt32? = nil
 
       def initialize(@counter : UInt32 = 0_u32, @rollover : Bool = true)
       end
 
       def next : UInt32
+        remaining = @remaining_messages
+        if remaining == 0_u32
+          raise Matter::SessionError.new("Reserved message counter range is exhausted")
+        end
         if @counter >= @maximum
           raise Matter::SessionError.new("Message counter overflow - session must be renegotiated") unless @rollover
-          return @counter = 0_u32
+          @counter = 0_u32
+        else
+          @counter += 1
         end
-        @counter += 1
+        @remaining_messages = remaining - 1_u32 if remaining
+        @counter
+      end
+
+      def limit_messages(count : UInt32) : Nil
+        @remaining_messages = count
       end
 
       def peek(message_id : UInt32) : CheckResult
         maximum = @max_received
         return CheckResult::Accept unless maximum
-        return CheckResult::Stale if (floor = @restored_floor) && message_id <= floor
-        return CheckResult::Accept if message_id > maximum
+        if floor = @restored_floor
+          return CheckResult::Stale unless newer?(message_id, floor)
+        end
+        return CheckResult::Accept if newer?(message_id, maximum)
         return CheckResult::Duplicate if @received_window.includes?(message_id)
-        return CheckResult::Stale if maximum - message_id > WINDOW_SIZE
+        backward = maximum &- message_id
+        return CheckResult::Stale if backward >= SERIAL_HALF_RANGE || backward > WINDOW_SIZE
         CheckResult::Accept
       end
 
@@ -45,9 +61,9 @@ module Matter
         result = peek(message_id)
         return result unless result.accept?
         maximum = @max_received
-        if maximum.nil? || message_id > maximum
+        if maximum.nil? || newer?(message_id, maximum)
           @max_received = message_id
-          @received_window.reject! { |id| message_id - id > WINDOW_SIZE }
+          @received_window.reject! { |id| (message_id &- id) > WINDOW_SIZE }
         end
         @received_window.add(message_id)
         result
@@ -63,6 +79,7 @@ module Matter
 
       def reset(value : UInt32 = 0_u32) : Nil
         @counter = value
+        @remaining_messages = nil
         @received_window.clear
         @max_received = nil
         @restored_floor = nil
@@ -74,6 +91,12 @@ module Matter
         @received_window.clear
         @max_received = value
         @restored_floor = value
+      end
+
+      private def newer?(candidate : UInt32, reference : UInt32) : Bool
+        return candidate > reference unless @rollover
+        distance = candidate &- reference
+        distance > 0_u32 && distance < SERIAL_HALF_RANGE
       end
     end
   end

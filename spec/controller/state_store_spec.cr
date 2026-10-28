@@ -45,6 +45,19 @@ private class FailingControllerSqlite < Matter::Storage::Sqlite
   end
 end
 
+private class OnceConflictingControllerMemory < Matter::Storage::Memory
+  @conflicts_remaining = 1
+
+  def compare_and_swap(collection : String, id : String,
+                       expected : Matter::Storage::Document?, document : Matter::Storage::Document) : Bool
+    if @conflicts_remaining > 0
+      @conflicts_remaining -= 1
+      return false
+    end
+    super
+  end
+end
+
 private def seed_controller_credentials(backend : Matter::Storage::Backend,
                                         fabric : Matter::Controller::FabricInfo,
                                         role : Matter::Session::Case::Role? = Matter::Session::Case::Role::Initiator) : Bytes
@@ -127,6 +140,44 @@ describe Matter::Controller::StateStore do
     loaded = store.load
     loaded.unsecured_message_counter.should eq(17_u32)
     loaded.pending_datastore_nodes.size.should eq(1)
+  end
+
+  it "reserves disjoint unsecured counter ranges for concurrent clients" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    starts = Channel(UInt32).new
+    done = Channel(Nil).new
+
+    2.times do
+      spawn do
+        starts.send(store.reserve_unsecured_message_counters(2_u32))
+        done.send(nil)
+      end
+    end
+
+    first = starts.receive
+    second = starts.receive
+    done.receive
+    done.receive
+    [first, second].sort.should eq([0_u32, 2_u32])
+    store.load.unsecured_message_counter.should eq(4_u32)
+  end
+
+  it "persists the reservation end across reload and wrap" do
+    backend = Matter::Storage::Memory.new
+    store = Matter::Controller::StateStore.new(backend)
+    store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX - 1_u32))
+
+    store.reserve_unsecured_message_counters(2_u32).should eq(UInt32::MAX - 1_u32)
+    restarted = Matter::Controller::StateStore.new(backend)
+    restarted.reserve_unsecured_message_counters(2_u32).should eq(0_u32)
+    restarted.load.unsecured_message_counter.should eq(2_u32)
+  end
+
+  it "reloads and retries a conflicting durable counter reservation" do
+    store = Matter::Controller::StateStore.new(OnceConflictingControllerMemory.new)
+
+    store.reserve_unsecured_message_counters(2_u32).should eq(0_u32)
+    store.load.unsecured_message_counter.should eq(2_u32)
   end
 
   it "rejects a stale full-state save and preserves an intervening journal update" do

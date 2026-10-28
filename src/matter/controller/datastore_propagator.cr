@@ -14,10 +14,15 @@ module Matter
       Log = ::Log.for("matter.controller.datastore_propagator")
 
       alias Store = Cluster::JointFabricDatastore
-      MAX_ATTEMPTS          = 3
-      DEFAULT_RETRY_DELAY   = 2.seconds
-      DEFAULT_POLL_INTERVAL = 30.seconds
-      FAILURE_CODE          = InteractionModel::StatusCode::Failure.value
+      MAX_ATTEMPTS                          = 3
+      DEFAULT_RETRY_DELAY                   = 2.seconds
+      DEFAULT_POLL_INTERVAL                 = 30.seconds
+      FAILURE_CODE                          = InteractionModel::StatusCode::Failure.value
+      CASE_INITIATOR_MESSAGES_PER_CANDIDATE = 2_u32
+      CASE_ACKABLE_RESPONSES_PER_CANDIDATE  = 2_u32
+      CASE_UNSECURED_MESSAGES_PER_CANDIDATE = CASE_INITIATOR_MESSAGES_PER_CANDIDATE +
+                                              CASE_ACKABLE_RESPONSES_PER_CANDIDATE *
+                                              (1_u32 + Transport::UDPTransport::MRP_MAX_RETRANSMISSIONS.to_u32)
 
       abstract class Delivery
         abstract def deliver(store : Store, node_id : UInt64) : Nil
@@ -43,9 +48,11 @@ module Matter
                    end
           peer = OperationalPeerResolver.new.resolve(state, fabric, node_id,
             @timeout, @peer_hints[node_id]?)
+          counter_start, counter_count = reserve_case_counters(fabric)
           client = Client.new(
             unsecured_source_node_id: fabric.controller_node_id,
-            initial_unsecured_message_counter: state.unsecured_message_counter
+            initial_unsecured_message_counter: counter_start,
+            unsecured_message_counter_limit: counter_count
           )
           delivered = false
           begin
@@ -63,6 +70,17 @@ module Matter
             end
             client.close
           end
+        end
+
+        protected def reserve_case_counters(fabric : FabricInfo) : {UInt32, UInt32}
+          # Full CASE sends Sigma1 and Sigma3, plus ACKs for Sigma2 and
+          # StatusReport. Each inbound response may be retried up to the
+          # transport's MRP bound; duplicate reception emits another ACK.
+          # Resumption uses fewer. Unused counters stay spent after crash.
+          preferred = fabric.case_ipk_value
+          candidate_count = 1_u32 + fabric.ipk_epoch_keys.count { |key| key != preferred }.to_u32
+          counter_count = candidate_count * CASE_UNSECURED_MESSAGES_PER_CANDIDATE
+          {@state_store.reserve_unsecured_message_counters(counter_count), counter_count}
         end
       end
 

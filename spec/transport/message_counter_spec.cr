@@ -3,6 +3,15 @@ require "../../src/matter/transport/message_counter"
 
 describe Matter::Transport::MessageCounter do
   describe "#next" do
+    it "refuses to emit a counter outside a reserved range even at wrap" do
+      counter = Matter::Transport::MessageCounter.new(UInt32::MAX - 1_u32)
+      counter.limit_messages(2_u32)
+
+      counter.next.should eq(UInt32::MAX)
+      counter.next.should eq(0_u32)
+      expect_raises(Matter::SessionError) { counter.next }
+    end
+
     it "generates sequential message IDs" do
       counter = Matter::Transport::MessageCounter.new(0_u32)
 
@@ -118,6 +127,30 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#check" do
+    it "retains the maximum when accepting an out-of-order packet" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.check(100_u32).accept?.should be_true
+      counter.check(99_u32).accept?.should be_true
+      counter.check(100_u32).duplicate?.should be_true
+      counter.max_received.should eq(100_u32)
+    end
+
+    it "rejects secure-session rollover when rollover is disabled" do
+      counter = Matter::Transport::MessageCounter.new(rollover: false)
+      counter.check(UInt32::MAX).accept?.should be_true
+      counter.check(0_u32).stale?.should be_true
+    end
+
+    it "accepts rollover and rejects duplicate and stale counters across it" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.check(UInt32::MAX - 1_u32).accept?.should be_true
+      counter.check(UInt32::MAX).accept?.should be_true
+      counter.check(0_u32).accept?.should be_true
+      counter.check(1_u32).accept?.should be_true
+      counter.check(UInt32::MAX).duplicate?.should be_true
+      counter.check(UInt32::MAX - 65_u32).stale?.should be_true
+    end
+
     it "recognizes a duplicate zero counter" do
       counter = Matter::Transport::MessageCounter.new
       counter.check(0_u32).accept?.should be_true
@@ -148,6 +181,23 @@ describe Matter::Transport::MessageCounter do
   end
 
   describe "#restore_received" do
+    it "accepts a large forward jump for a nonrolling secure peer" do
+      counter = Matter::Transport::MessageCounter.new(rollover: false)
+      counter.restore_received(1_u32)
+
+      counter.check(Matter::Transport::MessageCounter::SERIAL_HALF_RANGE + 2_u32).accept?.should be_true
+    end
+
+    it "keeps a restored floor across UInt32 rollover" do
+      counter = Matter::Transport::MessageCounter.new
+      counter.restore_received(UInt32::MAX)
+
+      counter.check(UInt32::MAX).stale?.should be_true
+      counter.check(UInt32::MAX - 1_u32).stale?.should be_true
+      counter.check(0_u32).accept?.should be_true
+      counter.check(0_u32).duplicate?.should be_true
+    end
+
     it "installs a floor so the restored counter and older ones are stale" do
       counter = Matter::Transport::MessageCounter.new
       counter.restore_received(100_u32)

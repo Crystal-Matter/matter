@@ -353,6 +353,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its initial key set and group through the Datastore synchronizer.
 - Require AddGroupResponse and RemoveGroupResponse to confirm the requested
   GroupId before committing or deleting a pending Datastore membership.
+- Require the expected Anchor Node ID to match both the CASE peer and the
+  Datastore AnchorNodeID before a shared controller group grant changes
+  Datastore entries.
 
 ### Thermostat suggestion guarded wire preparation
 

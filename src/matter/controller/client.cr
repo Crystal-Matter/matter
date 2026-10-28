@@ -60,6 +60,7 @@ module Matter
         @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
         unsecured_source_node_id : UInt64? = nil,
         initial_unsecured_message_counter : UInt32? = nil,
+        unsecured_message_counter_limit : UInt32? = nil,
         transport : Transport::PacketTransport? = nil,
         tcp_enabled : Bool = false,
         @session_id_in_use : Proc(UInt16, Bool)? = nil,
@@ -80,8 +81,9 @@ module Matter
           else
             @transport.message_counter.reset(Random::Secure.rand(UInt32))
           end
-        elsif initial_unsecured_message_counter
-          raise Matter::ConfigurationError.new("Cannot reset a shared transport message counter")
+          @transport.message_counter.limit_messages(unsecured_message_counter_limit) if unsecured_message_counter_limit
+        elsif initial_unsecured_message_counter || unsecured_message_counter_limit
+          raise Matter::ConfigurationError.new("Cannot configure a shared transport message counter")
         end
         @inbox = Channel(ReceivedMessage).new(256)
         @deferred_messages = [] of ReceivedMessage
