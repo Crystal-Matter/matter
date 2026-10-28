@@ -240,7 +240,7 @@ module Matter
           acls.each do |acl|
             next if acl.node_id == journal.node_id
             subjects = acl.acl_entry.subjects
-            raise Matter::CommissioningError.new("Wildcard ACL grants require explicit removal") unless subjects && subjects.any?
+            raise Matter::CommissioningError.new("Wildcard ACL grants require explicit removal") unless subjects && subjects.present?
             if subjects.includes?(journal.node_id) && acl.acl_entry.auth_mode != Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
               raise Matter::CommissioningError.new("Non-CASE ACL subject collides with the removed Node ID")
             end
