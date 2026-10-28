@@ -59,8 +59,11 @@ Finally, B removes A. The test interrupts after the remote RemoveFabric
 acknowledgement is lost, restarts B, and verifies that the persisted removal
 journal blocks replay until the operator reconciles A's fabric state. It also
 restarts B after a lost RemoveAdmin acknowledgement and verifies the persisted
-AdminList before reconciliation. B then completes removal and retains B and C
-in its Administrator list. A repeated removal is idempotent.
+AdminList before reconciliation. After C's credential rotation is reconciled,
+the test restarts B and C while B's removal journal is still `AnchorRotated`.
+B completes removal without repeating C's rotation or changing either
+Administrator's NOC, ICAC, CAT version, or the Datastore AdminList. B retains
+B and C in its Administrator list. A repeated removal is idempotent.
 
 Run just this scenario with `./test --e2e-only --
 e2e/spec/joint_fabric_two_jfa_spec.cr`.

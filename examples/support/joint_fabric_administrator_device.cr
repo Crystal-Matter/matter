@@ -310,6 +310,8 @@ module MatterJointFabricAdministrator
       getter inspected_transfer_stage : UInt8?
       getter inspected_active_rotation_node_id : UInt64?
       getter inspected_follow_up_stage : UInt8?
+      getter inspected_removal_stage : UInt8?
+      getter inspected_removal_rotated_nodes : Array(UInt64)?
       getter inspected_failsafe_clear : Bool?
       getter inspected_credential_journal_clear : Bool?
       getter inspected_operational_credential : Bytes?
@@ -343,6 +345,8 @@ module MatterJointFabricAdministrator
                      @inspected_transfer_stage : UInt8? = nil,
                      @inspected_active_rotation_node_id : UInt64? = nil,
                      @inspected_follow_up_stage : UInt8? = nil,
+                     @inspected_removal_stage : UInt8? = nil,
+                     @inspected_removal_rotated_nodes : Array(UInt64)? = nil,
                      @inspected_failsafe_clear : Bool? = nil,
                      @inspected_credential_journal_clear : Bool? = nil,
                      @inspected_operational_credential : Bytes? = nil,
@@ -3914,6 +3918,12 @@ module MatterJointFabricAdministrator
               Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.from_document(entry).stage.value
             end
             CommandResult.new("ok", inspected_follow_up_stage: stage)
+          when "inspect-removal-stage"
+            document = persistence.app_document("#{APP_REMOVAL_PREFIX}#{request.node_id.to_s(16)}") ||
+                       raise Matter::ConfigurationError.new("Administrator removal journal is absent")
+            journal = Matter::Controller::AdministratorRemoval::Journal.from_document(document)
+            CommandResult.new("ok", inspected_removal_stage: journal.stage.value,
+              inspected_removal_rotated_nodes: journal.rotated_nodes)
           when "reconcile-follow-up-cross-signed"
             reconcile_follow_up_cross_signed(request.node_id, request.nonce)
             CommandResult.new("ok", nonce: request.nonce)

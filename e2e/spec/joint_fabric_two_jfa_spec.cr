@@ -100,6 +100,34 @@ private def candidate_admin_icac(client : Matter::Controller::Client,
     .from_tlv(data.to_slice).find!(&.node_id.==(administrator_node_id)).icac
 end
 
+private def administrator_datastore_snapshot(client : Matter::Controller::Client,
+                                             peer : Socket::IPAddress,
+                                             fabric : Matter::Controller::FabricInfo,
+                                             node_id : UInt64) : NamedTuple(admin_entries: Array(Bytes), cat_version: UInt16)
+  session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer, fabric,
+    peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT)
+  im = Matter::Controller::ImClient.new(client, E2E::COMMAND_TIMEOUT)
+  admins = im.read_attribute(session: session, peer: peer,
+    endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
+    cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+    attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
+  admin_data = admins.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  entries = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
+    .from_tlv(admin_data.to_slice).map(&.to_slice)
+  groups = im.read_attribute(session: session, peer: peer,
+    endpoint_id: MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID,
+    cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+    attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST)
+  group_data = groups.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+    .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+  version = Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)
+    .from_tlv(group_data.to_slice)
+    .find!(&.group_cat.==(Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT))
+    .group_cat_version || raise Matter::ProtocolError.new("Administrator CAT version is absent")
+  {admin_entries: entries, cat_version: version}
+end
+
 private def administrator_noc(client : Matter::Controller::Client,
                               peer : Socket::IPAddress,
                               fabric : Matter::Controller::FabricInfo,
@@ -2861,9 +2889,59 @@ describe "three provisioned Joint Fabric Administrators" do
       MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-participant-rotated", 0xA102_u64,
         nonce: participant_rotation_nonce))
     reconciled_participant_rotation.status.should eq("ok"), reconciled_participant_rotation.error.to_s
+    # C's rotation is now journaled, but removal has not reached Completed.
+    # Restart both peers at this durable boundary so B must skip C's UpdateNOC.
+    reconciled_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-removal-stage", 0xA102_u64))
+    reconciled_removal_stage.inspected_removal_stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::AnchorRotated.value)
+    reconciled_removal_stage.inspected_removal_rotated_nodes.should eq([0xA104_u64])
+    b_before_completion = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    c_before_completion = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    datastore_before_completion = administrator_datastore_snapshot(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    datastore_before_completion.cat_version.should eq(before_removal_cat_version + 1_u16)
+    joiner.restart!
+    third.restart!
+    joiner_client.close
+    joiner_client = Matter::Controller::Client.new(
+      counter_lease: joiner_store.counter_lease(joiner_bootstrap.fabric.controller_node_id))
+    promoted_im = Matter::Controller::ImClient.new(joiner_client, E2E::COMMAND_TIMEOUT)
+    persisted_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-removal-stage", 0xA102_u64))
+    persisted_removal_stage.inspected_removal_stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::AnchorRotated.value)
+    persisted_removal_stage.inspected_removal_rotated_nodes.should eq([0xA104_u64])
+    b_after_reconciliation_restart = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    b_after_reconciliation_restart.noc.should eq(b_before_completion.noc)
+    b_after_reconciliation_restart.icac.should eq(b_before_completion.icac)
+    c_after_reconciliation_restart = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_after_reconciliation_restart.noc.should eq(c_before_completion.noc)
+    c_after_reconciliation_restart.icac.should eq(c_before_completion.icac)
+    administrator_datastore_snapshot(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64).should eq(datastore_before_completion)
     removed = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("remove-administrator", 0xA102_u64))
     removed.status.should eq("ok"), removed.error.to_s
+    completed_removal_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-removal-stage", 0xA102_u64))
+    completed_removal_stage.inspected_removal_stage.should eq(
+      Matter::Controller::AdministratorRemoval::Stage::Completed.value)
+    completed_removal_stage.inspected_removal_rotated_nodes.should eq([0xA104_u64])
+    b_after_completion = administrator_noc(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64)
+    b_after_completion.noc.should eq(b_before_completion.noc)
+    b_after_completion.icac.should eq(b_before_completion.icac)
+    c_after_completion = administrator_noc(joiner_client, third_peer,
+      joiner_bootstrap.fabric, 0xA104_u64)
+    c_after_completion.noc.should eq(c_before_completion.noc)
+    c_after_completion.icac.should eq(c_before_completion.icac)
+    administrator_datastore_snapshot(joiner_client, joiner_peer,
+      joiner_bootstrap.fabric, 0xB102_u64).should eq(datastore_before_completion)
     promoted_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
     final_admins = promoted_im.read_attribute(session: promoted_session, peer: joiner_peer,
