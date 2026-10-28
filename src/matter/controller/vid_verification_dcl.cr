@@ -17,8 +17,8 @@ module Matter
       # source, but its certificate and VID metadata are still checked locally.
       struct DclCertificate
         enum Type
-          OperationalPKI
-          VIDSignerPKI
+          OperationalPKI = 1
+          VIDSignerPKI   = 2
         end
 
         getter certificate : OpenSSL::X509::Certificate
@@ -96,8 +96,8 @@ module Matter
           data.map do |item|
             record = item.as_h
             type = case record["certificateType"].raw
-                   when "OperationalPKI", 1 then DclCertificate::Type::OperationalPKI
-                   when "VIDSignerPKI", 2   then DclCertificate::Type::VIDSignerPKI
+                   when "OperationalPKI", DclCertificate::Type::OperationalPKI.value then DclCertificate::Type::OperationalPKI
+                   when "VIDSignerPKI", DclCertificate::Type::VIDSignerPKI.value   then DclCertificate::Type::VIDSignerPKI
                    else                          raise Matter::AuthenticationError.new("Unknown DCL certificate type")
                    end
             vendor_id = record["vid"].raw.to_s.to_u16
