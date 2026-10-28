@@ -1397,7 +1397,7 @@ module Matter
 
       def add_group_id_to_endpoint_for_node(request : AddGroupIDToEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
         return InteractionModel::Status.constraint_error unless @group_list.any?(&.group_id.==(request.group_id.to_u64))
         return InteractionModel::Status.constraint_error if @endpoint_group_id_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
         return InteractionModel::Status.resource_exhausted if @endpoint_group_id_list.size >= MAX_NODE_ENTRIES
@@ -1418,6 +1418,7 @@ module Matter
 
       def remove_group_id_from_endpoint_for_node(request : RemoveGroupIDFromEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
+        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
         return InteractionModel::Status.not_found unless @endpoint_group_id_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
         entries = @endpoint_group_id_list.dup
         index = entries.index { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }.as(Int32)
@@ -1431,7 +1432,7 @@ module Matter
 
       def add_binding_to_endpoint_for_node(request : AddBindingToEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
         binding = request.binding
         return InteractionModel::Status.constraint_error unless valid_binding_target?(binding)
         return InteractionModel::Status.resource_exhausted if @endpoint_binding_list.size >= MAX_NODE_ENTRIES
@@ -1444,6 +1445,7 @@ module Matter
 
       def remove_binding_from_endpoint_for_node(request : RemoveBindingFromEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
+        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
         return InteractionModel::Status.not_found unless @endpoint_binding_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.list_id == request.list_id }
         entries = @endpoint_binding_list.dup
         index = entries.index { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.list_id == request.list_id }.as(Int32)

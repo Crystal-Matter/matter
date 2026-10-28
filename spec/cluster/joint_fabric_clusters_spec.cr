@@ -294,7 +294,7 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.endpoint_binding_list.first.binding.should eq(group_binding)
   end
 
-  it "returns NotFound for missing nodes and endpoints in datastore update commands without changing state" do
+  it "returns ConstraintError for missing endpoint targets in datastore membership commands without changing state" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     node_id = 42_u64
     missing_node_id = 43_u64
@@ -310,18 +310,32 @@ describe Matter::Cluster::JointFabricDatastore do
     before = cluster.save_state
     version = cluster.data_version
     not_found = Matter::InteractionModel::StatusCode::NotFound
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+    missing_list_id = 1_u16
 
     cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, missing_node_id, "Missing"))
       .status.should eq(not_found)
     cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(missing_endpoint_id, node_id, "Missing"))
       .status.should eq(not_found)
     cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(missing_node_id, endpoint_id, 10_u16))
-      .status.should eq(not_found)
+      .status.should eq(constraint)
     cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(node_id, missing_endpoint_id, 10_u16))
-      .status.should eq(not_found)
+      .status.should eq(constraint)
     cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(missing_node_id, endpoint_id, binding))
-      .status.should eq(not_found)
+      .status.should eq(constraint)
     cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(node_id, missing_endpoint_id, binding))
+      .status.should eq(constraint)
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(missing_node_id, endpoint_id, 10_u16))
+      .status.should eq(constraint)
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(node_id, missing_endpoint_id, 10_u16))
+      .status.should eq(constraint)
+    cluster.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(missing_list_id, endpoint_id, missing_node_id))
+      .status.should eq(constraint)
+    cluster.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(missing_list_id, missing_endpoint_id, node_id))
+      .status.should eq(constraint)
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(node_id, endpoint_id, 10_u16))
+      .status.should eq(not_found)
+    cluster.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(missing_list_id, endpoint_id, node_id))
       .status.should eq(not_found)
     cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(missing_node_id, acl))
       .status.should eq(not_found)

@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore command status
+
+- Return `ConstraintError` when an endpoint membership or binding command
+  targets a node or endpoint absent from the Datastore, matching the Matter 1.6
+  Joint Fabric Datastore command precondition. Missing entries under an
+  existing endpoint still return `NotFound`.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the
