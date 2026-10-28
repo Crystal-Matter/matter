@@ -85,6 +85,20 @@ module Matter
       end
 
       struct PayloadHeader
+        UNDECODED_EXCHANGE_ID  = 0_u16
+        UNDECODED_PROTOCOL_ID  = 0_u16
+        UNDECODED_MESSAGE_TYPE =  0_u8
+
+        # Encrypted packets do not expose their payload header until decryption.
+        # The transport carries this placeholder only until the handler decodes it.
+        def self.encrypted_placeholder : self
+          new(exchange_id: UNDECODED_EXCHANGE_ID,
+            protocol_id: UNDECODED_PROTOCOL_ID,
+            message_type: UNDECODED_MESSAGE_TYPE,
+            initiator_message: false,
+            requires_acknowledge: false)
+        end
+
         getter exchange_id : UInt16
         getter protocol_id : UInt32
         getter message_type : UInt8
