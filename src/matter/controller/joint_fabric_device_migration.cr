@@ -108,9 +108,10 @@ module Matter
           @backend.open unless @backend.open?
           id = identity_key(old_fabric_id, old_root_public_key, old_node_id,
             anchor_fabric_id, anchor_root_public_key, anchor_node_id)
+          result = nil.as(Journal?)
           @backend.transaction do
             document = @backend.read(COLLECTION, id)
-            next nil unless document
+            next unless document
             journal = Journal.from_document(document)
             if journal.attempt_id.empty? || !document.has_key?("stage_version")
               journal.attempt_id = Random::Secure.random_bytes(16).hexstring if journal.attempt_id.empty?
@@ -119,8 +120,9 @@ module Matter
                 raise Matter::StorageError.new("Legacy migration journal claim changed since load")
               end
             end
-            journal
+            result = journal
           end
+          result
         end
 
         private def document_id(journal : Journal) : String
