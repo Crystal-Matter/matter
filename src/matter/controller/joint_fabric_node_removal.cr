@@ -77,7 +77,7 @@ module Matter
               result = journal
             end
           end
-          result.not_nil!
+          result || raise Matter::StorageError.new("Joint Fabric node removal journal was not returned")
         end
 
         def save(journal : Journal) : Nil
@@ -149,38 +149,38 @@ module Matter
         end
 
         def revoke_direct_access!(journal : Journal) : Nil
-          with_anchor(journal) do |im, session|
-            validate_removable!(im, session, journal)
-            direct_grants(im, session, journal).each do |entry|
+          with_anchor(journal) do |im_client, session|
+            validate_removable!(im_client, session, journal)
+            direct_grants(im_client, session, journal).each do |entry|
               next if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending
-              invoke!(im, session, Datastore::CMD_REMOVE_ACL_FROM_NODE,
+              invoke!(im_client, session, Datastore::CMD_REMOVE_ACL_FROM_NODE,
                 Datastore::RemoveACLFromNodeRequest.new(entry.list_id, entry.node_id).to_slice)
             end
           end
         end
 
         def access_revoked?(journal : Journal) : Bool
-          with_anchor(journal) do |im, session|
-            validate_removable!(im, session, journal)
-            return direct_grants(im, session, journal).empty?
+          with_anchor(journal) do |im_client, session|
+            validate_removable!(im_client, session, journal)
+            return direct_grants(im_client, session, journal).empty?
           end
           false
         end
 
         def remove_node!(journal : Journal) : Nil
-          with_anchor(journal) do |im, session|
-            validate_removable!(im, session, journal)
-            unless direct_grants(im, session, journal).empty?
+          with_anchor(journal) do |im_client, session|
+            validate_removable!(im_client, session, journal)
+            unless direct_grants(im_client, session, journal).empty?
               raise Matter::CommissioningError.new("Joint Fabric node still has direct access grants")
             end
-            invoke!(im, session, Datastore::CMD_REMOVE_NODE,
+            invoke!(im_client, session, Datastore::CMD_REMOVE_NODE,
               Datastore::RemoveNodeRequest.new(journal.node_id).to_slice)
           end
         end
 
         def node_absent?(journal : Journal) : Bool
-          with_anchor(journal) do |im, session|
-            return node_entry(im, session, journal).nil?
+          with_anchor(journal) do |im_client, session|
+            return node_entry(im_client, session, journal).nil?
           end
           false
         end
@@ -240,7 +240,7 @@ module Matter
           acls.each do |acl|
             next if acl.node_id == journal.node_id
             subjects = acl.acl_entry.subjects
-            raise Matter::CommissioningError.new("Wildcard ACL grants require explicit removal") unless subjects && !subjects.empty?
+            raise Matter::CommissioningError.new("Wildcard ACL grants require explicit removal") unless subjects && subjects.any?
             if subjects.includes?(journal.node_id) && acl.acl_entry.auth_mode != Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
               raise Matter::CommissioningError.new("Non-CASE ACL subject collides with the removed Node ID")
             end
