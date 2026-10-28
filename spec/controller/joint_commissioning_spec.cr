@@ -337,6 +337,68 @@ describe Matter::Controller::JointCommissioning do
     end
   end
 
+  it "accepts only an authenticated Anchor CAT and root-issued Anchor ICAC on outbound CASE" do
+    bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      fabric_id, 9_u64, 0xFFF1_u16, crypto: crypto)
+    anchor = bootstrap.fabric
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16),
+      case_session: true)
+    session.peer_subject_ids = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(anchor.controller_noc)
+    session.peer_icac = anchor.intermediate_cert
+    Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+      anchor.root_cert, anchor.fabric_id)
+
+    anchor_only_key = crypto.create_key_pair
+    anchor_only_noc = bootstrap.issue_noc(anchor.controller_node_id, anchor_only_key.public_key,
+      [Matter::DataType::CaseAuthenticatedTag.create(
+        Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 1_u16).value], crypto)
+    session.peer_subject_ids = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(anchor_only_noc)
+    expect_raises(Matter::AuthenticationError, /Administrator CAT/) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        anchor.root_cert, anchor.fabric_id)
+    end
+
+    session.peer_subject_ids = [anchor.controller_node_id]
+    expect_raises(Matter::AuthenticationError, /Anchor CAT/) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        anchor.root_cert, anchor.fabric_id)
+    end
+    session.peer_subject_ids = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(anchor.controller_noc)
+    session.peer_icac = nil
+    expect_raises(Matter::AuthenticationError, /Anchor ICAC/) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        anchor.root_cert, anchor.fabric_id)
+    end
+
+    ordinary_key = crypto.create_key_pair
+    ordinary_icac = Matter::Crypto::MatterCertificate::Builder.intermediate(
+      ordinary_key.public_key, anchor.fabric_id, 4_u64,
+      anchor.certificate_authority_key, 1_u64, Bytes[0x09], crypto,
+      issuer_certificate: anchor.root_cert)
+    session.peer_icac = ordinary_icac
+    expect_raises(Matter::AuthenticationError, /Anchor ICAC/) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        anchor.root_cert, anchor.fabric_id)
+    end
+
+    session.peer_icac = anchor.intermediate_cert
+    other_root = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      fabric_id, 10_u64, 0xFFF1_u16, crypto: crypto).fabric.root_cert
+    expect_raises(Matter::AuthenticationError) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        other_root, anchor.fabric_id)
+    end
+
+    session.peer_icac = Bytes[1, 2, 3]
+    expect_raises(Matter::AuthenticationError, /Anchor ICAC/) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        anchor.root_cert, anchor.fabric_id)
+    end
+  end
+
   it "uses a supplied client's source port for outbound Anchor verification without closing it" do
     node_key = crypto.create_key_pair
     noc = Matter::Crypto::MatterCertificate::Builder.node(
