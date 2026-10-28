@@ -23,7 +23,7 @@ module Matter
       @remaining_messages : UInt32? = nil
       @refill : Proc(Tuple(UInt32, UInt32))? = nil
       @lease_validity : Proc(Nil)? = nil
-      @lease_owner : Object? = nil
+      @lease_owner_token : UInt64? = nil
       @issued_messages : UInt64 = 0_u64
       @send_mutex = Mutex.new
 
@@ -68,7 +68,7 @@ module Matter
       end
 
       def limit_messages(count : UInt32) : Nil
-        raise Matter::ConfigurationError.new("Cannot replace a leased counter range") if @lease_owner
+        raise Matter::ConfigurationError.new("Cannot replace a leased counter range") if @lease_owner_token
         @remaining_messages = count
       end
 
@@ -76,7 +76,7 @@ module Matter
       # The callback must commit its reservation before returning. Failure is
       # propagated and no counter is assigned.
       def refill_with(callback : Proc(Tuple(UInt32, UInt32))) : Nil
-        raise Matter::ConfigurationError.new("Cannot replace a counter lease renewal") if @lease_owner
+        raise Matter::ConfigurationError.new("Cannot replace a counter lease renewal") if @lease_owner_token
         @refill = callback
       end
 
@@ -84,18 +84,18 @@ module Matter
                      callback : Proc(Tuple(UInt32, UInt32))? = nil,
                      validity : Proc(Nil)? = nil) : Nil
         @send_mutex.synchronize do
-          raise Matter::ConfigurationError.new("Message counter already has a lease owner") if @lease_owner
+          raise Matter::ConfigurationError.new("Message counter already has a lease owner") if @lease_owner_token
           raise Matter::ConfigurationError.new("Cannot bind a counter lease after a message was sent") unless @issued_messages == 0_u64
           @counter = start
           @remaining_messages = count
           @refill = callback
           @lease_validity = validity
-          @lease_owner = owner
+          @lease_owner_token = owner.object_id.to_u64
         end
       end
 
       def leased_by?(owner : Object) : Bool
-        @lease_owner.same?(owner)
+        @lease_owner_token == owner.object_id.to_u64
       end
 
       def peek(message_id : UInt32) : CheckResult
