@@ -100,6 +100,8 @@ module Matter
         abstract def verify_no_effect!(stage : Stage) : Nil
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
         abstract def resume_rollback! : Nil
+        abstract def finalize_rollback! : Nil
+        abstract def finalize_migration! : Nil
         abstract def validate_journal!(journal : Journal) : Nil
       end
 
@@ -129,6 +131,10 @@ module Matter
                        @attestation_verifier : DeviceAttestationVerifier,
                        @commissioning_ack : Proc(Nil)? = nil,
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
+                       @anchor_registration_committed : Proc(Nil)? = nil,
+                       @anchor_node_removed : Proc(Nil)? = nil,
+                       @old_fabric_removed : Proc(Nil)? = nil,
+                       @old_node_removed : Proc(Nil)? = nil,
                        @timeout : Time::Span = 15.seconds,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @client : Client = Client.new,
@@ -190,7 +196,7 @@ module Matter
           window = Commissioning::CommissioningWindowOpener.new(@crypto).open_enhanced(
             ImClient.new(@client, @timeout), old_session, @device_peer,
             DEFAULT_WINDOW_SECONDS, DEFAULT_PBKDF_ITERATIONS,
-            Random::Secure.rand(0_u16..4095_u16))
+            Random::Secure.rand(0_u16..SetupPayload::MAX_DISCRIMINATOR))
           deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
           hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
             @crypto, -> { persist_commissioning_ack! }, deadline_callback)
@@ -258,6 +264,7 @@ module Matter
             Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE, request.to_slice)
           assert_status_success!(response, "AddPendingNode")
           wait_anchor_node_committed!(im, session)
+          @anchor_registration_committed.try(&.call)
         end
 
         def refresh_anchor_registration! : Nil
@@ -311,6 +318,7 @@ module Matter
              end
             raise Matter::CommissioningError.new("Fabric B remained installed after RemoveFabric")
           end
+          @old_fabric_removed.try(&.call)
         end
 
         def remove_old_node! : Nil
@@ -321,6 +329,7 @@ module Matter
             Cluster::JointFabricDatastore::RemoveNodeRequest.new(@old_node_id).to_slice)
           assert_status_success!(response, "RemoveNode")
           verify_postcondition!(Stage::Complete)
+          @old_node_removed.try(&.call)
         end
 
         def rollback_anchor!(anchor_registered : Bool) : Nil
@@ -339,6 +348,7 @@ module Matter
               Cluster::JointFabricDatastore::CMD_REMOVE_NODE,
               Cluster::JointFabricDatastore::RemoveNodeRequest.new(@anchor_node_id).to_slice)
             assert_status_success!(response, "Anchor RemoveNode")
+            @anchor_node_removed.try(&.call)
           end
           session = case_session(@old_fabric, @old_node_id, @device_peer)
           descriptor = fabrics(session, @device_peer).find do |entry|
@@ -354,6 +364,29 @@ module Matter
             assert_noc_success!(response, "Anchor RemoveFabric")
           end
           verify_postcondition!(Stage::RolledBack)
+        end
+
+        # The controller's A node record was saved during commissioning. Keep
+        # it until authenticated reads prove that both remote removals took
+        # effect; if this save fails, the RollingBack journal can retry it.
+        def finalize_rollback! : Nil
+          verify_postcondition!(Stage::RolledBack)
+          state = @store.load
+          nodes = state.nodes_for(@anchor_fabric.fabric_id,
+            @anchor_fabric.root_public_key, @anchor_fabric.controller_node_id)
+          @store.save(state) if nodes.delete(@anchor_node_id)
+        end
+
+        # The old controller node is no longer reachable after the device's
+        # B fabric and B Datastore entry have been removed. Keep it until
+        # authenticated completion proof, then clear it before journaling
+        # Complete so a failed local save remains recoverable.
+        def finalize_migration! : Nil
+          verify_postcondition!(Stage::Complete)
+          state = @store.load
+          nodes = state.nodes_for(@old_fabric.fabric_id,
+            @old_fabric.root_public_key, @old_fabric.controller_node_id)
+          @store.save(state) if nodes.delete(@old_node_id)
         end
 
         # These are read-only postconditions for explicit journal
@@ -865,6 +898,19 @@ module Matter
         # inspect the device or Datastore over authenticated CASE and then
         # explicitly record the observed postcondition before resuming.
         def reconcile!(completed : Stage) : Nil
+          # Journals written before controller node cleanup can already be
+          # terminal while their local node record is stale. An explicit
+          # reconciliation proves the remote terminal state before cleanup;
+          # it does not replay either removal command or rewrite the journal.
+          if @journal.stage.in?(Stage::Complete, Stage::RolledBack)
+            unless completed == @journal.stage
+              raise Matter::ConfigurationError.new("Invalid migration reconciliation stage")
+            end
+            @port.verify_postcondition!(completed)
+            @port.finalize_migration! if completed.complete?
+            @port.finalize_rollback! if completed.rolled_back?
+            return
+          end
           expected = case @journal.stage
                      when Stage::CommissioningAnchor then Stage::AnchorCommissioned
                      when Stage::VerifyingAnchor     then Stage::AnchorVerified
@@ -899,6 +945,8 @@ module Matter
         end
 
         private def advance(stage : Stage) : Nil
+          @port.finalize_migration! if stage.complete?
+          @port.finalize_rollback! if stage.rolled_back?
           updated = @journal
           updated.stage = stage
           @save.call(updated)

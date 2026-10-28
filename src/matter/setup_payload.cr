@@ -15,6 +15,7 @@ module Matter
   # The 11-digit code is computed as: (discriminator << 27) | PIN
   # Then the Verhoeff check digit is appended.
   module SetupPayload
+    MAX_DISCRIMINATOR                          = 0x0FFF_u16
     TEST_VENDOR_ID_MINIMUM                     = 0xFFF1_u16
     TEST_VENDOR_ID_EXCLUSIVE_MAXIMUM           = 0xFFF4_u16
     SHORT_DISCRIMINATOR_UNSPECIFIED_BITS_MASK  = 0x00FF_u16
@@ -88,7 +89,7 @@ module Matter
     # Generate a random discriminator (12-bit value, 0-4095)
     # Each device instance should have a unique discriminator
     def self.generate_random_discriminator : UInt16
-      Random::Secure.rand(4096).to_u16
+      Random::Secure.rand(0_u16..MAX_DISCRIMINATOR)
     end
 
     # Generate a unique ID (UUID-like format)
@@ -126,7 +127,7 @@ module Matter
     # Algorithm from matter.js PairingCodeSchema.ts (Matter Core Spec § 5.1.4.1)
     def self.generate_manual_code(discriminator : UInt16, pin : UInt32, validate : Bool = true) : String
       # Validate discriminator (12 bits = 0-4095)
-      raise ArgumentError.new("Discriminator must be 0-4095") if discriminator > 4095
+      raise ArgumentError.new("Discriminator must be 0-4095") if discriminator > MAX_DISCRIMINATOR
 
       if validate
         # Validate PIN (27 bits, but Matter has specific restrictions)
@@ -296,7 +297,7 @@ module Matter
         capabilities : DiscoveryCapability = DiscoveryCapability::BLE,
       ) : String
         # Validate inputs
-        raise ArgumentError.new("Discriminator must be 0-4095") if discriminator > 4095
+        raise ArgumentError.new("Discriminator must be 0-4095") if discriminator > MAX_DISCRIMINATOR
         raise ArgumentError.new("PIN must be 1-99999998") if pin < 1 || pin > 99999998
 
         # Encode payload as byte array with bit-packed fields

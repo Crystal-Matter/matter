@@ -970,9 +970,9 @@ module Matter
       def update_key_set(request : UpdateKeySetRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         key_set = request.group_key_set
-        return InteractionModel::Status.constraint_error unless valid_key_set?(key_set, allow_ipk: true)
         index = @group_key_set_list.index { |entry| entry.group_key_set_id == key_set.group_key_set_id }
         return InteractionModel::Status.not_found unless index
+        return InteractionModel::Status.constraint_error unless valid_key_set?(key_set, allow_ipk: true)
         changed = @group_key_set_list[index] != key_set
         if changed && key_set.group_key_set_id == IPK_KEY_SET_ID &&
            (key_set.epoch_key0.nil? || key_set.epoch_start_time0.nil? || key_set.epoch_start_time0 == 0_u64)
@@ -1244,9 +1244,9 @@ module Matter
 
       def update_node(request : UpdateNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
         index = @node_list.index { |entry| entry.node_id == request.node_id }
         return InteractionModel::Status.not_found unless index
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
         entry = @node_list[index]
         entry.friendly_name = request.friendly_name
         entries = @node_list.dup
@@ -1269,8 +1269,9 @@ module Matter
 
       def update_endpoint_for_node(request : UpdateEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless node_exists?(request.node_id) && valid_name?(request.friendly_name)
-        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.not_found unless node_exists?(request.node_id)
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name)
 
         entries = @node_endpoint_list.reject { |entry| entry.node_id == request.node_id && entry.endpoint_id == request.endpoint_id }
         entries << DatastoreEndpointEntryStruct.new(request.endpoint_id, request.node_id, request.friendly_name)
@@ -1306,17 +1307,17 @@ module Matter
         end
         self.node_endpoint_list = entries
         self.endpoint_group_id_list = @endpoint_group_id_list.reject do |entry|
-          entry.node_id == node_id && !ids.includes?(entry.endpoint_id)
+          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number && !ids.includes?(entry.endpoint_id)
         end
         self.endpoint_binding_list = @endpoint_binding_list.reject do |entry|
-          entry.node_id == node_id && !ids.includes?(entry.endpoint_id)
+          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number && !ids.includes?(entry.endpoint_id)
         end
         commit!
       end
 
       def reconcile_node_groups(node_id : UInt64, endpoint_id : UInt16, group_ids : Array(UInt16)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
+        return InteractionModel::Status.not_found unless refresh_endpoint_exists?(node_id, endpoint_id)
         return InteractionModel::Status.constraint_error if group_ids.includes?(RESERVED_GROUP_ID)
         ids = group_ids.uniq
         entries = @endpoint_group_id_list.reject do |entry|
@@ -1336,7 +1337,7 @@ module Matter
       def reconcile_node_bindings(node_id : UInt64, endpoint_id : UInt16,
                                   bindings : Array(DatastoreBindingTargetStruct)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless endpoint_exists?(node_id, endpoint_id)
+        return InteractionModel::Status.not_found unless refresh_endpoint_exists?(node_id, endpoint_id)
         return InteractionModel::Status.constraint_error unless bindings.all? { |binding| valid_binding_target?(binding) }
         entries = @endpoint_binding_list.reject do |entry|
           entry.node_id == node_id && entry.endpoint_id == endpoint_id &&
@@ -1396,8 +1397,8 @@ module Matter
 
       def add_group_id_to_endpoint_for_node(request : AddGroupIDToEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id) &&
-                                                                @group_list.any?(&.group_id.==(request.group_id.to_u64))
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.constraint_error unless @group_list.any?(&.group_id.==(request.group_id.to_u64))
         return InteractionModel::Status.constraint_error if @endpoint_group_id_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
         return InteractionModel::Status.resource_exhausted if @endpoint_group_id_list.size >= MAX_NODE_ENTRIES
         if (group = @group_list.find { |item| item.group_id == request.group_id.to_u64 }) && (key_id = group.group_key_set_id)
@@ -1430,7 +1431,7 @@ module Matter
 
       def add_binding_to_endpoint_for_node(request : AddBindingToEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless endpoint_exists?(request.node_id, request.endpoint_id)
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
         binding = request.binding
         return InteractionModel::Status.constraint_error unless valid_binding_target?(binding)
         return InteractionModel::Status.resource_exhausted if @endpoint_binding_list.size >= MAX_NODE_ENTRIES
@@ -1455,7 +1456,7 @@ module Matter
 
       def add_acl_to_node(request : AddACLToNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error unless node_exists?(request.node_id)
+        return InteractionModel::Status.not_found unless node_exists?(request.node_id)
         acl = request.acl_entry
         return InteractionModel::Status.constraint_error if (acl.subjects.try(&.size) || 0) > AccessControl::DEFAULT_SUBJECTS_PER_ENTRY ||
                                                             (acl.targets.try(&.size) || 0) > AccessControl::DEFAULT_TARGETS_PER_ENTRY
@@ -1666,6 +1667,13 @@ module Matter
 
       private def endpoint_exists?(node_id : UInt64, endpoint_id : UInt16) : Bool
         @node_endpoint_list.any? { |e| e.node_id == node_id && e.endpoint_id == endpoint_id }
+      end
+
+      # RefreshNode observes the root endpoint, which is absent from NodeEndpointList.
+      # Wire commands continue to require an endpoint stored in that list.
+      private def refresh_endpoint_exists?(node_id : UInt64, endpoint_id : UInt16) : Bool
+        endpoint_exists?(node_id, endpoint_id) ||
+          (endpoint_id == DataType::EndpointNumber::ROOT.number && node_exists?(node_id))
       end
 
       private def next_list_id(ids : Array(UInt16)) : UInt16?

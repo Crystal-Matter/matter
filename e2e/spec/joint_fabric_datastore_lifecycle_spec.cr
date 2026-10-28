@@ -158,6 +158,16 @@ describe "Joint Fabric Datastore commissioning lifecycle" do
     endpoints = lifecycle_list(LifecycleJFD::DatastoreEndpointEntryStruct, im, anchor_session,
       anchor_peer, LifecycleJFD::ATTR_NODE_ENDPOINT_LIST)
     endpoints.select(&.node_id.==(target_node_id)).map(&.endpoint_id).should contain(1_u16)
+    missing_endpoint = 20_u16
+    endpoints.any? { |entry| entry.node_id == target_node_id && entry.endpoint_id == missing_endpoint }.should be_false
+    missing_update = im.invoke(session: anchor_session, peer: anchor_peer, endpoint_id: 1_u16,
+      cluster_id: LifecycleJFD::CLUSTER_ID,
+      command_id: LifecycleJFD::CMD_UPDATE_ENDPOINT_FOR_NODE,
+      fields: LifecycleJFD::UpdateEndpointForNodeRequest.new(missing_endpoint, target_node_id, "Missing").to_slice)
+    missing_update.invoke_responses.first.command_status.as(LifecycleIM::CommandStatusIB)
+      .status.status.should eq(LifecycleIM::StatusCode::NotFound.value)
+    lifecycle_list(LifecycleJFD::DatastoreEndpointEntryStruct, im, anchor_session,
+      anchor_peer, LifecycleJFD::ATTR_NODE_ENDPOINT_LIST).should eq(endpoints)
     acls = lifecycle_list(LifecycleJFD::DatastoreACLEntryStruct, im, anchor_session,
       anchor_peer, LifecycleJFD::ATTR_NODE_ACL_LIST)
     anchor_subject = Matter::Controller::JointCommissioning.cat_subject(LifecycleJFD::ANCHOR_CAT, 1_u16)

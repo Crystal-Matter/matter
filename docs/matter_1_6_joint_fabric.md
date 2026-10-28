@@ -56,7 +56,10 @@ item below as covered only to the extent of its cited tests.
   An opt-in Groupcast Listener target accepts the provisioned key sets through
   GKM, adopts the fabric, and applies endpoint group membership through root
   Groupcast JoinGroup/LeaveGroup. RefreshNode imports Groupcast membership
-  when present. The target derives fabric-scoped AuxiliaryACL entries for
+  when present. It also reconciles Groups and Binding on endpoint 0 when those
+  clusters are advertised there, while NodeEndpointList continues to contain
+  only the target's Descriptor PartsList endpoints. The target derives
+  fabric-scoped AuxiliaryACL entries for
   authorized group endpoints and hides legacy GKM maps from an adopted fabric.
   An opt-in Sender on the same shared fabric can provision send-only membership
   with no listener endpoints and transmit authenticated group commands using
@@ -331,11 +334,19 @@ item below as covered only to the extent of its cited tests.
   uncertain until its postcondition is met or an operator repairs the device
   and Datastore state. Completion reconciliation checks both A's committed
   NodeList entry and B's absent device fabric and NodeList entry, guarding
-  against split ownership. Rollback is available before B removal. An
+  against split ownership. After that authenticated proof, it deletes the
+  stale B device record from the controller store before journaling Complete;
+  a failed local save leaves the removal stage pending for reconciliation.
+  Rollback is available before B removal. An
   interrupted rollback can be resumed explicitly: authenticated reads check
   whether each A NodeList and device fabric removal took effect before issuing
-  only the remaining command. The JFA example now publishes its IPK as
-  GroupKeySetID zero.
+  only the remaining command. Once both removals are proven, it deletes the
+  stale A device record from the controller store before marking the rollback
+  complete. For journals already marked Complete or RolledBack by an older
+  release, the consented `reconcile-device-migration` command authenticates
+  the corresponding remote postcondition and removes any stale controller
+  node record without replaying removal commands. The JFA example now
+  publishes its IPK as GroupKeySetID zero.
   The migration journal also records the device's CommissioningComplete
   acknowledgement before the controller node record is saved. If a process
   crashes in that window, recovery validates both fabric CASE sessions, B's
@@ -377,6 +388,25 @@ item below as covered only to the extent of its cited tests.
   restarts B and checks that recovery waits the advertised cumulative fail-safe
   bound and verifies both fabrics before continuing. This tests the ambiguous
   persisted result; it does not drop a UDP packet on the wire.
+  The same scenario then interrupts B after the Anchor Datastore commits
+  AddPendingNode but before B advances its durable per-device journal. After
+  restart, B refuses to replay AddPendingNode. Reconciliation rejects a missing
+  Anchor NodeList entry while B still owns the device, then accepts the
+  restored committed entry and completes the handoff.
+  It also restarts B after the migrated device commits RemoveFabric and after
+  B's Datastore commits RemoveNode, with each acknowledgement lost before the
+  migration journal advances. The first reconciliation rejects a missing
+  Anchor NodeList entry while B's old NodeList entry remains; after restoring
+  A's committed entry, it verifies A CASE and the absence of the device's B
+  fabric before proceeding. The second restart verifies the old B NodeList is
+  absent and completes the journal without sending RemoveNode again.
+  Before that handoff, the fixture uses a separate A Node ID to roll back the
+  same device after a committed Anchor registration. It restarts B after
+  Anchor RemoveNode commits but before B advances its rollback journal,
+  refuses automatic replay, then explicitly resumes. CASE and Datastore reads
+  verify B ownership persists and A's fabric and NodeList entry are removed;
+  the example's read-only local command confirms the A controller node record
+  is deleted before the rollback is marked complete.
   The local `migrate-device` command requires explicit device consent and an
   attestation trust configuration. An embedding application sets
   `Device#migration_attestation_trust=` with an `AttestationTrustStore` holding

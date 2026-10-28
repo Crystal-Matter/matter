@@ -294,6 +294,115 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.endpoint_binding_list.first.binding.should eq(group_binding)
   end
 
+  it "returns NotFound for missing nodes and endpoints in datastore update commands without changing state" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    missing_node_id = 43_u64
+    endpoint_id = 1_u16
+    missing_endpoint_id = 2_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, nil, nil, privilege)).success?.should be_true
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: node_id, endpoint: endpoint_id)
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(privilege,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [node_id], nil)
+    before = cluster.save_state
+    version = cluster.data_version
+    not_found = Matter::InteractionModel::StatusCode::NotFound
+
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, missing_node_id, "Missing"))
+      .status.should eq(not_found)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(missing_endpoint_id, node_id, "Missing"))
+      .status.should eq(not_found)
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(missing_node_id, endpoint_id, 10_u16))
+      .status.should eq(not_found)
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(node_id, missing_endpoint_id, 10_u16))
+      .status.should eq(not_found)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(missing_node_id, endpoint_id, binding))
+      .status.should eq(not_found)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(node_id, missing_endpoint_id, binding))
+      .status.should eq(not_found)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(missing_node_id, acl))
+      .status.should eq(not_found)
+
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+  end
+
+  it "keeps ConstraintError for invalid datastore update inputs without changing state" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    endpoint_id = 1_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    oversized_name = "x" * (Datastore::MAX_FRIENDLY_NAME_BYTES + 1)
+    invalid_binding = Datastore::DatastoreBindingTargetStruct.new(node: Matter::DataType::NodeId::UNSPECIFIED,
+      endpoint: endpoint_id)
+    oversized_acl = Datastore::DatastoreAccessControlEntryStruct.new(privilege,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [1_u64, 2_u64, 3_u64, 4_u64, 5_u64], nil)
+    before = cluster.save_state
+    version = cluster.data_version
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, node_id, oversized_name))
+      .status.should eq(constraint)
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(node_id, endpoint_id, 10_u16))
+      .status.should eq(constraint)
+    cluster.add_binding_to_endpoint_for_node(Datastore::AddBindingToEndpointForNodeRequest.new(node_id, endpoint_id, invalid_binding))
+      .status.should eq(constraint)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(node_id, oversized_acl))
+      .status.should eq(constraint)
+
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+  end
+
+  it "checks update targets before invalid payloads and leaves datastore state unchanged" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    endpoint_id = 1_u16
+    key_set_id = 10_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+    key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(Datastore::EPOCH_KEY_BYTES, 1_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key_set)).success?.should be_true
+    invalid_name = "x" * (Datastore::MAX_FRIENDLY_NAME_BYTES + 1)
+    invalid_key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      nil, nil, nil, nil, nil, nil)
+    missing_invalid_key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id + 1_u16,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      nil, nil, nil, nil, nil, nil)
+    before = cluster.save_state
+    version = cluster.data_version
+    not_found = Matter::InteractionModel::StatusCode::NotFound
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+
+    cluster.update_node(Datastore::UpdateNodeRequest.new(node_id + 1_u64, invalid_name))
+      .status.should eq(not_found)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(missing_invalid_key_set))
+      .status.should eq(not_found)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, node_id + 1_u64, invalid_name))
+      .status.should eq(not_found)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id + 1_u16, node_id, invalid_name))
+      .status.should eq(not_found)
+
+    cluster.update_node(Datastore::UpdateNodeRequest.new(node_id, invalid_name))
+      .status.should eq(constraint)
+    cluster.update_key_set(Datastore::UpdateKeySetRequest.new(invalid_key_set))
+      .status.should eq(constraint)
+    cluster.update_endpoint_for_node(Datastore::UpdateEndpointForNodeRequest.new(endpoint_id, node_id, invalid_name))
+      .status.should eq(constraint)
+
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+  end
+
   it "uses target snapshots to prune stale committed records while preserving pending work" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node"))
@@ -304,14 +413,21 @@ describe Matter::Cluster::JointFabricDatastore do
       Datastore::DatastoreEndpointGroupIDEntryStruct.new(42_u64, 1_u16, 1_u16, committed),
       Datastore::DatastoreEndpointGroupIDEntryStruct.new(42_u64, 1_u16, 2_u16, pending),
     ]
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: 43_u64, endpoint: 1_u16)
+    cluster.endpoint_binding_list = [
+      Datastore::DatastoreEndpointBindingEntryStruct.new(42_u64, 1_u16, 7_u16, binding, committed),
+      Datastore::DatastoreEndpointBindingEntryStruct.new(42_u64, 1_u16, 8_u16, binding, pending),
+    ]
     cluster.node_key_set_list = [
       Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 1_u16, committed),
       Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 2_u16, pending),
     ]
 
     cluster.reconcile_node_groups(42_u64, 1_u16, [] of UInt16).success?.should be_true
+    cluster.reconcile_node_bindings(42_u64, 1_u16, [] of Datastore::DatastoreBindingTargetStruct).success?.should be_true
     cluster.reconcile_node_key_sets(42_u64, [] of UInt16).success?.should be_true
     cluster.endpoint_group_id_list.map(&.group_id).should eq([2_u16])
+    cluster.endpoint_binding_list.map(&.list_id).should eq([8_u16])
     cluster.node_key_set_list.map(&.group_key_set_id).should eq([2_u16])
   end
 
