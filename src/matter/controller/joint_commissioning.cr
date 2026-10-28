@@ -9,6 +9,7 @@ require "./im_client"
 require "./vid_verification"
 require "./commissioning/commissioner"
 require "./pairing/case_pairing"
+require "./joint_fabric_peer_authentication"
 
 module Matter
   module Controller
@@ -787,6 +788,8 @@ module Matter
           peer = Socket::IPAddress.new(address, node.port)
           session = Pairing::CasePairing.new(@crypto).pair(@client, peer, fabric,
             peer_node_id: @anchor_node_id, timeout: @timeout)
+          JointFabricPeerAuthentication.verify_anchor!(session,
+            fabric.root_cert, fabric.fabric_id)
           im = ImClient.new(@client, @timeout)
           report = im.read_attribute(session: session, peer: peer,
             endpoint_id: @datastore_endpoint,
@@ -980,6 +983,16 @@ module Matter
         verified
       end
 
+      # CASE pairing verifies the peer NOC through the presented ICAC and
+      # records its authenticated CAT subjects and ICAC on the session. Check
+      # both Administrator and Anchor roles, then that this issuer is the
+      # fabric's root-signed Anchor ICAC before any
+      # Joint Fabric Interaction Model request uses the session.
+      def verify_anchor_case_peer!(session : Session::SecureContext,
+                                   root_certificate : Bytes, fabric_id : UInt64) : Nil
+        JointFabricPeerAuthentication.verify_anchor!(session, root_certificate, fabric_id)
+      end
+
       # Joining Administrator adapter. It opens a fresh outbound CASE session
       # using the NOC just installed on the Anchor fabric, then verifies the
       # Anchor Administrator's original fabric Vendor ID and fabric binding.
@@ -1006,6 +1019,7 @@ module Matter
         begin
           session = Pairing::CasePairing.new(crypto).pair(client, peer, identity,
             peer_node_id: peer_node_id, timeout: timeout)
+          verify_anchor_case_peer!(session, root, fabric.fabric_id)
           verified = verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
             fabric.root_public_key, fabric.fabric_id, trust, crypto)
           # Retain this CASE session only after the Anchor's operational VID and
