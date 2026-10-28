@@ -19,6 +19,13 @@ module Matter
         Complete
       end
 
+      enum ACLReplacementAction
+        Add
+        Wait
+        RemoveOriginal
+        Done
+      end
+
       struct GroupCleanup
         include Storage::Record
 
@@ -48,9 +55,25 @@ module Matter
         getter groups : Array(GroupCleanup)
         getter bindings : Array(BindingCleanup)
         getter key_set_ids : Array(UInt16)
+        getter acl_replacements : Array(ACLReplacement)
 
         def initialize(@groups : Array(GroupCleanup), @bindings : Array(BindingCleanup),
-                       @key_set_ids : Array(UInt16))
+                       @key_set_ids : Array(UInt16),
+                       @acl_replacements = [] of ACLReplacement)
+        end
+      end
+
+      struct ACLReplacement
+        include Storage::Record
+
+        getter node_id : UInt64
+        getter list_id : UInt16
+        getter original : Datastore::DatastoreAccessControlEntryStruct
+        getter replacement : Datastore::DatastoreAccessControlEntryStruct
+
+        def initialize(@node_id : UInt64, @list_id : UInt16,
+                       @original : Datastore::DatastoreAccessControlEntryStruct,
+                       @replacement : Datastore::DatastoreAccessControlEntryStruct)
         end
       end
 
@@ -69,6 +92,7 @@ module Matter
         property cleanup_groups : Array(GroupCleanup) = [] of GroupCleanup
         property cleanup_bindings : Array(BindingCleanup) = [] of BindingCleanup
         property cleanup_key_set_ids : Array(UInt16) = [] of UInt16
+        property acl_replacements : Array(ACLReplacement) = [] of ACLReplacement
         property stage : Stage
         property stage_version : UInt64
 
@@ -79,7 +103,8 @@ module Matter
                        @cleanup_recorded = false,
                        @cleanup_groups = [] of GroupCleanup,
                        @cleanup_bindings = [] of BindingCleanup,
-                       @cleanup_key_set_ids = [] of UInt16)
+                       @cleanup_key_set_ids = [] of UInt16,
+                       @acl_replacements = [] of ACLReplacement)
         end
       end
 
@@ -207,6 +232,7 @@ module Matter
           groups = [] of GroupCleanup
           bindings = [] of BindingCleanup
           key_set_ids = [] of UInt16
+          acl_replacements = [] of ACLReplacement
           with_anchor(journal) do |im_client, session|
             validate_removable!(im_client, session, journal, allow_cleanup: true)
             groups = read_list(Datastore::DatastoreEndpointGroupIDEntryStruct,
@@ -225,8 +251,14 @@ module Matter
               im_client, session, Datastore::ATTR_NODE_KEY_SET_LIST)
               .select { |entry| self.class.cleanup_key_set?(entry, journal.node_id) }
               .map(&.group_key_set_id)
+            acl_replacements = read_list(Datastore::DatastoreACLEntryStruct,
+              im_client, session, Datastore::ATTR_NODE_ACL_LIST).compact_map do |entry|
+              next if entry.node_id == journal.node_id
+              replacement = self.class.replacement_acl?(entry.acl_entry, journal.node_id)
+              replacement.try { |acl| ACLReplacement.new(entry.node_id, entry.list_id, entry.acl_entry, acl) }
+            end
           end
-          CleanupSnapshot.new(groups, bindings, key_set_ids)
+          CleanupSnapshot.new(groups, bindings, key_set_ids, acl_replacements)
         end
 
         def cleanup!(journal : Journal) : Nil
@@ -316,7 +348,22 @@ module Matter
         def revoke_direct_access!(journal : Journal) : Nil
           with_anchor(journal) do |im_client, session|
             validate_removable!(im_client, session, journal)
-            direct_grants(im_client, session, journal).each do |entry|
+            entries = read_list(Datastore::DatastoreACLEntryStruct,
+              im_client, session, Datastore::ATTR_NODE_ACL_LIST)
+            assert_acl_snapshot!(journal, entries)
+            journal.acl_replacements.each do |saved|
+              case self.class.acl_replacement_action(saved, entries)
+              when ACLReplacementAction::Add
+                invoke!(im_client, session, Datastore::CMD_ADD_ACL_TO_NODE,
+                  Datastore::AddACLToNodeRequest.new(saved.node_id, saved.replacement).to_slice)
+              when ACLReplacementAction::RemoveOriginal
+                invoke!(im_client, session, Datastore::CMD_REMOVE_ACL_FROM_NODE,
+                  Datastore::RemoveACLFromNodeRequest.new(saved.list_id, saved.node_id).to_slice)
+              end
+            end
+            entries.select do |entry|
+              entry.node_id != journal.node_id && self.class.sole_departing_subjects?(entry.acl_entry, journal.node_id)
+            end.each do |entry|
               next if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending
               invoke!(im_client, session, Datastore::CMD_REMOVE_ACL_FROM_NODE,
                 Datastore::RemoveACLFromNodeRequest.new(entry.list_id, entry.node_id).to_slice)
@@ -327,7 +374,20 @@ module Matter
         def access_revoked?(journal : Journal) : Bool
           with_anchor(journal) do |im_client, session|
             validate_removable!(im_client, session, journal)
-            return direct_grants(im_client, session, journal).empty?
+            entries = read_list(Datastore::DatastoreACLEntryStruct,
+              im_client, session, Datastore::ATTR_NODE_ACL_LIST)
+            assert_acl_snapshot!(journal, entries)
+            departing_grant = entries.any? do |entry|
+              entry.node_id != journal.node_id && direct_grant?(entry.acl_entry, journal.node_id)
+            end
+            return false if departing_grant
+            replacements_committed = journal.acl_replacements.all? do |saved|
+              entries.any? do |entry|
+                entry.node_id == saved.node_id && entry.acl_entry == saved.replacement &&
+                  entry.status_entry.state.committed?
+              end
+            end
+            return replacements_committed
           end
           false
         end
@@ -412,10 +472,44 @@ module Matter
             if subjects.includes?(journal.node_id) && acl.acl_entry.auth_mode != Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
               raise Matter::CommissioningError.new("Non-CASE ACL subject collides with the removed Node ID")
             end
-            if subjects.includes?(journal.node_id) && subjects != [journal.node_id]
-              raise Matter::CommissioningError.new("Shared direct ACL must be split before node removal")
+          end
+        end
+
+        private def assert_acl_snapshot!(journal : Journal,
+                                         entries : Array(Datastore::DatastoreACLEntryStruct)) : Nil
+          journal.acl_replacements.each do |saved|
+            original = entries.find { |entry| entry.node_id == saved.node_id && entry.list_id == saved.list_id }
+            if original && original.acl_entry != saved.original
+              raise Matter::AuthenticationError.new("Shared direct ACL changed during node removal")
             end
           end
+          entries.each do |entry|
+            next if entry.node_id == journal.node_id
+            next unless self.class.replacement_acl?(entry.acl_entry, journal.node_id)
+            unless journal.acl_replacements.any? { |saved| saved.node_id == entry.node_id && saved.list_id == entry.list_id }
+              raise Matter::AuthenticationError.new("New shared direct ACL appeared during node removal")
+            end
+          end
+        end
+
+        def self.acl_replacement_action(saved : ACLReplacement,
+                                        entries : Array(Datastore::DatastoreACLEntryStruct)) : ACLReplacementAction
+          original = entries.find { |entry| entry.node_id == saved.node_id && entry.list_id == saved.list_id }
+          if original && original.acl_entry != saved.original
+            raise Matter::AuthenticationError.new("Shared direct ACL changed during node removal")
+          end
+          replacement = entries.find do |entry|
+            entry.node_id == saved.node_id && entry.acl_entry == saved.replacement &&
+              entry.status_entry.state != Datastore::DatastoreStateEnum::DeletePending
+          end
+          unless replacement
+            raise Matter::CommissioningError.new("Shared ACL replacement disappeared before node removal") unless original
+            return ACLReplacementAction::Add
+          end
+          return ACLReplacementAction::Wait unless replacement.status_entry.state.committed?
+          return ACLReplacementAction::Done unless original
+          return ACLReplacementAction::Wait if original.status_entry.state == Datastore::DatastoreStateEnum::DeletePending
+          ACLReplacementAction::RemoveOriginal
         end
 
         private def assert_binding_identity!(saved : BindingCleanup,
@@ -556,7 +650,24 @@ module Matter
 
         def self.direct_grant?(acl : Datastore::DatastoreAccessControlEntryStruct,
                                node_id : UInt64) : Bool
-          acl.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE && acl.subjects == [node_id]
+          acl.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
+            (acl.subjects.try(&.includes?(node_id)) || false)
+        end
+
+        def self.replacement_acl?(acl : Datastore::DatastoreAccessControlEntryStruct,
+                                  node_id : UInt64) : Datastore::DatastoreAccessControlEntryStruct?
+          return unless direct_grant?(acl, node_id)
+          subjects = acl.subjects || return
+          return if sole_departing_subjects?(acl, node_id)
+          Datastore::DatastoreAccessControlEntryStruct.new(acl.privilege, acl.auth_mode,
+            subjects.reject(&.==(node_id)), acl.targets.try(&.dup))
+        end
+
+        def self.sole_departing_subjects?(acl : Datastore::DatastoreAccessControlEntryStruct,
+                                          node_id : UInt64) : Bool
+          return false unless acl.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
+          subjects = acl.subjects
+          !subjects.nil? && !subjects.empty? && subjects.all?(&.==(node_id))
         end
 
         private def direct_grant?(acl : Datastore::DatastoreAccessControlEntryStruct,
@@ -612,6 +723,7 @@ module Matter
             updated.cleanup_groups = snapshot.groups
             updated.cleanup_bindings = snapshot.bindings
             updated.cleanup_key_set_ids = snapshot.key_set_ids
+            updated.acl_replacements = snapshot.acl_replacements
             updated.cleanup_recorded = true
             updated.stage_version += 1_u64
             @store.save(updated)

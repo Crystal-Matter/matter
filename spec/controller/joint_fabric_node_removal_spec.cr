@@ -66,11 +66,13 @@ describe Removal do
     legacy.delete("cleanup_groups")
     legacy.delete("cleanup_bindings")
     legacy.delete("cleanup_key_set_ids")
+    legacy.delete("acl_replacements")
     restored = Removal::Journal.from_document(legacy)
     restored.cleanup_recorded?.should be_false
     restored.cleanup_groups.should be_empty
     restored.cleanup_bindings.should be_empty
     restored.cleanup_key_set_ids.should be_empty
+    restored.acl_replacements.should be_empty
   end
 
   it "includes bindings owned by or pointing to the removed node" do
@@ -109,6 +111,122 @@ describe Removal do
       [node_id], nil)
     Removal::NetworkPort.direct_grant?(group_acl, node_id).should be_false
     Removal::NetworkPort.direct_grant?(case_acl, node_id).should be_true
+  end
+
+  it "stages a shared CASE ACL replacement before deleting the original, including after a lost reply" do
+    node_id = 0xA201_u64
+    other_node_id = 0xA202_u64
+    target = Datastore::DatastoreAccessControlTargetStruct.new(
+      Matter::Cluster::OnOff::CLUSTER_ID, 1_u16, nil)
+    original = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [node_id, other_node_id], [target])
+    replacement = Removal::NetworkPort.replacement_acl?(original, node_id).as(Datastore::DatastoreAccessControlEntryStruct)
+    replacement.subjects.should eq([other_node_id])
+    replacement.privilege.should eq(original.privilege)
+    replacement.auth_mode.should eq(original.auth_mode)
+    replacement.targets.should eq(original.targets)
+    Removal::NetworkPort.direct_grant?(original, node_id).should be_true
+    Removal::NetworkPort.direct_grant?(replacement, node_id).should be_false
+
+    saved = Removal::ACLReplacement.new(0xA301_u64, 7_u16, original, replacement)
+    committed = Datastore::DatastoreStatusEntryStruct.new(
+      Datastore::DatastoreStateEnum::Committed, 1_u32, Datastore::NO_FAILURE_CODE)
+    pending = Datastore::DatastoreStatusEntryStruct.new(
+      Datastore::DatastoreStateEnum::Pending, 2_u32, Datastore::NO_FAILURE_CODE)
+    deleting = Datastore::DatastoreStatusEntryStruct.new(
+      Datastore::DatastoreStateEnum::DeletePending, 3_u32, Datastore::NO_FAILURE_CODE)
+    old_entry = Datastore::DatastoreACLEntryStruct.new(saved.node_id, saved.list_id, original, committed)
+    new_entry = Datastore::DatastoreACLEntryStruct.new(saved.node_id, 8_u16, replacement, pending)
+    Removal::NetworkPort.acl_replacement_action(saved, [old_entry]).should eq(Removal::ACLReplacementAction::Add)
+    # A lost AddACL reply is recognized by exact content, so it is not sent twice.
+    Removal::NetworkPort.acl_replacement_action(saved, [old_entry, new_entry]).should eq(Removal::ACLReplacementAction::Wait)
+    new_entry.status_entry = committed
+    Removal::NetworkPort.acl_replacement_action(saved, [old_entry, new_entry]).should eq(Removal::ACLReplacementAction::RemoveOriginal)
+    old_entry.status_entry = deleting
+    Removal::NetworkPort.acl_replacement_action(saved, [old_entry, new_entry]).should eq(Removal::ACLReplacementAction::Wait)
+    Removal::NetworkPort.acl_replacement_action(saved, [new_entry]).should eq(Removal::ACLReplacementAction::Done)
+    expect_raises(Matter::CommissioningError, /replacement disappeared/) do
+      Removal::NetworkPort.acl_replacement_action(saved, [] of Datastore::DatastoreACLEntryStruct)
+    end
+  end
+
+  it "does not infer a departing node from a wildcard or a Group ACL" do
+    node_id = 0xA201_u64
+    wildcard = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      nil, nil)
+    group = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::Group,
+      [node_id, 0xA202_u64], nil)
+    Removal::NetworkPort.replacement_acl?(wildcard, node_id).should be_nil
+    Removal::NetworkPort.replacement_acl?(group, node_id).should be_nil
+  end
+
+  it "preserves the surviving subject through Datastore AddACL and RemoveACL delivery" do
+    departing = 0xA201_u64
+    survivor = 0xA202_u64
+    target_node = 0xA301_u64
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.configure_anchor(Bytes[1], 0xA101_u64, 0xFFF1_u16, "Anchor").success?.should be_true
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(target_node, "Target")).success?.should be_true
+    original = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [departing, survivor], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(target_node, original)).success?.should be_true
+    old_entry = cluster.node_acl_list.find!(&.acl_entry.==(original))
+    cluster.complete_acl(target_node, old_entry.list_id).should be_true
+    saved = Removal::ACLReplacement.new(target_node, old_entry.list_id, original,
+      Removal::NetworkPort.replacement_acl?(original, departing).as(Datastore::DatastoreAccessControlEntryStruct))
+
+    Removal::NetworkPort.acl_replacement_action(saved, cluster.node_acl_list).should eq(Removal::ACLReplacementAction::Add)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(target_node, saved.replacement)).success?.should be_true
+    # Reading the pending replacement after a lost command reply does not add another ACL.
+    Removal::NetworkPort.acl_replacement_action(saved, cluster.node_acl_list).should eq(Removal::ACLReplacementAction::Wait)
+    cluster.node_acl_list.size.should eq(2)
+    replacement_entry = cluster.node_acl_list.find!(&.acl_entry.==(saved.replacement))
+    cluster.complete_acl(target_node, replacement_entry.list_id).should be_true
+    Removal::NetworkPort.acl_replacement_action(saved, cluster.node_acl_list).should eq(Removal::ACLReplacementAction::RemoveOriginal)
+    cluster.remove_acl_from_node(Datastore::RemoveACLFromNodeRequest.new(old_entry.list_id, target_node)).success?.should be_true
+    cluster.complete_acl(target_node, old_entry.list_id).should be_true
+
+    Removal::NetworkPort.acl_replacement_action(saved, cluster.node_acl_list).should eq(Removal::ACLReplacementAction::Done)
+    cluster.node_acl_list.map(&.acl_entry.subjects).should eq([[survivor]])
+  end
+
+  it "restores the exact shared ACL replacement from a durable removal journal" do
+    path = File.join(Dir.tempdir, "matter-shared-acl-removal-#{Random::Secure.hex(8)}.json")
+    begin
+      original = Datastore::DatastoreAccessControlEntryStruct.new(
+        Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+        Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+        [0xA201_u64, 0xA202_u64], nil)
+      replacement = Removal::NetworkPort.replacement_acl?(original, 0xA201_u64)
+        .as(Datastore::DatastoreAccessControlEntryStruct)
+      first = Matter::Storage::JsonFile.new(path)
+      first_store = Removal::JournalStore.new(first)
+      journal = first_store.load_or_create(Removal::Journal.new(0xA001_u64, Bytes[1],
+        0xA101_u64, 0xA102_u64, 0xA201_u64, "Lamp", Bytes[2]))
+      journal.acl_replacements = [Removal::ACLReplacement.new(0xA301_u64, 7_u16, original, replacement)]
+      journal.cleanup_recorded = true
+      journal.stage_version += 1_u64
+      first_store.save(journal)
+      first.close
+
+      second = Matter::Storage::JsonFile.new(path)
+      restored = Removal::JournalStore.new(second).load(journal.fabric_id, journal.root_public_key,
+        journal.controller_node_id, journal.node_id).as(Removal::Journal)
+      restored.acl_replacements.size.should eq(1)
+      restored.acl_replacements.first.original.should eq(original)
+      restored.acl_replacements.first.replacement.should eq(replacement)
+      second.close
+    ensure
+      File.delete?(path)
+    end
   end
 
   it "waits for access revocation before sending RemoveNode" do

@@ -25,12 +25,21 @@ durable journal at `Removing`; after restart, call `reconcile_removed!` to
 advance only if an authenticated Anchor NodeList read proves the node absent.
 The workflow never automatically repeats an uncertain `RemoveNode`.
 
+For a CASE ACL that names the departing Node ID alongside other subjects,
+the workflow journals the original ACL and stages an otherwise identical ACL
+for the remaining subjects. It waits for that replacement to reach Committed
+before removing the original, and verifies both conditions before RemoveNode.
+An interrupted or lost AddACL response is reconciled by matching the exact
+replacement content; a changed original or a replacement missing after the
+original disappears stops removal.
+Wildcard ACLs cannot be attributed to one Node ID and require an explicit
+host policy decision before removal.
+
 CAT-bearing controller targets require an `Effective` receipt from
 `SharedFabric.stage_joint_group_revocation` for every CAT authenticated in the
 target's current CASE session. The receipt is saved in the removal journal and
 rechecked against the Anchor before each removal step. This path rejects
-Administrator nodes and wildcard or shared ACL grants. A host must address
-any unsupported grants
+Administrator nodes and wildcard ACL grants. A host must address unsupported grants
 and ensure the target remains reachable before starting this workflow. If the
 Datastore is unavailable or the target identity changes, removal stops without
 deleting its NodeList entry. The host must retain journals and present a
