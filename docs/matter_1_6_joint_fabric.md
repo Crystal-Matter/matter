@@ -97,8 +97,9 @@ item below as covered only to the extent of its cited tests.
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
   persist across restart. On the joining side, outbound CASE to a discovered
-  Anchor must carry an Anchor CAT in the authenticated peer subjects and an
-  Anchor ICAC issued by the accessing fabric's root before the first Joint
+  Anchor must carry both Administrator and Anchor CATs in the authenticated
+  peer subjects and an Anchor ICAC issued by the accessing fabric's root
+  before the first Joint
   Fabric attribute read. CASE validates the peer NOC through that ICAC; this
   additional check rejects ordinary administrators that advertise an Anchor.
   For AddICAC or a deferred handoff interrupted before

@@ -350,6 +350,16 @@ describe Matter::Controller::JointCommissioning do
     Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
       anchor.root_cert, anchor.fabric_id)
 
+    anchor_only_key = crypto.create_key_pair
+    anchor_only_noc = bootstrap.issue_noc(anchor.controller_node_id, anchor_only_key.public_key,
+      [Matter::DataType::CaseAuthenticatedTag.create(
+        Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 1_u16).value], crypto)
+    session.peer_subject_ids = Matter::Crypto::MatterCertificate.subject_ids_from_tlv(anchor_only_noc)
+    expect_raises(Matter::AuthenticationError, /Administrator CAT/) do
+      Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,
+        anchor.root_cert, anchor.fabric_id)
+    end
+
     session.peer_subject_ids = [anchor.controller_node_id]
     expect_raises(Matter::AuthenticationError, /Anchor CAT/) do
       Matter::Controller::JointCommissioning.verify_anchor_case_peer!(session,

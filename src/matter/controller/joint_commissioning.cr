@@ -963,16 +963,20 @@ module Matter
 
       # CASE pairing verifies the peer NOC through the presented ICAC and
       # records its authenticated CAT subjects and ICAC on the session. Check
-      # that this issuer is the fabric's root-signed Anchor ICAC before any
+      # both Administrator and Anchor roles, then that this issuer is the
+      # fabric's root-signed Anchor ICAC before any
       # Joint Fabric Interaction Model request uses the session.
       def verify_anchor_case_peer!(session : Session::SecureContext,
                                    root_certificate : Bytes, fabric_id : UInt64) : Nil
-        anchor_cat = session.peer_subject_ids.any? do |subject|
-          cat = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
-          cat && cat.identity_value == Cluster::JointFabricDatastore::ANCHOR_CAT
+        cats = session.peer_subject_ids.compact_map do |subject|
+          DataType::NodeId.case_authenticated_tag_from_subject?(subject)
         end
+        anchor_cat = cats.any?(&.identity_value.==(Cluster::JointFabricDatastore::ANCHOR_CAT))
         unless session.case_session? && anchor_cat
           raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks the Anchor CAT")
+        end
+        unless cats.any?(&.identity_value.==(Cluster::JointFabricDatastore::ADMINISTRATOR_CAT))
+          raise Matter::AuthenticationError.new("Outbound Anchor CASE peer lacks the Administrator CAT")
         end
         icac = session.peer_icac
         unless icac && Crypto::MatterCertificate.anchor_icac?(icac)
