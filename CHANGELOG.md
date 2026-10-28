@@ -74,6 +74,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   deletion before ACL revocation and RemoveNode. Administrator nodes,
   wildcard or shared direct ACLs, and an unreachable target remain blocked.
 
+### Joint Fabric Datastore
+
+- Propagate a key-only `UpdateGroup` to legacy GroupKeyMap and Groupcast
+  memberships before removing the previous key; keep the old key for a
+  subsequent refresh if the replacement write or mapping update fails.
+- Keep a group key set while any group still references it, even if the group
+  has no node members. `RemoveKeySet` succeeds after the group is removed and
+  any remaining node references are pending deletion.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the
