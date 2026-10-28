@@ -56,7 +56,7 @@ module Matter
         # The peer address is only a reachability hint. Its UDP source port is
         # ephemeral and must not be used as an operational port. The callback
         # still has to CASE-authenticate the expected Node ID on this fabric.
-        @verify_anchor_initiator : Proc(UInt64, UInt8, Socket::IPAddress, Bool)? = nil,
+        @verify_anchor_initiator : Proc(UInt64, UInt8, Socket::IPAddress, UInt16, Bool)? = nil,
         @resolve_accessing_fabric : Proc(UInt8, FabricIdentity?)? = nil,
         existing_icac_certificate : Bytes? = nil,
         @failsafe_fabric_matches : Proc(UInt8?, Bool)? = nil,
@@ -297,7 +297,7 @@ module Matter
         fabric_index = cluster.request_fabric_index
         peer_address = cluster.request_peer_address
         verifier = @verify_anchor_initiator
-        if node_id && fabric_index && peer_address && verifier && verifier.call(node_id, fabric_index, peer_address)
+        if node_id && fabric_index && peer_address && verifier && verifier.call(node_id, fabric_index, peer_address, request.endpoint_id)
           @verified_initiator_node_id = node_id
           @verified_initiator_fabric_index = fabric_index
         else

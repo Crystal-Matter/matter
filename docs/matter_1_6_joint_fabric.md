@@ -109,6 +109,10 @@ item below as covered only to the extent of its cited tests.
   before the first Joint
   Fabric attribute read. CASE validates the peer NOC through that ICAC; this
   additional check rejects ordinary administrators that advertise an Anchor.
+  The joining Administrator verifies the exact endpoint named in
+  AnnounceJointFabricAdministrator. Its Descriptor device type and server list,
+  AdministratorFabricIndex, operational Vendor ID, and accessing-fabric
+  identity must agree; another valid JFA endpoint cannot stand in for it.
   Participant Administrator follow-up checks the authenticated Administrator
   CAT before endpoint discovery. Known-address Anchor Datastore registration
   paths apply both role checks before reading or changing the Datastore.

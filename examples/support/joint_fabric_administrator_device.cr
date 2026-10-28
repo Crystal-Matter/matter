@@ -1013,8 +1013,8 @@ module MatterJointFabricAdministrator
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: persisted_icac,
         persist_icac: ->(certificate : Bytes?) { persist_icac(certificate, APP_ICAC_DOCUMENT, administrator) },
-        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
-          verify_anchor_initiator(node_id, index, source)
+        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress, endpoint : UInt16) {
+          verify_anchor_initiator(node_id, index, source, endpoint)
         },
         resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
         existing_icac_certificate: icac,
@@ -1097,8 +1097,8 @@ module MatterJointFabricAdministrator
           APP_BOOTSTRAP_TRANSFER_WATCH_DOCUMENT),
         initial_icac: persisted_icac(APP_BOOTSTRAP_ICAC_DOCUMENT),
         persist_icac: ->(certificate : Bytes?) { persist_bootstrap_icac(certificate, administrator, datastore) },
-        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
-          verify_anchor_initiator(node_id, index, source)
+        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress, endpoint : UInt16) {
+          verify_anchor_initiator(node_id, index, source, endpoint)
         },
         resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
         existing_icac_certificate: icac,
@@ -1220,8 +1220,8 @@ module MatterJointFabricAdministrator
         initial_transfer_requester: persisted_transfer_requester(fabric, datastore),
         initial_icac: certificate,
         persist_icac: ->(value : Bytes?) { persist_icac(value, APP_ICAC_DOCUMENT, administrator) },
-        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress) {
-          verify_anchor_initiator(node_id, index, source)
+        verify_anchor_initiator: ->(node_id : UInt64, index : UInt8, source : Socket::IPAddress, endpoint : UInt16) {
+          verify_anchor_initiator(node_id, index, source, endpoint)
         },
         resolve_accessing_fabric: ->(index : UInt8) { accessing_fabric_identity(index) },
         existing_icac_certificate: certificate,
@@ -4254,7 +4254,7 @@ module MatterJointFabricAdministrator
     end
 
     private def verify_anchor_initiator(node_id : UInt64, fabric_index : UInt8,
-                                        source : Socket::IPAddress) : Bool
+                                        source : Socket::IPAddress, endpoint : UInt16) : Bool
       fabric = fabric_table.get_fabric(fabric_index)
       return false unless fabric
       trust = anchor_trust(fabric.vendor_id, ENV["MATTER_JFA_VID_TRUST_ROOT_PATH"]?,
@@ -4275,7 +4275,7 @@ module MatterJointFabricAdministrator
       client = anchor_verification_client(fabric.node_id)
       begin
         Matter::Controller::JointCommissioning.verify_anchor_from_fabric(fabric, node_id, peer, trust,
-          timeout: 15.seconds, client: client,
+          timeout: 15.seconds, client: client, administrator_endpoint: endpoint,
           on_verified_session: ->(session : Matter::Session::SecureContext) {
             # SDK Administrators can reuse this newly authenticated CASE
             # session for ICACCSRRequest immediately after Announce. The

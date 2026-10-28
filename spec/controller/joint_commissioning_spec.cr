@@ -308,6 +308,27 @@ describe Matter::Controller::JointCommissioning do
     client.close
   end
 
+  it "uses the exact announced Anchor endpoint rather than another valid Administrator" do
+    client = Matter::Controller::Client.new
+    im = JointStaleDescriptorIm.new(client)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer).should eq(2_u16)
+    expect_raises(Matter::AuthenticationError, /AdministratorFabricIndex is invalid/) do
+      Matter::Controller::JointCommissioning.read_announced_administrator_fabric_index(im, session, peer, 1_u16)
+    end
+    expect_raises(Matter::AuthenticationError, /not a Joint Fabric Administrator/) do
+      Matter::Controller::JointCommissioning.read_announced_administrator_fabric_index(im, session, peer, 0_u16)
+    end
+    Matter::Controller::JointCommissioning.read_announced_administrator_fabric_index(
+      im, session, peer, 2_u16).should eq(2_u8)
+    client.close
+  end
+
   it "discovers an SDK Administrator from a wildcard JFA attribute when Descriptor traversal misses it" do
     client = Matter::Controller::Client.new
     im = JointSparseDescriptorIm.new(client)

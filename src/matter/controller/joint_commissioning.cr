@@ -972,15 +972,36 @@ module Matter
                                   peer : Socket::IPAddress, accessing_root_public_key : Bytes,
                                   accessing_fabric_id : UInt64,
                                   trust : VidVerification::OperationalTrustAnchors,
-                                  crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : VidVerification::VerifiedFabric
-        endpoint = discover_administrator_endpoint(im, session, peer)
-        fabric_index = read_administrator_fabric_index(im, session, peer, endpoint)
+                                  crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+                                  administrator_endpoint : UInt16? = nil) : VidVerification::VerifiedFabric
+        fabric_index = if endpoint = administrator_endpoint
+                         read_announced_administrator_fabric_index(im, session, peer, endpoint)
+                       else
+                         endpoint = discover_administrator_endpoint(im, session, peer)
+                         read_administrator_fabric_index(im, session, peer, endpoint)
+                       end
         verified = VidVerification.verify(im, session, peer, fabric_index, trust, crypto)
         unless verified.descriptor.root_public_key == accessing_root_public_key &&
                verified.descriptor.fabric_id == accessing_fabric_id
           raise Matter::AuthenticationError.new("Verified Anchor fabric differs from accessing CASE fabric")
         end
         verified
+      end
+
+      # JCM step 6 binds the joining Administrator's trust check to the exact
+      # endpoint in AnnounceJointFabricAdministrator, not to another JFA
+      # endpoint that happens to be discoverable on the same Anchor node.
+      def read_announced_administrator_fabric_index(im : ImClient, session : Session::SecureContext,
+                                                     peer : Socket::IPAddress, endpoint : UInt16) : UInt8
+        types = read_descriptor_list(Cluster::Descriptor::DeviceTypeStruct, im, session, peer,
+          endpoint, Cluster::Descriptor::ATTR_DEVICE_TYPE_LIST)
+        servers = read_descriptor_list(UInt32, im, session, peer,
+          endpoint, Cluster::Descriptor::ATTR_SERVER_LIST)
+        unless types.any?(&.device_type.==(DeviceType::JOINT_FABRIC_ADMINISTRATOR)) &&
+               servers.includes?(Cluster::JointFabricAdministrator::CLUSTER_ID)
+          raise Matter::AuthenticationError.new("Announced endpoint is not a Joint Fabric Administrator")
+        end
+        read_administrator_fabric_index(im, session, peer, endpoint)
       end
 
       # CASE pairing verifies the peer NOC through the presented ICAC and
@@ -1002,7 +1023,8 @@ module Matter
                                     timeout : Time::Span = 10.seconds,
                                     crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                                     client : Client? = nil,
-                                    on_verified_session : Proc(Session::SecureContext, Nil)? = nil) : VidVerification::VerifiedFabric
+                                    on_verified_session : Proc(Session::SecureContext, Nil)? = nil,
+                                    administrator_endpoint : UInt16? = nil) : VidVerification::VerifiedFabric
         root = fabric.root_cert || raise Matter::ConfigurationError.new("Joining fabric has no RCAC")
         identity = FabricInfo.new(fabric_id: fabric.fabric_id,
           controller_node_id: fabric.node_id,
@@ -1021,7 +1043,7 @@ module Matter
             peer_node_id: peer_node_id, timeout: timeout)
           verify_anchor_case_peer!(session, root, fabric.fabric_id)
           verified = verify_anchor_initiator(ImClient.new(client, timeout), session, peer,
-            fabric.root_public_key, fabric.fabric_id, trust, crypto)
+            fabric.root_public_key, fabric.fabric_id, trust, crypto, administrator_endpoint)
           # Retain this CASE session only after the Anchor's operational VID and
           # original-fabric binding have both been verified. A peer may reuse
           # the newest CASE session for its following JCM command.
