@@ -345,7 +345,7 @@ module Matter
           false
         end
 
-        private def with_anchor(journal : Journal, & : ImClient, Session::SecureContext ->) : Nil
+        private def with_anchor(journal : Journal) : Nil
           unless journal.fabric_id == @fabric.fabric_id && journal.root_public_key == @fabric.root_public_key &&
                  journal.controller_node_id == @fabric.controller_node_id && journal.anchor_node_id == @anchor_node_id
             raise Matter::AuthenticationError.new("Joint Fabric node removal journal identifies another fabric or Anchor")
