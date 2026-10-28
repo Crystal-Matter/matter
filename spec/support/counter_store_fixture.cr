@@ -1,4 +1,3 @@
-require "tempfile"
 require "../../src/matter/controller/state_store"
 require "../../src/matter/storage/yaml_file"
 
