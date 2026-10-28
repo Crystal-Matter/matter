@@ -112,6 +112,26 @@ private class TestDclSource < VidTrust::DclSource
   end
 end
 
+describe VidTrust::HttpDclSource do
+  it "recognizes numeric DCL certificate type identifiers" do
+    crypto = Matter::Crypto::StandardCrypto.new
+    key = crypto.create_key_pair
+    name = OpenSSL::X509::Name.parse("CN=DCL certificate type")
+    pem = Base64.strict_encode(dcl_test_certificate(key, key, name, nil, 1, true))
+    records = [
+      {"pemCert" => pem, "vid" => 0xFFF1, "certificateType" => 1, "isRoot" => true},
+      {"pemCert" => pem, "vid" => 0xFFF1, "certificateType" => 2, "isRoot" => false},
+    ]
+    fetch = ->(_url : String) { {"nocRootCertificates" => {"certs" => records}}.to_json }
+
+    certificates = VidTrust::HttpDclSource.new("https://127.0.0.1", fetch).roots_for(0xFFF1_u16)
+    certificates.map(&.type).should eq([
+      VidTrust::DclCertificate::Type::OperationalPKI,
+      VidTrust::DclCertificate::Type::VIDSignerPKI,
+    ])
+  end
+end
+
 describe VidTrust::DclOperationalTrustAnchors do
   it "uses active VID-scoped HTTPS DCL records for an operational root" do
     crypto = Matter::Crypto::StandardCrypto.new

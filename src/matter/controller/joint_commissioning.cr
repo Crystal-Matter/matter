@@ -23,6 +23,7 @@ module Matter
       CERTIFICATE_SERIAL_BYTES =     8
       BOOTSTRAP_RCAC_ID        = 1_u64
       BOOTSTRAP_ICAC_ID        = 3_u64
+      UNSPECIFIED_ICAC_ID      = 0_u64
       BOOTSTRAP_SERIAL_BYTES   =     8
 
       def cat_subject(identity : UInt16, version : UInt16) : UInt64
@@ -232,7 +233,7 @@ module Matter
         )
           @pending = initial_pending
           if @administrator_fabric_index == DataType::NO_FABRIC || @administrator_cat_version == 0_u16 ||
-             @anchor_cat_version == 0_u16 || @icac_id == 0_u64
+             @anchor_cat_version == 0_u16 || @icac_id == UNSPECIFIED_ICAC_ID
             raise Matter::ConfigurationError.new("Invalid Joint Commissioning fabric index, CAT version or ICAC ID")
           end
         end
