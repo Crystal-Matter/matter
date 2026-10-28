@@ -536,6 +536,35 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.node_acl_list.map(&.list_id).should eq([1_u16])
   end
 
+  it "makes ACL removal a no-op when the node exists but the entry is absent" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    request = Datastore::RemoveACLFromNodeRequest.new(7_u16, 42_u64)
+    cluster.remove_acl_from_node(request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_acl_from_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE, [42_u64], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    existing = Datastore::RemoveACLFromNodeRequest.new(cluster.node_acl_list.first.list_id, 42_u64)
+    cluster.remove_acl_from_node(existing).success?.should be_true
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_acl_from_node(existing).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+    cluster.complete_acl(42_u64, existing.list_id).should be_true
+    version = cluster.data_version
+    cluster.remove_acl_from_node(existing).success?.should be_true
+    cluster.data_version.should eq(version)
+  end
+
   it "rejects oversized datastore ACL subjects and targets without changing state" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
@@ -819,6 +848,35 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
     cluster.complete_group_membership(42_u64, 1_u16, 1_u16).should be_true
     cluster.endpoint_group_id_list.should be_empty
+  end
+
+  it "requires an endpoint for group removal and treats absent membership as a no-op" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    request = Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16)
+    cluster.remove_group_id_from_endpoint_for_node(request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Node")).success?.should be_true
+    cluster.remove_group_id_from_endpoint_for_node(request).status.should eq(Matter::InteractionModel::StatusCode::NotFound)
+    cluster.record_endpoint(42_u64, 1_u16, "Light").success?.should be_true
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_group_id_from_endpoint_for_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+
+    cluster.add_group(Datastore::AddGroupRequest.new(1_u16, "Lights", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)).success?.should be_true
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 1_u16)).success?.should be_true
+    cluster.remove_group_id_from_endpoint_for_node(request).success?.should be_true
+    cluster.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    version = cluster.data_version
+    state = cluster.save_state
+    cluster.remove_group_id_from_endpoint_for_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+    cluster.complete_group_membership(42_u64, 1_u16, 1_u16).should be_true
+    version = cluster.data_version
+    cluster.remove_group_id_from_endpoint_for_node(request).success?.should be_true
+    cluster.data_version.should eq(version)
   end
 
   it "preserves pending group removal when the group's friendly name changes" do

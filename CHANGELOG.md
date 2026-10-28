@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore removals
+
+- `RemoveGroupIDFromEndpointForNode` now checks that the endpoint exists and
+  succeeds without changing Datastore state when its group membership is
+  already absent. `RemoveACLFromNode` does the same for an existing node whose
+  ACL entry is absent. Repeated removals already awaiting device delivery keep
+  their DeletePending status without advancing DataVersion.
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store
