@@ -330,9 +330,7 @@ module Matter
         message = if packet.header.session_id == Codec::MessageCodec::UNSECURED_SESSION_ID
                     Codec::MessageCodec::Base.decode_payload(packet)
                   else
-                    dummy = Codec::MessageCodec::PayloadHeader.new(
-                      exchange_id: 0_u16, protocol_id: 0_u16, message_type: 0_u8,
-                      initiator_message: false, requires_acknowledge: false)
+                    dummy = Codec::MessageCodec::PayloadHeader.encrypted_placeholder
                     Codec::MessageCodec::Message.new(packet.header, dummy,
                       packet.payload, packet.header_bytes)
                   end
