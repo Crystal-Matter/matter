@@ -82,7 +82,7 @@ module Matter
                 raise Matter::StorageError.new("Migration journal attempt changed since load")
               end
               if current.stage == journal.stage
-                unless !rotation && journal.stage_version == current.stage_version
+                if rotation || journal.stage_version != current.stage_version
                   raise Matter::StorageError.new("Migration journal stage changed since load")
                 end
               elsif journal.stage_version != current.stage_version + 1_u64

@@ -221,7 +221,7 @@ module Matter
                 allow_committed : Bool = false) : Nil
         entry = @store.update do |state|
           index = entry_index(state, fabric, node_id)
-          next nil unless index
+          next unless index
           current = state.pending_datastore_nodes[index]
           require_attempt!(current)
           unless current.stage.in?(PendingDatastoreNode::Stage::Pending, PendingDatastoreNode::Stage::Registered) ||
@@ -352,7 +352,7 @@ module Matter
       end
 
       private def require_attempt!(entry : PendingDatastoreNode) : Nil
-        unless !@attempt_id.empty? && entry.attempt_id == @attempt_id
+        if @attempt_id.empty? || entry.attempt_id != @attempt_id
           raise Matter::CommissioningError.new("Datastore registration belongs to another attempt")
         end
       end

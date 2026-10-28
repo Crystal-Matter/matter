@@ -333,7 +333,7 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     first_store = Matter::Controller::StateStore.new(backend)
     second_store = Matter::Controller::StateStore.new(backend)
     fabric = registrar_fabric
-    first_store.update { |state| state.install_fabric(fabric) }
+    first_store.update(&.install_fabric(fabric))
     delivery = RecordingNodeDelivery.new
     owner = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
     replacement = Matter::Controller::DatastoreNodeRegistrar.new(second_store, delivery)
@@ -361,7 +361,7 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     first_store = Matter::Controller::StateStore.new(backend)
     second_store = Matter::Controller::StateStore.new(backend)
     fabric = registrar_fabric
-    first_store.update { |state| state.install_fabric(fabric) }
+    first_store.update(&.install_fabric(fabric))
     delivery = RecordingNodeDelivery.new
     first = Matter::Controller::DatastoreNodeRegistrar.new(first_store, delivery)
     first.add_pending(fabric, 0x200_u64, "Lamp")
