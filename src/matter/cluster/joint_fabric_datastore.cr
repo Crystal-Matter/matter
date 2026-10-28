@@ -1292,7 +1292,9 @@ module Matter
       end
 
       # RefreshNode's Descriptor snapshot. New endpoint labels start empty;
-      # labels already assigned by an Administrator are preserved.
+      # labels already assigned by an Administrator are preserved. A missing
+      # endpoint drops committed group/binding snapshots, but recoverable
+      # additions and removals remain available on a later refresh.
       def reconcile_node_endpoints(node_id : UInt64, endpoint_ids : Array(UInt16)) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless node_exists?(node_id)
@@ -1307,12 +1309,22 @@ module Matter
         end
         self.node_endpoint_list = entries
         self.endpoint_group_id_list = @endpoint_group_id_list.reject do |entry|
-          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number && !ids.includes?(entry.endpoint_id)
+          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number &&
+            !ids.includes?(entry.endpoint_id) &&
+            !recoverable_endpoint_intent?(entry.status_entry)
         end
         self.endpoint_binding_list = @endpoint_binding_list.reject do |entry|
-          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number && !ids.includes?(entry.endpoint_id)
+          entry.node_id == node_id && entry.endpoint_id != DataType::EndpointNumber::ROOT.number &&
+            !ids.includes?(entry.endpoint_id) &&
+            !recoverable_endpoint_intent?(entry.status_entry)
         end
         commit!
+      end
+
+      private def recoverable_endpoint_intent?(status : DatastoreStatusEntryStruct) : Bool
+        status.state == DatastoreStateEnum::Pending ||
+          ((status.state == DatastoreStateEnum::CommitFailed ||
+            status.state == DatastoreStateEnum::DeletePending) && !terminal_failure?(status))
       end
 
       def reconcile_node_groups(node_id : UInt64, endpoint_id : UInt16, group_ids : Array(UInt16)) : InteractionModel::Status

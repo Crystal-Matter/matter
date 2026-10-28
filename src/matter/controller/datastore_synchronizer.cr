@@ -29,6 +29,8 @@ module Matter
           Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
         groupcast_target = groupcast_available?(root_servers, session, peer)
         refreshing = store.node_list.any? { |entry| entry.node_id == node_id && entry.commissioning_status_entry.state == Store::DatastoreStateEnum::Pending }
+        current_endpoint_ids = store.node_endpoint_list.select(&.node_id.==(node_id)).map(&.endpoint_id)
+        has_node_record = store.node_list.any?(&.node_id.==(node_id))
         if refreshing
           # Reject privileges JFDS cannot represent before changing any local
           # Datastore lists; pending ACL writes may require a later reread.
@@ -39,6 +41,7 @@ module Matter
           endpoint_ids = read_list(UInt16, session, peer, Node::ROOT_ENDPOINT_ID, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_PARTS_LIST)
           status = store.reconcile_node_endpoints(node_id, endpoint_ids)
           raise Matter::ProtocolError.new("Datastore endpoint reconciliation failed") unless status.success?
+          current_endpoint_ids = endpoint_ids
         end
 
         store.node_key_set_list.select { |entry| entry.node_id == node_id && entry.status_entry.state == Store::DatastoreStateEnum::Pending }.each do |entry|
@@ -48,7 +51,10 @@ module Matter
           store.complete_node_key_set(node_id, entry.group_key_set_id, status)
         end
 
-        pending_groups = store.endpoint_group_id_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }
+        pending_groups = store.endpoint_group_id_list.select do |entry|
+          entry.node_id == node_id && pending?(entry.status_entry) &&
+            (!has_node_record || entry.endpoint_id == Node::ROOT_ENDPOINT_ID || current_endpoint_ids.includes?(entry.endpoint_id))
+        end
         pending_groups.each do |entry|
           status = apply do
             adopt_groupcast(session, peer) if groupcast_target
@@ -71,7 +77,10 @@ module Matter
           store.complete_acl(node_id, entry.list_id, status)
         end
 
-        store.endpoint_binding_list.select { |entry| entry.node_id == node_id && pending?(entry.status_entry) }.each do |entry|
+        store.endpoint_binding_list.select do |entry|
+          entry.node_id == node_id && pending?(entry.status_entry) &&
+            (!has_node_record || entry.endpoint_id == Node::ROOT_ENDPOINT_ID || current_endpoint_ids.includes?(entry.endpoint_id))
+        end.each do |entry|
           status = apply do
             sync_binding(store, entry, session, peer)
           end
