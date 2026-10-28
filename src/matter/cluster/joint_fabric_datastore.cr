@@ -1145,7 +1145,9 @@ module Matter
         else
           self.group_list = entries
         end
-        mark_group_memberships_pending(request.group_id) if name_changed
+        # A changed key set also requires the target's group-to-key mapping
+        # (or Groupcast membership) to move to the replacement key.
+        mark_group_memberships_pending(request.group_id) if name_changed || key_changed
         if key_changed
           mark_group_key_sets_pending(request.group_id, entry.group_key_set_id)
           memberships = @endpoint_group_id_list.select do |membership|
