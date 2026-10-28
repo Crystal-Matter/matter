@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore removals
+
+- `RemoveGroupIDFromEndpointForNode` now checks that the endpoint exists and
+  succeeds without changing Datastore state when its group membership is
+  already absent. `RemoveACLFromNode` does the same for an existing node whose
+  ACL entry is absent. Repeated removals already awaiting device delivery keep
+  their DeletePending status without advancing DataVersion.
+
 ### Controller unsecured counter leases
 
 - Fixed source Node IDs now require a StateStore counter lease. The store
@@ -27,6 +35,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   must coordinate unique source ownership across processes.
 - `AnchorDatastoreSubscription.new` now requires `counter_store:`. Pass the
   StateStore that owns the installed controller fabric and its counter lease.
+
+### Joint Fabric committed node removal
+
+- Add a durable, opt-in removal workflow for a committed ordinary Joint Fabric
+  node. It removes direct Node ID ACL grants on other nodes and waits for their
+  delivery before issuing Datastore RemoveNode. A lost RemoveNode response is
+  reconciled by an authenticated NodeList read without replaying the command.
+- A CAT-bearing controller requires a saved group revocation receipt that is
+  `Effective` for each authenticated CASE CAT before removal can proceed.
+  The workflow now journals group, key-set, and binding cleanup, including
+  peer bindings pointing to the removed Node ID. It waits for confirmed
+  deletion before ACL revocation and RemoveNode. Administrator nodes,
+  wildcard or shared direct ACLs, and an unreachable target remain blocked.
 
 ### Joint Fabric Anchor transfer restart recovery
 
