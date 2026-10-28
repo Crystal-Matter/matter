@@ -60,7 +60,8 @@ module Matter
           # A failed KeySetWrite remains CommitFailed for RefreshNode to retry.
           next unless group_key_ready?(store, entry)
           status = apply do
-            adopt_groupcast(session, peer) if groupcast_target
+            group = store.group_list.find(&.group_id.==(entry.group_id.to_u64))
+            adopt_groupcast(session, peer) if groupcast_target && group.try(&.group_key_set_id)
             sync_group(store, entry, session, peer, groupcast_target)
           end
           store.complete_group_membership(node_id, entry.endpoint_id, entry.group_id, status)
@@ -124,16 +125,10 @@ module Matter
         endpoint_ids = store.node_endpoint_list.select(&.node_id.==(node_id)).map(&.endpoint_id) + [Node::ROOT_ENDPOINT_ID]
         endpoint_ids.uniq.each do |endpoint_id|
           servers = endpoint_id == Node::ROOT_ENDPOINT_ID ? root_servers : read_list(UInt32, session, peer, endpoint_id, Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
-          if groupcast_target
+          if groupcast_target || servers.includes?(Cluster::Groups::CLUSTER_ID)
             group_ids = groupcast_memberships.select(&.endpoints.includes?(endpoint_id)).map(&.group_id)
-            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, group_ids))
-          elsif servers.includes?(Cluster::Groups::CLUSTER_ID)
-            request = Cluster::Groups::GetGroupMembershipRequest.new([] of DataType::GroupId)
-            fields = invoke_data(session, peer, endpoint_id, Cluster::Groups::CLUSTER_ID,
-              Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP, Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE,
-              request.to_slice)
-            group_ids = Cluster::Groups::GetGroupMembershipResponse.from_slice(fields).group_list.map(&.id)
-            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, group_ids))
+            group_ids.concat(groups_membership_ids(session, peer, endpoint_id)) if servers.includes?(Cluster::Groups::CLUSTER_ID)
+            ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, group_ids.uniq))
           else
             if store.endpoint_group_id_list.any? { |entry| entry.node_id == node_id && entry.endpoint_id == endpoint_id && entry.status_entry.state == Store::DatastoreStateEnum::Committed }
               ensure_reconciled!(store.reconcile_node_groups(node_id, endpoint_id, [] of UInt16))
@@ -258,12 +253,31 @@ module Matter
       private def sync_group(store : Store, entry : Store::DatastoreEndpointGroupIDEntryStruct,
                              session : Session::SecureContext, peer : Socket::IPAddress,
                              groupcast_target : Bool) : Nil
-        if groupcast_target
+        group = store.group_list.find(&.group_id.==(entry.group_id.to_u64))
+        if groupcast_target && group.try(&.group_key_set_id)
           sync_groupcast(store, entry, session, peer)
           return
         end
+        if groupcast_target && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && !group
+          memberships = read_list(Cluster::Groupcast::MembershipStruct, session, peer,
+            Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP)
+          if memberships.any? { |membership| membership.group_id == entry.group_id && membership.endpoints.includes?(entry.endpoint_id) }
+            sync_groupcast(store, entry, session, peer)
+          end
+        end
+        if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && !group
+          servers = read_list(UInt32, session, peer, entry.endpoint_id,
+            Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
+          return unless servers.includes?(Cluster::Groups::CLUSTER_ID)
+        end
+        sync_legacy_group(store, entry, session, peer)
+      end
+
+      private def sync_legacy_group(store : Store, entry : Store::DatastoreEndpointGroupIDEntryStruct,
+                                    session : Session::SecureContext, peer : Socket::IPAddress) : Nil
         update_group_key_map(store, entry, session, peer)
         if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
+          return unless groups_membership_ids(session, peer, entry.endpoint_id).includes?(entry.group_id)
           request = Cluster::Groups::RemoveGroupRequest.new(DataType::GroupId.new(entry.group_id))
           response_id = Cluster::Groups::CMD_REMOVE_GROUP_RESPONSE
           command_id = Cluster::Groups::CMD_REMOVE_GROUP
@@ -354,6 +368,7 @@ module Matter
         return unless key_set_id || deleting
 
         mappings = read_list(Cluster::GroupKeyManagement::GroupKeyMapStruct, session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
+        return if deleting && mappings.none?(&.group_id.==(entry.group_id))
         fabric_index = read_target_fabric_index(session, peer)
         if mappings.any? { |mapping| mapping.fabric_index != fabric_index }
           raise Matter::ProtocolError.new("Target GroupKeyMap contains another fabric's entry")
@@ -365,6 +380,15 @@ module Matter
           end
         end
         write_ok!(session, peer, Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID, Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP, mappings.to_tlv)
+      end
+
+      private def groups_membership_ids(session : Session::SecureContext, peer : Socket::IPAddress,
+                                        endpoint_id : UInt16) : Array(UInt16)
+        request = Cluster::Groups::GetGroupMembershipRequest.new([] of DataType::GroupId)
+        fields = invoke_data(session, peer, endpoint_id, Cluster::Groups::CLUSTER_ID,
+          Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP, Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE,
+          request.to_slice)
+        Cluster::Groups::GetGroupMembershipResponse.from_slice(fields).group_list.map(&.id)
       end
 
       private def read_target_fabric_index(session : Session::SecureContext, peer : Socket::IPAddress) : UInt8
