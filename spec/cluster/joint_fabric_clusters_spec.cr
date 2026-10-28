@@ -521,7 +521,11 @@ describe Matter::Cluster::JointFabricDatastore do
       Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
       [42_u64], nil)
     cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
-    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, acl)).success?.should be_true
+    other_acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [42_u64], nil)
+    cluster.add_acl_to_node(Datastore::AddACLToNodeRequest.new(42_u64, other_acl)).success?.should be_true
     cluster.node_acl_list.map(&.list_id).should eq([0_u16, 1_u16])
     cluster.record_endpoint(42_u64, 1_u16, "Light")
     binding = Datastore::DatastoreBindingTargetStruct.new(node: 42_u64, endpoint: 1_u16)
@@ -534,6 +538,96 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
     cluster.complete_acl(42_u64, 0_u16).should be_true
     cluster.node_acl_list.map(&.list_id).should eq([1_u16])
+  end
+
+  it "treats repeated add commands as no-ops without changing status or DataVersion" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    endpoint_id = 1_u16
+    group_id = 10_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(group_id, "Group", nil, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View)).success?.should be_true
+
+    group_request = Datastore::AddGroupIDToEndpointForNodeRequest.new(node_id, endpoint_id, group_id)
+    cluster.add_group_id_to_endpoint_for_node(group_request).success?.should be_true
+    group_status = cluster.endpoint_group_id_list.first.status_entry.to_slice
+    group_version = cluster.data_version
+    cluster.add_group_id_to_endpoint_for_node(group_request).success?.should be_true
+    cluster.endpoint_group_id_list.size.should eq(1)
+    cluster.endpoint_group_id_list.first.status_entry.to_slice.should eq(group_status)
+    cluster.data_version.should eq(group_version)
+
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: node_id, endpoint: endpoint_id)
+    binding_request = Datastore::AddBindingToEndpointForNodeRequest.new(node_id, endpoint_id, binding)
+    cluster.add_binding_to_endpoint_for_node(binding_request).success?.should be_true
+    first_binding = cluster.endpoint_binding_list.first
+    binding_version = cluster.data_version
+    cluster.add_binding_to_endpoint_for_node(binding_request).success?.should be_true
+    cluster.endpoint_binding_list.size.should eq(1)
+    cluster.endpoint_binding_list.first.list_id.should eq(first_binding.list_id)
+    cluster.endpoint_binding_list.first.status_entry.to_slice.should eq(first_binding.status_entry.to_slice)
+    cluster.data_version.should eq(binding_version)
+
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [node_id], nil)
+    acl_request = Datastore::AddACLToNodeRequest.new(node_id, acl)
+    cluster.add_acl_to_node(acl_request).success?.should be_true
+    first_acl = cluster.node_acl_list.first
+    acl_version = cluster.data_version
+    cluster.add_acl_to_node(acl_request).success?.should be_true
+    cluster.node_acl_list.size.should eq(1)
+    cluster.node_acl_list.first.list_id.should eq(first_acl.list_id)
+    cluster.node_acl_list.first.status_entry.to_slice.should eq(first_acl.status_entry.to_slice)
+    cluster.data_version.should eq(acl_version)
+  end
+
+  it "re-adds entries whose removal is still pending" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    node_id = 42_u64
+    endpoint_id = 1_u16
+    group_id = 10_u16
+    key_set_id = 11_u16
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(node_id, "Node")).success?.should be_true
+    cluster.record_endpoint(node_id, endpoint_id, "Endpoint").success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(group_id, "Group", key_set_id, nil, nil,
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::View)).success?.should be_true
+
+    group_request = Datastore::AddGroupIDToEndpointForNodeRequest.new(node_id, endpoint_id, group_id)
+    cluster.add_group_id_to_endpoint_for_node(group_request).success?.should be_true
+    cluster.remove_group_id_from_endpoint_for_node(Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(node_id, endpoint_id, group_id)).success?.should be_true
+    cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::DeletePending)
+    cluster.add_group_id_to_endpoint_for_node(group_request).success?.should be_true
+    cluster.endpoint_group_id_list.size.should eq(1)
+    cluster.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+    cluster.node_key_set_list.size.should eq(1)
+    cluster.node_key_set_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+
+    binding = Datastore::DatastoreBindingTargetStruct.new(node: node_id, endpoint: endpoint_id)
+    binding_request = Datastore::AddBindingToEndpointForNodeRequest.new(node_id, endpoint_id, binding)
+    cluster.add_binding_to_endpoint_for_node(binding_request).success?.should be_true
+    binding_id = cluster.endpoint_binding_list.first.list_id
+    cluster.remove_binding_from_endpoint_for_node(Datastore::RemoveBindingFromEndpointForNodeRequest.new(binding_id, endpoint_id, node_id)).success?.should be_true
+    cluster.add_binding_to_endpoint_for_node(binding_request).success?.should be_true
+    cluster.endpoint_binding_list.size.should eq(1)
+    cluster.endpoint_binding_list.first.list_id.should eq(binding_id)
+    cluster.endpoint_binding_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
+
+    acl = Datastore::DatastoreAccessControlEntryStruct.new(
+      Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [node_id], nil)
+    acl_request = Datastore::AddACLToNodeRequest.new(node_id, acl)
+    cluster.add_acl_to_node(acl_request).success?.should be_true
+    acl_id = cluster.node_acl_list.first.list_id
+    cluster.remove_acl_from_node(Datastore::RemoveACLFromNodeRequest.new(acl_id, node_id)).success?.should be_true
+    cluster.add_acl_to_node(acl_request).success?.should be_true
+    cluster.node_acl_list.size.should eq(1)
+    cluster.node_acl_list.first.list_id.should eq(acl_id)
+    cluster.node_acl_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
   end
 
   it "rejects oversized datastore ACL subjects and targets without changing state" do

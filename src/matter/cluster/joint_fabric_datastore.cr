@@ -1411,16 +1411,37 @@ module Matter
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
         return InteractionModel::Status.constraint_error unless @group_list.any?(&.group_id.==(request.group_id.to_u64))
-        return InteractionModel::Status.constraint_error if @endpoint_group_id_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
-        return InteractionModel::Status.resource_exhausted if @endpoint_group_id_list.size >= MAX_NODE_ENTRIES
+        index = @endpoint_group_id_list.index { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.group_id == request.group_id }
+        if index
+          return InteractionModel::Status.success unless @endpoint_group_id_list[index].status_entry.state == DatastoreStateEnum::DeletePending
+        else
+          return InteractionModel::Status.resource_exhausted if @endpoint_group_id_list.size >= MAX_NODE_ENTRIES
+        end
         if (group = @group_list.find { |item| item.group_id == request.group_id.to_u64 }) && (key_id = group.group_key_set_id)
           adding_key_set = !@node_key_set_list.any? { |item| item.node_id == request.node_id && item.group_key_set_id == key_id }
           return InteractionModel::Status.resource_exhausted if adding_key_set && @node_key_set_list.size >= MAX_NODE_ENTRIES
         end
-        entry = DatastoreEndpointGroupIDEntryStruct.new(request.node_id, request.endpoint_id, request.group_id, status_entry(DatastoreStateEnum::Pending))
-        self.endpoint_group_id_list = @endpoint_group_id_list + [entry]
+        if index
+          entries = @endpoint_group_id_list.dup
+          entry = entries[index]
+          entry.status_entry = status_entry(DatastoreStateEnum::Pending)
+          entries[index] = entry
+          self.endpoint_group_id_list = entries
+        else
+          entry = DatastoreEndpointGroupIDEntryStruct.new(request.node_id, request.endpoint_id, request.group_id, status_entry(DatastoreStateEnum::Pending))
+          self.endpoint_group_id_list = @endpoint_group_id_list + [entry]
+        end
         if group && (key_id = group.group_key_set_id)
-          unless @node_key_set_list.any? { |item| item.node_id == request.node_id && item.group_key_set_id == key_id }
+          key_index = @node_key_set_list.index { |item| item.node_id == request.node_id && item.group_key_set_id == key_id }
+          if key_index
+            key_entries = @node_key_set_list.dup
+            key_entry = key_entries[key_index]
+            if key_entry.status_entry.state == DatastoreStateEnum::DeletePending
+              key_entry.status_entry = status_entry(DatastoreStateEnum::Pending)
+              key_entries[key_index] = key_entry
+              self.node_key_set_list = key_entries
+            end
+          else
             key_entry = DatastoreNodeKeySetEntryStruct.new(request.node_id, key_id, status_entry(DatastoreStateEnum::Pending))
             self.node_key_set_list = @node_key_set_list + [key_entry]
           end
@@ -1446,6 +1467,16 @@ module Matter
         return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
         binding = request.binding
         return InteractionModel::Status.constraint_error unless valid_binding_target?(binding)
+        index = @endpoint_binding_list.index { |entry| entry.node_id == request.node_id && entry.endpoint_id == request.endpoint_id && entry.binding == binding }
+        if index
+          entry = @endpoint_binding_list[index]
+          return InteractionModel::Status.success unless entry.status_entry.state == DatastoreStateEnum::DeletePending
+          entries = @endpoint_binding_list.dup
+          entry.status_entry = status_entry(DatastoreStateEnum::Pending)
+          entries[index] = entry
+          self.endpoint_binding_list = entries
+          return commit!
+        end
         return InteractionModel::Status.resource_exhausted if @endpoint_binding_list.size >= MAX_NODE_ENTRIES
         id = next_list_id(all_list_ids)
         return InteractionModel::Status.resource_exhausted unless id
@@ -1472,6 +1503,16 @@ module Matter
         acl = request.acl_entry
         return InteractionModel::Status.constraint_error if (acl.subjects.try(&.size) || 0) > AccessControl::DEFAULT_SUBJECTS_PER_ENTRY ||
                                                             (acl.targets.try(&.size) || 0) > AccessControl::DEFAULT_TARGETS_PER_ENTRY
+        index = @node_acl_list.index { |entry| entry.node_id == request.node_id && entry.acl_entry == acl }
+        if index
+          entry = @node_acl_list[index]
+          return InteractionModel::Status.success unless entry.status_entry.state == DatastoreStateEnum::DeletePending
+          entries = @node_acl_list.dup
+          entry.status_entry = status_entry(DatastoreStateEnum::Pending)
+          entries[index] = entry
+          self.node_acl_list = entries
+          return commit!
+        end
         return InteractionModel::Status.resource_exhausted if @node_acl_list.size >= MAX_NODE_ENTRIES
         id = next_list_id(all_list_ids)
         return InteractionModel::Status.resource_exhausted unless id
