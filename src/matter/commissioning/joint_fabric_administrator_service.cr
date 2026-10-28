@@ -26,7 +26,7 @@ module Matter
       @last_csr_public_key : Bytes?
       @csr_requester_node_id : UInt64?
       @csr_requester_fabric_index : UInt8?
-      @icac_successful_fabric_indices = Set(UInt8?).new
+      @icac_consumed_fabric_indices = Set(UInt8?).new
       @icac_pending_commit : Bool = false
       @transfer_requester_node_id : UInt64?
       @transfer_requester_fabric_index : UInt8?
@@ -101,7 +101,7 @@ module Matter
         @last_csr_public_key = nil
         @csr_requester_node_id = nil
         @csr_requester_fabric_index = nil
-        @icac_successful_fabric_indices.clear
+        @icac_consumed_fabric_indices.clear
         @verified_initiator_node_id = nil
         @verified_initiator_fabric_index = nil
       end
@@ -156,7 +156,7 @@ module Matter
       def icaccsr_request(cluster : Admin) : Admin::ICACCSRResponse | InteractionModel::Status
         return InteractionModel::Status.invalid_command unless cluster.request_is_case_session?
         return InteractionModel::Status.failsafe_required unless @failsafe_armed.call
-        return InteractionModel::Status.constraint_error if icac_succeeded_on_fabric?(cluster)
+        return InteractionModel::Status.constraint_error if icac_consumed_on_fabric?(cluster)
         fabric_index = cluster.administrator_fabric_index
         accessing_fabric_index = cluster.request_fabric_index
         unless verified_initiator?(cluster) && accessing_fabric_index && @vendor_id_verified.call(accessing_fabric_index)
@@ -191,11 +191,14 @@ module Matter
         return InteractionModel::Status.invalid_command unless cluster.request_is_case_session?
         return InteractionModel::Status.failsafe_required unless @failsafe_armed.call
         return InteractionModel::Status.invalid_command if request.icac_value.size > MAX_ICAC_BYTES
-        return InteractionModel::Status.constraint_error if icac_succeeded_on_fabric?(cluster)
+        return InteractionModel::Status.constraint_error if icac_consumed_on_fabric?(cluster)
         unless anchor_principal?(cluster)
           # A malformed/non-matching ICAC can be rejected without revealing a
           # CSR or mutating credentials. Certification exercises this path on a
-          # fresh Administrator before it has joined a joint fabric.
+          # fresh Administrator before it has joined a joint fabric. Its
+          # status-only AddICAC still consumes the one-command allowance tested
+          # by TC_JFADMIN_1_2; authenticated JCM validation failures do not.
+          @icac_consumed_fabric_indices.add(cluster.request_fabric_index)
           return Admin::ICACResponse.new(unprivileged_icac_status(cluster, request.icac_value))
         end
         return InteractionModel::Status.unsupported_access unless failsafe_fabric_matches?(cluster)
@@ -230,7 +233,7 @@ module Matter
         @administrator_cluster = cluster
         @cross_signed_icac = request.icac_value.dup
         @icac_pending_commit = true
-        @icac_successful_fabric_indices.add(cluster.request_fabric_index)
+        @icac_consumed_fabric_indices.add(cluster.request_fabric_index)
         Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::OK)
       rescue Matter::Error
         Admin::ICACResponse.new(Admin::ICACResponseStatusEnum::InvalidICAC)
@@ -313,8 +316,8 @@ module Matter
           @verified_initiator_fabric_index == cluster.request_fabric_index
       end
 
-      private def icac_succeeded_on_fabric?(cluster : Admin) : Bool
-        @icac_successful_fabric_indices.includes?(cluster.request_fabric_index)
+      private def icac_consumed_on_fabric?(cluster : Admin) : Bool
+        @icac_consumed_fabric_indices.includes?(cluster.request_fabric_index)
       end
 
       private def failsafe_fabric_matches?(cluster : Admin) : Bool

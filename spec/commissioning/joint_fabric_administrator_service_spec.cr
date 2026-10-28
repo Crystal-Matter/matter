@@ -508,9 +508,13 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidPublicKey)
     service.cross_signed_icac.should be_nil
-    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
-      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
-    # Rejected status-only attempts do not consume a successful AddICAC slot.
+    # TC_JFADMIN_1_2 treats a status-only, out-of-flow AddICAC as consuming
+    # the fail-safe's one-command allowance, unlike an authenticated JCM
+    # certificate validation failure.
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(certificate)).should eq(
+      Matter::InteractionModel::Status.constraint_error)
+    # The attempt is scoped to the accessing fabric.
     cluster.request_fabric_index = 2_u8
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
@@ -518,8 +522,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidPublicKey)
     cluster.request_fabric_index = 1_u8
-    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
-      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
     service.reset_failsafe
     other_key = crypto.create_key_pair
     foreign_certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
