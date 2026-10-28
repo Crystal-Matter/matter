@@ -508,6 +508,11 @@ module Matter
             ->(pending : PendingRegistration?) { save_pending(pending) },
             initial_pending, @crypto, anchor_exchange, anchor_finalize
           )
+          @retry_owned = false
+          if registrar = @datastore_registrar
+            registrar.start_retrying
+            @retry_owned = true
+          end
         end
 
         def commission(node_id : UInt64, manual_code : String,
@@ -537,7 +542,7 @@ module Matter
           commissioner = Commissioning::Commissioner.new(@store, @client,
             crypto: @crypto, hooks: @hooks, fail_safe_expiry_seconds: @fail_safe_expiry_seconds,
             attestation_verifier: @attestation_verifier,
-            datastore_registrar: @datastore_registrar)
+            datastore_registrar: @datastore_registrar, start_datastore_retry: false)
           commissioner.pairing_code(node_id, manual_code, peer,
             fabric_id: @fabric_id, root_public_key: @root_public_key,
             controller_node_id: @controller_node_id,
@@ -698,6 +703,10 @@ module Matter
         end
 
         def close : Nil
+          if @retry_owned
+            @datastore_registrar.try(&.stop_retrying)
+            @retry_owned = false
+          end
           @client.close
         end
 

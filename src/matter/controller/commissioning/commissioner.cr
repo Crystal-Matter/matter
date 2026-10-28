@@ -129,6 +129,7 @@ module Matter
           @fail_safe_expiry_seconds : UInt16 = 60_u16,
           @attestation_verifier : DeviceAttestationVerifier? = nil,
           @datastore_registrar : DatastoreNodeRegistrar? = nil,
+          start_datastore_retry : Bool = true,
           @regulatory_location : Cluster::GeneralCommissioning::RegulatoryLocationType? = nil,
           @regulatory_country_code : String? = nil,
         )
@@ -141,9 +142,18 @@ module Matter
               raise Matter::ConfigurationError.new("Regulatory country code must be two uppercase letters")
             end
           end
+          @retry_owned = false
+          if start_datastore_retry && (registrar = @datastore_registrar)
+            registrar.start_retrying
+            @retry_owned = true
+          end
         end
 
         def close : Nil
+          if @retry_owned
+            @datastore_registrar.try(&.stop_retrying)
+            @retry_owned = false
+          end
           @client.close
         end
 

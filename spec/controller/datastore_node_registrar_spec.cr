@@ -5,11 +5,13 @@ private alias JfdDatastore = Matter::Cluster::JointFabricDatastore
 
 private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
   getter calls = [] of String
+  property? fail_add = false
   property? fail_refresh = false
   property? fail_remove = false
 
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "add:#{node_id}:#{friendly_name}"
+    raise Matter::TransportError.new("offline") if @fail_add
   end
 
   def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
@@ -20,6 +22,45 @@ private class RecordingNodeDelivery < Matter::Controller::DatastoreNodeRegistrar
   def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
     @calls << "remove:#{node_id}:#{friendly_name}"
     raise Matter::TransportError.new("offline") if @fail_remove
+  end
+end
+
+private class BlockingRetryDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  getter entered = Channel(Nil).new
+  getter release = Channel(Nil).new
+  @attempts = 0
+
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+    @attempts += 1
+    raise Matter::TransportError.new("offline") if @attempts == 1
+    @entered.send(nil)
+    @release.receive
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+  end
+end
+
+private class BlockingFirstRetryDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  getter entered = Channel(Nil).new
+  getter release = Channel(Nil).new
+  getter calls = [] of UInt64
+
+  def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
+    @calls << node_id
+    if @calls.size == 1
+      @entered.send(nil)
+      @release.receive
+    end
+  end
+
+  def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+  end
+
+  def remove_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64, friendly_name : String) : Nil
   end
 end
 
@@ -105,6 +146,110 @@ describe Matter::Controller::DatastoreNodeRegistrar do
     store.load.pending_datastore_nodes.should be_empty
   end
 
+  it "retries a failed AddPendingNode from the durable journal after controller startup" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    state = store.load
+    state.install_fabric(fabric)
+    store.save(state)
+    delivery = RecordingNodeDelivery.new
+    delivery.fail_add = true
+    original = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    deadline = Time.utc.to_unix + 60_i64
+    expect_raises(Matter::TransportError, /offline/) do
+      original.add_pending(fabric, 0x200_u64, "Lamp", deadline)
+    end
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Pending)
+
+    delivery.fail_add = false
+    restarted = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery,
+      retry_interval: 10.milliseconds)
+    commissioner = Matter::Controller::Commissioning::Commissioner.new(store,
+      datastore_registrar: restarted)
+    begin
+      wait_until = Time.instant + 1.second
+      until store.load.pending_datastore_nodes.first.stage.registered? || Time.instant >= wait_until
+        sleep 10.milliseconds
+      end
+      store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Registered)
+      delivery.calls.should eq(["add:512:Lamp", "add:512:Lamp"])
+    ensure
+      commissioner.close
+    end
+  end
+
+  it "keeps a foreground Completing save after an overlapping retry" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = registrar_fabric
+    state = store.load
+    state.install_fabric(fabric)
+    store.save(state)
+    delivery = BlockingRetryDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    expect_raises(Matter::TransportError, /offline/) do
+      registrar.add_pending(fabric, 0x200_u64, "Lamp", Time.utc.to_unix + 60_i64)
+    end
+
+    retry_finished = Channel(Nil).new
+    spawn do
+      registrar.retry_pending_once
+      retry_finished.send(nil)
+    end
+    delivery.entered.receive
+    foreground_started = Channel(Nil).new
+    foreground_finished = Channel(Nil).new
+    spawn do
+      foreground_started.send(nil)
+      registrar.completing(fabric, 0x200_u64)
+      foreground_finished.send(nil)
+    end
+    foreground_started.receive
+    finished_early = select
+    when foreground_finished.receive?
+      true
+    when timeout(20.milliseconds)
+      false
+    end
+    delivery.release.send(nil)
+    retry_finished.receive
+    foreground_finished.receive unless finished_early
+    finished_early.should be_false
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Completing)
+  end
+
+  it "does not retry a node on a fabric removed after the retry scan" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    first = registrar_fabric
+    second = Matter::Controller::FabricInfo.new(
+      fabric_id: 0x124_u64, controller_node_id: 0x101_u64,
+      ipk_value: Bytes.new(16), root_cert: Bytes[1], root_public_key: Bytes[5],
+      controller_noc: Bytes[3], controller_private_key: Bytes[4])
+    store.update do |state|
+      state.install_fabric(first)
+      state.install_fabric(second)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        first.fabric_id, first.root_public_key.dup, first.controller_node_id,
+        0x200_u64, "First", Time.utc.to_unix + 60_i64)
+      state.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        second.fabric_id, second.root_public_key.dup, second.controller_node_id,
+        0x201_u64, "Second", Time.utc.to_unix + 60_i64)
+    end
+    delivery = BlockingFirstRetryDelivery.new
+    registrar = Matter::Controller::DatastoreNodeRegistrar.new(store, delivery)
+    finished = Channel(Nil).new
+    spawn do
+      registrar.retry_pending_once
+      finished.send(nil)
+    end
+    delivery.entered.receive
+    store.update { |state| state.remove_fabric(second.fabric_id, second.root_public_key, second.controller_node_id) }
+    delivery.release.send(nil)
+    finished.receive
+
+    delivery.calls.should eq([0x200_u64])
+    store.load.pending_datastore_nodes.last.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Pending)
+  end
+
   it "retains acknowledged completion until RefreshNode succeeds after restart" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = registrar_fabric
@@ -141,6 +286,8 @@ describe Matter::Controller::DatastoreNodeRegistrar do
 
     registrar.add_pending(fabric, 0x200_u64, "Lamp")
     registrar.completing(fabric, 0x200_u64)
+    registrar.retry_pending_once
+    store.load.pending_datastore_nodes.first.stage.should eq(Matter::Controller::PendingDatastoreNode::Stage::Completing)
     expect_raises(Matter::CommissioningError, /ambiguous/) { registrar.resume(fabric) }
     expect_raises(Matter::CommissioningError, /ambiguous/) { registrar.abort(fabric, 0x200_u64) }
     delivery.calls.should eq(["add:512:Lamp"])
