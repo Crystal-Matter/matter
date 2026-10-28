@@ -1598,6 +1598,202 @@ describe "three provisioned Joint Fabric Administrators" do
     b_target_session = Matter::Controller::Pairing::CasePairing.new.pair(b_controller_client,
       migration_peer, renewed_controller, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
     assert_two_jfa_on_off_access(b_controller_im, b_target_session, migration_peer, true)
+    a_target_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+      migration_peer, anchor_bootstrap.fabric, peer_node_id: 0xA201_u64,
+      timeout: E2E::COMMAND_TIMEOUT)
+
+    # Exercise keyed group revocation against the migrated device itself. A
+    # separate group keeps its Operate CAT and group key distinct from the
+    # unkeyed Administrator group above.
+    keyed_group_id = 12_u16
+    keyed_group_cat = 0x1236_u16
+    keyed_group_version = 2_u16
+    old_key_set_id = 12_u16
+    new_key_set_id = 13_u16
+    old_epoch_key = crypto.random_bytes(JfaRolloutDatastore::EPOCH_KEY_BYTES)
+    new_epoch_key = crypto.random_bytes(JfaRolloutDatastore::EPOCH_KEY_BYTES)
+    keyed_survivor_id = 0xA107_u64
+    keyed_revoked_id = 0xA108_u64
+    keyed_survivor = b_issuer.delegate_controller(joined_identity,
+      keyed_survivor_id, keyed_group_cat, keyed_group_version, crypto)
+    keyed_revoked = b_issuer.delegate_controller(joined_identity,
+      keyed_revoked_id, keyed_group_cat, keyed_group_version, crypto)
+    keyed_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
+      File.join(E2E::LOG_DIR, "joint-fabric-keyed-survivor.yml")))
+    keyed_revoked_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(
+      File.join(E2E::LOG_DIR, "joint-fabric-keyed-revoked.yml")))
+    Matter::Controller::SharedFabric.install(keyed_store, keyed_survivor)
+    Matter::Controller::SharedFabric.install(keyed_revoked_store, keyed_revoked)
+    keyed_client = Matter::Controller::Client.new(counter_lease: keyed_store.counter_lease(keyed_survivor_id))
+    keyed_revoked_client = Matter::Controller::Client.new(counter_lease: keyed_revoked_store.counter_lease(keyed_revoked_id))
+    keyed_invoker = Matter::Controller::GroupInvoker.new(keyed_client, keyed_store)
+    keyed_revoked_invoker = Matter::Controller::GroupInvoker.new(keyed_revoked_client, keyed_revoked_store)
+    keyed_invoker.install_epoch_key(keyed_survivor.fabric_id, keyed_survivor.root_public_key,
+      keyed_group_id, old_epoch_key)
+    keyed_revoked_invoker.install_epoch_key(keyed_revoked.fabric_id, keyed_revoked.root_public_key,
+      keyed_group_id, old_epoch_key)
+    old_key_set = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(old_key_set_id,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      old_epoch_key, 1_u64, nil, nil, nil, nil)
+    new_key_set = JfaRolloutDatastore::DatastoreGroupKeySetStruct.new(new_key_set_id,
+      JfaRolloutDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      new_epoch_key, 2_u64, nil, nil, nil, nil)
+    add_key = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_KEY_SET,
+      fields: JfaRolloutDatastore::AddKeySetRequest.new(old_key_set).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_key)
+    add_group = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_GROUP,
+      fields: JfaRolloutDatastore::AddGroupRequest.new(keyed_group_id, "Keyed B controllers",
+        old_key_set_id, keyed_group_cat, keyed_group_version,
+        JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_group)
+    add_membership = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_GROUP_ID_TO_ENDPOINT_FOR_NODE,
+      fields: JfaRolloutDatastore::AddGroupIDToEndpointForNodeRequest.new(
+        0xA201_u64, 1_u16, keyed_group_id).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_membership)
+    keyed_cat_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(keyed_group_cat, keyed_group_version)).id
+    keyed_acl = JfaRolloutDatastore::DatastoreACLEntryStruct.new(
+      JfaRolloutDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate,
+      JfaRolloutDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+      [keyed_cat_subject], nil)
+    add_keyed_acl = anchor_im.invoke(session: anchor_session, peer: anchor_peer,
+      endpoint_id: 1_u16, cluster_id: JfaRolloutDatastore::CLUSTER_ID,
+      command_id: JfaRolloutDatastore::CMD_ADD_ACL_TO_NODE,
+      fields: JfaRolloutDatastore::AddACLToNodeRequest.new(0xA201_u64, keyed_acl).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(add_keyed_acl)
+    wait_two_jfa_acl(anchor_im, anchor_session, anchor_peer,
+      0xA201_u64, keyed_cat_subject, 120.seconds)
+
+    key_delivery_deadline = Time.instant + 120.seconds
+    loop do
+      node_keys = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreNodeKeySetEntryStruct),
+        anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_NODE_KEY_SET_LIST)
+      memberships = jfa_rollout_attribute(Array(JfaRolloutDatastore::DatastoreEndpointGroupIDEntryStruct),
+        anchor_im, anchor_session, anchor_peer, JfaRolloutDatastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+      break if node_keys.any? { |entry| entry.node_id == 0xA201_u64 && entry.group_key_set_id == old_key_set_id && entry.status_entry.state.committed? } &&
+               memberships.any? { |entry| entry.node_id == 0xA201_u64 && entry.endpoint_id == 1_u16 && entry.group_id == keyed_group_id && entry.status_entry.state.committed? }
+      raise Matter::TimeoutError.new("Initial keyed group did not reach the migrated device") if Time.instant >= key_delivery_deadline
+      sleep 1.second
+    end
+    keyed_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_client,
+      migration_peer, keyed_survivor, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    keyed_im = Matter::Controller::ImClient.new(keyed_client, E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(keyed_im, keyed_session, migration_peer, true)
+    key_indices = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      command_id: Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES,
+      fields: Bytes.empty)
+    key_index_fields = key_indices.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+      .command_fields.as(TLV::Any)
+    Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(key_index_fields.to_slice)
+      .group_key_set_i_ds.should contain(old_key_set_id)
+    initial_map_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      attribute_id: Matter::Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
+    initial_map_data = initial_map_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Array(Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).from_tlv(initial_map_data.to_slice)
+      .any? { |entry| entry.group_id == keyed_group_id && entry.group_key_set_id == old_key_set_id }.should be_true
+    auxiliary = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::Groupcast::CLUSTER_ID,
+      command_id: Matter::Cluster::Groupcast::CMD_CONFIGURE_AUXILIARY_ACL,
+      fields: Matter::Cluster::Groupcast::ConfigureAuxiliaryAclRequest.new(keyed_group_id, true).to_slice)
+    Matter::Controller::JointCommissioning.assert_status_success(auxiliary)
+    off = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(off)
+    keyed_invoker.invoke(keyed_survivor.fabric_id, keyed_group_id,
+      Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+      root_public_key: keyed_survivor.root_public_key, iana_address: true)
+    sleep 1.second
+    initial_groupcast_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    initial_groupcast_data = initial_groupcast_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(initial_groupcast_data.to_slice).should be_true
+
+    keyed_rotation = Matter::Controller::SharedFabric::JointGroupKeyRotation.new(old_key_set_id, new_key_set)
+    keyed_receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(
+      anchor_im, anchor_session, anchor_peer, 1_u16, keyed_group_id, keyed_revoked,
+      [{keyed_store, keyed_survivor_id}], b_signing_authority, 0xA102_u64,
+      key_rotation: keyed_rotation)
+    keyed_deadline = Time.instant + 120.seconds
+    loop do
+      break if Matter::Controller::SharedFabric.joint_group_revocation_status(
+                 anchor_im, anchor_session, anchor_peer, 1_u16, keyed_receipt).effective?
+      raise Matter::TimeoutError.new("Keyed Joint Fabric revocation did not reach the migrated device") if Time.instant >= keyed_deadline
+      sleep 1.second
+    end
+    keyed_receipt.current_key_set_id.should eq(new_key_set_id)
+    keyed_receipt.previous_key_set_id.should eq(old_key_set_id)
+    keyed_invoker.install_epoch_key(keyed_survivor.fabric_id, keyed_survivor.root_public_key,
+      keyed_group_id, new_epoch_key)
+    key_indices = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      command_id: Matter::Cluster::GroupKeyManagement::CMD_KEY_SET_READ_ALL_INDICES,
+      fields: Bytes.empty)
+    key_index_fields = key_indices.invoke_responses.first.command_data.as(Matter::InteractionModel::CommandDataIBTlv)
+      .command_fields.as(TLV::Any)
+    installed_key_ids = Matter::Cluster::GroupKeyManagement::KeySetReadAllIndicesResponse.from_slice(
+      key_index_fields.to_slice).group_key_set_i_ds
+    installed_key_ids.should contain(new_key_set_id)
+    installed_key_ids.should_not contain(old_key_set_id)
+    rotated_map_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: Matter::DataType::EndpointNumber::ROOT.number,
+      cluster_id: Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+      attribute_id: Matter::Cluster::GroupKeyManagement::ATTR_GROUP_KEY_MAP)
+    rotated_map_data = rotated_map_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    rotated_maps = Array(Matter::Cluster::GroupKeyManagement::GroupKeyMapStruct).from_tlv(rotated_map_data.to_slice)
+    rotated_maps.any? { |entry| entry.group_id == keyed_group_id && entry.group_key_set_id == new_key_set_id }.should be_true
+    rotated_maps.any? { |entry| entry.group_id == keyed_group_id && entry.group_key_set_id == old_key_set_id }.should be_false
+    keyed_revoked_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_revoked_client,
+      migration_peer, keyed_revoked, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    keyed_revoked_im = Matter::Controller::ImClient.new(keyed_revoked_client, E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(keyed_revoked_im, keyed_revoked_session, migration_peer, false)
+    renewed_keyed_survivor = keyed_store.load.fabric_for(keyed_survivor.fabric_id,
+      keyed_survivor.root_public_key, keyed_survivor_id)
+    keyed_session = Matter::Controller::Pairing::CasePairing.new.pair(keyed_client,
+      migration_peer, renewed_keyed_survivor, peer_node_id: 0xA201_u64, timeout: E2E::COMMAND_TIMEOUT)
+    assert_two_jfa_on_off_access(keyed_im, keyed_session, migration_peer, true)
+    off = anchor_im.invoke(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      command_id: Matter::Cluster::OnOff::CMD_OFF, fields: Bytes.empty)
+    Matter::Controller::JointCommissioning.assert_status_success(off)
+    keyed_revoked_invoker.invoke(keyed_revoked.fabric_id, keyed_group_id,
+      Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+      root_public_key: keyed_revoked.root_public_key, iana_address: true)
+    sleep 1.second
+    # The stale key has no delivery acknowledgement; observe that the target
+    # remained Off before a fresh-key groupcast turns it On.
+    stale_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    stale_data = stale_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(stale_data.to_slice).should be_false
+    keyed_invoker.invoke(keyed_survivor.fabric_id, keyed_group_id,
+      Matter::Cluster::OnOff::CLUSTER_ID, Matter::Cluster::OnOff::CMD_ON,
+      root_public_key: keyed_survivor.root_public_key, iana_address: true)
+    sleep 1.second
+    fresh_report = anchor_im.read_attribute(session: a_target_session, peer: migration_peer,
+      endpoint_id: 1_u16, cluster_id: Matter::Cluster::OnOff::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OnOff::ATTR_ON_OFF)
+    fresh_data = fresh_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+    Bool.from_tlv(fresh_data.to_slice).should be_true
 
     before_transfer = jfa_command("matter_joint_fabric_anchor",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-new-anchor", 0xA102_u64,
@@ -2651,6 +2847,8 @@ describe "three provisioned Joint Fabric Administrators" do
     mirror_log.try(&.close)
     b_controller_client.try(&.close)
     revoked_controller_client.try(&.close)
+    keyed_client.try(&.close)
+    keyed_revoked_client.try(&.close)
     anchor_client.try(&.close)
     joiner_client.try(&.close)
     third_client.try(&.close)
