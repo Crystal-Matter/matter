@@ -33,6 +33,25 @@ module Matter::Cluster
     end
 
     describe "OpenCommissioningWindow command (Enhanced)" do
+      it "publishes the authenticated CASE fabric and its vendor on a wire command" do
+        cluster = AdministratorCommissioning.new
+        cluster.on_fabric_vendor_id = ->(index : UInt8) do
+          index == 1_u8 ? 0xFFF1_u16 : nil
+        end
+        request = AdministratorCommissioning::OpenCommissioningWindowRequest.new(
+          commissioning_timeout: 180_u16,
+          pake_passcode_verifier: Bytes.new(AdministratorCommissioning::PAKE_PASSCODE_VERIFIER_LENGTH, 0_u8),
+          discriminator: 3840_u16,
+          iterations: AdministratorCommissioning::PBKDF2_MIN_ITERATIONS.to_u32,
+          salt: Bytes.new(AdministratorCommissioning::PAKE_SALT_MIN_LENGTH, 1_u8)
+        )
+
+        cluster.invoke_command(AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
+          request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8).should eq(InteractionModel::Status.success)
+        cluster.admin_fabric_index.should eq(1_u8)
+        cluster.admin_vendor_id.should eq(0xFFF1_u16)
+      end
+
       it "opens enhanced commissioning window with valid parameters" do
         cluster = AdministratorCommissioning.new
 
@@ -319,12 +338,13 @@ module Matter::Cluster
         cluster.session_vendor_id.should be_nil
       end
 
-      it "uses session context in OpenCommissioningWindow" do
+      it "uses authenticated CASE context in OpenCommissioningWindow" do
         cluster = build(AdministratorCommissioning, 0)
 
-        # Set session context
-        cluster.session_fabric_index = 3_u8
-        cluster.session_vendor_id = 0xABCD_u16
+        # Legacy mutable context must not override the authenticated command.
+        cluster.session_fabric_index = 4_u8
+        cluster.session_vendor_id = 0xEEEE_u16
+        cluster.on_fabric_vendor_id = ->(index : UInt8) { index == 3_u8 ? 0xABCD_u16 : nil }
 
         # Create TLV-encoded OpenCommissioningWindowRequest
         tlv_data = create_open_commissioning_window_tlv(
@@ -337,11 +357,13 @@ module Matter::Cluster
 
         result = invoke(cluster,
           AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
-          tlv_data
+          tlv_data,
+          is_case_session: true,
+          fabric_index: 3_u8
         )
 
         result.should be_a(Matter::InteractionModel::Status | CommandResponse)
-        # Verify session context was applied to admin attributes
+        # Only the authenticated command identity is published.
         cluster.admin_fabric_index.should eq(3_u8)
         cluster.admin_vendor_id.should eq(0xABCD_u16)
         cluster.window_status.should eq(AdministratorCommissioning::CommissioningWindowStatus::EnhancedWindowOpen)
@@ -373,23 +395,25 @@ module Matter::Cluster
         cluster.window_status.should eq(AdministratorCommissioning::CommissioningWindowStatus::EnhancedWindowOpen)
       end
 
-      it "uses session context in OpenBasicCommissioningWindow" do
+      it "uses authenticated CASE context in OpenBasicCommissioningWindow" do
         cluster = build(AdministratorCommissioning, 0)
 
-        # Set session context
-        cluster.session_fabric_index = 5_u8
-        cluster.session_vendor_id = 0x1234_u16
+        cluster.session_fabric_index = 4_u8
+        cluster.session_vendor_id = 0xEEEE_u16
+        cluster.on_fabric_vendor_id = ->(index : UInt8) { index == 5_u8 ? 0x1234_u16 : nil }
 
         # Create TLV-encoded OpenBasicCommissioningWindowRequest
         tlv_data = create_open_basic_commissioning_window_tlv(600_u16)
 
         result = invoke(cluster,
           AdministratorCommissioning::CMD_OPEN_BASIC_COMMISSIONING_WINDOW,
-          tlv_data
+          tlv_data,
+          is_case_session: true,
+          fabric_index: 5_u8
         )
 
         result.should be_a(Matter::InteractionModel::Status | CommandResponse)
-        # Verify session context was applied to admin attributes
+        # Only the authenticated command identity is published.
         cluster.admin_fabric_index.should eq(5_u8)
         cluster.admin_vendor_id.should eq(0x1234_u16)
         cluster.window_status.should eq(AdministratorCommissioning::CommissioningWindowStatus::BasicWindowOpen)
@@ -415,8 +439,14 @@ module Matter::Cluster
         cluster.window_status.should eq(AdministratorCommissioning::CommissioningWindowStatus::BasicWindowOpen)
       end
 
-      it "allows session context to be updated between commands" do
+      it "uses each command's authenticated CASE fabric" do
         cluster = build(AdministratorCommissioning, 0)
+        cluster.on_fabric_vendor_id = ->(index : UInt8) do
+          case index
+          when 1_u8 then 0x1111_u16
+          when 2_u8 then 0x2222_u16
+          end
+        end
 
         # First command with fabric 1
         cluster.session_fabric_index = 1_u8
@@ -426,7 +456,9 @@ module Matter::Cluster
 
         invoke(cluster,
           AdministratorCommissioning::CMD_OPEN_BASIC_COMMISSIONING_WINDOW,
-          tlv_data
+          tlv_data,
+          is_case_session: true,
+          fabric_index: 1_u8
         )
 
         # Verify first command used fabric 1
@@ -443,7 +475,9 @@ module Matter::Cluster
 
         invoke(cluster,
           AdministratorCommissioning::CMD_OPEN_BASIC_COMMISSIONING_WINDOW,
-          tlv_data
+          tlv_data,
+          is_case_session: true,
+          fabric_index: 2_u8
         )
 
         # Verify second command used fabric 2

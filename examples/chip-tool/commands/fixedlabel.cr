@@ -91,13 +91,14 @@ module ChipTool
         peer = Matter::Controller::OperationalPeerResolver.new.resolve(state, fabric, node_id, ctx.timeout)
 
         controller = Matter::Controller::Client.new(
-          unsecured_source_node_id: state.commissioner_node_id,
-          initial_unsecured_message_counter: state.unsecured_message_counter
+          counter_lease: store.counter_lease(state.commissioner_node_id)
         )
         begin
           session = ctx.case_pairing.pair(controller, peer, fabric, peer_node_id: node_id, timeout: ctx.timeout)
-          state.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(node_id, Matter::Controller::OperationalPeerResolver.address_hint(peer), peer.port),
-            fabric.root_public_key, fabric.controller_node_id)
+          store.update do |current|
+            current.record_node(fabric.fabric_id, Matter::Controller::NodeInfo.new(node_id, Matter::Controller::OperationalPeerResolver.address_hint(peer), peer.port),
+              fabric.root_public_key, fabric.controller_node_id)
+          end
           im = Matter::Controller::ImClient.new(controller, ctx.timeout)
           report = im.read_attribute(
             session: session,
@@ -109,8 +110,6 @@ module ChipTool
 
           extract_report_label_list(report, cluster_id, attribute_id) || raise Matter::ProtocolError.new("ReportData missing LabelList")
         ensure
-          state.unsecured_message_counter = controller.transport.message_counter.counter
-          store.save(state)
           controller.close
         end
       end

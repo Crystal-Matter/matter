@@ -8,12 +8,10 @@ describe "shared fabric between Crystal controllers" do
   device = E2E::Device["matter_shared_switch"]
 
   it "commissions once and gives a second controller operational access" do
-    authority_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
-    authority_state = authority_store.load
-    authority_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: authority_state.commissioner_node_id,
-      initial_unsecured_message_counter: authority_state.unsecured_message_counter
-    )
+    authority_path = File.join(E2E::LOG_DIR, "shared-fabric-authority.yml")
+    File.delete?(authority_path)
+    authority_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(authority_path))
+    authority_client = Matter::Controller::Client.new
     peer = Socket::IPAddress.new(device.address, E2E::DEVICE_PORT)
     node_id = 0x301_u64
     delegate_id = 0x302_u64
@@ -32,13 +30,14 @@ describe "shared fabric between Crystal controllers" do
     im = Matter::Controller::ImClient.new(authority_client, E2E::COMMAND_TIMEOUT)
     Matter::Controller::SharedFabric.grant_admin(im, authority_session, peer, delegate_id)
 
-    delegate_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    delegate_path = File.join(E2E::LOG_DIR, "shared-fabric-delegate.yml")
+    File.delete?(delegate_path)
+    delegate_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(delegate_path))
     delegated = Matter::Controller::SharedFabric.delegate(authority, delegate_id)
     Matter::Controller::SharedFabric.install(delegate_store, delegated)
     delegate_state = delegate_store.load
     delegate_client = Matter::Controller::Client.new(
-      unsecured_source_node_id: delegate_state.commissioner_node_id,
-      initial_unsecured_message_counter: delegate_state.unsecured_message_counter
+      counter_lease: delegate_store.counter_lease(delegate_state.commissioner_node_id)
     )
     delegate_session = Matter::Controller::Pairing::CasePairing.new.pair(
       delegate_client, peer, delegated, peer_node_id: node_id, timeout: E2E::COMMAND_TIMEOUT

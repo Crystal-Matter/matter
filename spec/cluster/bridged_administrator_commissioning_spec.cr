@@ -8,12 +8,12 @@ private alias Status = Matter::InteractionModel::Status
 describe Matter::Cluster::BridgedAdministratorCommissioning do
   it "forwards mandatory timed commands with the remote target and authenticated caller fabric" do
     calls = [] of String
-    open = ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, request : RootAdmin::OpenCommissioningWindowRequest) do
-      calls << "open:#{target_fabric}:#{target_node}:#{caller_fabric}:#{request.discriminator}"
+    open = ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, caller_node : UInt64, request : RootAdmin::OpenCommissioningWindowRequest) do
+      calls << "open:#{target_fabric}:#{target_node}:#{caller_fabric}:#{caller_node}:#{request.discriminator}"
       Status.success
     end
-    revoke = ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8) do
-      calls << "revoke:#{target_fabric}:#{target_node}:#{caller_fabric}"
+    revoke = ->(target_fabric : UInt8, target_node : UInt64, caller_fabric : UInt8, caller_node : UInt64) do
+      calls << "revoke:#{target_fabric}:#{target_node}:#{caller_fabric}:#{caller_node}"
       Status.success
     end
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
@@ -27,11 +27,12 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
 
     cluster.get_command_metadata(Admin::CMD_OPEN_COMMISSIONING_WINDOW).try(&.timed?).should be_true
     cluster.get_command_metadata(Admin::CMD_REVOKE_COMMISSIONING).try(&.timed?).should be_true
+    cluster.request_peer_node_id = 0xCA11_u64
     cluster.invoke_command(Admin::CMD_OPEN_COMMISSIONING_WINDOW, request.to_tlv(nil),
       is_case_session: true, fabric_index: 1_u8).should eq(Status.success)
     cluster.invoke_command(Admin::CMD_REVOKE_COMMISSIONING,
       is_case_session: true, fabric_index: 2_u8).should eq(Status.success)
-    calls.should eq(["open:3:4660:1:3840", "revoke:3:4660:2"])
+    calls.should eq(["open:3:4660:1:51729:3840", "revoke:3:4660:2:51729"])
     cluster.window_status.should eq(RootAdmin::CommissioningWindowStatus::WindowNotOpen)
     cluster.admin_fabric_index.should be_nil
     cluster.admin_vendor_id.should be_nil
@@ -42,18 +43,20 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
     calls = 0
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
-      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { calls += 1; Status.success },
-      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { calls += 1; Status.success })
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { calls += 1; Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { calls += 1; Status.success })
     cluster.invoke_command(Admin::CMD_REVOKE_COMMISSIONING, fabric_index: 1_u8).should eq(Status.unsupported_access)
     cluster.invoke_command(Admin::CMD_REVOKE_COMMISSIONING, is_case_session: true).should eq(Status.unsupported_access)
+    cluster.invoke_command(Admin::CMD_REVOKE_COMMISSIONING,
+      is_case_session: true, fabric_index: 1_u8).should eq(Status.unsupported_access)
     calls.should eq(0)
   end
 
   it "publishes only host supplied remote window state" do
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
-      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.failure },
-      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.failure })
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.failure },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { Status.failure })
     cluster.publish_remote_window_state(RootAdmin::CommissioningWindowStatus::EnhancedWindowOpen,
       1_u8, 0xFFF1_u16)
     cluster.window_status.should eq(RootAdmin::CommissioningWindowStatus::EnhancedWindowOpen)
@@ -67,8 +70,8 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
   it "rejects a Basic window state without the Basic Commissioning feature" do
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
-      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
-      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success })
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { Status.success })
 
     expect_raises(ArgumentError, /Basic Commissioning/) do
       cluster.publish_remote_window_state(RootAdmin::CommissioningWindowStatus::BasicWindowOpen,
@@ -82,8 +85,8 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
   it "rejects stale administrator identity when the remote window is closed" do
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
-      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
-      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success })
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { Status.success })
 
     expect_raises(ArgumentError, /closed commissioning window/) do
       cluster.publish_remote_window_state(RootAdmin::CommissioningWindowStatus::WindowNotOpen,
@@ -96,8 +99,8 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
   it "requires the opening administrator vendor while the remote window is open" do
     cluster = Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
       target_fabric_index: 3_u8, target_node_id: 0x1234_u64,
-      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
-      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success })
+      on_open: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success },
+      on_revoke: ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { Status.success })
 
     expect_raises(ArgumentError, /administrator vendor/) do
       cluster.publish_remote_window_state(RootAdmin::CommissioningWindowStatus::EnhancedWindowOpen,
@@ -107,8 +110,8 @@ describe Matter::Cluster::BridgedAdministratorCommissioning do
   end
 
   it "refuses reserved remote target identities" do
-    open = ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success }
-    revoke = ->(_tf : UInt8, _tn : UInt64, _cf : UInt8) { Status.success }
+    open = ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64, _r : RootAdmin::OpenCommissioningWindowRequest) { Status.success }
+    revoke = ->(_tf : UInt8, _tn : UInt64, _cf : UInt8, _caller_node : UInt64) { Status.success }
     expect_raises(ArgumentError, /target fabric index/) do
       Admin.new(Matter::DataType::EndpointNumber.new(2_u16),
         target_fabric_index: 0_u8, target_node_id: Matter::DataType::NodeId::OPERATIONAL_MINIMUM,

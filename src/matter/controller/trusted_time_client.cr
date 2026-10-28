@@ -32,7 +32,7 @@ module Matter
           ipk_epoch_keys: fabric.ipk_epoch_keys)
         state = State.new(fabric: identity)
         peer = @resolver.resolve(state, identity, node_id, @timeout)
-        client = Client.new(unsecured_source_node_id: fabric.node_id)
+        client = Client.new
         begin
           session = Pairing::CasePairing.new.pair(client, peer, identity,
             peer_node_id: node_id, timeout: @timeout)

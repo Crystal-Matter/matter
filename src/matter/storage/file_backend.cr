@@ -20,12 +20,55 @@ module Matter
       CORRUPT_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%S"
 
       getter path : String
+      @counter_lease_lock : File? = nil
+      @counter_lease_epoch = Atomic(UInt64).new(0_u64)
 
       def durable? : Bool
         true
       end
 
+      def counter_lease_namespace : String
+        "file:#{File.expand_path(@path)}"
+      end
+
+      def counter_lease_validity : Proc(Nil)?
+        epoch = @counter_lease_epoch.get
+        -> do
+          unless @counter_lease_epoch.get == epoch
+            raise Matter::StorageError.new("Counter lease owner was closed: #{@path}")
+          end
+        end
+      end
+
       def initialize(@path : String)
+      end
+
+      # Hold an advisory lock for the lifetime of the open backend. Another
+      # lease owner for this path, even in the same process, must fail closed.
+      # Other state writers, including writers not acquiring counter leases,
+      # must reuse this backend instance. Advisory locks are cooperative.
+      def claim_counter_lease_owner! : Nil
+        @mutex.synchronize do
+          return if @counter_lease_lock
+          raise Matter::StorageError.new("Cannot claim a counter lease inside a storage transaction") if @transaction_depth > 0
+          lock_path = "#{File.expand_path(@path)}.counter.lock"
+          FileUtils.mkdir_p(File.dirname(lock_path))
+          lock_file = File.open(lock_path, "a")
+          begin
+            lock_file.flock_exclusive(blocking: false)
+          rescue ex : IO::Error
+            lock_file.close
+            raise Matter::StorageError.new("Counter lease storage path is owned by another writer: #{@path}", cause: ex)
+          end
+          begin
+            replace_tree(load) if @open
+            @counter_lease_lock = lock_file
+            @counter_lease_epoch.add(1_u64)
+          rescue ex
+            lock_file.close
+            raise ex
+          end
+        end
       end
 
       # Serialises the tree. Every document must survive a `decode` round trip.
@@ -39,6 +82,18 @@ module Matter
           return if @open
           replace_tree(load)
           @open = true
+        end
+      end
+
+      def close : Nil
+        @mutex.synchronize do
+          @open = false
+          if lock_file = @counter_lease_lock
+            @counter_lease_lock = nil
+            @counter_lease_epoch.add(1_u64)
+            lock_file.flock_unlock
+            lock_file.close
+          end
         end
       end
 

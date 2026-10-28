@@ -1,10 +1,11 @@
 require "../spec_helper"
 require "../../src/matter/controller/datastore_propagator"
 require "../../src/matter/storage/memory"
+require "../support/counter_store_fixture"
 
 private class CounterReservationDelivery < Matter::Controller::DatastorePropagator::NetworkDelivery
   def reserve_for_spec(fabric : Matter::Controller::FabricInfo) : {UInt32, UInt32}
-    reserve_case_counters(fabric)
+    counter_lease_for(fabric).reserve
   end
 end
 
@@ -58,7 +59,8 @@ end
 
 describe Matter::Controller::DatastorePropagator do
   it "gives two simultaneous network deliveries distinct CASE counter ranges" do
-    state_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fixture = Matter::Spec::CounterStoreFixture.new
+    state_store = fixture.store
     fabric = counter_reservation_fabric
     deliveries = [CounterReservationDelivery.new(state_store), CounterReservationDelivery.new(state_store)]
     reservations = Channel(Tuple(UInt32, UInt32)).new
@@ -71,16 +73,21 @@ describe Matter::Controller::DatastorePropagator do
     second = reservations.receive
     [first, second].sort_by { |reservation| reservation[0] }.should eq([{0_u32, 12_u32}, {12_u32, 12_u32}])
     state_store.load.unsecured_message_counter.should eq(24_u32)
+  ensure
+    fixture.try(&.close)
   end
 
   it "reserves Sigma1 and completion counters for every CASE IPK candidate" do
-    state_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fixture = Matter::Spec::CounterStoreFixture.new
+    state_store = fixture.store
     fabric = counter_reservation_fabric
     fabric.ipk_epoch_keys = [Bytes.new(16, 0xA1_u8), Bytes.new(16, 0xA2_u8), Bytes.new(16, 0xA3_u8)]
     delivery = CounterReservationDelivery.new(state_store)
 
     delivery.reserve_for_spec(fabric).should eq({0_u32, 36_u32})
     state_store.load.unsecured_message_counter.should eq(36_u32)
+  ensure
+    fixture.try(&.close)
   end
 
   it "drains the background worker before shutdown" do

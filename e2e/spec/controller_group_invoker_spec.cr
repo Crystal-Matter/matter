@@ -43,10 +43,7 @@ describe "Crystal controller group Invoke to official connectedhomeip recipient"
     File.delete?(state_path)
     backend = Matter::Storage::YamlFile.new(state_path)
     store = Matter::Controller::StateStore.new(backend)
-    state = store.load
-    client = Matter::Controller::Client.new(
-      unsecured_source_node_id: state.commissioner_node_id,
-      initial_unsecured_message_counter: state.unsecured_message_counter)
+    client = Matter::Controller::Client.new
     node_id = 0x7331_u64
     group_id = 0x7332_u16
     keyset_id = 0x7333_u16

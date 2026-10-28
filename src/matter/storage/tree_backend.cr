@@ -125,6 +125,10 @@ module Matter
         end
       end
 
+      def transaction_open? : Bool
+        @mutex.synchronize { @transaction_depth > 0 }
+      end
+
       # Writes the in-memory tree out. Called after every mutation outside a
       # transaction and once at the end of the outermost transaction.
       protected abstract def persist : Nil

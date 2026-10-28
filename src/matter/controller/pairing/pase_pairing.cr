@@ -28,8 +28,12 @@ module Matter
           pin_code : UInt32,
           timeout : Time::Span = 10.seconds,
         ) : Session::SecureContext
+          # ameba:disable Lint/UselessAssign -- Rescue must handle failures before allocation.
+          reserved_session_id : UInt16? = nil
+          # ameba:enable Lint/UselessAssign
           initiator_random = @crypto.random_bytes(32)
           initiator_session_id = client.allocate_session_id("PASE") { @crypto.random_uint16 }
+          reserved_session_id = initiator_session_id
 
           pbkdf_req = Session::Pase::Definitions::PbkdfParamRequest.new(
             initiator_random: initiator_random,
@@ -137,6 +141,11 @@ module Matter
             session.peer_mrp_active_interval_ms = mrp.active_retransmit_timeout_ms
           end
           session
+        rescue ex
+          if id = reserved_session_id
+            client.release_session_id_reservation(id)
+          end
+          raise ex
         end
       end
     end

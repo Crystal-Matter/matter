@@ -137,6 +137,7 @@ module Matter
       # Session context (set by the session before invoking commands)
       property session_fabric_index : UInt8?
       property session_vendor_id : UInt16?
+      property on_fabric_vendor_id : Proc(UInt8, UInt16?)?
 
       # The commissioning window behind the three commands. Built on first use:
       # the service publishes state back onto this cluster's attributes, and an
@@ -191,7 +192,8 @@ module Matter
       # ========================================================================
 
       def open_commissioning_window(request : OpenCommissioningWindowRequest) : InteractionModel::Status
-        open_commissioning_window(request, @session_fabric_index, @session_vendor_id)
+        fabric_index, vendor_id = command_administrator_identity
+        open_commissioning_window(request, fabric_index, vendor_id)
         InteractionModel::Status.success
       rescue ex : Matter::ClusterError
         Log.warn(exception: ex) { "OpenCommissioningWindow rejected" }
@@ -202,7 +204,8 @@ module Matter
       end
 
       def open_basic_commissioning_window(request : OpenBasicCommissioningWindowRequest) : InteractionModel::Status
-        open_basic_commissioning_window(request, @session_fabric_index, @session_vendor_id)
+        fabric_index, vendor_id = command_administrator_identity
+        open_basic_commissioning_window(request, fabric_index, vendor_id)
         InteractionModel::Status.success
       rescue ex : Matter::ClusterError
         Log.warn(exception: ex) { "OpenBasicCommissioningWindow rejected" }
@@ -218,6 +221,13 @@ module Matter
       rescue ex : Matter::ClusterError
         Log.warn(exception: ex) { "RevokeCommissioning rejected" }
         ex.to_status
+      end
+
+      private def command_administrator_identity : Tuple(UInt8?, UInt16?)
+        return {@session_fabric_index, @session_vendor_id} unless request_command_active?
+        return {nil, nil} unless request_is_case_session?
+        index = request_fabric_index
+        {index, index.try { |fabric_index| @on_fabric_vendor_id.try(&.call(fabric_index)) }}
       end
 
       # ========================================================================

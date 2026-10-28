@@ -14,6 +14,27 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   before adding a fabric. Ordinary commissioning keeps its existing AddNOC
   behavior.
 
+### Controller unsecured counter leases
+
+- Fixed source Node IDs now require a StateStore counter lease. The store
+  commits each bounded range before any packet uses it, and long-lived clients
+  renew the range without resetting the source or message counter.
+- A device listener can bind its outgoing counter before startup; controller
+  clients may share that counter while keeping independent sockets and sessions,
+  and must use the same storage backend.
+  CLI and Joint Fabric call sites now use leases or ephemeral source IDs.
+- Applications using `Client.new(unsecured_source_node_id: ...)` should pass
+  `counter_lease: store.counter_lease(source_node_id)` instead. A fixed-source
+  client without a lease raises `ConfigurationError`.
+- Memory storage is rejected for fixed-source leases. File stores require one
+  backend instance per state path while a lease is active; competing lease
+  owners are rejected. SQL stores retain cross-instance CAS support.
+- Only one independent counter per fixed source and storage namespace is allowed
+  in one process. Concurrent clients may share the bound counter; callers
+  must coordinate unique source ownership across processes.
+- `AnchorDatastoreSubscription.new` now requires `counter_store:`. Pass the
+  StateStore that owns the installed controller fabric and its counter lease.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the

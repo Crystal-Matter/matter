@@ -21,27 +21,86 @@ module Matter
       @max_received : UInt32? = nil
       @restored_floor : UInt32? = nil
       @remaining_messages : UInt32? = nil
+      @refill : Proc(Tuple(UInt32, UInt32))? = nil
+      @lease_validity : Proc(Nil)? = nil
+      @lease_owner_token : UInt64? = nil
+      @issued_messages : UInt64 = 0_u64
+      @send_mutex = Mutex.new
 
       def initialize(@counter : UInt32 = 0_u32, @rollover : Bool = true)
       end
 
       def next : UInt32
-        remaining = @remaining_messages
-        if remaining == 0_u32
-          raise Matter::SessionError.new("Reserved message counter range is exhausted")
+        loop do
+          assigned : UInt32? = nil
+          refill : Proc(Tuple(UInt32, UInt32))? = nil
+          @send_mutex.synchronize do
+            @lease_validity.try(&.call)
+            if @remaining_messages == 0_u32
+              refill = @refill || raise Matter::SessionError.new("Reserved message counter range is exhausted")
+            else
+              if @counter >= @maximum
+                raise Matter::SessionError.new("Message counter overflow - session must be renegotiated") unless @rollover
+                @counter = 0_u32
+              else
+                @counter += 1
+              end
+              if remaining = @remaining_messages
+                @remaining_messages = remaining - 1_u32
+              end
+              @issued_messages = @issued_messages &+ 1_u64
+              assigned = @counter
+            end
+          end
+          if value = assigned
+            return value
+          end
+
+          # Storage may hold its own transaction lock. Reserve outside the
+          # send mutex so a transaction attempting to send cannot deadlock a
+          # concurrent renewal. An overlapping renewal may leave a safe gap.
+          refill_callback = refill || raise Matter::SessionError.new("Reserved message counter range is exhausted")
+          start, count = refill_callback.call
+          raise Matter::SessionError.new("Counter lease returned an empty range") if count == 0_u32
+          @send_mutex.synchronize do
+            @lease_validity.try(&.call)
+            if @remaining_messages == 0_u32 && (start == @counter || newer?(start, @counter))
+              @counter = start
+              @remaining_messages = count
+            end
+          end
         end
-        if @counter >= @maximum
-          raise Matter::SessionError.new("Message counter overflow - session must be renegotiated") unless @rollover
-          @counter = 0_u32
-        else
-          @counter += 1
-        end
-        @remaining_messages = remaining - 1_u32 if remaining
-        @counter
       end
 
       def limit_messages(count : UInt32) : Nil
+        raise Matter::ConfigurationError.new("Cannot replace a leased counter range") if @lease_owner_token
         @remaining_messages = count
+      end
+
+      # Replenish a bounded send range before the next packet gets a counter.
+      # The callback must commit its reservation before returning. Failure is
+      # propagated and no counter is assigned.
+      def refill_with(callback : Proc(Tuple(UInt32, UInt32))) : Nil
+        raise Matter::ConfigurationError.new("Cannot replace a counter lease renewal") if @lease_owner_token
+        @refill = callback
+      end
+
+      def bind_lease(owner : Object, start : UInt32, count : UInt32,
+                     callback : Proc(Tuple(UInt32, UInt32))? = nil,
+                     validity : Proc(Nil)? = nil) : Nil
+        @send_mutex.synchronize do
+          raise Matter::ConfigurationError.new("Message counter already has a lease owner") if @lease_owner_token
+          raise Matter::ConfigurationError.new("Cannot bind a counter lease after a message was sent") unless @issued_messages == 0_u64
+          @counter = start
+          @remaining_messages = count
+          @refill = callback
+          @lease_validity = validity
+          @lease_owner_token = owner.object_id.to_u64
+        end
+      end
+
+      def leased_by?(owner : Object) : Bool
+        @lease_owner_token == owner.object_id.to_u64
       end
 
       def peek(message_id : UInt32) : CheckResult
@@ -78,6 +137,7 @@ module Matter
       end
 
       def reset(value : UInt32 = 0_u32) : Nil
+        raise Matter::ConfigurationError.new("Cannot reset a leased message counter") if @lease_owner_token
         @counter = value
         @remaining_messages = nil
         @received_window.clear

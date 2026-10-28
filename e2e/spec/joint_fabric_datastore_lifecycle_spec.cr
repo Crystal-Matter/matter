@@ -110,7 +110,7 @@ describe "Joint Fabric Datastore commissioning lifecycle" do
     store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
       commissioner_node_id: bootstrap.fabric.controller_node_id))
     client = Matter::Controller::Client.new(
-      unsecured_source_node_id: bootstrap.fabric.controller_node_id)
+      counter_lease: store.counter_lease(bootstrap.fabric.controller_node_id))
     anchor_peer = Socket::IPAddress.new(anchor.address, E2E::DEVICE_PORT)
     target_peer = Socket::IPAddress.new(target.address, E2E::DEVICE_PORT)
     trust = Matter::Controller::DeviceAttestationVerifier.new(
