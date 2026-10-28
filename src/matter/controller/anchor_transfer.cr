@@ -619,6 +619,11 @@ module Matter
             return
           end
           if @journal.stage.ready?
+            current_index = JointCommissioning.read_administrator_fabric_index(
+              @im, session, @peer, @administrator_endpoint)
+            unless current_index == old_index
+              raise Matter::AuthenticationError.new("Participant JFA no longer belongs to the old Anchor fabric")
+            end
             advance(Stage::CrossSigning)
             arm_fail_safe(session, FAIL_SAFE_SECONDS)
             begin

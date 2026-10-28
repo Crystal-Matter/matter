@@ -198,6 +198,7 @@ private class FakeCredentialTransition < Matter::Controller::AnchorTransfer::Cre
 end
 
 private class FakeFollowUpImClient < Matter::Controller::ImClient
+  property administrator_fabric_index = 1_u8
   getter commands = [] of UInt32
   getter peer_icac_key = Matter::Crypto::Key.generate_key_pair
   property? old_present = true
@@ -224,8 +225,14 @@ private class FakeFollowUpImClient < Matter::Controller::ImClient
                   end
     path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id,
       cluster: cluster_id, attribute: attribute_id)
+    value = if cluster_id == Matter::Cluster::JointFabricAdministrator::CLUSTER_ID &&
+               attribute_id == Matter::Cluster::JointFabricAdministrator::ATTR_ADMINISTRATOR_FABRIC_INDEX
+              @administrator_fabric_index.to_tlv
+            else
+              descriptors.to_tlv
+            end
     data = Matter::InteractionModel::AttributeDataIB.new(path: path,
-      data: TLV::Any.from_slice(descriptors.to_tlv))
+      data: TLV::Any.from_slice(value))
     Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [
       Matter::InteractionModel::AttributeReportIB.new(attribute_data: data),
     ])
@@ -1488,6 +1495,32 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
 
     expect_raises(Matter::CommissioningError, /CommissioningComplete failed: NoFailSafe/) { runner.run }
     im.commands.should_not contain(Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC)
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
+  it "refuses a Ready retry when the participant JFA switched fabrics after no-effect recovery" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    im.administrator_fabric_index = 2_u8
+    client = Matter::Controller::Client.new
+    session = authenticated_follow_up_session
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(_state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) { nil },
+      consent: -> { true },
+      case_opener: ->(_identity : Matter::Controller::FabricInfo, _node : UInt64) { session },
+      endpoint_resolver: ->(_im : Matter::Controller::ImClient, _session : Matter::Session::SecureContext, _peer : Socket::IPAddress) { 1_u16 })
+
+    expect_raises(Matter::AuthenticationError, /old Anchor fabric/) { runner.run }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready)
+    im.commands.should be_empty
   ensure
     im.try(&.close)
     client.try(&.close)

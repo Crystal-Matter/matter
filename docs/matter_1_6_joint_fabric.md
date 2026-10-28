@@ -509,7 +509,9 @@ records remain durable, its JFA endpoint and committed ICAC still belong to
 the old fabric, and no new-root ICAC committed. B verifies that fresh witness
 against C's live CASE identity and both fabric descriptors, then durably
 rewinds `CrossSigning` to `Ready`. A missing or mismatched witness leaves the
-journal blocked and C's old fabric in place.
+journal blocked and C's old fabric in place. Before a Ready retry, B re-reads
+C's JFA AdministratorFabricIndex over CASE and requires the old fabric index;
+a concurrent cross-sign that changed C's JFA binding fails closed.
 
 ## Official certification scenario mirrors
 
