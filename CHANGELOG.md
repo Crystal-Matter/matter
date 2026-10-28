@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Commissioning AddNOC validation
+
+- A Joint Fabric Administrator now rejects a joining NOC without the current
+  Administrator CAT or without the current Anchor CAT as CaseAdminSubject
+  before adding a fabric. Ordinary commissioning keeps its existing AddNOC
+  behavior.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the

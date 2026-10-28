@@ -1,6 +1,7 @@
 require "../../src/matter/node"
 require "./console"
 require "../../src/matter/commissioning/joint_fabric_administrator_service"
+require "../../src/matter/commissioning/joint_fabric_add_noc_policy"
 require "../../src/matter/controller/datastore_propagator"
 require "../../src/matter/controller/anchor_datastore_subscription"
 require "../../src/matter/controller/joint_commissioning"
@@ -469,6 +470,7 @@ module MatterJointFabricAdministrator
     @transfer_in_progress : Bool = false
     @removal_in_progress : Bool = false
     @jcm_failsafe_session_id : UInt64?
+    @jcm_failsafe_datastore : Datastore?
     @new_anchor_subscription : Matter::Controller::AnchorDatastoreSubscription?
     @new_anchor_scanner : Matter::Controller::Scanner?
     @subscribed_fabric_id : UInt64?
@@ -837,6 +839,7 @@ module MatterJointFabricAdministrator
         joint_fabric_datastore.clear_fabric_state
         joint_fabric_datastore.allow_jcm_pase_group_list = nil
         @jcm_failsafe_session_id = nil
+        @jcm_failsafe_datastore = nil
         persistence.forget_cluster(ANCHOR_JFA_ENDPOINT_ID, Datastore::CLUSTER_ID)
         joint_fabric_administrator.administrator_fabric_index = nil
         joint_fabric_administrator.service = nil
@@ -1443,6 +1446,13 @@ module MatterJointFabricAdministrator
     end
 
     private def connect_failsafe_lifecycle : Nil
+      operational_credentials.credentials.on_validate_add_noc =
+        ->(noc : Bytes, case_admin_subject : UInt64, session_id : UInt64) {
+          if @jcm_failsafe_session_id == session_id
+            Matter::Commissioning::JointFabricAddNocPolicy.validate(noc, case_admin_subject,
+              @jcm_failsafe_datastore)
+          end
+        }
       self.commissioning_commit_write = ->(_backend : Matter::Storage::Backend) do
         joint_fabric_service.try(&.write_pending_completion)
         bootstrap_joint_fabric_service.try(&.write_pending_completion)
@@ -1458,6 +1468,10 @@ module MatterJointFabricAdministrator
         armed.try(&.call)
         if administrator_commissioning.window.joint_window? && !general_commissioning.request_is_case_session?
           @jcm_failsafe_session_id = general_commissioning.request_session_id
+          window_fabric_index = administrator_commissioning.window.admin_fabric_index
+          @jcm_failsafe_datastore = {joint_fabric_datastore, bootstrap_joint_fabric_datastore}.find do |store|
+            store.joint_fabric_index == window_fabric_index
+          end
         end
         joint_fabric_service.try(&.reset_failsafe)
         bootstrap_joint_fabric_service.try(&.reset_failsafe)
@@ -1465,12 +1479,14 @@ module MatterJointFabricAdministrator
       general_commissioning.on_failsafe_expired = -> do
         expired.try(&.call)
         @jcm_failsafe_session_id = nil
+        @jcm_failsafe_datastore = nil
         joint_fabric_service.try(&.on_failsafe_expired)
         bootstrap_joint_fabric_service.try(&.on_failsafe_expired)
       end
       general_commissioning.on_failsafe_success = -> do
         succeeded.try(&.call)
         @jcm_failsafe_session_id = nil
+        @jcm_failsafe_datastore = nil
         fabric_table.all_fabrics.each { |fabric| attach_joined_fabric(fabric) }
         restore_bootstrap_administrator_binding
       end

@@ -96,7 +96,12 @@ item below as covered only to the extent of its cited tests.
   ICAC exchange; the returned certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
-  persist across restart. For AddICAC or a deferred handoff interrupted before
+  persist across restart. During the joining Administrator's JCM fail-safe
+  session, AddNOC requires the current Administrator CAT in the NOC and the
+  current Anchor CAT as CaseAdminSubject, using the local Datastore GroupList.
+  A host using the JFA service outside the worked example must wire
+  `CredentialService#on_validate_add_noc` with the same JCM-scoped policy.
+  For AddICAC or a deferred handoff interrupted before
   CommissioningComplete, the pending record also retains the observed
   cumulative fail-safe deadline and the joiner's original fabric identity.
   `JointCommissioning::Workflow#recover_abandoned_pending` can clear that

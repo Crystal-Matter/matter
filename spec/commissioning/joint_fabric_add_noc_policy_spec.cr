@@ -9,11 +9,11 @@ end
 
 private def jcm_datastore(admin_version : UInt16 = 2_u16,
                           anchor_version : UInt16 = 3_u16) : Matter::Cluster::JointFabricDatastore
-  store = Matter::Cluster::JointFabricDatastore.new
+  store = Matter::Cluster::JointFabricDatastore.new(Matter::DataType::EndpointNumber.new(1_u16))
   store.seed_reserved_cat_group(1_u16, "Administrators",
-    Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, admin_version)
+    Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, admin_version).success?.should be_true
   store.seed_reserved_cat_group(2_u16, "Anchors",
-    Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, anchor_version)
+    Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, anchor_version).success?.should be_true
   store
 end
 
