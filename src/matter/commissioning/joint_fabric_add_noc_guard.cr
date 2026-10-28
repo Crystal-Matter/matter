@@ -39,7 +39,7 @@ module Matter
         return false unless @installed
         fabric_index = administrator.administrator_fabric_index
         return false unless fabric_index
-        datastore = @datastore_at.call(administrator.endpoint_id.id)
+        datastore = @datastore_at.call(administrator.endpoint_id.number)
         return false unless datastore && datastore.joint_fabric_index == fabric_index
         return false unless datastore.access_mode.active?
         !JointFabricAddNocPolicy.current_versions(datastore).nil?
@@ -53,7 +53,7 @@ module Matter
         candidates = @administrators.call.compact_map do |administrator|
           next unless administrator.administrator_fabric_index == window_fabric_index
           next unless ready_for?(administrator)
-          @datastore_at.call(administrator.endpoint_id.id)
+          @datastore_at.call(administrator.endpoint_id.number)
         end
         return unless candidates.size == 1
         @active_datastore = candidates.first
