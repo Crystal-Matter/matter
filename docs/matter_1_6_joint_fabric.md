@@ -59,6 +59,12 @@ blocked removal for operator reconciliation.
   callers should observe its status before assuming the controller can access
   that node. Existing `grant_admin` remains available for fabrics that do
   not use the Joint Fabric Datastore.
+  The Anchor propagation worker revisits recoverable target delivery failures
+  on later polling passes, including after restart, by rearming the node
+  through RefreshNode. Each pass retains a bounded retry count; target-side
+  ResourceExhausted and ConstraintError remain terminal for automatic retry.
+  When a recoverable entry shares a node with a terminal entry, RefreshNode
+  prunes that terminal entry as specified in Core §11.24.7.11.
 - `SharedFabric.stage_joint_group_revocation` removes one controller from a
   shared group by reissuing every surviving controller NOC on its existing
   operational key at the next GroupCATVersion, then invoking Datastore
