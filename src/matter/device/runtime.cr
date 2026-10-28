@@ -1642,6 +1642,23 @@ module Matter
     private def reconcile_restored_group_sources : Nil
       keys = @node.get_cluster(Cluster::GroupKeyManagement)
       return unless keys
+      # Older Groups documents had only an unscoped map. Their GroupTable is
+      # the sole durable evidence of the endpoint's fabric membership. Copy
+      # that intersection into fabric-scoped Groups state before rebuilding
+      # the operational table from Groups, and persist it before proceeding.
+      @message_handler.clusters.each_value do |cluster|
+        next unless groups = cluster.as?(Cluster::Groups)
+        changed = false
+        @fabric_table.all_fabrics.each do |fabric|
+          keys.operational_legacy_group_table(fabric.fabric_index).each do |entry|
+            next unless entry.endpoints.includes?(groups.endpoint_id.number)
+            changed = groups.migrate_unscoped_group(entry.group_id, fabric.fabric_index) || changed
+          end
+        end
+        if changed
+          raise StorageError.new("Could not persist migrated Groups fabric membership") unless @persistence.save_cluster(groups)
+        end
+      end
       entries = [] of Cluster::GroupKeyManagement::GroupInfoMapStruct
       @message_handler.clusters.each_value do |cluster|
         next unless groups = cluster.as?(Cluster::Groups)
