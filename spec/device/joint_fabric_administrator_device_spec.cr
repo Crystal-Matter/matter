@@ -1884,7 +1884,8 @@ describe MatterJointFabricAdministrator::Device do
   end
 
   it "starts Anchor verification from the operational listener without taking ownership of it" do
-    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+    backend = durable_jfa_backend
+    device = InspectableJointFabricAdministratorDevice.new(storage: backend,
       ip_addresses: [Socket::IPAddress.new("::1", 0)], port: 0)
     client = device.anchor_verification_client_for_spec(9_u64)
     client.transport.should be(device.transport)
@@ -1894,6 +1895,7 @@ describe MatterJointFabricAdministrator::Device do
   ensure
     client.try(&.close)
     device.try(&.shutdown!)
+    cleanup_durable_jfa_backend(backend)
   end
 
   it "uses the authenticated Anchor CASE source when operational discovery misses" do
