@@ -368,6 +368,8 @@ module Matter
 
       @group_key_map = [] of GroupKeyMapStruct
       @group_table = [] of GroupInfoMapStruct
+      @legacy_group_table = [] of GroupInfoMapStruct
+      @groupcast_group_table = [] of GroupInfoMapStruct
       @groupcast_adoption = [] of GroupcastAdoptionStruct
 
       # Internal storage (fabric-scoped)
@@ -472,6 +474,10 @@ module Matter
         @group_table.select { |entry| entry.fabric_index == fabric_index }
       end
 
+      def operational_legacy_group_table(fabric_index : UInt8?) : Array(GroupInfoMapStruct)
+        @legacy_group_table.select { |entry| entry.fabric_index == fabric_index }
+      end
+
       def groupcast_adoption(fabric_index : UInt8?) : Array(GroupcastAdoptionStruct)
         @groupcast_adoption.select { |entry| entry.fabric_index == fabric_index }
       end
@@ -499,22 +505,79 @@ module Matter
         protocol_lock.try(&.unlock)
       end
 
-      # Groupcast owns the operational mapping even after adoption makes the
-      # legacy GKM attributes appear empty on the wire. This is the source used
-      # for authenticated group packets and local multicast joins.
+      # Keep the two membership sources separate. A Groups endpoint can share
+      # a Group ID with Groupcast, and leaving either source must not remove
+      # an endpoint that still belongs through the other source.
       def replace_groupcast_membership(group_id : UInt16, endpoints : Array(UInt16),
                                        key_set_id : UInt16, fabric_index : UInt8) : Nil
         protocol_lock = @protocol_lock
         protocol_lock.try(&.lock)
         @on_before_direct_mutation.try(&.call)
-        @group_key_map.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
-        @group_table.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        @groupcast_group_table.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
         unless endpoints.empty?
+          @groupcast_group_table << GroupInfoMapStruct.new(group_id, endpoints.dup, nil, fabric_index)
+        end
+        rebuild_operational_group(group_id, fabric_index)
+        @group_key_map.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        if group_exists?(group_id, fabric_index)
           @group_key_map << GroupKeyMapStruct.new(group_id, key_set_id, fabric_index)
-          @group_table << GroupInfoMapStruct.new(group_id, endpoints.dup, nil, fabric_index)
         end
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
         notify_changed(ATTR_GROUP_TABLE)
+      ensure
+        protocol_lock.try(&.unlock)
+      end
+
+      # Cluster documents from older releases stored only the combined table.
+      # After every endpoint has restored, rebuild its legacy source from the
+      # actual Groups clusters so an old Groupcast endpoint is not mistaken for
+      # a legacy recipient on a later LeaveGroup.
+      def reconcile_legacy_groups(entries : Array(GroupInfoMapStruct)) : Bool
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
+        return false if @legacy_group_table == entries
+        @legacy_group_table = entries
+        @group_table = [] of GroupInfoMapStruct
+        (@legacy_group_table + @groupcast_group_table).each do |entry|
+          rebuild_operational_group(entry.group_id, entry.fabric_index)
+        end
+        increment_version_and_notify(ATTR_GROUP_TABLE)
+        true
+      ensure
+        protocol_lock.try(&.unlock)
+      end
+
+      # Groupcast has its own durable membership document. Reconcile the
+      # operational copy with that source after both documents have restored.
+      def reconcile_groupcast_groups(entries : Array(GroupInfoMapStruct),
+                                     key_set_ids : Hash(Tuple(UInt8, UInt16), UInt16)) : Bool
+        protocol_lock = @protocol_lock
+        protocol_lock.try(&.lock)
+        @on_before_direct_mutation.try(&.call)
+        mapping_current = key_set_ids.all? do |identity, key_set_id|
+          @group_key_map.any? { |mapping| mapping.fabric_index == identity[0] &&
+            mapping.group_id == identity[1] && mapping.group_key_set_id == key_set_id }
+        end
+        return false if @groupcast_group_table == entries && mapping_current
+
+        previous = @groupcast_group_table
+        @groupcast_group_table = entries
+        @group_table = [] of GroupInfoMapStruct
+        (@legacy_group_table + @groupcast_group_table).each do |entry|
+          rebuild_operational_group(entry.group_id, entry.fabric_index)
+        end
+        previous.each do |entry|
+          next if group_exists?(entry.group_id, entry.fabric_index)
+          @group_key_map.reject! { |mapping| mapping.fabric_index == entry.fabric_index && mapping.group_id == entry.group_id }
+        end
+        key_set_ids.each do |identity, key_set_id|
+          @group_key_map.reject! { |mapping| mapping.fabric_index == identity[0] && mapping.group_id == identity[1] }
+          @group_key_map << GroupKeyMapStruct.new(identity[1], key_set_id, identity[0])
+        end
+        increment_version_and_notify(ATTR_GROUP_KEY_MAP)
+        notify_changed(ATTR_GROUP_TABLE)
+        true
       ensure
         protocol_lock.try(&.unlock)
       end
@@ -748,6 +811,16 @@ module Matter
         protocol_lock.try(&.unlock)
       end
 
+      private def rebuild_operational_group(group_id : UInt16, fabric_index : UInt8) : Nil
+        legacy = @legacy_group_table.find { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        groupcast = @groupcast_group_table.find { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        @group_table.reject! { |entry| entry.fabric_index == fabric_index && entry.group_id == group_id }
+        endpoints = (legacy.try(&.endpoints) || [] of UInt16) + (groupcast.try(&.endpoints) || [] of UInt16)
+        return if endpoints.empty?
+
+        @group_table << GroupInfoMapStruct.new(group_id, endpoints.uniq, legacy.try(&.group_name), fabric_index)
+      end
+
       # Add a group to the group table
       # Called by Groups cluster when AddGroup command is executed
       #
@@ -763,7 +836,7 @@ module Matter
         protocol_lock.try(&.lock)
         @on_before_direct_mutation.try(&.call)
         # Find or create group info
-        existing = @group_table.find do |entry|
+        existing = @legacy_group_table.find do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id
         end
 
@@ -772,25 +845,26 @@ module Matter
           unless existing.endpoints.includes?(endpoint_id)
             # Reconstruct with updated endpoints (struct immutability)
             new_endpoints = existing.endpoints + [endpoint_id]
-            @group_table.reject! do |entry|
+            @legacy_group_table.reject! do |entry|
               entry.fabric_index == fabric_index && entry.group_id == group_id
             end
-            @group_table << GroupInfoMapStruct.new(
+            @legacy_group_table << GroupInfoMapStruct.new(
               group_id, new_endpoints, existing.group_name, fabric_index
             )
           end
         else
           # Check resource limit
           fabric_groups = @group_table.count { |e| e.fabric_index == fabric_index }
-          if fabric_groups >= max_groups_per_fabric
+          if fabric_groups >= max_groups_per_fabric && !group_exists?(group_id, fabric_index)
             raise Matter::ClusterError.new("Cannot exceed max_groups_per_fabric (#{max_groups_per_fabric})", InteractionModel::StatusCode::ResourceExhausted)
           end
 
           # Create new group
-          @group_table << GroupInfoMapStruct.new(
+          @legacy_group_table << GroupInfoMapStruct.new(
             group_id, [endpoint_id], group_name, fabric_index
           )
         end
+        rebuild_operational_group(group_id, fabric_index)
         increment_version_and_notify(ATTR_GROUP_TABLE)
       ensure
         protocol_lock.try(&.unlock)
@@ -802,25 +876,26 @@ module Matter
         protocol_lock = @protocol_lock
         protocol_lock.try(&.lock)
         @on_before_direct_mutation.try(&.call)
-        existing_index = @group_table.index do |entry|
+        existing_index = @legacy_group_table.index do |entry|
           entry.fabric_index == fabric_index && entry.group_id == group_id
         end
         return unless existing_index
 
-        existing = @group_table[existing_index]
+        existing = @legacy_group_table[existing_index]
 
         # Remove endpoint from group
         new_endpoints = existing.endpoints.reject { |endpoint| endpoint == endpoint_id }
 
         if new_endpoints.empty?
           # Remove entire group if no endpoints remain
-          @group_table.delete_at(existing_index)
+          @legacy_group_table.delete_at(existing_index)
         else
           # Update group with remaining endpoints
-          @group_table[existing_index] = GroupInfoMapStruct.new(
+          @legacy_group_table[existing_index] = GroupInfoMapStruct.new(
             group_id, new_endpoints, existing.group_name, fabric_index
           )
         end
+        rebuild_operational_group(group_id, fabric_index)
         increment_version_and_notify(ATTR_GROUP_TABLE)
       ensure
         protocol_lock.try(&.unlock)
@@ -842,6 +917,8 @@ module Matter
         @key_sets.delete(fabric_index)
         @group_key_map.reject! { |entry| entry.fabric_index == fabric_index }
         @group_table.reject! { |entry| entry.fabric_index == fabric_index }
+        @legacy_group_table.reject! { |entry| entry.fabric_index == fabric_index }
+        @groupcast_group_table.reject! { |entry| entry.fabric_index == fabric_index }
         @groupcast_adoption.reject! { |entry| entry.fabric_index == fabric_index }
         increment_version_and_notify(ATTR_GROUP_KEY_MAP)
         notify_changed(ATTR_GROUP_TABLE)
@@ -969,6 +1046,8 @@ module Matter
         getter key_sets : Hash(UInt8, Array(PersistedKeySet))
         getter group_key_map : Array(GroupKeyMapStruct)
         getter group_table : Array(GroupInfoMapStruct)
+        getter legacy_group_table : Array(GroupInfoMapStruct)? = nil
+        getter groupcast_group_table : Array(GroupInfoMapStruct)? = nil
         getter groupcast_adoption : Array(GroupcastAdoptionStruct) = [] of GroupcastAdoptionStruct
 
         def initialize(
@@ -976,6 +1055,8 @@ module Matter
           @key_sets : Hash(UInt8, Array(PersistedKeySet)),
           @group_key_map : Array(GroupKeyMapStruct),
           @group_table : Array(GroupInfoMapStruct),
+          @legacy_group_table : Array(GroupInfoMapStruct)? = nil,
+          @groupcast_group_table : Array(GroupInfoMapStruct)? = nil,
           @groupcast_adoption : Array(GroupcastAdoptionStruct) = [] of GroupcastAdoptionStruct,
         )
         end
@@ -992,6 +1073,8 @@ module Matter
           key_sets: key_sets,
           group_key_map: @group_key_map,
           group_table: @group_table,
+          legacy_group_table: @legacy_group_table,
+          groupcast_group_table: @groupcast_group_table,
           groupcast_adoption: @groupcast_adoption
         ).to_document
       end
@@ -1013,6 +1096,8 @@ module Matter
 
           @group_key_map = state.group_key_map
           @group_table = state.group_table
+          @legacy_group_table = state.legacy_group_table || state.group_table.dup
+          @groupcast_group_table = state.groupcast_group_table || [] of GroupInfoMapStruct
           @groupcast_adoption = state.groupcast_adoption
 
           @data_version = state.data_version

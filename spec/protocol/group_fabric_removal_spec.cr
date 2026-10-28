@@ -172,8 +172,7 @@ describe "group fabric removal" do
     root = handler.node.endpoint!(0_u16)
     endpoint_id = Matter::DataType::EndpointNumber.new(0_u16)
     gkm = Matter::Cluster::GroupKeyManagement.new(endpoint_id,
-      feature_map: Matter::Cluster::GroupKeyManagement::Feature::Groupcast,
-      max_groups_per_fabric: 0_u16)
+      feature_map: Matter::Cluster::GroupKeyManagement::Feature::Groupcast)
     acl = Matter::Cluster::AccessControl.new(endpoint_id,
       feature_map: Matter::Cluster::AccessControl::Feature::Auxiliary)
     listener = Matter::Cluster::Groupcast.new(endpoint_id, gkm, acl)
@@ -186,17 +185,23 @@ describe "group fabric removal" do
     key_set = Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(5_u16,
       epoch_key0: Bytes.new(16, 0x55_u8), epoch_start_time0: 1_u64)
     gkm.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(key_set), 1_u8)
-    gkm.replace_groupcast_membership(2_u16, [1_u16], 5_u16, 1_u8)
+    gkm.add_group(2_u16, 1_u16, "Legacy", 1_u8)
+    gkm.add_group_key_map(2_u16, 5_u16, 1_u8)
     listener.with_request_context do
       listener.request_fabric_index = 1_u8
       listener.request_is_case_session = true
       listener.join_group(Matter::Cluster::Groupcast::JoinGroupRequest.new(
         1_u16, [1_u16], 5_u16)).success?.should be_true
     end
+    gkm.add_group(1_u16, 2_u16, "Shared", 1_u8)
     handler.refresh_group_memberships
     transport.group_memberships.should contain(Matter::Transport::GroupMulticast.iana_address(transport.port))
     transport.group_memberships.should contain(Matter::Transport::GroupMulticast.address(fabric_id, 2_u16, transport.port))
+    transport.group_memberships.should contain(Matter::Transport::GroupMulticast.address(fabric_id, 1_u16, transport.port))
+    gkm.remove_group(1_u16, 2_u16, 1_u8)
+    handler.refresh_group_memberships
     transport.group_memberships.should_not contain(Matter::Transport::GroupMulticast.address(fabric_id, 1_u16, transport.port))
+    transport.group_memberships.should contain(Matter::Transport::GroupMulticast.iana_address(transport.port))
   end
 
   it "purges old credentials, names, and multicast joins before index reuse" do

@@ -346,6 +346,12 @@ module Matter
         @fabric_groups.keys
       end
 
+      # Used to rebuild the operational group table after all cluster state
+      # has restored. The copy cannot mutate this cluster's fabric state.
+      def group_names_for_fabric(fabric_index : UInt8) : Hash(UInt16, String)
+        (@fabric_groups[fabric_index]? || Hash(UInt16, String).new).dup
+      end
+
       # Fabric indexes can be reused after RemoveFabric. Discard the removed
       # fabric's group names before another commissioner receives that index.
       def remove_fabric(fabric_index : UInt8) : Nil
