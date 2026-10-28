@@ -548,6 +548,12 @@ blocked removal for operator reconciliation.
   restarts B and checks that recovery waits the advertised cumulative fail-safe
   bound and verifies both fabrics before continuing. This tests the ambiguous
   persisted result; it does not drop a UDP packet on the wire.
+  After that recovery, the fixture interrupts before Anchor verification,
+  restarts B, and requires authenticated no-effect reconciliation before
+  verification may be retried. For the later AddingAnchorNode stage, modern
+  commissioning has already preregistered the device in A's NodeList. The
+  fixture verifies that a committed entry rejects a no-effect claim and leaves
+  the uncertain journal unchanged.
   The same scenario then interrupts B after the Anchor Datastore commits
   the refreshed node but before B advances its durable per-device journal. After
   restart, B refuses to replay RefreshNode. Reconciliation rejects a missing
@@ -557,6 +563,9 @@ blocked removal for operator reconciliation.
   records RemovingOldFabric, restarts B and the device, verifies both fabrics
   and NodeLists remain, and requires authenticated no-effect reconciliation
   before retrying the removal.
+  Before B's Datastore RemoveNode, the fixture now interrupts after saving
+  RemovingOldNode, restarts B, checks that its NodeList is unchanged, and
+  requires authenticated no-effect reconciliation before retrying RemoveNode.
   It also restarts B after the migrated device commits RemoveFabric and after
   B's Datastore commits RemoveNode, with each acknowledgement lost before the
   migration journal advances. The first reconciliation rejects a missing
