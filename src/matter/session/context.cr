@@ -112,7 +112,7 @@ module Matter
         # Matter spec requires message counter to start at a random value
         # to prevent replay attacks across session resumptions
         @local_counter = Transport::MessageCounter.new(Random::Secure.rand(UInt32), rollover: false)
-        @peer_counter = Transport::MessageCounter.new
+        @peer_counter = Transport::MessageCounter.new(rollover: false)
         @creation_time = Time.utc
         @last_activity_time = Time.utc
       end

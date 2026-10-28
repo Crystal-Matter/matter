@@ -515,6 +515,19 @@ the marker are treated as initialized to reject stale counters after a possible
 wrap to zero. A value saved once from a loaded snapshot must be reloaded before
 another save; freshly constructed `State` values remain an explicit full-state
 replacement path for bootstrap and recovery callers.
+Datastore network delivery reserves all possible unsecured CASE counters in a
+short atomic controller-state update before constructing its client. The
+reservation covers Sigma1, Sigma3, and ACKs for Sigma2 and StatusReport for
+each configured IPK candidate. The ACK budget includes the transport's bounded
+MRP retransmissions, which can each cause a new ACK. Resumed CASE uses fewer
+counters. The client
+refuses sends beyond its reservation,
+and unused counters stay spent after a crash. A competing SQL writer causes a
+bounded reload and retry before any network packet is sent.
+Incoming replay windows use serial arithmetic so a legitimate counter wrap
+within a CASE exchange remains acceptable while duplicates and older packets
+are still rejected. Secure-session peer windows disable rollover because the
+session must be renegotiated before its counter wraps.
 SQL storage uses a conditional row update (or insert if absent) so independent
 SQLite/PostgreSQL adapters cannot both commit a stale state document. File
 backends serialize through their own in-process backend instance; independent
