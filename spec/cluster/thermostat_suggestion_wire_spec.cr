@@ -46,7 +46,7 @@ private def suggestion_im_invoke(cluster : SuggestWire, command_id : UInt32, req
   path = Matter::InteractionModel::CommandPath.new(endpoint, SuggestWire::CLUSTER_ID, command_id)
   data = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Serializable.serialize_value(request, nil))
   Matter::Protocol::IMHandler.invoke_commands([data],
-    { {endpoint, SuggestWire::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster),
     session_id: 9_u64, is_case_session: true, fabric_index: 1_u8,
     peer_subject_ids: [11_u64]).first
 end

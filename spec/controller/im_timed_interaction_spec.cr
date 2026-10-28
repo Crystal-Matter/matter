@@ -1,6 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/controller/im_client"
 require "../../src/matter/controller/commissioning/window_opener"
+require "../../src/matter/cluster/access_control"
 require "../../src/matter/cluster/on_off"
 require "../../src/matter/cluster/user_label"
 require "../../src/matter/protocol/message_handler"
@@ -118,6 +119,15 @@ private def timed_interaction_fixture : TimedInteractionFixture
   handler.node.add_endpoint(endpoint)
   basic = handler.node.get_cluster(Matter::Cluster::BasicInformation).as(Matter::Cluster::BasicInformation)
   device_session = Matter::Spec::ProtocolMessages.case_session(1_u16)
+  root = handler.node.endpoint!(Matter::Node::ROOT_ENDPOINT_ID)
+  acl = Matter::Cluster::AccessControl.new(root.endpoint_id)
+  acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+    Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+    Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+    [device_session.peer_node_id.as(Matter::DataType::NodeId).id], nil,
+    device_session.fabric_index.as(UInt8))
+  root.add_cluster(acl)
+  handler.node.add_endpoint(root)
   handler.sessions[device_session.session_id] = device_session
   session = Matter::Session::SecureContext.new(
     session_id: device_session.peer_session_id,

@@ -175,7 +175,7 @@ describe "Access Control MNGD wire schema" do
       [] of MngdAcl::CommissioningAccessRestrictionEntry).to_tlv(nil)
     request = Matter::InteractionModel::CommandDataIBTlv.new(path, fields)
     response = Matter::Protocol::IMHandler.invoke_commands([request],
-      { {1_u16, MngdAcl::CLUSTER_ID} => acl.as(Matter::Cluster::Base) },
+      case_im_clusters(acl, subject_id: MNGD_SUBJECT),
       is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [MNGD_SUBJECT]).first
     response.command_status.try(&.status.status).should eq(Matter::InteractionModel::StatusCode::InvalidCommand.value)
     requested.should be_empty

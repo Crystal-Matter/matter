@@ -25,7 +25,7 @@ private def invoke_active_schedule(cluster : ActiveScheduleThermostat, handle : 
   request = ActiveScheduleThermostat::SetActiveScheduleRequest.new(handle)
   command = Matter::InteractionModel::CommandDataIBTlv.new(path, TLV::Serializable.serialize_value(request, nil))
   response = Matter::Protocol::IMHandler.invoke_commands([command],
-    { {endpoint, ActiveScheduleThermostat::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster),
     session_id: 9_u64, is_case_session: true, fabric_index: 1_u8,
     peer_subject_ids: [11_u64]).first
   status = response.command_status || raise "expected SetActiveSchedule status"

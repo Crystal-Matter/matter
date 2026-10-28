@@ -35,7 +35,7 @@ private def schedule_atomic_write(cluster : ScheduleAtomic, schedules : Array(Sc
     cluster: ScheduleAtomic::CLUSTER_ID, attribute: ScheduleAtomic::ATTR_SCHEDULES)
   data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Serializable.serialize_value(schedules, nil), data_version)
   statuses = Matter::Protocol::IMHandler.write_attributes([data],
-    { {endpoint, ScheduleAtomic::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster, fabric_index: fabric, subject_id: subject),
     session_id: 9_u16, is_case_session: is_case, fabric_index: fabric, peer_subject_ids: [subject])
   ScheduleStatus.new(statuses.first.status.status)
 end
@@ -51,7 +51,7 @@ private def schedule_atomic_append(cluster : ScheduleAtomic, schedule : Schedule
     list_index_null: true)
   data = Matter::InteractionModel::AttributeDataIB.new(path, TLV::Serializable.serialize_value(schedule, nil))
   statuses = Matter::Protocol::IMHandler.write_attributes([replace, data],
-    { {endpoint, ScheduleAtomic::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster),
     session_id: 9_u16, is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [11_u64])
   ScheduleStatus.new(statuses.last.status.status)
 end

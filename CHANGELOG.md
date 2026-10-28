@@ -111,6 +111,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   discard the exchange's pending timed state, and start valid deadlines when
   their successful StatusResponse is sent.
 
+### Access Control authorization
+
+- Deny CASE reads, writes, invokes, and event access when the accessing fabric
+  has no matching ACL grant. An empty ACL cannot be used by a former controller
+  to restore its own Administrator entry. PASE commissioning retains its
+  implicit privilege, while fabricless PASE ACL writes remain rejected.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the
