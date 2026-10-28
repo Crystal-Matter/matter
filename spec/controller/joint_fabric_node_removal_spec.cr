@@ -6,9 +6,28 @@ private alias Datastore = Matter::Cluster::JointFabricDatastore
 
 private class RemovalPort < Removal::Port
   getter calls = [] of String
+  property? cleanup_present : Bool = true
+  property? cleanup_failed : Bool = false
   property? grants_present : Bool = true
   property? node_present : Bool = true
   property? lose_remove_response : Bool = false
+
+  def snapshot_cleanup(journal : Removal::Journal) : Removal::CleanupSnapshot
+    @calls << "snapshot-cleanup"
+    Removal::CleanupSnapshot.new(
+      [Removal::GroupCleanup.new(journal.node_id, 1_u16, 7_u16)],
+      [] of Removal::BindingCleanup,
+      [7_u16])
+  end
+
+  def cleanup!(journal : Removal::Journal) : Nil
+    @calls << "cleanup"
+  end
+
+  def cleanup_complete?(journal : Removal::Journal) : Bool
+    @calls << "verify-cleanup"
+    !@cleanup_present && !@cleanup_failed
+  end
 
   def revoke_direct_access!(journal : Removal::Journal) : Nil
     @calls << "revoke"
@@ -53,13 +72,18 @@ describe Removal do
       0xA101_u64, 0xA102_u64, 0xA201_u64, "Lamp", Bytes[2]))
     port = RemovalPort.new
     workflow = Removal::Workflow.new(journal, port, store)
+    expect_raises(Matter::CommissioningError, /cleanup.*pending/) { workflow.run }
+    port.calls.should eq(["snapshot-cleanup", "cleanup", "verify-cleanup"])
+    store.load_or_create(journal).cleanup_recorded?.should be_true
+
+    port.cleanup_present = false
     expect_raises(Matter::CommissioningError, /pending delivery/) { workflow.run }
-    port.calls.should eq(["revoke", "verify-revoked"])
+    port.calls.last(4).should eq(["cleanup", "verify-cleanup", "revoke", "verify-revoked"])
     store.load_or_create(journal).stage.should eq(Removal::Stage::Revoking)
 
     port.grants_present = false
     workflow.run
-    port.calls.should eq(["revoke", "verify-revoked", "revoke", "verify-revoked", "remove", "verify-absent"])
+    port.calls.last(6).should eq(["cleanup", "verify-cleanup", "revoke", "verify-revoked", "remove", "verify-absent"])
     workflow.journal.stage.should eq(Removal::Stage::Complete)
   end
 
@@ -73,6 +97,7 @@ describe Removal do
       journal = store.load_or_create(initial)
       port = RemovalPort.new
       port.grants_present = false
+      port.cleanup_present = false
       port.lose_remove_response = true
       workflow = Removal::Workflow.new(journal, port, store)
       expect_raises(Matter::TransportError, /response lost/) { workflow.run }
@@ -89,6 +114,41 @@ describe Removal do
       restarted.journal.stage.should eq(Removal::Stage::Complete)
       port.calls.count("remove").should eq(1)
       second_backend.close
+    ensure
+      File.delete?(path)
+    end
+  end
+
+  it "keeps a failed cleanup deletion ahead of ACL and RemoveNode across restart" do
+    path = File.join(Dir.tempdir, "matter-node-cleanup-#{Random::Secure.hex(8)}.json")
+    begin
+      first = Matter::Storage::JsonFile.new(path)
+      first_store = Removal::JournalStore.new(first)
+      initial = Removal::Journal.new(0xA001_u64, Bytes[1],
+        0xA101_u64, 0xA102_u64, 0xA201_u64, "Lamp", Bytes[2])
+      journal = first_store.load_or_create(initial)
+      port = RemovalPort.new
+      port.cleanup_failed = true
+      expect_raises(Matter::CommissioningError, /cleanup.*pending/) do
+        Removal::Workflow.new(journal, port, first_store).run
+      end
+      port.calls.should_not contain("revoke")
+      port.calls.should_not contain("remove")
+      first.close
+
+      second = Matter::Storage::JsonFile.new(path)
+      second_store = Removal::JournalStore.new(second)
+      resumed = second_store.load(initial.fabric_id, initial.root_public_key,
+        initial.controller_node_id, initial.node_id).as(Removal::Journal)
+      resumed.cleanup_recorded?.should be_true
+      resumed.cleanup_groups.size.should eq(1)
+      port.cleanup_failed = false
+      port.cleanup_present = false
+      port.grants_present = false
+      Removal::Workflow.new(resumed, port, second_store).run
+      port.calls.count("snapshot-cleanup").should eq(1)
+      port.calls.count("remove").should eq(1)
+      second.close
     ensure
       File.delete?(path)
     end
