@@ -51,7 +51,7 @@ private def joint_write_list(cluster : JointThermostat, attribute : UInt32, entr
       TLV::Serializable.serialize_value(value, nil), data_version)
   end
   Matter::Protocol::IMHandler.write_attributes(writes,
-    { {endpoint, JointThermostat::CLUSTER_ID} => cluster.as(Matter::Cluster::Base) },
+    case_im_clusters(cluster),
     session_id: 9_u16, is_case_session: true, fabric_index: 1_u8, peer_subject_ids: [11_u64])
     .map { |status| JointStatus.new(status.status.status) }
 end
