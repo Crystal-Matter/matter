@@ -47,16 +47,26 @@ module Matter
           document = @backend.read(COLLECTION, DOCUMENT_ID)
           state = document ? State.from_document(document) : State.new
           state, dirty = normalize(state)
-          # Guard the entire cleanup transaction, even when normalization
-          # made no changes. SQL's conditional update locks this row until
-          # commit, and an absent row is inserted before any cleanup occurs.
-          normalized = state.to_document
-          guarded = document ? (dirty ? normalized : document) : normalized
-          unless @backend.compare_and_swap(COLLECTION, DOCUMENT_ID, document, guarded)
-            raise LoadConflict.new("Controller state changed during load")
+          if original = document
+            # An old document has no marker for a counter that already
+            # wrapped to zero. Treat it as initialized to reject stale peers.
+            unless original.has_key?("unsecured_counter_initialized")
+              state.unsecured_counter_initialized = true
+              dirty = true
+            end
+            # Guard cleanup even when normalization made no changes. The SQL
+            # conditional update locks this row until commit.
+            guarded = dirty ? state.to_document : original
+            unless @backend.compare_and_swap(COLLECTION, DOCUMENT_ID, original, guarded)
+              raise LoadConflict.new("Controller state changed during load")
+            end
+            purge_orphaned_credentials(state)
+            state.storage_snapshot = Storage.deep_copy(guarded)
+          else
+            # An empty store owns no controller credentials yet. Do not
+            # clean them from an unguarded snapshot or write on first read.
+            state.storage_snapshot = nil
           end
-          purge_orphaned_credentials(state)
-          state.storage_snapshot = Storage.deep_copy(guarded)
           state.storage_loaded = true
         end
         state

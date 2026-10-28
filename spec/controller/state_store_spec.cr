@@ -168,6 +168,48 @@ describe Matter::Controller::StateStore do
     store.load.unsecured_message_counter.should eq(1_u32)
   end
 
+  it "persists a first random unsecured counter above the serial half-range" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new)
+    first_counter = Matter::Controller::State::UNSECURED_COUNTER_HALF_RANGE + 7_u32
+
+    store.update { |current| current.advance_unsecured_message_counter(first_counter) }
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(first_counter)
+    loaded.unsecured_counter_initialized?.should be_true
+  end
+
+  it "rejects a stale high counter after a persisted wrap to zero" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX))
+
+    store.update { |current| current.advance_unsecured_message_counter(0_u32) }
+    store.update { |current| current.advance_unsecured_message_counter(UInt32::MAX - 1_u32) }
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(0_u32)
+    loaded.unsecured_counter_initialized?.should be_true
+  end
+
+  it "treats a legacy zero counter as initialized during migration" do
+    backend = Matter::Storage::Memory.new
+    old_document = Matter::Controller::State.new(commissioner_node_id: 0x2222_u64).to_document
+    old_document.delete("unsecured_counter_initialized")
+    backend.write(Matter::Controller::StateStore::COLLECTION,
+      Matter::Controller::StateStore::DOCUMENT_ID, old_document)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.update do |current|
+      current.advance_unsecured_message_counter(
+        Matter::Controller::State::UNSECURED_COUNTER_HALF_RANGE + 7_u32)
+    end
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(0_u32)
+    loaded.unsecured_counter_initialized?.should be_true
+  end
+
   it "persists replaced IPK epochs without losing the controller's peers" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = sample_fabric
@@ -411,6 +453,18 @@ describe Matter::Controller::StateStore do
     backend = Matter::Storage::Memory.new
     Matter::Controller::StateStore.new(backend).load
     backend.collections.should eq([Matter::Storage::Collections::META])
+  end
+
+  it "defers orphan cleanup when controller state has no guarded row" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    id = seed_controller_credentials(backend, fabric)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.load
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should_not be_nil
+    store.save(Matter::Controller::State.new)
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should be_nil
   end
 
   it "round-trips fabric and nodes through a YAML file" do

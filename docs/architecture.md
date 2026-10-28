@@ -501,14 +501,18 @@ silent loss of Datastore registrations, nodes, or counters. Use `StateStore#upda
 for short read-modify-write operations; it runs them in one backend transaction.
 The update block receives a mutable `State` reference, and the store saves
 that same object after the block, including scalar and nested changes.
-Every load conditionally writes the controller-state row before cleaning up
-orphaned controller credentials. The row stays locked through cleanup on SQL;
-if a concurrent controller writer wins first, load rolls back cleanup and
-retries from a fresh document.
+When a controller-state row exists, load conditionally writes that row before
+cleaning up orphaned controller credentials. The row stays locked through
+cleanup on SQL; if a concurrent controller writer wins first, load rolls back
+cleanup and retries from a fresh document. Loading an empty store leaves it
+unchanged and defers orphan cleanup until a guarded save.
 Network requests must finish before the update block, which reads fresh state.
 An update advancing the unsecured message counter uses serial arithmetic so a
 slower client cannot move the durable counter backward, including at UInt32
-wraparound. A value saved once from a loaded snapshot must be reloaded before
+wraparound. A persisted initialization marker accepts the first random
+counter even when it starts above the serial half-range; old documents without
+the marker are treated as initialized to reject stale counters after a possible
+wrap to zero. A value saved once from a loaded snapshot must be reloaded before
 another save; freshly constructed `State` values remain an explicit full-state
 replacement path for bootstrap and recovery callers.
 SQL storage uses a conditional row update (or insert if absent) so independent
