@@ -173,16 +173,14 @@ module Matter
       def retry_pending_once(now_unix : Int64 = Time.utc.to_unix) : Nil
         state = @store.load
         state.pending_datastore_nodes.each do |saved|
-          begin
-            @operation_lock.synchronize do
-              latest = @store.load
-              fabric = latest.fabric_for(saved.fabric_id, saved.root_public_key, saved.controller_node_id)
-              current = entry_for(latest, fabric, saved.node_id)
-              resume_entry(fabric, current, now_unix) if current
-            end
-          rescue ex
-            Log.warn(exception: ex) { "Datastore registration retry failed for node 0x#{saved.node_id.to_s(16)}" }
+          @operation_lock.synchronize do
+            latest = @store.load
+            fabric = latest.fabric_for(saved.fabric_id, saved.root_public_key, saved.controller_node_id)
+            current = entry_for(latest, fabric, saved.node_id)
+            resume_entry(fabric, current, now_unix) if current
           end
+        rescue ex
+          Log.warn(exception: ex) { "Datastore registration retry failed for node 0x#{saved.node_id.to_s(16)}" }
         end
       end
 
