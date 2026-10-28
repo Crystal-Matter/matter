@@ -19,6 +19,40 @@ module Matter
       CERTIFICATE_SERIAL_BYTES = 8
       KEY_PROOF_MESSAGE        = "Matter shared fabric controller key".to_slice
 
+      # Persist this receipt until `joint_group_revocation_status` reports
+      # Effective. UpdateGroup itself only queues target ACL delivery.
+      struct JointGroupACLTarget
+        include Storage::Record
+
+        getter node_id : UInt64
+        getter list_id : UInt16
+
+        def initialize(@node_id, @list_id)
+        end
+      end
+
+      struct JointGroupRevocation
+        include Storage::Record
+
+        enum Status
+          Pending
+          Effective
+        end
+
+        getter group_id : UInt16
+        getter group_cat : UInt16
+        getter previous_version : UInt16
+        getter current_version : UInt16
+        getter target_node_ids : Array(UInt64)
+        getter target_acls : Array(JointGroupACLTarget)
+        getter anchor_root_cert : Bytes
+        getter anchor_node_id : UInt64
+
+        def initialize(@group_id, @group_cat, @previous_version, @current_version,
+                       @target_node_ids, @target_acls, @anchor_root_cert, @anchor_node_id)
+        end
+      end
+
       def self.delegate(
         authority : FabricInfo,
         controller_node_id : UInt64,
@@ -195,6 +229,219 @@ module Matter
         if membership.try(&.status_entry.state.commit_failed?) || existing_acl.try(&.status_entry.state.commit_failed?)
           request = Datastore::RefreshNodeRequest.new(device_node_id)
           invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_REFRESH_NODE, request.to_slice)
+        end
+      end
+
+      # Stage removal of one controller from a shared Joint Fabric group.
+      # Every survivor store must be supplied; its existing operational key is
+      # kept while its NOC is reissued with the next group CAT version. The
+      # Anchor then rotates target ACLs without deleting group membership.
+      # This returns a pending receipt, never proof that devices deny the old
+      # CAT. Save the receipt and poll `joint_group_revocation_status` after
+      # the Anchor synchronizer has delivered the ACLs.
+      def self.stage_joint_group_revocation(im : ImClient, session : Session::SecureContext,
+                                            peer : Socket::IPAddress, datastore_endpoint : UInt16,
+                                            group_id : UInt16, revoked : FabricInfo,
+                                            survivors : Array({StateStore, UInt64}), authority : FabricInfo,
+                                            anchor_node_id : UInt64,
+                                            crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new) : JointGroupRevocation
+        verify_joint_anchor!(im, session, peer, datastore_endpoint, anchor_node_id, authority.root_cert)
+        icac = authority.intermediate_cert || raise Matter::ConfigurationError.new("Joint Fabric authority requires an ICAC")
+        issuer = authority.intermediate_authority_key
+        icac_id = Crypto::MatterCertificate.from_slice(icac).subject.icac_id ||
+                  raise Matter::CertificateError.new("Joint Fabric ICAC has no ICAC ID")
+        Crypto::MatterCertificate::Validation.verify_chain(authority.controller_noc, icac,
+          authority.root_public_key, authority.root_cert)
+        groups = read_datastore_list(Datastore::DatastoreGroupInformationEntryStruct, im, session, peer,
+          datastore_endpoint, Datastore::ATTR_GROUP_LIST)
+        group = groups.find(&.group_id.==(group_id.to_u64)) ||
+                raise Matter::ConfigurationError.new("Joint Fabric group does not exist")
+        cat = group.group_cat || raise Matter::ConfigurationError.new("Joint Fabric group has no CAT")
+        version = group.group_cat_version || raise Matter::ConfigurationError.new("Joint Fabric group has no CAT version")
+        unless group.group_permission == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+               group.group_key_set_id.nil? && version < Datastore::RESERVED_GROUP_CAT_VERSION
+          raise Matter::ConfigurationError.new("Joint Fabric group cannot rotate its CAT version")
+        end
+        recovered = false
+        previous_version = if version < Datastore::RESERVED_GROUP_CAT_VERSION - 1 &&
+                              joint_controller_cat?(revoked, authority, cat, version)
+                             version
+                           elsif version > Datastore::FIRST_GROUP_CAT_VERSION &&
+                                 joint_controller_cat?(revoked, authority, cat, version - 1_u16)
+                             recovered = true
+                             version - 1_u16
+                           else
+                             raise Matter::ConfigurationError.new("Revoked controller CAT does not match the current or preceding group version")
+                           end
+        next_version = previous_version + 1_u16
+        target_acls = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
+          datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
+        new_subject = DataType::NodeId.from_case_authenticated_tag(
+          DataType::CaseAuthenticatedTag.create(cat, next_version)).id
+        selected_acls = target_acls.select do |entry|
+          next false if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending
+          if recovered
+            entry.acl_entry.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
+              entry.acl_entry.privilege == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+              entry.acl_entry.subjects == [new_subject]
+          else
+            acl_grants_cat_version?(entry.acl_entry, cat, previous_version)
+          end
+        end
+        raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if selected_acls.empty?
+        target_ids = selected_acls.map(&.node_id).uniq!
+        target_refs = selected_acls.map { |entry| JointGroupACLTarget.new(entry.node_id, entry.list_id) }
+
+        seen = [revoked.controller_node_id]
+        replacements = [] of {StateStore, FabricInfo}
+        survivors.each do |store, controller_node_id|
+          state = store.load
+          fabric = state.fabric_for(authority.fabric_id, authority.root_public_key, controller_node_id)
+          if seen.includes?(fabric.controller_node_id) ||
+             !(joint_controller_cat?(fabric, authority, cat, previous_version) ||
+             joint_controller_cat?(fabric, authority, cat, next_version)) ||
+             (recovered && !joint_controller_cat?(fabric, authority, cat, next_version))
+            raise Matter::ConfigurationError.new("Survivor identity is duplicated or lacks the current or next group CAT")
+          end
+          seen << fabric.controller_node_id
+          # A prior attempt may have saved some NOCs before UpdateGroup failed.
+          # Reuse those credentials so retrying the stage is safe.
+          next if joint_controller_cat?(fabric, authority, cat, next_version)
+          old_noc = Crypto::MatterCertificate.from_slice(fabric.controller_noc)
+          key = Crypto::Key.new(Crypto::KeyType::EC, Crypto::CurveType::P256)
+          key.private_bits = fabric.controller_private_key
+          key.public_bits = old_noc.ec_public_key
+          crypto.verify_ecdsa(key, KEY_PROOF_MESSAGE, crypto.sign_ecdsa(key, KEY_PROOF_MESSAGE))
+          noc = Crypto::MatterCertificate::Builder.node(
+            public_key: old_noc.ec_public_key, fabric_id: fabric.fabric_id,
+            node_id: fabric.controller_node_id, issuer_key: issuer,
+            issuer_rcac_id: root_certificate_id(authority), issuer_icac_id: icac_id,
+            issuer_certificate: icac, serial: crypto.random_bytes(CERTIFICATE_SERIAL_BYTES),
+            crypto: crypto, case_authenticated_tag: DataType::CaseAuthenticatedTag.create(cat, next_version).value)
+          Crypto::MatterCertificate::Validation.verify_chain(noc, icac,
+            authority.root_public_key, authority.root_cert)
+          replacement = FabricInfo.new(fabric.fabric_id, fabric.controller_node_id, fabric.ipk_value.dup,
+            fabric.root_cert.dup, fabric.root_public_key.dup, noc, fabric.controller_private_key.dup,
+            fabric.root_private_key, fabric.admin_vendor_id, icac.dup,
+            fabric.intermediate_private_key, fabric.ipk_epoch_keys)
+          replacements << {store, replacement}
+        end
+        replacements.each do |store, replacement|
+          state = store.load
+          state.replace_fabric(replacement)
+          store.save(state)
+        end
+        unless recovered
+          request = Datastore::UpdateGroupRequest.new(group_id, nil, nil, nil, next_version, nil)
+          invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_UPDATE_GROUP, request.to_slice)
+        end
+        JointGroupRevocation.new(group_id, cat, previous_version, next_version, target_ids, target_refs,
+          authority.root_cert.dup, anchor_node_id)
+      end
+
+      # A pending receipt becomes effective only after every target ACL is
+      # committed at the new CAT version and no old CAT ACL remains.
+      def self.joint_group_revocation_status(im : ImClient, session : Session::SecureContext,
+                                             peer : Socket::IPAddress, datastore_endpoint : UInt16,
+                                             receipt : JointGroupRevocation) : JointGroupRevocation::Status
+        verify_joint_anchor!(im, session, peer, datastore_endpoint,
+          receipt.anchor_node_id, receipt.anchor_root_cert)
+        groups = read_datastore_list(Datastore::DatastoreGroupInformationEntryStruct, im, session, peer,
+          datastore_endpoint, Datastore::ATTR_GROUP_LIST)
+        group = groups.find(&.group_id.==(receipt.group_id.to_u64))
+        return JointGroupRevocation::Status::Pending unless group &&
+                                                            group.group_cat == receipt.group_cat &&
+                                                            group.group_cat_version == receipt.current_version &&
+                                                            group.group_permission == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+                                                            group.group_key_set_id.nil?
+        entries = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
+          datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
+        new_subject = DataType::NodeId.from_case_authenticated_tag(
+          DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
+        previous_version_acl = entries.any? do |entry|
+          acl_grants_cat_version?(entry.acl_entry, receipt.group_cat, receipt.previous_version)
+        end
+        return JointGroupRevocation::Status::Pending if previous_version_acl
+        receipt.target_acls.each do |target|
+          entry = entries.find { |candidate| candidate.node_id == target.node_id && candidate.list_id == target.list_id }
+          return JointGroupRevocation::Status::Pending unless entry &&
+                                                              entry.acl_entry.subjects == [new_subject] &&
+                                                              entry.acl_entry.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE &&
+                                                              entry.acl_entry.privilege == Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer &&
+                                                              entry.status_entry.state == Datastore::DatastoreStateEnum::Committed
+        end
+        JointGroupRevocation::Status::Effective
+      end
+
+      # Ask the Anchor to retry target ACLs that reported CommitFailed. The
+      # receipt remains Pending until the subsequent delivery is committed.
+      def self.retry_failed_joint_group_revocation(im : ImClient, session : Session::SecureContext,
+                                                   peer : Socket::IPAddress, datastore_endpoint : UInt16,
+                                                   receipt : JointGroupRevocation) : Nil
+        verify_joint_anchor!(im, session, peer, datastore_endpoint,
+          receipt.anchor_node_id, receipt.anchor_root_cert)
+        entries = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
+          datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
+        new_subject = DataType::NodeId.from_case_authenticated_tag(
+          DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
+        receipt.target_node_ids.each do |node_id|
+          next unless entries.any? do |entry|
+                        entry.node_id == node_id && entry.acl_entry.subjects == [new_subject] &&
+                        entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed
+                      end
+          request = Datastore::RefreshNodeRequest.new(node_id)
+          invoke_datastore!(im, session, peer, datastore_endpoint, Datastore::CMD_REFRESH_NODE, request.to_slice)
+        end
+      end
+
+      private def self.joint_controller_cat?(fabric : FabricInfo, authority : FabricInfo,
+                                             cat : UInt16, version : UInt16) : Bool
+        return false unless fabric.fabric_id == authority.fabric_id &&
+                            fabric.root_public_key == authority.root_public_key &&
+                            fabric.intermediate_cert == authority.intermediate_cert
+        Crypto::MatterCertificate::Validation.verify_chain(fabric.controller_noc, fabric.intermediate_cert,
+          fabric.root_public_key, fabric.root_cert)
+        noc = Crypto::MatterCertificate.from_slice(fabric.controller_noc)
+        return false unless noc.fabric_id == fabric.fabric_id && noc.node_id == fabric.controller_node_id
+        subject = DataType::NodeId.from_case_authenticated_tag(
+          DataType::CaseAuthenticatedTag.create(cat, version)).id
+        subjects = Crypto::MatterCertificate.subject_ids_from_tlv(fabric.controller_noc)
+        cat_subject_count = subjects.count do |id|
+          DataType::NodeId.case_authenticated_tag_from_subject?(id) != nil
+        end
+        subjects.includes?(subject) && cat_subject_count == 1
+      end
+
+      private def self.acl_grants_cat_version?(acl : Datastore::DatastoreAccessControlEntryStruct,
+                                               cat : UInt16, max_version : UInt16) : Bool
+        return false unless acl.auth_mode == Datastore::DatastoreAccessControlEntryAuthModeEnum::CASE
+        subjects = acl.subjects
+        return false unless subjects
+        subjects.any? do |subject|
+          tag = DataType::NodeId.case_authenticated_tag_from_subject?(subject)
+          !tag.nil? && tag.identity_value == cat && tag.version <= max_version
+        end
+      end
+
+      private def self.verify_joint_anchor!(im : ImClient, session : Session::SecureContext,
+                                            peer : Socket::IPAddress, endpoint : UInt16,
+                                            anchor_node_id : UInt64, root_cert : Bytes) : Nil
+        unless session.case_session? && session.peer_node_id.try(&.id) == anchor_node_id
+          raise Matter::AuthenticationError.new("Joint Fabric Datastore requires CASE with the expected Anchor")
+        end
+        root_report = im.read_attribute(session: session, peer: peer, endpoint_id: endpoint,
+          cluster_id: Datastore::CLUSTER_ID, attribute_id: Datastore::ATTR_ANCHOR_ROOT_CA)
+        root_data = root_report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+                    raise Matter::ProtocolError.new("Joint Fabric Datastore AnchorRootCA returned no data")
+        unless Bytes.from_tlv(root_data.to_slice) == root_cert
+          raise Matter::AuthenticationError.new("Joint Fabric Datastore root differs from controller fabric")
+        end
+        node_report = im.read_attribute(session: session, peer: peer, endpoint_id: endpoint,
+          cluster_id: Datastore::CLUSTER_ID, attribute_id: Datastore::ATTR_ANCHOR_NODE_ID)
+        node_data = node_report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+                    raise Matter::ProtocolError.new("Joint Fabric Datastore AnchorNodeID returned no data")
+        unless UInt64.from_tlv(node_data.to_slice) == anchor_node_id
+          raise Matter::AuthenticationError.new("Joint Fabric Datastore node differs from CASE peer")
         end
       end
 

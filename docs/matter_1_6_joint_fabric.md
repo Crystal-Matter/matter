@@ -31,6 +31,23 @@ item below as covered only to the extent of its cited tests.
   callers should observe its status before assuming the controller can access
   that node. Existing `grant_admin` remains available for fabrics that do
   not use the Joint Fabric Datastore.
+- `SharedFabric.stage_joint_group_revocation` removes one controller from a
+  shared group by reissuing every surviving controller NOC on its existing
+  operational key at the next GroupCATVersion, then invoking Datastore
+  UpdateGroup. The host must provide the complete set of surviving controller
+  stores and distribute their new NOCs before relying on continued access.
+  The API preserves the group and its endpoint memberships. It returns a
+  serializable pending receipt. Save it durably and call
+  `SharedFabric.joint_group_revocation_status` until every target ACL is
+  Committed at the new CAT version; only then is the old CAT denied on those
+  targets. On CommitFailed, call `retry_failed_joint_group_revocation`, then
+  poll again. If the Anchor cannot confirm target ACL delivery, revocation
+  remains Pending and requires operator follow-up. See Matter 1.6 Core
+  §11.24.4.9. If UpdateGroup's response is lost, retry the same stage call
+  with the original revoked NOC and survivor stores. It authenticates the
+  Anchor, recognizes the already rotated CAT version and ACLs, and returns a
+  new Pending receipt without issuing another UpdateGroup. Keep the original
+  revoked NOC available until the receipt is obtained.
 - After JCM, a joining Administrator can use
   `JointFabricDeviceMigration.cross_signed_issuer` with its original ICAC
   private key and A's cross-signed ICAC. The resulting issuer's
