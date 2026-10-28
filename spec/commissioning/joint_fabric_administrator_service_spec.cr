@@ -84,7 +84,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     jfa_icac_install_status(wrong_fabric, root, icac_key, anchor_icac).should eq(invalid)
   end
 
-  it "allows only one authenticated AddICAC attempt per armed fail-safe" do
+  it "permits corrected AddICAC after a rejected ICAC but only one successful AddICAC per fail-safe" do
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
       -> { true }, ->(_index : UInt8) { true },
@@ -115,18 +115,14 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(invalid))
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidICAC)
-    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
-    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid)).should eq(
-      Matter::InteractionModel::Status.constraint_error)
-    service.cross_signed_icac.should be_nil
-
-    service.reset_failsafe
-    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
     service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
     service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid))
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::OK)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
+    service.add_icac(cluster, Matter::Cluster::JointFabricAdministrator::AddICACRequest.new(valid)).should eq(
+      Matter::InteractionModel::Status.constraint_error)
   end
 
   it "checks remote CSR proof and pinned existing ICAC before returning bytes" do
@@ -512,9 +508,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidPublicKey)
     service.cross_signed_icac.should be_nil
-    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
-    # A status-only attempt on another fabric must not consume this fabric's
-    # sole AddICAC attempt during the same fail-safe period.
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+    # Rejected status-only attempts do not consume a successful AddICAC slot.
     cluster.request_fabric_index = 2_u8
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
@@ -522,7 +518,8 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       .as(Matter::Cluster::JointFabricAdministrator::ICACResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACResponseStatusEnum::InvalidPublicKey)
     cluster.request_fabric_index = 1_u8
-    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.constraint_error)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
     service.reset_failsafe
     other_key = crypto.create_key_pair
     foreign_certificate = Matter::Crypto::MatterCertificate::Builder.intermediate(
