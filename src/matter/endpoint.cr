@@ -203,6 +203,14 @@ module Matter
       errors = [] of String
 
       @device_types.each do |device_type|
+        if device_type.device_type_id.id == DeviceType::BRIDGED_NODE
+          admin = get_cluster(Cluster::AdministratorCommissioning::CLUSTER_ID)
+          if admin && !admin.is_a?(Cluster::BridgedAdministratorCommissioning)
+            errors << "Bridged Node Administrator Commissioning must forward to its synchronized node"
+          elsif admin && !has_cluster?(Cluster::EcosystemInformation::CLUSTER_ID)
+            errors << "FabricSynchronizedNode Bridged Node requires Ecosystem Information"
+          end
+        end
         device_type.required_endpoint_device_types.each do |required_id|
           unless @device_types.any? { |candidate| candidate.device_type_id.id == required_id }
             errors << "Missing required device type #{DeviceType.name(required_id)} on endpoint for device type #{device_type.name}"

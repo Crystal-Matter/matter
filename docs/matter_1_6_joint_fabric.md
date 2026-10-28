@@ -710,6 +710,23 @@ Bridged Nodes. Commissioner Control is required on an Aggregator with the
 FabricSynchronization condition; its approval, UI and reverse commissioning
 flow still needs a host policy implementation.
 
+For a FabricSynchronizedNode, add a
+`Cluster::BridgedAdministratorCommissioning` to that bridged endpoint alongside
+`Cluster::EcosystemInformation`. Construct it with the remote
+`target_fabric_index`, `target_node_id`, and both `on_open` and `on_revoke`
+callbacks. The callbacks receive that target identity plus the authenticated
+caller fabric; `on_open` also receives the verifier request. They must perform
+the operation on the actual remote node and return its completed status.
+The host calls `publish_remote_window_state` when it observes that node's
+window status, opener fabric, and vendor. The cluster deliberately has no local
+PASE or mDNS window. After restart its published state starts closed until the
+host refreshes it. Advertising this endpoint requires the host to maintain the
+remote-node mapping and forwarding path; this library does not create them.
+The host must bind the mapping to the remote fabric's durable identity and
+revalidate it before each forwarded command because a fabric index can be
+reused. This bridged cluster does not advertise Basic Commissioning, so the
+host cannot publish `BasicWindowOpen` as its state.
+
 `examples/matter_ecosystem_bridge_device.cr` is an opt-in interoperability
 fixture. It publishes clearly synthetic names and a location for each newly
 commissioned fabric, so the official chip-tool E2E can read both directories,

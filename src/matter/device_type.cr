@@ -17,6 +17,7 @@ module Matter
     OTA_PROVIDER               = 0x0014_u32 # OTA Provider
     AGGREGATOR                 = 0x000E_u32 # Aggregator
     BRIDGED_NODE               = 0x0013_u32 # Bridged Node
+    BRIDGED_NODE_REVISION      =      3_u16 # Matter 1.6
     JOINT_FABRIC_ADMINISTRATOR = 0x0130_u32 # Joint Fabric Administrator
 
     # Lighting Device Types
@@ -140,6 +141,26 @@ module Matter
         "Joint Fabric Administrator",
         1_u16,
         required_server_clusters: [Cluster::JointFabricDatastore::CLUSTER_ID, Cluster::JointFabricAdministrator::CLUSTER_ID]
+      )
+    end
+
+    # Bridged Node revision 3. FabricSynchronizedNode adds Administrator
+    # Commissioning and makes Ecosystem Information mandatory; Endpoint checks
+    # that condition against the installed bridged commissioning implementation.
+    def self.bridged_node : DeviceType
+      new(
+        DataType::DeviceTypeId.new(BRIDGED_NODE),
+        "Bridged Node",
+        BRIDGED_NODE_REVISION,
+        required_server_clusters: [
+          Cluster::Descriptor::CLUSTER_ID,
+          Cluster::BridgedDeviceBasicInformation::CLUSTER_ID,
+        ],
+        optional_server_clusters: [
+          Cluster::AdministratorCommissioning::CLUSTER_ID,
+          Cluster::EcosystemInformation::CLUSTER_ID,
+          Cluster::PowerSource::CLUSTER_ID,
+        ]
       )
     end
 
@@ -520,6 +541,7 @@ module Matter
       when ROOT_NODE                      then root_node
       when POWER_SOURCE                   then power_source
       when JOINT_FABRIC_ADMINISTRATOR     then joint_fabric_administrator
+      when BRIDGED_NODE                   then bridged_node
       when SMOKE_CO_ALARM                 then smoke_co_alarm
       when ON_OFF_LIGHT                   then on_off_light
       when DIMMABLE_LIGHT                 then dimmable_light

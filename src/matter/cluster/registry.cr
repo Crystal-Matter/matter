@@ -14,7 +14,7 @@ module Matter
         # `Base.subclasses` is complete once every file has been parsed.
         ENTRIES = [
           {% for klass in Base.subclasses %}
-            {% unless klass.private? %}
+          {% unless klass.private? || klass.annotation(::Matter::Cluster::RegistryExclude) %}
               { {{ klass }}::CLUSTER_ID, {{ klass }} },
             {% end %}
           {% end %}

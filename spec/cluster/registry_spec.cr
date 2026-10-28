@@ -5,12 +5,17 @@ private UNREGISTERED_ID = 0xFFF1_FCFE_u32
 
 describe Matter::Cluster::Registry do
   {% for klass in Matter::Cluster::Base.subclasses %}
-    {% if klass.name.starts_with?("Matter::Cluster::") %}
+    {% if klass.name.starts_with?("Matter::Cluster::") && !klass.annotation(::Matter::Cluster::RegistryExclude) %}
       it "registers {{ klass }} under its CLUSTER_ID" do
         Matter::Cluster::Registry.for({{ klass }}::CLUSTER_ID).should eq({{ klass }})
       end
     {% end %}
   {% end %}
+
+  it "keeps the standard Administrator Commissioning implementation as the default" do
+    Matter::Cluster::Registry.for(Matter::Cluster::AdministratorCommissioning::CLUSTER_ID)
+      .should eq(Matter::Cluster::AdministratorCommissioning)
+  end
 
   it "answers nil for an id no cluster declares" do
     Matter::Cluster::Registry.for(UNREGISTERED_ID).should be_nil
