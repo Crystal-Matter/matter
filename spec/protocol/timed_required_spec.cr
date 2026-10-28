@@ -98,6 +98,72 @@ describe "timed Interaction Model requirements over encrypted CASE" do
     handler.close
   end
 
+  it "rejects a second TimedRequest on an armed exchange" do
+    handler, transport, session = timed_fixture
+    exchange = 97_u16
+    timed = Matter::InteractionModel::TimedRequestMessage.new(1_000_u16)
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::TimedRequest.value,
+      timed.to_slice, 1_u32, exchange), TIMED_PEER)
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::TimedRequest.value,
+      timed.to_slice, 2_u32, exchange), TIMED_PEER)
+
+    rejection = Matter::InteractionModel::StatusResponseMessage.from_slice(
+      timed_response_payload(transport.sent_packets.last[0], session))
+    rejection.status.should eq(Matter::InteractionModel::StatusCode::InvalidAction.value)
+
+    cluster = TimedWritable.new(Matter::DataType::EndpointNumber.new(1_u16))
+    handler.clusters[{1_u16, TimedWritable::CLUSTER_ID}] = cluster
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: TimedWritable::CLUSTER_ID, attribute: TimedWritable::ATTR_VALUE)
+    write = Matter::InteractionModel::WriteRequestMessage.new(timed_request: true,
+      write_requests: [Matter::InteractionModel::AttributeDataIB.new(path, TLV::Any.new(7_u8))])
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::WriteRequest.value,
+      write.to_slice, 3_u32, exchange), TIMED_PEER)
+
+    mismatch = Matter::InteractionModel::StatusResponseMessage.from_slice(
+      timed_response_payload(transport.sent_packets.last[0], session))
+    mismatch.status.should eq(Matter::InteractionModel::StatusCode::TimedRequestMismatch.value)
+    cluster.value.should eq(0_u8)
+    handler.close
+  end
+
+  it "allows a fresh TimedRequest when an earlier use of the exchange id has expired" do
+    handler, transport, session = timed_fixture
+    cluster = TimedWritable.new(Matter::DataType::EndpointNumber.new(1_u16))
+    handler.clusters[{1_u16, TimedWritable::CLUSTER_ID}] = cluster
+    exchange = 98_u16
+    expired = Matter::InteractionModel::TimedRequestMessage.new(1_u16)
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::TimedRequest.value,
+      expired.to_slice, 1_u32, exchange), TIMED_PEER)
+    sleep 10.milliseconds
+
+    fresh = Matter::InteractionModel::TimedRequestMessage.new(1_000_u16)
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::TimedRequest.value,
+      fresh.to_slice, 2_u32, exchange), TIMED_PEER)
+    acknowledgment = Matter::InteractionModel::StatusResponseMessage.from_slice(
+      timed_response_payload(transport.sent_packets.last[0], session))
+    acknowledgment.status.should eq(Matter::InteractionModel::StatusCode::Success.value)
+
+    path = Matter::InteractionModel::AttributePath.new(endpoint: 1_u16,
+      cluster: TimedWritable::CLUSTER_ID, attribute: TimedWritable::ATTR_VALUE)
+    write = Matter::InteractionModel::WriteRequestMessage.new(timed_request: true,
+      write_requests: [Matter::InteractionModel::AttributeDataIB.new(path, TLV::Any.new(7_u8))])
+    handler.handle_message(Matter::Spec::ProtocolMessages.from_peer(session,
+      Matter::InteractionModel::MessageType::WriteRequest.value,
+      write.to_slice, 3_u32, exchange), TIMED_PEER)
+
+    response = Matter::InteractionModel::WriteResponseMessage.from_slice(
+      timed_response_payload(transport.sent_packets.last[0], session))
+    response.write_responses.first.status.status.should eq(Matter::InteractionModel::StatusCode::Success.value)
+    cluster.value.should eq(7_u8)
+    handler.close
+  end
+
   it "rejects untimed AdministratorCommissioning OpenCommissioningWindow and RevokeCommissioning" do
     handler, transport, session = timed_fixture
     cluster = Matter::Cluster::AdministratorCommissioning.new(Matter::DataType::EndpointNumber.new(0_u16))

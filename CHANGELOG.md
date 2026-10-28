@@ -28,6 +28,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AnchorDatastoreSubscription.new` now requires `counter_store:`. Pass the
   StateStore that owns the installed controller fabric and its counter lease.
 
+### Timed Interaction Model requests
+
+- Reject malformed or repeated TimedRequest actions with `InvalidAction`,
+  discard the exchange's pending timed state, and start valid deadlines when
+  their successful StatusResponse is sent.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the
