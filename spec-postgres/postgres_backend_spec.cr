@@ -130,7 +130,7 @@ if url = ENV["MATTER_TEST_POSTGRES_URL"]?
       end
       2.times { ready.receive }
       2.times { release.send(nil) }
-      results = 2.times.map { finished.receive }.to_a
+      results = Array.new(2) { finished.receive }
       results.count(&.nil?).should eq(1)
       unless results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") } == 1
         raise "Unexpected competing-writer results: #{results.map { |result| result.try { |error| {error.class.name, error.message} } }}"
@@ -172,7 +172,7 @@ if url = ENV["MATTER_TEST_POSTGRES_URL"]?
       end
       2.times { ready.receive }
       2.times { release.send(nil) }
-      results = 2.times.map { finished.receive }.to_a
+      results = Array.new(2) { finished.receive }
       results.count(&.nil?).should eq(1)
       unless results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") } == 1
         raise "Unexpected competing-insert results: #{results.map { |result| result.try { |error| {error.class.name, error.message} } }}"
