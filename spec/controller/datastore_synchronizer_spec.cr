@@ -102,6 +102,13 @@ private class DatastoreImClient < Matter::Controller::ImClient
         response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::AddGroupResponse.new(Matter::InteractionModel::StatusCode::Success, @group_response_id || request.group_id).to_slice)
       elsif command_id == Matter::Cluster::Groups::CMD_REMOVE_GROUP
         request = Matter::Cluster::Groups::RemoveGroupRequest.from_slice(fields)
+        if code = @response_code
+          if code != Matter::InteractionModel::StatusCode::Success
+            path = Matter::InteractionModel::CommandPath.new(endpoint: endpoint_id, cluster: cluster_id, command: command_id)
+            status = Matter::InteractionModel::CommandStatusIB.new(path, Matter::InteractionModel::StatusIB.new(code.value))
+            return Matter::InteractionModel::InvokeResponseMessage.new(invoke_responses: [Matter::InteractionModel::InvokeResponseIB.new(command_status: status)])
+          end
+        end
         @group_memberships[endpoint_id] = (@group_memberships[endpoint_id]? || [] of Matter::DataType::GroupId).reject(&.==(request.group_id))
         response_id = Matter::Cluster::Groups::CMD_REMOVE_GROUP_RESPONSE
         response_fields = TLV::Any.from_slice(Matter::Cluster::Groups::RemoveGroupResponse.new(Matter::InteractionModel::StatusCode::Success, @group_response_id || request.group_id).to_slice)
@@ -322,6 +329,7 @@ describe Matter::Controller::DatastoreSynchronizer do
     store.endpoint_binding_list.all?(&.status_entry.state.delete_pending?).should be_true
 
     im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: peer_id, endpoint: 1_u16)]
+    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(group_id)]
     synchronizer = Matter::Controller::DatastoreSynchronizer.new(im)
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     im.response_code = Matter::InteractionModel::StatusCode::Busy
@@ -778,6 +786,7 @@ describe Matter::Controller::DatastoreSynchronizer do
     im.parts_list = [1_u16]
     im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID, Matter::Cluster::Binding::CLUSTER_ID]
     im.binding_entries[1_u16] = [Matter::Cluster::Binding::Target.new(node: 0x200_u64, endpoint: 1_u16)]
+    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(5_u16)]
     synchronizer.sync_node(store, 0x100_u64, datastore_session, peer)
     store.endpoint_group_id_list.should be_empty
     store.endpoint_binding_list.should be_empty
@@ -1436,6 +1445,8 @@ describe Matter::Controller::DatastoreSynchronizer do
     client = Matter::Controller::Client.new
     im = DatastoreImClient.new(client)
     im.group_response_id = Matter::DataType::GroupId.new(3_u16)
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID]
+    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(2_u16)]
     store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
     store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
       2_u64, "kitchen", 1_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
