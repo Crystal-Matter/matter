@@ -2967,7 +2967,7 @@ describe "three provisioned Joint Fabric Administrators" do
       joiner_bootstrap.fabric, 0xA104_u64)
     datastore_before_completion = administrator_datastore_snapshot(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, 0xB102_u64)
-    datastore_before_completion.cat_version.should eq(before_removal_cat_version + 1_u16)
+    datastore_before_completion[:cat_version].should eq(before_removal_cat_version + 1_u16)
     joiner.restart!
     third.restart!
     joiner_client.close
