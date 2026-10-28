@@ -13,6 +13,7 @@ module Matter
 
       getter active_session_id : UInt64?
       getter active_datastore : Datastore?
+      @window_endpoint_id : UInt16?
       @installed = false
 
       def initialize(@credentials : CredentialService,
@@ -32,7 +33,12 @@ module Matter
       def bind_administrators : Nil
         @administrators.call.each do |administrator|
           administrator.jcm_add_noc_guard_ready = -> { ready_for?(administrator) }
+          administrator.jcm_window_opened = -> { note_window_opened(administrator) }
         end
+      end
+
+      def note_window_opened(administrator : Admin) : Nil
+        @window_endpoint_id = administrator.endpoint_id.number
       end
 
       def ready_for?(administrator : Admin) : Bool
@@ -47,22 +53,35 @@ module Matter
 
       def observe_failsafe_arm(session_id : UInt64?, window_fabric_index : UInt8?,
                                joint_window : Bool, case_session : Bool) : Nil
+        window_endpoint_id = @window_endpoint_id
         reset
         return unless joint_window && session_id && window_fabric_index
         return if case_session
         @active_session_id = session_id
+        unless window_endpoint_id
+          Log.warn { "Joint Fabric AddNOC guard has no endpoint for the open joint window" }
+          return
+        end
         candidates = @administrators.call.compact_map do |administrator|
+          next unless administrator.endpoint_id.number == window_endpoint_id
           next unless administrator.administrator_fabric_index == window_fabric_index
           next unless ready_for?(administrator)
           @datastore_at.call(administrator.endpoint_id.number)
         end
-        return unless candidates.size == 1
+        unless candidates.size == 1
+          Log.warn do
+            "Joint Fabric AddNOC guard could not bind the window endpoint #{window_endpoint_id} " \
+            "to fabric #{window_fabric_index} (ready Datastores=#{candidates.size})"
+          end
+          return
+        end
         @active_datastore = candidates.first
       end
 
       def reset : Nil
         @active_session_id = nil
         @active_datastore = nil
+        @window_endpoint_id = nil
       end
 
       private def validate(noc : Bytes, case_admin_subject : UInt64, session_id : UInt64) : NocOutcome?

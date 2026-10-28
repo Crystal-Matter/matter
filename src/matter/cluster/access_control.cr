@@ -1135,6 +1135,9 @@ module Matter
           end
         end
         @reviews_needing_replay.dup.each do |token|
+          # A host callback may restore a previous document while this token
+          # is completing. Replaying it here would reenter that callback.
+          next if @review_delivery_inflight.includes?(token)
           request = @pending_restriction_reviews[token]?
           next unless request
           deadline = @pending_restriction_review_deadlines[token]

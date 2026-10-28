@@ -19,6 +19,7 @@ module MatterBindingValidationFixture
     endpoint 1, device_type: Matter::DeviceType::ON_OFF_LIGHT_SWITCH do
       cluster Matter::Cluster::Identify, identify_type: :none
       cluster Matter::Cluster::Binding
+      client_cluster Matter::Cluster::OnOff::CLUSTER_ID
     end
   end
 end

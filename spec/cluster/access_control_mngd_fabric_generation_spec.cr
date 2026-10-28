@@ -322,7 +322,8 @@ describe "Managed restriction fabric generation" do
   end
 
   it "does not resume an old callback after a failed removal restores its token" do
-    acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice)
+    acl = GenerationAcl.new(endpoint(0), GenerationAcl::Feature::ManagedDevice,
+      review_timeout: 100.milliseconds, review_delivery_retry_interval: 5.milliseconds)
     old_policy = generation_entry(GenerationAcl::AccessRestrictionType::AttributeAccessForbidden)
     acl.configure_access_restrictions(1_u8, [old_policy])
     acl.on_restriction_review_requested { |_request| }
@@ -330,13 +331,17 @@ describe "Managed restriction fabric generation" do
     token = acl.request_restriction_review(1_u8, [old_policy])
     prior_state = acl.save_state.as(Matter::Storage::Document)
     events = [] of UInt8?
+    callbacks = 0
     acl.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, _id : UInt32, _priority : Matter::InteractionModel::EventPriority, _payload : TLV::Any, fabric : UInt8?) { events << fabric; nil }
     acl.on_restriction_review_updated do |_fabric, _update|
+      callbacks += 1
       acl.remove_fabric_acl(1_u8)
       acl.restore_state(prior_state)
     end
 
     expect_raises(Matter::ConfigurationError) { acl.complete_restriction_review(1_u8, token) }
+    sleep 200.milliseconds
+    callbacks.should eq(1)
     events.should be_empty
     acl.arl(1_u8).first.restrictions.should eq(old_policy.restrictions)
   end

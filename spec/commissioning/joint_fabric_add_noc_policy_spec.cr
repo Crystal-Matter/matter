@@ -105,14 +105,14 @@ describe Matter::Commissioning::JointFabricAddNocPolicy do
 end
 
 describe Matter::Commissioning::JointFabricAddNocGuard do
-  it "binds multiple JFA endpoints to their own Datastore and tracks the selected JCM session" do
+  it "binds the selected JFA endpoint when two Datastores use the same fabric" do
     admin_a = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
     admin_b = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(2_u16))
-    admin_a.administrator_fabric_index = 1_u8
+    admin_a.administrator_fabric_index = 2_u8
     admin_b.administrator_fabric_index = 2_u8
     store_a = jcm_datastore(4_u16, 5_u16)
     store_b = jcm_datastore(2_u16, 3_u16, 2_u16)
-    store_a.joint_fabric_index = 1_u8
+    store_a.joint_fabric_index = 2_u8
     store_b.joint_fabric_index = 2_u8
     store_a.access_mode = Matter::Cluster::JointFabricDatastore::AccessMode::Active
     store_b.access_mode = Matter::Cluster::JointFabricDatastore::AccessMode::Active
@@ -123,6 +123,7 @@ describe Matter::Commissioning::JointFabricAddNocGuard do
     guard.install!
     admin_a.jcm_add_noc_guard_ready?.should be_true
     admin_b.jcm_add_noc_guard_ready?.should be_true
+    guard.note_window_opened(admin_b)
     guard.observe_failsafe_arm(42_u64, 2_u8, joint_window: true, case_session: false)
 
     service.add_noc(jcm_noc(key, nil), nil, Bytes.new(16, 0_u8),
