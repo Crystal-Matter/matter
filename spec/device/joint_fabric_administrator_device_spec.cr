@@ -17,6 +17,10 @@ private def cleanup_durable_jfa_backend(backend : Matter::Storage::YamlFile?) : 
 end
 
 class InspectableJointFabricAdministratorDevice < MatterJointFabricAdministrator::Device
+  def jcm_guard_for_spec : Matter::Commissioning::JointFabricAddNocGuard
+    @joint_fabric_add_noc_guard.as(Matter::Commissioning::JointFabricAddNocGuard)
+  end
+
   def prepare_for_start : Nil
     before_start
   end
@@ -836,6 +840,54 @@ private class FailingJfaYaml < Matter::Storage::YamlFile
 end
 
 describe MatterJointFabricAdministrator::Device do
+  it "binds and clears the Device-installed JCM guard through GeneralCommissioning callbacks" do
+    device = InspectableJointFabricAdministratorDevice.new(storage: Matter::Storage::Memory.new,
+      ip_addresses: [Socket::IPAddress.new("127.0.0.1", 0)], port: 0)
+    administrator = device.joint_fabric_administrator
+    datastore = device.joint_fabric_datastore
+    administrator.administrator_fabric_index = 1_u8
+    datastore.joint_fabric_index = 1_u8
+    datastore.access_mode = Matter::Cluster::JointFabricDatastore::AccessMode::Active
+    datastore.seed_reserved_cat_group(1_u16, "Administrators",
+      Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 2_u16).success?.should be_true
+    datastore.seed_reserved_cat_group(2_u16, "Anchors",
+      Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 3_u16).success?.should be_true
+    administrator.jcm_add_noc_guard_ready?.should be_true
+
+    window = device.administrator_commissioning.window
+    window.on_start_commissioning_advertising = nil
+    window.on_configure_pase_server = nil
+    window.open_enhanced(180_u16, Bytes.new(97, 0_u8), 3839_u16, 2000_u32,
+      Bytes.new(16, 0_u8), 1_u8, Matter::SetupPayload.test_vendor_id, joint: true)
+    device.general_commissioning.request_session_id = 42_u64
+    device.general_commissioning.request_is_case_session = false
+    device.general_commissioning.arm_failsafe(
+      Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64), nil, true
+    ).error_code.ok?.should be_true
+    device.jcm_guard_for_spec.active_session_id.should eq(42_u64)
+    device.jcm_guard_for_spec.active_datastore.should be(datastore)
+
+    device.general_commissioning.arm_failsafe(
+      Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(0_u16, 0_u64), nil, true
+    ).error_code.ok?.should be_true
+    device.jcm_guard_for_spec.active_session_id.should be_nil
+    device.jcm_guard_for_spec.active_datastore.should be_nil
+
+    window.open_enhanced(180_u16, Bytes.new(97, 0_u8), 3839_u16, 2000_u32,
+      Bytes.new(16, 0_u8), 1_u8, Matter::SetupPayload.test_vendor_id, joint: true)
+    device.general_commissioning.request_session_id = 43_u64
+    device.general_commissioning.arm_failsafe(
+      Matter::Cluster::GeneralCommissioning::ArmFailSafeRequest.new(60_u16, 0_u64), nil, true
+    ).error_code.ok?.should be_true
+    device.jcm_guard_for_spec.active_session_id.should eq(43_u64)
+    device.general_commissioning.record_added_fabric(1_u8)
+    device.general_commissioning.commissioning_complete(1_u8, true).error_code.ok?.should be_true
+    device.jcm_guard_for_spec.active_session_id.should be_nil
+    device.jcm_guard_for_spec.active_datastore.should be_nil
+  ensure
+    device.try(&.shutdown!)
+  end
+
   it "keeps a copied joined Datastore when its saved fabric binding still matches after restart" do
     previous_anchor = ENV["MATTER_JFA_PROVISIONED_ANCHOR"]?
     previous_csr = ENV["MATTER_JFA_ICAC_CSR_MAILBOX_PATH"]?

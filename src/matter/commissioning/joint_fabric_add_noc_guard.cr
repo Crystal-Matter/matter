@@ -11,8 +11,8 @@ module Matter
       alias Admin = Cluster::JointFabricAdministrator
       alias Datastore = Cluster::JointFabricDatastore
 
-      @active_session_id : UInt64?
-      @active_datastore : Datastore?
+      getter active_session_id : UInt64?
+      getter active_datastore : Datastore?
       @installed = false
 
       def initialize(@credentials : CredentialService,
