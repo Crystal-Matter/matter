@@ -46,12 +46,13 @@ private class FailingControllerSqlite < Matter::Storage::Sqlite
 end
 
 private def seed_controller_credentials(backend : Matter::Storage::Backend,
-                                        fabric : Matter::Controller::FabricInfo) : Bytes
+                                        fabric : Matter::Controller::FabricInfo,
+                                        role : Matter::Session::Case::Role? = Matter::Session::Case::Role::Initiator) : Bytes
   id = Bytes.new(16, 0x11_u8)
   Matter::Session::Case::ResumptionStore.new(backend).save(
     Matter::Session::Case::ResumptionStore::Record.new(fabric.fabric_id,
       fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
-      id, Bytes.new(32, 0x22_u8), [0x3333_u64]))
+      id, Bytes.new(32, 0x22_u8), [0x3333_u64], role: role))
   Matter::Controller::IcdPeerStore.new(backend).save(
     Matter::Controller::IcdPeerStore::Record.new(fabric.fabric_id,
       fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
@@ -111,6 +112,104 @@ private def assert_atomic_controller_removal(backend : Matter::Storage::Backend,
 end
 
 describe Matter::Controller::StateStore do
+  it "persists scalar and nested mutations made in one atomic update" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = sample_fabric
+    store.save(Matter::Controller::State.new(fabric: fabric))
+
+    store.update do |current|
+      current.unsecured_message_counter = 17_u32
+      current.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+        0x3333_u64, "Lamp", Time.utc.to_unix + 60)
+    end
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(17_u32)
+    loaded.pending_datastore_nodes.size.should eq(1)
+  end
+
+  it "rejects a stale full-state save and preserves an intervening journal update" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    fabric = sample_fabric
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    stale = store.load
+    store.update do |current|
+      current.pending_datastore_nodes << Matter::Controller::PendingDatastoreNode.new(
+        fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
+        0x3333_u64, "Lamp", Time.utc.to_unix + 60)
+    end
+    stale.unsecured_message_counter = 42_u32
+
+    expect_raises(Matter::StorageError, /changed since load/) { store.save(stale) }
+    store.load.pending_datastore_nodes.size.should eq(1)
+    store.load.unsecured_message_counter.should eq(0_u32)
+  end
+
+  it "rejects a second save from a copied loaded snapshot" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new(fabric: sample_fabric))
+    first = store.load
+    second = first
+    first.unsecured_message_counter = 1_u32
+    store.save(first)
+    second.unsecured_message_counter = 2_u32
+
+    expect_raises(Matter::StorageError, /changed since load/) { store.save(second) }
+    store.load.unsecured_message_counter.should eq(1_u32)
+  end
+
+  it "keeps the newer unsecured counter from concurrent clients across wraparound" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX - 1_u32))
+    store.update(&.advance_unsecured_message_counter(1_u32))
+    store.update { |current| current.advance_unsecured_message_counter(UInt32::MAX) }
+
+    store.load.unsecured_message_counter.should eq(1_u32)
+  end
+
+  it "persists a first random unsecured counter above the serial half-range" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new)
+    first_counter = Matter::Controller::State::UNSECURED_COUNTER_HALF_RANGE + 7_u32
+
+    store.update { |current| current.advance_unsecured_message_counter(first_counter) }
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(first_counter)
+    loaded.unsecured_counter_initialized?.should be_true
+  end
+
+  it "rejects a stale high counter after a persisted wrap to zero" do
+    store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    store.save(Matter::Controller::State.new(unsecured_message_counter: UInt32::MAX))
+
+    store.update(&.advance_unsecured_message_counter(0_u32))
+    store.update { |current| current.advance_unsecured_message_counter(UInt32::MAX - 1_u32) }
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(0_u32)
+    loaded.unsecured_counter_initialized?.should be_true
+  end
+
+  it "treats a legacy zero counter as initialized during migration" do
+    backend = Matter::Storage::Memory.new
+    old_document = Matter::Controller::State.new(commissioner_node_id: 0x2222_u64).to_document
+    old_document.delete("unsecured_counter_initialized")
+    backend.write(Matter::Controller::StateStore::COLLECTION,
+      Matter::Controller::StateStore::DOCUMENT_ID, old_document)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.update do |current|
+      current.advance_unsecured_message_counter(
+        Matter::Controller::State::UNSECURED_COUNTER_HALF_RANGE + 7_u32)
+    end
+
+    loaded = store.load
+    loaded.unsecured_message_counter.should eq(0_u32)
+    loaded.unsecured_counter_initialized?.should be_true
+  end
+
   it "persists replaced IPK epochs without losing the controller's peers" do
     store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
     fabric = sample_fabric
@@ -174,7 +273,8 @@ describe Matter::Controller::StateStore do
     id = Bytes.new(16, 0x11_u8)
     resume_store.save(Matter::Session::Case::ResumptionStore::Record.new(
       fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id,
-      0x3333_u64, id, Bytes.new(32, 0x22_u8), [0x3333_u64]))
+      0x3333_u64, id, Bytes.new(32, 0x22_u8), [0x3333_u64],
+      role: Matter::Session::Case::Role::Initiator))
 
     state = store.load
     state.remove_fabric(fabric.fabric_id, fabric.root_public_key,
@@ -257,7 +357,7 @@ describe Matter::Controller::StateStore do
       operational_key: Matter::Crypto::Key.generate_key_pair,
       ipk: fabric.ipk_value)
     backend.write(Matter::Storage::Collections::FABRICS, "1", device_fabric.to_document)
-    id = seed_controller_credentials(backend, fabric)
+    id = seed_controller_credentials(backend, fabric, role: nil)
     store = Matter::Controller::StateStore.new(backend)
 
     store.load.fabric.should be_nil
@@ -269,6 +369,22 @@ describe Matter::Controller::StateStore do
     state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
     store.save(state)
     resume_store.find_by_id(id).should_not be_nil
+  end
+
+  it "does not infer roleless CASE ownership from controller state alone" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    id = seed_controller_credentials(backend, fabric, role: nil)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.load
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should_not be_nil
+    store.save(Matter::Controller::State.new(fabric: fabric))
+    state = store.load
+    state.remove_fabric(fabric.fabric_id, fabric.root_public_key, fabric.controller_node_id)
+    store.save(state)
+
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should_not be_nil
   end
 
   it "keeps ambiguous device secrets when a device fabric document is unreadable" do
@@ -337,6 +453,18 @@ describe Matter::Controller::StateStore do
     backend = Matter::Storage::Memory.new
     Matter::Controller::StateStore.new(backend).load
     backend.collections.should eq([Matter::Storage::Collections::META])
+  end
+
+  it "defers orphan cleanup when controller state has no guarded row" do
+    backend = Matter::Storage::Memory.new
+    fabric = sample_fabric
+    id = seed_controller_credentials(backend, fabric)
+    store = Matter::Controller::StateStore.new(backend)
+
+    store.load
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should_not be_nil
+    store.save(Matter::Controller::State.new)
+    Matter::Session::Case::ResumptionStore.new(backend).find_by_id(id).should be_nil
   end
 
   it "round-trips fabric and nodes through a YAML file" do

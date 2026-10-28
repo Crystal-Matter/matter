@@ -132,6 +132,28 @@ module Matter
         end
       end
 
+      def compare_and_swap(collection : String, id : String,
+                           expected : Document?, document : Document) : Bool
+        validate(collection, id)
+        payload = SqlDocumentCodec.encode(Storage.deep_copy(document))
+        with_connection do |connection|
+          changed = false
+          mutate(connection) do
+            current_payload = connection.query_one?(read_sql, collection, id, as: String)
+            current = current_payload.try { |value| SqlDocumentCodec.decode(value) }
+            if current == expected
+              result = if raw = current_payload
+                         connection.exec(conditional_update_sql, payload, collection, id, raw)
+                       else
+                         connection.exec(insert_if_absent_sql, collection, id, payload)
+                       end
+              changed = result.rows_affected == 1
+            end
+          end
+          changed
+        end
+      end
+
       def delete(collection : String, id : String) : Nil
         validate(collection, id)
         with_connection do |connection|
@@ -228,6 +250,10 @@ module Matter
 
       private def upsert_sql : String
         "#{insert_sql} ON CONFLICT (collection, id) DO UPDATE SET payload = EXCLUDED.payload"
+      end
+
+      private def conditional_update_sql : String
+        "UPDATE #{SqlSchema::DOCUMENT_TABLE} SET payload = #{bind(1)} WHERE collection = #{bind(2)} AND id = #{bind(3)} AND payload = #{bind(4)}"
       end
 
       private def mutate(connection : DB::Connection, & : -> Nil) : Nil

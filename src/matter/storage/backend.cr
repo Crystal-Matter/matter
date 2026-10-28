@@ -27,6 +27,21 @@ module Matter
       # Stores a deep copy of *document*, creating the collection if needed.
       abstract def write(collection : String, id : String, document : Document) : Nil
 
+      # Replace only the document observed by a prior read. Backends with
+      # independent writers should override this with a database-level
+      # conditional write; the default uses the backend transaction lock.
+      def compare_and_swap(collection : String, id : String,
+                           expected : Document?, document : Document) : Bool
+        changed = false
+        transaction do
+          if read(collection, id) == expected
+            write(collection, id, document)
+            changed = true
+          end
+        end
+        changed
+      end
+
       # Removes the document; a no-op when it does not exist.
       abstract def delete(collection : String, id : String) : Nil
 

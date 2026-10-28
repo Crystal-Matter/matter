@@ -89,6 +89,7 @@ module Matter
             client.transport.configure_mrp_peer(peer, Codec::MessageCodec::UNSECURED_SESSION_ID,
               intervals[0], intervals[1], intervals[2])
           end
+          record_peer = false
           begin
             session = pair(client, peer, fabric, peer_node_id: peer_node_id, timeout: timeout)
             if intervals = resolver.last_mrp_parameters
@@ -99,13 +100,18 @@ module Matter
                 session.peer_mrp_idle_interval_ms, session.peer_mrp_active_interval_ms,
                 session.peer_mrp_active_threshold_ms)
             end
-            state.record_node(fabric.fabric_id, NodeInfo.new(peer_node_id, OperationalPeerResolver.address_hint(peer), peer.port),
-              fabric.root_public_key, fabric.controller_node_id)
+            record_peer = true
             {session, peer}
           ensure
             # Sigma1 consumes an unsecured message counter even if CASE fails.
-            state.unsecured_message_counter = client.transport.message_counter.counter
-            store.save(state)
+            store.update do |current|
+              if record_peer
+                current.record_node(fabric.fabric_id,
+                  NodeInfo.new(peer_node_id, OperationalPeerResolver.address_hint(peer), peer.port),
+                  fabric.root_public_key, fabric.controller_node_id)
+              end
+              current.advance_unsecured_message_counter(client.transport.message_counter.counter)
+            end
           end
         end
 

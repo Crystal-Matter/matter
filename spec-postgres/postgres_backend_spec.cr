@@ -1,6 +1,7 @@
 require "uri"
 require "../spec/storage/backend_contract_spec"
 require "../src/matter/storage/postgres"
+require "../src/matter/controller/state_store"
 
 # This suite is intentionally outside spec/: ordinary `crystal spec` never
 # loads the optional PostgreSQL driver or needs a running database. CI and
@@ -12,12 +13,176 @@ private def fresh_postgres(url : String) : Matter::Storage::Postgres
   backend
 end
 
+private class PausedControllerPostgres < Matter::Storage::Postgres
+  property? pause = false
+
+  def initialize(url : String, @ready : Channel(Nil), @release : Channel(Nil))
+    super(url)
+  end
+
+  def compare_and_swap(collection : String, id : String,
+                       expected : Matter::Storage::Document?,
+                       document : Matter::Storage::Document) : Bool
+    if @pause
+      @ready.send(nil)
+      @release.receive
+    end
+    super
+  end
+end
+
+private class PausedControllerLoadPostgres < Matter::Storage::Postgres
+  @pause_once = true
+
+  def initialize(url : String, @ready : Channel(Nil), @release : Channel(Nil))
+    super(url)
+  end
+
+  def compare_and_swap(collection : String, id : String,
+                       expected : Matter::Storage::Document?, document : Matter::Storage::Document) : Bool
+    if @pause_once && collection == Matter::Controller::StateStore::COLLECTION &&
+       id == Matter::Controller::StateStore::DOCUMENT_ID
+      @pause_once = false
+      @ready.send(nil)
+      @release.receive
+    end
+    super
+  end
+end
+
 if url = ENV["MATTER_TEST_POSTGRES_URL"]?
   raise "PostgreSQL integration tests require a dedicated *_test database" unless URI.parse(url).path.ends_with?("_test")
 
   BackendContract.run("Postgres", ".postgres") { |_path| fresh_postgres(url) }
 
   describe Matter::Storage::Postgres do
+    it "retries clean and normalized loads without purging newly owned CASE credentials" do
+      [false, true].each do |needs_normalization|
+        seed = fresh_postgres(url)
+        initial_id = needs_normalization ? Matter::DataType::NodeId::UNSPECIFIED : 0x7777_u64
+        Matter::Controller::StateStore.new(seed).save(
+          Matter::Controller::State.new(commissioner_node_id: initial_id))
+        seed.close
+
+        ready = Channel(Nil).new
+        release = Channel(Nil).new
+        paused_backend = PausedControllerLoadPostgres.new(url, ready, release).tap(&.open)
+        paused_store = Matter::Controller::StateStore.new(paused_backend)
+        result = Channel(Matter::Controller::State | Exception).new
+        spawn do
+          result.send(paused_store.load)
+        rescue ex
+          result.send(ex)
+        end
+        ready.receive
+
+        fabric = Matter::Controller::FabricInfo.new(
+          fabric_id: 0x1111_u64, controller_node_id: 0x2222_u64,
+          ipk_value: Bytes.new(16, 0xAA_u8), root_cert: Bytes.empty,
+          root_public_key: Bytes.new(65, 0xBB_u8), controller_noc: Bytes.empty,
+          controller_private_key: Bytes.empty)
+        writer = Matter::Storage::Postgres.new(url).tap(&.open)
+        Matter::Controller::StateStore.new(writer).save(Matter::Controller::State.new(fabric: fabric))
+        credential_id = Bytes.new(16, 0x11_u8)
+        Matter::Session::Case::ResumptionStore.new(writer).save(
+          Matter::Session::Case::ResumptionStore::Record.new(fabric.fabric_id,
+            fabric.root_public_key, fabric.controller_node_id, 0x3333_u64,
+            credential_id, Bytes.new(32, 0x22_u8), [0x3333_u64],
+            role: Matter::Session::Case::Role::Initiator))
+        release.send(nil)
+
+        result.receive.as(Matter::Controller::State).fabric.as(Matter::Controller::FabricInfo).fabric_id.should eq(fabric.fabric_id)
+        Matter::Session::Case::ResumptionStore.new(writer).find_by_id(credential_id).should_not be_nil
+        paused_backend.close
+        writer.destroy!
+      end
+    end
+
+    it "rejects one of two independent controller writes that read the same SQL row" do
+      seed = fresh_postgres(url)
+      seed_store = Matter::Controller::StateStore.new(seed)
+      seed_store.save(Matter::Controller::State.new)
+      seed.close
+      ready = Channel(Nil).new
+      release = Channel(Nil).new
+      first_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      second_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      first_store = Matter::Controller::StateStore.new(first_backend)
+      second_store = Matter::Controller::StateStore.new(second_backend)
+      first = first_store.load
+      second = second_store.load
+      first_backend.pause = true
+      second_backend.pause = true
+      first.unsecured_message_counter = 1_u32
+      second.unsecured_message_counter = 2_u32
+      finished = Channel(Exception?).new
+      spawn do
+        first_store.save(first)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      spawn do
+        second_store.save(second)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      2.times { ready.receive }
+      2.times { release.send(nil) }
+      results = Array.new(2) { finished.receive }
+      results.count(&.nil?).should eq(1)
+      unless results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") } == 1
+        raise "Unexpected competing-writer results: #{results.map { |result| result.try { |error| {error.class.name, error.message} } }}"
+      end
+      results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") }.should eq(1)
+      first_backend.close
+      second_backend.close
+      persisted = Matter::Controller::StateStore.new(Matter::Storage::Postgres.new(url))
+      persisted.load.unsecured_message_counter.in?(1_u32, 2_u32).should be_true
+      persisted.backend.destroy!
+    end
+
+    it "allows only one independent controller insert when both saw no row" do
+      Matter::Storage::Postgres.new(url).destroy!
+      ready = Channel(Nil).new
+      release = Channel(Nil).new
+      first_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      second_backend = PausedControllerPostgres.new(url, ready, release).tap(&.open)
+      first_store = Matter::Controller::StateStore.new(first_backend)
+      second_store = Matter::Controller::StateStore.new(second_backend)
+      first = Matter::Controller::State.new
+      second = Matter::Controller::State.new
+      first_backend.pause = true
+      second_backend.pause = true
+      first.unsecured_message_counter = 1_u32
+      second.unsecured_message_counter = 2_u32
+      finished = Channel(Exception?).new
+      spawn do
+        first_store.save(first)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      spawn do
+        second_store.save(second)
+        finished.send(nil)
+      rescue ex
+        finished.send(ex)
+      end
+      2.times { ready.receive }
+      2.times { release.send(nil) }
+      results = Array.new(2) { finished.receive }
+      results.count(&.nil?).should eq(1)
+      unless results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") } == 1
+        raise "Unexpected competing-insert results: #{results.map { |result| result.try { |error| {error.class.name, error.message} } }}"
+      end
+      results.count { |result| result.is_a?(Matter::StorageError) && result.message.to_s.includes?("changed since load") }.should eq(1)
+      first_backend.close
+      second_backend.close
+      Matter::Storage::Postgres.new(url).destroy!
+    end
+
     it "rejects a non-PostgreSQL connection URL" do
       expect_raises(Matter::StorageError, /postgres/) { Matter::Storage::Postgres.new("") }
       expect_raises(Matter::StorageError, /postgres/) { Matter::Storage::Postgres.new("sqlite3:///tmp/matter.db") }

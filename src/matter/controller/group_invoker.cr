@@ -31,27 +31,27 @@ module Matter
       def install_epoch_key(fabric_id : UInt64, root_public_key : Bytes,
                             group_id : UInt16, epoch_key : Bytes) : Nil
         raise Matter::ConfigurationError.new("Group ID zero is reserved") if group_id == DataType::GroupId::RESERVED.id
-        state = @store.load
-        fabric = state.fabrics.find do |entry|
-          entry.fabric_id == fabric_id && entry.root_public_key == root_public_key
-        end || raise Matter::ConfigurationError.new("Controller fabric is not installed")
-        compressed = Bytes.new(8)
-        IO::ByteFormat::BigEndian.encode(fabric.compressed_fabric_id, compressed)
-        operational_key = Session::GroupSecurePacket.derive_operational_key(epoch_key, compressed)
-        state.group_keys.reject! do |entry|
-          entry.fabric_id == fabric_id && entry.root_public_key == root_public_key && entry.group_id == group_id
+        @store.update do |state|
+          fabric = state.fabrics.find do |entry|
+            entry.fabric_id == fabric_id && entry.root_public_key == root_public_key
+          end || raise Matter::ConfigurationError.new("Controller fabric is not installed")
+          compressed = Bytes.new(8)
+          IO::ByteFormat::BigEndian.encode(fabric.compressed_fabric_id, compressed)
+          operational_key = Session::GroupSecurePacket.derive_operational_key(epoch_key, compressed)
+          state.group_keys.reject! do |entry|
+            entry.fabric_id == fabric_id && entry.root_public_key == root_public_key && entry.group_id == group_id
+          end
+          state.group_keys << GroupKeyInfo.new(fabric_id, root_public_key.dup, group_id, operational_key)
         end
-        state.group_keys << GroupKeyInfo.new(fabric_id, root_public_key.dup, group_id, operational_key)
-        @store.save(state)
       end
 
       def remove_group_key(fabric_id : UInt64, root_public_key : Bytes,
                            group_id : UInt16) : Nil
-        state = @store.load
-        state.group_keys.reject! do |entry|
-          entry.fabric_id == fabric_id && entry.root_public_key == root_public_key && entry.group_id == group_id
+        @store.update do |state|
+          state.group_keys.reject! do |entry|
+            entry.fabric_id == fabric_id && entry.root_public_key == root_public_key && entry.group_id == group_id
+          end
         end
-        @store.save(state)
       end
 
       def invoke(fabric_id : UInt64, group_id : UInt16, cluster_id : UInt32,

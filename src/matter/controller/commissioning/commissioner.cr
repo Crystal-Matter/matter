@@ -176,8 +176,10 @@ module Matter
             raise Matter::ConfigurationError.new("Cannot select an existing fabric while creating a new one")
           end
           fabric = new_fabric ? nil : (fabric_id ? state.fabric_for(fabric_id, root_public_key, controller_node_id) : state.fabric)
+          created_fabric = false
           unless fabric
             fabric = create_fabric(controller_node_id: state.commissioner_node_id)
+            created_fabric = true
             state.install_fabric(fabric)
           end
           if fabric.root_private_key.nil? && fabric.intermediate_private_key.nil? && @certificate_issuer.nil? && @hooks.nil?
@@ -189,7 +191,7 @@ module Matter
                fabric.controller_node_id).has_key?(node_id)
             raise Matter::CommissioningError.new("Controller already has a commissioned node with this Node ID")
           end
-          @store.save(state)
+          @store.update(&.install_fabric(fabric)) if created_fabric
 
           peer_addr = if peer
                         peer
@@ -367,10 +369,10 @@ module Matter
                 hooks.finalize_deferred_handoff(fabric, node_id, im, pase_session, peer_addr, handoff)
                 hooks.complete_acknowledged(fabric, node_id, peer_addr)
                 registrar.try(&.complete(fabric, node_id))
-                state = @store.load
-                state.complete_pending_handoff(fabric.fabric_id, fabric.root_public_key,
-                  fabric.controller_node_id, node_id, handoff.nonce)
-                @store.save(state)
+                @store.update do |current|
+                  current.complete_pending_handoff(fabric.fabric_id, fabric.root_public_key,
+                    fabric.controller_node_id, node_id, handoff.nonce)
+                end
                 hooks.after_deferred_handoff(fabric, node_id, peer_addr)
                 registrar.try(&.refresh(fabric, node_id))
                 return
@@ -415,12 +417,12 @@ module Matter
               hooks.complete_acknowledged(fabric, node_id, peer_addr)
             end
 
-            state = @store.load
-            state.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id,
-              address: OperationalPeerResolver.address_hint(peer_addr), port: peer_addr.port),
-              fabric.root_public_key, fabric.controller_node_id)
-            state.unsecured_message_counter = @client.transport.message_counter.counter
-            @store.save(state)
+            @store.update do |current|
+              current.record_node(fabric.fabric_id, NodeInfo.new(node_id: node_id,
+                address: OperationalPeerResolver.address_hint(peer_addr), port: peer_addr.port),
+                fabric.root_public_key, fabric.controller_node_id)
+              current.advance_unsecured_message_counter(@client.transport.message_counter.counter)
+            end
             if hooks = @hooks
               hooks.after_complete(fabric, node_id, im, case_session, peer_addr)
             end
@@ -444,12 +446,12 @@ module Matter
         def record_handoff_success(fabric_id : UInt64, root_public_key : Bytes,
                                    controller_node_id : UInt64, node_id : UInt64,
                                    nonce : String) : NodeInfo
-          state = @store.load
-          node = state.complete_pending_handoff(fabric_id, root_public_key,
-            controller_node_id, node_id, nonce)
-          @store.save(state)
+          node = @store.update do |current|
+            current.complete_pending_handoff(fabric_id, root_public_key,
+              controller_node_id, node_id, nonce)
+          end
           if registrar = @datastore_registrar
-            fabric = state.fabric_for(fabric_id, root_public_key, controller_node_id)
+            fabric = @store.load.fabric_for(fabric_id, root_public_key, controller_node_id)
             registrar.complete(fabric, node_id)
             registrar.refresh(fabric, node_id)
           end
@@ -518,10 +520,10 @@ module Matter
             fabric.fabric_id, fabric.root_public_key.dup, fabric.controller_node_id,
             node_id, OperationalPeerResolver.address_hint(peer), peer.port,
             window.expires_at_unix, @crypto.random_bytes(16).hexstring)
-          state = @store.load
-          state.add_pending_handoff(handoff)
-          state.unsecured_message_counter = @client.transport.message_counter.counter
-          @store.save(state)
+          @store.update do |current|
+            current.add_pending_handoff(handoff)
+            current.advance_unsecured_message_counter(@client.transport.message_counter.counter)
+          end
           {window, handoff}
         end
 

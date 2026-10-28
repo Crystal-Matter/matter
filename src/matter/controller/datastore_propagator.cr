@@ -47,13 +47,20 @@ module Matter
             unsecured_source_node_id: fabric.controller_node_id,
             initial_unsecured_message_counter: state.unsecured_message_counter
           )
+          delivered = false
           begin
             session = Pairing::CasePairing.new.pair(client, peer, fabric, peer_node_id: node_id, timeout: @timeout)
             DatastoreSynchronizer.new(ImClient.new(client, @timeout)).sync_node(store, node_id, session, peer)
-            state.record_node(fabric.fabric_id, NodeInfo.new(node_id, OperationalPeerResolver.address_hint(peer), peer.port), fabric.root_public_key, fabric.controller_node_id)
+            delivered = true
           ensure
-            state.unsecured_message_counter = client.transport.message_counter.counter
-            @state_store.save(state)
+            @state_store.update do |current|
+              if delivered
+                current.record_node(fabric.fabric_id,
+                  NodeInfo.new(node_id, OperationalPeerResolver.address_hint(peer), peer.port),
+                  fabric.root_public_key, fabric.controller_node_id)
+              end
+              current.advance_unsecured_message_counter(client.transport.message_counter.counter)
+            end
             client.close
           end
         end

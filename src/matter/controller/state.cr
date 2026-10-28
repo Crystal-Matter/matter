@@ -196,8 +196,15 @@ module Matter
       end
     end
 
-    struct State
+    class State
       include Storage::Record
+
+      # A loaded State carries an immutable snapshot for stale-write checks.
+      @[Storage::Field(ignore: true)]
+      property storage_snapshot : Storage::Document? = nil
+
+      @[Storage::Field(ignore: true)]
+      property? storage_loaded : Bool = false
 
       property fabric : FabricInfo?
       property nodes : Hash(UInt64, NodeInfo)
@@ -216,7 +223,28 @@ module Matter
 
       # Monotonic counter for unsecured (session_id=0) messages. This must not go
       # backwards across process restarts or peers may treat requests as stale.
-      property unsecured_message_counter : UInt32 = 0_u32
+      getter unsecured_message_counter : UInt32 = 0_u32
+      property? unsecured_counter_initialized : Bool = false
+
+      UNSECURED_COUNTER_HALF_RANGE = 1_u32 << 31
+
+      # Accept a counter from a client that may have started from an older
+      # snapshot. Serial arithmetic also handles a legitimate UInt32 wrap.
+      def advance_unsecured_message_counter(candidate : UInt32) : Nil
+        unless @unsecured_counter_initialized
+          self.unsecured_message_counter = candidate
+          return
+        end
+        distance = candidate &- @unsecured_message_counter
+        if distance > 0_u32 && distance < UNSECURED_COUNTER_HALF_RANGE
+          self.unsecured_message_counter = candidate
+        end
+      end
+
+      def unsecured_message_counter=(value : UInt32) : Nil
+        @unsecured_message_counter = value
+        @unsecured_counter_initialized = true
+      end
 
       def initialize(
         @fabric : FabricInfo? = nil,
@@ -228,7 +256,9 @@ module Matter
         @pending_handoffs : Array(PendingCommissioningHandoff) = [] of PendingCommissioningHandoff,
         @pending_datastore_nodes : Array(PendingDatastoreNode) = [] of PendingDatastoreNode,
         @group_keys : Array(GroupKeyInfo) = [] of GroupKeyInfo,
+        @unsecured_counter_initialized : Bool = false,
       )
+        @unsecured_counter_initialized = true unless @unsecured_message_counter == 0_u32
       end
 
       def fabrics : Array(FabricInfo)

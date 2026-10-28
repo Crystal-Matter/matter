@@ -420,12 +420,13 @@ module Matter
                      @anchor_fabric.controller_node_id).has_key?(@anchor_node_id)
               verify_handoff_baseline!
               verify_anchor!
-              state.record_node(@anchor_fabric.fabric_id,
-                NodeInfo.new(node_id: @anchor_node_id,
-                  address: OperationalPeerResolver.address_hint(@device_peer),
-                  port: @device_peer.port), @anchor_fabric.root_public_key,
-                @anchor_fabric.controller_node_id)
-              @store.save(state)
+              @store.update do |current|
+                current.record_node(@anchor_fabric.fabric_id,
+                  NodeInfo.new(node_id: @anchor_node_id,
+                    address: OperationalPeerResolver.address_hint(@device_peer),
+                    port: @device_peer.port), @anchor_fabric.root_public_key,
+                  @anchor_fabric.controller_node_id)
+              end
               return
             end
             verify_anchor!

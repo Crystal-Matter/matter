@@ -577,16 +577,21 @@ module Matter
             unless state.nodes_for(fabric.fabric_id, fabric.root_public_key,
                      fabric.controller_node_id).has_key?(pending.node_id)
               return false unless pending.completion_acknowledged?
-              if nonce = pending.handoff_nonce
-                state.recover_acknowledged_handoff(fabric.fabric_id, fabric.root_public_key,
-                  fabric.controller_node_id, pending.node_id, nonce)
-              else
-                address = pending.peer_address || raise Matter::CommissioningError.new("Acknowledged registration has no peer address")
-                port = pending.peer_port || raise Matter::CommissioningError.new("Acknowledged registration has no peer port")
-                state.record_node(fabric.fabric_id, NodeInfo.new(node_id: pending.node_id,
-                  address: address, port: port), fabric.root_public_key, fabric.controller_node_id)
+              state = @store.update do |current|
+                unless current.nodes_for(fabric.fabric_id, fabric.root_public_key,
+                         fabric.controller_node_id).has_key?(pending.node_id)
+                  if nonce = pending.handoff_nonce
+                    current.recover_acknowledged_handoff(fabric.fabric_id, fabric.root_public_key,
+                      fabric.controller_node_id, pending.node_id, nonce)
+                  else
+                    address = pending.peer_address || raise Matter::CommissioningError.new("Acknowledged registration has no peer address")
+                    port = pending.peer_port || raise Matter::CommissioningError.new("Acknowledged registration has no peer port")
+                    current.record_node(fabric.fabric_id, NodeInfo.new(node_id: pending.node_id,
+                      address: address, port: port), fabric.root_public_key, fabric.controller_node_id)
+                  end
+                end
+                current
               end
-              @store.save(state)
             end
           end
           recovered = @hooks.resume_pending(state)

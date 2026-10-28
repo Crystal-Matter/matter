@@ -482,17 +482,43 @@ Controller::GroupInvoker       fabric-scoped one-way group Invoke with durable c
 Controller::StateStore         the fabric, its certificates and known nodes, over Storage::Backend
 ```
 
-`StateStore` removes a controller fabric and its CASE resumption and ICD
-Check-In records in one backend transaction. On load it removes credentials
-orphaned by older, partially completed removals. A Joint Fabric Administrator
-can share a backend between its controller and device roles; device CASE
-resumptions are preserved while the device FabricTable still owns their full
-fabric and local Node ID. New CASE records store their initiator or responder
+`StateStore` removes a controller fabric and its initiator CASE resumption and
+ICD Check-In records in one backend transaction. On load it removes initiator
+credentials orphaned by older, partially completed removals. A Joint Fabric
+Administrator can share a backend between its controller and device roles;
+controller cleanup always preserves responder and roleless CASE records because
+the device writer does not share the controller-state transaction guard. Device
+cleanup owns those records. New CASE records store their initiator or responder
 role, which also separates lookups when both roles use the same fabric and
-local Node ID. Older CASE records do not identify their role, so either role
-falls back to full CASE. A legacy record matching both roles remains until
-neither role owns that identity. Undecodable credential documents are retained
-and logged so a damaged record cannot block controller state recovery.
+local Node ID. Older CASE records do not identify their role and fall back to
+full CASE; retaining an old ambiguous record can leave an unused secret until
+device cleanup. Undecodable credential documents are retained and logged so a
+damaged record cannot block controller state recovery.
+
+Each loaded controller `State` remembers the exact document it read. A later
+`save` rejects that state if another writer has changed the document, avoiding
+silent loss of Datastore registrations, nodes, or counters. Use `StateStore#update`
+for short read-modify-write operations; it runs them in one backend transaction.
+The update block receives a mutable `State` reference, and the store saves
+that same object after the block, including scalar and nested changes.
+When a controller-state row exists, load conditionally writes that row before
+cleaning up orphaned controller credentials. The row stays locked through
+cleanup on SQL; if a concurrent controller writer wins first, load rolls back
+cleanup and retries from a fresh document. Loading an empty store leaves it
+unchanged and defers orphan cleanup until a guarded save.
+Network requests must finish before the update block, which reads fresh state.
+An update advancing the unsecured message counter uses serial arithmetic so a
+slower client cannot move the durable counter backward, including at UInt32
+wraparound. A persisted initialization marker accepts the first random
+counter even when it starts above the serial half-range; old documents without
+the marker are treated as initialized to reject stale counters after a possible
+wrap to zero. A value saved once from a loaded snapshot must be reloaded before
+another save; freshly constructed `State` values remain an explicit full-state
+replacement path for bootstrap and recovery callers.
+SQL storage uses a conditional row update (or insert if absent) so independent
+SQLite/PostgreSQL adapters cannot both commit a stale state document. File
+backends serialize through their own in-process backend instance; independent
+processes writing the same file path are outside that guarantee.
 
 `examples/chip-tool.cr` is the worked example; see [../README.md](../README.md#controller) for the
 short version.
