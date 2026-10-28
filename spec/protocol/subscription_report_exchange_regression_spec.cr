@@ -55,6 +55,7 @@ describe "Subscription report exchange regression" do
       local_node_id: Matter::DataType::NodeId.new(0x1111_u64),
       case_session: true, fabric_index: 1_u8)
     session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
+    Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
     subscription = Matter::Protocol::ActiveSubscription.new(
       subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
       peer: Socket::IPAddress.new("127.0.0.1", 5540), session: session,
@@ -86,6 +87,7 @@ describe "Subscription report exchange regression" do
     session = Matter::Spec::ProtocolMessages.case_session(21_u16)
     session.peer_subject_ids = [session.peer_node_id.as(Matter::DataType::NodeId).id]
     handler.sessions[session.session_id] = session
+    Matter::Spec::ProtocolMessages.grant_case_access(handler.node.clusters, session)
     subscription = Matter::Protocol::ActiveSubscription.new(
       subscription_id: 3_u32, min_interval: 0_u16, max_interval: 60_u16,
       peer: Socket::IPAddress.new("127.0.0.1", 5540), session: session,
