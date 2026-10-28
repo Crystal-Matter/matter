@@ -43,6 +43,10 @@ module Matter
         property? commissioning_acknowledged : Bool = false
         property fail_safe_deadline_unix : Int64? = nil
         property fail_safe_max_seconds : UInt16? = nil
+        property attempt_id : String = ""
+        property previous_attempt_id : String = ""
+        property stage_version : UInt64 = 0_u64
+        property? legacy_registration_order : Bool = false
 
         def initialize(@old_fabric_id : UInt64, @anchor_fabric_id : UInt64,
                        @old_node_id : UInt64, @anchor_node_id : UInt64,
@@ -50,7 +54,9 @@ module Matter
                        @stage : Stage = Stage::Ready,
                        @commissioning_acknowledged : Bool = false,
                        @fail_safe_deadline_unix : Int64? = nil,
-                       @fail_safe_max_seconds : UInt16? = nil)
+                       @fail_safe_max_seconds : UInt16? = nil,
+                       @attempt_id : String = Random::Secure.random_bytes(16).hexstring,
+                       @previous_attempt_id : String = "")
         end
       end
 
@@ -64,7 +70,36 @@ module Matter
 
         def save(journal : Journal) : Nil
           @backend.open unless @backend.open?
-          @backend.write(COLLECTION, document_id(journal), journal.to_document)
+          @backend.transaction do
+            current_document = @backend.read(COLLECTION, document_id(journal))
+            updated = journal
+            if current_document
+              current = Journal.from_document(current_document)
+              rotation = current.attempt_id != journal.attempt_id &&
+                         current.stage.commissioning_anchor? && journal.stage.ready? &&
+                         journal.previous_attempt_id == current.attempt_id
+              if current.attempt_id != journal.attempt_id && !rotation
+                raise Matter::StorageError.new("Migration journal attempt changed since load")
+              end
+              if current.stage == journal.stage
+                if rotation || journal.stage_version != current.stage_version
+                  raise Matter::StorageError.new("Migration journal stage changed since load")
+                end
+              elsif journal.stage_version != current.stage_version + 1_u64
+                raise Matter::StorageError.new("Migration journal stage changed since load")
+              end
+              updated.commissioning_acknowledged = current.commissioning_acknowledged? || journal.commissioning_acknowledged?
+              if current_deadline = current.fail_safe_deadline_unix
+                if !journal.fail_safe_deadline_unix || current_deadline >= journal.fail_safe_deadline_unix.as(Int64)
+                  updated.fail_safe_deadline_unix = current_deadline
+                  updated.fail_safe_max_seconds = current.fail_safe_max_seconds
+                end
+              end
+            end
+            unless @backend.compare_and_swap(COLLECTION, document_id(journal), current_document, updated.to_document)
+              raise Matter::StorageError.new("Migration journal changed since load")
+            end
+          end
         end
 
         def load(old_fabric_id : UInt64, old_root_public_key : Bytes,
@@ -73,7 +108,21 @@ module Matter
           @backend.open unless @backend.open?
           id = identity_key(old_fabric_id, old_root_public_key, old_node_id,
             anchor_fabric_id, anchor_root_public_key, anchor_node_id)
-          @backend.read(COLLECTION, id).try { |document| Journal.from_document(document) }
+          result = nil.as(Journal?)
+          @backend.transaction do
+            document = @backend.read(COLLECTION, id)
+            next unless document
+            journal = Journal.from_document(document)
+            if journal.attempt_id.empty? || !document.has_key?("stage_version")
+              journal.attempt_id = Random::Secure.random_bytes(16).hexstring if journal.attempt_id.empty?
+              journal.legacy_registration_order = true unless document.has_key?("stage_version")
+              unless @backend.compare_and_swap(COLLECTION, id, document, journal.to_document)
+                raise Matter::StorageError.new("Legacy migration journal claim changed since load")
+              end
+            end
+            result = journal
+          end
+          result
         end
 
         private def document_id(journal : Journal) : String
@@ -98,6 +147,10 @@ module Matter
         abstract def remove_old_node! : Nil
         abstract def verify_postcondition!(stage : Stage) : Nil
         abstract def verify_no_effect!(stage : Stage) : Nil
+
+        def cleanup_failed_anchor_registration! : Nil
+        end
+
         abstract def rollback_anchor!(anchor_registered : Bool) : Nil
         abstract def resume_rollback! : Nil
         abstract def finalize_rollback! : Nil
@@ -201,12 +254,24 @@ module Matter
           deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
           hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
             @crypto, -> { persist_commissioning_ack! }, deadline_callback)
+          registrar = datastore_registrar
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
-            @crypto, hooks: hooks, attestation_verifier: @attestation_verifier)
+            @crypto, hooks: hooks, attestation_verifier: @attestation_verifier,
+            datastore_registrar: registrar, start_datastore_retry: false)
           commissioner.pairing_code(@anchor_node_id, window.manual_pairing_code,
             peer: @device_peer, fabric_id: @anchor_fabric.fabric_id,
             root_public_key: @anchor_fabric.root_public_key,
-            controller_node_id: @anchor_fabric.controller_node_id)
+            controller_node_id: @anchor_fabric.controller_node_id,
+            friendly_name: @friendly_name)
+        end
+
+        private def datastore_registrar : DatastoreNodeRegistrar
+          delivery = DatastoreNodeRegistrar::NetworkDelivery.new(@store, @client,
+            @anchor_datastore_node_id, @anchor_datastore_endpoint, @timeout,
+            @crypto, @anchor_datastore_peer)
+          attempt_id = @journal.try(&.attempt_id) ||
+                       raise Matter::ConfigurationError.new("Migration journal is required for Datastore registration")
+          DatastoreNodeRegistrar.new(@store, delivery, attempt_id, @anchor_node_id)
         end
 
         private def verify_anchor_material! : Nil
@@ -259,21 +324,28 @@ module Matter
         def add_anchor_node! : Nil
           session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
           im = ImClient.new(@client, @timeout)
-          request = Cluster::JointFabricDatastore::AddPendingNodeRequest.new(@anchor_node_id, @friendly_name)
-          response = im.invoke(session, @anchor_datastore_peer, @anchor_datastore_endpoint,
-            Cluster::JointFabricDatastore::CLUSTER_ID,
-            Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE, request.to_slice)
-          assert_status_success!(response, "AddPendingNode")
-          wait_anchor_node_committed!(im, session)
+          entry = datastore_nodes(im, session, @anchor_datastore_peer,
+            @anchor_datastore_endpoint).find(&.node_id.==(@anchor_node_id)) ||
+                  stage_legacy_anchor_registration!
+          unless entry.friendly_name == @friendly_name
+            raise Matter::AuthenticationError.new("Anchor Datastore migrated node identity changed")
+          end
+          refresh_anchor_registration! unless entry.commissioning_status_entry.state.committed?
+          # Refresh already waits for Committed using its own CASE session.
+          # Reusing this earlier session after refresh can target a superseded
+          # session and lose the ReadResponse.
+          confirm_legacy_registration_if_committed!
           @anchor_registration_committed.try(&.call)
         end
 
         def refresh_anchor_registration! : Nil
           verify_anchor!
           require_old_fabric_present!
-          entry = anchor_node_entry ||
-                  raise Matter::CommissioningError.new("Anchor Datastore has no pending migrated node to refresh")
-          return if entry.commissioning_status_entry.state.committed?
+          entry = anchor_node_entry || stage_legacy_anchor_registration!
+          if entry.commissioning_status_entry.state.committed?
+            confirm_legacy_registration_if_committed!
+            return
+          end
           session = case_session(@anchor_fabric, @anchor_datastore_node_id, @anchor_datastore_peer)
           im = ImClient.new(@client, @timeout)
           response = im.invoke(session, @anchor_datastore_peer, @anchor_datastore_endpoint,
@@ -282,6 +354,61 @@ module Matter
             Cluster::JointFabricDatastore::RefreshNodeRequest.new(@anchor_node_id).to_slice)
           assert_status_success!(response, "RefreshNode")
           wait_anchor_node_committed!(im, session)
+          confirm_legacy_registration_if_committed!
+        end
+
+        private def stage_legacy_anchor_registration! : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct
+          unless @journal.try(&.legacy_registration_order?)
+            raise Matter::CommissioningError.new("Anchor Datastore has no staged migrated node")
+          end
+          verify_anchor!
+          require_old_fabric_present!
+          verify_handoff_baseline!
+          datastore_registrar.add_pending(@anchor_fabric, @anchor_node_id, @friendly_name,
+            peer: @device_peer, allow_commissioned: true)
+          anchor_node_entry ||
+            raise Matter::CommissioningError.new("Legacy Anchor registration is absent after AddPendingNode")
+        end
+
+        private def confirm_legacy_registration_if_committed! : Nil
+          return unless @journal.try(&.legacy_registration_order?)
+          pending = @store.load.pending_datastore_nodes.find do |item|
+            item.fabric_id == @anchor_fabric.fabric_id &&
+              item.root_public_key == @anchor_fabric.root_public_key &&
+              item.controller_node_id == @anchor_fabric.controller_node_id &&
+              item.node_id == @anchor_node_id
+          end
+          return unless pending
+          unless owned_pending_registration?
+            raise Matter::CommissioningError.new("Legacy Anchor registration belongs to another attempt")
+          end
+          datastore_registrar.confirm_remote_committed(@anchor_fabric, @anchor_node_id)
+        end
+
+        def cleanup_failed_anchor_registration! : Nil
+          pending = @store.load.pending_datastore_nodes.find do |item|
+            item.fabric_id == @anchor_fabric.fabric_id &&
+              item.root_public_key == @anchor_fabric.root_public_key &&
+              item.controller_node_id == @anchor_fabric.controller_node_id &&
+              item.node_id == @anchor_node_id
+          end
+          return unless pending
+          claim_legacy_anchor_registration!(pending)
+          pending = @store.load.pending_datastore_nodes.find do |item|
+            item.fabric_id == @anchor_fabric.fabric_id &&
+              item.root_public_key == @anchor_fabric.root_public_key &&
+              item.controller_node_id == @anchor_fabric.controller_node_id &&
+              item.node_id == @anchor_node_id
+          end || raise Matter::CommissioningError.new("Staged Anchor registration disappeared during claim")
+          unless owned_pending_registration?(pending)
+            raise Matter::CommissioningError.new("Staged Anchor registration belongs to another attempt")
+          end
+          registrar = datastore_registrar
+          if pending.stage.removing?
+            registrar.reconcile_removal(@anchor_fabric, @anchor_node_id)
+          else
+            registrar.abort(@anchor_fabric, @anchor_node_id, confirmed_failure: true, allow_committed: true)
+          end
         end
 
         private def wait_anchor_node_committed!(im : ImClient,
@@ -427,9 +554,11 @@ module Matter
                     port: @device_peer.port), @anchor_fabric.root_public_key,
                   @anchor_fabric.controller_node_id)
               end
+              resume_pending_datastore_registration!
               return
             end
             verify_anchor!
+            resume_pending_datastore_registration!
           when Stage::AnchorVerified
             verify_anchor!
           when Stage::AnchorNodeAdded
@@ -488,16 +617,21 @@ module Matter
             if anchor_fabric_present_over_old_case?
               raise Matter::CommissioningError.new("Anchor fabric is present on the device")
             end
-            if anchor_node_entry
-              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            if anchor_entry = anchor_node_entry
+              unless anchor_entry.friendly_name == @friendly_name && owned_pending_registration?
+                raise Matter::CommissioningError.new("Anchor Datastore contains an unrelated migrated node")
+              end
             end
           when Stage::VerifyingAnchor
             verify_postcondition!(Stage::AnchorCommissioned)
           when Stage::AddingAnchorNode
             verify_anchor!
             require_old_fabric_present!
-            if anchor_node_entry
-              raise Matter::CommissioningError.new("Anchor Datastore already contains the migrated node")
+            anchor_entry = anchor_node_entry ||
+                           raise Matter::CommissioningError.new("Staged Anchor Datastore node is missing")
+            unless anchor_entry.friendly_name == @friendly_name &&
+                   anchor_entry.commissioning_status_entry.state.pending?
+              raise Matter::CommissioningError.new("Anchor Datastore registration already changed")
             end
           when Stage::RemovingOldFabric
             verify_postcondition!(Stage::AnchorNodeAdded)
@@ -553,9 +687,69 @@ module Matter
           unless entry && entry.commissioning_status_entry.state.committed?
             raise Matter::CommissioningError.new("Fabric B Datastore no longer owns the committed device node")
           end
-          if anchor_node_entry
-            raise Matter::CommissioningError.new("Anchor Datastore already contains the device before registration")
+          if anchor_entry = anchor_node_entry
+            unless anchor_entry.friendly_name == @friendly_name && owned_pending_registration?
+              raise Matter::CommissioningError.new("Anchor Datastore contains an unrelated device registration")
+            end
           end
+        end
+
+        private def owned_pending_registration? : Bool
+          item = @store.load.pending_datastore_nodes.find do |entry|
+            entry.node_id == @anchor_node_id &&
+              entry.fabric_id == @anchor_fabric.fabric_id &&
+              entry.root_public_key == @anchor_fabric.root_public_key &&
+              entry.controller_node_id == @anchor_fabric.controller_node_id
+          end
+          return false unless item
+          if item.attempt_id.empty?
+            claim_legacy_anchor_registration!(item)
+            item = @store.load.pending_datastore_nodes.find do |entry|
+              entry.node_id == @anchor_node_id &&
+                entry.fabric_id == @anchor_fabric.fabric_id &&
+                entry.root_public_key == @anchor_fabric.root_public_key &&
+                entry.controller_node_id == @anchor_fabric.controller_node_id
+            end || return false
+          end
+          owned_pending_registration?(item)
+        end
+
+        private def claim_legacy_anchor_registration!(item : PendingDatastoreNode) : Nil
+          return unless item.attempt_id.empty?
+          unless item.fabric_id == @anchor_fabric.fabric_id &&
+                 item.root_public_key == @anchor_fabric.root_public_key &&
+                 item.controller_node_id == @anchor_fabric.controller_node_id &&
+                 item.node_id == @anchor_node_id &&
+                 item.friendly_name == @friendly_name &&
+                 item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
+                 item.peer_port == @device_peer.port
+            raise Matter::CommissioningError.new("Legacy Anchor registration identity changed")
+          end
+          datastore_registrar.claim_legacy(@anchor_fabric, @anchor_node_id,
+            @friendly_name, item.peer_address, item.peer_port)
+        end
+
+        private def resume_pending_datastore_registration! : Nil
+          if item = @store.load.pending_datastore_nodes.find do |entry|
+               entry.fabric_id == @anchor_fabric.fabric_id &&
+               entry.root_public_key == @anchor_fabric.root_public_key &&
+               entry.controller_node_id == @anchor_fabric.controller_node_id &&
+               entry.node_id == @anchor_node_id
+             end
+            claim_legacy_anchor_registration!(item)
+          end
+          datastore_registrar.resume(@anchor_fabric)
+        end
+
+        private def owned_pending_registration?(item : PendingDatastoreNode) : Bool
+          item.fabric_id == @anchor_fabric.fabric_id &&
+            item.root_public_key == @anchor_fabric.root_public_key &&
+            item.controller_node_id == @anchor_fabric.controller_node_id &&
+            item.node_id == @anchor_node_id &&
+            item.friendly_name == @friendly_name &&
+            item.attempt_id == (@journal.try(&.attempt_id) || "") &&
+            item.peer_address == OperationalPeerResolver.address_hint(@device_peer) &&
+            item.peer_port == @device_peer.port
         end
 
         private def anchor_node_entry : Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct?
@@ -944,16 +1138,26 @@ module Matter
                        raise Matter::ConfigurationError.new("Migration is not awaiting a command outcome")
                      end
           @port.verify_no_effect!(@journal.stage)
+          @port.cleanup_failed_anchor_registration! if @journal.stage.commissioning_anchor?
           advance(previous)
         end
 
         private def advance(stage : Stage) : Nil
           @port.finalize_migration! if stage.complete?
           @port.finalize_rollback! if stage.rolled_back?
+          previous_stage = @journal.stage
           updated = @journal
           updated.stage = stage
+          updated.stage_version += 1_u64
+          updated.legacy_registration_order = false if previous_stage.ready? && stage.commissioning_anchor?
+          if previous_stage.commissioning_anchor? && stage.ready?
+            updated.previous_attempt_id = updated.attempt_id
+            updated.attempt_id = Random::Secure.random_bytes(16).hexstring
+            updated.legacy_registration_order = false
+          end
           @save.call(updated)
           @journal = updated
+          @port.validate_journal!(updated)
         end
       end
     end
