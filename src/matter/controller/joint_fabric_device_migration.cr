@@ -331,7 +331,9 @@ module Matter
             raise Matter::AuthenticationError.new("Anchor Datastore migrated node identity changed")
           end
           refresh_anchor_registration! unless entry.commissioning_status_entry.state.committed?
-          wait_anchor_node_committed!(im, session)
+          # Refresh already waits for Committed using its own CASE session.
+          # Reusing this earlier session after refresh can target a superseded
+          # session and lose the ReadResponse.
           confirm_legacy_registration_if_committed!
           @anchor_registration_committed.try(&.call)
         end
