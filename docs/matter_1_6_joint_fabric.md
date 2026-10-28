@@ -543,6 +543,11 @@ blocked removal for operator reconciliation.
   B's JFA credentials and endpoint available. The
   Docker two-JFA test migrates a real switch from B201 to A201 and verifies A
   CASE, absence of the B fabric, and NodeList movement in both Datastores.
+  Before that handoff, the fixture interrupts after B durably saves the
+  device's cumulative fail-safe bound but before AddNOC or AddPendingNode.
+  It restarts B and the device, verifies B remains the sole owner, checks that
+  an ordinary retry cannot commission A, and uses authenticated no-effect
+  reconciliation after the full recovery interval before retrying successfully.
   The fixture also injects an interruption after the switch commits
   CommissioningComplete but before B durably records acknowledgement. It
   restarts B and checks that recovery waits the advertised cumulative fail-safe
