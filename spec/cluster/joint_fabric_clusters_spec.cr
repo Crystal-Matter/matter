@@ -176,6 +176,30 @@ describe Matter::Cluster::JointFabricDatastore do
       .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
   end
 
+  it "reserves future Joint Fabric CAT identifiers in AddGroup and UpdateGroup" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    view = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
+    constraint = Matter::InteractionModel::StatusCode::ConstraintError
+
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Valid", nil, 0xEFFE_u16, 1_u16, view))
+      .success?.should be_true
+    before = cluster.save_state
+    version = cluster.data_version
+    [0xF000_u16, 0xFFFD_u16].each do |cat|
+      cluster.add_group(Datastore::AddGroupRequest.new(11_u16, "Reserved", nil, cat, 1_u16, view))
+        .status.should eq(constraint)
+      cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, cat, nil, nil))
+        .status.should eq(constraint)
+      cluster.save_state.should eq(before)
+      cluster.data_version.should eq(version)
+    end
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, nil, 0xEFFF_u16, nil, nil))
+      .success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(11_u16, "Boundary", nil, 0xEFFF_u16, 1_u16, view))
+      .success?.should be_true
+  end
+
   it "accepts an unprovisioned but valid group key set reference as TC_JFDS_2_3 does" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::View
