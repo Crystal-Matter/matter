@@ -8,6 +8,8 @@ private alias JfaRollout = Matter::Controller::IpkRollout
 MIGRATION_RECOVERY_MIN_WAIT       = 120.seconds
 MIGRATION_REMOVE_FABRIC_DROP_PATH = File.join(E2E::LOG_DIR,
   "matter_joint_fabric_migration_target.remove_fabric_response")
+MIGRATION_COMPLETION_DROP_PATH = File.join(E2E::LOG_DIR,
+  "matter_joint_fabric_migration_target.commissioning_complete_response")
 ROLLBACK_ANCHOR_NODE_ID = 0xA202_u64
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
@@ -1122,18 +1124,22 @@ describe "three provisioned Joint Fabric Administrators" do
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
       .any?(&.node_id.==(ROLLBACK_ANCHOR_NODE_ID)).should be_false
 
-    # The target commits A's fabric, but B loses the result before recording
-    # durable acknowledgement or a local node record. Recovery must observe
-    # the full advertised fail-safe bound before trusting that fabric.
+    # The real target commits A's fabric and encodes CommissioningComplete's
+    # InvokeResponse, then drops that packet before UDP enqueue or MRP replay.
+    # B cannot record an acknowledgement or a local node until it observes
+    # the target after a restart and the full fail-safe recovery interval.
+    File.delete?("#{MIGRATION_COMPLETION_DROP_PATH}.count")
+    File.delete?("#{MIGRATION_COMPLETION_DROP_PATH}.dropped")
+    File.write("#{MIGRATION_COMPLETION_DROP_PATH}.armed", "1")
     interrupted_migration = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         nonce: Random::Secure.hex(8), anchor_node_id: 0xA201_u64,
-        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
-        interrupt_after_migration_complete_before_ack: true))
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     interrupted_migration.status.should eq("error")
-    interrupted_migration.error.to_s.should contain("Injected interruption after device CommissioningComplete")
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.dropped").should eq("1")
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
 
     provisional_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
       migration_peer, anchor_bootstrap.fabric,
@@ -1146,17 +1152,37 @@ describe "three provisioned Joint Fabric Administrators" do
     provisional_fabrics_data = provisional_fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     provisional_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(provisional_fabrics_data.to_slice)
-    provisional_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
-    provisional_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_true
+    provisional_fabrics.size.should eq(2)
+    provisional_fabrics.any? do |fabric|
+      fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+        fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+        fabric.node_id == 0xA201_u64
+    end.should be_true
+    provisional_fabrics.any? do |fabric|
+      fabric.fabric_id == joiner_bootstrap.fabric.fabric_id &&
+        fabric.root_public_key == joiner_bootstrap.fabric.root_public_key &&
+        fabric.node_id == 0xB201_u64
+    end.should be_true
     # AddPendingNode precedes CommissioningComplete. A lost completion
     # acknowledgement leaves the target on A but must not leave it unlisted.
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
       .any?(&.node_id.==(0xA201_u64)).should be_true
+    jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16)
+      .any?(&.node_id.==(0xB201_u64)).should be_true
 
     joiner.restart!
     b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       joiner_peer, joiner_bootstrap.fabric,
       peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    lost_completion_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: 0xA201_u64))
+    lost_completion_stage.status.should eq("ok"), lost_completion_stage.error.to_s
+    lost_completion_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor.value)
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
     recovery_started = Time.instant
     interrupted_registration = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", 0xB201_u64,
@@ -1168,6 +1194,7 @@ describe "three provisioned Joint Fabric Administrators" do
     interrupted_registration.status.should eq("error")
     interrupted_registration.error.to_s.should contain("Injected interruption after Anchor NodeList committed")
     (Time.instant - recovery_started).should be >= MIGRATION_RECOVERY_MIN_WAIT
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16).any? do |entry|
       entry.node_id == 0xA201_u64 && entry.commissioning_status_entry.state.committed?
     end.should be_true
@@ -1381,8 +1408,14 @@ describe "three provisioned Joint Fabric Administrators" do
     fabrics_data = fabrics_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
     target_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor).from_tlv(fabrics_data.to_slice)
-    target_fabrics.any? { |fabric| fabric.fabric_id == anchor_bootstrap.fabric.fabric_id }.should be_true
+    target_fabrics.size.should eq(1)
+    target_fabrics.any? do |fabric|
+      fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+        fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+        fabric.node_id == 0xA201_u64
+    end.should be_true
     target_fabrics.any? { |fabric| fabric.fabric_id == joiner_bootstrap.fabric.fabric_id }.should be_false
+    File.read("#{MIGRATION_COMPLETION_DROP_PATH}.count").should eq("1")
     a_nodes_report = anchor_im.read_attribute(session: anchor_session, peer: anchor_peer,
       endpoint_id: 1_u16, cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
       attribute_id: Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST)
