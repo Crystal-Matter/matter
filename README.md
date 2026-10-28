@@ -1272,6 +1272,18 @@ CommissioningComplete response is cleaned up automatically.
 `datastore_registrar:` option and uses the Administrator name as the node's
 friendly name.
 
+To remove a committed Joint Fabric node, use the separate durable
+`JointFabricNodeRemoval` workflow. Its network port authenticates the Anchor
+and target, saves the target NOC, removes direct Node ID grants on other nodes,
+and waits until the Datastore reports their delivery before `RemoveNode`.
+Persist the journal on the controller backend before calling `run`. If a
+`RemoveNode` response is lost, reopen the same journal and call
+`reconcile_removed!` after an authenticated NodeList read; `run` never replays
+an uncertain removal. Group CAT controllers require an effective
+`SharedFabric::JointGroupRevocation` receipt. See the
+[Joint Fabric status](docs/matter_1_6_joint_fabric.md) for the supported
+removal cases and blocked cases.
+
 Grant each controller access to the new device with `SharedFabric.grant_admin`
 over the commissioning controller's CASE session. The ACL has a minimum of
 four entries per fabric; large controller groups need an ACL strategy that

@@ -8,6 +8,30 @@ item below as covered only to the extent of its cited tests.
 
 ## Available building blocks
 
+`Controller::JointFabricNodeRemoval` implements the committed ordinary-node
+subset of Core §11.24.4.2. `NetworkPort#initial_journal` authenticates the
+target over CASE and pins its current NOC. Persist that journal with
+`JournalStore#load_or_create` on the controller's durable backend, then call
+`Workflow#run`. After restart, call `JournalStore#load` before trying to reach
+the target, since a completed removal makes its NOC unreadable. The workflow
+sends `RemoveACLFromNode` for direct Node ID grants
+on other nodes, waits until those entries disappear from the Anchor Datastore
+after delivery, and only then sends `RemoveNode`. A lost response leaves the
+durable journal at `Removing`; after restart, call `reconcile_removed!` to
+advance only if an authenticated Anchor NodeList read proves the node absent.
+The workflow never automatically repeats an uncertain `RemoveNode`.
+
+CAT-bearing controller targets require an `Effective` receipt from
+`SharedFabric.stage_joint_group_revocation` for every CAT authenticated in the
+target's current CASE session. The receipt is saved in the removal journal and
+rechecked against the Anchor before each removal step. This path rejects
+Administrator nodes, targets with group membership, key sets or bindings, and
+wildcard or shared ACL grants. A host must address any unsupported grants
+and ensure the target remains reachable before starting this workflow. If the
+Datastore is unavailable or the target identity changes, removal stops without
+deleting its NodeList entry. The host must retain journals and present a
+blocked removal for operator reconciliation.
+
 - Controller state stores multiple fabrics and scopes known nodes to a fabric.
   Commissioning and chip-tool selection accept explicit fabric identity.
 - Device AddNOC and UpdateNOC bind the issued NOC to the CSR public key. CASE

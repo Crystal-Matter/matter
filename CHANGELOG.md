@@ -28,6 +28,17 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AnchorDatastoreSubscription.new` now requires `counter_store:`. Pass the
   StateStore that owns the installed controller fabric and its counter lease.
 
+### Joint Fabric committed node removal
+
+- Add a durable, opt-in removal workflow for a committed ordinary Joint Fabric
+  node. It removes direct Node ID ACL grants on other nodes and waits for their
+  delivery before issuing Datastore RemoveNode. A lost RemoveNode response is
+  reconciled by an authenticated NodeList read without replaying the command.
+- A CAT-bearing controller requires a saved group revocation receipt that is
+  `Effective` for each authenticated CASE CAT before removal can proceed.
+  Administrator nodes, group or binding membership, wildcard or shared direct
+  ACLs, and an unreachable target remain blocked for separate cleanup.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the
