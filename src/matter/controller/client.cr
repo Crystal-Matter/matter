@@ -42,8 +42,6 @@ module Matter
       getter transport : Transport::PacketTransport
       getter crypto : Crypto::CryptoBase
 
-      # Constructor cleanup uses a rescue clause; initialize this before it can run.
-      @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new
       @sessions = {} of UInt16 => Session::SecureContext
       @ack_packets = {} of {UInt16, UInt32} => Bytes
       @inbox : Channel(ReceivedMessage)
@@ -76,7 +74,6 @@ module Matter
         tcp_enabled : Bool = false,
         @session_id_in_use : Proc(UInt16, Bool)? = nil,
       )
-        created_transport : Transport::PacketTransport? = nil
         if unsecured_source_node_id && !counter_lease
           raise Matter::ConfigurationError.new("A fixed unsecured source Node ID requires a StateStore counter lease")
         end
@@ -98,61 +95,11 @@ module Matter
           raise Matter::ConfigurationError.new("Shared message counter requires a fixed-source UDP Client and counter lease")
         end
         @owns_transport = transport.nil?
-        if lease = counter_lease
-          key = lease.ownership_key
-          supplied_counter = transport.try(&.message_counter) || shared_message_counter
-          @@shared_registry_mutex.synchronize do
-            if existing = @@active_fixed_sources[key]?
-              counter, count = existing
-              unless supplied_counter && counter.same?(supplied_counter)
-                raise Matter::ConfigurationError.new("A Client already owns this fixed source Node ID with another counter")
-              end
-              @@active_fixed_sources[key] = {counter, count + 1}
-            else
-              @@active_fixed_sources[key] = {supplied_counter, 1}
-            end
-          end
-          @fixed_source_ownership_key = key
-        end
-        reserved = @owns_transport && !shared_message_counter ? counter_lease.try(&.reserve) : nil
         @transport = transport || (tcp_enabled ? Transport::TcpEnabledTransport.new(port: port) : Transport::UDPTransport.new(port: port, shared_message_counter: shared_message_counter))
-        created_transport = @transport if @owns_transport
-        if key = @fixed_source_ownership_key
-          @@shared_registry_mutex.synchronize do
-            _, count = @@active_fixed_sources[key]
-            @@active_fixed_sources[key] = {@transport.message_counter, count}
-          end
-        end
         @transport_observer_id = nil
         @tcp_disconnect_observer_id = nil
         @owned_unsecured_exchanges = Set(Tuple(UInt16, Socket::IPAddress)).new
-        @unsecured_source_node_id = if lease = counter_lease
-                                      DataType::NodeId.new(lease.source_node_id)
-                                    else
-                                      DataType::NodeId.random_operational
-                                    end
-
-        # Avoid re-using old unsecured message IDs across process restarts: peers may
-        # keep a dedupe window for unsecured traffic (session_id=0), which can cause
-        # commissioning/CASE handshakes to be ignored as duplicates/stale.
-        if @owns_transport
-          if range = reserved
-            lease = counter_lease.not_nil!
-            refill = lease.renewable? ? -> { lease.reserve } : nil
-            @transport.message_counter.bind_lease(lease.store.backend, range[0], range[1], refill,
-              lease.store.backend.counter_lease_validity)
-          elsif shared_message_counter
-            # The listener owns the lease and counter; this Client owns only
-            # its separate socket, exchanges, and secure sessions.
-          elsif initial = initial_unsecured_message_counter
-            @transport.message_counter.reset(initial)
-          else
-            @transport.message_counter.reset(Random::Secure.rand(UInt32))
-          end
-          @transport.message_counter.limit_messages(unsecured_message_counter_limit) if unsecured_message_counter_limit
-        elsif initial_unsecured_message_counter || unsecured_message_counter_limit
-          raise Matter::ConfigurationError.new("Cannot configure a shared transport message counter")
-        end
+        @unsecured_source_node_id = nil
         @inbox = Channel(ReceivedMessage).new(256)
         @deferred_messages = [] of ReceivedMessage
         @deferred_mutex = Mutex.new
@@ -163,48 +110,103 @@ module Matter
         @pending_subscription_exchanges = Set(Tuple(UInt16, UInt16)).new
         @next_exchange_id = Random.rand(UInt16).to_u16
 
-        if tcp = @transport.as?(Transport::TcpEnabledTransport)
-          @tcp_disconnect_observer_id = tcp.add_connection_closed_observer do |peer|
-            closed_sessions = @sessions.values.select { |session| session.tcp_session? && session.tcp_peer == peer }
-            closed_sessions.each { |session| @sessions.delete(session.session_id) }
-            ids = closed_sessions.map(&.session_id).to_set
-            @subscription_mutex.synchronize do
-              ids.each do |id|
-                @subscription_ids.delete(id)
-                @closed_subscription_ids.delete(id)
-              end
-              @pending_subscription_exchanges.reject! { |id, _| ids.includes?(id) }
-            end
-            @ack_packets.reject! { |(session_id, _), _| ids.includes?(session_id) }
-            @deferred_mutex.synchronize { @deferred_messages.reject! { |message| message.peer == peer } }
-            @owned_unsecured_exchanges.reject! { |entry| entry[1] == peer }
-          end
-        end
-
-        if @owns_transport
-          @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) { handle_transport_message(msg, peer) }
-          @transport.start
-        else
-          @transport_observer_id = @transport.add_message_observer do |msg, peer|
-            if owns_incoming?(msg, peer)
-              handle_transport_message(msg, peer)
-              true
-            else
-              false
-            end
-          end
-        end
-        @@shared_registry_mutex.synchronize do
-          (@@clients_by_transport[@transport.object_id.to_u64] ||= Set(Client).new).add(self)
-        end
-      rescue ex
+        # Keep setup cleanup inside this block after all required fields are initialized.
         begin
-          created_transport.try(&.close)
-        rescue cleanup_error
-          Log.warn(exception: cleanup_error) { "Could not close Client transport after constructor failure" }
+          if lease = counter_lease
+            key = lease.ownership_key
+            supplied_counter = transport.try(&.message_counter) || shared_message_counter
+            @@shared_registry_mutex.synchronize do
+              if existing = @@active_fixed_sources[key]?
+                counter, count = existing
+                unless supplied_counter && counter.same?(supplied_counter)
+                  raise Matter::ConfigurationError.new("A Client already owns this fixed source Node ID with another counter")
+                end
+                @@active_fixed_sources[key] = {counter, count + 1}
+              else
+                @@active_fixed_sources[key] = {supplied_counter, 1}
+              end
+            end
+            @fixed_source_ownership_key = key
+          end
+          reserved = @owns_transport && !shared_message_counter ? counter_lease.try(&.reserve) : nil
+          if key = @fixed_source_ownership_key
+            @@shared_registry_mutex.synchronize do
+              _, count = @@active_fixed_sources[key]
+              @@active_fixed_sources[key] = {@transport.message_counter, count}
+            end
+          end
+          @unsecured_source_node_id = if lease = counter_lease
+                                        DataType::NodeId.new(lease.source_node_id)
+                                      else
+                                        DataType::NodeId.random_operational
+                                      end
+
+          # Avoid re-using old unsecured message IDs across process restarts: peers may
+          # keep a dedupe window for unsecured traffic (session_id=0), which can cause
+          # commissioning/CASE handshakes to be ignored as duplicates/stale.
+          if @owns_transport
+            if range = reserved
+              lease = counter_lease.not_nil!
+              refill = lease.renewable? ? -> { lease.reserve } : nil
+              @transport.message_counter.bind_lease(lease.store.backend, range[0], range[1], refill,
+                lease.store.backend.counter_lease_validity)
+            elsif shared_message_counter
+              # The listener owns the lease and counter; this Client owns only
+              # its separate socket, exchanges, and secure sessions.
+            elsif initial = initial_unsecured_message_counter
+              @transport.message_counter.reset(initial)
+            else
+              @transport.message_counter.reset(Random::Secure.rand(UInt32))
+            end
+            @transport.message_counter.limit_messages(unsecured_message_counter_limit) if unsecured_message_counter_limit
+          elsif initial_unsecured_message_counter || unsecured_message_counter_limit
+            raise Matter::ConfigurationError.new("Cannot configure a shared transport message counter")
+          end
+          if tcp = @transport.as?(Transport::TcpEnabledTransport)
+            @tcp_disconnect_observer_id = tcp.add_connection_closed_observer do |peer|
+              closed_sessions = @sessions.values.select { |session| session.tcp_session? && session.tcp_peer == peer }
+              closed_sessions.each { |session| @sessions.delete(session.session_id) }
+              ids = closed_sessions.map(&.session_id).to_set
+              @subscription_mutex.synchronize do
+                ids.each do |id|
+                  @subscription_ids.delete(id)
+                  @closed_subscription_ids.delete(id)
+                end
+                @pending_subscription_exchanges.reject! { |id, _| ids.includes?(id) }
+              end
+              @ack_packets.reject! { |(session_id, _), _| ids.includes?(session_id) }
+              @deferred_mutex.synchronize { @deferred_messages.reject! { |message| message.peer == peer } }
+              @owned_unsecured_exchanges.reject! { |entry| entry[1] == peer }
+            end
+          end
+
+          if @owns_transport
+            @transport.on_message = ->(msg : Codec::MessageCodec::Message, peer : Socket::IPAddress) { handle_transport_message(msg, peer) }
+            @transport.start
+          else
+            @transport_observer_id = @transport.add_message_observer do |msg, peer|
+              if owns_incoming?(msg, peer)
+                handle_transport_message(msg, peer)
+                true
+              else
+                false
+              end
+            end
+          end
+          @@shared_registry_mutex.synchronize do
+            (@@clients_by_transport[@transport.object_id.to_u64] ||= Set(Client).new).add(self)
+          end
+        rescue ex
+          if @owns_transport
+            begin
+              @transport.close
+            rescue cleanup_error
+              Log.warn(exception: cleanup_error) { "Could not close Client transport after constructor failure" }
+            end
+          end
+          release_fixed_source_ownership
+          raise ex
         end
-        release_fixed_source_ownership
-        raise ex
       end
 
       def close : Nil
