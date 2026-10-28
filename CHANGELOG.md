@@ -98,6 +98,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Verify the Descriptor device type and server cluster of an Administrator
   endpoint found through a wildcard attribute read before Joint Commissioning.
 
+### Access Control DeviceType targets
+
+- Match ACL `Target.DeviceType` against every advertised type in each endpoint's
+  current Descriptor `DeviceTypeList` for CASE reads, writes, events, commands,
+  and authenticated group writes and commands. Dynamic endpoint composition is
+  evaluated on each request, and a missing Descriptor cannot grant a type target.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the

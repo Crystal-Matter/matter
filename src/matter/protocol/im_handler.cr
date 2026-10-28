@@ -6,6 +6,7 @@ require "../event_journal"
 require "../node"
 require "../session/context"
 require "../cluster/access_control"
+require "../cluster/descriptor"
 require "../cluster/group_key_management"
 require "../cluster/thermostat"
 require "../cluster/icd_management"
@@ -41,6 +42,17 @@ module Matter
         clusters[{Node::ROOT_ENDPOINT_ID, Cluster::AccessControl::CLUSTER_ID}]?.as?(Cluster::AccessControl)
       end
 
+      # Read the current Descriptor composition on each authorization. The
+      # cluster index changes with dynamic endpoint insertion and removal.
+      def self.device_type_ids_for_endpoint(
+        clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
+        endpoint_id : UInt16,
+      ) : Array(UInt32)
+        descriptor = clusters[{endpoint_id, Cluster::Descriptor::CLUSTER_ID}]?.as?(Cluster::Descriptor)
+        return [] of UInt32 unless descriptor
+        descriptor.device_type_list.map(&.device_type)
+      end
+
       private def self.authorized?(
         clusters : Hash(Tuple(UInt16, UInt32), Cluster::Base),
         required : InteractionModel::EntryPrivilege,
@@ -70,6 +82,7 @@ module Matter
             privilege: required,
             cluster: cluster_id,
             endpoint: endpoint_id,
+            device_types: device_type_ids_for_endpoint(clusters, endpoint_id),
             auth_mode: InteractionModel::EntryAuthMode::Case
           )
         end

@@ -217,6 +217,10 @@ parsing commands, replay checks, or ACL evaluation. A group command path
 without an Endpoint tag expands over member endpoints; an explicit Endpoint
 tag is invalid on a group command path. Each expansion passes
 its own Group ACL check. No group response or acknowledgement is sent.
+Both CASE and group authorization compare an ACL `Target.DeviceType` against
+every entry in the endpoint's current Descriptor `DeviceTypeList`; this includes
+secondary device types and endpoints added or removed at runtime. An endpoint
+without a Descriptor has no device types for ACL matching.
 Authenticated group WriteRequests fan out over the same member endpoints and
 Group ACL, reject timed/chunked writes, endpoint and node paths, and
 DataVersion, and emit no response. The sender sets SuppressResponse as required
