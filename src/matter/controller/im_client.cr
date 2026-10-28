@@ -482,7 +482,11 @@ module Matter
         fields : Bytes = Bytes.empty,
         timed_request : Bool = false,
         timed_request_timeout : Time::Span = DEFAULT_TIMED_REQUEST_TIMEOUT,
+        response_timeout : Time::Span? = nil,
       ) : InteractionModel::InvokeResponseMessage
+        if timeout = response_timeout
+          raise Matter::ConfigurationError.new("Invoke response timeout must be positive") if timeout <= 0.seconds
+        end
         path = InteractionModel::CommandPath.new(
           endpoint: endpoint_id,
           cluster: cluster_id,
@@ -510,13 +514,14 @@ module Matter
           requires_ack: true
         )
 
-        read_invoke_responses(session, peer, exchange_id, path)
+        read_invoke_responses(session, peer, exchange_id, path, response_timeout || @timeout)
       end
 
       private def read_invoke_responses(session : Session::SecureContext, peer : Socket::IPAddress,
                                         exchange_id : UInt16,
-                                        request_path : InteractionModel::CommandPath) : InteractionModel::InvokeResponseMessage
-        deadline = Time.instant + @timeout
+                                        request_path : InteractionModel::CommandPath,
+                                        response_timeout : Time::Span) : InteractionModel::InvokeResponseMessage
+        deadline = Time.instant + response_timeout
         responses = [] of InteractionModel::InvokeResponseIB
         chunks_received = 0
         bytes_received = 0
