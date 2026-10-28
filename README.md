@@ -1274,8 +1274,10 @@ friendly name.
 
 To remove a committed Joint Fabric node, use the separate durable
 `JointFabricNodeRemoval` workflow. Its network port authenticates the Anchor
-and target, saves the target NOC, removes direct Node ID grants on other nodes,
-and waits until the Datastore reports their delivery before `RemoveNode`.
+and target, saves the target NOC and a durable cleanup snapshot, then removes
+target group memberships, key sets and both outgoing and incoming bindings.
+It waits for the Datastore to confirm those removals and direct Node ID grant
+revocation before `RemoveNode`.
 Persist the journal on the controller backend before calling `run`. If a
 `RemoveNode` response is lost, reopen the same journal and call
 `reconcile_removed!` after an authenticated NodeList read; `run` never replays

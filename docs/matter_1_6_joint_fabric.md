@@ -14,9 +14,13 @@ target over CASE and pins its current NOC. Persist that journal with
 `JournalStore#load_or_create` on the controller's durable backend, then call
 `Workflow#run`. After restart, call `JournalStore#load` before trying to reach
 the target, since a completed removal makes its NOC unreadable. The workflow
-sends `RemoveACLFromNode` for direct Node ID grants
-on other nodes, waits until those entries disappear from the Anchor Datastore
-after delivery, and only then sends `RemoveNode`. A lost response leaves the
+first saves a snapshot of target-owned group memberships, target-owned
+bindings, incoming bindings from other nodes, and non-IPK key sets. It sends
+the corresponding JFDS membership and binding removal commands, waits until
+all those entries disappear after target delivery, then removes direct Node ID
+ACL grants on other nodes. Only after those grants disappear does it send
+`RemoveNode`. The IPK key-set entry is fabric bootstrap state and is removed
+with the node itself. A lost response leaves the
 durable journal at `Removing`; after restart, call `reconcile_removed!` to
 advance only if an authenticated Anchor NodeList read proves the node absent.
 The workflow never automatically repeats an uncertain `RemoveNode`.
@@ -25,8 +29,8 @@ CAT-bearing controller targets require an `Effective` receipt from
 `SharedFabric.stage_joint_group_revocation` for every CAT authenticated in the
 target's current CASE session. The receipt is saved in the removal journal and
 rechecked against the Anchor before each removal step. This path rejects
-Administrator nodes, targets with group membership, key sets or bindings, and
-wildcard or shared ACL grants. A host must address any unsupported grants
+Administrator nodes and wildcard or shared ACL grants. A host must address
+any unsupported grants
 and ensure the target remains reachable before starting this workflow. If the
 Datastore is unavailable or the target identity changes, removal stops without
 deleting its NodeList entry. The host must retain journals and present a

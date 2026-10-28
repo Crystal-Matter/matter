@@ -44,8 +44,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reconciled by an authenticated NodeList read without replaying the command.
 - A CAT-bearing controller requires a saved group revocation receipt that is
   `Effective` for each authenticated CASE CAT before removal can proceed.
-  Administrator nodes, group or binding membership, wildcard or shared direct
-  ACLs, and an unreachable target remain blocked for separate cleanup.
+  The workflow now journals group, key-set, and binding cleanup, including
+  peer bindings pointing to the removed Node ID. It waits for confirmed
+  deletion before ACL revocation and RemoveNode. Administrator nodes,
+  wildcard or shared direct ACLs, and an unreachable target remain blocked.
 
 ### Joint Fabric Anchor transfer restart recovery
 

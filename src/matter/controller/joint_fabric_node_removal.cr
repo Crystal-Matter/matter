@@ -19,6 +19,41 @@ module Matter
         Complete
       end
 
+      struct GroupCleanup
+        include Storage::Record
+
+        getter node_id : UInt64
+        getter endpoint_id : UInt16
+        getter group_id : UInt16
+
+        def initialize(@node_id : UInt64, @endpoint_id : UInt16, @group_id : UInt16)
+        end
+      end
+
+      struct BindingCleanup
+        include Storage::Record
+
+        getter node_id : UInt64
+        getter endpoint_id : UInt16
+        getter list_id : UInt16
+        getter binding : Datastore::DatastoreBindingTargetStruct
+        getter owner_noc : Bytes
+
+        def initialize(@node_id : UInt64, @endpoint_id : UInt16, @list_id : UInt16,
+                       @binding : Datastore::DatastoreBindingTargetStruct, @owner_noc : Bytes)
+        end
+      end
+
+      struct CleanupSnapshot
+        getter groups : Array(GroupCleanup)
+        getter bindings : Array(BindingCleanup)
+        getter key_set_ids : Array(UInt16)
+
+        def initialize(@groups : Array(GroupCleanup), @bindings : Array(BindingCleanup),
+                       @key_set_ids : Array(UInt16))
+        end
+      end
+
       struct Journal
         include Storage::Record
 
@@ -30,13 +65,21 @@ module Matter
         getter friendly_name : String
         getter target_noc : Bytes
         getter group_revocations : Array(SharedFabric::JointGroupRevocation)
+        property? cleanup_recorded : Bool
+        property cleanup_groups : Array(GroupCleanup)
+        property cleanup_bindings : Array(BindingCleanup)
+        property cleanup_key_set_ids : Array(UInt16)
         property stage : Stage
         property stage_version : UInt64
 
         def initialize(@fabric_id, @root_public_key, @controller_node_id,
                        @anchor_node_id, @node_id, @friendly_name, @target_noc,
                        @group_revocations = [] of SharedFabric::JointGroupRevocation,
-                       @stage = Stage::Revoking, @stage_version = 0_u64)
+                       @stage = Stage::Revoking, @stage_version = 0_u64,
+                       @cleanup_recorded = false,
+                       @cleanup_groups = [] of GroupCleanup,
+                       @cleanup_bindings = [] of BindingCleanup,
+                       @cleanup_key_set_ids = [] of UInt16)
         end
       end
 
@@ -115,15 +158,27 @@ module Matter
       end
 
       abstract class Port
+        abstract def snapshot_cleanup(journal : Journal) : CleanupSnapshot
+        abstract def cleanup!(journal : Journal) : Nil
+        abstract def cleanup_complete?(journal : Journal) : Bool
         abstract def revoke_direct_access!(journal : Journal) : Nil
         abstract def access_revoked?(journal : Journal) : Bool
         abstract def remove_node!(journal : Journal) : Nil
         abstract def node_absent?(journal : Journal) : Bool
       end
 
-      # Group CAT controllers require a completed CAT rotation receipt. Group
-      # memberships and bindings need their own removal before this workflow.
+      # Group CAT controllers require a completed CAT rotation receipt.
       class NetworkPort < Port
+        def self.cleanup_binding?(entry : Datastore::DatastoreEndpointBindingEntryStruct,
+                                  node_id : UInt64) : Bool
+          entry.node_id == node_id || entry.binding.node == node_id
+        end
+
+        def self.cleanup_key_set?(entry : Datastore::DatastoreNodeKeySetEntryStruct,
+                                  node_id : UInt64) : Bool
+          entry.node_id == node_id && entry.group_key_set_id != Datastore::IPK_KEY_SET_ID
+        end
+
         def initialize(@store : StateStore, @fabric : FabricInfo,
                        @anchor_node_id : UInt64, @anchor_peer : Socket::IPAddress,
                        @datastore_endpoint : UInt16,
@@ -146,6 +201,103 @@ module Matter
           Journal.new(@fabric.fabric_id, @fabric.root_public_key.dup,
             @fabric.controller_node_id, @anchor_node_id, node_id, friendly_name,
             target_noc(provisional), group_revocations)
+        end
+
+        def snapshot_cleanup(journal : Journal) : CleanupSnapshot
+          groups = [] of GroupCleanup
+          bindings = [] of BindingCleanup
+          key_set_ids = [] of UInt16
+          with_anchor(journal) do |im, session|
+            validate_removable!(im, session, journal, allow_cleanup: true)
+            groups = read_list(Datastore::DatastoreEndpointGroupIDEntryStruct,
+              im, session, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+              .select(&.node_id.==(journal.node_id))
+              .map { |entry| GroupCleanup.new(entry.node_id, entry.endpoint_id, entry.group_id) }
+            entries = read_list(Datastore::DatastoreEndpointBindingEntryStruct,
+              im, session, Datastore::ATTR_ENDPOINT_BINDING_LIST)
+              .select { |entry| self.class.cleanup_binding?(entry, journal.node_id) }
+            entries.each do |entry|
+              owner_noc = entry.node_id == journal.node_id ? journal.target_noc : peer_noc(journal, entry.node_id)
+              bindings << BindingCleanup.new(entry.node_id, entry.endpoint_id, entry.list_id,
+                entry.binding, owner_noc)
+            end
+            key_set_ids = read_list(Datastore::DatastoreNodeKeySetEntryStruct,
+              im, session, Datastore::ATTR_NODE_KEY_SET_LIST)
+              .select { |entry| self.class.cleanup_key_set?(entry, journal.node_id) }
+              .map(&.group_key_set_id)
+          end
+          CleanupSnapshot.new(groups, bindings, key_set_ids)
+        end
+
+        def cleanup!(journal : Journal) : Nil
+          raise Matter::CommissioningError.new("Joint Fabric node cleanup snapshot is missing") unless journal.cleanup_recorded?
+          with_anchor(journal) do |im, session|
+            validate_removable!(im, session, journal, allow_cleanup: true)
+            current_groups = read_list(Datastore::DatastoreEndpointGroupIDEntryStruct,
+              im, session, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+            current_bindings = read_list(Datastore::DatastoreEndpointBindingEntryStruct,
+              im, session, Datastore::ATTR_ENDPOINT_BINDING_LIST)
+            key_sets = read_list(Datastore::DatastoreNodeKeySetEntryStruct,
+              im, session, Datastore::ATTR_NODE_KEY_SET_LIST)
+            assert_cleanup_snapshot!(journal, current_groups, current_bindings, key_sets)
+            journal.cleanup_groups.each do |saved|
+              entry = current_groups.find do |candidate|
+                candidate.node_id == saved.node_id && candidate.endpoint_id == saved.endpoint_id && candidate.group_id == saved.group_id
+              end
+              next unless entry
+              next if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending &&
+                      entry.status_entry.failure_code == Datastore::NO_FAILURE_CODE
+              invoke!(im, session, Datastore::CMD_REMOVE_GROUP_ID_FROM_ENDPOINT_FOR_NODE,
+                Datastore::RemoveGroupIDFromEndpointForNodeRequest.new(saved.node_id,
+                  saved.endpoint_id, saved.group_id).to_slice)
+            end
+            journal.cleanup_bindings.each do |saved|
+              entry = current_bindings.find do |candidate|
+                candidate.node_id == saved.node_id && candidate.endpoint_id == saved.endpoint_id && candidate.list_id == saved.list_id
+              end
+              next unless entry
+              assert_binding_identity!(saved, entry, journal)
+              next if entry.status_entry.state == Datastore::DatastoreStateEnum::DeletePending &&
+                      entry.status_entry.failure_code == Datastore::NO_FAILURE_CODE
+              invoke!(im, session, Datastore::CMD_REMOVE_BINDING_FROM_ENDPOINT_FOR_NODE,
+                Datastore::RemoveBindingFromEndpointForNodeRequest.new(saved.list_id,
+                  saved.endpoint_id, saved.node_id).to_slice)
+            end
+            failed_keys = key_sets.select { |entry| self.class.cleanup_key_set?(entry, journal.node_id) &&
+              entry.status_entry.failure_code != Datastore::NO_FAILURE_CODE }
+            if failed_keys.any? { |entry| terminal_cleanup_failure?(entry.status_entry) }
+              raise Matter::CommissioningError.new("Joint Fabric key-set deletion needs operator repair")
+            end
+            if failed_keys.any?
+              invoke!(im, session, Datastore::CMD_REFRESH_NODE,
+                Datastore::RefreshNodeRequest.new(journal.node_id).to_slice)
+            end
+          end
+        end
+
+        def cleanup_complete?(journal : Journal) : Bool
+          raise Matter::CommissioningError.new("Joint Fabric node cleanup snapshot is missing") unless journal.cleanup_recorded?
+          with_anchor(journal) do |im, session|
+            validate_removable!(im, session, journal, allow_cleanup: true)
+            groups = read_list(Datastore::DatastoreEndpointGroupIDEntryStruct,
+              im, session, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+            bindings = read_list(Datastore::DatastoreEndpointBindingEntryStruct,
+              im, session, Datastore::ATTR_ENDPOINT_BINDING_LIST)
+            key_sets = read_list(Datastore::DatastoreNodeKeySetEntryStruct,
+              im, session, Datastore::ATTR_NODE_KEY_SET_LIST)
+            assert_cleanup_snapshot!(journal, groups, bindings, key_sets)
+            journal.cleanup_bindings.each do |saved|
+              if entry = bindings.find { |item| item.node_id == saved.node_id &&
+                 item.endpoint_id == saved.endpoint_id && item.list_id == saved.list_id }
+                assert_binding_identity!(saved, entry, journal)
+              end
+            end
+            return false if groups.any?(&.node_id.==(journal.node_id))
+            return false if bindings.any? { |entry| self.class.cleanup_binding?(entry, journal.node_id) }
+            return false if key_sets.any? { |entry| self.class.cleanup_key_set?(entry, journal.node_id) }
+            return true
+          end
+          false
         end
 
         def revoke_direct_access!(journal : Journal) : Nil
@@ -214,7 +366,7 @@ module Matter
         end
 
         private def validate_removable!(im : ImClient, session : Session::SecureContext,
-                                        journal : Journal) : Nil
+                                        journal : Journal, allow_cleanup : Bool = false) : Nil
           entry = node_entry(im, session, journal) ||
                   raise Matter::CommissioningError.new("Committed Joint Fabric node is absent")
           unless entry.friendly_name == journal.friendly_name && entry.commissioning_status_entry.state.committed?
@@ -231,8 +383,9 @@ module Matter
             im, session, Datastore::ATTR_ENDPOINT_BINDING_LIST)
           key_sets = read_list(Datastore::DatastoreNodeKeySetEntryStruct,
             im, session, Datastore::ATTR_NODE_KEY_SET_LIST)
-          if memberships.any?(&.node_id.==(journal.node_id)) || bindings.any?(&.node_id.==(journal.node_id)) ||
-             key_sets.any?(&.node_id.==(journal.node_id))
+          if !allow_cleanup && (memberships.any?(&.node_id.==(journal.node_id)) ||
+             bindings.any? { |item| self.class.cleanup_binding?(item, journal.node_id) } ||
+             key_sets.any? { |item| self.class.cleanup_key_set?(item, journal.node_id) })
             raise Matter::CommissioningError.new("Joint Fabric node group or binding removal is still required")
           end
           acls = read_list(Datastore::DatastoreACLEntryStruct, im, session, Datastore::ATTR_NODE_ACL_LIST)
@@ -248,6 +401,52 @@ module Matter
               raise Matter::CommissioningError.new("Shared direct ACL must be split before node removal")
             end
           end
+        end
+
+        private def assert_binding_identity!(saved : BindingCleanup,
+                                             current : Datastore::DatastoreEndpointBindingEntryStruct,
+                                             journal : Journal) : Nil
+          left = saved.binding
+          right = current.binding
+          unless left.node == right.node && left.group == right.group &&
+                 left.endpoint == right.endpoint && left.cluster == right.cluster
+            raise Matter::AuthenticationError.new("Joint Fabric binding ListID was reused during node removal")
+          end
+          current_noc = saved.node_id == journal.node_id ? target_noc(journal) : peer_noc(journal, saved.node_id)
+          unless current_noc == saved.owner_noc
+            raise Matter::AuthenticationError.new("Joint Fabric binding owner identity changed during node removal")
+          end
+        end
+
+        private def assert_cleanup_snapshot!(journal : Journal,
+                                             groups : Array(Datastore::DatastoreEndpointGroupIDEntryStruct),
+                                             bindings : Array(Datastore::DatastoreEndpointBindingEntryStruct),
+                                             key_sets : Array(Datastore::DatastoreNodeKeySetEntryStruct)) : Nil
+          groups.each do |entry|
+            next unless entry.node_id == journal.node_id
+            unless journal.cleanup_groups.any? { |saved| saved.node_id == entry.node_id &&
+                   saved.endpoint_id == entry.endpoint_id && saved.group_id == entry.group_id }
+              raise Matter::AuthenticationError.new("Joint Fabric group membership changed during node removal")
+            end
+          end
+          bindings.each do |entry|
+            next unless self.class.cleanup_binding?(entry, journal.node_id)
+            saved = journal.cleanup_bindings.find { |candidate| candidate.node_id == entry.node_id &&
+              candidate.endpoint_id == entry.endpoint_id && candidate.list_id == entry.list_id } ||
+                    raise Matter::AuthenticationError.new("Joint Fabric binding changed during node removal")
+            assert_binding_identity!(saved, entry, journal)
+          end
+          key_sets.each do |entry|
+            next unless self.class.cleanup_key_set?(entry, journal.node_id)
+            unless journal.cleanup_key_set_ids.includes?(entry.group_key_set_id)
+              raise Matter::AuthenticationError.new("Joint Fabric key set changed during node removal")
+            end
+          end
+        end
+
+        private def terminal_cleanup_failure?(status : Datastore::DatastoreStatusEntryStruct) : Bool
+          status.failure_code.in?(InteractionModel::StatusCode::ResourceExhausted.value,
+            InteractionModel::StatusCode::ConstraintError.value)
         end
 
         private def target_noc(journal : Journal, anchor_im : ImClient? = nil,
@@ -297,6 +496,34 @@ module Matter
           unless journal.target_noc.empty? || selected.noc == journal.target_noc
             raise Matter::AuthenticationError.new("Joint Fabric target NOC changed since removal began")
           end
+          selected.noc.dup
+        end
+
+        private def peer_noc(journal : Journal, node_id : UInt64) : Bytes
+          state = @store.load
+          installed = state.fabric_for(journal.fabric_id, journal.root_public_key, journal.controller_node_id)
+          node = state.nodes_for(journal.fabric_id, journal.root_public_key,
+            journal.controller_node_id)[node_id]? ||
+                 raise Matter::CommissioningError.new("Joint Fabric binding owner has no controller peer record")
+          address = node.address || raise Matter::CommissioningError.new("Joint Fabric binding owner address is missing")
+          peer = Socket::IPAddress.new(address, node.port)
+          session = Pairing::CasePairing.new(@crypto).pair(@client, peer, installed,
+            peer_node_id: node_id, timeout: @timeout)
+          report = ImClient.new(@client, @timeout).read_attribute(session: session, peer: peer,
+            endpoint_id: Node::ROOT_ENDPOINT_ID, cluster_id: Cluster::OperationalCredentials::CLUSTER_ID,
+            attribute_id: Cluster::OperationalCredentials::ATTR_NOCS)
+          data = report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data) ||
+                 raise Matter::ProtocolError.new("Joint Fabric binding owner NOCs read returned no data")
+          matching = Array(Cluster::OperationalCredentials::Tlv::NOC).from_tlv(data.to_slice).select do |entry|
+            certificate = Crypto::MatterCertificate.from_slice(entry.noc)
+            certificate.fabric_id == journal.fabric_id && certificate.node_id == node_id
+          end
+          unless matching.size == 1
+            raise Matter::AuthenticationError.new("Joint Fabric binding owner has no unique selected-fabric NOC")
+          end
+          selected = matching.first
+          Crypto::MatterCertificate::Validation.verify_chain(selected.noc, selected.icac,
+            installed.root_public_key, installed.root_cert)
           selected.noc.dup
         end
 
@@ -358,6 +585,21 @@ module Matter
           return if @journal.stage.complete?
           if @journal.stage.removing?
             raise Matter::CommissioningError.new("RemoveNode outcome needs authenticated reconciliation")
+          end
+          unless @journal.cleanup_recorded?
+            snapshot = @port.snapshot_cleanup(@journal)
+            updated = @journal
+            updated.cleanup_groups = snapshot.groups
+            updated.cleanup_bindings = snapshot.bindings
+            updated.cleanup_key_set_ids = snapshot.key_set_ids
+            updated.cleanup_recorded = true
+            updated.stage_version += 1_u64
+            @store.save(updated)
+            @journal = updated
+          end
+          @port.cleanup!(@journal)
+          unless @port.cleanup_complete?(@journal)
+            raise Matter::CommissioningError.new("Joint Fabric node cleanup is pending delivery")
           end
           @port.revoke_direct_access!(@journal)
           unless @port.access_revoked?(@journal)
