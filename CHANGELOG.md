@@ -28,6 +28,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AnchorDatastoreSubscription.new` now requires `counter_store:`. Pass the
   StateStore that owns the installed controller fabric and its counter lease.
 
+### Joint Fabric Datastore
+
+- Keep a group key set while any group still references it, even if the group
+  has no node members. `RemoveKeySet` succeeds after the group is removed and
+  any remaining node references are pending deletion.
+
 ### Joint Fabric Anchor transfer restart recovery
 
 - Reconcile a committed Anchor Datastore copy after a restart only when the

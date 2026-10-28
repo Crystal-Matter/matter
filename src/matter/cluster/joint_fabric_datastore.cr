@@ -1046,11 +1046,12 @@ module Matter
       def remove_key_set(request : RemoveKeySetRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         id = request.group_key_set_id
+        return InteractionModel::Status.constraint_error if id == IPK_KEY_SET_ID || id == UInt16::MAX
+        return InteractionModel::Status.not_found unless @group_key_set_list.any?(&.group_key_set_id.==(id))
         in_use = @node_key_set_list.any? do |entry|
           entry.group_key_set_id == id && entry.status_entry.state != DatastoreStateEnum::DeletePending
         end
-        return InteractionModel::Status.constraint_error if id == IPK_KEY_SET_ID || id == UInt16::MAX || in_use
-        return InteractionModel::Status.not_found unless @group_key_set_list.any?(&.group_key_set_id.==(id))
+        return InteractionModel::Status.constraint_error if in_use || @group_list.any?(&.group_key_set_id.==(id))
         self.group_key_set_list = @group_key_set_list.reject { |entry| entry.group_key_set_id == id }
         commit!
       end

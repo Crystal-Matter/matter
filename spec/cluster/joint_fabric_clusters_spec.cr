@@ -706,6 +706,28 @@ describe Matter::Cluster::JointFabricDatastore do
     acl_changes.should eq(0)
   end
 
+  it "keeps a key set referenced by a group even when the group has no members" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    key_set_id = 7_u16
+    group_id = 9_u16
+    key_set = Datastore::DatastoreGroupKeySetStruct.new(key_set_id,
+      Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(Datastore::EPOCH_KEY_BYTES, 0xAA_u8), 1_u64, nil, nil, nil, nil)
+    cluster.add_key_set(Datastore::AddKeySetRequest.new(key_set)).success?.should be_true
+    cluster.add_group(Datastore::AddGroupRequest.new(group_id, "Empty group", key_set_id,
+      nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::View)).success?.should be_true
+    version = cluster.data_version
+
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(key_set_id))
+      .status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.group_key_set_list.map(&.group_key_set_id).should eq([key_set_id])
+    cluster.data_version.should eq(version)
+
+    cluster.remove_group(Datastore::RemoveGroupRequest.new(group_id)).success?.should be_true
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(key_set_id)).success?.should be_true
+    cluster.group_key_set_list.should be_empty
+  end
+
   it "rejects oversized datastore ACL subjects and targets without changing state" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Kitchen")).success?.should be_true
@@ -854,7 +876,7 @@ describe Matter::Cluster::JointFabricDatastore do
     end
   end
 
-  it "allows removing a key set when every node reference is DeletePending" do
+  it "allows removing a key set when every node reference is DeletePending and no group references it" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     key = Datastore::DatastoreGroupKeySetStruct.new(10_u16,
       Datastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
@@ -868,6 +890,8 @@ describe Matter::Cluster::JointFabricDatastore do
 
     cluster.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(42_u64, 10_u16,
       Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8))]
+    cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(10_u16)).status.should eq(Matter::InteractionModel::StatusCode::ConstraintError)
+    cluster.remove_group(Datastore::RemoveGroupRequest.new(10_u16)).success?.should be_true
     cluster.remove_key_set(Datastore::RemoveKeySetRequest.new(10_u16)).success?.should be_true
     cluster.group_key_set_list.should be_empty
   end
