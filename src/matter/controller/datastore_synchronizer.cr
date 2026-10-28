@@ -256,16 +256,16 @@ module Matter
         group = store.group_list.find(&.group_id.==(entry.group_id.to_u64))
         if groupcast_target && group.try(&.group_key_set_id)
           sync_groupcast(store, entry, session, peer)
-          return
+          return unless entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
         end
-        if groupcast_target && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && !group
+        if groupcast_target && entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && !group.try(&.group_key_set_id)
           memberships = read_list(Cluster::Groupcast::MembershipStruct, session, peer,
             Node::ROOT_ENDPOINT_ID, Cluster::Groupcast::CLUSTER_ID, Cluster::Groupcast::ATTR_MEMBERSHIP)
           if memberships.any? { |membership| membership.group_id == entry.group_id && membership.endpoints.includes?(entry.endpoint_id) }
             sync_groupcast(store, entry, session, peer)
           end
         end
-        if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending && !group
+        if entry.status_entry.state == Store::DatastoreStateEnum::DeletePending
           servers = read_list(UInt32, session, peer, entry.endpoint_id,
             Cluster::Descriptor::CLUSTER_ID, Cluster::Descriptor::ATTR_SERVER_LIST)
           return unless servers.includes?(Cluster::Groups::CLUSTER_ID)
@@ -325,6 +325,14 @@ module Matter
       private def groupcast_available?(root_servers : Array(UInt32), session : Session::SecureContext,
                                        peer : Socket::IPAddress) : Bool
         return false unless root_servers.includes?(Cluster::Groupcast::CLUSTER_ID)
+        feature_response = @im.read_attribute(session, peer, Node::ROOT_ENDPOINT_ID,
+          Cluster::Groupcast::CLUSTER_ID, Cluster::Base::GLOBAL_FEATURE_MAP)
+        feature_data = feature_response.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
+        if !feature_data && (status = feature_response.attribute_reports.try(&.compact_map(&.attribute_status)).try(&.first?).try(&.status))
+          raise Matter::ClusterError.from_wire("Target Groupcast FeatureMap read failed", status.status, status.cluster_status)
+        end
+        raise Matter::ProtocolError.new("Target Groupcast FeatureMap read returned no data") unless feature_data
+        return false unless Cluster::Groupcast::Feature.from_value(UInt32.from_tlv(feature_data.to_slice)).listener?
         read_list(Cluster::GroupKeyManagement::GroupcastAdoptionStruct, session, peer,
           Node::ROOT_ENDPOINT_ID, Cluster::GroupKeyManagement::CLUSTER_ID,
           Cluster::GroupKeyManagement::ATTR_GROUPCAST_ADOPTION)

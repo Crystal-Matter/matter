@@ -61,6 +61,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   getter binding_entries = Hash(UInt16, Array(Matter::Cluster::Binding::Target)).new
   property key_set_ids = [] of UInt16
   property groupcast_memberships = [] of Matter::Cluster::Groupcast::MembershipStruct
+  property groupcast_features = Matter::Cluster::Groupcast::Feature::Listener
   property? groupcast_adopted = false
   property? groupcast_adoption_supported = true
   property? reject_groupcast_adoption = false
@@ -203,7 +204,11 @@ private class DatastoreImClient < Matter::Controller::ImClient
                   attribute_id == Matter::Cluster::OperationalCredentials::ATTR_CURRENT_FABRIC_INDEX
               @current_fabric_index.to_tlv
             elsif cluster_id == Matter::Cluster::Groupcast::CLUSTER_ID
-              @groupcast_memberships.to_tlv
+              if attribute_id == Matter::Cluster::Base::GLOBAL_FEATURE_MAP
+                @groupcast_features.value.to_tlv
+              else
+                @groupcast_memberships.to_tlv
+              end
             else
               @acl_entries.to_tlv
             end
@@ -632,6 +637,65 @@ describe Matter::Controller::DatastoreSynchronizer do
     im.command_paths.should contain({Matter::Cluster::Groupcast::CLUSTER_ID,
                                      Matter::Cluster::Groupcast::CMD_LEAVE_GROUP})
     im.groupcast_memberships.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "removes keyed membership from both Groupcast and legacy Groups" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.server_lists[0_u16] = [Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+                              Matter::Cluster::Groupcast::CLUSTER_ID]
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID]
+    im.groupcast_adopted = true
+    im.groupcast_memberships = [Matter::Cluster::Groupcast::MembershipStruct.new(
+      5_u16, [1_u16], 7_u16, false, fabric_index: 1_u8)]
+    im.group_memberships[1_u16] = [Matter::DataType::GroupId.new(5_u16)]
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
+      5_u64, "Shared", 7_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    deleting = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::DeletePending, 0_u32, 0_u8)
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      0x100_u64, 1_u16, 5_u16, deleting)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.command_paths.should contain({Matter::Cluster::Groupcast::CLUSTER_ID,
+                                     Matter::Cluster::Groupcast::CMD_LEAVE_GROUP})
+    im.command_paths.should contain({Matter::Cluster::Groups::CLUSTER_ID,
+                                     Matter::Cluster::Groups::CMD_REMOVE_GROUP})
+    im.groupcast_memberships.should be_empty
+    im.group_memberships[1_u16].should be_empty
+    store.endpoint_group_id_list.should be_empty
+  ensure
+    client.try(&.close)
+  end
+
+  it "uses legacy Groups for a keyed endpoint on a sender-only Groupcast target" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    im.server_lists[0_u16] = [Matter::Cluster::GroupKeyManagement::CLUSTER_ID,
+                              Matter::Cluster::Groupcast::CLUSTER_ID]
+    im.server_lists[1_u16] = [Matter::Cluster::Groups::CLUSTER_ID]
+    im.groupcast_features = Matter::Cluster::Groupcast::Feature::Sender
+    im.reject_unadvertised_commands = true
+    store = Datastore.new(Matter::DataType::EndpointNumber.new(0_u16))
+    store.group_list = [Datastore::DatastoreGroupInformationEntryStruct.new(
+      5_u64, "Shared", 7_u16, nil, nil, Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)]
+    committed = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    pending = Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)
+    store.node_key_set_list = [Datastore::DatastoreNodeKeySetEntryStruct.new(0x100_u64, 7_u16, committed)]
+    store.endpoint_group_id_list = [Datastore::DatastoreEndpointGroupIDEntryStruct.new(
+      0x100_u64, 1_u16, 5_u16, pending)]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, 0x100_u64, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+    im.groupcast_adopted?.should be_false
+    im.command_paths.should contain({Matter::Cluster::Groups::CLUSTER_ID,
+                                     Matter::Cluster::Groups::CMD_ADD_GROUP})
+    im.command_paths.any? { |path| path[0] == Matter::Cluster::Groupcast::CLUSTER_ID }.should be_false
+    im.group_key_map.map(&.group_id).should eq([5_u16])
+    store.endpoint_group_id_list.first.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
   ensure
     client.try(&.close)
   end
