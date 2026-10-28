@@ -1,5 +1,8 @@
 require "../spec_helper"
 require "../../src/matter/cluster/binding"
+require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/level_control"
+require "../../src/matter/endpoint"
 
 private alias BindingCluster = Matter::Cluster::Binding
 private alias BindingTarget = BindingCluster::Target
@@ -49,6 +52,24 @@ describe BindingCluster do
 
   it "rejects a node without an endpoint and preserves both fabrics" do
     assert_rejected_binding_target(BindingTarget.new(node: 7_u64))
+  end
+
+  it "requires a cluster-specific binding to name a local client cluster" do
+    endpoint = Matter::Endpoint.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster = BindingCluster.new(endpoint.endpoint_id)
+    endpoint.add_cluster(cluster)
+    endpoint.add_client_cluster(Matter::Cluster::OnOff::CLUSTER_ID)
+    cluster.request_fabric_index = 1_u8
+
+    invalid = BindingTarget.new(node: 2_u64, endpoint: 1_u16,
+      cluster: Matter::Cluster::LevelControl::CLUSTER_ID)
+    write_bindings(cluster, [invalid]).should eq(BindingStatus::ConstraintError)
+    cluster.binding.should be_empty
+
+    valid = BindingTarget.new(node: 2_u64, endpoint: 1_u16,
+      cluster: Matter::Cluster::OnOff::CLUSTER_ID)
+    write_bindings(cluster, [valid]).should eq(BindingStatus::Success)
+    cluster.binding.map(&.cluster).should eq([Matter::Cluster::OnOff::CLUSTER_ID])
   end
 
   it "rejects group zero and preserves both fabrics" do

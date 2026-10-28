@@ -1,5 +1,7 @@
 require "../spec_helper"
 require "../../src/matter/controller"
+require "../../src/matter/cluster/on_off"
+require "../../src/matter/cluster/level_control"
 
 private alias Datastore = Matter::Cluster::JointFabricDatastore
 
@@ -15,6 +17,7 @@ private class DatastoreImClient < Matter::Controller::ImClient
   property acl_entries = [] of Matter::Cluster::AccessControl::AccessControlEntry
   property parts_list = [] of UInt16
   getter server_lists = Hash(UInt16, Array(UInt32)).new
+  getter client_lists = Hash(UInt16, Array(UInt32)).new
   getter group_memberships = Hash(UInt16, Array(Matter::DataType::GroupId)).new
   getter binding_entries = Hash(UInt16, Array(Matter::Cluster::Binding::Target)).new
   property key_set_ids = [] of UInt16
@@ -117,6 +120,8 @@ private class DatastoreImClient < Matter::Controller::ImClient
     value = if cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID
               if attribute_id == Matter::Cluster::Descriptor::ATTR_PARTS_LIST
                 @parts_list.to_tlv
+              elsif attribute_id == Matter::Cluster::Descriptor::ATTR_CLIENT_LIST
+                (@client_lists[endpoint_id]? || [] of UInt32).to_tlv
               else
                 (@server_lists[endpoint_id]? || [] of UInt32).to_tlv
               end
@@ -932,6 +937,38 @@ describe Matter::Controller::DatastoreSynchronizer do
     bindings = Array(Matter::Cluster::Binding::Target).from_tlv(im.writes.first[2])
     bindings.first.node.should eq(0x200_u64)
     store.endpoint_binding_list.first.status_entry.state.should eq(Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed)
+  ensure
+    client.try(&.close)
+  end
+
+  it "commits only cluster-specific bindings advertised in the endpoint ClientList" do
+    client = Matter::Controller::Client.new
+    im = DatastoreImClient.new(client)
+    store = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    node_id = 0x100_u64
+    endpoint_id = 1_u16
+    im.client_lists[endpoint_id] = [Matter::Cluster::OnOff::CLUSTER_ID]
+    invalid = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64,
+      endpoint: endpoint_id, cluster: Matter::Cluster::LevelControl::CLUSTER_ID)
+    valid = Datastore::DatastoreBindingTargetStruct.new(node: 0x200_u64,
+      endpoint: endpoint_id, cluster: Matter::Cluster::OnOff::CLUSTER_ID)
+    store.endpoint_binding_list = [
+      Datastore::DatastoreEndpointBindingEntryStruct.new(node_id, endpoint_id, 1_u16, invalid,
+        Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)),
+      Datastore::DatastoreEndpointBindingEntryStruct.new(node_id, endpoint_id, 2_u16, valid,
+        Datastore::DatastoreStatusEntryStruct.new(Datastore::DatastoreStateEnum::Pending, 0_u32, 0_u8)),
+    ]
+
+    Matter::Controller::DatastoreSynchronizer.new(im).sync_node(store, node_id, datastore_session,
+      Socket::IPAddress.new("127.0.0.1", 5540))
+
+    rejected = store.endpoint_binding_list.find!(&.list_id.==(1_u16))
+    rejected.status_entry.state.should eq(Datastore::DatastoreStateEnum::CommitFailed)
+    rejected.status_entry.failure_code.should eq(Matter::InteractionModel::StatusCode::ConstraintError.value)
+    committed = store.endpoint_binding_list.find!(&.list_id.==(2_u16))
+    committed.status_entry.state.should eq(Datastore::DatastoreStateEnum::Committed)
+    im.writes.size.should eq(1)
+    im.binding_entries[endpoint_id].map(&.cluster).should eq([Matter::Cluster::OnOff::CLUSTER_ID])
   ensure
     client.try(&.close)
   end
