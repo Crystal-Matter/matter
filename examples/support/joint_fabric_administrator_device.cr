@@ -215,6 +215,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_migration_complete_before_ack : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
       getter? interrupt_after_migration_anchor_node_removed : Bool = false
+      getter? interrupt_after_migration_anchor_fabric_removed : Bool = false
       getter? interrupt_after_migration_old_fabric_removed : Bool = false
       getter? interrupt_after_migration_old_node_removed : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
@@ -266,6 +267,7 @@ module MatterJointFabricAdministrator
                      @interrupt_after_migration_complete_before_ack : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
                      @interrupt_after_migration_anchor_node_removed : Bool = false,
+                     @interrupt_after_migration_anchor_fabric_removed : Bool = false,
                      @interrupt_after_migration_old_fabric_removed : Bool = false,
                      @interrupt_after_migration_old_node_removed : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil,
@@ -3925,6 +3927,11 @@ module MatterJointFabricAdministrator
         anchor_node_removed: -> {
           if request.interrupt_after_migration_anchor_node_removed?
             raise Matter::TransportError.new("Injected interruption after Anchor RemoveNode")
+          end
+        },
+        anchor_fabric_removed: -> {
+          if request.interrupt_after_migration_anchor_fabric_removed?
+            raise Matter::TransportError.new("Injected interruption after Anchor RemoveFabric")
           end
         },
         old_fabric_removed: -> {

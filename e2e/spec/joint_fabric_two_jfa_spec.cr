@@ -1043,26 +1043,28 @@ describe "three provisioned Joint Fabric Administrators" do
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
     controller_node_during_rollback.inspected_controller_migration_node_present.should be_true
-    resumed_rollback = jfa_command("matter_joint_fabric_joiner",
+    # The device commits Anchor RemoveFabric, but B loses the result before
+    # saving RolledBack. Recovery must prove the committed removal over B CASE.
+    interrupted_rollback_fabric_removal = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("resume-rollback-device-migration", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID,
-        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
-    resumed_rollback.status.should eq("ok"), resumed_rollback.error.to_s
-    completed_rollback_stage = jfa_command("matter_joint_fabric_joiner",
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
+        interrupt_after_migration_anchor_fabric_removed: true))
+    interrupted_rollback_fabric_removal.status.should eq("error")
+    interrupted_rollback_fabric_removal.error.to_s.should contain("Injected interruption after Anchor RemoveFabric")
+    joiner.restart!
+    b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+      joiner_peer, joiner_bootstrap.fabric,
+      peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+    committed_rollback_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
-    completed_rollback_stage.inspected_migration_stage.should eq(
-      Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack.value)
-    controller_node_after_rollback = jfa_command("matter_joint_fabric_joiner",
-      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", 0xB201_u64,
-        fabric_id: anchor_bootstrap.fabric.fabric_id,
-        root_public_key: anchor_bootstrap.fabric.root_public_key,
-        anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
-    controller_node_after_rollback.inspected_controller_migration_node_present.should be_false
+    committed_rollback_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::RollingBack.value)
     b_rollback_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       migration_peer, joiner_bootstrap.fabric,
       peer_node_id: 0xB201_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -1076,6 +1078,35 @@ describe "three provisioned Joint Fabric Administrators" do
       rollback_fabrics_data.to_slice)
     rollback_fabrics.any?(&.fabric_id.==(joiner_bootstrap.fabric.fabric_id)).should be_true
     rollback_fabrics.any?(&.fabric_id.==(anchor_bootstrap.fabric.fabric_id)).should be_false
+    jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
+      .any?(&.node_id.==(ROLLBACK_ANCHOR_NODE_ID)).should be_false
+    controller_node_before_rollback_reconciliation = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
+    controller_node_before_rollback_reconciliation.inspected_controller_migration_node_present.should be_true
+    reconciled_rollback = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: ROLLBACK_ANCHOR_NODE_ID,
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
+        interrupt_after_migration_anchor_fabric_removed: true))
+    reconciled_rollback.status.should eq("ok"), reconciled_rollback.error.to_s
+    completed_rollback_stage = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
+    completed_rollback_stage.inspected_migration_stage.should eq(
+      Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack.value)
+    controller_node_after_rollback = jfa_command("matter_joint_fabric_joiner",
+      MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", 0xB201_u64,
+        fabric_id: anchor_bootstrap.fabric.fabric_id,
+        root_public_key: anchor_bootstrap.fabric.root_public_key,
+        anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
+    controller_node_after_rollback.inspected_controller_migration_node_present.should be_false
     jfa_node_list(joiner_im, b_datastore_session, joiner_peer, 2_u16)
       .any?(&.node_id.==(0xB201_u64)).should be_true
     jfa_node_list(anchor_im, anchor_session, anchor_peer, 1_u16)
