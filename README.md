@@ -1289,8 +1289,12 @@ joint_delegate = Matter::Controller::SharedFabric.delegate_joint(
   joint_authority, controller_node_id, group_cat, group_cat_version)
 Matter::Controller::SharedFabric.grant_joint_admin(
   im, anchor_case_session, anchor_peer, datastore_endpoint,
-  device_node_id, device_endpoint, group_id, group_name, joint_delegate)
+  anchor_node_id, device_node_id, device_endpoint, group_id, group_name, joint_delegate)
 ```
+
+Pass the expected Anchor Node ID from trusted commissioning state. The grant
+checks it against both the CASE peer and the Datastore `AnchorNodeID` before
+changing any Datastore entries.
 
 Wait for the Datastore entries to become Committed before the delegated
 controller opens CASE to the device. The ICAC signing key stays with

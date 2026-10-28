@@ -150,14 +150,15 @@ module Matter
       # is locally held.
       def self.grant_joint_admin(im : ImClient, session : Session::SecureContext,
                                  peer : Socket::IPAddress, datastore_endpoint : UInt16,
+                                 anchor_node_id : UInt64,
                                  device_node_id : UInt64, device_endpoint : UInt16,
                                  group_id : UInt16, group_name : String,
                                  controller : FabricInfo) : Nil
         if group_id == Datastore::RESERVED_GROUP_ID || device_node_id == DataType::NodeId::UNSPECIFIED || group_name.empty?
           raise Matter::ConfigurationError.new("Invalid Joint Fabric group or target node")
         end
-        unless session.case_session?
-          raise Matter::AuthenticationError.new("Joint Fabric Datastore grant requires CASE")
+        unless session.case_session? && session.peer_node_id.try(&.id) == anchor_node_id
+          raise Matter::AuthenticationError.new("Joint Fabric Datastore grant requires CASE with the expected Anchor")
         end
         icac = controller.intermediate_cert || raise Matter::ConfigurationError.new("Joint Fabric controller has no ICAC")
         Crypto::MatterCertificate::Validation.verify_chain(controller.controller_noc, icac,
@@ -172,6 +173,13 @@ module Matter
         raise Matter::ProtocolError.new("Joint Fabric Datastore AnchorRootCA returned no data") unless root_data
         unless Bytes.from_tlv(root_data.to_slice) == controller.root_cert
           raise Matter::AuthenticationError.new("Joint Fabric Datastore root differs from controller fabric")
+        end
+        node_report = im.read_attribute(session: session, peer: peer, endpoint_id: datastore_endpoint,
+          cluster_id: Datastore::CLUSTER_ID, attribute_id: Datastore::ATTR_ANCHOR_NODE_ID)
+        node_data = node_report.attribute_reports.try(&.find(&.attribute_data)).try(&.attribute_data).try(&.data)
+        raise Matter::ProtocolError.new("Joint Fabric Datastore AnchorNodeID returned no data") unless node_data
+        unless UInt64.from_tlv(node_data.to_slice) == anchor_node_id
+          raise Matter::AuthenticationError.new("Joint Fabric Datastore AnchorNodeID differs from expected Anchor")
         end
         subjects = Crypto::MatterCertificate.subject_ids_from_tlv(controller.controller_noc)
         cats = subjects.select do |subject|
