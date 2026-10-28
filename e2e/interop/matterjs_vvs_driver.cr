@@ -25,8 +25,7 @@ module MatterjsVvsDriver
 
   private def client(store : Matter::Controller::StateStore) : Matter::Controller::Client
     saved = store.load
-    Matter::Controller::Client.new(unsecured_source_node_id: saved.commissioner_node_id,
-      initial_unsecured_message_counter: saved.unsecured_message_counter)
+    Matter::Controller::Client.new(counter_lease: store.counter_lease(saved.commissioner_node_id))
   end
 
   private def read_list(type : T.class, im : Matter::Controller::ImClient,

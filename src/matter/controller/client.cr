@@ -10,6 +10,7 @@ require "../transport/udp_transport"
 require "../transport/tcp_enabled_transport"
 require "../interaction_model/tlv_messages"
 require "../protocol/message_type"
+require "./state_store"
 
 module Matter
   module Controller
@@ -31,6 +32,10 @@ module Matter
       DEFERRED_CHECK_INTERVAL  = 10.milliseconds
       # A bounded rejection limit for random candidates, not a wire protocol value.
       SESSION_ID_ALLOCATION_ATTEMPTS = 32
+
+      @@shared_registry_mutex = Mutex.new
+      @@active_fixed_sources = Hash(Tuple(String, UInt64), Tuple(Transport::MessageCounter?, Int32)).new
+      @@clients_by_transport = Hash(UInt64, Set(Client)).new
 
       record ReceivedMessage, message : Codec::MessageCodec::Message, peer : Socket::IPAddress
 
@@ -54,29 +59,89 @@ module Matter
       @tcp_disconnect_observer_id : Int32?
       @owned_unsecured_exchanges : Set(Tuple(UInt16, Socket::IPAddress))
       @session_id_in_use : Proc(UInt16, Bool)?
+      @fixed_source_ownership_key : Tuple(String, UInt64)? = nil
+      @pending_session_ids = Set(UInt16).new
 
       def initialize(
         port : Int32 = 0,
         @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
         unsecured_source_node_id : UInt64? = nil,
+        counter_lease : StateStore::CounterLease? = nil,
         initial_unsecured_message_counter : UInt32? = nil,
         unsecured_message_counter_limit : UInt32? = nil,
         transport : Transport::PacketTransport? = nil,
+        shared_message_counter : Transport::MessageCounter? = nil,
         tcp_enabled : Bool = false,
         @session_id_in_use : Proc(UInt16, Bool)? = nil,
       )
+        created_transport : Transport::PacketTransport? = nil
+        if unsecured_source_node_id && !counter_lease
+          raise Matter::ConfigurationError.new("A fixed unsecured source Node ID requires a StateStore counter lease")
+        end
+        if lease = counter_lease
+          if unsecured_source_node_id && unsecured_source_node_id != lease.source_node_id
+            raise Matter::ConfigurationError.new("Counter lease source Node ID does not match Client source")
+          end
+          if initial_unsecured_message_counter || unsecured_message_counter_limit
+            raise Matter::ConfigurationError.new("Counter lease controls the entire message counter range")
+          end
+          if transport && !lease.owns?(transport.message_counter)
+            raise Matter::ConfigurationError.new("Shared transport must use the same StateStore counter lease")
+          end
+          if shared_message_counter && !lease.owns?(shared_message_counter)
+            raise Matter::ConfigurationError.new("Shared message counter must use the same StateStore counter lease")
+          end
+        end
+        if shared_message_counter && (transport || tcp_enabled || !counter_lease)
+          raise Matter::ConfigurationError.new("Shared message counter requires a fixed-source UDP Client and counter lease")
+        end
         @owns_transport = transport.nil?
-        @transport = transport || (tcp_enabled ? Transport::TcpEnabledTransport.new(port: port) : Transport::UDPTransport.new(port: port))
+        if @owns_transport && (lease = counter_lease)
+          key = lease.ownership_key
+          @@shared_registry_mutex.synchronize do
+            if existing = @@active_fixed_sources[key]?
+              counter, count = existing
+              unless shared_message_counter && counter.same?(shared_message_counter)
+                raise Matter::ConfigurationError.new("A standalone Client already owns this fixed source Node ID")
+              end
+              @@active_fixed_sources[key] = {counter, count + 1}
+            else
+              @@active_fixed_sources[key] = {shared_message_counter, 1}
+            end
+          end
+          @fixed_source_ownership_key = key
+        end
+        reserved = @owns_transport && !shared_message_counter ? counter_lease.try(&.reserve) : nil
+        @transport = transport || (tcp_enabled ? Transport::TcpEnabledTransport.new(port: port) : Transport::UDPTransport.new(port: port, shared_message_counter: shared_message_counter))
+        created_transport = @transport if @owns_transport
+        if key = @fixed_source_ownership_key
+          @@shared_registry_mutex.synchronize do
+            _, count = @@active_fixed_sources[key]
+            @@active_fixed_sources[key] = {@transport.message_counter, count}
+          end
+        end
         @transport_observer_id = nil
         @tcp_disconnect_observer_id = nil
         @owned_unsecured_exchanges = Set(Tuple(UInt16, Socket::IPAddress)).new
-        @unsecured_source_node_id = unsecured_source_node_id ? DataType::NodeId.new(unsecured_source_node_id) : DataType::NodeId.random_operational
+        @unsecured_source_node_id = if lease = counter_lease
+                                      DataType::NodeId.new(lease.source_node_id)
+                                    else
+                                      DataType::NodeId.random_operational
+                                    end
 
         # Avoid re-using old unsecured message IDs across process restarts: peers may
         # keep a dedupe window for unsecured traffic (session_id=0), which can cause
         # commissioning/CASE handshakes to be ignored as duplicates/stale.
         if @owns_transport
-          if initial = initial_unsecured_message_counter
+          if range = reserved
+            lease = counter_lease.not_nil!
+            refill = lease.renewable? ? -> { lease.reserve } : nil
+            @transport.message_counter.bind_lease(lease.store.backend, range[0], range[1], refill,
+              lease.store.backend.counter_lease_validity)
+          elsif shared_message_counter
+            # The listener owns the lease and counter; this Client owns only
+            # its separate socket, exchanges, and secure sessions.
+          elsif initial = initial_unsecured_message_counter
             @transport.message_counter.reset(initial)
           else
             @transport.message_counter.reset(Random::Secure.rand(UInt32))
@@ -126,6 +191,17 @@ module Matter
             end
           end
         end
+        @@shared_registry_mutex.synchronize do
+          (@@clients_by_transport[@transport.object_id.to_u64] ||= Set(Client).new).add(self)
+        end
+      rescue ex
+        begin
+          created_transport.try(&.close)
+        rescue cleanup_error
+          Log.warn(exception: cleanup_error) { "Could not close Client transport after constructor failure" }
+        end
+        release_fixed_source_ownership
+        raise ex
       end
 
       def close : Nil
@@ -138,6 +214,14 @@ module Matter
           @transport_observer_id = nil
         end
         @transport.close if @owns_transport
+        @@shared_registry_mutex.synchronize do
+          if clients = @@clients_by_transport[@transport.object_id.to_u64]?
+            clients.delete(self)
+            @@clients_by_transport.delete(@transport.object_id.to_u64) if clients.empty?
+          end
+          @pending_session_ids.clear
+        end
+        release_fixed_source_ownership
         @subscription_mutex.synchronize do
           @subscription_ids.clear
           @closed_subscription_ids.clear
@@ -147,16 +231,19 @@ module Matter
 
       def register_session(session : Session::SecureContext,
                            peer : Socket::IPAddress? = nil) : Nil
-        unless session_id_available?(session.session_id)
-          raise Matter::ProtocolError.new("Controller session ID #{session.session_id} is already in use")
-        end
         if peer && peer.port == Transport::TcpEnabledTransport::TOKEN_PORT
           unless @transport.tcp_peer?(peer)
             raise Matter::TransportError.new("Matter TCP connection is closed")
           end
           session.bind_tcp_peer(peer)
         end
-        @sessions[session.session_id] = session
+        @@shared_registry_mutex.synchronize do
+          unless session_id_claimable_unlocked?(session.session_id)
+            raise Matter::ProtocolError.new("Controller session ID #{session.session_id} is already in use")
+          end
+          @pending_session_ids.delete(session.session_id)
+          @sessions[session.session_id] = session
+        end
         if peer
           @transport.configure_mrp_peer(peer, session.session_id,
             session.peer_mrp_idle_interval_ms, session.peer_mrp_active_interval_ms,
@@ -172,7 +259,46 @@ module Matter
       end
 
       def session_id_available?(session_id : UInt16) : Bool
-        session_id != UNSECURED_SESSION_ID && !@sessions.has_key?(session_id) && !(@session_id_in_use.try(&.call(session_id)) || false)
+        @@shared_registry_mutex.synchronize { session_id_available_unlocked?(session_id) }
+      end
+
+      private def session_id_available_unlocked?(session_id : UInt16) : Bool
+        !@pending_session_ids.includes?(session_id) && session_id_claimable_unlocked?(session_id)
+      end
+
+      private def session_id_claimable_unlocked?(session_id : UInt16) : Bool
+        return false if session_id == UNSECURED_SESSION_ID || @sessions.has_key?(session_id)
+        return false if @session_id_in_use.try(&.call(session_id)) || false
+        if clients = @@clients_by_transport[@transport.object_id.to_u64]?
+          return false if clients.any? do |client|
+                            !client.same?(self) && (client.session?(session_id) || client.pending_session_id?(session_id))
+                          end
+        end
+        true
+      end
+
+      protected def pending_session_id?(session_id : UInt16) : Bool
+        @pending_session_ids.includes?(session_id)
+      end
+
+      def release_session_id_reservation(session_id : UInt16) : Nil
+        @@shared_registry_mutex.synchronize { @pending_session_ids.delete(session_id) }
+      end
+
+      private def release_fixed_source_ownership : Nil
+        if key = @fixed_source_ownership_key
+          @@shared_registry_mutex.synchronize do
+            if existing = @@active_fixed_sources[key]?
+              counter, count = existing
+              if count <= 1
+                @@active_fixed_sources.delete(key)
+              else
+                @@active_fixed_sources[key] = {counter, count - 1}
+              end
+            end
+          end
+          @fixed_source_ownership_key = nil
+        end
       end
 
       # Session IDs must be available both locally and to another controller
@@ -180,7 +306,12 @@ module Matter
       def allocate_session_id(protocol : String, &candidate : -> UInt16) : UInt16
         SESSION_ID_ALLOCATION_ATTEMPTS.times do
           id = candidate.call
-          return id if session_id_available?(id)
+          @@shared_registry_mutex.synchronize do
+            if session_id_available_unlocked?(id)
+              @pending_session_ids.add(id)
+              return id
+            end
+          end
         end
         raise Matter::ProtocolError.new("Could not allocate an unused #{protocol} session ID")
       end

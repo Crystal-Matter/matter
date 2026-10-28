@@ -992,7 +992,7 @@ module Matter
           intermediate_cert: fabric.intermediate_cert,
           ipk_epoch_keys: fabric.ipk_epoch_keys)
         owns_client = client.nil?
-        client ||= Client.new(unsecured_source_node_id: fabric.node_id, crypto: crypto)
+        client ||= Client.new(crypto: crypto)
         begin
           session = Pairing::CasePairing.new(crypto).pair(client, peer, identity,
             peer_node_id: peer_node_id, timeout: timeout)

@@ -50,9 +50,10 @@ module SdkReverseCommissioningDriver
   end
 
   def commission_aggregator(path : String, manual_code : String) : Nil
-    client = Matter::Controller::Client.new(unsecured_source_node_id: SOURCE_CONTROLLER_ID)
+    state_store = store(path)
+    client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(SOURCE_CONTROLLER_ID))
     begin
-      Matter::Controller::Commissioning::Commissioner.new(store(path), client,
+      Matter::Controller::Commissioning::Commissioner.new(state_store, client,
         timeout: OPERATION_TIMEOUT,
         attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
           Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(

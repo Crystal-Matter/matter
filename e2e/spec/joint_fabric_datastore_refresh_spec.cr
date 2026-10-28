@@ -97,7 +97,7 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
     store.save(Matter::Controller::State.new(fabric: bootstrap.fabric,
       commissioner_node_id: bootstrap.fabric.controller_node_id))
     client = Matter::Controller::Client.new(
-      unsecured_source_node_id: bootstrap.fabric.controller_node_id)
+      counter_lease: store.counter_lease(bootstrap.fabric.controller_node_id))
     anchor_peer = Socket::IPAddress.new(anchor.address, E2E::DEVICE_PORT)
     target_peer = Socket::IPAddress.new(target.address, E2E::DEVICE_PORT)
     issuer = ->(fabric_id : UInt64, node_id : UInt64, key : Bytes) do
@@ -187,9 +187,11 @@ describe "Joint Fabric Datastore RefreshNode against a commissioned device" do
     group_version = 2_u16
     delegated = Matter::Controller::SharedFabric.delegate_joint(bootstrap.fabric,
       delegate_id, group_cat, group_version)
-    delegate_store = Matter::Controller::StateStore.new(Matter::Storage::Memory.new)
+    delegate_path = File.join(E2E::LOG_DIR, "joint-fabric-refresh-delegate.yml")
+    File.delete?(delegate_path)
+    delegate_store = Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(delegate_path))
     Matter::Controller::SharedFabric.install(delegate_store, delegated)
-    delegate_client = Matter::Controller::Client.new(unsecured_source_node_id: delegate_id)
+    delegate_client = Matter::Controller::Client.new(counter_lease: delegate_store.counter_lease(delegate_id))
     delegate_session = Matter::Controller::Pairing::CasePairing.new.pair(delegate_client,
       target_peer, delegated, peer_node_id: target_node_id, timeout: E2E::COMMAND_TIMEOUT)
     delegate_im = Matter::Controller::ImClient.new(delegate_client, E2E::COMMAND_TIMEOUT)
