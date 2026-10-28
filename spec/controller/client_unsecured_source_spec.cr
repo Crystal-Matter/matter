@@ -77,6 +77,30 @@ describe Matter::Controller::Client do
     first_fixture.try(&.close)
   end
 
+  it "rejects a standalone counter while a shared transport owns that source" do
+    fixture = Matter::Spec::CounterStoreFixture.new
+    store = fixture.store
+    source = 0x2222_u64
+    transport = Matter::Spec::CaptureTransport.new_for_spec
+    store.bind_transport_counter(transport.message_counter)
+    shared = Matter::Controller::Client.new(transport: transport,
+      counter_lease: store.counter_lease(source))
+    reserved = store.load.unsecured_message_counter
+
+    expect_raises(Matter::ConfigurationError, /already owns/) do
+      Matter::Controller::Client.new(counter_lease: store.counter_lease(source))
+    end
+    store.load.unsecured_message_counter.should eq(reserved)
+    shared.close
+    standalone = Matter::Controller::Client.new(counter_lease: store.counter_lease(source))
+    store.load.unsecured_message_counter.should be > reserved
+  ensure
+    standalone.try(&.close)
+    shared.try(&.close)
+    transport.try(&.close)
+    fixture.try(&.close)
+  end
+
   it "allows only one standalone Client for a fixed source until close" do
     fixture = Matter::Spec::CounterStoreFixture.new
     store = fixture.store

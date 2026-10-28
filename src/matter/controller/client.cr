@@ -96,17 +96,18 @@ module Matter
           raise Matter::ConfigurationError.new("Shared message counter requires a fixed-source UDP Client and counter lease")
         end
         @owns_transport = transport.nil?
-        if @owns_transport && (lease = counter_lease)
+        if lease = counter_lease
           key = lease.ownership_key
+          supplied_counter = transport.try(&.message_counter) || shared_message_counter
           @@shared_registry_mutex.synchronize do
             if existing = @@active_fixed_sources[key]?
               counter, count = existing
-              unless shared_message_counter && counter.same?(shared_message_counter)
-                raise Matter::ConfigurationError.new("A standalone Client already owns this fixed source Node ID")
+              unless supplied_counter && counter.same?(supplied_counter)
+                raise Matter::ConfigurationError.new("A Client already owns this fixed source Node ID with another counter")
               end
               @@active_fixed_sources[key] = {counter, count + 1}
             else
-              @@active_fixed_sources[key] = {shared_message_counter, 1}
+              @@active_fixed_sources[key] = {supplied_counter, 1}
             end
           end
           @fixed_source_ownership_key = key
