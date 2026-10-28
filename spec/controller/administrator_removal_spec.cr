@@ -472,6 +472,22 @@ describe Matter::Controller::AdministratorRemoval::Workflow do
     end
   end
 
+  it "rejects participant completion metadata while reconciling RemoveFabric" do
+    journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
+      RemovalStage::RemovingFabric)
+    saved = false
+    save = ->(_state : Matter::Controller::AdministratorRemoval::Journal) { saved = true; nil }
+
+    expect_raises(Matter::ConfigurationError, /Invalid Administrator removal reconciliation/) do
+      Matter::Controller::AdministratorRemoval::Workflow.reconcile_journal!(journal,
+        RemovalStage::FabricRemoved, save, rotated_node_id: 0x200_u64,
+        participant_completed: true)
+    end
+    saved.should be_false
+    journal.stage.should eq(RemovalStage::RemovingFabric)
+    journal.rotated_nodes.should be_empty
+  end
+
   it "requires persisted AdminList proof before resuming a lost RemoveAdmin acknowledgement" do
     datastore = removal_datastore
     journal = Matter::Controller::AdministratorRemoval::Journal.new(0x300_u64,
