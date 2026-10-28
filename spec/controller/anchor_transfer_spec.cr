@@ -1327,6 +1327,40 @@ describe Matter::Controller::AnchorTransfer::AdministratorFollowUp do
     client.try(&.close)
   end
 
+  it "rewinds an uncommitted participant cross-sign only after a durable no-effect decision" do
+    new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
+    old_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
+      0x4321_u64, 0x100_u64, 0xFFF1_u16).fabric
+    im = FakeFollowUpImClient.new(old_fabric.fabric_id, old_fabric.root_public_key)
+    client = Matter::Controller::Client.new
+    journal = Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal.new(
+      0x300_u64, Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    durable = journal.detached_copy
+    fail_save = true
+    runner = Matter::Controller::AnchorTransfer::AdministratorFollowUp.new(
+      client, im, Socket::IPAddress.new("127.0.0.1", 5540), 0x300_u64,
+      new_fabric, old_fabric.fabric_id, old_fabric.root_public_key,
+      1_u16, im.peer_icac_key.public_key, 3_u64,
+      ->(state : Matter::Controller::AnchorTransfer::AdministratorFollowUp::Journal) {
+        raise Matter::StorageError.new("no-effect save failed") if fail_save
+        durable = state.detached_copy
+        nil
+      }, journal)
+
+    expect_raises(Matter::StorageError, /no-effect save failed/) { runner.reconcile_cross_sign!(false) }
+    runner.journal.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    durable.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::CrossSigning)
+    fail_save = false
+    runner.reconcile_cross_sign!(false)
+    durable.stage.should eq(Matter::Controller::AnchorTransfer::AdministratorFollowUp::Stage::Ready)
+    durable.pending_icac.should be_nil
+    im.commands.should be_empty
+  ensure
+    im.try(&.close)
+    client.try(&.close)
+  end
+
   it "does not complete commissioning when saving the pending ICAC fails" do
     new_fabric = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       0x1234_u64, 0x200_u64, 0xFFF2_u16).fabric
