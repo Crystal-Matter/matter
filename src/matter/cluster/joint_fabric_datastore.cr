@@ -1459,10 +1459,13 @@ module Matter
 
       def remove_binding_from_endpoint_for_node(request : RemoveBindingFromEndpointForNodeRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.not_found unless @endpoint_binding_list.any? { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.list_id == request.list_id }
+        return InteractionModel::Status.not_found unless endpoint_exists?(request.node_id, request.endpoint_id)
         entries = @endpoint_binding_list.dup
-        index = entries.index { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.list_id == request.list_id }.as(Int32)
+        index = entries.index { |e| e.node_id == request.node_id && e.endpoint_id == request.endpoint_id && e.list_id == request.list_id }
+        return InteractionModel::Status.success unless index
         entry = entries[index]
+        return InteractionModel::Status.success if entry.status_entry.state == DatastoreStateEnum::DeletePending &&
+                                                   entry.status_entry.failure_code == NO_FAILURE_CODE
         entry.status_entry = status_entry(DatastoreStateEnum::DeletePending)
         entries[index] = entry
         self.endpoint_binding_list = entries
