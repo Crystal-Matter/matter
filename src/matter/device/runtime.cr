@@ -1026,6 +1026,9 @@ module Matter
 
       administrator_commissioning = Cluster::AdministratorCommissioning.new(endpoint_0)
       @administrator_commissioning = administrator_commissioning
+      administrator_commissioning.on_fabric_vendor_id = ->(index : UInt8) do
+        fabric_table.get_fabric(index).try(&.vendor_id)
+      end
       general_commissioning.on_close_commissioning_window = -> do
         administrator_commissioning.close_window if administrator_commissioning.window_open?
       end

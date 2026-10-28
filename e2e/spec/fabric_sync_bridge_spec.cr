@@ -67,6 +67,8 @@ describe "real target Fabric Synchronization bridge" do
       open_args, endpoint: 1, options: timed))
     read_int(bridge, "administratorcommissioning", "window-status", "WindowStatus", 1).should eq(
       Admin::CommissioningWindowStatus::EnhancedWindowOpen.value.to_i64)
+    read_int(bridge, "administratorcommissioning", "admin-vendor-id", "AdminVendorId", 1).should eq(
+      Matter::SetupPayload.test_vendor_id.to_i64)
 
     bridge.restart!
     deadline = Time.instant + E2E::COMMAND_TIMEOUT

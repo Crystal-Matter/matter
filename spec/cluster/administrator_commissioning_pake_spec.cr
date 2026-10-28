@@ -33,6 +33,25 @@ module Matter::Cluster
     end
 
     describe "OpenCommissioningWindow command (Enhanced)" do
+      it "publishes the authenticated CASE fabric and its vendor on a wire command" do
+        cluster = AdministratorCommissioning.new
+        cluster.on_fabric_vendor_id = ->(index : UInt8) do
+          index == 1_u8 ? 0xFFF1_u16 : nil
+        end
+        request = AdministratorCommissioning::OpenCommissioningWindowRequest.new(
+          commissioning_timeout: 180_u16,
+          pake_passcode_verifier: Bytes.new(AdministratorCommissioning::PAKE_PASSCODE_VERIFIER_LENGTH, 0_u8),
+          discriminator: 3840_u16,
+          iterations: AdministratorCommissioning::PBKDF2_MIN_ITERATIONS.to_u32,
+          salt: Bytes.new(AdministratorCommissioning::PAKE_SALT_MIN_LENGTH, 1_u8)
+        )
+
+        cluster.invoke_command(AdministratorCommissioning::CMD_OPEN_COMMISSIONING_WINDOW,
+          request.to_tlv(nil), is_case_session: true, fabric_index: 1_u8).should eq(InteractionModel::Status.success)
+        cluster.admin_fabric_index.should eq(1_u8)
+        cluster.admin_vendor_id.should eq(0xFFF1_u16)
+      end
+
       it "opens enhanced commissioning window with valid parameters" do
         cluster = AdministratorCommissioning.new
 
