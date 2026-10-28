@@ -345,6 +345,7 @@ module Matter
       @reviews_awaiting_delivery = {} of UInt64 => Tuple(UInt8, FabricRestrictionReviewUpdate, Bool)
       @review_callbacks_needing_replay = Set(UInt64).new
       @review_delivery_inflight = Set(UInt64).new
+      @review_callbacks_active = Set(UInt64).new
       @review_events_emitted = Set(UInt64).new
       @review_delivery_retry_scheduled = Set(UInt64).new
       @restriction_fabric_generations = {} of UInt8 => UInt64
@@ -656,7 +657,12 @@ module Matter
         begin
           persist_access_control_state
           ensure_current_restriction_review!(fabric_index, token, generation)
-          callback.call(request)
+          @review_callbacks_active.add(token)
+          begin
+            callback.call(request)
+          ensure
+            @review_callbacks_active.delete(token)
+          end
           ensure_current_restriction_review!(fabric_index, token, generation)
         rescue ex
           @deferred_restriction_review_decisions.delete(token)
@@ -762,7 +768,12 @@ module Matter
           begin
             persist_access_control_state
             ensure_current_restriction_review!(fabric_index, token, generation)
-            callback.call(fabric_index, update)
+            @review_callbacks_active.add(token)
+            begin
+              callback.call(fabric_index, update)
+            ensure
+              @review_callbacks_active.delete(token)
+            end
             ensure_current_restriction_review!(fabric_index, token, generation)
           rescue ex
             unless current_restriction_review?(fabric_index, token, generation)
@@ -802,13 +813,18 @@ module Matter
         delivery = @reviews_awaiting_delivery[token]? || return false
         return false unless current_restriction_review?(delivery[0], token)
         generation = @review_generations[token]
-        return false if @review_delivery_inflight.includes?(token)
+        return false if @review_delivery_inflight.includes?(token) || @review_callbacks_active.includes?(token)
         @review_delivery_inflight.add(token)
         begin
           fabric_index, update, arl_notification_required = delivery
           if @review_callbacks_needing_replay.includes?(token)
             callback = @on_restriction_review_updated || return false
-            callback.call(fabric_index, update)
+            @review_callbacks_active.add(token)
+            begin
+              callback.call(fabric_index, update)
+            ensure
+              @review_callbacks_active.delete(token)
+            end
             return false unless current_restriction_review?(fabric_index, token, generation)
             @review_callbacks_needing_replay.delete(token)
           end
@@ -905,7 +921,12 @@ module Matter
         callback = @on_restriction_review_updated ||
                    raise Matter::ConfigurationError.new("Restriction review update callback is not configured")
         update = FabricRestrictionReviewUpdate.new(token, instruction, arl_request_flow_url)
-        callback.call(fabric_index, update)
+        @review_callbacks_active.add(token)
+        begin
+          callback.call(fabric_index, update)
+        ensure
+          @review_callbacks_active.delete(token)
+        end
         return false unless current_restriction_review?(fabric_index, token, generation) && @pending_restriction_reviews.has_key?(token)
         emit_event(EVENT_FABRIC_RESTRICTION_REVIEW_UPDATE, update, fabric_index) if @feature_map.managed_device?
         current_restriction_review?(fabric_index, token, generation)
@@ -1126,6 +1147,7 @@ module Matter
         requested = @on_restriction_review_requested || return
         return unless @on_restriction_review_updated
         @review_callbacks_needing_replay.to_a.each do |token|
+          next if @review_callbacks_active.includes?(token)
           delivery = @reviews_awaiting_delivery[token]? || next
           schedule_restriction_review_delivery_retry(token, delivery[0])
           begin
@@ -1137,7 +1159,7 @@ module Matter
         @reviews_needing_replay.dup.each do |token|
           # A host callback may restore a previous document while this token
           # is completing. Replaying it here would reenter that callback.
-          next if @review_delivery_inflight.includes?(token)
+          next if @review_delivery_inflight.includes?(token) || @review_callbacks_active.includes?(token)
           request = @pending_restriction_reviews[token]?
           next unless request
           deadline = @pending_restriction_review_deadlines[token]
@@ -1151,7 +1173,12 @@ module Matter
               end
             else
               schedule_restriction_review_timer(request.fabric_index, token, deadline - Time.utc)
-              requested.call(request)
+              @review_callbacks_active.add(token)
+              begin
+                requested.call(request)
+              ensure
+                @review_callbacks_active.delete(token)
+              end
               @reviews_needing_replay.delete(token)
             end
           rescue ex
