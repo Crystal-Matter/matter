@@ -343,7 +343,18 @@ item below as covered only to the extent of its cited tests.
   callers using it directly are responsible for safe rollout.
 - Opt-in controller Datastore registration journals AddPendingNode before the
   device's final CASE, then RefreshNode after acknowledged commissioning. The
-  Anchor CASE adapter reads NodeList before retrying a command; known failures
+  Anchor CASE adapter checks NodeList before AddNOC and rejects an occupied
+  Node ID even when its FriendlyName matches. A first AddPendingNode also
+  rejects any existing entry; only a durably acknowledged local registration
+  may treat a matching Pending entry as a retry. If AddPendingNode's response
+  is lost, the journal remains Pending because NodeList has no attempt token
+  that proves ownership against a concurrent Administrator. The host must
+  reconcile that entry; automated retry cannot safely claim or remove it.
+  The read and subsequent AddPendingNode are not atomic across Administrators,
+  so hosts should coordinate Node ID allocation. The current wire schema has
+  no attempt token to distinguish concurrent same-name AddPendingNode calls. A Joint
+  Commissioning workflow without this opt-in registrar does not perform the
+  remote NodeList check and must arrange it through its host. Known failures
   remove the pending entry. A lost CommissioningComplete result requires
   explicit reconciliation before removal. An opt-in Commissioner starts a
   retry worker that scans the durable controller journal immediately at startup

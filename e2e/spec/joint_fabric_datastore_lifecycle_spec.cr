@@ -37,9 +37,9 @@ private class ObservedLifecycleDelivery < Matter::Controller::DatastoreNodeRegis
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
                        friendly_name : String) : Nil
     @network.add_pending_node(fabric, node_id, friendly_name)
-    # Simulate a lost command acknowledgement. NodeList must make this retry
-    # idempotent while commissioning has not yet entered final CASE.
-    @network.add_pending_node(fabric, node_id, friendly_name)
+    # Confirm the staged entry is visible before final CASE. An unacknowledged
+    # AddPendingNode is now held for reconciliation because NodeList has no
+    # attempt identifier that distinguishes a concurrent Administrator.
     session = Matter::Controller::Pairing::CasePairing.new.pair(@client, @anchor_peer,
       fabric, peer_node_id: @anchor_node_id, timeout: @timeout)
     im = Matter::Controller::ImClient.new(@client, @timeout)
@@ -51,6 +51,10 @@ private class ObservedLifecycleDelivery < Matter::Controller::DatastoreNodeRegis
       raise Matter::ProtocolError.new("AddPendingNode had an unexpected pre-completion state")
     end
     @pending_seen = true
+  end
+
+  def assert_node_id_available(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+    @network.assert_node_id_available(fabric, node_id)
   end
 
   def refresh_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil

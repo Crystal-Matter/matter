@@ -14,6 +14,10 @@ ROLLBACK_ANCHOR_NODE_ID = 0xA202_u64
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
 
 private class JcmInterruptedDelivery < Matter::Controller::DatastoreNodeRegistrar::Delivery
+  def assert_node_id_available(fabric : Matter::Controller::FabricInfo, node_id : UInt64) : Nil
+    # This fault-injection fixture deliberately has no Anchor delivery.
+  end
+
   def add_pending_node(fabric : Matter::Controller::FabricInfo, node_id : UInt64,
                        friendly_name : String) : Nil
   end
