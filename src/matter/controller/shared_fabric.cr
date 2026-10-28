@@ -289,7 +289,7 @@ module Matter
           end
         end
         raise Matter::ConfigurationError.new("Joint Fabric group has no target ACLs") if selected_acls.empty?
-        target_ids = selected_acls.map(&.node_id).uniq
+        target_ids = selected_acls.map(&.node_id).uniq!
         target_refs = selected_acls.map { |entry| JointGroupACLTarget.new(entry.node_id, entry.list_id) }
 
         seen = [revoked.controller_node_id]
@@ -358,10 +358,10 @@ module Matter
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         new_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
-        if entries.any? { |entry| acl_grants_cat_version?(entry.acl_entry,
-             receipt.group_cat, receipt.previous_version) }
-          return JointGroupRevocation::Status::Pending
+        previous_version_acl = entries.any? do |entry|
+          acl_grants_cat_version?(entry.acl_entry, receipt.group_cat, receipt.previous_version)
         end
+        return JointGroupRevocation::Status::Pending if previous_version_acl
         receipt.target_acls.each do |target|
           entry = entries.find { |candidate| candidate.node_id == target.node_id && candidate.list_id == target.list_id }
           return JointGroupRevocation::Status::Pending unless entry &&
@@ -406,9 +406,10 @@ module Matter
         subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(cat, version)).id
         subjects = Crypto::MatterCertificate.subject_ids_from_tlv(fabric.controller_noc)
-        subjects.includes?(subject) && subjects.count { |id|
+        cat_subject_count = subjects.count do |id|
           DataType::NodeId.case_authenticated_tag_from_subject?(id) != nil
-        } == 1
+        end
+        subjects.includes?(subject) && cat_subject_count == 1
       end
 
       private def self.acl_grants_cat_version?(acl : Datastore::DatastoreAccessControlEntryStruct,
