@@ -72,13 +72,27 @@ end
 # report. A participant can expose that path even when Descriptor traversal
 # does not enumerate its Administrator endpoint to this fabric.
 private class JointSparseDescriptorIm < JointDescriptorIm
-  def initialize(client : Matter::Controller::Client, @extra_endpoint : UInt16? = nil)
+  def initialize(client : Matter::Controller::Client, @extra_endpoint : UInt16? = nil,
+                 @missing_device_type : Bool = false, @missing_server_cluster : Bool = false)
     super(client)
   end
 
   def read_attribute(session : Matter::Session::SecureContext, peer : Socket::IPAddress,
                      endpoint_id : UInt16, cluster_id : UInt32, attribute_id : UInt32,
                      fabric_filtered : Bool = true) : Matter::InteractionModel::ReportDataMessage
+    if endpoint_id == 1_u16 && cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID
+      value = if attribute_id == Matter::Cluster::Descriptor::ATTR_DEVICE_TYPE_LIST && @missing_device_type
+                [Matter::Cluster::Descriptor::DeviceTypeStruct.new(Matter::DeviceType::ROOT_NODE, 1_u16)].to_tlv
+              elsif attribute_id == Matter::Cluster::Descriptor::ATTR_SERVER_LIST && @missing_server_cluster
+                [Matter::Cluster::Descriptor::CLUSTER_ID].to_tlv
+              end
+      if value
+        path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id)
+        data = Matter::InteractionModel::AttributeDataIB.new(path: path, data: TLV::Any.from_slice(value))
+        return Matter::InteractionModel::ReportDataMessage.new(
+          attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)])
+      end
+    end
     if endpoint_id == 0_u16 && cluster_id == Matter::Cluster::Descriptor::CLUSTER_ID &&
        attribute_id == Matter::Cluster::Descriptor::ATTR_PARTS_LIST
       path = Matter::InteractionModel::AttributePath.new(endpoint: 0_u16, cluster: cluster_id, attribute: attribute_id)
@@ -304,6 +318,36 @@ describe Matter::Controller::JointCommissioning do
     )
     peer = Socket::IPAddress.new("127.0.0.1", 5540)
     Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer).should eq(1_u16)
+    client.close
+  end
+
+  it "rejects a wildcard Administrator endpoint without the JFA device type" do
+    client = Matter::Controller::Client.new
+    im = JointSparseDescriptorIm.new(client, missing_device_type: true)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    expect_raises(Matter::AuthenticationError, /no Joint Fabric Administrator endpoint/) do
+      Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
+    end
+    client.close
+  end
+
+  it "rejects a wildcard Administrator endpoint without the JFA server cluster" do
+    client = Matter::Controller::Client.new
+    im = JointSparseDescriptorIm.new(client, missing_server_cluster: true)
+    session = Matter::Session::SecureContext.new(
+      session_id: 1_u16, peer_session_id: 2_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16)
+    )
+    peer = Socket::IPAddress.new("127.0.0.1", 5540)
+    expect_raises(Matter::AuthenticationError, /no Joint Fabric Administrator endpoint/) do
+      Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
+    end
     client.close
   end
 

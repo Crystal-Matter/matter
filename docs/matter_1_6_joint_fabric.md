@@ -92,8 +92,11 @@ item below as covered only to the extent of its cited tests.
   memberships count their destination policy without joining a receive socket.
 - The Joint Commissioning workflow verifies the joining administrator's
   operational VID proof, NOC chain, and Administrator CAT before issuing a
-  NOC. The reachable Anchor Administrator device performs Announce and the
-  ICAC exchange; the returned certificate is checked against the previously
+  NOC. A wildcard AdministratorFabricIndex discovery result must also expose
+  the Joint Fabric Administrator device type and server cluster on its
+  Descriptor endpoint, even when PartsList omits that endpoint. The reachable
+  Anchor Administrator device performs Announce and the ICAC exchange; the
+  returned certificate is checked against the previously
   authenticated key and Anchor root. Trust anchors, attestation, and consent
   are explicit host decisions. Pending registration and the cross-signed ICAC
   persist across restart. For AddICAC or a deferred handoff interrupted before
