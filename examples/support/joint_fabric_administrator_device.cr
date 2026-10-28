@@ -4298,7 +4298,8 @@ module MatterJointFabricAdministrator
         response = im.invoke(session: session, peer: peer, endpoint_id: endpoint,
           cluster_id: Admin::CLUSTER_ID,
           command_id: Admin::CMD_ANNOUNCE_JOINT_FABRIC_ADMINISTRATOR,
-          fields: Admin::AnnounceJointFabricAdministratorRequest.new(endpoint).to_slice)
+          # The command target is the joining JFA; the payload identifies this Anchor's JFA.
+          fields: Admin::AnnounceJointFabricAdministratorRequest.new(ANCHOR_JFA_ENDPOINT_ID).to_slice)
         Matter::Controller::JointCommissioning.assert_status_success(response)
         Matter::Controller::JointCommissioning.exchange_icac(im, session, peer,
           endpoint, identity.root_cert, identity.certificate_authority_key,
