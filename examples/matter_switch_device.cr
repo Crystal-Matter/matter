@@ -90,5 +90,41 @@ Examples.main("Matter Switch Device") do
     device.node.get_cluster!(Matter::Node::ROOT_ENDPOINT_ID, Matter::Cluster::DiagnosticLogs)
       .log("E2E BDX diagnostic log " + "L" * 1100)
   end
+  if drop_path = ENV["MATTER_SWITCH_E2E_DROP_REMOVE_FABRIC_RESPONSE"]?
+    device.message_handler.on_im_response_packet = ->(request_message : Matter::Codec::MessageCodec::Message, response_type : UInt8, _packet : Bytes) do
+      remove_fabric_request = if response_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+                                if request = Matter::Protocol::IMHandler.parse_invoke_request(request_message.payload)
+                                  if request.invoke_requests.size == 1
+                                    path = request.invoke_requests.first.command_path
+                                    path.endpoint == Matter::Node::ROOT_ENDPOINT_ID &&
+                                    path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
+                                    path.command == Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC
+                                  else
+                                    false
+                                  end
+                                else
+                                  false
+                                end
+                              else
+                                false
+                              end
+
+      if remove_fabric_request
+        count_path = "#{drop_path}.count"
+        count = (File.exists?(count_path) ? File.read(count_path).to_i? : nil) || 0
+        count += 1
+        File.write(count_path, count.to_s)
+        if File.exists?("#{drop_path}.armed")
+          File.delete("#{drop_path}.armed")
+          File.write("#{drop_path}.dropped", count.to_s)
+          true
+        else
+          false
+        end
+      else
+        false
+      end
+    end
+  end
   device
 end

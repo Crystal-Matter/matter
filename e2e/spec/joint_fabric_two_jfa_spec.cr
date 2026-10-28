@@ -5,8 +5,10 @@ require "../interop/jfa_vvs_dcl_fixture"
 
 private alias JfaRolloutDatastore = Matter::Cluster::JointFabricDatastore
 private alias JfaRollout = Matter::Controller::IpkRollout
-MIGRATION_RECOVERY_MIN_WAIT = 120.seconds
-ROLLBACK_ANCHOR_NODE_ID     = 0xA202_u64
+MIGRATION_RECOVERY_MIN_WAIT       = 120.seconds
+MIGRATION_REMOVE_FABRIC_DROP_PATH = File.join(E2E::LOG_DIR,
+  "matter_joint_fabric_migration_target.remove_fabric_response")
+ROLLBACK_ANCHOR_NODE_ID = 0xA202_u64
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
@@ -1043,17 +1045,21 @@ describe "three provisioned Joint Fabric Administrators" do
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
     controller_node_during_rollback.inspected_controller_migration_node_present.should be_true
-    # The device commits Anchor RemoveFabric, but B loses the result before
-    # saving RolledBack. Recovery must prove the committed removal over B CASE.
+    # The target encodes the successful Anchor RemoveFabric InvokeResponse,
+    # then drops that packet before its UDP transport can send or retry it.
+    # B must retain RollingBack and prove removal without issuing it again.
+    File.delete?("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.count")
+    File.delete?("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.dropped")
+    File.write("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.armed", "1")
     interrupted_rollback_fabric_removal = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("resume-rollback-device-migration", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID,
-        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
-        interrupt_after_migration_anchor_fabric_removed: true))
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     interrupted_rollback_fabric_removal.status.should eq("error")
-    interrupted_rollback_fabric_removal.error.to_s.should contain("Injected interruption after Anchor RemoveFabric")
+    File.read("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.dropped").should eq("1")
+    File.read("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.count").should eq("1")
     joiner.restart!
     b_datastore_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       joiner_peer, joiner_bootstrap.fabric,
@@ -1065,6 +1071,7 @@ describe "three provisioned Joint Fabric Administrators" do
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID))
     committed_rollback_stage.inspected_migration_stage.should eq(
       Matter::Controller::JointFabricDeviceMigration::Stage::RollingBack.value)
+    File.read("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.count").should eq("1")
     b_rollback_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
       migration_peer, joiner_bootstrap.fabric,
       peer_node_id: 0xB201_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -1091,9 +1098,9 @@ describe "three provisioned Joint Fabric Administrators" do
         fabric_id: anchor_bootstrap.fabric.fabric_id,
         root_public_key: anchor_bootstrap.fabric.root_public_key,
         anchor_node_id: ROLLBACK_ANCHOR_NODE_ID,
-        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT,
-        interrupt_after_migration_anchor_fabric_removed: true))
+        peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     reconciled_rollback.status.should eq("ok"), reconciled_rollback.error.to_s
+    File.read("#{MIGRATION_REMOVE_FABRIC_DROP_PATH}.count").should eq("1")
     completed_rollback_stage = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,

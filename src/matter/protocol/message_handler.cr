@@ -51,6 +51,13 @@ module Matter
       getter bdx : Bdx::Responder
       getter bdx_initiator : Bdx::Initiator
 
+      # The hook sees an encoded IM response immediately before transport
+      # enqueue. Applications normally leave it unset; E2E peers can discard
+      # a selected packet to exercise uncertain command-result recovery.
+      def on_im_response_packet=(callback : Proc(Codec::MessageCodec::Message, UInt8, Bytes, Bool)?) : Nil
+        @sender.on_im_response_packet = callback
+      end
+
       # Network receive must remain free while a cluster handler performs a
       # controller exchange through the same socket. One worker preserves the
       # device's inbound message ordering.

@@ -426,8 +426,11 @@ item below as covered only to the extent of its cited tests.
   same device after a committed Anchor registration. It restarts B after
   Anchor RemoveNode commits but before B advances its rollback journal,
   refuses automatic replay, then explicitly resumes. The device then commits
-  Anchor RemoveFabric, but B loses that result and restarts with a RollingBack
-  journal. Authenticated CASE and Datastore reads prove B ownership persists
+  Anchor RemoveFabric, but its encoded InvokeResponse is discarded at the
+  target's outgoing packet boundary before UDP transmission or MRP caching.
+  B times out and restarts with a RollingBack journal. The fixture counts one
+  handled RemoveFabric request and no replay during reconciliation.
+  Authenticated CASE and Datastore reads prove B ownership persists
   and A's fabric and NodeList entry are absent; read-only reconciliation
   completes the rollback without repeating RemoveFabric. The example's local
   inspection command confirms the A controller node record is deleted before
