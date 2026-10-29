@@ -1075,7 +1075,8 @@ describe "three provisioned Joint Fabric Administrators" do
           peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
       sdk_migration.status.should eq("ok"), sdk_migration.error.to_s
       fresh_sdk_client = Matter::Controller::Client.new(
-        counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id))
+        counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
+        shared_message_counter: anchor_client.transport.message_counter)
       begin
         fresh_sdk_session = Matter::Controller::Pairing::CasePairing.new.pair(fresh_sdk_client,
           sdk_peer, anchor_bootstrap.fabric,
