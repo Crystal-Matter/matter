@@ -1333,7 +1333,7 @@ describe "three provisioned Joint Fabric Administrators" do
         anchor_node_id: 0xA201_u64,
         peer_address: migration_target.address, peer_port: E2E::DEVICE_PORT))
     rejected_anchor_registration_no_effect.status.should eq("error")
-    rejected_anchor_registration_no_effect.error.to_s.should contain("Anchor Datastore already contains the migrated node")
+    rejected_anchor_registration_no_effect.error.to_s.should contain("Anchor Datastore registration already changed")
     persisted_after_no_effect_rejection = jfa_command("matter_joint_fabric_joiner",
       MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", 0xB201_u64,
         fabric_id: anchor_bootstrap.fabric.fabric_id,
