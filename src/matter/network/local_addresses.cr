@@ -4,7 +4,7 @@ require "socket"
   # IP Helper exposes the adapter's IPv6 interface index, which is required
   # to join and send link-local multicast on every active Windows interface.
   @[Link("iphlpapi")]
-  lib LibWindowsAdapters
+  lib LibMatterWindowsAdapters
     PHYSICAL_ADDRESS_MAX_LENGTH = 8
 
     struct SocketAddress
@@ -143,8 +143,8 @@ module Matter
         buffer = Bytes.new(size.to_i)
         attempts = 0
         loop do
-          result = LibWindowsAdapters.GetAdaptersAddresses(LibC::AF_UNSPEC.to_u32, WINDOWS_ADAPTER_DEFAULT_FLAGS,
-            Pointer(Void).null, buffer.to_unsafe.as(LibWindowsAdapters::AdapterAddress*), pointerof(size))
+          result = LibMatterWindowsAdapters.GetAdaptersAddresses(LibC::AF_UNSPEC.to_u32, WINDOWS_ADAPTER_DEFAULT_FLAGS,
+            Pointer(Void).null, buffer.to_unsafe.as(LibMatterWindowsAdapters::AdapterAddress*), pointerof(size))
           case result
           when WINDOWS_ADAPTER_SUCCESS
             break
@@ -161,7 +161,7 @@ module Matter
           end
         end
 
-        adapter_pointer = buffer.to_unsafe.as(LibWindowsAdapters::AdapterAddress*)
+        adapter_pointer = buffer.to_unsafe.as(LibMatterWindowsAdapters::AdapterAddress*)
         until adapter_pointer.null?
           adapter = adapter_pointer.value
           if adapter.oper_status == WINDOWS_ADAPTER_OPER_STATUS_UP &&
