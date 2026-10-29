@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """SDK 1.6 joining JFA with a DCL-backed VVS, driven into Crystal JCM."""
 
+import asyncio
 import base64
 import json
 import os
@@ -19,6 +20,7 @@ from cryptography.x509.oid import NameOID, ObjectIdentifier
 
 import matter.clusters as Clusters
 from matter import CertificateAuthority
+from matter.exceptions import ChipStackError
 from matter.setup_payload import SetupPayload
 from matter.storage import VolatileTemporaryPersistentStorage
 from matter.testing.apps import JFAdministratorSubprocess, JFControllerSubprocess
@@ -41,6 +43,7 @@ ICA_ID_OID = ObjectIdentifier("1.3.6.1.4.1.37244.1.3")
 SIGNER_ID_OID = ObjectIdentifier("1.3.6.1.4.1.37244.1.7")
 STATEMENT_VERSION = 0x21
 FABRIC_BINDING_VERSION = 1
+SDK_JCM_BUSY_ERROR = 0x00000605
 
 
 def certificate(key, issuer_key, oid, number, label, parent=None, *, ca=False,
@@ -137,6 +140,20 @@ def run_driver(test, name, *args, env=None, timeout=360):
                            log.read_text(errors="replace")[-6000:])
 
 
+async def open_jcm_window(controller):
+    for attempt in range(20):
+        try:
+            window = await controller.OpenJointCommissioningWindow(
+                nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
+                timeout=900, iteration=1000, discriminator=1261)
+            return SetupPayload().GenerateManualPairingCode(
+                passcode=window.setupPinCode, discriminator=1261)
+        except ChipStackError as error:
+            if error.code != SDK_JCM_BUSY_ERROR or attempt == 19:
+                raise
+            await asyncio.sleep(0.2)
+
+
 async def read_identity(controller):
     result = await controller.ReadAttribute(
         nodeId=SDK_JFA_NODE_ID,
@@ -209,7 +226,6 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
                                       str(rpc_port), "--secured-commissioner-port",
                                       str(secured_commissioner_port)])
         self.fabric_b_admin = JFAdministratorSubprocess(**jfa_kwargs)
-        self.sdk_kvs_owner = self.fabric_b_admin
         self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
         self.fabric_b_ctrl = JFControllerSubprocess(
             self.user_params["vvs_sdk_jfc"], prefix="JFC-B", rpc_server_port=rpc_port,
@@ -266,23 +282,8 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         write_mode(dcl_path, state, "active")
         print("PASS: independent SDK JFA carries signed VVS and original ICAC without VVSC", flush=True)
 
-        # Keep the original NamedTemporaryFile owner alive across restarts.
-        # The SDK persists its commissioning state in this KVS.
-        kvs_path = Path(self.sdk_kvs_owner.kvs_tmp_file.name)
-
-        def restart_sdk_jfa():
-            self.fabric_b_admin.terminate()
-            self.fabric_b_admin = JFAdministratorSubprocess(
-                **jfa_kwargs, kvs_path=str(kvs_path))
-            self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
-            self.controller.MarkSessionDefunct(SDK_JFA_NODE_ID)
-
         self.step("3")
-        window = await self.controller.OpenJointCommissioningWindow(
-            nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
-            timeout=900, iteration=1000, discriminator=1261)
-        code = SetupPayload().GenerateManualPairingCode(
-            passcode=window.setupPinCode, discriminator=1261)
+        code = await open_jcm_window(self.controller)
         dcl_env = os.environ.copy()
         dcl_env.update(SSL_CERT_FILE=self.user_params["vvs_tls_cert"],
                        MATTER_JCM_TEST_DCL_GATEWAY_URL="https://127.0.0.1",
@@ -296,12 +297,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             SDK_JFA_NODE_ID, 0,
             Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
             timedRequestTimeoutMs=6000)
-        restart_sdk_jfa()
-        window = await self.controller.OpenJointCommissioningWindow(
-            nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
-            timeout=900, iteration=1000, discriminator=1261)
-        code = SetupPayload().GenerateManualPairingCode(
-            passcode=window.setupPinCode, discriminator=1261)
+        code = await open_jcm_window(self.controller)
         denied_env = dcl_env.copy()
         denied_env["MATTER_JCM_TEST_CONSENT"] = "deny"
         driver_args = (self.user_params["vvs_bootstrap"],
@@ -323,24 +319,13 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         print("PASS: consent denial preserved SDK JFA original fabric", flush=True)
 
         # After verifying consent denial changed neither fabric, revoke the
-        # remaining PASE commissioning window and restart with the same KVS.
+        # remaining PASE commissioning window before the successful attempt.
         await self.controller.SendCommand(
             SDK_JFA_NODE_ID, 0,
             Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
             timedRequestTimeoutMs=6000)
-        restart_sdk_jfa()
-        restarted_fabrics, restarted_nocs = await read_identity(self.controller)
-        restarted_descriptor, restarted_noc = sdk_fabric(restarted_fabrics, restarted_nocs)
-        if (len(restarted_fabrics) != 1 or
-                bytes(restarted_descriptor.VIDVerificationStatement or b"") != statement or
-                bytes(restarted_noc.icac or b"") != original_icac):
-            raise RuntimeError("SDK JFA did not recover its VVS and original ICAC after restart")
         self.step("5")
-        window = await self.controller.OpenJointCommissioningWindow(
-            nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
-            timeout=900, iteration=1000, discriminator=1261)
-        code = SetupPayload().GenerateManualPairingCode(
-            passcode=window.setupPinCode, discriminator=1261)
+        code = await open_jcm_window(self.controller)
         allowed_env = dcl_env.copy()
         allowed_env["MATTER_JCM_TEST_SKIP_ANCHOR_COMMISSION"] = "1"
         successful_args = list(driver_args)

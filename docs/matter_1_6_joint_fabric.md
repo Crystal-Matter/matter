@@ -780,8 +780,8 @@ and reads back the unchanged ICAC. Crystal queries a local HTTPS DCL-shaped
 signer mirror over a fresh PASE session, rejects wrong VID, wrong signer,
 removed, and cached records, and accepts the active Root→ICA→signer chain.
 The fixture then denies consent, checks that neither JFA fabric nor the
-Anchor Datastore changed, restarts the SDK JFA after its fail-safe was armed,
-and completes JCM with consent. SDK reads verify both fabrics, the original
+Anchor Datastore changed, revokes the PASE commissioning window, and completes
+JCM with consent. SDK reads verify both fabrics, the original
 VVS/ICAC, the cross-signed joined ICAC, and AdministratorFabricIndex. The
 signer and DCL records are synthetic; this does not test a deployed DCL or a
 real user's consent decision. The SDK's own VVS verifier remains unsupported,
