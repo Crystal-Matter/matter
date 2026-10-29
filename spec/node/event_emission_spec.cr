@@ -90,6 +90,46 @@ describe "Cluster event emission" do
       Matter::Cluster::BooleanState::StateChangeEvent.from_tlv(records.first.data).state_value?.should be_true
     end
 
+    it "journals BasicInformation ReachableChanged only for actual changes" do
+      node = Matter::Node.new
+      root = Matter::Endpoint.new(endpoint(0))
+      basic = build(Matter::Cluster::BasicInformation, 0, reachable: true)
+      root.add_cluster(basic)
+      node.add_endpoint(root)
+
+      basic.reachable = false
+      basic.reachable = false
+      basic.emit_reachable_changed_event(true)
+      basic.emit_reachable_changed_event(true)
+
+      records = node.event_journal.query([Matter::InteractionModel::EventPath.new(
+        cluster: Matter::Cluster::BasicInformation::CLUSTER_ID,
+        event: Matter::Cluster::BasicInformation::EVENT_REACHABLE_CHANGED,
+      )])
+      records.size.should eq(2)
+      records.map { |record| Matter::Cluster::BasicInformation::ReachableChangedEvent.from_tlv(record.data).reachable_new_value? }
+        .should eq([false, true])
+    end
+
+    it "journals each bridge-style reachable toggle exactly once" do
+      node = Matter::Node.new
+      node.add_endpoint(bridged_endpoint)
+      info = bridged_cluster(node)
+
+      # The bridge example toggles reachability through this public setter.
+      info.reachable = !info.reachable?
+      info.reachable = !info.reachable?
+      info.reachable = info.reachable?
+
+      records = node.event_journal.query([Matter::InteractionModel::EventPath.new(
+        cluster: Matter::Cluster::BridgedDeviceBasicInformation::CLUSTER_ID,
+        event: Matter::Cluster::BridgedDeviceBasicInformation::EVENT_REACHABLE_CHANGED,
+      )])
+      records.size.should eq(2)
+      records.map { |record| Matter::Cluster::BridgedDeviceBasicInformation::ReachableChangedEvent.from_tlv(record.data).reachable_new_value? }
+        .should eq([false, true])
+    end
+
     it "journals every event a cluster on the node emits" do
       node = Matter::Node.new
       node.add_endpoint(bridged_endpoint)
