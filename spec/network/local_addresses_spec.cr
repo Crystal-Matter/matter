@@ -43,4 +43,28 @@ describe Matter::Network do
       addresses.uniq.size.should eq(addresses.size)
     end
   end
+
+  {% if flag?(:win32) %}
+    describe ".local_ip_addresses_by_interface" do
+      it "enumerates active Windows adapters by their real interface index" do
+        require_udp_sockets!
+
+        indexed = Matter::Network.local_ip_addresses_by_interface
+        indexed.should_not be_empty
+        local = Matter::Network.local_ip_addresses
+
+        indexed.each do |index, addresses|
+          index.should be > 0_u32
+          addresses.should_not be_empty
+          addresses.uniq.size.should eq(addresses.size)
+          addresses.each do |address|
+            address.loopback?.should be_false
+            address.unspecified?.should be_false
+            address.port.should eq(Matter::Network::UNSPECIFIED_PORT)
+            local.should contain(address)
+          end
+        end
+      end
+    end
+  {% end %}
 end
