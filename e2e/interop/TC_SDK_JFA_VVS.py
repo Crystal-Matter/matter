@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SDK 1.6 joining JFA with a DCL-backed VVS, driven into Crystal JCM."""
+"""SDK 1.6 VVS JFA trust checks through its incomplete AddICAC handler."""
 
 import asyncio
 import base64
@@ -32,7 +32,6 @@ from sdk_jfc_jcm_live import inspect_identity
 
 
 VENDOR_ID = 0xFFF1
-ANCHOR_FABRIC_ID = 0xA100
 SDK_FABRIC_ID = 2
 SDK_JFA_NODE_ID = 11
 SDK_CONTROLLER_NODE_ID = 201
@@ -126,7 +125,7 @@ def write_mode(path, state, mode):
     temporary.replace(path)
 
 
-def run_driver(test, name, *args, env=None, timeout=360):
+def run_driver(test, name, *args, env=None, timeout=360, expected_failure=None):
     logs = Path(test.user_params["vvs_logs"])
     command = [test.user_params["vvs_driver"], name, *map(str, args)]
     call_index = getattr(test, "vvs_driver_calls", 0) + 1
@@ -135,7 +134,12 @@ def run_driver(test, name, *args, env=None, timeout=360):
     with log.open("wb") as output:
         result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
                                 timeout=timeout, env=env, check=False)
-    if result.returncode:
+    if expected_failure:
+        actual = log.read_text(errors="replace")
+        if result.returncode == 0 or expected_failure not in actual:
+            raise RuntimeError(f"Crystal {name} did not fail at the expected SDK limit: " +
+                               actual[-6000:])
+    elif result.returncode:
         raise RuntimeError(f"Crystal {name} failed ({result.returncode}): " +
                            log.read_text(errors="replace")[-6000:])
 
@@ -205,7 +209,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             TestStep("2", "SDK controller installs a signed VVS without VVSC"),
             TestStep("3", "Crystal rejects stale or invalid DCL signer records"),
             TestStep("4", "Crystal denies JCM without consent and preserves fabrics"),
-            TestStep("5", "Crystal joins SDK JFA using VVS and retains both ICACs"),
+            TestStep("5", "Crystal reaches SDK AddICAC and detects its missing ICACResponse"),
         ]
 
     @async_test_body
@@ -319,7 +323,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         print("PASS: consent denial preserved SDK JFA original fabric", flush=True)
 
         # After verifying consent denial changed neither fabric, revoke the
-        # remaining PASE commissioning window before the successful attempt.
+        # remaining PASE commissioning window before the consented attempt.
         await self.controller.SendCommand(
             SDK_JFA_NODE_ID, 0,
             Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
@@ -328,31 +332,31 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         code = await open_jcm_window(self.controller)
         allowed_env = dcl_env.copy()
         allowed_env["MATTER_JCM_TEST_SKIP_ANCHOR_COMMISSION"] = "1"
-        successful_args = list(driver_args)
-        successful_args[2] = code
-        run_driver(self, "commission", *successful_args, env=allowed_env)
-        cross_icac = Path(self.user_params["vvs_cross_icac"]).read_bytes()
+        consented_args = list(driver_args)
+        consented_args[2] = code
+        run_driver(self, "commission", *consented_args, env=allowed_env,
+                   expected_failure="IM Success for AddICAC without ICACResponse")
         fabrics, nocs = await read_identity(self.controller)
         sdk_descriptor, sdk_noc = sdk_fabric(fabrics, nocs)
-        joining = [fabric for fabric in fabrics if fabric.fabricID == ANCHOR_FABRIC_ID]
-        if len(fabrics) != 2 or len(joining) != 1 or len(nocs) != 2:
-            raise RuntimeError("SDK JFA did not retain both fabrics after Crystal JCM")
-        joined_nocs = [noc for noc in nocs if noc.fabricIndex == joining[0].fabricIndex]
-        if (len(joined_nocs) != 1 or bytes(joined_nocs[0].icac or b"") != cross_icac or
-                joined_nocs[0].vvsc not in (None, b"") or
+        if (len(fabrics) != 1 or len(nocs) != 1 or
                 bytes(sdk_noc.icac or b"") != original_icac or
                 sdk_noc.vvsc not in (None, b"") or
                 bytes(sdk_descriptor.VIDVerificationStatement or b"") != statement):
-            raise RuntimeError("SDK JFA did not preserve original VVS/ICAC and joined cross-ICAC")
+            raise RuntimeError("SDK AddICAC limit changed the original fabric or VVS")
+        if Path(self.user_params["vvs_cross_icac"]).exists():
+            raise RuntimeError("Crystal recorded an unconfirmed SDK cross-ICAC")
+        a_identity = inspect_identity(Path(self.user_params["vvs_a_command"]))
+        if len(a_identity.get("inspected_datastore_admin_entries", [])) != 1:
+            raise RuntimeError("Crystal registered the SDK JFA without ICACResponse")
         index = await self.controller.ReadAttribute(
             SDK_JFA_NODE_ID, [(SDK_JFA_ENDPOINT,
                                Clusters.JointFabricAdministrator.Attributes.AdministratorFabricIndex)],
             returnClusterObject=True)
         admin_index = index[SDK_JFA_ENDPOINT][
             Clusters.JointFabricAdministrator].administratorFabricIndex
-        if admin_index != joining[0].fabricIndex:
-            raise RuntimeError("SDK JFA AdministratorFabricIndex did not select Crystal fabric")
-        print("PASS: Crystal Anchor JCM joined independent SDK JFA with signed VVS", flush=True)
+        if admin_index != sdk_descriptor.fabricIndex:
+            raise RuntimeError("SDK JFA changed AdministratorFabricIndex without ICACResponse")
+        print("PASS: Crystal verified SDK VVS and consent, reached SDK AddICAC, and rejected its missing ICACResponse", flush=True)
 
 
 if __name__ == "__main__":

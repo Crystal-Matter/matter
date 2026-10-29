@@ -134,7 +134,7 @@ jobs:
           python3 e2e/interop/sdk_jfadmin_multi.py \
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --case TC_JFADMIN_2_1 --log-dir tmp/interop-jfadmin-multi
-      - name: Run SDK VVS joining JFA against Crystal Anchor JCM
+      - name: Check SDK VVS JFA trust and consent through its AddICAC limit
         id: jfadmin_vvs
         continue-on-error: true
         timeout-minutes: 28
@@ -145,7 +145,7 @@ jobs:
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --driver tmp/sdk_jfc_jcm_driver \
             --log-dir tmp/interop-jfadmin-vvs
-      - name: Require official JFADMIN and VVS JCM cases to pass
+      - name: Require official JFADMIN and VVS JFA boundary cases to pass
         if: always()
         env:
           JFADMIN_2_2: ${{ steps.jfadmin_2_2.outcome }}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run SDK 1.6 VVS-bearing JFA against Crystal Anchor JCM in GitHub CI."""
+"""Run SDK 1.6 VVS JFA trust and consent checks up to its AddICAC limit."""
 
 import argparse
 import os
@@ -145,7 +145,7 @@ def run(args):
         if result.returncode:
             raise RuntimeError(f"SDK VVS JFA fixture failed ({result.returncode}):\n" +
                                official_log.read_text(errors="replace")[-14000:])
-        print(f"PASS: independent SDK VVS JFA joined Crystal Anchor; logs: {logs}", flush=True)
+        print(f"PASS: SDK VVS JFA trust and consent checks; valid AddICAC limit confirmed; logs: {logs}", flush=True)
     finally:
         if a is not None:
             a.close()
