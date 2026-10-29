@@ -4360,7 +4360,8 @@ module MatterJointFabricAdministrator
       loop do
         if device = scanner.operational_devices.find { |entry| entry.fabric_id == compressed_fabric_id && entry.node_id == node_id }
           if address = device.addresses.find(&.family.inet?) || device.addresses.first?
-            return Socket::IPAddress.new(address.address, device.port)
+            return Socket::IPAddress.new(
+              Matter::Controller::OperationalPeerResolver.address_hint(address), device.port)
           end
         end
         break if Time.instant >= deadline
@@ -4512,7 +4513,8 @@ module MatterJointFabricAdministrator
       ::Log.for("matter.example.joint_fabric_administrator").info do
         "Operational mDNS did not locate authenticated Anchor; trying CASE source route"
       end
-      Socket::IPAddress.new(source.address, listener_port)
+      Socket::IPAddress.new(
+        Matter::Controller::OperationalPeerResolver.address_hint(source), listener_port)
     end
 
     private def accessing_fabric_identity(index : UInt8) : Matter::Commissioning::JointFabricAdministratorService::FabricIdentity?

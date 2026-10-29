@@ -40,6 +40,9 @@ mirror_flush_delay=1
 mkdir -p "$log_dir" "$state_dir"
 : > "$log"
 rm -f "$restart_marker"
+if [ "${E2E_INTERFACE_SNAPSHOT:-0}" = "1" ]; then
+  cp /proc/net/if_inet6 "$log_dir/$name.if_inet6"
+fi
 cd "$state_dir"
 
 # Mirror the log to the container's stdout (docker compose logs). The device
