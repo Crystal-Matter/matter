@@ -1,0 +1,76 @@
+name: Matter 1.6 SDK device Joint Fabric migration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/sdk-jf-device-migration.yml
+      - docker-compose.yml
+      - e2e/sdk16-migration.compose.yml
+      - e2e/spec/joint_fabric_two_jfa_spec.cr
+      - examples/support/joint_fabric_administrator_device.cr
+      - src/matter/controller/joint_fabric_device_migration.cr
+
+jobs:
+  sdk-device-migration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare official SDK build dependencies
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang ninja-build cmake pkg-config libssl-dev libglib2.0-dev \
+            libcairo2-dev libgirepository1.0-dev libavahi-client-dev libdbus-1-dev
+      - name: Build pinned Matter 1.6 ordinary device
+        timeout-minutes: 115
+        run: |
+          mkdir -p tmp
+          git clone --depth 1 --branch v1.6.0.0 \
+            https://github.com/project-chip/connectedhomeip.git tmp/connectedhomeip
+          cd tmp/connectedhomeip
+          test "$(git describe --tags --exact-match HEAD)" = v1.6.0.0
+          ./scripts/checkout_submodules.py --shallow --platform linux
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("scripts/setup/environment.json").read_text())
+          config["cipd_package_files"] = [
+              package for package in config["cipd_package_files"]
+              if not package.endswith("/arm.json")
+          ]
+          Path("objdir-jf-environment.json").write_text(json.dumps(config))
+          PY
+          export PW_CONFIG_FILE=objdir-jf-environment.json
+          set +u
+          source scripts/bootstrap.sh -p linux
+          set -u
+          ./scripts/build/build_examples.py \
+            --target linux-x64-all-clusters-ipv6only-no-ble-no-wifi-clang \
+            --build-profile debug build --copy-artifacts-to objdir-jf
+          install -Dm755 \
+            objdir-jf/linux-x64-all-clusters-ipv6only-no-ble-no-wifi-clang/chip-all-clusters-app \
+            ../sdk16-migration/chip-all-clusters-app
+      - name: Migrate SDK device from Crystal B to shared Anchor fabric
+        timeout-minutes: 115
+        env:
+          COMPOSE_FILE: docker-compose.yml:e2e/sdk16-migration.compose.yml
+          MATTER_E2E_SDK16_MIGRATION: '1'
+        run: |
+          ./test --focused \
+            --service joint-fabric-anchor \
+            --service joint-fabric-joiner \
+            --service joint-fabric-third \
+            --service joint-fabric-migration-target \
+            --service official-jf-migration-target \
+            -- e2e/spec/joint_fabric_two_jfa_spec.cr
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-jf-device-migration-logs
+          path: tmp/e2e/logs/
+          if-no-files-found: warn

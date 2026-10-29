@@ -20,6 +20,7 @@ CONFIG = {
             }
         },
         "switch": {"environment": {"E2E_DEVICE": "matter_switch"}},
+        "official-jf-migration-target": {"environment": {}},
         "tests": {},
     }
 }
@@ -42,6 +43,11 @@ class FocusedServicesTest(unittest.TestCase):
 
     def test_duplicate_binary_is_built_once(self):
         result = self.resolve("shared-switch", "switch")
+        self.assertEqual(result.stdout.strip(), "matter_switch")
+
+    def test_sdk_target_does_not_add_a_crystal_binary(self):
+        result = self.resolve("switch", "official-jf-migration-target")
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "matter_switch")
 
     def test_unknown_service_is_rejected(self):
