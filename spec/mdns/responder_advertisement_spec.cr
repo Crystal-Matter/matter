@@ -2,6 +2,28 @@ require "../spec_helper"
 require "../support/mdns_responder_helpers"
 
 describe Matter::MDNS::Responder do
+  it "omits other interfaces' A and AAAA records from an IPv4 multicast response" do
+    require_udp_sockets!
+    local = Socket::IPAddress.new("192.0.2.11", 0)
+    other = Socket::IPAddress.new("192.0.2.12", 0)
+    other_ipv6 = Socket::IPAddress.new("fe80::12", 0)
+    responder = RecordingResponder.new(ip_addresses: [local, other, other_ipv6])
+    begin
+      hostname = "multihomed-device.local"
+      local_record = Matter::MDNS::RecordBuilder.build_a(hostname, local, 120.seconds)
+      other_record = Matter::MDNS::RecordBuilder.build_a(hostname, other, 120.seconds)
+      ipv6_record = Matter::MDNS::RecordBuilder.build_aaaa(hostname, other_ipv6, 120.seconds)
+      packet = DNS::Packet.new(id: 0_u16, response: true, authoritative_answer: true,
+        answers: [] of DNS::Packet::ResourceRecord,
+        additionals: [local_record, other_record, ipv6_record])
+
+      filtered = responder.filter_ipv4_packet(packet, local)
+      filtered.additionals.map(&.resource_data).should eq([local_record.resource_data])
+    ensure
+      responder.close
+    end
+  end
+
   describe "initialization" do
     it "creates a responder with default settings" do
       require_udp_sockets!

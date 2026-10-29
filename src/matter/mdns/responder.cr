@@ -3,6 +3,7 @@ require "./responder_interface"
 require "./service_type"
 require "./record_builder"
 require "../network/constants"
+require "../network/local_addresses"
 
 module Matter
   module MDNS
@@ -14,9 +15,11 @@ module Matter
     # - Using Authority Section for authoritative records
     class Responder
       include ResponderInterface
-      MDNS_PORT = 5353
-      MDNS_IPV4 = Socket::IPAddress.new("224.0.0.251", MDNS_PORT)
-      MDNS_IPV6 = Socket::IPAddress.new("ff02::fb", MDNS_PORT)
+      MDNS_PORT        = 5353
+      MDNS_IPV4        = Socket::IPAddress.new("224.0.0.251", MDNS_PORT)
+      MDNS_IPV6_HOST   = "ff02::fb"
+      MDNS_IPV6        = Socket::IPAddress.new(MDNS_IPV6_HOST, MDNS_PORT)
+      MDNS_RESPONSE_ID = 0_u16
 
       DEFAULT_TTL           = 120.seconds
       ANNOUNCEMENT_INTERVAL = 30.seconds # Re-announce services every 30 seconds
@@ -40,6 +43,9 @@ module Matter
       getter announcement_burst_interval : Time::Span
 
       @running : Bool
+      @ipv6_interface_ids : Array(UInt32)
+      @interface_addresses : Hash(UInt32, Array(Socket::IPAddress))
+      @ipv6_send_mutex : Mutex
 
       # Currently advertised services (for responding to queries), keyed by instance name
       @advertised_services : Hash(String, AdvertisedService)
@@ -94,6 +100,9 @@ module Matter
         end
 
         @running = false
+        @ipv6_interface_ids = [] of UInt32
+        @interface_addresses = Hash(UInt32, Array(Socket::IPAddress)).new
+        @ipv6_send_mutex = Mutex.new
 
         # Ensure at least one socket was created successfully
         raise Matter::TransportError.new("Failed to create any mDNS socket") if @socket_ipv4.nil? && @socket_ipv6.nil?
@@ -142,6 +151,7 @@ module Matter
         return if @running
 
         @running = true
+        @interface_addresses = Network.local_ip_addresses_by_interface
 
         # Join IPv4 multicast group and start receive loop
         if sock4 = @socket_ipv4
@@ -159,15 +169,11 @@ module Matter
 
         # Join IPv6 multicast group and start receive loop
         if sock6 = @socket_ipv6
-          begin
-            sock6.join_group(MDNS_IPV6)
-            Log.debug { "Joined IPv6 mDNS multicast group ff02::fb" }
-
+          @ipv6_interface_ids = join_ipv6_interfaces(sock6)
+          unless @ipv6_interface_ids.empty?
             spawn do
               receive_loop_ipv6(sock6)
             end
-          rescue ex
-            Log.warn(exception: ex) { "Could not join IPv6 multicast group" }
           end
         end
 
@@ -200,7 +206,8 @@ module Matter
         # Leave IPv6 multicast group
         if sock6 = @socket_ipv6
           begin
-            sock6.leave_group(MDNS_IPV6)
+            # Closing the socket drops every per-interface membership.
+            sock6.leave_group(MDNS_IPV6) if @ipv6_interface_ids == [0_u32]
           rescue ex
             Log.warn(exception: ex) { "Error leaving IPv6 multicast group" }
           ensure
@@ -211,6 +218,39 @@ module Matter
             end
           end
         end
+        @ipv6_interface_ids.clear
+      end
+
+      private def join_ipv6_interfaces(socket : UDPSocket) : Array(UInt32)
+        ids = [] of UInt32
+        {% unless flag?(:win32) %}
+          @interface_addresses.each do |index, addresses|
+            next unless addresses.any?(&.family.inet6?)
+            begin
+              request = LibC::Ipv6Mreq.new
+              request.ipv6mr_multiaddr = MDNS_IPV6.to_unsafe.as(LibC::SockaddrIn6*).value.sin6_addr
+              request.ipv6mr_interface = index
+              result = LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
+                pointerof(request).as(Void*), sizeof(LibC::Ipv6Mreq).to_u32)
+              if result == 0
+                ids << index
+              else
+                Log.debug { "Could not join IPv6 mDNS group on interface #{index}: #{Errno.value}" }
+              end
+            rescue ex
+              Log.debug(exception: ex) { "Could not join IPv6 mDNS group on interface #{index}" }
+            end
+          end
+        {% end %}
+        if ids.empty?
+          begin
+            socket.join_group(MDNS_IPV6)
+            ids << 0_u32
+          rescue ex
+            Log.warn(exception: ex) { "Could not join IPv6 multicast group" }
+          end
+        end
+        ids
       end
 
       # Close responder
@@ -530,8 +570,12 @@ module Matter
         # Send to IPv4 multicast
         if sock4 = @socket_ipv4
           begin
-            bytes_sent = sock4.send(data, MDNS_IPV4)
-            Log.trace { "Sent #{bytes_sent} bytes to IPv4 multicast 224.0.0.251:5353" }
+            source = ipv4_multicast_source
+            outgoing = source ? packet_for_ipv4_source(packet, source) : packet_with_addresses(packet, [] of Socket::IPAddress)
+            unless outgoing.answers.empty? && outgoing.authorities.empty? && outgoing.additionals.empty?
+              bytes_sent = sock4.send(outgoing.to_slice, MDNS_IPV4)
+              Log.trace { "Sent #{bytes_sent} bytes to IPv4 multicast 224.0.0.251:5353" }
+            end
           rescue ex
             Log.error(exception: ex) { "Error sending IPv4 multicast" }
           end
@@ -539,13 +583,73 @@ module Matter
 
         # Send to IPv6 multicast
         if sock6 = @socket_ipv6
-          begin
-            bytes_sent = sock6.send(data, MDNS_IPV6)
-            Log.trace { "Sent #{bytes_sent} bytes to IPv6 multicast ff02::fb:5353" }
-          rescue ex
-            Log.error(exception: ex) { "Error sending IPv6 multicast" }
+          interface_ids = @ipv6_interface_ids.empty? ? [0_u32] : @ipv6_interface_ids
+          @ipv6_send_mutex.synchronize do
+            interface_ids.each do |index|
+              outgoing = index == 0 ? packet : packet_for_interface(packet, index)
+              next if outgoing.answers.empty? && outgoing.authorities.empty? && outgoing.additionals.empty?
+              # Crystal permits zone IDs only on link-local unicast addresses.
+              # IPV6_MULTICAST_IF selects this link-local multicast route.
+              sock6.multicast_interface(index) if index > 0
+              bytes_sent = sock6.send(outgoing.to_slice, MDNS_IPV6)
+              Log.trace { "Sent #{bytes_sent} bytes to IPv6 multicast on interface #{index}" }
+            rescue ex
+              Log.error(exception: ex) { "Error sending IPv6 multicast on interface #{index}" }
+            end
           end
         end
+      end
+
+      # Never advertise an interface's link-local AAAA on another interface:
+      # the scanner scopes a link-local answer to the interface it arrived on.
+      private def packet_for_interface(packet : DNS::Packet, index : UInt32) : DNS::Packet
+        addresses = @interface_addresses[index]? || [] of Socket::IPAddress
+        permitted = addresses.select { |ip| @ip_addresses.any?(&.address.==(ip.address)) }
+        packet_with_addresses(packet, permitted)
+      end
+
+      # IPv4 multicast uses the OS-selected outgoing interface. On Unix the
+      # address map supplies that interface's A/AAAA records. On Windows, or
+      # when interface enumeration failed, answer with the selected IPv4 A
+      # only rather than leaking other interfaces' address records.
+      protected def packet_for_ipv4_source(packet : DNS::Packet, source : Socket::IPAddress) : DNS::Packet
+        @interface_addresses.each do |index, addresses|
+          if index > 0 && addresses.any?(&.address.==(source.address))
+            return packet_for_interface(packet, index)
+          end
+        end
+        packet_with_addresses(packet, [source])
+      end
+
+      private def ipv4_multicast_source : Socket::IPAddress?
+        probe = UDPSocket.new(:inet)
+        probe.connect(MDNS_IPV4)
+        Socket::IPAddress.new(probe.local_address.address, Network::UNSPECIFIED_PORT)
+      rescue error : IO::Error
+        Log.debug(exception: error) { "Could not determine outgoing IPv4 mDNS interface" }
+        nil
+      ensure
+        probe.try(&.close)
+      end
+
+      private def packet_with_addresses(packet : DNS::Packet,
+                                        permitted : Array(Socket::IPAddress)) : DNS::Packet
+        allowed_data = permitted.map do |ip|
+          if ip.family.inet6?
+            RecordBuilder.build_aaaa("interface.local", ip, DEFAULT_TTL).resource_data
+          else
+            RecordBuilder.build_a("interface.local", ip, DEFAULT_TTL).resource_data
+          end
+        end
+        filter = ->(records : Array(DNS::Packet::ResourceRecord)) do
+          records.select do |record|
+            !record.type.in?(RecordBuilder::TYPE_A, RecordBuilder::TYPE_AAAA) ||
+              allowed_data.any?(&.==(record.resource_data))
+          end
+        end
+        DNS::Packet.new(id: MDNS_RESPONSE_ID, response: true, authoritative_answer: true,
+          answers: filter.call(packet.answers), authorities: filter.call(packet.authorities),
+          additionals: filter.call(packet.additionals))
       end
 
       # IPv4 receive loop
