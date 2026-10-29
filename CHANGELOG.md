@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Electrical power measurement periods
+
+- `complete_measurement_period(ranges)` now publishes validated Ranges and
+  emits MeasurementPeriodRanges once per completed period, including identical
+  consecutive periods. The generated `ranges=` setter validates and copies
+  values without emitting a period event. `update_ranges` remains compatible;
+  its empty-list reset emits no event.
+
 ### Joint Fabric keyed group revocation
 
 - Shared group revocation now accepts an explicit fresh key set for groups with

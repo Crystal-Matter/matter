@@ -601,8 +601,13 @@ Energy devices can add `ElectricalPowerMeasurement`,
 clusters require their fixed measurement accuracy at construction. Select the
 DC/AC and imported/exported plus cumulative/periodic feature bits that the
 device actually supports; the constructors reject incomplete combinations.
-Use `update_ranges`, `record_cumulative`, or `record_periodic` to update
-readings and emit the Matter 1.6 measurement events. Power Topology exposes a
+Call `complete_measurement_period(ranges)` when a power measurement period ends;
+it publishes the latest Ranges attribute and emits one MeasurementPeriodRanges
+event even if its values match the prior period. The event requires at least
+one range. `update_ranges` remains available for existing callers; its empty
+list resets Ranges without an event. Direct `ranges=` updates the attribute
+without marking a completed period. Use `record_cumulative` or
+`record_periodic` for energy measurement events. Power Topology exposes a
 fixed set of available endpoints; `update_active_endpoints` changes its
 nonvolatile active subset when DynamicPowerFlow is enabled.
 
