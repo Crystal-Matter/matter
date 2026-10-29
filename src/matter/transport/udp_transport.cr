@@ -2,6 +2,7 @@ require "socket"
 require "log"
 require "../codec/message_codec"
 require "../protocol/message_type"
+require "../network/local_addresses"
 require "./message_counter"
 require "./exchange"
 require "./packet_transport"
@@ -20,9 +21,10 @@ module Matter
       Log = ::Log.for("matter.transport.udp_transport")
 
       # Matter default port
-      MATTER_PORT        = 5540
-      IPV4_MAPPED_PREFIX = "::ffff:"
-      TCP_ROUTE_PORT     = 0
+      MATTER_PORT           = 5540
+      IPV4_MAPPED_PREFIX    = "::ffff:"
+      IPV6_MULTICAST_PREFIX = "ff"
+      TCP_ROUTE_PORT        = 0
 
       # How long the receive loop waits for a datagram before looping.
       RECEIVE_TIMEOUT = 100.milliseconds
@@ -120,6 +122,7 @@ module Matter
       end
 
       @joined_groups = Set(Socket::IPAddress).new
+      @multicast_send_mutex = Mutex.new
 
       # Keep multicast memberships aligned with the device's GroupTable.
       def group_memberships=(addresses : Array(Socket::IPAddress)) : Nil
@@ -467,6 +470,53 @@ module Matter
                       else
                         peer_address
                       end
+        if destination.address.starts_with?(IPV6_MULTICAST_PREFIX)
+          transmit_ipv6_multicast(data, destination)
+        else
+          @socket.send(data, destination)
+        end
+      end
+
+      # A controller may be attached to several IPv6 networks. The kernel's
+      # default multicast route reaches only one of them, so send the same
+      # encrypted datagram on every active interface. Reuse the packet bytes:
+      # each copy is the same Matter message and consumes only one counter.
+      protected def transmit_ipv6_multicast(data : Bytes | Slice(UInt8),
+                                            destination : Socket::IPAddress) : Nil
+        interfaces = ipv6_multicast_interface_ids
+        if interfaces.empty?
+          @socket.send(data, destination)
+          return
+        end
+
+        sent = false
+        last_error = nil.as(Exception?)
+        @multicast_send_mutex.synchronize do
+          interfaces.each do |index|
+            begin
+              send_on_multicast_interface(data, destination, index)
+              sent = true
+            rescue ex
+              last_error = ex
+              Log.debug(exception: ex) { "Could not send IPv6 multicast on interface #{index}" }
+            end
+          end
+        end
+        raise last_error.as(Exception) unless sent
+      end
+
+      protected def ipv6_multicast_interface_ids : Array(UInt32)
+        indices = [] of UInt32
+        Network.local_ip_addresses_by_interface.each do |index, addresses|
+          indices << index if addresses.any?(&.family.inet6?)
+        end
+        indices
+      end
+
+      protected def send_on_multicast_interface(data : Bytes | Slice(UInt8),
+                                                destination : Socket::IPAddress,
+                                                index : UInt32) : Nil
+        @socket.multicast_interface(index)
         @socket.send(data, destination)
       end
 
