@@ -4398,8 +4398,8 @@ module MatterJointFabricAdministrator
         if !node_id || !host || host.empty? || hints.has_key?(node_id)
           raise Matter::ConfigurationError.new("Invalid or duplicate configured Joint Fabric peer")
         end
-        address = Socket::Addrinfo.resolve(host, port.to_s, type: Socket::Type::DGRAM)
-          .find(&.ip_address.family.inet?) ||
+        addresses = Socket::Addrinfo.resolve(host, port.to_s, type: Socket::Type::DGRAM)
+        address = addresses.find(&.ip_address.family.inet6?) || addresses.first? ||
                   raise Matter::TransportError.new("Configured Joint Fabric peer hostname did not resolve")
         hints[node_id] = address.ip_address
       end

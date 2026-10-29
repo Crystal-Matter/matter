@@ -115,7 +115,7 @@ module SdkJfcJcmDriver
   def commission(state_path : String, a_code : String, b_code : String,
                  b_root_path : String, exchange_path : String, command_path : String,
                  result_path : String, a_port : Int32, b_port : Int32,
-                 sdk_root : String) : Nil
+                 sdk_root : String? = nil) : Nil
     state_store = store(state_path)
     fabric = state_store.load.fabric.as(Matter::Controller::FabricInfo)
     bootstrap_key = fabric.intermediate_private_key ||
@@ -124,7 +124,8 @@ module SdkJfcJcmDriver
     a_peer = Socket::IPAddress.new("127.0.0.1", a_port)
     b_peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(A_CONTROLLER_ID))
-    attestation_trust = sdk_attestation_trust(sdk_root)
+    attestation_trust = sdk_root ? sdk_attestation_trust(sdk_root) :
+                                   Matter::Controller::AttestationTrustStore.matter_test_fixture
     begin
       issuer = ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
         raise Matter::ConfigurationError.new("Wrong A fabric") unless fabric_id == A_FABRIC_ID
@@ -267,7 +268,7 @@ when "verify-csr"
   SdkJfcJcmDriver.verify_csr(ARGV[0], ARGV[1])
 when "commission"
   SdkJfcJcmDriver.commission(ARGV[0], ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5],
-    ARGV[6], ARGV[7].to_i, ARGV[8].to_i, ARGV[9])
+    ARGV[6], ARGV[7].to_i, ARGV[8].to_i, ARGV[9]?)
 when "probe-dcl"
   SdkJfcJcmDriver.probe_dcl(ARGV[0], ARGV[1].to_i, ARGV[2], ARGV[3])
 else
