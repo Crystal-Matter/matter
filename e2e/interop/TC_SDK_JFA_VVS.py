@@ -297,7 +297,8 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         self.step("4")
         await self.controller.SendCommand(
             SDK_JFA_NODE_ID, 0,
-            Clusters.AdministratorCommissioning.Commands.RevokeCommissioning())
+            Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
+            timedRequestTimeoutMs=6000)
         restart_from_snapshot()
         window = await self.controller.OpenJointCommissioningWindow(
             nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
@@ -328,7 +329,8 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         # fabric; revoke the remaining PASE commissioning window first.
         await self.controller.SendCommand(
             SDK_JFA_NODE_ID, 0,
-            Clusters.AdministratorCommissioning.Commands.RevokeCommissioning())
+            Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
+            timedRequestTimeoutMs=6000)
         restart_from_snapshot()
         restarted_fabrics, restarted_nocs = await read_identity(self.controller)
         restarted_descriptor, restarted_noc = sdk_fabric(restarted_fabrics, restarted_nocs)
