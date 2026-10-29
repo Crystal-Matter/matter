@@ -749,10 +749,17 @@ Crystal keeps the VID decision and CSR owner bound to the authenticated
 Anchor node and fabric across those sessions; a different node or fabric
 cannot reuse either decision.
 The local Anchor ICAC exchange handoff retains a discovered link-local IPv6
-peer's interface scope in its persisted request, so the Anchor's follow-up
-CASE and Announce use the same interface. A scoped-address round-trip spec and
-the Docker two-JFA handoff path cover the request; a live multi-interface
-link-local network run remains to be exercised.
+peer's interface scope in its persisted request. The scoped-address round-trip
+spec covers this representation. The dedicated Docker link-local JCM scenario
+attaches its controller to two IPv6 bridges, derives the second bridge's
+interface index at runtime, and completes controller-to-Joiner JCM over a
+scoped link-local address. The Anchor and controller run in separate network
+namespaces, so its separate ICAC exchange uses the Joiner's bridge ULA rather
+than copying the controller's interface index into the Anchor namespace.
+The example's operational discovery and CASE source fallbacks also retain an
+IPv6 scope when choosing a new port. A full multihomed mDNS responder path
+remains open: the responder joins and sends IPv6 multicast on its default
+interface only, so this scenario gives each JFA one bridge interface.
 The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
 `TC_JFADMIN_2_1` each passed all steps against Crystal in
 [the integrated multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)

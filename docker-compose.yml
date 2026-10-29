@@ -212,6 +212,42 @@ services:
       MATTER_JFA_ANCHOR_NODE_ID: a102
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_third.command.yml
 
+  joint-fabric-link-local-anchor:
+    <<: *device
+    networks:
+      - matter-link-local
+    environment:
+      E2E_DEVICE: matter_joint_fabric_link_local_anchor
+      E2E_BINARY: matter_joint_fabric_administrator
+      E2E_INTERFACE_SNAPSHOT: "1"
+      MATTER_JFA_PROVISIONED_ANCHOR: "1"
+      MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_link_local_anchor.bootstrap.yml
+      MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_link_local_anchor.trust-root.tlv
+      MATTER_JFA_DCL_GATEWAY_URL: https://tests
+      SSL_CERT_FILE: /e2e/logs/jfa-dcl-tls.crt
+      MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
+      MATTER_JFA_JCM_REQUEST_PATH: /e2e/logs/matter_joint_fabric_link_local_anchor.jcm-rpc.yml
+      MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_link_local_anchor.command.yml
+
+  joint-fabric-link-local-joiner:
+    <<: *device
+    networks:
+      - matter-link-local
+    environment:
+      E2E_DEVICE: matter_joint_fabric_link_local_joiner
+      E2E_BINARY: matter_joint_fabric_administrator
+      E2E_INTERFACE_SNAPSHOT: "1"
+      MATTER_JFA_PROVISIONED_ANCHOR: "1"
+      MATTER_JFA_BOOTSTRAP_STATE_PATH: /e2e/logs/matter_joint_fabric_link_local_joiner.bootstrap.yml
+      MATTER_JFA_VID_TRUST_ROOT_PATH: /e2e/logs/matter_joint_fabric_link_local_joiner.trust-root.tlv
+      MATTER_JFA_DCL_GATEWAY_URL: https://tests
+      SSL_CERT_FILE: /e2e/logs/jfa-dcl-tls.crt
+      MATTER_JFA_ALLOW_JCM: "1"
+      MATTER_JFA_ANCHOR_OPERATIONAL_PORT: "5540"
+      MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE: "1"
+      MATTER_JFA_ANCHOR_NODE_ID: d102
+      MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_link_local_joiner.command.yml
+
   joint-fabric-refresh-anchor:
     <<: *device
     environment:
@@ -699,6 +735,8 @@ services:
       joint-fabric-anchor: { condition: service_healthy }
       joint-fabric-joiner: { condition: service_healthy }
       joint-fabric-third: { condition: service_healthy }
+      joint-fabric-link-local-anchor: { condition: service_healthy }
+      joint-fabric-link-local-joiner: { condition: service_healthy }
       joint-fabric-refresh-anchor: { condition: service_healthy }
       joint-fabric-refresh-target: { condition: service_healthy }
       joint-fabric-lifecycle-anchor: { condition: service_healthy }
@@ -757,6 +795,7 @@ services:
       - crystal-cache:/root/.cache/crystal
     networks:
       - matter
+      - matter-link-local
 
 networks:
   matter:
@@ -764,6 +803,11 @@ networks:
     ipam:
       config:
         - subnet: fd00:6d61:7474::/64
+  matter-link-local:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd00:6d61:7475::/64
 
 volumes:
   e2e-logs:
