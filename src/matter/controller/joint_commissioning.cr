@@ -1196,6 +1196,13 @@ module Matter
           command_id: Cluster::JointFabricAdministrator::CMD_ADD_ICAC,
           fields: Cluster::JointFabricAdministrator::AddICACRequest.new(icac).to_slice
         )
+        add_entry = ImClient.single_invoke_response!(add_response, "AddICAC")
+        if status = add_entry.command_status
+          if status.command_path.command == Cluster::JointFabricAdministrator::CMD_ADD_ICAC &&
+             status.status.status == InteractionModel::StatusCode::Success.value
+            raise Matter::ProtocolError.new("Joining Administrator returned IM Success for AddICAC without ICACResponse; cross-signed ICAC is unconfirmed")
+          end
+        end
         outcome = Cluster::JointFabricAdministrator::ICACResponse.from_slice(
           command_fields(add_response, Cluster::JointFabricAdministrator::CMD_ADD_ICAC_RESPONSE)
         )

@@ -73,7 +73,11 @@ module Matter
         shared_message_counter : Transport::MessageCounter? = nil,
         tcp_enabled : Bool = false,
         @session_id_in_use : Proc(UInt16, Bool)? = nil,
+        @delegate_peer_initiated : Bool = false,
       )
+        if @delegate_peer_initiated && !transport
+          raise Matter::ConfigurationError.new("Peer-initiated delegation requires a shared transport")
+        end
         if unsecured_source_node_id && !counter_lease
           raise Matter::ConfigurationError.new("A fixed unsecured source Node ID requires a StateStore counter lease")
         end
@@ -366,7 +370,21 @@ module Matter
           !msg.payload_header.initiator_message? &&
             @owned_unsecured_exchanges.includes?({msg.payload_header.exchange_id, canonical_peer(peer)})
         else
-          @@shared_registry_mutex.synchronize { @sessions.has_key?(msg.packet_header.session_id) }
+          session = @@shared_registry_mutex.synchronize { @sessions[msg.packet_header.session_id]? }
+          return false unless session
+          if @delegate_peer_initiated && session.accepts_peer?(peer)
+            begin
+              # The transport's encrypted payload header is a placeholder. Authenticate
+              # it without advancing replay state so the device can process peer requests.
+              decoded = Session::SecureMessage.decode(session,
+                Codec::MessageCodec::Packet.new(msg.packet_header, msg.payload, msg.header_bytes),
+                @crypto, advance_counter: false)
+              return false if decoded.payload_header.initiator_message?
+            rescue Matter::Error
+              # Keep malformed packets on this client's normal authenticated path.
+            end
+          end
+          true
         end
       end
 
