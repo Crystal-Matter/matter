@@ -218,6 +218,7 @@ module MatterJointFabricAdministrator
       getter? interrupt_before_participant_rewind_save : Bool = false
       getter? interrupt_after_participant_rewind_save : Bool = false
       getter? interrupt_after_migration_complete_before_ack : Bool = false
+      getter? interrupt_after_migration_failsafe_recorded : Bool = false
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
       getter? interrupt_after_migration_anchor_node_removed : Bool = false
       getter? interrupt_after_migration_anchor_fabric_removed : Bool = false
@@ -275,6 +276,7 @@ module MatterJointFabricAdministrator
                      @interrupt_before_participant_rewind_save : Bool = false,
                      @interrupt_after_participant_rewind_save : Bool = false,
                      @interrupt_after_migration_complete_before_ack : Bool = false,
+                     @interrupt_after_migration_failsafe_recorded : Bool = false,
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
                      @interrupt_after_migration_anchor_node_removed : Bool = false,
                      @interrupt_after_migration_anchor_fabric_removed : Bool = false,
@@ -4075,6 +4077,9 @@ module MatterJointFabricAdministrator
           armed.fail_safe_deadline_unix = deadline
           armed.fail_safe_max_seconds = max_seconds
           journal_store.save(armed)
+          if request.interrupt_after_migration_failsafe_recorded?
+            raise Matter::TransportError.new("Injected interruption after migration fail-safe bound was saved")
+          end
         },
         anchor_registration_committed: -> {
           if request.interrupt_after_migration_anchor_node_committed?
