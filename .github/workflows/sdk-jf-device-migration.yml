@@ -23,7 +23,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang ninja-build cmake pkg-config libssl-dev libglib2.0-dev \
-            libcairo2-dev libgirepository1.0-dev libavahi-client-dev libdbus-1-dev
+            libcairo2-dev libgirepository1.0-dev libavahi-client-dev libdbus-1-dev \
+            libevent-dev
       - name: Build pinned Matter 1.6 ordinary device
         timeout-minutes: 115
         run: |
