@@ -311,6 +311,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         self.fabric_b_admin = JFAdministratorSubprocess(
             **jfa_kwargs, kvs_path=previous.kvs_tmp_file.name)
         self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
+        self.controller.MarkSessionDefunct(SDK_JFA_NODE_ID)
         restarted_fabrics, restarted_nocs = await read_identity(self.controller)
         restarted_descriptor, restarted_noc = sdk_fabric(restarted_fabrics, restarted_nocs)
         if (len(restarted_fabrics) != 1 or

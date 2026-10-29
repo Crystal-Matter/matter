@@ -145,7 +145,7 @@ jobs:
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --driver tmp/sdk_jfc_jcm_driver \
             --log-dir tmp/interop-jfadmin-vvs
-      - name: Require both official JFADMIN cases to pass
+      - name: Require official JFADMIN and VVS JCM cases to pass
         if: always()
         env:
           JFADMIN_2_2: ${{ steps.jfadmin_2_2.outcome }}
