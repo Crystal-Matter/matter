@@ -197,7 +197,7 @@ module SdkJfcJcmDriver
   end
 
   def probe_dcl(b_code : String, b_port : Int32, gateway_url : String,
-                dcl_state_path : String) : Nil
+                dcl_state_path_or_expected : String) : Nil
     _, pin = Matter::SetupPayload.parse_manual_code(b_code)
     peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new
@@ -208,13 +208,20 @@ module SdkJfcJcmDriver
       im = Matter::Controller::ImClient.new(client, OPERATION_TIMEOUT)
       index = Matter::Controller::JointCommissioning.read_administrator_fabric_index(
         im, session, peer, JFA_ENDPOINT)
-      {"wrong-vid" => false, "wrong-signer" => false, "removed" => false,
-       "stale" => false, "active" => true}.each do |mode, expected_accept|
-        state = JSON.parse(File.read(dcl_state_path))
-        state.as_h["mode"] = JSON::Any.new(mode)
-        next_path = "#{dcl_state_path}.next"
-        File.write(next_path, state.to_json)
-        File.rename(next_path, dcl_state_path)
+      modes = if {"deny", "accept"}.includes?(dcl_state_path_or_expected)
+                {"existing" => dcl_state_path_or_expected == "accept"}
+              else
+                {"wrong-vid" => false, "wrong-signer" => false, "removed" => false,
+                 "stale" => false, "active" => true}
+              end
+      modes.each do |mode, expected_accept|
+        unless mode == "existing"
+          state = JSON.parse(File.read(dcl_state_path_or_expected))
+          state.as_h["mode"] = JSON::Any.new(mode)
+          next_path = "#{dcl_state_path_or_expected}.next"
+          File.write(next_path, state.to_json)
+          File.rename(next_path, dcl_state_path_or_expected)
+        end
         trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
           Matter::Controller::VidVerification::HttpDclSource.new(gateway_url))
         begin
