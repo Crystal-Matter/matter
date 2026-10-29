@@ -57,6 +57,7 @@ module Matter
         session : SecureContext,
         packet : Codec::MessageCodec::Packet,
         crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
+        advance_counter : Bool = true,
       ) : Codec::MessageCodec::Message
         aad = packet.header_bytes || raise Matter::CodecError.new("Secure message decode: received header bytes required for authentication")
         node_id = nonce_node_id(session, session.peer_node_id, packet.header.source_node_id)
@@ -64,7 +65,7 @@ module Matter
         Log.trace { "Decoding secure message: session_id=#{session.session_id}, counter=#{packet.header.message_id}, nonce_node_id=0x#{node_id.to_s(16)}, aad_bytes=#{aad.size}" }
         plaintext = crypto.decrypt(session.decryption_key, packet.payload, nonce, aad)
         message = Codec::MessageCodec::Base.decode_payload(Codec::MessageCodec::Packet.new(packet.header, plaintext, aad))
-        session.accept_peer_message_counter(packet.header.message_id)
+        session.accept_peer_message_counter(packet.header.message_id) if advance_counter
         message
       end
 

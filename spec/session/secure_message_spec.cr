@@ -53,6 +53,18 @@ describe Matter::Session::SecureMessage do
     session.check_peer_message_counter(1_u32).accept?.should be_true
   end
 
+  it "can authenticate a payload for routing without consuming its counter" do
+    session = wire_session
+    encoded, _ = Matter::Session::SecureMessage.encode(session, wire_payload_header,
+      Bytes[1], message_counter: 100_u32)
+    packet = Matter::Codec::MessageCodec::Base.decode_packet(encoded)
+    message = Matter::Session::SecureMessage.decode(session, packet, advance_counter: false)
+    message.payload_header.initiator_message?.should be_true
+    session.peer_message_counter.should be_nil
+    Matter::Session::SecureMessage.decode(session, packet).payload.should eq(Bytes[1])
+    session.peer_message_counter.should eq(100_u32)
+  end
+
   it "refuses to decode a packet without the received header bytes" do
     session = wire_session
     encoded, _ = Matter::Session::SecureMessage.encode(session, wire_payload_header, Bytes[1])

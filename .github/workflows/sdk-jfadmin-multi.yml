@@ -6,6 +6,10 @@ on:
     paths:
       - .github/workflows/sdk-jfadmin-multi.yml
       - e2e/interop/sdk_jfadmin_multi.py
+      - e2e/interop/sdk_jfa_vvs_live.py
+      - e2e/interop/TC_SDK_JFA_VVS.py
+      - e2e/interop/sdk_jfc_jcm_driver.cr
+      - e2e/interop/jfa_vvs_dcl_mirror.py
       - e2e/interop/sdk_cert_identity.py
       - e2e/interop/sdk_jfadmin_issuer_fixture.cr
       - e2e/interop/joint_fabric_rpc_bridge.py
@@ -16,7 +20,7 @@ on:
 jobs:
   tc-jfadmin-2-x:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@v5
       - uses: crystal-lang/install-crystal@v1
@@ -42,6 +46,7 @@ jobs:
           mkdir -p tmp
           crystal build examples/matter_joint_fabric_administrator_device.cr -o tmp/matter_jfa
           crystal build e2e/interop/sdk_jfadmin_issuer_fixture.cr -o tmp/sdk_jfadmin_issuer_fixture
+          crystal build e2e/interop/sdk_jfc_jcm_driver.cr -o tmp/sdk_jfc_jcm_driver
       - name: Build official Matter 1.6 JFC, JFA, all-clusters and Python controller
         timeout-minutes: 115
         run: |
@@ -129,19 +134,35 @@ jobs:
           python3 e2e/interop/sdk_jfadmin_multi.py \
             --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
             --case TC_JFADMIN_2_1 --log-dir tmp/interop-jfadmin-multi
-      - name: Require both official JFADMIN cases to pass
+      - name: Check SDK VVS JFA trust and consent through its AddICAC limit
+        id: jfadmin_vvs
+        continue-on-error: true
+        timeout-minutes: 28
+        env:
+          MATTER_JFA_IP_ADDRESS: 'fd42:4d41:5454::2'
+        run: |
+          python3 e2e/interop/sdk_jfa_vvs_live.py \
+            --sdk tmp/connectedhomeip --jfa tmp/matter_jfa \
+            --driver tmp/sdk_jfc_jcm_driver \
+            --log-dir tmp/interop-jfadmin-vvs
+      - name: Require official JFADMIN and VVS JFA boundary cases to pass
         if: always()
         env:
           JFADMIN_2_2: ${{ steps.jfadmin_2_2.outcome }}
           JFADMIN_2_1: ${{ steps.jfadmin_2_1.outcome }}
+          JFADMIN_VVS: ${{ steps.jfadmin_vvs.outcome }}
         run: |
           echo "TC_JFADMIN_2_2: $JFADMIN_2_2"
           echo "TC_JFADMIN_2_1: $JFADMIN_2_1"
-          test "$JFADMIN_2_2" = success && test "$JFADMIN_2_1" = success
+          echo "SDK VVS JFA: $JFADMIN_VVS"
+          test "$JFADMIN_2_2" = success && test "$JFADMIN_2_1" = success && \
+            test "$JFADMIN_VVS" = success
       - name: Upload official test and device logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: official-jfadmin-multi-logs
-          path: tmp/interop-jfadmin-multi/
+          path: |
+            tmp/interop-jfadmin-multi/
+            tmp/interop-jfadmin-vvs/
           if-no-files-found: warn

@@ -13,6 +13,26 @@ module SdkJfcJcmDriver
   A_VENDOR_ID       = 0xFFF1_u16
   JFA_ENDPOINT      =      1_u16
   OPERATION_TIMEOUT = 90.seconds
+  SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
+  SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+
+  private def sdk_attestation_trust(sdk_root : String) : Matter::Controller::AttestationTrustStore
+    trust = Matter::Controller::AttestationTrustStore.matter_test_fixture
+    trust.paa_certificates << File.read(File.join(sdk_root, SDK_PAA_CERT)).to_slice.dup
+    signer_paths = Dir.glob(File.join(sdk_root, SDK_CD_CERT_GLOB))
+    raise Matter::ConfigurationError.new("No SDK development CD signers found") if signer_paths.empty?
+    signer_paths.each do |path|
+      signer = OpenSSL::X509::Certificate.from_der(File.read(path).to_slice)
+      extension = signer.extensions.find { |entry| entry.oid == "subjectKeyIdentifier" } ||
+                  raise Matter::ConfigurationError.new("SDK CD signer has no subject key identifier")
+      ski = extension.value.gsub(/[^0-9A-Fa-f]/, "").upcase
+      unless ski.matches?(/\A[0-9A-F]{40}\z/)
+        raise Matter::ConfigurationError.new("SDK CD signer has invalid subject key identifier")
+      end
+      trust.cd_signers[ski] = signer.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+    end
+    trust
+  end
 
   private def store(path : String) : Matter::Controller::StateStore
     Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
@@ -94,15 +114,17 @@ module SdkJfcJcmDriver
 
   def commission(state_path : String, a_code : String, b_code : String,
                  b_root_path : String, exchange_path : String, command_path : String,
-                 result_path : String, a_port : Int32, b_port : Int32) : Nil
+                 result_path : String, a_port : Int32, b_port : Int32,
+                 sdk_root : String? = nil) : Nil
     state_store = store(state_path)
     fabric = state_store.load.fabric.as(Matter::Controller::FabricInfo)
     bootstrap_key = fabric.intermediate_private_key ||
                     raise Matter::ConfigurationError.new("A Anchor ICAC private key is unavailable")
     bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(fabric, bootstrap_key)
     a_peer = Socket::IPAddress.new("127.0.0.1", a_port)
-    b_peer = Socket::IPAddress.new("127.0.0.1", b_port)
+    b_peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(A_CONTROLLER_ID))
+    attestation_trust = sdk_root ? sdk_attestation_trust(sdk_root) : Matter::Controller::AttestationTrustStore.matter_test_fixture
     begin
       issuer = ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
         raise Matter::ConfigurationError.new("Wrong A fabric") unless fabric_id == A_FABRIC_ID
@@ -111,8 +133,7 @@ module SdkJfcJcmDriver
       unless ENV["MATTER_JCM_TEST_SKIP_ANCHOR_COMMISSION"]? == "1"
         Matter::Controller::Commissioning::Commissioner.new(state_store, client,
           timeout: OPERATION_TIMEOUT, certificate_issuer: issuer,
-          attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-            Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
+          attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(attestation_trust)).pairing_code(
           A_ANCHOR_ID, a_code, a_peer)
         puts "A Anchor commissioned"
       end
@@ -153,8 +174,7 @@ module SdkJfcJcmDriver
         ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { consent },
         registrar.callback, anchor_exchange, client: client, anchor_finalize: anchor_finalize,
         node_list_check: registrar.node_list_check,
-        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-          Matter::Controller::AttestationTrustStore.matter_test_fixture))
+        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(attestation_trust))
       if !consent
         begin
           workflow.commission(B_JOINED_ID, b_code, b_peer, defer_completion: true)
@@ -165,7 +185,7 @@ module SdkJfcJcmDriver
           if state_store.load.nodes.has_key?(B_JOINED_ID)
             raise Matter::CommissioningError.new("Denied joiner was recorded in source controller state")
           end
-          puts "PASS: trusted SDK-issued B root was rejected by explicit consent denial"
+          puts "PASS: trusted SDK joining Administrator was rejected by explicit consent denial"
           return
         end
         raise Matter::CommissioningError.new("Joint Commissioning succeeded without consent")
@@ -197,9 +217,9 @@ module SdkJfcJcmDriver
   end
 
   def probe_dcl(b_code : String, b_port : Int32, gateway_url : String,
-                expected : String) : Nil
+                dcl_state_path_or_expected : String) : Nil
     _, pin = Matter::SetupPayload.parse_manual_code(b_code)
-    peer = Socket::IPAddress.new("127.0.0.1", b_port)
+    peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new
     begin
       session = Matter::Controller::Pairing::PasePairing.new.pair(client, peer, pin,
@@ -208,17 +228,32 @@ module SdkJfcJcmDriver
       im = Matter::Controller::ImClient.new(client, OPERATION_TIMEOUT)
       index = Matter::Controller::JointCommissioning.read_administrator_fabric_index(
         im, session, peer, JFA_ENDPOINT)
-      trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
-        Matter::Controller::VidVerification::HttpDclSource.new(gateway_url))
-      begin
-        Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, index, trust)
-      rescue ex : Matter::AuthenticationError
-        raise ex unless expected == "deny"
-        puts "PASS: SDK-issued root denied by test DCL before Joint Commissioning: #{ex.message}"
-        return
+      modes = if {"deny", "accept"}.includes?(dcl_state_path_or_expected)
+                {"existing" => dcl_state_path_or_expected == "accept"}
+              else
+                {"wrong-vid" => false, "wrong-signer" => false, "removed" => false,
+                 "stale" => false, "active" => true}
+              end
+      modes.each do |mode, expected_accept|
+        unless mode == "existing"
+          state = JSON.parse(File.read(dcl_state_path_or_expected))
+          state.as_h["mode"] = JSON::Any.new(mode)
+          next_path = "#{dcl_state_path_or_expected}.next"
+          File.write(next_path, state.to_json)
+          File.rename(next_path, dcl_state_path_or_expected)
+        end
+        trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
+          Matter::Controller::VidVerification::HttpDclSource.new(gateway_url))
+        begin
+          Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, index, trust)
+        rescue ex : Matter::AuthenticationError
+          raise ex if expected_accept
+          puts "PASS: SDK joining Administrator denied by #{mode} DCL record: #{ex.message}"
+          next
+        end
+        raise Matter::AuthenticationError.new("Untrusted SDK joining Administrator passed #{mode} DCL validation") unless expected_accept
+        puts "PASS: SDK joining Administrator and VID accepted by test DCL before Joint Commissioning"
       end
-      raise Matter::AuthenticationError.new("Untrusted SDK-issued root passed DCL validation") if expected == "deny"
-      puts "PASS: SDK-issued root and VID accepted by test DCL before Joint Commissioning"
     ensure
       client.close
     end
@@ -232,7 +267,7 @@ when "verify-csr"
   SdkJfcJcmDriver.verify_csr(ARGV[0], ARGV[1])
 when "commission"
   SdkJfcJcmDriver.commission(ARGV[0], ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5],
-    ARGV[6], ARGV[7].to_i, ARGV[8].to_i)
+    ARGV[6], ARGV[7].to_i, ARGV[8].to_i, ARGV[9]?)
 when "probe-dcl"
   SdkJfcJcmDriver.probe_dcl(ARGV[0], ARGV[1].to_i, ARGV[2], ARGV[3])
 else
