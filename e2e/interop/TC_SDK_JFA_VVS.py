@@ -20,6 +20,7 @@ from cryptography.x509.oid import NameOID, ObjectIdentifier
 
 import matter.clusters as Clusters
 from matter import CertificateAuthority
+from matter.clusters.Types import Nullable
 from matter.exceptions import ChipStackError
 from matter.setup_payload import SetupPayload
 from matter.storage import VolatileTemporaryPersistentStorage
@@ -266,6 +267,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             catTags=[int(cats, 16)])
         fabrics, nocs = await read_identity(self.controller)
         descriptor, noc = sdk_fabric(fabrics, nocs)
+        original_noc = bytes(noc.noc)
         original_icac = bytes(noc.icac or b"")
         if len(fabrics) != 1 or not original_icac or noc.vvsc not in (None, b""):
             raise RuntimeError("SDK JFA did not start with exactly one ICAC-backed fabric")
@@ -347,11 +349,16 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         own_fabrics, own_nocs = await read_identity(self.controller, fabric_filtered=True)
         own_descriptor, own_noc = sdk_fabric(own_fabrics, own_nocs)
         if (len(own_fabrics) != 1 or len(own_nocs) != 1 or
-                bytes(own_noc.icac or b"") != original_icac or
+                bytes(own_noc.noc) != original_noc or
                 own_noc.vvsc not in (None, b"") or
+                isinstance(own_descriptor.VIDVerificationStatement, Nullable) or
                 bytes(own_descriptor.VIDVerificationStatement or b"") != statement or
                 own_descriptor.fabricIndex != sdk_descriptor.fabricIndex):
-            raise RuntimeError("SDK AddICAC boundary changed the original ICAC or VVS")
+            raise RuntimeError("SDK AddICAC boundary changed the original NOC or VVS")
+        if isinstance(own_noc.icac, Nullable):
+            print("INFO: SDK NOCs reports a null original ICAC after provisional AddNOC", flush=True)
+        elif bytes(own_noc.icac or b"") != original_icac:
+            raise RuntimeError("SDK AddICAC boundary changed the readable original ICAC")
         if Path(self.user_params["vvs_cross_icac"]).exists():
             raise RuntimeError("Crystal recorded an unconfirmed SDK cross-ICAC")
         a_identity = inspect_identity(Path(self.user_params["vvs_a_command"]))

@@ -795,9 +795,12 @@ validates the cross-signed ICAC but does not store it. AddNOC has already
 installed the Anchor fabric provisionally under the fail-safe; without
 CommissioningComplete that fabric is not committed and must roll back when
 the fail-safe expires. The test requires Crystal to reject the incomplete
-response and verifies the SDK's original VVS/ICAC and
+response and verifies the SDK's original NOC, VVS, and
 AdministratorFabricIndex remain unchanged, the Anchor fabric is still
-provisional, and the Anchor Datastore has no new Administrator. **This is not
+provisional, and the Anchor Datastore has no new Administrator. It verifies
+the original ICAC before AddNOC. After AddNOC, the pinned SDK reports a null
+ICAC for that fabric even through a fabric-filtered NOCs read, so this test
+cannot assert post-boundary ICAC preservation. **This is not
 a completed independent SDK JFA join.** The signer and DCL records are
 synthetic; this does not test a
 deployed DCL or a real user's consent decision. The SDK's own VVS verifier
