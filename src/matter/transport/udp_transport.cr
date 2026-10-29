@@ -493,13 +493,11 @@ module Matter
         last_error = nil.as(Exception?)
         @multicast_send_mutex.synchronize do
           interfaces.each do |index|
-            begin
-              send_on_multicast_interface(data, destination, index)
-              sent = true
-            rescue ex
-              last_error = ex
-              Log.debug(exception: ex) { "Could not send IPv6 multicast on interface #{index}" }
-            end
+            send_on_multicast_interface(data, destination, index)
+            sent = true
+          rescue ex
+            last_error = ex
+            Log.debug(exception: ex) { "Could not send IPv6 multicast on interface #{index}" }
           end
         end
         raise last_error.as(Exception) unless sent
