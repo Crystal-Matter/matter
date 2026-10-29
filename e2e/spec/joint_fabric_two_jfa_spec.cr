@@ -1122,7 +1122,7 @@ describe "three provisioned Joint Fabric Administrators" do
         endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
         cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
         attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS)
-        .attribute_reports.empty?.should be_false
+        .attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB)).empty?.should be_false
       sdk_blocked_replay = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
