@@ -757,9 +757,14 @@ scoped link-local address. The Anchor and controller run in separate network
 namespaces, so its separate ICAC exchange uses the Joiner's bridge ULA rather
 than copying the controller's interface index into the Anchor namespace.
 The example's operational discovery and CASE source fallbacks also retain an
-IPv6 scope when choosing a new port. A full multihomed mDNS responder path
-remains open: the responder joins and sends IPv6 multicast on its default
-interface only, so this scenario gives each JFA one bridge interface.
+IPv6 scope when choosing a new port. On Unix, the responder joins and sends
+IPv6 mDNS on each active interface, and filters A/AAAA records to the sending
+interface. IPv4 mDNS filters address records to its selected outgoing
+interface. Windows still uses its default IPv6 multicast interface; full
+Windows multi-interface discovery is not yet covered.
+The Docker JFAs attach to both bridges; the scenario requires the scanner to
+discover the Joiner's link-local AAAA with the second bridge's scope before
+using it for JCM.
 The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
 `TC_JFADMIN_2_1` each passed all steps against Crystal in
 [the integrated multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)

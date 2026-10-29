@@ -69,11 +69,12 @@ Run just this scenario with `./test --e2e-only --
 e2e/spec/joint_fabric_two_jfa_spec.cr`.
 
 `e2e/spec/joint_fabric_link_local_spec.cr` is a separate live Joint
-Commissioning check on a second Compose IPv6 bridge. The tests container has
-both bridges, while its two JFAs are isolated to the second bridge. It reads
+Commissioning check on a second Compose IPv6 bridge. The tests container and
+both JFAs attach to both bridges. It reads
 `/proc/net/if_inet6` in each network namespace, matches the second bridge by
 ULA prefix, and uses the tests container's interface index to reach B's
-link-local address. CASE, VVS installation, the Joint Commissioning window,
+link-local address. An operational mDNS query must first find that exact
+address with the second bridge's scope. CASE, VVS installation, the Joint Commissioning window,
 and the controller-to-B JCM all use that scoped route. A's separate ICAC
 exchange uses B's ULA because interface indexes are namespace-local. The
 test then confirms A's Datastore registered B after handoff. Run it in CI

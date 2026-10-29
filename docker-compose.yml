@@ -215,6 +215,7 @@ services:
   joint-fabric-link-local-anchor:
     <<: *device
     networks:
+      - matter
       - matter-link-local
     environment:
       E2E_DEVICE: matter_joint_fabric_link_local_anchor
@@ -232,6 +233,7 @@ services:
   joint-fabric-link-local-joiner:
     <<: *device
     networks:
+      - matter
       - matter-link-local
     environment:
       E2E_DEVICE: matter_joint_fabric_link_local_joiner

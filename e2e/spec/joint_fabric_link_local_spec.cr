@@ -134,6 +134,35 @@ describe "scoped IPv6 link-local Joint Commissioning" do
       attestation_verifier: attestation).pairing_code(LINK_LOCAL_JOINER_NODE_ID,
       joiner.pairing_code, joiner_ula)
 
+    # The JFA now has both Compose bridges. Resolve its operational service
+    # over mDNS and require the second bridge's link-local AAAA with the
+    # runner's interface scope before any JCM traffic uses that route.
+    scanner = Matter::Controller::Scanner.new
+    begin
+      scanner.start
+      deadline = Time.instant + 20.seconds
+      discovered = nil
+      loop do
+        scanner.query_operational
+        discovered = scanner.operational_devices.find do |device|
+          device.node_id == LINK_LOCAL_JOINER_NODE_ID && device.addresses.any? do |address|
+            address.address == joiner_link_local.address && address.zone_id == runner_interface.zone_id
+          end
+        end
+        break if discovered || Time.instant >= deadline
+        sleep 1.second
+      end
+      device = discovered || raise Matter::TimeoutError.new("Second-bridge link-local JFA discovery timed out")
+      address = device.addresses.find! do |candidate|
+        candidate.address == joiner_link_local.address && candidate.zone_id == runner_interface.zone_id
+      end
+      joiner_peer = Socket::IPAddress.new(
+        Matter::Controller::OperationalPeerResolver.address_hint(address), device.port)
+      joiner_peer.zone_id.should eq(runner_interface.zone_id)
+    ensure
+      scanner.close
+    end
+
     joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client, joiner_peer,
       joiner_bootstrap.fabric, peer_node_id: LINK_LOCAL_JOINER_NODE_ID,
       timeout: E2E::COMMAND_TIMEOUT)

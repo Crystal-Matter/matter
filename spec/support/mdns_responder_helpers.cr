@@ -16,6 +16,10 @@ end
 class RecordingResponder < Matter::MDNS::Responder
   getter sent = [] of DNS::Packet
 
+  def filter_ipv4_packet(packet : DNS::Packet, source : Socket::IPAddress) : DNS::Packet
+    packet_for_ipv4_source(packet, source)
+  end
+
   private def send_multicast(packet : DNS::Packet) : Nil
     @sent << packet
   end

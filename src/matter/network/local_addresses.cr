@@ -13,6 +13,7 @@ require "socket"
 
     fun getifaddrs(result : Void*) : Int32
     fun freeifaddrs(result : Void*) : Void
+    fun if_nametoindex(name : UInt8*) : UInt32
   end
 {% end %}
 
@@ -41,6 +42,19 @@ module Matter
       {% end %}
     end
 
+    # Preserve the interface identity needed for link-local IPv6 multicast on
+    # Unix. Windows currently exposes the addresses under the default index
+    # only; its responder keeps default-interface IPv6 multicast behavior.
+    # Addresses are normalized in the same way as local_ip_addresses so an
+    # advertiser can match its configured address list against this map.
+    def self.local_ip_addresses_by_interface : Hash(UInt32, Array(Socket::IPAddress))
+      {% if flag?(:win32) %}
+        {0_u32 => local_ip_addresses}
+      {% else %}
+        interface_addresses_by_index
+      {% end %}
+    end
+
     # Keep every usable local address so IPv6-only, dual-stack, and multihomed
     # networks can discover the device. Prefer IPv6 with a non-link-local scope,
     # then IPv4, then link-local addresses. The caller advertises all of them.
@@ -64,6 +78,45 @@ module Matter
     end
 
     {% unless flag?(:win32) %}
+      private def self.interface_addresses_by_index : Hash(UInt32, Array(Socket::IPAddress))
+        addresses = Hash(UInt32, Array(Socket::IPAddress)).new do |hash, index|
+          hash[index] = [] of Socket::IPAddress
+        end
+        result_holder = Pointer(Pointer(LibInterfaceAddresses::Ifaddrs)).malloc(1)
+        result_holder.value = Pointer(LibInterfaceAddresses::Ifaddrs).null
+        if LibInterfaceAddresses.getifaddrs(result_holder.as(Void*)) != 0
+          Log.warn { "unable to enumerate indexed network interfaces: #{Errno.value}" }
+          return addresses
+        end
+
+        current = result_holder.value
+        until current.null?
+          interface = current.value
+          active = interface.ifa_flags & (INTERFACE_UP | INTERFACE_RUNNING) == (INTERFACE_UP | INTERFACE_RUNNING)
+          loopback = interface.ifa_flags & INTERFACE_LOOPBACK != 0
+          if active && !loopback && (sockaddr = interface.ifa_addr) && !interface.ifa_name.null?
+            family = sockaddr.value.sa_family
+            if family == LibC::AF_INET || family == LibC::AF_INET6
+              index = LibInterfaceAddresses.if_nametoindex(interface.ifa_name)
+              if index > 0
+                address = Socket::IPAddress.from(sockaddr)
+                unless address.loopback? || address.unspecified?
+                  normalized = Socket::IPAddress.new(address.address, UNSPECIFIED_PORT)
+                  addresses[index] << normalized unless addresses[index].includes?(normalized)
+                end
+              end
+            end
+          end
+          current = interface.ifa_next
+        end
+        addresses
+      ensure
+        if result_holder
+          result = result_holder.value
+          LibInterfaceAddresses.freeifaddrs(result) unless result.null?
+        end
+      end
+
       private def self.interface_addresses : Array(Socket::IPAddress)
         result_holder = Pointer(Pointer(LibInterfaceAddresses::Ifaddrs)).malloc(1)
         result_holder.value = Pointer(LibInterfaceAddresses::Ifaddrs).null
