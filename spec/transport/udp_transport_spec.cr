@@ -334,6 +334,43 @@ describe Matter::Transport::UDPTransport do
     transport.try(&.close)
   end
 
+  it "routes peer-initiated secure requests to the device while retaining responses" do
+    transport = AuthenticationBoundaryTransport.new(port: 0)
+    received_by_device = [] of UInt16
+    transport.on_message = ->(message : Matter::Codec::MessageCodec::Message, _peer : Socket::IPAddress) {
+      received_by_device << message.packet_header.session_id
+      nil
+    }
+    client = Matter::Controller::Client.new(transport: transport, delegate_peer_initiated: true)
+    session = Matter::Session::SecureContext.new(7_u16, 7_u16,
+      Matter::Session::SessionType::Unicast, Bytes.new(16, 7_u8), Bytes.new(16, 7_u8))
+    client.register_session(session)
+    peer = Socket::IPAddress.new("127.0.0.1", transport.port)
+    request_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 1_u16, protocol_id: Matter::Protocol::ProtocolId::InteractionModel.value,
+      message_type: Matter::InteractionModel::MessageType::ReadRequest.value,
+      initiator_message: true, requires_acknowledge: false)
+    request, _ = Matter::Session::SecureMessage.encode(session, request_header, Bytes.empty,
+      message_counter: 1_u32)
+    transport.receive_for_spec(request, peer)
+    received_by_device.should eq([session.session_id])
+    session.peer_message_counter.should be_nil
+
+    response_header = Matter::Codec::MessageCodec::PayloadHeader.new(
+      exchange_id: 2_u16, protocol_id: Matter::Protocol::ProtocolId::InteractionModel.value,
+      message_type: Matter::InteractionModel::MessageType::StatusResponse.value,
+      initiator_message: false, requires_acknowledge: false)
+    response, _ = Matter::Session::SecureMessage.encode(session, response_header, Bytes.empty,
+      message_counter: 2_u32)
+    transport.receive_for_spec(response, peer)
+    received_by_device.should eq([session.session_id])
+    client.wait_for(2_u16, Matter::Protocol::ProtocolId::InteractionModel.value,
+      Matter::InteractionModel::MessageType::StatusResponse.value, 100.milliseconds).should_not be_nil
+  ensure
+    client.try(&.close)
+    transport.try(&.close)
+  end
+
   it "accepts a fresh unsecured counter from the same Node ID on another UDP socket" do
     transport = AuthenticationBoundaryTransport.new(port: 0)
     received = [] of UInt32

@@ -4329,10 +4329,14 @@ module MatterJointFabricAdministrator
       end
       identity.certificate_authority_key
       peer = Socket::IPAddress.new(request.peer_address, request.peer_port)
-      client = leased_case_client(own_fabric.node_id)
+      client = leased_case_client(own_fabric.node_id, delegate_peer_initiated: true)
       begin
         session = Matter::Controller::Pairing::CasePairing.new.pair(client, peer,
           identity, peer_node_id: request.joining_node_id)
+        # SDK JFA reads this Anchor's JFA attributes during Announce on the
+        # very CASE session opened by this client. Route those peer requests to
+        # the device while keeping Announce and ICAC exchange replies here.
+        message_handler.registry.establish_session(session, preserve_existing: true)
         im = Matter::Controller::ImClient.new(client, 45.seconds)
         endpoint = Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
         unless endpoint == request.administrator_endpoint
@@ -4485,17 +4489,20 @@ module MatterJointFabricAdministrator
       root_trust || raise Matter::ConfigurationError.new("No operational Vendor ID trust source configured")
     end
 
-    private def anchor_verification_client(node_id : UInt64) : Matter::Controller::Client
+    private def anchor_verification_client(node_id : UInt64,
+                                           delegate_peer_initiated : Bool = false) : Matter::Controller::Client
       store = @controller_store || Matter::Controller::StateStore.new(persistence.backend)
       Matter::Controller::Client.new(
         transport: message_handler.transport,
         counter_lease: store.counter_lease(node_id),
-        session_id_in_use: ->(id : UInt16) { message_handler.sessions.has_key?(id) }
+        session_id_in_use: ->(id : UInt16) { message_handler.sessions.has_key?(id) },
+        delegate_peer_initiated: delegate_peer_initiated
       )
     end
 
-    private def leased_case_client(node_id : UInt64) : Matter::Controller::Client
-      anchor_verification_client(node_id)
+    private def leased_case_client(node_id : UInt64,
+                                   delegate_peer_initiated : Bool = false) : Matter::Controller::Client
+      anchor_verification_client(node_id, delegate_peer_initiated: delegate_peer_initiated)
     end
 
     # Announce arrived over an authenticated CASE session. Its UDP source is
