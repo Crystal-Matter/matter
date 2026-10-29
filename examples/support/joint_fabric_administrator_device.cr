@@ -4336,6 +4336,7 @@ module MatterJointFabricAdministrator
         # SDK JFA reads this Anchor's JFA attributes during Announce on the
         # very CASE session opened by this client. Route those peer requests to
         # the device while keeping Announce and ICAC exchange replies here.
+        session.fabric_index = own_fabric.fabric_index
         message_handler.registry.establish_session(session, preserve_existing: true)
         im = Matter::Controller::ImClient.new(client, 45.seconds)
         endpoint = Matter::Controller::JointCommissioning.discover_administrator_endpoint(im, session, peer)
@@ -4453,6 +4454,7 @@ module MatterJointFabricAdministrator
             # session for ICACCSRRequest immediately after Announce. The
             # listener must continue to receive it once this client closes.
             client.relinquish_session(session)
+            session.fabric_index = fabric.fabric_index
             message_handler.registry.establish_session(session, preserve_existing: true)
           })
       ensure
