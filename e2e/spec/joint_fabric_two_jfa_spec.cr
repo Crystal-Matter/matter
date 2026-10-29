@@ -1002,6 +1002,7 @@ describe "three provisioned Joint Fabric Administrators" do
         cert = OpenSSL::X509::Certificate.from_der(der)
         ski = LibCrypto.x509_get0_subject_key_id(cert)
         next if ski.null?
+        next unless LibCrypto.asn1_string_length(ski) == 20
         ski_bytes = Slice.new(LibCrypto.asn1_string_get0_data(ski), 20).dup
         sdk_cd_signers[ski_bytes.hexstring.upcase] = cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes
       end
