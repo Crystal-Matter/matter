@@ -175,7 +175,7 @@ module Matter
         raise ArgumentError.new("too many measurement ranges") if new_ranges.size > @accuracy.size
         types = @accuracy.map(&.measurement_type)
         raise ArgumentError.new("range has no matching accuracy type") unless new_ranges.all? { |range| types.includes?(range.measurement_type) }
-        raise ArgumentError.new("measurement range types must be unique") unless new_ranges.map(&.measurement_type).uniq.size == new_ranges.size
+        raise ArgumentError.new("measurement range types must be unique") unless new_ranges.map(&.measurement_type).uniq!.size == new_ranges.size
       end
 
       private def validate_features! : Nil
