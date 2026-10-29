@@ -32,6 +32,7 @@ from sdk_jfc_jcm_live import inspect_identity
 
 
 VENDOR_ID = 0xFFF1
+ANCHOR_FABRIC_ID = 0xA100
 SDK_FABRIC_ID = 2
 SDK_JFA_NODE_ID = 11
 SDK_CONTROLLER_NODE_ID = 201
@@ -338,11 +339,14 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
                    expected_failure="IM Success for AddICAC without ICACResponse")
         fabrics, nocs = await read_identity(self.controller)
         sdk_descriptor, sdk_noc = sdk_fabric(fabrics, nocs)
-        if (len(fabrics) != 1 or len(nocs) != 1 or
+        pending = [fabric for fabric in fabrics if fabric.fabricID == ANCHOR_FABRIC_ID]
+        pending_nocs = [noc for noc in nocs if pending and noc.fabricIndex == pending[0].fabricIndex]
+        if (len(fabrics) != 2 or len(nocs) != 2 or len(pending) != 1 or
+                len(pending_nocs) != 1 or
                 bytes(sdk_noc.icac or b"") != original_icac or
                 sdk_noc.vvsc not in (None, b"") or
                 bytes(sdk_descriptor.VIDVerificationStatement or b"") != statement):
-            raise RuntimeError("SDK AddICAC limit changed the original fabric or VVS")
+            raise RuntimeError("SDK AddICAC boundary changed the expected provisional fabrics or original VVS")
         if Path(self.user_params["vvs_cross_icac"]).exists():
             raise RuntimeError("Crystal recorded an unconfirmed SDK cross-ICAC")
         a_identity = inspect_identity(Path(self.user_params["vvs_a_command"]))
@@ -356,7 +360,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             Clusters.JointFabricAdministrator].administratorFabricIndex
         if admin_index != sdk_descriptor.fabricIndex:
             raise RuntimeError("SDK JFA changed AdministratorFabricIndex without ICACResponse")
-        print("PASS: Crystal verified SDK VVS and consent, reached SDK AddICAC, and rejected its missing ICACResponse", flush=True)
+        print("PASS: Crystal verified SDK VVS and consent, reached SDK AddICAC, and left its new fabric provisional", flush=True)
 
 
 if __name__ == "__main__":
