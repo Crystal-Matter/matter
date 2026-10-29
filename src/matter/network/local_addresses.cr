@@ -17,6 +17,9 @@ require "socket"
       flags : UInt32
       next_address : UnicastAddress*
       address : SocketAddress
+      prefix_origin : UInt32
+      suffix_origin : UInt32
+      dad_state : UInt32
     end
 
     struct AdapterAddress
@@ -79,6 +82,8 @@ module Matter
       WINDOWS_ADAPTER_OPER_STATUS_UP   =      1_u32
       WINDOWS_ADAPTER_TYPE_LOOPBACK    =     24_u32
       WINDOWS_ADAPTER_NO_MULTICAST     = 0x0010_u32
+      WINDOWS_DAD_STATE_DEPRECATED     =      3_u32
+      WINDOWS_DAD_STATE_PREFERRED      =      4_u32
     {% else %}
       INTERFACE_UP       =  0x1_u32
       INTERFACE_LOOPBACK =  0x8_u32
@@ -166,7 +171,9 @@ module Matter
             until unicast_pointer.null?
               unicast = unicast_pointer.value
               sockaddr = unicast.address.address
-              unless sockaddr.null?
+              usable_address = unicast.dad_state == WINDOWS_DAD_STATE_DEPRECATED ||
+                               unicast.dad_state == WINDOWS_DAD_STATE_PREFERRED
+              if !sockaddr.null? && usable_address
                 family = sockaddr.value.sa_family
                 if family == LibC::AF_INET || family == LibC::AF_INET6
                   index = family == LibC::AF_INET6 ? adapter.ipv6_if_index : adapter.if_index
