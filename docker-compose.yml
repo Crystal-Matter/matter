@@ -188,9 +188,6 @@ services:
       MATTER_JFA_TRANSFER_PEERS: a102=joint-fabric-anchor,a104=joint-fabric-third,b201=joint-fabric-migration-target,b202=official-jf-migration-target
       MATTER_JFA_KEEP_BOOTSTRAP_DATASTORE: "1"
       MATTER_JFA_CONSENTED_MIGRATIONS: b201,b202
-      MATTER_JFA_MIGRATION_TEST_TRUST: "1"
-      MATTER_JFA_MIGRATION_TEST_SDK_PAA: /e2e/logs/jf-sdk-migration-paa.der
-      MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR: /e2e/logs/jf-sdk-migration-cd
       MATTER_JFA_ANCHOR_NODE_ID: a102
       MATTER_JFA_COMMAND_PATH: /e2e/logs/matter_joint_fabric_joiner.command.yml
       MATTER_JFA_CONSENTED_REMOVALS: a102
