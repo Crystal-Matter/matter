@@ -266,15 +266,12 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         write_mode(dcl_path, state, "active")
         print("PASS: independent SDK JFA carries signed VVS and original ICAC without VVSC", flush=True)
 
-        # The read-only PASE probe leaves the SDK commissioning window active.
-        # Restore the post-VVS KVS after checking each attempted handoff, so
-        # the next case starts from the same commissioned device state.
+        # Keep the original NamedTemporaryFile owner alive across restarts.
+        # The SDK persists its commissioning state in this KVS.
         kvs_path = Path(self.sdk_kvs_owner.kvs_tmp_file.name)
-        kvs_snapshot = kvs_path.read_bytes()
 
-        def restart_from_snapshot():
+        def restart_sdk_jfa():
             self.fabric_b_admin.terminate()
-            kvs_path.write_bytes(kvs_snapshot)
             self.fabric_b_admin = JFAdministratorSubprocess(
                 **jfa_kwargs, kvs_path=str(kvs_path))
             self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
@@ -299,7 +296,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             SDK_JFA_NODE_ID, 0,
             Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
             timedRequestTimeoutMs=6000)
-        restart_from_snapshot()
+        restart_sdk_jfa()
         window = await self.controller.OpenJointCommissioningWindow(
             nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
             timeout=900, iteration=1000, discriminator=1261)
@@ -325,13 +322,13 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             raise RuntimeError("Consent denial registered SDK JFA in Crystal A Datastore")
         print("PASS: consent denial preserved SDK JFA original fabric", flush=True)
 
-        # Restore only after verifying that consent denial changed neither
-        # fabric; revoke the remaining PASE commissioning window first.
+        # After verifying consent denial changed neither fabric, revoke the
+        # remaining PASE commissioning window and restart with the same KVS.
         await self.controller.SendCommand(
             SDK_JFA_NODE_ID, 0,
             Clusters.AdministratorCommissioning.Commands.RevokeCommissioning(),
             timedRequestTimeoutMs=6000)
-        restart_from_snapshot()
+        restart_sdk_jfa()
         restarted_fabrics, restarted_nocs = await read_identity(self.controller)
         restarted_descriptor, restarted_noc = sdk_fabric(restarted_fabrics, restarted_nocs)
         if (len(restarted_fabrics) != 1 or
