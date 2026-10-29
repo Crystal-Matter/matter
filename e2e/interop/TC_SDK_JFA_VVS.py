@@ -209,6 +209,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
                                       str(rpc_port), "--secured-commissioner-port",
                                       str(secured_commissioner_port)])
         self.fabric_b_admin = JFAdministratorSubprocess(**jfa_kwargs)
+        self.sdk_kvs_owner = self.fabric_b_admin
         self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
         self.fabric_b_ctrl = JFControllerSubprocess(
             self.user_params["vvs_sdk_jfc"], prefix="JFC-B", rpc_server_port=rpc_port,
@@ -265,6 +266,20 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         write_mode(dcl_path, state, "active")
         print("PASS: independent SDK JFA carries signed VVS and original ICAC without VVSC", flush=True)
 
+        # The read-only PASE probe leaves the SDK commissioning window active.
+        # Restore the post-VVS KVS after checking each attempted handoff, so
+        # the next case starts from the same commissioned device state.
+        kvs_path = Path(self.sdk_kvs_owner.kvs_tmp_file.name)
+        kvs_snapshot = kvs_path.read_bytes()
+
+        def restart_from_snapshot():
+            self.fabric_b_admin.terminate()
+            kvs_path.write_bytes(kvs_snapshot)
+            self.fabric_b_admin = JFAdministratorSubprocess(
+                **jfa_kwargs, kvs_path=str(kvs_path))
+            self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
+            self.controller.MarkSessionDefunct(SDK_JFA_NODE_ID)
+
         self.step("3")
         window = await self.controller.OpenJointCommissioningWindow(
             nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
@@ -280,14 +295,10 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         print("PASS: Crystal rejected invalid/removed/stale DCL records and accepted the SDK VVS", flush=True)
 
         self.step("4")
-        # The SDK keeps the first PASE commissioning session open after the
-        # read-only probes. Restart to release it before the consent attempt.
-        previous = self.fabric_b_admin
-        previous.terminate()
-        self.fabric_b_admin = JFAdministratorSubprocess(
-            **jfa_kwargs, kvs_path=previous.kvs_tmp_file.name)
-        self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
-        self.controller.MarkSessionDefunct(SDK_JFA_NODE_ID)
+        await self.controller.SendCommand(
+            SDK_JFA_NODE_ID, 0,
+            Clusters.AdministratorCommissioning.Commands.RevokeCommissioning())
+        restart_from_snapshot()
         window = await self.controller.OpenJointCommissioningWindow(
             nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
             timeout=900, iteration=1000, discriminator=1261)
@@ -313,14 +324,12 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
             raise RuntimeError("Consent denial registered SDK JFA in Crystal A Datastore")
         print("PASS: consent denial preserved SDK JFA original fabric", flush=True)
 
-        # The denied PASE attempt armed the fail-safe. Restart the SDK JFA with
-        # the same KVS to roll it back before opening a fresh JCM window.
-        previous = self.fabric_b_admin
-        previous.terminate()
-        self.fabric_b_admin = JFAdministratorSubprocess(
-            **jfa_kwargs, kvs_path=previous.kvs_tmp_file.name)
-        self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
-        self.controller.MarkSessionDefunct(SDK_JFA_NODE_ID)
+        # Restore only after verifying that consent denial changed neither
+        # fabric; revoke the remaining PASE commissioning window first.
+        await self.controller.SendCommand(
+            SDK_JFA_NODE_ID, 0,
+            Clusters.AdministratorCommissioning.Commands.RevokeCommissioning())
+        restart_from_snapshot()
         restarted_fabrics, restarted_nocs = await read_identity(self.controller)
         restarted_descriptor, restarted_noc = sdk_fabric(restarted_fabrics, restarted_nocs)
         if (len(restarted_fabrics) != 1 or
