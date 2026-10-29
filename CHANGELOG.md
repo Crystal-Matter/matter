@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Reachability events
+
+- Emit `ReachableChanged` whenever the Basic Information or Bridged Device Basic
+  Information `Reachable` value actually changes, including direct bridge
+  reachability toggles. The explicit event helpers still return the encoded
+  payload and now use the setter's single event emission.
+
 ### Joint Fabric keyed group revocation
 
 - Shared group revocation now accepts an explicit fresh key set for groups with

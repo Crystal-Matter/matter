@@ -186,7 +186,7 @@ module Matter
       attribute 0x000E, :product_label, String, default: "", fixed: true, optional: true
       attribute 0x000F, :serial_number, String, default: "", fixed: true, optional: true
       attribute 0x0010, :local_config_disabled, Bool, default: false, writable: true, write_access: :manage, optional: true
-      attribute 0x0011, :reachable, Bool, default: true, optional: true
+      attribute 0x0011, :reachable, Bool, default: true, optional: true, on_change: :emit_reachable_changed_on_change
       attribute 0x0012, :unique_id, String, default: "", fixed: true
       attribute 0x0013, :capability_minima, CapabilityMinimaStruct, default: CapabilityMinimaStruct.new, fixed: true
       attribute 0x0014, :product_appearance, ProductAppearanceStruct, nullable: true, fixed: true, optional: true, present_if: :product_appearance
@@ -302,13 +302,15 @@ module Matter
         payload.to_slice
       end
 
-      # Journals the ReachableChanged event (call when reachability changes).
+      # Updates reachability and returns the event payload. The setter journals
+      # the event only when the value actually changes.
       def emit_reachable_changed_event(reachable_new_value : Bool) : Bytes
         self.reachable = reachable_new_value
+        ReachableChangedEvent.new(reachable_new_value).to_slice
+      end
 
-        payload = ReachableChangedEvent.new(reachable_new_value)
-        emit_event(EVENT_REACHABLE_CHANGED, payload)
-        payload.to_slice
+      private def emit_reachable_changed_on_change(reachable_new_value : Bool) : Nil
+        emit_event(EVENT_REACHABLE_CHANGED, ReachableChangedEvent.new(reachable_new_value))
       end
     end
   end
