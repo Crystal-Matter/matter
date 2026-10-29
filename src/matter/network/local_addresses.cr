@@ -43,8 +43,9 @@ require "socket"
       ipv6_if_index : UInt32
     end
 
-    fun GetAdaptersAddresses(family : UInt32, flags : UInt32, reserved : Void*,
-                             addresses : AdapterAddress*, size : UInt32*) : UInt32
+    fun matter_get_adapters_addresses = GetAdaptersAddresses(family : UInt32, flags : UInt32,
+                                                             reserved : Void*, addresses : AdapterAddress*,
+                                                             size : UInt32*) : UInt32
   end
 {% else %}
   # getifaddrs is available on the Unix platforms supported by Crystal. The
@@ -143,7 +144,7 @@ module Matter
         buffer = Bytes.new(size.to_i)
         attempts = 0
         loop do
-          result = LibMatterWindowsAdapters.GetAdaptersAddresses(LibC::AF_UNSPEC.to_u32, WINDOWS_ADAPTER_DEFAULT_FLAGS,
+          result = LibMatterWindowsAdapters.matter_get_adapters_addresses(LibC::AF_UNSPEC.to_u32, WINDOWS_ADAPTER_DEFAULT_FLAGS,
             Pointer(Void).null, buffer.to_unsafe.as(LibMatterWindowsAdapters::AdapterAddress*), pointerof(size))
           case result
           when WINDOWS_ADAPTER_SUCCESS
