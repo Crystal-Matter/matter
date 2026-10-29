@@ -1,9 +1,10 @@
 require "socket"
 
 {% if flag?(:win32) %}
+  require "dns"
+
   # IP Helper exposes the adapter's IPv6 interface index, which is required
   # to join and send link-local multicast on every active Windows interface.
-  @[Link("iphlpapi")]
   lib LibMatterWindowsAdapters
     PHYSICAL_ADDRESS_MAX_LENGTH = 8
 
@@ -42,10 +43,6 @@ require "socket"
       oper_status : UInt32
       ipv6_if_index : UInt32
     end
-
-    fun matter_get_adapters_addresses = GetAdaptersAddresses(family : UInt32, flags : UInt32,
-                                                             reserved : Void*, addresses : AdapterAddress*,
-                                                             size : UInt32*) : UInt32
   end
 {% else %}
   # getifaddrs is available on the Unix platforms supported by Crystal. The
@@ -144,8 +141,9 @@ module Matter
         buffer = Bytes.new(size.to_i)
         attempts = 0
         loop do
-          result = LibMatterWindowsAdapters.matter_get_adapters_addresses(LibC::AF_UNSPEC.to_u32, WINDOWS_ADAPTER_DEFAULT_FLAGS,
-            Pointer(Void).null, buffer.to_unsafe.as(LibMatterWindowsAdapters::AdapterAddress*), pointerof(size))
+          result = DNS::Servers::IpHlpApi.GetAdaptersAddresses(LibC::AF_UNSPEC,
+            WINDOWS_ADAPTER_DEFAULT_FLAGS, Pointer(Void).null,
+            buffer.to_unsafe.as(DNS::Servers::IpHlpApi::IP_ADAPTER_ADDRESSES*), pointerof(size))
           case result
           when WINDOWS_ADAPTER_SUCCESS
             break
