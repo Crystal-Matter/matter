@@ -229,13 +229,7 @@ module Matter
             request = LibC::Ipv6Mreq.new
             request.ipv6mr_multiaddr = MDNS_IPV6.to_unsafe.as(LibC::SockaddrIn6*).value.sin6_addr
             request.ipv6mr_interface = index
-            {% if flag?(:win32) %}
-              result = LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
-                pointerof(request).as(LibC::Char*), sizeof(LibC::Ipv6Mreq).to_i32)
-            {% else %}
-              result = LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
-                pointerof(request).as(Void*), sizeof(LibC::Ipv6Mreq).to_u32)
-            {% end %}
+            result = join_ipv6_group(socket, request)
             if result == 0
               ids << index
             else
@@ -258,6 +252,16 @@ module Matter
           end
         end
         ids
+      end
+
+      private def join_ipv6_group(socket : UDPSocket, request : LibC::Ipv6Mreq) : Int32
+        {% if flag?(:win32) %}
+          LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
+            pointerof(request).as(LibC::Char*), sizeof(LibC::Ipv6Mreq).to_i32)
+        {% else %}
+          LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
+            pointerof(request).as(Void*), sizeof(LibC::Ipv6Mreq).to_u32)
+        {% end %}
       end
 
       # Close responder
