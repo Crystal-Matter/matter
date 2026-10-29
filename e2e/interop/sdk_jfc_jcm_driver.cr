@@ -197,7 +197,7 @@ module SdkJfcJcmDriver
   end
 
   def probe_dcl(b_code : String, b_port : Int32, gateway_url : String,
-                expected : String) : Nil
+                dcl_state_path : String) : Nil
     _, pin = Matter::SetupPayload.parse_manual_code(b_code)
     peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new
@@ -208,17 +208,25 @@ module SdkJfcJcmDriver
       im = Matter::Controller::ImClient.new(client, OPERATION_TIMEOUT)
       index = Matter::Controller::JointCommissioning.read_administrator_fabric_index(
         im, session, peer, JFA_ENDPOINT)
-      trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
-        Matter::Controller::VidVerification::HttpDclSource.new(gateway_url))
-      begin
-        Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, index, trust)
-      rescue ex : Matter::AuthenticationError
-        raise ex unless expected == "deny"
-        puts "PASS: SDK joining Administrator denied by test DCL before Joint Commissioning: #{ex.message}"
-        return
+      {"wrong-vid" => false, "wrong-signer" => false, "removed" => false,
+       "stale" => false, "active" => true}.each do |mode, expected_accept|
+        state = JSON.parse(File.read(dcl_state_path))
+        state.as_h["mode"] = JSON::Any.new(mode)
+        next_path = "#{dcl_state_path}.next"
+        File.write(next_path, state.to_json)
+        File.rename(next_path, dcl_state_path)
+        trust = Matter::Controller::VidVerification::DclOperationalTrustAnchors.new(
+          Matter::Controller::VidVerification::HttpDclSource.new(gateway_url))
+        begin
+          Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, index, trust)
+        rescue ex : Matter::AuthenticationError
+          raise ex if expected_accept
+          puts "PASS: SDK joining Administrator denied by #{mode} DCL record: #{ex.message}"
+          next
+        end
+        raise Matter::AuthenticationError.new("Untrusted SDK joining Administrator passed #{mode} DCL validation") unless expected_accept
+        puts "PASS: SDK joining Administrator and VID accepted by test DCL before Joint Commissioning"
       end
-      raise Matter::AuthenticationError.new("Untrusted SDK joining Administrator passed DCL validation") if expected == "deny"
-      puts "PASS: SDK joining Administrator and VID accepted by test DCL before Joint Commissioning"
     ensure
       client.close
     end

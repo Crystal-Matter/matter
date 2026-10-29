@@ -275,15 +275,24 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         dcl_env.update(SSL_CERT_FILE=self.user_params["vvs_tls_cert"],
                        MATTER_JCM_TEST_DCL_GATEWAY_URL="https://127.0.0.1",
                        MATTER_JCM_TEST_B_HOST=self.user_params["vvs_sdk_ipv6_host"])
-        for mode, expected in (("wrong-vid", "deny"), ("wrong-signer", "deny"),
-                               ("removed", "deny"), ("stale", "deny"),
-                               ("active", "accept")):
-            write_mode(dcl_path, state, mode)
-            run_driver(self, "probe-dcl", code, SDK_JFA_PORT, "https://127.0.0.1",
-                       expected, env=dcl_env, timeout=90)
+        run_driver(self, "probe-dcl", code, SDK_JFA_PORT, "https://127.0.0.1",
+                   dcl_path, env=dcl_env, timeout=90)
         print("PASS: Crystal rejected invalid/removed/stale DCL records and accepted the SDK VVS", flush=True)
 
         self.step("4")
+        # The SDK keeps the first PASE commissioning session open after the
+        # read-only probes. Restart to release it before the consent attempt.
+        previous = self.fabric_b_admin
+        previous.terminate()
+        self.fabric_b_admin = JFAdministratorSubprocess(
+            **jfa_kwargs, kvs_path=previous.kvs_tmp_file.name)
+        self.fabric_b_admin.start(expected_output="Server initialization complete", timeout=30)
+        self.controller.MarkSessionDefunct(SDK_JFA_NODE_ID)
+        window = await self.controller.OpenJointCommissioningWindow(
+            nodeId=SDK_JFA_NODE_ID, endpointId=SDK_JFA_ENDPOINT,
+            timeout=900, iteration=1000, discriminator=1261)
+        code = SetupPayload().GenerateManualPairingCode(
+            passcode=window.setupPinCode, discriminator=1261)
         denied_env = dcl_env.copy()
         denied_env["MATTER_JCM_TEST_CONSENT"] = "deny"
         driver_args = (self.user_params["vvs_bootstrap"],
