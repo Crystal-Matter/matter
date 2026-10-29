@@ -760,8 +760,10 @@ The example's operational discovery and CASE source fallbacks also retain an
 IPv6 scope when choosing a new port. On Unix, the responder joins and sends
 IPv6 mDNS on each active interface, and filters A/AAAA records to the sending
 interface. IPv4 mDNS filters address records to its selected outgoing
-interface. Windows still uses its default IPv6 multicast interface; full
-Windows multi-interface discovery is not yet covered.
+interface. On Windows, IP Helper enumerates active adapters and the responder
+joins and sends IPv6 mDNS on each adapter's IPv6 interface index. Windows CI
+checks adapter enumeration, but a multi-adapter Windows network has not yet
+been exercised end to end.
 The Docker JFAs attach to both bridges; the scenario requires the scanner to
 discover the Joiner's link-local AAAA with the second bridge's scope before
 using it for JCM.

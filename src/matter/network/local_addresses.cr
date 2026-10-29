@@ -1,6 +1,50 @@
 require "socket"
 
-{% unless flag?(:win32) %}
+{% if flag?(:win32) %}
+  require "dns"
+
+  # IP Helper exposes the adapter's IPv6 interface index, which is required
+  # to join and send link-local multicast on every active Windows interface.
+  lib LibMatterWindowsAdapters
+    PHYSICAL_ADDRESS_MAX_LENGTH = 8
+
+    struct SocketAddress
+      address : LibC::Sockaddr*
+      length : Int32
+    end
+
+    struct UnicastAddress
+      length : UInt32
+      flags : UInt32
+      next_address : UnicastAddress*
+      address : SocketAddress
+      prefix_origin : UInt32
+      suffix_origin : UInt32
+      dad_state : UInt32
+    end
+
+    struct AdapterAddress
+      length : UInt32
+      if_index : UInt32
+      next_adapter : AdapterAddress*
+      adapter_name : UInt8*
+      first_unicast_address : UnicastAddress*
+      first_anycast_address : Void*
+      first_multicast_address : Void*
+      first_dns_server_address : Void*
+      dns_suffix : UInt16*
+      description : UInt16*
+      friendly_name : UInt16*
+      physical_address : StaticArray(UInt8, PHYSICAL_ADDRESS_MAX_LENGTH)
+      physical_address_length : UInt32
+      flags : UInt32
+      mtu : UInt32
+      if_type : UInt32
+      oper_status : UInt32
+      ipv6_if_index : UInt32
+    end
+  end
+{% else %}
   # getifaddrs is available on the Unix platforms supported by Crystal. The
   # first four fields of ifaddrs have the same layout on Linux and BSD/macOS.
   lib LibInterfaceAddresses
@@ -26,7 +70,19 @@ module Matter
     LOOPBACK_ADDRESS = Socket::IPAddress.new("127.0.0.1", 0)
     UNSPECIFIED_PORT = 0
 
-    {% unless flag?(:win32) %}
+    {% if flag?(:win32) %}
+      WINDOWS_ADAPTER_BUFFER_BYTES     = 15 * 1024
+      WINDOWS_ADAPTER_BUFFER_MAX_BYTES = 1024 * 1024
+      WINDOWS_ADAPTER_BUFFER_RETRIES   =          3
+      WINDOWS_ADAPTER_DEFAULT_FLAGS    =      0_u32
+      WINDOWS_ADAPTER_BUFFER_OVERFLOW  =    111_u32
+      WINDOWS_ADAPTER_SUCCESS          =      0_u32
+      WINDOWS_ADAPTER_OPER_STATUS_UP   =      1_u32
+      WINDOWS_ADAPTER_TYPE_LOOPBACK    =     24_u32
+      WINDOWS_ADAPTER_NO_MULTICAST     = 0x0010_u32
+      WINDOWS_DAD_STATE_DEPRECATED     =      3_u32
+      WINDOWS_DAD_STATE_PREFERRED      =      4_u32
+    {% else %}
       INTERFACE_UP       =  0x1_u32
       INTERFACE_LOOPBACK =  0x8_u32
       INTERFACE_RUNNING  = 0x40_u32
@@ -36,20 +92,19 @@ module Matter
     # local-network discovery, so a public internet route is not required.
     def self.local_ip_addresses : Array(Socket::IPAddress)
       {% if flag?(:win32) %}
-        select_local_ip_addresses(route_probe_addresses)
+        indexed = local_ip_addresses_by_interface.values.flatten
+        select_local_ip_addresses(indexed.empty? ? route_probe_addresses : indexed)
       {% else %}
         select_local_ip_addresses(interface_addresses)
       {% end %}
     end
 
-    # Preserve the interface identity needed for link-local IPv6 multicast on
-    # Unix. Windows currently exposes the addresses under the default index
-    # only; its responder keeps default-interface IPv6 multicast behavior.
+    # Preserve the interface identity needed for link-local IPv6 multicast.
     # Addresses are normalized in the same way as local_ip_addresses so an
     # advertiser can match its configured address list against this map.
     def self.local_ip_addresses_by_interface : Hash(UInt32, Array(Socket::IPAddress))
       {% if flag?(:win32) %}
-        {0_u32 => local_ip_addresses}
+        windows_interface_addresses_by_index
       {% else %}
         interface_addresses_by_index
       {% end %}
@@ -77,7 +132,67 @@ module Matter
       addresses
     end
 
-    {% unless flag?(:win32) %}
+    {% if flag?(:win32) %}
+      private def self.windows_interface_addresses_by_index : Hash(UInt32, Array(Socket::IPAddress))
+        addresses = Hash(UInt32, Array(Socket::IPAddress)).new do |hash, index|
+          hash[index] = [] of Socket::IPAddress
+        end
+        size = WINDOWS_ADAPTER_BUFFER_BYTES.to_u32
+        buffer = Bytes.new(size.to_i)
+        attempts = 0
+        loop do
+          result = DNS::Servers::IpHlpApi.GetAdaptersAddresses(LibC::AF_UNSPEC,
+            WINDOWS_ADAPTER_DEFAULT_FLAGS, Pointer(Void).null,
+            buffer.to_unsafe.as(DNS::Servers::IpHlpApi::IP_ADAPTER_ADDRESSES*), pointerof(size))
+          case result
+          when WINDOWS_ADAPTER_SUCCESS
+            break
+          when WINDOWS_ADAPTER_BUFFER_OVERFLOW
+            attempts += 1
+            if attempts >= WINDOWS_ADAPTER_BUFFER_RETRIES || size > WINDOWS_ADAPTER_BUFFER_MAX_BYTES
+              Log.warn { "Windows adapter list exceeded the supported buffer size" }
+              return addresses
+            end
+            buffer = Bytes.new(size.to_i)
+          else
+            Log.warn { "unable to enumerate Windows network adapters: error #{result}" }
+            return addresses
+          end
+        end
+
+        adapter_pointer = buffer.to_unsafe.as(LibMatterWindowsAdapters::AdapterAddress*)
+        until adapter_pointer.null?
+          adapter = adapter_pointer.value
+          if adapter.oper_status == WINDOWS_ADAPTER_OPER_STATUS_UP &&
+             adapter.if_type != WINDOWS_ADAPTER_TYPE_LOOPBACK &&
+             adapter.flags & WINDOWS_ADAPTER_NO_MULTICAST == 0
+            unicast_pointer = adapter.first_unicast_address
+            until unicast_pointer.null?
+              unicast = unicast_pointer.value
+              sockaddr = unicast.address.address
+              usable_address = unicast.dad_state == WINDOWS_DAD_STATE_DEPRECATED ||
+                               unicast.dad_state == WINDOWS_DAD_STATE_PREFERRED
+              if !sockaddr.null? && usable_address
+                family = sockaddr.value.sa_family
+                if family == LibC::AF_INET || family == LibC::AF_INET6
+                  index = family == LibC::AF_INET6 ? adapter.ipv6_if_index : adapter.if_index
+                  if index > 0
+                    address = Socket::IPAddress.from(sockaddr, unicast.address.length)
+                    unless address.loopback? || address.unspecified?
+                      normalized = Socket::IPAddress.new(address.address, UNSPECIFIED_PORT)
+                      addresses[index] << normalized unless addresses[index].includes?(normalized)
+                    end
+                  end
+                end
+              end
+              unicast_pointer = unicast.next_address
+            end
+          end
+          adapter_pointer = adapter.next_adapter
+        end
+        addresses
+      end
+    {% else %}
       private def self.interface_addresses_by_index : Hash(UInt32, Array(Socket::IPAddress))
         addresses = Hash(UInt32, Array(Socket::IPAddress)).new do |hash, index|
           hash[index] = [] of Socket::IPAddress

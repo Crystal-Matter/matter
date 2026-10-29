@@ -223,25 +223,26 @@ module Matter
 
       private def join_ipv6_interfaces(socket : UDPSocket) : Array(UInt32)
         ids = [] of UInt32
-        {% unless flag?(:win32) %}
-          @interface_addresses.each do |index, addresses|
-            next unless addresses.any?(&.family.inet6?)
-            begin
-              request = LibC::Ipv6Mreq.new
-              request.ipv6mr_multiaddr = MDNS_IPV6.to_unsafe.as(LibC::SockaddrIn6*).value.sin6_addr
-              request.ipv6mr_interface = index
-              result = LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
-                pointerof(request).as(Void*), sizeof(LibC::Ipv6Mreq).to_u32)
-              if result == 0
-                ids << index
-              else
+        @interface_addresses.each do |index, addresses|
+          next unless addresses.any?(&.family.inet6?)
+          begin
+            request = LibC::Ipv6Mreq.new
+            request.ipv6mr_multiaddr = MDNS_IPV6.to_unsafe.as(LibC::SockaddrIn6*).value.sin6_addr
+            request.ipv6mr_interface = index
+            result = join_ipv6_group(socket, request)
+            if result == 0
+              ids << index
+            else
+              {% if flag?(:win32) %}
+                Log.debug { "Could not join IPv6 mDNS group on interface #{index}: Winsock error #{LibC.WSAGetLastError}" }
+              {% else %}
                 Log.debug { "Could not join IPv6 mDNS group on interface #{index}: #{Errno.value}" }
-              end
-            rescue ex
-              Log.debug(exception: ex) { "Could not join IPv6 mDNS group on interface #{index}" }
+              {% end %}
             end
+          rescue ex
+            Log.debug(exception: ex) { "Could not join IPv6 mDNS group on interface #{index}" }
           end
-        {% end %}
+        end
         if ids.empty?
           begin
             socket.join_group(MDNS_IPV6)
@@ -251,6 +252,16 @@ module Matter
           end
         end
         ids
+      end
+
+      private def join_ipv6_group(socket : UDPSocket, request : LibC::Ipv6Mreq) : Int32
+        {% if flag?(:win32) %}
+          LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
+            pointerof(request).as(LibC::Char*), sizeof(LibC::Ipv6Mreq).to_i32)
+        {% else %}
+          LibC.setsockopt(socket.fd, LibC::IPPROTO_IPV6, LibC::IPV6_JOIN_GROUP,
+            pointerof(request).as(Void*), sizeof(LibC::Ipv6Mreq).to_u32)
+        {% end %}
       end
 
       # Close responder
