@@ -10,7 +10,9 @@ MIGRATION_REMOVE_FABRIC_DROP_PATH = File.join(E2E::LOG_DIR,
   "matter_joint_fabric_migration_target.remove_fabric_response")
 MIGRATION_COMPLETION_DROP_PATH = File.join(E2E::LOG_DIR,
   "matter_joint_fabric_migration_target.commissioning_complete_response")
-ROLLBACK_ANCHOR_NODE_ID = 0xA202_u64
+ROLLBACK_ANCHOR_NODE_ID      = 0xA202_u64
+SDK_MIGRATION_OLD_NODE_ID    = 0xB202_u64
+SDK_MIGRATION_ANCHOR_NODE_ID = 0xA203_u64
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
@@ -983,6 +985,146 @@ describe "three provisioned Joint Fabric Administrators" do
       fields: Bytes.empty)
     b_csr_without_failsafe.invoke_responses.first.command_status.as(Matter::InteractionModel::CommandStatusIB)
       .status.status.should eq(Matter::InteractionModel::StatusCode::FailsafeRequired.value)
+
+    if ENV["MATTER_E2E_SDK16_MIGRATION"]? == "1"
+      # Migrate a pinned SDK v1.6 ordinary device while A and B still have
+      # their original Anchor roles. This exercises the independent device's
+      # AddNOC, CASE and RemoveFabric wire behavior without fault injection.
+      sdk_paa = File.read("/sdk16-credentials/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der").to_slice.dup
+      sdk_paa_path = File.join(E2E::LOG_DIR, "jf-sdk-migration-paa.der")
+      sdk_cd_dir = File.join(E2E::LOG_DIR, "jf-sdk-migration-cd")
+      Dir.mkdir_p(sdk_cd_dir)
+      File.write(sdk_paa_path, sdk_paa)
+      sdk_cd_signers = {} of String => Bytes
+      Dir.glob("/sdk16-credentials/cd-certs/*.der").each do |path|
+        der = File.read(path).to_slice.dup
+        File.write(File.join(sdk_cd_dir, File.basename(path)), der)
+        cert = OpenSSL::X509::Certificate.from_der(der)
+        ski = LibCrypto.x509_get0_subject_key_id(cert)
+        next if ski.null?
+        next unless LibCrypto.asn1_string_length(ski) == 20
+        ski_bytes = Slice.new(LibCrypto.asn1_string_get0_data(ski), 20).dup
+        sdk_cd_signers[ski_bytes.hexstring.upcase] = cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+      end
+      sdk_cd_signers.empty?.should be_false
+      sdk_trust = Matter::Controller::AttestationTrustStore.new([sdk_paa], sdk_cd_signers,
+        allow_test_attestation: true,
+        revocation_check: ->(_dac : Bytes, _pai : Bytes, _paa : Bytes) {
+          Matter::Controller::RevocationStatus::Good
+        })
+      sdk_trigger = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.start")
+      File.write(sdk_trigger, "")
+      sleep 2.seconds
+      sdk_address = Socket::Addrinfo.udp("official-jf-migration-target", E2E::DEVICE_PORT,
+        family: Socket::Family::INET6).first.ip_address.address
+      sdk_peer = Socket::IPAddress.new(sdk_address, E2E::DEVICE_PORT)
+      sdk_code = Matter::SetupPayload.generate_manual_code(3842_u16, 20202022_u32)
+      Matter::Controller::Commissioning::Commissioner.new(joiner_store, joiner_client,
+        timeout: E2E::COMMAND_TIMEOUT,
+        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(sdk_trust)).pairing_code(
+        SDK_MIGRATION_OLD_NODE_ID, sdk_code, sdk_peer,
+        fabric_id: joiner_bootstrap.fabric.fabric_id,
+        root_public_key: joiner_bootstrap.fabric.root_public_key,
+        controller_node_id: joiner_bootstrap.fabric.controller_node_id)
+      sdk_b_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        sdk_peer, joiner_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_OLD_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_acl_report = joiner_im.read_attribute(session: sdk_b_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+      sdk_acl_data = sdk_acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(sdk_acl_data.to_slice)
+      sdk_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+        Matter::DataType::CaseAuthenticatedTag.create(
+          Matter::Cluster::JointFabricDatastore::ADMINISTRATOR_CAT, 1_u16)).id
+      sdk_acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+        [sdk_admin_subject], nil)
+      sdk_acl_write = joiner_im.write_attribute(session: sdk_b_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL, value: sdk_acl.to_tlv)
+      sdk_acl_write.write_responses.first.status.status.should eq(Matter::InteractionModel::StatusCode::Success.value)
+      sdk_b_registration = joiner_im.invoke(session: joiner_session, peer: joiner_peer,
+        endpoint_id: MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
+        command_id: Matter::Cluster::JointFabricDatastore::CMD_ADD_PENDING_NODE,
+        fields: Matter::Cluster::JointFabricDatastore::AddPendingNodeRequest.new(
+          SDK_MIGRATION_OLD_NODE_ID, "SDK migration target").to_slice)
+      Matter::Controller::JointCommissioning.assert_status_success(sdk_b_registration)
+      sdk_b_deadline = Time.instant + 90.seconds
+      until jfa_node_list(joiner_im, joiner_session, joiner_peer,
+              MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+              entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?
+            end
+        raise Matter::TimeoutError.new("B Datastore did not commit the SDK device") if Time.instant >= sdk_b_deadline
+        sleep 500.milliseconds
+      end
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
+      end.should be_false
+      sdk_migration = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_migration.status.should eq("ok"), sdk_migration.error.to_s
+      fresh_sdk_client = Matter::Controller::Client.new(
+        counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
+        shared_message_counter: anchor_client.transport.message_counter)
+      begin
+        fresh_sdk_session = Matter::Controller::Pairing::CasePairing.new.pair(fresh_sdk_client,
+          sdk_peer, anchor_bootstrap.fabric,
+          peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+        fresh_sdk_im = Matter::Controller::ImClient.new(fresh_sdk_client, E2E::COMMAND_TIMEOUT)
+        sdk_fabrics = fresh_sdk_im.read_attribute(session: fresh_sdk_session, peer: sdk_peer,
+          endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+          cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+          attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+          fabric_filtered: false)
+        sdk_fabrics_data = sdk_fabrics.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+          .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+        sdk_descriptors = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+          .from_tlv(sdk_fabrics_data.to_slice)
+        sdk_descriptors.size.should eq(1)
+        sdk_descriptors.first.fabric_id.should eq(anchor_bootstrap.fabric.fabric_id)
+        sdk_descriptors.first.root_public_key.should eq(anchor_bootstrap.fabric.root_public_key)
+        sdk_descriptors.first.node_id.should eq(SDK_MIGRATION_ANCHOR_NODE_ID)
+        sdk_descriptors.first.vendor_id.should eq(joiner_bootstrap.fabric.admin_vendor_id)
+        sdk_nocs = fresh_sdk_im.read_attribute(session: fresh_sdk_session, peer: sdk_peer,
+          endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+          cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+          attribute_id: Matter::Cluster::OperationalCredentials::ATTR_NOCS,
+          fabric_filtered: false)
+        sdk_nocs_data = sdk_nocs.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+          .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+        sdk_noc_entries = Array(Matter::Cluster::OperationalCredentials::Tlv::NOC).from_tlv(sdk_nocs_data.to_slice)
+        sdk_noc_entries.size.should eq(1)
+        sdk_noc_entries.first.icac.should eq(cross_signed_icac)
+        sdk_noc = Matter::Crypto::MatterCertificate.from_slice(sdk_noc_entries.first.noc)
+        sdk_noc.fabric_id.should eq(anchor_bootstrap.fabric.fabric_id)
+        sdk_noc.node_id.should eq(SDK_MIGRATION_ANCHOR_NODE_ID)
+        Matter::Crypto::MatterCertificate::Validation.verify_chain(sdk_noc_entries.first.noc,
+          cross_signed_icac, anchor_bootstrap.fabric.root_public_key,
+          anchor_bootstrap.fabric.root_cert)
+      ensure
+        fresh_sdk_client.close
+      end
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID
+      end.should be_false
+    end
 
     # B's bootstrap Datastore remains on endpoint 2 after the JFA joins A.
     # Commission an ordinary B device, grant B's Administrator CAT, and move

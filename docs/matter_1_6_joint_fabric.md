@@ -543,6 +543,14 @@ blocked removal for operator reconciliation.
   B's JFA credentials and endpoint available. The
   Docker two-JFA test migrates a real switch from B201 to A201 and verifies A
   CASE, absence of the B fabric, and NodeList movement in both Datastores.
+  The dedicated Linux GitHub Actions Docker E2E migrates the pinned official Matter 1.6 SDK
+  all-clusters app as an independent ordinary device from B202 to A203. It
+  verifies the SDK device's sole A fabric over fresh CASE, its A-issued NOC
+  with B's cross-signed ICAC, and the moved NodeList entries. SDK development
+  PAA/CD credentials and revocation allowance are opt-in test fixtures. This
+  case uses a v1.6.0.0 SDK build mounted into Compose and runs only when
+  `MATTER_E2E_SDK16_MIGRATION=1`; the regular Docker suite skips the extra
+  device handoff.
   Before that handoff, the fixture interrupts after B durably saves the
   device's cumulative fail-safe bound but before AddNOC or AddPendingNode.
   It restarts B and the device, verifies B remains the sole owner, checks that
@@ -891,7 +899,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    it cannot be saved; a file-backed restart regression covers process loss
    before the normal debounced save.
    Exercise restart and network interruption at each per-device journal stage
-   with independent ecosystem devices before claiming conformance.
+   with independent ecosystem devices before claiming conformance. The SDK
+   all-clusters migration verifies the successful independent device path;
+   interruption coverage still uses a Crystal target.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected

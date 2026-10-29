@@ -546,10 +546,30 @@ module MatterJointFabricAdministrator
     end
 
     private def migration_attestation_verifier : Matter::Controller::DeviceAttestationVerifier
-      trust = @migration_attestation_trust ||
-              (ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]? == "1" ? Matter::Controller::AttestationTrustStore.matter_test_fixture : nil)
+      trust = @migration_attestation_trust || migration_test_attestation_trust
       raise Matter::ConfigurationError.new("Migration attestation trust is not configured") unless trust
       Matter::Controller::DeviceAttestationVerifier.new(trust)
+    end
+
+    private def migration_test_attestation_trust : Matter::Controller::AttestationTrustStore?
+      return unless ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]? == "1"
+      fixture = Matter::Controller::AttestationTrustStore.matter_test_fixture
+      paa_path = ENV["MATTER_JFA_MIGRATION_TEST_SDK_PAA"]?
+      cd_dir = ENV["MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR"]?
+      return fixture unless paa_path && cd_dir
+
+      signers = fixture.cd_signers.dup
+      Dir.glob(File.join(cd_dir, "*.der")).each do |path|
+        cert = OpenSSL::X509::Certificate.from_der(File.read(path).to_slice)
+        ski = LibCrypto.x509_get0_subject_key_id(cert)
+        next if ski.null?
+        next unless LibCrypto.asn1_string_length(ski) == 20
+        ski_bytes = Slice.new(LibCrypto.asn1_string_get0_data(ski), 20).dup
+        signers[ski_bytes.hexstring.upcase] = cert.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+      end
+      Matter::Controller::AttestationTrustStore.new(
+        fixture.paa_certificates + [File.read(paa_path).to_slice.dup], signers,
+        allow_test_attestation: true, revocation_check: fixture.revocation_check)
     end
 
     def commands : Array(Tuple(String, String))

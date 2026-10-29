@@ -1,0 +1,15 @@
+services:
+  joint-fabric-joiner:
+    environment:
+      MATTER_JFA_MIGRATION_TEST_SDK_PAA: /e2e/logs/jf-sdk-migration-paa.der
+      MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR: /e2e/logs/jf-sdk-migration-cd
+  tests:
+    volumes:
+      - ./tmp/connectedhomeip/credentials/development:/sdk16-credentials:ro
+  official-jf-migration-target:
+    volumes:
+      - ./tmp/sdk16-migration/chip-all-clusters-app:/opt/sdk16/chip-all-clusters-app:ro
+    command:
+      - |
+        until [ -f /e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.start ]; do sleep 0.2; done
+        exec /opt/sdk16/chip-all-clusters-app --discriminator 3842 --passcode 20202022 --KVS /tmp/official-jf-migration-target.kvs
