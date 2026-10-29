@@ -117,6 +117,7 @@ def run(args):
             "vvs_dcl_state": dcl_state,
             "vvs_sdk_jfa": sdk_jfa,
             "vvs_sdk_jfc": jfc,
+            "vvs_sdk_root": sdk,
             "vvs_driver": driver,
             "vvs_tls_cert": dcl_cert,
             "vvs_bootstrap": bootstrap,

@@ -306,7 +306,7 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
                        self.user_params["vvs_a_exchange"],
                        self.user_params["vvs_a_command"],
                        self.user_params["vvs_cross_icac"],
-                       5540, SDK_JFA_PORT)
+                       5540, SDK_JFA_PORT, self.user_params["vvs_sdk_root"])
         run_driver(self, "commission", *driver_args, env=denied_env)
         fabrics, nocs = await read_identity(self.controller)
         denied_descriptor, denied_noc = sdk_fabric(fabrics, nocs)

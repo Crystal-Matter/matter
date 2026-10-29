@@ -13,6 +13,26 @@ module SdkJfcJcmDriver
   A_VENDOR_ID       = 0xFFF1_u16
   JFA_ENDPOINT      =      1_u16
   OPERATION_TIMEOUT = 90.seconds
+  SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
+  SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+
+  private def sdk_attestation_trust(sdk_root : String) : Matter::Controller::AttestationTrustStore
+    trust = Matter::Controller::AttestationTrustStore.matter_test_fixture
+    trust.paa_certificates << File.read(File.join(sdk_root, SDK_PAA_CERT)).to_slice.dup
+    signer_paths = Dir.glob(File.join(sdk_root, SDK_CD_CERT_GLOB))
+    raise Matter::ConfigurationError.new("No SDK development CD signers found") if signer_paths.empty?
+    signer_paths.each do |path|
+      signer = OpenSSL::X509::Certificate.from_der(File.read(path).to_slice)
+      extension = signer.extensions.find { |entry| entry.oid == "subjectKeyIdentifier" } ||
+                  raise Matter::ConfigurationError.new("SDK CD signer has no subject key identifier")
+      ski = extension.value.gsub(/[^0-9A-Fa-f]/, "").upcase
+      unless ski.matches?(/\A[0-9A-F]{40}\z/)
+        raise Matter::ConfigurationError.new("SDK CD signer has invalid subject key identifier")
+      end
+      trust.cd_signers[ski] = signer.public_key.as(OpenSSL::PKey::EC).public_key_bytes
+    end
+    trust
+  end
 
   private def store(path : String) : Matter::Controller::StateStore
     Matter::Controller::StateStore.new(Matter::Storage::YamlFile.new(path))
@@ -94,7 +114,8 @@ module SdkJfcJcmDriver
 
   def commission(state_path : String, a_code : String, b_code : String,
                  b_root_path : String, exchange_path : String, command_path : String,
-                 result_path : String, a_port : Int32, b_port : Int32) : Nil
+                 result_path : String, a_port : Int32, b_port : Int32,
+                 sdk_root : String) : Nil
     state_store = store(state_path)
     fabric = state_store.load.fabric.as(Matter::Controller::FabricInfo)
     bootstrap_key = fabric.intermediate_private_key ||
@@ -103,6 +124,7 @@ module SdkJfcJcmDriver
     a_peer = Socket::IPAddress.new("127.0.0.1", a_port)
     b_peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(A_CONTROLLER_ID))
+    attestation_trust = sdk_attestation_trust(sdk_root)
     begin
       issuer = ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
         raise Matter::ConfigurationError.new("Wrong A fabric") unless fabric_id == A_FABRIC_ID
@@ -111,8 +133,7 @@ module SdkJfcJcmDriver
       unless ENV["MATTER_JCM_TEST_SKIP_ANCHOR_COMMISSION"]? == "1"
         Matter::Controller::Commissioning::Commissioner.new(state_store, client,
           timeout: OPERATION_TIMEOUT, certificate_issuer: issuer,
-          attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-            Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
+          attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(attestation_trust)).pairing_code(
           A_ANCHOR_ID, a_code, a_peer)
         puts "A Anchor commissioned"
       end
@@ -153,8 +174,7 @@ module SdkJfcJcmDriver
         ->(_joiner : Matter::Controller::JointCommissioning::VerifiedJoiner) { consent },
         registrar.callback, anchor_exchange, client: client, anchor_finalize: anchor_finalize,
         node_list_check: registrar.node_list_check,
-        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
-          Matter::Controller::AttestationTrustStore.matter_test_fixture))
+        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(attestation_trust))
       if !consent
         begin
           workflow.commission(B_JOINED_ID, b_code, b_peer, defer_completion: true)
@@ -247,7 +267,7 @@ when "verify-csr"
   SdkJfcJcmDriver.verify_csr(ARGV[0], ARGV[1])
 when "commission"
   SdkJfcJcmDriver.commission(ARGV[0], ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5],
-    ARGV[6], ARGV[7].to_i, ARGV[8].to_i)
+    ARGV[6], ARGV[7].to_i, ARGV[8].to_i, ARGV[9])
 when "probe-dcl"
   SdkJfcJcmDriver.probe_dcl(ARGV[0], ARGV[1].to_i, ARGV[2], ARGV[3])
 else
