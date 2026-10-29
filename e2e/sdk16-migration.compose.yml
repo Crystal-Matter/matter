@@ -1,7 +1,6 @@
 services:
   joint-fabric-joiner:
     environment:
-      MATTER_JFA_MIGRATION_TEST_TRUST: "1"
       MATTER_JFA_MIGRATION_TEST_SDK_PAA: /e2e/logs/jf-sdk-migration-paa.der
       MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR: /e2e/logs/jf-sdk-migration-cd
   tests:
