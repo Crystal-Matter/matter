@@ -552,7 +552,7 @@ module MatterJointFabricAdministrator
     end
 
     private def migration_test_attestation_trust : Matter::Controller::AttestationTrustStore?
-      return nil unless ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]? == "1"
+      return unless ENV["MATTER_JFA_MIGRATION_TEST_TRUST"]? == "1"
       fixture = Matter::Controller::AttestationTrustStore.matter_test_fixture
       paa_path = ENV["MATTER_JFA_MIGRATION_TEST_SDK_PAA"]?
       cd_dir = ENV["MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR"]?
