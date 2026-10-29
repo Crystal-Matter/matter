@@ -17,7 +17,7 @@ def main():
             environment = dict(item.split("=", 1) for item in environment)
         binary = environment.get("E2E_BINARY", environment.get("E2E_DEVICE"))
         if binary is None:
-            if service != "official-group-recipient":
+            if service not in ("official-group-recipient", "official-jf-migration-target"):
                 raise ValueError(f"Focused E2E service has no device binary: {service}")
             continue
         if binary not in binaries:
