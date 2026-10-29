@@ -101,7 +101,7 @@ module SdkJfcJcmDriver
                     raise Matter::ConfigurationError.new("A Anchor ICAC private key is unavailable")
     bootstrap = Matter::Controller::JointCommissioning::AnchorBootstrap.new(fabric, bootstrap_key)
     a_peer = Socket::IPAddress.new("127.0.0.1", a_port)
-    b_peer = Socket::IPAddress.new("127.0.0.1", b_port)
+    b_peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new(counter_lease: state_store.counter_lease(A_CONTROLLER_ID))
     begin
       issuer = ->(fabric_id : UInt64, node_id : UInt64, public_key : Bytes) do
@@ -165,7 +165,7 @@ module SdkJfcJcmDriver
           if state_store.load.nodes.has_key?(B_JOINED_ID)
             raise Matter::CommissioningError.new("Denied joiner was recorded in source controller state")
           end
-          puts "PASS: trusted SDK-issued B root was rejected by explicit consent denial"
+          puts "PASS: trusted SDK joining Administrator was rejected by explicit consent denial"
           return
         end
         raise Matter::CommissioningError.new("Joint Commissioning succeeded without consent")
@@ -199,7 +199,7 @@ module SdkJfcJcmDriver
   def probe_dcl(b_code : String, b_port : Int32, gateway_url : String,
                 expected : String) : Nil
     _, pin = Matter::SetupPayload.parse_manual_code(b_code)
-    peer = Socket::IPAddress.new("127.0.0.1", b_port)
+    peer = Socket::IPAddress.new(ENV["MATTER_JCM_TEST_B_HOST"]? || "127.0.0.1", b_port)
     client = Matter::Controller::Client.new
     begin
       session = Matter::Controller::Pairing::PasePairing.new.pair(client, peer, pin,
@@ -214,11 +214,11 @@ module SdkJfcJcmDriver
         Matter::Controller::JointCommissioning.verify_joiner(im, session, peer, index, trust)
       rescue ex : Matter::AuthenticationError
         raise ex unless expected == "deny"
-        puts "PASS: SDK-issued root denied by test DCL before Joint Commissioning: #{ex.message}"
+        puts "PASS: SDK joining Administrator denied by test DCL before Joint Commissioning: #{ex.message}"
         return
       end
-      raise Matter::AuthenticationError.new("Untrusted SDK-issued root passed DCL validation") if expected == "deny"
-      puts "PASS: SDK-issued root and VID accepted by test DCL before Joint Commissioning"
+      raise Matter::AuthenticationError.new("Untrusted SDK joining Administrator passed DCL validation") if expected == "deny"
+      puts "PASS: SDK joining Administrator and VID accepted by test DCL before Joint Commissioning"
     ensure
       client.close
     end

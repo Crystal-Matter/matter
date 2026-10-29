@@ -772,6 +772,22 @@ The unmodified official SDK v1.6.0.0 `TC_JFADMIN_2_2` and
 [the integrated multi-ecosystem CI run](https://github.com/Crystal-Matter/matter/actions/runs/39691543775)
 against merged `develop`.
 
+The same CI workflow also runs `e2e/interop/TC_SDK_JFA_VVS.py` with the pinned
+SDK JFA as a VVS-bearing joining Administrator and Crystal as the Anchor and
+JCM controller. The SDK JFC provisions the JFA's original ICAC fabric; an SDK
+Python controller installs an independently signed 85-byte VVS without VVSC
+and reads back the unchanged ICAC. Crystal queries a local HTTPS DCL-shaped
+signer mirror over a fresh PASE session, rejects wrong VID, wrong signer,
+removed, and cached records, and accepts the active Root→ICA→signer chain.
+The fixture then denies consent, checks that neither JFA fabric nor the
+Anchor Datastore changed, restarts the SDK JFA after its fail-safe was armed,
+and completes JCM with consent. SDK reads verify both fabrics, the original
+VVS/ICAC, the cross-signed joined ICAC, and AdministratorFabricIndex. The
+signer and DCL records are synthetic; this does not test a deployed DCL or a
+real user's consent decision. The SDK's own VVS verifier remains unsupported,
+so the joining SDK JFA verifies Crystal's no-VVS Anchor fabric through its
+preknown root while Crystal verifies the SDK JFA's VVS.
+
 `e2e/interop/matterjs_vvs_live.py` checks the VVS-bearing VID path against an
 independent matter.js 0.18.0 device, pinned to commit
 `7e1f5d7892dcea4330828b6a82d31ffe2a04cc0b`. The Crystal controller
@@ -838,9 +854,9 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    unsupported. The matter.js device test above covers VVS-bearing wire
    verification with a synthetic signer and DCL fixture. The Crystal JCM test
    above covers a joining Administrator with an ICAC and VVS but no VVSC,
-   using a fixture HTTPS DCL signer through Anchor transfer. An independently implemented
-   Administrator and independently deployed trust/consent policies remain
-   unverified together.
+   using a fixture HTTPS DCL signer through Anchor transfer. The SDK VVS JFA
+   fixture above extends that path to an independent joining Administrator.
+   Independently deployed trust and consent policies remain unverified.
    Deployment must authenticate and freshen its DCL gateway. The optional
    Matter-TLV VVSC is checked for its signed signer profile and issuer path.
    The Appendix F.5 fixed-vector spec checks fabric-binding and VVS-bearing
@@ -1089,8 +1105,9 @@ digital-signature usage, non-CA status, SKID/AKID, and signature under its
 DCL-approved Root/ICA issuer. The
 SDK v1.6 does not implement independent VVS path verification. The pinned
 matter.js device run above exercises its independent on-wire responder and
-Crystal's full VVS trust path; an independent VVS-bearing Joint Fabric
-Administrator and production DCL source remain to be exercised.
+Crystal's full VVS trust path. The SDK VVS JFA fixture exercises an independent
+joining Administrator through Crystal's JCM verifier; a production DCL source
+remains to be exercised.
 
 For administrator removal, Matter 1.6 recommends transferring to a fresh
 trusted root after rotating Administrator CAT credentials, because an ICAC
