@@ -550,7 +550,12 @@ blocked removal for operator reconciliation.
   PAA/CD credentials and revocation allowance are opt-in test fixtures. This
   case uses a v1.6.0.0 SDK build mounted into Compose and runs only when
   `MATTER_E2E_SDK16_MIGRATION=1`; the regular Docker suite skips the extra
-  device handoff.
+  device handoff. The SDK fixture now interrupts B after it durably records
+  `RemovingOldFabric` but before sending RemoveFabric to the SDK device. After
+  B restarts, fresh CASE from both fabrics confirms the SDK device still has
+  both credentials, both Datastores retain their node entries, and an ordinary
+  retry remains blocked. Authenticated no-effect reconciliation permits the
+  retry, which completes with only the shared Anchor fabric on the device.
   Before that handoff, the fixture interrupts after B durably saves the
   device's cumulative fail-safe bound but before AddNOC or AddPendingNode.
   It restarts B and the device, verifies B remains the sole owner, checks that
@@ -914,7 +919,8 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    Exercise restart and network interruption at each per-device journal stage
    with independent ecosystem devices before claiming conformance. The SDK
    all-clusters migration verifies the successful independent device path;
-   interruption coverage still uses a Crystal target.
+   most interruption coverage still uses a Crystal target; the SDK device now
+   covers the pre-RemoveFabric no-effect transition through a live B restart.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected
