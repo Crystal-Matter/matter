@@ -221,8 +221,10 @@ module MatterJointFabricAdministrator
       getter? interrupt_after_migration_anchor_node_committed : Bool = false
       getter? interrupt_after_migration_anchor_node_removed : Bool = false
       getter? interrupt_after_migration_anchor_fabric_removed : Bool = false
+      getter? interrupt_before_migration_anchor_verified : Bool = false
       getter? interrupt_before_migration_old_fabric_removed : Bool = false
       getter? interrupt_after_migration_old_fabric_removed : Bool = false
+      getter? interrupt_before_migration_old_node_removed : Bool = false
       getter? interrupt_after_migration_old_node_removed : Bool = false
       getter fail_safe_max_seconds : UInt16? = nil
       getter test_friendly_name : String? = nil
@@ -276,8 +278,10 @@ module MatterJointFabricAdministrator
                      @interrupt_after_migration_anchor_node_committed : Bool = false,
                      @interrupt_after_migration_anchor_node_removed : Bool = false,
                      @interrupt_after_migration_anchor_fabric_removed : Bool = false,
+                     @interrupt_before_migration_anchor_verified : Bool = false,
                      @interrupt_before_migration_old_fabric_removed : Bool = false,
                      @interrupt_after_migration_old_fabric_removed : Bool = false,
+                     @interrupt_before_migration_old_node_removed : Bool = false,
                      @interrupt_after_migration_old_node_removed : Bool = false,
                      @fail_safe_max_seconds : UInt16? = nil,
                      @test_friendly_name : String? = nil,
@@ -4103,8 +4107,14 @@ module MatterJointFabricAdministrator
           journal, network, -> { true },
           ->(entry : Matter::Controller::JointFabricDeviceMigration::Journal) {
             journal_store.save(entry)
+            if request.interrupt_before_migration_anchor_verified? && entry.stage.verifying_anchor?
+              raise Matter::TransportError.new("Injected interruption before Anchor verification")
+            end
             if request.interrupt_before_migration_old_fabric_removed? && entry.stage.removing_old_fabric?
               raise Matter::TransportError.new("Injected interruption before device RemoveFabric")
+            end
+            if request.interrupt_before_migration_old_node_removed? && entry.stage.removing_old_node?
+              raise Matter::TransportError.new("Injected interruption before Fabric B RemoveNode")
             end
           })
         case request.operation
