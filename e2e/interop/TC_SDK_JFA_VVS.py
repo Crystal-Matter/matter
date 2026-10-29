@@ -159,12 +159,12 @@ async def open_jcm_window(controller):
             await asyncio.sleep(0.2)
 
 
-async def read_identity(controller):
+async def read_identity(controller, *, fabric_filtered=False):
     result = await controller.ReadAttribute(
         nodeId=SDK_JFA_NODE_ID,
         attributes=[(0, Clusters.OperationalCredentials.Attributes.Fabrics),
                     (0, Clusters.OperationalCredentials.Attributes.NOCs)],
-        returnClusterObject=True, fabricFiltered=False)
+        returnClusterObject=True, fabricFiltered=fabric_filtered)
     creds = result[0][Clusters.OperationalCredentials]
     return creds.fabrics, creds.NOCs
 
@@ -338,15 +338,20 @@ class TC_SDK_JFA_VVS(MatterBaseTest):
         run_driver(self, "commission", *consented_args, env=allowed_env,
                    expected_failure="IM Success for AddICAC without ICACResponse")
         fabrics, nocs = await read_identity(self.controller)
-        sdk_descriptor, sdk_noc = sdk_fabric(fabrics, nocs)
+        sdk_descriptor, _ = sdk_fabric(fabrics, nocs)
         pending = [fabric for fabric in fabrics if fabric.fabricID == ANCHOR_FABRIC_ID]
         pending_nocs = [noc for noc in nocs if pending and noc.fabricIndex == pending[0].fabricIndex]
         if (len(fabrics) != 2 or len(nocs) != 2 or len(pending) != 1 or
-                len(pending_nocs) != 1 or
-                bytes(sdk_noc.icac or b"") != original_icac or
-                sdk_noc.vvsc not in (None, b"") or
-                bytes(sdk_descriptor.VIDVerificationStatement or b"") != statement):
-            raise RuntimeError("SDK AddICAC boundary changed the expected provisional fabrics or original VVS")
+                len(pending_nocs) != 1):
+            raise RuntimeError("SDK AddICAC boundary changed the expected provisional fabrics")
+        own_fabrics, own_nocs = await read_identity(self.controller, fabric_filtered=True)
+        own_descriptor, own_noc = sdk_fabric(own_fabrics, own_nocs)
+        if (len(own_fabrics) != 1 or len(own_nocs) != 1 or
+                bytes(own_noc.icac or b"") != original_icac or
+                own_noc.vvsc not in (None, b"") or
+                bytes(own_descriptor.VIDVerificationStatement or b"") != statement or
+                own_descriptor.fabricIndex != sdk_descriptor.fabricIndex):
+            raise RuntimeError("SDK AddICAC boundary changed the original ICAC or VVS")
         if Path(self.user_params["vvs_cross_icac"]).exists():
             raise RuntimeError("Crystal recorded an unconfirmed SDK cross-ICAC")
         a_identity = inspect_identity(Path(self.user_params["vvs_a_command"]))
