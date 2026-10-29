@@ -775,7 +775,7 @@ module Matter
         if @case_handshakes.has_key?(handshake_key(msg, peer))
           Log.debug do
             "StatusReport during CASE: protocol=#{Hex.u16(protocol)} " \
-            "(e.g. 0x0002 NO_SHARED_TRUST_ROOTS; check ICAC/root trust)"
+            "(e.g. NO_SHARED_TRUST_ROOTS; check ICAC/root trust)"
           end
         else
           Log.debug { "StatusReport during PASE: check PIN, SPAKE2+, and crypto parameter compatibility" }

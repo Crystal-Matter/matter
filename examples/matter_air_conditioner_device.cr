@@ -131,8 +131,8 @@ module MatterAirConditioner
 
     def console_notes : Array(String)
       [
-        "Endpoint #{THERMOSTAT_ENDPOINT}: Thermostat (0x301) - Temperature Control",
-        "Endpoint #{FAN_ENDPOINT}: Fan (0x002B) - Fan Control with OnOff",
+        "Endpoint #{THERMOSTAT_ENDPOINT}: Thermostat - Temperature Control",
+        "Endpoint #{FAN_ENDPOINT}: Fan - Fan Control with OnOff",
       ]
     end
 
