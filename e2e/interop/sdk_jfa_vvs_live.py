@@ -40,11 +40,13 @@ def run(args):
     private.mkdir(parents=True, exist_ok=True)
     private.chmod(0o700)
     sdk = args.sdk.resolve()
+    jfa = args.jfa.resolve()
+    driver = args.driver.resolve()
     python = sdk / "out/python_env/bin/python3"
     jfc = sdk / "objdir-jf/linux-x64-jf-control-app-ipv6only-no-ble-no-wifi-clang/jfc-app"
     sdk_jfa = sdk / "objdir-jf/linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang/jfa-app"
     script = Path(__file__).with_name("TC_SDK_JFA_VVS.py").resolve()
-    for binary in (python, jfc, sdk_jfa, args.jfa, args.driver):
+    for binary in (python, jfc, sdk_jfa, jfa, driver):
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise RuntimeError(f"missing executable: {binary}")
 
@@ -61,7 +63,7 @@ def run(args):
     for path in (bootstrap, a_root, b_root, a_exchange, a_command, a_discovery_gate,
                  cross_icac, dcl_state, dcl_cert, dcl_key):
         path.unlink(missing_ok=True)
-    run_command([str(args.driver), "setup", str(bootstrap), str(a_root)],
+    run_command([str(driver), "setup", str(bootstrap), str(a_root)],
                 logs / "a-setup.log")
     # The Crystal driver selects the live DCL source; this argument is unused
     # in that mode but remains required by its generic commissioning CLI.
@@ -99,7 +101,7 @@ def run(args):
                      SSL_CERT_FILE=str(dcl_cert),
                      MATTER_JFA_ANCHOR_OPERATIONAL_PORT="5541",
                      MATTER_JFA_TRANSFER_PEERS=f"a103={SDK_IPV6_HOST}")
-        a = ManagedProcess("crystal-a", [str(args.jfa), "--no-interactive"],
+        a = ManagedProcess("crystal-a", [str(jfa), "--no-interactive"],
                            a_state, logs, a_env)
         pin = a.expect(SETUP_PIN_PATTERN, 60).group(1)
         discriminator = a.expect(r"Discriminator:\s*(\d+)", 10).group(1)
@@ -115,7 +117,7 @@ def run(args):
             "vvs_dcl_state": dcl_state,
             "vvs_sdk_jfa": sdk_jfa,
             "vvs_sdk_jfc": jfc,
-            "vvs_driver": args.driver.resolve(),
+            "vvs_driver": driver,
             "vvs_tls_cert": dcl_cert,
             "vvs_bootstrap": bootstrap,
             "vvs_a_code": a_code,
