@@ -68,9 +68,7 @@ describe Matter::Cluster::BooleanStateConfiguration do
   it "rejects invalid direct alarm assignments before changing state or emitting events" do
     sensor = build(BSC, feature_map: BSC::Feature::Visual | BSC::Feature::AlarmSuppress)
     events = [] of TLV::Any
-    sensor.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32,
-                                 _priority : Matter::InteractionModel::EventPriority, data : TLV::Any,
-                                 _fabric : UInt8?) do
+    sensor.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
       event.should eq(BSC::EVENT_ALARMS_STATE_CHANGED)
       events << data
       nil
@@ -89,17 +87,17 @@ describe Matter::Cluster::BooleanStateConfiguration do
     events.should be_empty
 
     sensor.alarms_enabled = BSC::AlarmMode::None
+    disabled_version = sensor.data_version
     expect_raises(ArgumentError) { sensor.alarms_active = BSC::AlarmMode::Visual }
     sensor.alarms_active.should eq(BSC::AlarmMode::None)
+    sensor.data_version.should eq(disabled_version)
     events.should be_empty
   end
 
   it "emits supported direct alarm assignments with the current event payload" do
     sensor = build(BSC, feature_map: BSC::Feature::Visual | BSC::Feature::AlarmSuppress)
     events = [] of TLV::Any
-    sensor.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32,
-                                 _priority : Matter::InteractionModel::EventPriority, data : TLV::Any,
-                                 _fabric : UInt8?) do
+    sensor.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
       event.should eq(BSC::EVENT_ALARMS_STATE_CHANGED)
       events << data
       nil
