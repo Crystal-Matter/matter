@@ -65,6 +65,58 @@ describe Matter::Cluster::BooleanStateConfiguration do
       BSC::EnableDisableAlarmRequest.new(BSC::AlarmMode::Audible)), Matter::InteractionModel::StatusCode::ConstraintError)
   end
 
+  it "rejects invalid direct alarm assignments before changing state or emitting events" do
+    sensor = build(BSC, feature_map: BSC::Feature::Visual | BSC::Feature::AlarmSuppress)
+    events = [] of TLV::Any
+    sensor.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32,
+                                 _priority : Matter::InteractionModel::EventPriority, data : TLV::Any,
+                                 _fabric : UInt8?) do
+      event.should eq(BSC::EVENT_ALARMS_STATE_CHANGED)
+      events << data
+      nil
+    end
+    initial_version = sensor.data_version
+
+    expect_raises(ArgumentError) { sensor.alarms_active = BSC::AlarmMode::Audible }
+    expect_raises(ArgumentError) { sensor.alarms_enabled = BSC::AlarmMode::Audible }
+    expect_raises(ArgumentError) { sensor.alarms_suppressed = BSC::AlarmMode::Audible }
+    expect_raises(ArgumentError) { sensor.alarms_suppressed = BSC::AlarmMode::Visual }
+
+    sensor.alarms_active.should eq(BSC::AlarmMode::None)
+    sensor.alarms_enabled.should eq(BSC::AlarmMode::Visual)
+    sensor.alarms_suppressed.should eq(BSC::AlarmMode::None)
+    sensor.data_version.should eq(initial_version)
+    events.should be_empty
+
+    sensor.alarms_enabled = BSC::AlarmMode::None
+    expect_raises(ArgumentError) { sensor.alarms_active = BSC::AlarmMode::Visual }
+    sensor.alarms_active.should eq(BSC::AlarmMode::None)
+    events.should be_empty
+  end
+
+  it "emits supported direct alarm assignments with the current event payload" do
+    sensor = build(BSC, feature_map: BSC::Feature::Visual | BSC::Feature::AlarmSuppress)
+    events = [] of TLV::Any
+    sensor.on_event_emitted = ->(_endpoint : UInt16, _cluster : UInt32, event : UInt32,
+                                 _priority : Matter::InteractionModel::EventPriority, data : TLV::Any,
+                                 _fabric : UInt8?) do
+      event.should eq(BSC::EVENT_ALARMS_STATE_CHANGED)
+      events << data
+      nil
+    end
+
+    sensor.alarms_active = BSC::AlarmMode::Visual
+    sensor.alarms_suppressed = BSC::AlarmMode::Visual
+
+    events.size.should eq(2)
+    first = AlarmStateWire.from_tlv(events.first)
+    first.alarms_active.should eq(BSC::AlarmMode::Visual)
+    first.alarms_suppressed.should eq(BSC::AlarmMode::None)
+    last = AlarmStateWire.from_tlv(events.last)
+    last.alarms_active.should eq(BSC::AlarmMode::Visual)
+    last.alarms_suppressed.should eq(BSC::AlarmMode::Visual)
+  end
+
   it "journals an alarm state event and keeps suppression separate from active alarms" do
     node = Matter::Node.new
     endpoint1 = Matter::Endpoint.new(endpoint(1))
