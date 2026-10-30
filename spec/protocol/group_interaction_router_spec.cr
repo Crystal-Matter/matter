@@ -1,6 +1,47 @@
 require "../spec_helper"
 
 describe Matter::Protocol::GroupInteractionRouter do
+  it "stores a fabric-scoped scene from an authenticated group invoke" do
+    group_id = 0x1234_u16
+    fabric = Matter::Fabric::MIN_FABRIC_INDEX
+    root = Matter::DataType::EndpointNumber::ROOT
+    endpoint_id = 1_u16
+    acl = Matter::Cluster::AccessControl.new(root)
+    gkm = Matter::Cluster::GroupKeyManagement.new(root)
+    scenes = Matter::Cluster::ScenesManagement.new(Matter::DataType::EndpointNumber.new(endpoint_id))
+    clusters = {
+      {root.number, Matter::Cluster::AccessControl::CLUSTER_ID}    => acl.as(Matter::Cluster::Base),
+      {endpoint_id, Matter::Cluster::ScenesManagement::CLUSTER_ID} => scenes.as(Matter::Cluster::Base),
+    }
+
+    epoch = Bytes.new(16, 0x11_u8)
+    gkm.handle_key_set_write(Matter::Cluster::GroupKeyManagement::KeySetWriteRequest.new(
+      Matter::Cluster::GroupKeyManagement::GroupKeySetStruct.new(1_u16,
+        epoch_key0: epoch, epoch_start_time0: 1_u64)), fabric)
+    gkm.add_group_key_map(group_id, 1_u16, fabric)
+    gkm.add_group(group_id, endpoint_id, nil, fabric)
+    acl.acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+      Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Manage,
+      Matter::Cluster::AccessControl::AccessControlEntryAuthMode::Group,
+      [group_id.to_u64], nil, fabric)
+
+    key = Matter::Session::GroupSecurePacket::Key.new(fabric, group_id, epoch)
+    payload = Matter::Cluster::AddSceneRequest.new(group_id, 1_u8, 0_u32, "Group scene").to_tlv(nil)
+    request = Matter::InteractionModel::InvokeRequestMessage.new([
+      Matter::InteractionModel::CommandDataIBTlv.new(
+        Matter::InteractionModel::CommandPath.new(nil,
+          Matter::Cluster::ScenesManagement::CLUSTER_ID, Matter::Cluster::ScenesManagement::CMD_ADD_SCENE), payload),
+    ])
+    header = Matter::Codec::MessageCodec::PayloadHeader.new(9_u16, 1_u16,
+      Matter::Protocol::IMHandler::MSG_INVOKE_REQUEST, true, false)
+    wire = Matter::Session::GroupSecurePacket.new([key]).encode(key, 0x1111_u64, 100_u32, header, request.to_slice)
+    Matter::Protocol::GroupInteractionRouter.new(clusters, gkm)
+      .handle(Matter::Session::GroupSecurePacket.new([key]).decode(wire))
+
+    scenes.has_scene?(group_id, 1_u8, fabric).should be_true
+    scenes.has_scene?(group_id, 1_u8, fabric + 1_u8).should be_false
+  end
+
   it "applies a group WriteRequest only to member endpoints with Group write ACL" do
     group_id = 0x1234_u16
     fabric = 1_u8
