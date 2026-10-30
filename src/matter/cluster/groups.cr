@@ -1,5 +1,6 @@
 require "./cluster"
 require "./identify"
+require "../fabric"
 require "tlv"
 
 module Matter
@@ -216,6 +217,17 @@ module Matter
       # ------------------------------------------------------------------------
       # Commands
       # ------------------------------------------------------------------------
+
+      # Every Groups command is fabric-scoped. Reject unscoped wire requests
+      # before Base invokes command hooks or decodes and dispatches the payload.
+      # Direct host calls to the methods below retain their legacy behavior.
+      def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
+                         is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
+        if get_command_metadata(command_id)
+          return InteractionModel::Status.unsupported_access unless fabric_index && Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX
+        end
+        super
+      end
 
       def add_group(request : AddGroupRequest) : AddGroupResponse
         status = store_group(request.group_id.id, request.group_name)
