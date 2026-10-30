@@ -5,26 +5,85 @@ alias GroupsDef = Matter::Cluster::Groups
 alias GroupsStatus = Matter::InteractionModel::StatusCode
 
 def add_test_group(cluster, id : UInt16, name = "")
-  invoke_response(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP,
-    GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(id), name), GroupsDef::AddGroupResponse)
+  cluster.add_group(GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(id), name))
 end
 
 def view_test_group(cluster, id : UInt16)
-  invoke_response(cluster, Matter::Cluster::Groups::CMD_VIEW_GROUP,
-    GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(id)), GroupsDef::ViewGroupResponse)
+  cluster.view_group(GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(id)))
 end
 
 def remove_test_group(cluster, id : UInt16)
-  invoke_response(cluster, Matter::Cluster::Groups::CMD_REMOVE_GROUP,
-    GroupsDef::RemoveGroupRequest.new(Matter::DataType::GroupId.new(id)), GroupsDef::RemoveGroupResponse)
+  cluster.remove_group(GroupsDef::RemoveGroupRequest.new(Matter::DataType::GroupId.new(id)))
 end
 
 def test_group_membership(cluster, ids = [] of UInt16)
-  invoke_response(cluster, Matter::Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP,
-    GroupsDef::GetGroupMembershipRequest.new(ids.map { |id| Matter::DataType::GroupId.new(id) }), GroupsDef::GetGroupMembershipResponse)
+  cluster.get_group_membership(GroupsDef::GetGroupMembershipRequest.new(ids.map { |id| Matter::DataType::GroupId.new(id) }))
+end
+
+def invoke_fabric_group_response(cluster, command_id : UInt32, request, response_class : T.class, fabric_index : UInt8) forall T
+  case result = invoke(cluster, command_id, request, fabric_index: fabric_index)
+  in Matter::Cluster::CommandResponse
+    response_class.from_tlv(result.response.as(TLV::Any))
+  in Matter::InteractionModel::Status
+    raise "Expected #{response_class}, got #{result.status}"
+  end
 end
 
 describe Matter::Cluster::Groups do
+  it "rejects every fabric-scoped wire command without a valid fabric before callbacks or state changes" do
+    cluster = build(GroupsDef)
+    add_test_group(cluster, 257_u16, "Legacy")
+    commands = {
+      GroupsDef::CMD_ADD_GROUP                => GroupsDef::AddGroupRequest.new(Matter::DataType::GroupId.new(258_u16), "New").to_tlv(nil),
+      GroupsDef::CMD_VIEW_GROUP               => GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(257_u16)).to_tlv(nil),
+      GroupsDef::CMD_GET_GROUP_MEMBERSHIP     => GroupsDef::GetGroupMembershipRequest.new([] of Matter::DataType::GroupId).to_tlv(nil),
+      GroupsDef::CMD_REMOVE_GROUP             => GroupsDef::RemoveGroupRequest.new(Matter::DataType::GroupId.new(257_u16)).to_tlv(nil),
+      GroupsDef::CMD_REMOVE_ALL_GROUPS        => GroupsDef::RemoveAllGroupsRequest.new.to_tlv(nil),
+      GroupsDef::CMD_ADD_GROUP_IF_IDENTIFYING => GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(259_u16), "New").to_tlv(nil),
+    }
+    callbacks = 0
+    cluster.on_before_command = ->(_command : UInt32) { callbacks += 1; nil }
+    cluster.on_group_added = ->(_id : UInt16, _endpoint : UInt16, _name : String, _fabric : UInt8) { callbacks += 1; nil }
+    cluster.on_group_removed = ->(_id : UInt16, _endpoint : UInt16, _fabric : UInt8) { callbacks += 1; nil }
+    cluster.on_version_changed = -> { callbacks += 1; nil }
+    version = cluster.data_version
+    state = cluster.save_state
+
+    [nil, Matter::DataType::NO_FABRIC, UInt8::MAX].each do |fabric_index|
+      commands.each do |command_id, fields|
+        expect_status(cluster.invoke_command(command_id, fields, fabric_index: fabric_index), GroupsStatus::UnsupportedAccess)
+      end
+    end
+
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(state)
+    cluster.groups.should eq({257_u16 => "Legacy"})
+    cluster.fabric_indices.should be_empty
+    callbacks.should eq(0)
+  end
+
+  it "keeps wire commands isolated by fabric and accepts group-authenticated fabric context" do
+    cluster = build(GroupsDef)
+    group_id = Matter::DataType::GroupId.new(257_u16)
+    first = GroupsDef::AddGroupRequest.new(group_id, "First")
+    second = GroupsDef::AddGroupRequest.new(group_id, "Second")
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_ADD_GROUP, first, GroupsDef::AddGroupResponse, 1_u8).status_code.should eq(GroupsStatus::Success)
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_ADD_GROUP, second, GroupsDef::AddGroupResponse, 2_u8).status_code.should eq(GroupsStatus::Success)
+
+    view = GroupsDef::ViewGroupRequest.new(group_id)
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_VIEW_GROUP, view, GroupsDef::ViewGroupResponse, 1_u8).group_name.should eq("First")
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_VIEW_GROUP, view, GroupsDef::ViewGroupResponse, 2_u8).group_name.should eq("Second")
+    membership = GroupsDef::GetGroupMembershipRequest.new([] of Matter::DataType::GroupId)
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_GET_GROUP_MEMBERSHIP, membership, GroupsDef::GetGroupMembershipResponse, 1_u8).group_list.map(&.id).should eq([257_u16])
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_GET_GROUP_MEMBERSHIP, membership, GroupsDef::GetGroupMembershipResponse, 2_u8).group_list.map(&.id).should eq([257_u16])
+
+    remove = GroupsDef::RemoveGroupRequest.new(group_id)
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_REMOVE_GROUP, remove, GroupsDef::RemoveGroupResponse, 1_u8).status_code.should eq(GroupsStatus::Success)
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_VIEW_GROUP, view, GroupsDef::ViewGroupResponse, 1_u8).status_code.should eq(GroupsStatus::NotFound)
+    invoke_fabric_group_response(cluster, GroupsDef::CMD_VIEW_GROUP, view, GroupsDef::ViewGroupResponse, 2_u8).group_name.should eq("Second")
+    cluster.groups.should be_empty
+  end
+
   it "updates the GroupTable through fabric-scoped membership callbacks" do
     groups = GroupsDef.new(Matter::DataType::EndpointNumber.new(1_u16))
     key_management = Matter::Cluster::GroupKeyManagement.new(Matter::DataType::EndpointNumber.new(0_u16))
@@ -109,7 +168,7 @@ describe Matter::Cluster::Groups do
     generated_command_ids(cluster).should eq([0_u32, 1_u32, 2_u32, 3_u32])
   end
 
-  it "adds a group and returns a tagged AddGroupResponse" do
+  it "adds a group through the direct host API" do
     cluster = build(Matter::Cluster::Groups)
     version = cluster.data_version
     response = add_test_group(cluster, 1234_u16, "Living Room")
@@ -183,7 +242,7 @@ describe Matter::Cluster::Groups do
     cluster = build(Matter::Cluster::Groups)
     [1_u16, 2_u16].each { |id| add_test_group(cluster, id) }
     version = cluster.data_version
-    expect_success(invoke(cluster, Matter::Cluster::Groups::CMD_REMOVE_ALL_GROUPS, GroupsDef::RemoveAllGroupsRequest.new))
+    cluster.remove_all_groups.success?.should be_true
     cluster.groups.should be_empty
     cluster.data_version.should eq(version + 1)
   end
@@ -253,7 +312,7 @@ describe Matter::Cluster::Groups do
   it "rejects AddGroup when the name field is missing" do
     cluster = build(Matter::Cluster::Groups)
     request = GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(1_u16))
-    expect_status(invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP, request), GroupsStatus::InvalidCommand)
+    expect_status(invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP, request, fabric_index: 1_u8), GroupsStatus::InvalidCommand)
     cluster.groups.should be_empty
   end
 
@@ -262,7 +321,7 @@ describe Matter::Cluster::Groups do
     [Matter::Cluster::Groups::CMD_ADD_GROUP, Matter::Cluster::Groups::CMD_VIEW_GROUP,
      Matter::Cluster::Groups::CMD_REMOVE_GROUP, Matter::Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP,
      Matter::Cluster::Groups::CMD_ADD_GROUP_IF_IDENTIFYING].each do |command|
-      expect_status(invoke(cluster, command), GroupsStatus::InvalidCommand)
+      expect_status(invoke(cluster, command, fabric_index: 1_u8), GroupsStatus::InvalidCommand)
     end
   end
 
@@ -312,9 +371,9 @@ describe Matter::Cluster::Groups do
       identify.identify(Matter::Cluster::Identify::Request.new(30_u16))
       command = Matter::Cluster::Groups::CMD_ADD_GROUP_IF_IDENTIFYING
       request = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(reserved_group), "Kitchen")
-      expect_status(invoke(cluster, command, request), GroupsStatus::ConstraintError)
+      expect_status(invoke(cluster, command, request, fabric_index: 1_u8), GroupsStatus::ConstraintError)
       request = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(1_u16), too_long_name)
-      expect_status(invoke(cluster, command, request), GroupsStatus::ConstraintError)
+      expect_status(invoke(cluster, command, request, fabric_index: 1_u8), GroupsStatus::ConstraintError)
       cluster.groups.should be_empty
     end
 

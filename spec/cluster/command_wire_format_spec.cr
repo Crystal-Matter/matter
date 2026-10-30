@@ -7,8 +7,8 @@ describe "cluster command wire format" do
   it "decodes a tagged AddGroup request" do
     cluster = build(Matter::Cluster::Groups)
     fields = TLV::Any.new({0_u8 => TLV::Any.new(1234_u16, 0_u8), 1_u8 => TLV::Any.new("Office", 1_u8)} of TLV::TagId => TLV::Any)
-    invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP, fields.to_slice)
-    cluster.groups[1234_u16]?.should eq("Office")
+    invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP, fields.to_slice, fabric_index: 1_u8)
+    cluster.group_names_for_fabric(1_u8)[1234_u16]?.should eq("Office")
   end
 
   it "decodes tagged MoveToHue fields instead of the TLV header" do

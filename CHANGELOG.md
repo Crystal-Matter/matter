@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   authenticated CASE or group session before reading or changing scene state.
   PASE and invalid fabric contexts return `UnsupportedAccess`.
 
+### Groups command fabric scope
+
+- Reject all six Groups wire commands when the request lacks a valid fabric
+  index, before command callbacks, membership access, or DataVersion changes.
+  Fabric-authenticated group commands and direct host group APIs keep their
+  existing behavior.
+
 ### Boolean State Configuration alarm setters
 
 - Direct host assignments to `AlarmsActive`, `AlarmsSuppressed`, and
