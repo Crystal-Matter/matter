@@ -107,7 +107,8 @@ module Matter
       attribute 0x0000, :power_mode, PowerMode, default: PowerMode::Unknown
       attribute 0x0001, :number_of_measurement_types, UInt8, computed: true, fixed: true
       attribute 0x0002, :accuracy, Array(Accuracy), computed: true, fixed: true
-      attribute 0x0003, :ranges, Array(MeasurementRange), default: [] of MeasurementRange, optional: true
+      attribute 0x0003, :ranges, Array(MeasurementRange), default: [] of MeasurementRange, optional: true,
+        validate: :validate_ranges!, copy_on_assign: true, copy_on_read: true
       attribute 0x0004, :voltage, Int64, nullable: true, optional: true
       attribute 0x0005, :active_current, Int64, nullable: true, optional: true
       attribute 0x0006, :reactive_current, Int64, nullable: true, optional: true, requires: :alternating_current
@@ -152,13 +153,29 @@ module Matter
         @accuracy.dup
       end
 
-      # Ranges are optional, but once exposed their change event is mandatory.
+      # The host calls this at the end of each measurement period. The event
+      # carries the Ranges attribute as it stands after publishing that period.
+      def complete_measurement_period(new_ranges : Array(MeasurementRange)) : Nil
+        raise ArgumentError.new("completed measurement period needs at least one range") if new_ranges.empty?
+        self.ranges = new_ranges
+        emit_measurement_period_ranges(MeasurementPeriodRangesEvent.new(ranges))
+      end
+
+      # Compatibility API: an empty list resets Ranges without completing a
+      # period. A nonempty list completes a period and emits its event.
       def update_ranges(new_ranges : Array(MeasurementRange)) : Nil
+        if new_ranges.empty?
+          self.ranges = new_ranges
+          return
+        end
+        complete_measurement_period(new_ranges)
+      end
+
+      private def validate_ranges!(new_ranges : Array(MeasurementRange)) : Nil
         raise ArgumentError.new("too many measurement ranges") if new_ranges.size > @accuracy.size
         types = @accuracy.map(&.measurement_type)
         raise ArgumentError.new("range has no matching accuracy type") unless new_ranges.all? { |range| types.includes?(range.measurement_type) }
-        self.ranges = new_ranges.dup
-        emit_measurement_period_ranges(MeasurementPeriodRangesEvent.new(new_ranges.dup)) unless new_ranges.empty?
+        raise ArgumentError.new("measurement range types must be unique") unless new_ranges.map(&.measurement_type).uniq!.size == new_ranges.size
       end
 
       private def validate_features! : Nil
