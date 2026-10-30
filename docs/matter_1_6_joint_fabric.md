@@ -568,7 +568,14 @@ blocked removal for operator reconciliation.
   It restarts B and the device, verifies B remains the sole owner, checks that
   an ordinary retry cannot commission A, and uses authenticated no-effect
   reconciliation after the full recovery interval before retrying successfully.
-  The fixture also injects an interruption after the switch commits
+  On the SDK retry, B then stops after the device successfully responds to
+  CommissioningComplete but before B saves the acknowledgement. After B
+  restarts, the test observes both fabric CASE paths and NodeLists without
+  treating the visible A fabric as durable yet. B waits the SDK device's
+  advertised cumulative fail-safe bound plus the recovery margin, authenticates
+  the completed handoff, and continues to the old-fabric removal boundary
+  without recommissioning the device. This injection does not drop a wire reply.
+  The Crystal switch fixture also injects an interruption after it commits
   CommissioningComplete but before B durably records acknowledgement. It
   restarts B and checks that recovery waits the advertised cumulative fail-safe
   bound and verifies both fabrics before continuing. This tests the ambiguous
@@ -927,8 +934,8 @@ proofs ([DCL client guidance](https://github.com/zigbee-alliance/distributed-com
    with independent ecosystem devices before claiming conformance. The SDK
    all-clusters migration verifies the successful independent device path;
    most interruption coverage still uses a Crystal target; the SDK device now
-   covers both the pre-RemoveFabric no-effect and post-RemoveFabric recovery
-   transitions through live B restarts.
+   covers the post-CommissioningComplete acknowledgement gap, pre-RemoveFabric
+   no-effect, and post-RemoveFabric recovery through live B restarts.
 
 The opt-in `HttpDclRevocationSource` queries the v1.6 DCL
 `/dcl/pki/revocation-points/{issuerSKID}` index at an explicitly selected
