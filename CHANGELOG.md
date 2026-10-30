@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Access Control ACL fabric filtering
+
+- Honor `ReadRequest.FabricFiltered` for ACL reads: a fabric-filtered read
+  returns the requesting fabric's entries, while an authenticated unfiltered
+  read includes entries from all fabrics.
+
 ### Groups command fabric scope
 
 - Reject all six Groups wire commands when the request lacks a valid fabric
