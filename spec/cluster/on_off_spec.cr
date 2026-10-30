@@ -200,16 +200,17 @@ describe Matter::Cluster::OnOff do
     end
 
     describe "OnWithRecallGlobalScene command" do
-      it "executes OnWithRecallGlobalScene command with Lighting feature" do
+      it "discards OnWithRecallGlobalScene while GlobalSceneControl is true" do
         cluster = build(Matter::Cluster::OnOff,
           on_off: false,
           feature_map: Matter::Cluster::OnOff::Feature::Lighting
         )
 
+        cluster.global_scene_control?.should be_true
         result = invoke(cluster, Matter::Cluster::OnOff::CMD_ON_WITH_RECALL_GLOBAL_SCENE, Bytes.new(0))
 
         result.as(Matter::InteractionModel::Status).success?.should be_true
-        cluster.on_off?.should be_true
+        cluster.on_off?.should be_false
       end
     end
 

@@ -95,12 +95,19 @@ module Matter
         @timed_fiber_running = false
         @level_on_effect = nil
         @mode_on_effect = nil
+        @global_scenes = nil
       end
 
       @next_timed_tick : Time::Instant?
       @timed_fiber_running : Bool
       @level_on_effect : Proc(Nil)?
       @mode_on_effect : Proc(Nil)?
+      @global_scenes : ScenesManagement?
+
+      # The endpoint supplies its same-endpoint Scenes server when present.
+      def bind_global_scenes(scenes : ScenesManagement?) : Nil
+        @global_scenes = scenes
+      end
 
       # Internal endpoint hook for the LevelControl OnLevel effect. This is
       # separate from the application-facing OnOff attribute change callback.
@@ -171,13 +178,30 @@ module Matter
         @on_off ? off : on
       end
 
-      # Effects are not rendered; the device turns off immediately.
+      # Effects are host-owned; capture the current fabric's global scene
+      # before the immediate off transition.
       def off_with_effect(request : OffWithEffectRequest) : InteractionModel::Status
+        if @global_scene_control && (fabric_index = request_fabric_index)
+          @global_scenes.try(&.store_global_scene(fabric_index))
+        end
         off
       end
 
       def on_with_recall_global_scene : InteractionModel::Status
-        on
+        return InteractionModel::Status.success if @global_scene_control
+
+        recalled = if fabric_index = request_fabric_index
+                     @global_scenes.try(&.recall_global_scene(fabric_index)) || false
+                   else
+                     false
+                   end
+        on unless recalled
+        self.global_scene_control = true
+        if @on_time == 0
+          self.off_wait_time = 0_u16
+          @next_timed_tick = nil
+        end
+        InteractionModel::Status.success
       end
 
       # OnTime and OffWaitTime count down in tenths of a second. A later timed

@@ -392,6 +392,8 @@ module Matter
       # Minimum Scene Table size the specification allows (Matter 1.4 §1.4.8.1).
       DEFAULT_SCENE_TABLE_SIZE =  16_u16
       UNDEFINED_SCENE_ID       = 0xFF_u8
+      GLOBAL_SCENE_GROUP_ID    = DataType::GroupId::RESERVED.id
+      GLOBAL_SCENE_ID          = 0_u8
 
       # Largest exact capacity a SceneInfo / GetSceneMembershipResponse can
       # report; 0xFE means "at least one" and 0xFF "unknown".
@@ -644,7 +646,20 @@ module Matter
       end
 
       def store_scene(request : StoreSceneRequest) : SceneStatusResponse
-        fabric_index = scene_fabric_index
+        store_scene_for_fabric(request, scene_fabric_index)
+      end
+
+      # OnOff Lighting uses the reserved global scene identity. The caller
+      # supplies its authenticated fabric because this cluster is not the
+      # dispatched command target and has no request context of its own.
+      def store_global_scene(fabric_index : UInt8) : Bool
+        with_request_context do
+          store_scene_for_fabric(StoreSceneRequest.new(GLOBAL_SCENE_GROUP_ID, GLOBAL_SCENE_ID), fabric_index)
+            .status == InteractionModel::StatusCode::Success.value
+        end
+      end
+
+      private def store_scene_for_fabric(request : StoreSceneRequest, fabric_index : UInt8) : SceneStatusResponse
         key = {fabric_index, request.group_id, request.scene_id}
 
         if fabric_full?(fabric_index) && !@scenes.has_key?(key)
@@ -667,7 +682,18 @@ module Matter
       end
 
       def recall_scene(request : RecallSceneRequest) : InteractionModel::Status
-        fabric_index = scene_fabric_index
+        recall_scene_for_fabric(request, scene_fabric_index)
+      end
+
+      def recall_global_scene(fabric_index : UInt8) : Bool
+        with_request_context do
+          request = RecallSceneRequest.new(GLOBAL_SCENE_GROUP_ID, GLOBAL_SCENE_ID)
+          @scenes.has_key?({fabric_index, GLOBAL_SCENE_GROUP_ID, GLOBAL_SCENE_ID}) &&
+            recall_scene_for_fabric(request, fabric_index).status == InteractionModel::StatusCode::Success
+        end
+      end
+
+      private def recall_scene_for_fabric(request : RecallSceneRequest, fabric_index : UInt8) : InteractionModel::Status
         key = {fabric_index, request.group_id, request.scene_id}
 
         scene_data = @scenes[key]?
