@@ -80,11 +80,14 @@ module Matter
         fixed: true, optional: true, requires: :sensitivity_level,
         present_if: :default_sensitivity_level_present?
       attribute 0x0003, :alarms_active, AlarmMode, default: AlarmMode::None,
-        requires: [:visual, :audible], on_change: :report_alarms_state_change
+        requires: [:visual, :audible], validate: :validate_alarms_active!,
+        on_change: :report_alarms_state_change
       attribute 0x0004, :alarms_suppressed, AlarmMode, default: AlarmMode::None,
-        requires: :alarm_suppress, on_change: :report_alarms_state_change
+        requires: :alarm_suppress, validate: :validate_alarms_suppressed!,
+        on_change: :report_alarms_state_change
       attribute 0x0005, :alarms_enabled, AlarmMode, default: AlarmMode::None,
-        persist: true, optional: true, requires: [:visual, :audible]
+        persist: true, optional: true, requires: [:visual, :audible],
+        validate: :validate_alarm_mode!
       attribute 0x0006, :alarms_supported, AlarmMode, default: AlarmMode::None,
         fixed: true, requires: [:visual, :audible]
       attribute 0x0007, :sensor_fault, SensorFault, default: SensorFault::None,
@@ -136,10 +139,6 @@ module Matter
       # A device reports the underlying alarm condition independently of
       # acknowledgement or suppression.
       def update_alarms_active(value : AlarmMode) : Nil
-        validate_alarm_mode!(value)
-        unless (value.value & ~@alarms_enabled.value) == 0
-          raise ArgumentError.new("Cannot activate a disabled alarm mode")
-        end
         self.alarms_active = value
         self.alarms_suppressed = AlarmMode.new(@alarms_suppressed.value & value.value) if @feature_map.alarm_suppress?
       end
@@ -182,6 +181,20 @@ module Matter
 
       private def validate_alarm_mode!(value : AlarmMode) : Nil
         raise ArgumentError.new("Unsupported alarm mode bits") unless valid_alarm_mode?(value)
+      end
+
+      private def validate_alarms_active!(value : AlarmMode) : Nil
+        validate_alarm_mode!(value)
+        unless (value.value & ~@alarms_enabled.value) == 0
+          raise ArgumentError.new("Cannot activate a disabled alarm mode")
+        end
+      end
+
+      private def validate_alarms_suppressed!(value : AlarmMode) : Nil
+        validate_alarm_mode!(value)
+        unless (value.value & ~@alarms_active.value) == 0
+          raise ArgumentError.new("Cannot suppress an inactive alarm mode")
+        end
       end
 
       private def report_alarms_state_change(_value : AlarmMode) : Nil

@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Boolean State Configuration alarm setters
+
+- Direct host assignments to `AlarmsActive`, `AlarmsSuppressed`, and
+  `AlarmsEnabled` now reject modes outside the advertised alarm features.
+  Activating a disabled mode or suppressing an inactive mode is also rejected
+  before changing DataVersion or emitting `AlarmsStateChanged`.
+
 ### Electrical power measurement periods
 
 - `complete_measurement_period(ranges)` now publishes validated Ranges and
