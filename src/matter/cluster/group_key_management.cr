@@ -454,16 +454,21 @@ module Matter
         request_fabric_index || raise Matter::ClusterError.new("Group key commands require a fabric-scoped session", InteractionModel::StatusCode::UnsupportedAccess)
       end
 
-      # The fabric-scoped lists hold only the accessing fabric's entries; a
-      # read outside a fabric sees none.
+      # Fabric-scoped reads filter to the accessing fabric unless the ReadRequest
+      # explicitly disables fabric filtering. Adopted fabrics expose their
+      # group data through Groupcast instead of these legacy lists.
       def group_key_map(fabric_index : UInt8?) : Array(GroupKeyMapStruct)
-        return [] of GroupKeyMapStruct if fabric_index && groupcast_adopted?(fabric_index)
-        operational_group_key_map(fabric_index)
+        return [] of GroupKeyMapStruct unless fabric_index
+        return [] of GroupKeyMapStruct if request_fabric_filtered? && groupcast_adopted?(fabric_index)
+        return operational_group_key_map(fabric_index) if request_fabric_filtered?
+        @group_key_map.reject { |entry| groupcast_adopted?(entry.fabric_index) }
       end
 
       def group_table(fabric_index : UInt8?) : Array(GroupInfoMapStruct)
-        return [] of GroupInfoMapStruct if fabric_index && groupcast_adopted?(fabric_index)
-        operational_group_table(fabric_index)
+        return [] of GroupInfoMapStruct unless fabric_index
+        return [] of GroupInfoMapStruct if request_fabric_filtered? && groupcast_adopted?(fabric_index)
+        return operational_group_table(fabric_index) if request_fabric_filtered?
+        @group_table.reject { |entry| groupcast_adopted?(entry.fabric_index) }
       end
 
       def operational_group_key_map(fabric_index : UInt8?) : Array(GroupKeyMapStruct)
