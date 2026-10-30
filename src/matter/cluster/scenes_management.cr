@@ -1,4 +1,5 @@
 require "./cluster"
+require "../fabric"
 require "tlv"
 
 module Matter
@@ -731,8 +732,24 @@ module Matter
       end
 
       private def scene_fabric_index : UInt8
-        request_fabric_index || raise Matter::ClusterError.new("Scene commands require a fabric-scoped session",
+        fabric_index = request_fabric_index || raise Matter::ClusterError.new("Scene commands require an authenticated fabric",
           InteractionModel::StatusCode::UnsupportedAccess)
+        valid_auth = case request_auth_mode
+                     when InteractionModel::EntryAuthMode::Case
+                       request_is_case_session?
+                     when InteractionModel::EntryAuthMode::Group
+                       !request_is_case_session?
+                     when Nil
+                       # Direct callers can supply the CASE flag without an auth-mode descriptor.
+                       request_is_case_session?
+                     else
+                       false
+                     end
+        unless (Fabric::MIN_FABRIC_INDEX..Fabric::MAX_FABRIC_INDEX).includes?(fabric_index) && valid_auth
+          raise Matter::ClusterError.new("Scene commands require an authenticated fabric",
+            InteractionModel::StatusCode::UnsupportedAccess)
+        end
+        fabric_index
       end
 
       private def remaining_capacity(fabric_index : UInt8) : UInt8

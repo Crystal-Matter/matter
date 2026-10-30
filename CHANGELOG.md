@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Scenes Management fabric authentication
+
+- Fabric-scoped scene commands now require a valid fabric index and an
+  authenticated CASE or group session before reading or changing scene state.
+  PASE and invalid fabric contexts return `UnsupportedAccess`.
+
 ### Boolean State Configuration alarm setters
 
 - Direct host assignments to `AlarmsActive`, `AlarmsSuppressed`, and

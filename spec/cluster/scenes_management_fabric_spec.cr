@@ -75,6 +75,7 @@ describe "Scenes Management fabric isolation" do
     before_version = cluster.data_version
 
     contexts = [
+      {false, nil, nil},
       {false, nil, Matter::Fabric::MIN_FABRIC_INDEX},
       {false, Matter::InteractionModel::EntryAuthMode::Pase, Matter::Fabric::MIN_FABRIC_INDEX},
       {true, Matter::InteractionModel::EntryAuthMode::Case, Matter::DataType::NO_FABRIC},
