@@ -83,6 +83,7 @@ describe Matter::Cluster::Groups do
     invoke_fabric_group_response(cluster, GroupsDef::CMD_VIEW_GROUP, view, GroupsDef::ViewGroupResponse, 2_u8).group_name.should eq("Second")
     cluster.groups.should be_empty
   end
+
   it "updates the GroupTable through fabric-scoped membership callbacks" do
     groups = GroupsDef.new(Matter::DataType::EndpointNumber.new(1_u16))
     key_management = Matter::Cluster::GroupKeyManagement.new(Matter::DataType::EndpointNumber.new(0_u16))
@@ -167,7 +168,7 @@ describe Matter::Cluster::Groups do
     generated_command_ids(cluster).should eq([0_u32, 1_u32, 2_u32, 3_u32])
   end
 
-  it "adds a group and returns a tagged AddGroupResponse" do
+  it "adds a group through the direct host API" do
     cluster = build(Matter::Cluster::Groups)
     version = cluster.data_version
     response = add_test_group(cluster, 1234_u16, "Living Room")
@@ -241,7 +242,7 @@ describe Matter::Cluster::Groups do
     cluster = build(Matter::Cluster::Groups)
     [1_u16, 2_u16].each { |id| add_test_group(cluster, id) }
     version = cluster.data_version
-    expect_success(invoke(cluster, Matter::Cluster::Groups::CMD_REMOVE_ALL_GROUPS, GroupsDef::RemoveAllGroupsRequest.new))
+    cluster.remove_all_groups.success?.should be_true
     cluster.groups.should be_empty
     cluster.data_version.should eq(version + 1)
   end
@@ -311,7 +312,7 @@ describe Matter::Cluster::Groups do
   it "rejects AddGroup when the name field is missing" do
     cluster = build(Matter::Cluster::Groups)
     request = GroupsDef::ViewGroupRequest.new(Matter::DataType::GroupId.new(1_u16))
-    expect_status(invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP, request), GroupsStatus::InvalidCommand)
+    expect_status(invoke(cluster, Matter::Cluster::Groups::CMD_ADD_GROUP, request, fabric_index: 1_u8), GroupsStatus::InvalidCommand)
     cluster.groups.should be_empty
   end
 
@@ -320,7 +321,7 @@ describe Matter::Cluster::Groups do
     [Matter::Cluster::Groups::CMD_ADD_GROUP, Matter::Cluster::Groups::CMD_VIEW_GROUP,
      Matter::Cluster::Groups::CMD_REMOVE_GROUP, Matter::Cluster::Groups::CMD_GET_GROUP_MEMBERSHIP,
      Matter::Cluster::Groups::CMD_ADD_GROUP_IF_IDENTIFYING].each do |command|
-      expect_status(invoke(cluster, command), GroupsStatus::InvalidCommand)
+      expect_status(invoke(cluster, command, fabric_index: 1_u8), GroupsStatus::InvalidCommand)
     end
   end
 
@@ -370,9 +371,9 @@ describe Matter::Cluster::Groups do
       identify.identify(Matter::Cluster::Identify::Request.new(30_u16))
       command = Matter::Cluster::Groups::CMD_ADD_GROUP_IF_IDENTIFYING
       request = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(reserved_group), "Kitchen")
-      expect_status(invoke(cluster, command, request), GroupsStatus::ConstraintError)
+      expect_status(invoke(cluster, command, request, fabric_index: 1_u8), GroupsStatus::ConstraintError)
       request = GroupsDef::AddGroupIfIdentifyingRequest.new(Matter::DataType::GroupId.new(1_u16), too_long_name)
-      expect_status(invoke(cluster, command, request), GroupsStatus::ConstraintError)
+      expect_status(invoke(cluster, command, request, fabric_index: 1_u8), GroupsStatus::ConstraintError)
       cluster.groups.should be_empty
     end
 
