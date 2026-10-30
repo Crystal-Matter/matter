@@ -65,7 +65,7 @@ module Matter
       end
 
       def binding : Array(Target)
-        if fabric_index = request_fabric_index
+        if request_fabric_filtered? && (fabric_index = request_fabric_index)
           @binding.select { |entry| entry.fabric_index == fabric_index }
         else
           @binding

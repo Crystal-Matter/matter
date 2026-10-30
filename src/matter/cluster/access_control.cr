@@ -299,8 +299,8 @@ module Matter
         end
       end
 
-      # ACL and Extension are fabric-scoped lists: reads are filtered to the
-      # accessing fabric and writes replace only that fabric's entries (see
+      # ACL and Extension are fabric-scoped lists: reads honor FabricFiltered
+      # and writes replace only the accessing fabric's entries (see
       # `acl`, `acl=`, `extension` and `extension=`). They are persisted by
       # the hand-written records further down.
       attribute 0x0000, :acl, Array(AccessControlEntry), computed: true, writable: true, read_access: :administer, write_access: :administer, fabric_scoped: true
@@ -411,7 +411,11 @@ module Matter
       end
 
       def extension(fabric_index : UInt8? = nil) : Array(ExtensionEntry)
-        fabric_index ? @extension.select { |entry| entry.fabric_index == fabric_index } : @extension
+        if request_fabric_filtered? && (index = fabric_index)
+          @extension.select { |entry| entry.fabric_index == index }
+        else
+          @extension
+        end
       end
 
       def auxiliary_acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)

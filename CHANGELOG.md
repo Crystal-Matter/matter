@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Binding and Access Control Extension fabric filtering
+
+- Authenticated Interaction Model reads of Binding and Access Control Extension
+  now honor `FabricFiltered=false` and include entries from every fabric.
+  Filtered reads still return only the requesting fabric's entries.
+
 ### Scenes Management fabric authentication
 
 - Fabric-scoped scene commands now require a valid fabric index and an
