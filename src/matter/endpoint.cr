@@ -78,6 +78,9 @@ module Matter
       if mode = get_cluster(Cluster::ModeSelect)
         mode.bind_on_off(get_cluster(Cluster::OnOff))
       end
+      if on_off = get_cluster(Cluster::OnOff)
+        on_off.bind_global_scenes(get_cluster(Cluster::ScenesManagement))
+      end
       if groups = get_cluster(Cluster::Groups)
         groups.bind_identify(get_cluster(Cluster::Identify))
       end
