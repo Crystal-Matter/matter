@@ -989,8 +989,8 @@ describe "three provisioned Joint Fabric Administrators" do
     if ENV["MATTER_E2E_SDK16_MIGRATION"]? == "1"
       # Migrate a pinned SDK v1.6 ordinary device while A and B still have
       # their original Anchor roles. Interrupt B before it removes the SDK
-      # device's old fabric, prove no effect, then interrupt after its
-      # successful RemoveFabric response before B advances its journal.
+      # device's CommissioningComplete acknowledgement, recover after the
+      # fail-safe bound, then exercise both old-fabric removal outcomes.
       sdk_paa = File.read("/sdk16-credentials/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der").to_slice.dup
       sdk_paa_path = File.join(E2E::LOG_DIR, "jf-sdk-migration-paa.der")
       sdk_cd_dir = File.join(E2E::LOG_DIR, "jf-sdk-migration-cd")
@@ -1069,15 +1069,83 @@ describe "three provisioned Joint Fabric Administrators" do
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
         entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
       end.should be_false
+      sdk_basic_commissioning = joiner_im.read_attribute(session: sdk_b_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
+        attribute_id: Matter::Cluster::GeneralCommissioning::ATTR_BASIC_COMMISSIONING_INFO)
+      sdk_basic_commissioning_data = sdk_basic_commissioning.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_fail_safe_max = Matter::Cluster::GeneralCommissioning::BasicCommissioningInfo
+        .from_slice(sdk_basic_commissioning_data.to_slice).max_cumulative_failsafe_seconds
+      sdk_fail_safe_max.should be > 0_u16
+      sdk_recovery_interval = (sdk_fail_safe_max.to_i64 +
+                               Matter::Controller::Commissioning::Commissioner::FAIL_SAFE_RECOVERY_GRACE_SECONDS).seconds
+      sdk_unacknowledged_commissioning = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_complete_before_ack: true))
+      sdk_unacknowledged_commissioning.status.should eq("error")
+      sdk_unacknowledged_commissioning.error.to_s.should contain("Injected interruption after device CommissioningComplete")
+      joiner.restart!
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_unacknowledged_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_unacknowledged_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor.value)
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
+      end.should be_true
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        sdk_peer, joiner_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_OLD_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_provisional_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_peer, anchor_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_provisional_report = anchor_im.read_attribute(session: sdk_provisional_a_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+        attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+        fabric_filtered: false)
+      sdk_provisional_data = sdk_provisional_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_provisional_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+        .from_tlv(sdk_provisional_data.to_slice)
+      sdk_provisional_fabrics.size.should eq(2)
+      sdk_provisional_fabrics.any? do |fabric|
+        fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+          fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+          fabric.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
+      end.should be_true
+      sdk_provisional_fabrics.any? do |fabric|
+        fabric.fabric_id == joiner_bootstrap.fabric.fabric_id &&
+          fabric.root_public_key == joiner_bootstrap.fabric.root_public_key &&
+          fabric.node_id == SDK_MIGRATION_OLD_NODE_ID
+      end.should be_true
+      sdk_recovery_started = Time.instant
       sdk_interrupted_removal = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
           root_public_key: anchor_bootstrap.fabric.root_public_key,
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
           peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
-          interrupt_before_migration_old_fabric_removed: true))
+          interrupt_before_migration_old_fabric_removed: true),
+        timeout: sdk_recovery_interval + E2E::COMMAND_TIMEOUT)
       sdk_interrupted_removal.status.should eq("error")
       sdk_interrupted_removal.error.to_s.should contain("Injected interruption before device RemoveFabric")
+      (Time.instant - sdk_recovery_started).should be >= sdk_recovery_interval
       joiner.restart!
       joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
         joiner_peer, joiner_bootstrap.fabric,
