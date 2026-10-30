@@ -570,8 +570,9 @@ blocked removal for operator reconciliation.
   reconciliation after the full recovery interval before retrying successfully.
   The SDK fixture also interrupts after AddNOC succeeds and the provisional A
   CASE path works, but before CommissioningComplete. After B restarts, it
-  confirms both SDK device fabrics are visible, blocks journal replay, and
-  waits the full advertised cumulative fail-safe bound. Authenticated
+  confirms both SDK device fabrics are visible. A normal retry waits the full
+  advertised cumulative fail-safe bound, then refuses to advance the journal
+  when A has rolled back. Authenticated
   no-effect reconciliation then observes the SDK's rollback to B alone,
   removes any staged A NodeList entry, and permits a clean retry.
   During the provisional interval, the pinned SDK omits B's ICAC from a fresh

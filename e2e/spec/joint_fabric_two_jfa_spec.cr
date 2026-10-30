@@ -1126,14 +1126,23 @@ describe "three provisioned Joint Fabric Administrators" do
       Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
         sdk_peer, anchor_bootstrap.fabric,
         peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      # A normal retry performs the conservative fail-safe wait before it can
+      # decide whether the interrupted CommissioningComplete took effect.
       sdk_blocked_add_noc_replay = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
           root_public_key: anchor_bootstrap.fabric.root_public_key,
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
-          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT),
+        timeout: sdk_recovery_interval + E2E::COMMAND_TIMEOUT)
       sdk_blocked_add_noc_replay.status.should eq("error")
-      sdk_blocked_add_noc_replay.error.to_s.should contain("needs authenticated reconciliation")
+      sdk_blocked_add_noc_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_blocked_add_noc_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor.value)
       sdk_recovery_started = Time.instant
       sdk_add_noc_no_effect = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration-no-effect", SDK_MIGRATION_OLD_NODE_ID,
