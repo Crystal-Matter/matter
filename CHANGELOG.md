@@ -13,6 +13,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   entries from all non-adopted fabrics. Filtered reads still return only the
   accessing fabric, and Groupcast-adopted entries remain hidden.
 
+### Binding and Access Control Extension fabric filtering
+
+- Authenticated Interaction Model reads of Binding and Access Control Extension
+  now honor `FabricFiltered=false` and include entries from every fabric.
+  Filtered reads still return only the requesting fabric's entries.
+
+### Access Control ACL fabric filtering
+
+- Honor `ReadRequest.FabricFiltered` for ACL reads: a fabric-filtered read
+  returns the requesting fabric's entries, while an authenticated unfiltered
+  read includes entries from all fabrics.
+
 ### Scenes Management fabric authentication
 
 - Fabric-scoped scene commands now require a valid fabric index and an

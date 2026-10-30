@@ -299,10 +299,9 @@ module Matter
         end
       end
 
-      # ACL and Extension are fabric-scoped lists: reads are filtered to the
-      # accessing fabric and writes replace only that fabric's entries (see
-      # `acl`, `acl=`, `extension` and `extension=`). They are persisted by
-      # the hand-written records further down.
+      # ACL and Extension are fabric-scoped lists. Writes replace only the
+      # accessing fabric's entries; their read behavior is defined by the
+      # getters below. They are persisted by the hand-written records.
       attribute 0x0000, :acl, Array(AccessControlEntry), computed: true, writable: true, read_access: :administer, write_access: :administer, fabric_scoped: true
       attribute 0x0001, :extension, Array(ExtensionEntry), computed: true, writable: true, read_access: :administer, write_access: :administer, fabric_scoped: true, requires: :extension
       attribute 0x0002, :subjects_per_access_control_entry, UInt16, default: DEFAULT_SUBJECTS_PER_ENTRY, fixed: true
@@ -404,14 +403,22 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
-      # The fabric-scoped lists are filtered to the accessing fabric; a read
-      # outside a fabric (PASE) sees every entry.
+      # ACL reads honor the ReadRequest FabricFiltered flag. A read outside a
+      # fabric (PASE) also sees every entry.
       def acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)
-        fabric_index ? get_acl_for_fabric(fabric_index) : @acl
+        if request_fabric_filtered? && (index = fabric_index)
+          get_acl_for_fabric(index)
+        else
+          @acl
+        end
       end
 
       def extension(fabric_index : UInt8? = nil) : Array(ExtensionEntry)
-        fabric_index ? @extension.select { |entry| entry.fabric_index == fabric_index } : @extension
+        if request_fabric_filtered? && (index = fabric_index)
+          @extension.select { |entry| entry.fabric_index == index }
+        else
+          @extension
+        end
       end
 
       def auxiliary_acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)
