@@ -40,6 +40,10 @@ module LevelControlE2E
   COVERING_MAINTENANCE         = 4
   COVERING_CALIBRATION         = 2
   COVERING_REVERSED            = 1
+  SCENE_MODE_ECO               = 1
+  SCENE_MODE_BOOST             = 2
+  GLOBAL_SCENE_EFFECT_ID       = 0
+  GLOBAL_SCENE_EFFECT_VARIANT  = 0
 end
 
 def wait_for_covering_lift(device : E2E::Device, target : Int32, endpoint : Int32) : Nil
@@ -107,6 +111,21 @@ describe "matter_level_control example" do
     before = read_bool(device, "onoff", "on-off", "OnOff")
     expect_success(device.invoke("onoff", "toggle"))
     read_bool(device, "onoff", "on-off", "OnOff").should eq !before
+  end
+
+  it "stores and recalls the Lighting global scene through chip-tool" do
+    expect_success(device.invoke("onoff", "on", endpoint: 1))
+    expect_success(device.invoke("modeselect", "change-to-mode", [LevelControlE2E::SCENE_MODE_ECO.to_s], endpoint: 1))
+    expect_success(device.invoke("onoff", "off-with-effect", [LevelControlE2E::GLOBAL_SCENE_EFFECT_ID.to_s,
+                                                              LevelControlE2E::GLOBAL_SCENE_EFFECT_VARIANT.to_s], endpoint: 1))
+    read_bool(device, "onoff", "on-off", "OnOff", 1).should be_false
+    read_bool(device, "onoff", "global-scene-control", "GlobalSceneControl", 1).should be_false
+
+    expect_success(device.invoke("modeselect", "change-to-mode", [LevelControlE2E::SCENE_MODE_BOOST.to_s], endpoint: 1))
+    expect_success(device.invoke("onoff", "on-with-recall-global-scene", endpoint: 1))
+    read_bool(device, "onoff", "on-off", "OnOff", 1).should be_true
+    read_bool(device, "onoff", "global-scene-control", "GlobalSceneControl", 1).should be_true
+    read_int(device, "modeselect", "current-mode", "CurrentMode", 1).should eq(LevelControlE2E::SCENE_MODE_ECO.to_i64)
   end
 
   it "adds, views, lists and removes a group using Matter command structures" do

@@ -43,6 +43,7 @@ describe "OnOff Lighting global scene" do
     on_off.global_scene_control?.should be_false
 
     mode.current_mode = 2_u8
+    expect_success(off_with_global_scene(on_off, 1_u8))
     expect_success(recall_global_scene(on_off, 1_u8))
     on_off.on_off?.should be_true
     mode.current_mode.should eq(1_u8)
@@ -50,7 +51,7 @@ describe "OnOff Lighting global scene" do
   end
 
   it "turns on when the global scene cannot be recalled" do
-    on_off, mode, scenes = lighting_scene_endpoint
+    on_off, _mode, scenes = lighting_scene_endpoint
     on_off.off
     scenes.has_scene?(GlobalScenes::GLOBAL_SCENE_GROUP_ID, GlobalScenes::GLOBAL_SCENE_ID, 1_u8).should be_false
 
@@ -60,7 +61,7 @@ describe "OnOff Lighting global scene" do
   end
 
   it "discards recall while GlobalSceneControl is already true" do
-    on_off, mode, scenes = lighting_scene_endpoint
+    on_off, _mode, _scenes = lighting_scene_endpoint
     on_off.on_off?.should be_false
     on_off.global_scene_control?.should be_true
 
