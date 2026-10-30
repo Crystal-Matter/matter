@@ -1101,9 +1101,9 @@ describe "three provisioned Joint Fabric Administrators" do
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
       sdk_add_noc_stage.inspected_migration_stage.should eq(
         Matter::Controller::JointFabricDeviceMigration::Stage::CommissioningAnchor.value)
-      sdk_b_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
-        sdk_peer, joiner_bootstrap.fabric,
-        peer_node_id: SDK_MIGRATION_OLD_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      # Read through the B session established before AddNOC. The pinned SDK
+      # omits B's ICAC from fresh Sigma2 while A's NOC is provisional. Require
+      # fresh B CASE after fail-safe expiry, when A has been rolled back.
       sdk_before_expiry = joiner_im.read_attribute(session: sdk_b_session, peer: sdk_peer,
         endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
         cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,

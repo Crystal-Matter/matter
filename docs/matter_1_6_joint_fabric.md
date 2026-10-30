@@ -574,6 +574,9 @@ blocked removal for operator reconciliation.
   waits the full advertised cumulative fail-safe bound. Authenticated
   no-effect reconciliation then observes the SDK's rollback to B alone,
   removes any staged A NodeList entry, and permits a clean retry.
+  During the provisional interval, the pinned SDK omits B's ICAC from a fresh
+  B CASE Sigma2; the test reads through its preexisting B session and requires
+  a fresh B CASE after rollback.
   On the SDK retry, B then stops after the device successfully responds to
   CommissioningComplete but before B saves the acknowledgement. After B
   restarts, the test observes both fabric CASE paths and NodeLists without
