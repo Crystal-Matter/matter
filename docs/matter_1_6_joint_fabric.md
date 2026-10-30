@@ -568,6 +568,12 @@ blocked removal for operator reconciliation.
   It restarts B and the device, verifies B remains the sole owner, checks that
   an ordinary retry cannot commission A, and uses authenticated no-effect
   reconciliation after the full recovery interval before retrying successfully.
+  The SDK fixture also interrupts after AddNOC succeeds and the provisional A
+  CASE path works, but before CommissioningComplete. After B restarts, it
+  confirms both SDK device fabrics are visible, blocks journal replay, and
+  waits the full advertised cumulative fail-safe bound. Authenticated
+  no-effect reconciliation then observes the SDK's rollback to B alone,
+  removes any staged A NodeList entry, and permits a clean retry.
   On the SDK retry, B then stops after the device successfully responds to
   CommissioningComplete but before B saves the acknowledgement. After B
   restarts, the test observes both fabric CASE paths and NodeLists without
