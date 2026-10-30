@@ -414,7 +414,11 @@ module Matter
       end
 
       def extension(fabric_index : UInt8? = nil) : Array(ExtensionEntry)
-        fabric_index ? @extension.select { |entry| entry.fabric_index == fabric_index } : @extension
+        if request_fabric_filtered? && (index = fabric_index)
+          @extension.select { |entry| entry.fabric_index == index }
+        else
+          @extension
+        end
       end
 
       def auxiliary_acl(fabric_index : UInt8? = nil) : Array(AccessControlEntry)
