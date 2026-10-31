@@ -13,6 +13,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   include connections from every fabric. Filtered reads remain scoped to the
   requesting fabric, and both forms omit transport options from attribute data.
 
+### TLS Client Management fabric filtering
+
+- `ProvisionedEndpoints` now includes the required `fabricIndex` field in each
+  endpoint and honors `FabricFiltered=false` on authenticated reads. A filtered
+  read returns the requesting fabric's endpoints; an unfiltered read includes
+  endpoints from all fabrics. `FindEndpoint` remains fabric owned.
+
+### Groupcast Membership fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of Groupcast Membership now include
+  memberships from all fabrics. Filtered reads and the fabric-scoped host API
+  still return only the selected fabric, including after state restoration.
+
 ### Scenes Management fabric filtering
 
 - Authenticated `FabricSceneInfo` reads honor `FabricFiltered=false` by

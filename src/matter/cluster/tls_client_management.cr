@@ -72,8 +72,10 @@ module Matter
       end
 
       def provisioned_endpoints(fabric_index : UInt8?) : Array(Tlv::Endpoint) | InteractionModel::Status
-        return InteractionModel::Status.unsupported_access unless fabric_index
-        endpoints_for(fabric_index).map { |entry| wire(entry) }
+        return InteractionModel::Status.unsupported_access unless fabric_index && request_is_case_session?
+        return InteractionModel::Status.unsupported_access unless installed?(fabric_index)
+        entries = request_fabric_filtered? ? endpoints_for(fabric_index) : @endpoints
+        entries.map { |entry| wire(entry) }
       end
 
       def provision_endpoint(request : Tlv::ProvisionEndpointRequest) : Tlv::ProvisionEndpointResponse | InteractionModel::Status
@@ -214,7 +216,7 @@ module Matter
 
       private def wire(entry : EndpointRecord) : Tlv::Endpoint
         Tlv::Endpoint.new(entry.endpoint_id, entry.hostname.dup, entry.port,
-          entry.caid, entry.ccdid, entry.reference_count)
+          entry.caid, entry.ccdid, entry.reference_count, entry.fabric_index)
       end
 
       private def changed : Nil
