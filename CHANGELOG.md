@@ -14,6 +14,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fail-safe rollback to B, blocked replay after B restart, authenticated
   no-effect reconciliation, and a successful fresh migration attempt.
 
+### Group Key Management fabric filtering
+
+- Honor `FabricFiltered=false` on GroupKeyMap and GroupTable reads by returning
+  entries from all non-adopted fabrics. Filtered reads still return only the
+  accessing fabric, and Groupcast-adopted entries remain hidden.
+
 ### Binding and Access Control Extension fabric filtering
 
 - Authenticated Interaction Model reads of Binding and Access Control Extension
