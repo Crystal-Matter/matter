@@ -1,9 +1,12 @@
 require "../spec_helper"
+require "../../src/matter/cluster/access_control"
+require "../../src/matter/protocol/im_handler"
 
 private alias CameraAv = Matter::Cluster::CameraAvStreamManagement
 private alias Provider = Matter::Cluster::WebRtcTransportProvider
 private alias Status = Matter::InteractionModel::Status
 private alias StatusCode = Matter::InteractionModel::StatusCode
+private alias ProviderAcl = Matter::Cluster::AccessControl
 
 private class TestWebRtcPeer < Provider::Peer
   property? reject_offer : Bool = false
@@ -90,7 +93,79 @@ private def invoke_provider(provider : Provider, command : UInt32, request : TLV
   invoke(provider, command, request, is_case_session: case_session, fabric_index: fabric)
 end
 
+private def read_provider_sessions(provider : Provider, acl : ProviderAcl,
+                                   fabric_index : UInt8?, node : UInt64,
+                                   fabric_filtered : Bool, case_session : Bool = true)
+  path = Matter::InteractionModel::AttributePath.new(
+    endpoint: provider.endpoint_id.number, cluster: Provider::CLUSTER_ID,
+    attribute: Provider::ATTR_CURRENT_SESSIONS)
+  request = Matter::InteractionModel::ReadRequestMessage.new(
+    attribute_requests: [path], fabric_filtered: fabric_filtered)
+  parsed = Matter::Protocol::IMHandler.parse_read_request(request.to_slice)
+    .as(Matter::InteractionModel::ReadRequestMessage)
+  clusters = {
+    {Matter::Node::ROOT_ENDPOINT_ID, ProviderAcl::CLUSTER_ID} => acl.as(Matter::Cluster::Base),
+    {provider.endpoint_id.number, Provider::CLUSTER_ID}       => provider.as(Matter::Cluster::Base),
+  }
+  Matter::Protocol::IMHandler.read_attributes(parsed.attribute_requests, clusters,
+    fabric_index: fabric_index, is_case_session: case_session, peer_subject_ids: [node],
+    fabric_filtered: parsed.fabric_filtered != false)
+end
+
 describe Provider do
+  it "honors FabricFiltered for authenticated two-fabric CurrentSessions reads" do
+    provider, _camera, peer, audio_id = web_rtc_fixture
+    acl = ProviderAcl.new(endpoint(0))
+    {1_u8 => 101_u64, 2_u8 => 202_u64}.each do |fabric_index, node|
+      acl.acl << ProviderAcl::AccessControlEntry.new(
+        ProviderAcl::AccessControlEntryPrivilege::Manage,
+        ProviderAcl::AccessControlEntryAuthMode::CASE, [node], nil, fabric_index)
+      offer = Provider::ProvideOfferRequest.new(nil, "v=0", CameraAv::StreamUsage::LiveView,
+        22_u16, audio_streams: [audio_id])
+      invoke_provider(provider, Provider::CMD_PROVIDE_OFFER, offer,
+        fabric: fabric_index, node: node).as(Matter::Cluster::CommandResponse)
+    end
+
+    {1_u8 => 101_u64, 2_u8 => 202_u64}.each do |fabric_index, node|
+      filtered = read_provider_sessions(provider, acl, fabric_index, node, true)
+      filtered.size.should eq(1)
+      filtered_sessions = TLV::Serializable.deserialize_value(
+        filtered.first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data,
+        Array(Provider::Session))
+      filtered_sessions.map(&.fabric_index).should eq([fabric_index])
+      filtered_sessions.map(&.peer_node_id).should eq([node])
+
+      unfiltered = read_provider_sessions(provider, acl, fabric_index, node, false)
+      unfiltered.size.should eq(1)
+      unfiltered_data = unfiltered.first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data
+      unfiltered_data.as_list.each do |entry|
+        entry.as_structure.keys.should contain(254_u8)
+      end
+      all_sessions = TLV::Serializable.deserialize_value(unfiltered_data, Array(Provider::Session))
+      all_sessions.map(&.fabric_index).should eq([1_u8, 2_u8])
+      all_sessions.map(&.peer_node_id).should eq([101_u64, 202_u64])
+    end
+
+    read_provider_sessions(provider, acl, nil, 101_u64, false).first.attribute_status
+      .try(&.status.status).should eq(StatusCode::UnsupportedAccess.value)
+    read_provider_sessions(provider, acl, nil, 101_u64, false, case_session: false).first.attribute_status
+      .try(&.status.status).should eq(StatusCode::UnsupportedAccess.value)
+
+    first_id = TLV::Serializable.deserialize_value(
+      read_provider_sessions(provider, acl, 1_u8, 101_u64, true).first.attribute_data
+        .as(Matter::InteractionModel::AttributeDataIB).data,
+      Array(Provider::Session)).first.id
+    invoke_provider(provider, Provider::CMD_END_SESSION,
+      Provider::EndSessionRequest.new(first_id, Provider::EndReason::UserHangup),
+      fabric: 2_u8, node: 202_u64).as(Status).status.should eq(StatusCode::NotFound)
+    peer.endings.should be_empty
+    remaining = TLV::Serializable.deserialize_value(
+      read_provider_sessions(provider, acl, 1_u8, 101_u64, true).first.attribute_data
+        .as(Matter::InteractionModel::AttributeDataIB).data,
+      Array(Provider::Session))
+    remaining.map(&.fabric_index).should eq([1_u8])
+  end
+
   it "assigns an allocated audio stream for a legacy null SolicitOffer ID" do
     provider, _camera, peer, audio_id = web_rtc_fixture
     request = Provider::SolicitOfferRequest.new(CameraAv::StreamUsage::LiveView,

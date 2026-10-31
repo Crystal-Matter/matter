@@ -15,6 +15,25 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checked against its current fabric identity before exposure; stale policy
   cleanup must persist or the read fails closed.
 
+### OTA Requestor fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of `DefaultOTAProviders` now include
+  provider locations from every fabric, with each entry's `fabricIndex` on the
+  wire. Filtered reads and direct fabric-scoped access remain isolated.
+
+### WebRTC Transport Provider fabric filtering
+
+- Authenticated `CurrentSessions` reads honor `FabricFiltered=false` by
+  returning sessions from every fabric with their fabric indices. Filtered
+  reads remain scoped to the requesting fabric; signaling commands still
+  require the matching fabric and peer.
+
+### Push AV Stream Transport fabric filtering
+
+- Authenticated `CurrentConnections` reads honor `FabricFiltered=false` and
+  include connections from every fabric. Filtered reads remain scoped to the
+  requesting fabric, and both forms omit transport options from attribute data.
+
 ### TLS Client Management fabric filtering
 
 - `ProvisionedEndpoints` now includes the required `fabricIndex` field in each
