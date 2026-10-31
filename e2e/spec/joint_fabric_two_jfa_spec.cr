@@ -1335,16 +1335,31 @@ describe "three provisioned Joint Fabric Administrators" do
           nonce: Random::Secure.hex(8), anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
           peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
       sdk_no_effect.status.should eq("ok"), sdk_no_effect.error.to_s
+      sdk_remove_reply_loss_path = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.remove_fabric_reply_loss")
+      File.delete?("#{sdk_remove_reply_loss_path}.sent")
+      File.delete?("#{sdk_remove_reply_loss_path}.dropped")
+      File.write(sdk_remove_reply_loss_path, "")
       sdk_interrupted_after_removal = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
           root_public_key: anchor_bootstrap.fabric.root_public_key,
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
-          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
-          interrupt_after_migration_old_fabric_removed: true))
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      File.delete?(sdk_remove_reply_loss_path)
       sdk_interrupted_after_removal.status.should eq("error")
-      sdk_interrupted_after_removal.error.to_s.should contain("Injected interruption after device RemoveFabric")
+      sdk_interrupted_after_removal.error.to_s.should contain("timeout waiting for InvokeResponse")
+      File.read("#{sdk_remove_reply_loss_path}.sent").should eq("1")
+      File.read("#{sdk_remove_reply_loss_path}.dropped").should contain("successful SDK RemoveFabric response")
       joiner.restart!
+      sdk_restart_count = File.read(sdk_log_path).scan(/=== sdk restart ===/).size
+      File.write(sdk_restart_marker, "")
+      sdk_restart_deadline = Time.instant + E2E::RESTART_TIMEOUT
+      until File.read(sdk_log_path).scan(/=== sdk restart ===/).size > sdk_restart_count
+        raise Matter::TimeoutError.new("SDK device did not restart after RemoveFabric") if Time.instant >= sdk_restart_deadline
+        sleep E2E::LOG_POLL
+      end
+      sleep E2E::RESTART_SETTLE
       joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
         joiner_peer, joiner_bootstrap.fabric,
         peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -1371,6 +1386,7 @@ describe "three provisioned Joint Fabric Administrators" do
           peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
       sdk_post_removal_replay.status.should eq("error")
       sdk_post_removal_replay.error.to_s.should contain("needs authenticated reconciliation")
+      File.read("#{sdk_remove_reply_loss_path}.sent").should eq("1")
       sdk_post_removal_client = Matter::Controller::Client.new(
         counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
         shared_message_counter: anchor_client.transport.message_counter)
@@ -1395,6 +1411,21 @@ describe "three provisioned Joint Fabric Administrators" do
       ensure
         sdk_post_removal_client.close
       end
+      sdk_removed_no_effect = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration-no-effect", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          nonce: Random::Secure.hex(8), anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_removed_no_effect.status.should eq("error")
+      File.read("#{sdk_remove_reply_loss_path}.sent").should eq("1")
+      sdk_still_removing = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_still_removing.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldFabric.value)
       sdk_reconciled_removal = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
@@ -1402,6 +1433,7 @@ describe "three provisioned Joint Fabric Administrators" do
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
           peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
       sdk_reconciled_removal.status.should eq("ok"), sdk_reconciled_removal.error.to_s
+      File.read("#{sdk_remove_reply_loss_path}.sent").should eq("1")
       sdk_reconciled_stage = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
@@ -1416,6 +1448,7 @@ describe "three provisioned Joint Fabric Administrators" do
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
           peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
       sdk_migration.status.should eq("ok"), sdk_migration.error.to_s
+      File.read("#{sdk_remove_reply_loss_path}.sent").should eq("1")
       fresh_sdk_client = Matter::Controller::Client.new(
         counter_lease: anchor_store.counter_lease(anchor_bootstrap.fabric.controller_node_id),
         shared_message_counter: anchor_client.transport.message_counter)
