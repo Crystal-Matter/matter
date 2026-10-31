@@ -339,7 +339,7 @@ module Matter
       def current_sessions(fabric_index : UInt8?) : Array(Session) | InteractionModel::Status
         return InteractionModel::Status.unsupported_access unless fabric_index
         expire_offers
-        @sessions.select { |session| session.fabric_index == fabric_index }
+        @sessions.select { |session| !request_fabric_filtered? || session.fabric_index == fabric_index }
       end
 
       def solicit_offer(request : SolicitOfferRequest) : InteractionModel::Status | SolicitOfferResponse
