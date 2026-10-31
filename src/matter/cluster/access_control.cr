@@ -479,7 +479,7 @@ module Matter
         if attribute_id == ATTR_ARL && @feature_map.managed_device? && !request_fabric_filtered? && fabric_index
           # The policy keys are candidates only. arl(index) checks each current
           # fabric identity and fails closed if stale policy cleanup cannot save.
-          entries = @access_restrictions.keys.sort.flat_map { |index| arl(index) }
+          entries = @access_restrictions.keys.sort!.flat_map { |index| arl(index) }
           return tlv(entries)
         end
         super
