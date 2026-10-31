@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### OTA Requestor fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of `DefaultOTAProviders` now include
+  provider locations from every fabric, with each entry's `fabricIndex` on the
+  wire. Filtered reads and direct fabric-scoped access remain isolated.
+
 ### WebRTC Transport Provider fabric filtering
 
 - Authenticated `CurrentSessions` reads honor `FabricFiltered=false` by
