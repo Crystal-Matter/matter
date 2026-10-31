@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Operational Credentials fabricless filtered reads
+
+- Filtered `NOCs` and `Fabrics` reads without an accessing fabric now return
+  empty lists, matching the Matter 1.6 fabric-scoped list rule. Authenticated
+  CASE reads still select their own fabric, and unfiltered reads include all
+  installed fabrics.
+
 ### Push AV Stream Transport fabric filtering
 
 - Authenticated `CurrentConnections` reads honor `FabricFiltered=false` and
