@@ -13,8 +13,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   NodeLabel limit, including the default inherited from ProductName. Invalid
   host updates leave the attribute value, data version, and change callbacks
   untouched; interaction-model write constraints remain in place. The Joint
-  Fabric Administrator example now uses a conforming product name so its
-  default NodeLabel also fits.
+  Fabric Administrator example and three thermostat E2E fixtures now use
+  conforming product names so their default NodeLabels also fit.
 
 ### Independent SDK migration reply-loss coverage
 

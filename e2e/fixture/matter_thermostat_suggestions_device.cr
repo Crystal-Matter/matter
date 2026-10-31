@@ -26,7 +26,7 @@ module MatterThermostatSuggestionsFixture
   class Device < Matter::Device
     include Examples::Console
 
-    identity vendor: "Spider-Gazelle", product: "Crystal Suggestions Test Thermostat",
+    identity vendor: "Spider-Gazelle", product: "Crystal Suggestions Thermostat",
       vendor_id: Matter::SetupPayload.test_vendor_id,
       product_id: rand(0x0001_u16..0xFFFF_u16),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
