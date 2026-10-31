@@ -35,8 +35,10 @@ module MatterJointFabricAdministrator
          message_type == Matter::InteractionModel::MessageType::InvokeRequest.value
         paths = Matter::InteractionModel::InvokeRequestMessage.from_slice(payload.to_slice)
           .invoke_requests.map(&.command_path)
-        if paths.any? { |path| path.cluster == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
-           path.command == Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE }
+        if paths.any? do |path|
+             path.cluster == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
+             path.command == Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE
+           end
           if File.exists?(@drop_path)
             @lost_exchange = exchange_id
             @lost_session_id = session.session_id
@@ -46,8 +48,10 @@ module MatterJointFabricAdministrator
           File.write(count_path, (sent + 1).to_s)
         end
         if remove_path = @remove_drop_path
-          if paths.any? { |path| path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
-             path.command == Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC }
+          if paths.any? do |path|
+               path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
+               path.command == Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC
+             end
             if File.exists?(remove_path)
               @lost_remove_exchange = exchange_id
               @lost_remove_session_id = session.session_id
