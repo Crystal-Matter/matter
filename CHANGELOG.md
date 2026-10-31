@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Access Control ARL fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of the Managed Device ARL include
+  current policies from every fabric, with each entry's `fabricIndex`. Filtered
+  reads and explicit host reads remain fabric scoped. Each candidate policy is
+  checked against its current fabric identity before exposure; stale policy
+  cleanup must persist or the read fails closed.
+
 ### OTA Requestor fabric filtering
 
 - Authenticated `FabricFiltered=false` reads of `DefaultOTAProviders` now include
