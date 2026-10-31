@@ -94,6 +94,40 @@ describe Matter::Cluster::BasicInformation do
       expect_raises(Matter::ConfigurationError) { build(Matter::Cluster::BasicInformation, 0, configuration_version: 0_u32) }
     end
 
+    it "rejects an oversized explicit or default NodeLabel at construction" do
+      valid_label = "é" * 16
+      oversized_label = valid_label + "a"
+      valid_label.bytesize.should eq(Matter::Cluster::BasicInformation::NODE_LABEL_MAX_LENGTH)
+      oversized_label.bytesize.should eq(Matter::Cluster::BasicInformation::NODE_LABEL_MAX_LENGTH + 1)
+
+      build(Matter::Cluster::BasicInformation, 0, node_label: valid_label).node_label.should eq(valid_label)
+      expect_raises(Matter::ConfigurationError) do
+        build(Matter::Cluster::BasicInformation, 0, node_label: oversized_label)
+      end
+      expect_raises(Matter::ConfigurationError) do
+        build(Matter::Cluster::BasicInformation, 0, product_name: oversized_label)
+      end
+    end
+
+    it "rejects an oversized host NodeLabel before updating version or notifying" do
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+      valid_label = "é" * 16
+      oversized_label = valid_label + "a"
+      changes = 0
+      cluster.on_node_label_changed { |_old_value, _new_value| changes += 1 }
+
+      cluster.node_label = valid_label
+      cluster.node_label.should eq(valid_label)
+      changes.should eq(1)
+      accepted_version = cluster.data_version
+
+      expect_raises(Matter::ConfigurationError) { cluster.node_label = oversized_label }
+      cluster.node_label.should eq(valid_label)
+      cluster.data_version.should eq(accepted_version)
+      changes.should eq(1)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_NODE_LABEL).should eq(valid_label)
+    end
+
     it "increments ConfigurationVersion after one logical configuration change" do
       cluster = build(Matter::Cluster::BasicInformation, 0)
       observed = 0_u32

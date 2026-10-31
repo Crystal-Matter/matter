@@ -7,6 +7,15 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Basic Information NodeLabel validation
+
+- Host updates and device construction now enforce Matter 1.6's 32-byte
+  NodeLabel limit, including the default inherited from ProductName. Invalid
+  host updates leave the attribute value, data version, and change callbacks
+  untouched; interaction-model write constraints remain in place. The Joint
+  Fabric Administrator example now uses a conforming product name so its
+  default NodeLabel also fits.
+
 ### Independent SDK migration reply-loss coverage
 
 - The pinned Matter 1.6 SDK migration E2E now drops the SDK device's successful

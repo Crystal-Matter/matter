@@ -578,7 +578,7 @@ module MatterJointFabricAdministrator
       end
     end
 
-    identity vendor: "Crystal Matter", product: "Crystal Joint Fabric Administrator",
+    identity vendor: "Crystal Matter", product: "Crystal Joint Fabric Admin",
       vendor_id: Matter::SetupPayload.test_vendor_id,
       product_id: EXAMPLE_PRODUCT_ID,
       discriminator: Matter::SetupPayload.generate_random_discriminator,
