@@ -174,7 +174,8 @@ module Matter
       attribute 0x0002, :vendor_id, UInt16, default: 0_u16, fixed: true
       attribute 0x0003, :product_name, String, default: "", fixed: true
       attribute 0x0004, :product_id, UInt16, default: 0_u16, fixed: true
-      attribute 0x0005, :node_label, String, default: "", writable: true, write_access: :manage, max_length: NODE_LABEL_MAX_LENGTH
+      attribute 0x0005, :node_label, String, default: "", writable: true, write_access: :manage,
+        max_length: NODE_LABEL_MAX_LENGTH, validate: :validate_node_label!
       attribute 0x0006, :location, String, default: LOCATION_UNKNOWN, writable: true, write_access: :administer
       attribute 0x0007, :hardware_version, UInt16, default: 0_u16, fixed: true
       attribute 0x0008, :hardware_version_string, String, default: "1.0", fixed: true
@@ -237,7 +238,9 @@ module Matter
 
         # Default node_label to product_name if not explicitly set
         # This ensures iOS/controllers show a meaningful device name
-        @node_label = node_label || @product_name
+        configured_node_label = node_label || @product_name
+        validate_node_label!(configured_node_label)
+        @node_label = configured_node_label
 
         # Default product_label to product_name if not explicitly set
         @product_label = product_label || @product_name
@@ -277,6 +280,12 @@ module Matter
 
       private def valid_location?(code : String) : Bool
         code.size == LOCATION_LENGTH && (code == LOCATION_UNKNOWN || code.chars.all?(&.ascii_letter?))
+      end
+
+      private def validate_node_label!(label : String) : Nil
+        return if label.bytesize <= NODE_LABEL_MAX_LENGTH
+
+        raise Matter::ConfigurationError.new("NodeLabel must be at most #{NODE_LABEL_MAX_LENGTH} bytes")
       end
 
       # Journals the StartUp event (call when the node boots) and returns its
