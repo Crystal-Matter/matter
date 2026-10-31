@@ -98,7 +98,8 @@ module Matter
         return InteractionModel::Status.unsupported_access unless valid_fabric?(fabric_index)
         # Attribute reads can run on transports without Large Message support.
         # FindTransport is the complete representation of TransportOptions.
-        @connections.select(&.fabric_index.==(fabric_index)).map do |entry|
+        entries = request_fabric_filtered? ? @connections.select(&.fabric_index.==(fabric_index)) : @connections
+        entries.map do |entry|
           Tlv::TransportConfiguration.new(entry.connection_id, entry.transport_status, nil, entry.fabric_index)
         end
       end
