@@ -180,9 +180,15 @@ module Matter
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
 
-      def default_ota_providers(fabric_index : UInt8? = request_fabric_index) : Array(ProviderLocation)
+      def default_ota_providers : Array(ProviderLocation)
+        fabric_index = request_fabric_index
         return [] of ProviderLocation unless fabric_index
         return @default_ota_providers.dup unless request_fabric_filtered?
+        default_ota_providers(fabric_index)
+      end
+
+      def default_ota_providers(fabric_index : UInt8?) : Array(ProviderLocation)
+        return [] of ProviderLocation unless fabric_index
         @default_ota_providers.select { |entry| entry.fabric_index == fabric_index }
       end
 
