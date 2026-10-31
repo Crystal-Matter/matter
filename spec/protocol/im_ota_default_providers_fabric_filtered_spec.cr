@@ -57,7 +57,7 @@ describe "OTA Requestor DefaultOTAProviders fabric filtering" do
     unfiltered.each do |entry|
       entry.to_tlv(nil).as_structure.has_key?(254_u8).should be_true
     end
-    cluster.default_ota_providers(1_u8).map(&.provider_node_id).should eq([0x1001_u64])
+    cluster.providers_for_fabric(1_u8).map(&.provider_node_id).should eq([0x1001_u64])
 
     restored = OtaFabric.new
     restored.restore_state(cluster.save_state.as(Matter::Storage::Document))

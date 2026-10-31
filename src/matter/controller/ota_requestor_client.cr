@@ -48,7 +48,7 @@ module Matter
         unless session.case_session? && fabric_index && provider_node_id
           raise Matter::SessionError.new("OTA default provider query requires a CASE fabric")
         end
-        provider = @requestor.default_ota_providers(fabric_index).first?
+        provider = @requestor.providers_for_fabric(fabric_index).first?
         return unless provider
         unless provider.provider_node_id == provider_node_id
           raise Matter::SessionError.new("CASE peer does not match the default OTA provider")
