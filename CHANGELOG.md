@@ -14,6 +14,18 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read returns the requesting fabric's endpoints; an unfiltered read includes
   endpoints from all fabrics. `FindEndpoint` remains fabric owned.
 
+### Groupcast Membership fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of Groupcast Membership now include
+  memberships from all fabrics. Filtered reads and the fabric-scoped host API
+  still return only the selected fabric, including after state restoration.
+
+### Scenes Management fabric filtering
+
+- Authenticated `FabricSceneInfo` reads honor `FabricFiltered=false` by
+  including scene information for every stored fabric. Filtered reads still
+  return only the requesting fabric's information, including its empty default.
+
 ### Joint Fabric SDK device fail-safe recovery coverage
 
 - The pinned Matter 1.6 SDK ordinary-device migration E2E now interrupts after

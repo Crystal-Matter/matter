@@ -578,19 +578,24 @@ module Matter
         @scene_info_by_fabric = Hash(UInt8, SceneInfo).new
       end
 
-      # FabricSceneInfo attribute (0x02): the accessing fabric's scene info
+      # FabricSceneInfo reports the accessing fabric, plus other stored
+      # fabrics when the authenticated read is not fabric-filtered.
       def fabric_scene_info(fabric_index : UInt8?) : Array(SceneInfoTlv) | InteractionModel::Status
         return InteractionModel::Status.unsupported_access unless fabric_index
-        scene_info = @scene_info_by_fabric[fabric_index]? || SceneInfo.new(fabric_index: fabric_index)
-
-        [SceneInfoTlv.new(
-          scene_count: scene_info.scene_count,
-          current_scene: scene_info.current_scene,
-          current_group: scene_info.current_group,
-          scene_valid: scene_info.scene_valid?,
-          remaining_capacity: scene_info.remaining_capacity,
-          fabric_index: fabric_index
-        )]
+        indices = request_fabric_filtered? ? [fabric_index] : (@scene_info_by_fabric.keys + [fabric_index]).uniq.sort!
+        result = [] of SceneInfoTlv
+        indices.each do |index|
+          scene_info = @scene_info_by_fabric[index]? || SceneInfo.new(fabric_index: index)
+          result << SceneInfoTlv.new(
+            scene_count: scene_info.scene_count,
+            current_scene: scene_info.current_scene,
+            current_group: scene_info.current_group,
+            scene_valid: scene_info.scene_valid?,
+            remaining_capacity: scene_info.remaining_capacity,
+            fabric_index: index
+          )
+        end
+        result
       end
 
       # ------------------------------------------------------------------------
