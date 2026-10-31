@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Groupcast Membership fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of Groupcast Membership now include
+  memberships from all fabrics. Filtered reads and the fabric-scoped host API
+  still return only the selected fabric, including after state restoration.
+
 ### Group Key Management fabric filtering
 
 - Honor `FabricFiltered=false` on GroupKeyMap and GroupTable reads by returning
