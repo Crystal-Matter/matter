@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### OTA Requestor progress validation
+
+- Reject host-supplied `UpdateStateProgress` values above the Matter 1.6
+  maximum of 100 before changing the attribute or DataVersion. Nil remains
+  valid for unknown progress.
+
 ### WebRTC Transport Provider fabric filtering
 
 - Authenticated `CurrentSessions` reads honor `FabricFiltered=false` by

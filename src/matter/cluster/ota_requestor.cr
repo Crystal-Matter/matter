@@ -9,7 +9,8 @@ module Matter
     # application can add an update engine separately from this registry.
     # Matter Specification: Core 1.6 § 11.20.7.
     class OtaRequestor < Base
-      Log = ::Log.for("matter.cluster.ota_requestor")
+      Log                 = ::Log.for("matter.cluster.ota_requestor")
+      MAX_UPDATE_PROGRESS = 100_u8
 
       # The class name is shortened from the spec cluster name.
       cluster 0x002A, revision: 1, name: "OtaSoftwareUpdateRequestor", persist_state: false
@@ -150,7 +151,8 @@ module Matter
         writable: true, write_access: :administer, fabric_scoped: true
       attribute 0x0001, :update_possible, Bool, default: false
       attribute 0x0002, :update_state, UpdateState, default: UpdateState::Idle
-      attribute 0x0003, :update_state_progress, UInt8, nullable: true
+      attribute 0x0003, :update_state_progress, UInt8, nullable: true,
+        validate: :validate_update_state_progress!
 
       event 0x00, :state_transition, priority: :info, payload: StateTransitionEvent
       event 0x01, :version_applied, priority: :critical, payload: VersionAppliedEvent
@@ -178,6 +180,7 @@ module Matter
         @update_state_progress : UInt8? = nil,
       )
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
+        validate_update_state_progress!(@update_state_progress)
       end
 
       def default_ota_providers(fabric_index : UInt8? = request_fabric_index) : Array(ProviderLocation)
@@ -230,7 +233,7 @@ module Matter
       def emit_download_error(software_version : UInt32, bytes_downloaded : UInt64,
                               progress_percent : UInt8? = nil,
                               platform_code : Int64? = nil) : Nil
-        if progress_percent && progress_percent > 100_u8
+        if progress_percent && progress_percent > MAX_UPDATE_PROGRESS
           raise Matter::ConfigurationError.new("OTA download progress must be 0..100")
         end
         emit_event(EVENT_DOWNLOAD_ERROR,
@@ -246,6 +249,12 @@ module Matter
         state = PersistedState.from_document(document)
         @data_version = state.data_version
         @default_ota_providers = state.default_ota_providers
+      end
+
+      private def validate_update_state_progress!(progress : UInt8?) : Nil
+        if progress && progress > MAX_UPDATE_PROGRESS
+          raise Matter::ConfigurationError.new("OTA update state progress must be 0..100")
+        end
       end
     end
   end
