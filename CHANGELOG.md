@@ -13,6 +13,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   memberships from all fabrics. Filtered reads and the fabric-scoped host API
   still return only the selected fabric, including after state restoration.
 
+### Scenes Management fabric filtering
+
+- Authenticated `FabricSceneInfo` reads honor `FabricFiltered=false` by
+  including scene information for every stored fabric. Filtered reads still
+  return only the requesting fabric's information, including its empty default.
+
+### Joint Fabric SDK device fail-safe recovery coverage
+
+- The pinned Matter 1.6 SDK ordinary-device migration E2E now interrupts after
+  AddNOC and before CommissioningComplete. It verifies provisional A CASE,
+  fail-safe rollback to B, blocked replay after B restart, authenticated
+  no-effect reconciliation, and a successful fresh migration attempt.
+
 ### Group Key Management fabric filtering
 
 - Honor `FabricFiltered=false` on GroupKeyMap and GroupTable reads by returning
