@@ -306,8 +306,8 @@ module Matter
 
       private def visible_fabrics : Array(Fabric)
         all = fabric_table.all_fabrics
-        if request_fabric_filtered? && (index = request_fabric_index)
-          all.select { |fabric| fabric.fabric_index == index }
+        if request_fabric_filtered?
+          all.select { |fabric| fabric.fabric_index == request_fabric_index }
         else
           all
         end

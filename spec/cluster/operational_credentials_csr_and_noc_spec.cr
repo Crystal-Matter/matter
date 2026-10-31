@@ -345,11 +345,12 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Verify fabric was added
         cluster.commissioned_fabrics.should eq(1_u8)
-        cluster.fabrics.size.should eq(1)
+        cluster.fabric_table.all_fabrics.size.should eq(1)
+        cluster.request_fabric_filtered = false
         cluster.nocs.size.should eq(1)
 
         # Verify fabric details
-        fabric = cluster.fabrics[0]
+        fabric = cluster.fabric_table.all_fabrics[0]
         fabric.fabric_id.should eq(0x0011223344556677_u64)
         fabric.node_id.should eq(0x1234567890ABCDEF_u64)
         fabric.vendor_id.should eq(0xFFF1_u16)
@@ -458,7 +459,7 @@ describe Matter::Cluster::OperationalCredentials do
             add_noc_tlv
           )
 
-          initial_fabric_index = cluster.fabrics[0].fabric_index
+          initial_fabric_index = cluster.fabric_table.all_fabrics[0].fabric_index
 
           # Reset failsafe context to simulate new failsafe period
           cluster.on_failsafe_success
@@ -507,7 +508,7 @@ describe Matter::Cluster::OperationalCredentials do
           cluster.commissioned_fabrics.should eq(1_u8)
 
           # Verify node_id changed
-          fabric = cluster.fabrics[0]
+          fabric = cluster.fabric_table.all_fabrics[0]
           fabric.node_id.should eq(0xFEDCBA0987654321_u64)
           fabric.fabric_id.should eq(0x0011223344556677_u64) # Same fabric_id
         end
@@ -549,7 +550,7 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_noc_request_tlv(noc1, nil, ipk1, 0xABCD_u64, 0xFFF1_u16)
         )
 
-        fabric_index = cluster.fabrics[0].fabric_index
+        fabric_index = cluster.fabric_table.all_fabrics[0].fabric_index
 
         # Reset failsafe for update attempt
         cluster.on_failsafe_expired
@@ -654,11 +655,11 @@ describe Matter::Cluster::OperationalCredentials do
         # Verify fabric was added to fabric_table
         fabric_table.size.should eq(1)
 
-        # Verify cluster.fabrics returns the fabric
-        cluster.fabrics.size.should eq(1)
+        # Verify the installed fabric is reflected by the cluster attribute.
+        cluster.fabric_table.all_fabrics.size.should eq(1)
+        cluster.request_fabric_index = cluster.fabric_table.all_fabrics[0].fabric_index
 
-        # NOW TEST THE ACTUAL ISSUE: Read the Fabrics attribute
-        # This is what the iPhone does after commissioning
+        # Read the Fabrics attribute through the new fabric's CASE context.
         read_tlv(cluster, Matter::Cluster::OperationalCredentials::ATTR_FABRICS).as_list.size.should eq(1)
       end
     end
