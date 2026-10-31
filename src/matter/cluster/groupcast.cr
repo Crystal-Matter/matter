@@ -269,7 +269,17 @@ module Matter
 
       def membership(fabric_index : UInt8?) : Array(MembershipStruct)
         return [] of MembershipStruct unless fabric_index
-        entries = @membership.select { |entry| entry.fabric_index == fabric_index }
+        membership_snapshot(@membership.select { |entry| entry.fabric_index == fabric_index })
+      end
+
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        if attribute_id == ATTR_MEMBERSHIP && !request_fabric_filtered? && request_is_case_session? && fabric_index
+          return tlv(membership_snapshot(@membership))
+        end
+        super
+      end
+
+      private def membership_snapshot(entries : Array(MembershipStruct)) : Array(MembershipStruct)
         entries.map do |entry|
           MembershipStruct.new(entry.group_id, entry.endpoints_field.try(&.dup), entry.key_set_id,
             entry.has_auxiliary_acl_field, entry.mcast_addr_policy, entry.fabric_index)
