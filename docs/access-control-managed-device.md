@@ -109,8 +109,11 @@ The Matter 1.6 wire schema is now present behind the MNGD feature gate. The
 default `AccessControl` feature map omits MNGD, so its attributes,
 command, and event are absent from default metadata and global lists. With
 callbacks and durable storage configured, `CommissioningARL` is a View-readable fixed
-list configured once during setup, `ARL` is View-readable and fabric scoped,
-and `ReviewFabricRestrictions` requires Administer privilege and a CASE fabric.
+list configured once during setup, and `ARL` is View-readable and fabric scoped.
+Authenticated `FabricFiltered=false` reads return current policies from all
+fabrics. An unfiltered read verifies every candidate policy against its current
+fabric identity before returning it. `ReviewFabricRestrictions` requires
+Administer privilege and a CASE fabric.
 The response carries a review token; completion emits a fabric-sensitive
 `FabricRestrictionReviewUpdate` event. Malformed wire requests fail before
 the host callback runs. The command is accepted only on the root endpoint.
