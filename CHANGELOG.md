@@ -14,6 +14,22 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CASE reads still select their own fabric, and unfiltered reads include all
   installed fabrics.
 
+### Independent SDK migration reply-loss coverage
+
+- The pinned Matter 1.6 SDK migration E2E now drops the SDK device's successful
+  CommissioningComplete reply before B acknowledges or delivers it. After B
+  and the SDK process restart, it verifies both CASE paths and Datastore
+  NodeLists, waits the cumulative fail-safe bound, and proves B does not send
+  CommissioningComplete again before authenticated reconciliation.
+
+### Access Control ARL fabric filtering
+
+- Authenticated `FabricFiltered=false` reads of the Managed Device ARL include
+  current policies from every fabric, with each entry's `fabricIndex`. Filtered
+  reads and explicit host reads remain fabric scoped. Each candidate policy is
+  checked against its current fabric identity before exposure; stale policy
+  cleanup must persist or the read fails closed.
+
 ### OTA Requestor fabric filtering
 
 - Authenticated `FabricFiltered=false` reads of `DefaultOTAProviders` now include
