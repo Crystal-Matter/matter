@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Push AV Stream Transport fabric filtering
+
+- Authenticated `CurrentConnections` reads honor `FabricFiltered=false` and
+  include connections from every fabric. Filtered reads remain scoped to the
+  requesting fabric, and both forms omit transport options from attribute data.
+
 ### TLS Client Management fabric filtering
 
 - `ProvisionedEndpoints` now includes the required `fabricIndex` field in each
