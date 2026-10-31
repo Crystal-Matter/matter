@@ -148,7 +148,7 @@ describe Provider do
 
     read_provider_sessions(provider, acl, nil, 101_u64, false).first.attribute_status
       .try(&.status.status).should eq(StatusCode::UnsupportedAccess.value)
-    read_provider_sessions(provider, acl, 1_u8, 101_u64, false, case_session: false).first.attribute_status
+    read_provider_sessions(provider, acl, nil, 101_u64, false, case_session: false).first.attribute_status
       .try(&.status.status).should eq(StatusCode::UnsupportedAccess.value)
 
     first_id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
