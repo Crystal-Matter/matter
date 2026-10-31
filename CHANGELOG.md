@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### WebRTC Transport Provider fabric filtering
+
+- Authenticated `CurrentSessions` reads honor `FabricFiltered=false` by
+  returning sessions from every fabric with their fabric indices. Filtered
+  reads remain scoped to the requesting fabric; signaling commands still
+  require the matching fabric and peer.
+
 ### Push AV Stream Transport fabric filtering
 
 - Authenticated `CurrentConnections` reads honor `FabricFiltered=false` and
