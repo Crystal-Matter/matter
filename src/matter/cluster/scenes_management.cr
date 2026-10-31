@@ -582,10 +582,11 @@ module Matter
       # fabrics when the authenticated read is not fabric-filtered.
       def fabric_scene_info(fabric_index : UInt8?) : Array(SceneInfoTlv) | InteractionModel::Status
         return InteractionModel::Status.unsupported_access unless fabric_index
-        indices = request_fabric_filtered? ? [fabric_index] : (@scene_info_by_fabric.keys + [fabric_index]).uniq.sort
-        indices.map do |index|
+        indices = request_fabric_filtered? ? [fabric_index] : (@scene_info_by_fabric.keys + [fabric_index]).uniq.sort!
+        result = [] of SceneInfoTlv
+        indices.each do |index|
           scene_info = @scene_info_by_fabric[index]? || SceneInfo.new(fabric_index: index)
-          SceneInfoTlv.new(
+          result << SceneInfoTlv.new(
             scene_count: scene_info.scene_count,
             current_scene: scene_info.current_scene,
             current_group: scene_info.current_group,
@@ -594,6 +595,7 @@ module Matter
             fabric_index: index
           )
         end
+        result
       end
 
       # ------------------------------------------------------------------------
