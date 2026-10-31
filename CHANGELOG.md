@@ -14,6 +14,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the SDK process restart, it verifies both CASE paths and Datastore
   NodeLists, waits the cumulative fail-safe bound, and proves B does not send
   CommissioningComplete again before authenticated reconciliation.
+- The same E2E now withholds the SDK device's successful RemoveFabric reply,
+  restarts B and the device, and verifies that authenticated reconciliation
+  completes the handoff without sending RemoveFabric twice.
 
 ### Access Control ARL fabric filtering
 
