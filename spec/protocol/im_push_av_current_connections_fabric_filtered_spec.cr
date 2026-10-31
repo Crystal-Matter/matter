@@ -68,7 +68,7 @@ describe "Push AV CurrentConnections fabric filtering" do
         unfiltered = read_push_av_connections(push, acl, fabric_index, false)
         unfiltered.map(&.fabric_index).should eq([1_u8, 2_u8])
         unfiltered.map(&.connection_id).should eq([0_u16, 1_u16])
-        unfiltered.each { |entry| entry.transport_options.should be_nil }
+        unfiltered.map(&.transport_options).should eq([nil, nil])
       end
     end
 
