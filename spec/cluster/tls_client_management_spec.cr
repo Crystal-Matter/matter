@@ -88,7 +88,7 @@ describe TlsClient do
     second.endpoint_id.should eq(first.endpoint_id)
     client.provisioned_endpoints(2_u8).as(Array(TlsClient::Tlv::Endpoint)).size.should eq(1)
     client.request_fabric_filtered = false
-    client.provisioned_endpoints(2_u8).as(Array(TlsClient::Tlv::Endpoint)).size.should eq(1)
+    client.provisioned_endpoints(2_u8).as(Array(TlsClient::Tlv::Endpoint)).map(&.fabric_index).should eq([1_u8, 2_u8])
     client.remove_fabric(1_u8)
     client.find_endpoint(TlsClient::Tlv::FindEndpointRequest.new(second.endpoint_id)).as(TlsClient::Tlv::FindEndpointResponse)
       .endpoint.reference_count.should eq(0_u8)
