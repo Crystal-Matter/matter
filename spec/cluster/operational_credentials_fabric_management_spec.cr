@@ -41,7 +41,7 @@ describe Matter::Cluster::OperationalCredentials do
       cluster = Matter::Cluster::OperationalCredentials.new(fabric_table)
 
       cluster.commissioned_fabrics.should eq(1)
-      cluster.fabrics.size.should eq(1)
+      cluster.fabric_table.all_fabrics.size.should eq(1)
     end
 
     it "returns empty NOCs for non-existent fabric" do
@@ -364,10 +364,10 @@ describe Matter::Cluster::OperationalCredentials do
 
         # Verify both fabrics exist
         cluster.commissioned_fabrics.should eq(2_u8)
-        cluster.fabrics.size.should eq(2)
+        cluster.fabric_table.all_fabrics.size.should eq(2)
 
-        fabric1 = cluster.fabrics.find { |fabric| fabric.fabric_id == 0xAAAAAAAAAAAAAAAA_u64 }
-        fabric2 = cluster.fabrics.find { |fabric| fabric.fabric_id == 0xBBBBBBBBBBBBBBBB_u64 }
+        fabric1 = cluster.fabric_table.all_fabrics.find { |fabric| fabric.fabric_id == 0xAAAAAAAAAAAAAAAA_u64 }
+        fabric2 = cluster.fabric_table.all_fabrics.find { |fabric| fabric.fabric_id == 0xBBBBBBBBBBBBBBBB_u64 }
 
         fabric1.should_not be_nil
         fabric2.should_not be_nil
@@ -437,7 +437,7 @@ describe Matter::Cluster::OperationalCredentials do
         response = parsed.value.as(TLV::Structure)
         status = response[0_u8].value.as(Int)
         status.should eq(0_u8) # Success
-        cluster.fabrics.size.should eq(2)
+        cluster.fabric_table.all_fabrics.size.should eq(2)
       end
 
       it "prevents duplicate fabric identity (same root + fabric_id)" do
@@ -533,7 +533,7 @@ describe Matter::Cluster::OperationalCredentials do
           create_add_noc_request_tlv(noc, nil, ipk, 0xABCD_u64, 0xFFF1_u16)
         )
 
-        fabric_index = cluster.fabrics[0].fabric_index
+        fabric_index = cluster.fabric_table.all_fabrics[0].fabric_index
         cluster.request_fabric_index = fabric_index
 
         # Update label
@@ -546,7 +546,7 @@ describe Matter::Cluster::OperationalCredentials do
         result.should be_a(Matter::Cluster::CommandResponse)
 
         # Verify label was updated
-        fabric = cluster.fabrics[0]
+        fabric = cluster.fabric_table.all_fabrics[0]
         fabric.label.should eq("MyFabricLabel")
       end
 

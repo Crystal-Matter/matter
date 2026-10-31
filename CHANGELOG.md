@@ -13,6 +13,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   maximum of 100 before changing the attribute or DataVersion. Nil remains
   valid for unknown progress.
 
+### Operational Credentials fabricless filtered reads
+
+- Filtered `NOCs` and `Fabrics` reads without an accessing fabric now return
+  empty lists, matching the Matter 1.6 fabric-scoped list rule. Authenticated
+  CASE reads still select their own fabric, and unfiltered reads include all
+  installed fabrics.
+
 ### Independent SDK migration reply-loss coverage
 
 - The pinned Matter 1.6 SDK migration E2E now drops the SDK device's successful
@@ -20,6 +27,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the SDK process restart, it verifies both CASE paths and Datastore
   NodeLists, waits the cumulative fail-safe bound, and proves B does not send
   CommissioningComplete again before authenticated reconciliation.
+- The same E2E now withholds the SDK device's successful RemoveFabric reply,
+  restarts B and the device, and verifies that authenticated reconciliation
+  completes the handoff without sending RemoveFabric twice.
 
 ### Access Control ARL fabric filtering
 

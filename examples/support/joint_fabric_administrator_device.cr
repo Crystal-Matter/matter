@@ -16,11 +16,11 @@ require "../../src/matter/controller/vid_verification_dcl"
 module MatterJointFabricAdministrator
   EXAMPLE_PRODUCT_ID = 0x0130_u16
 
-  # The SDK migration E2E uses this client to count completion commands. When
-  # the shared marker is armed, it receives the real encrypted SDK reply and
-  # withholds a successful CommissioningComplete before MRP acknowledgement.
+  # The SDK migration E2E counts completion and removal commands. When a
+  # shared marker is armed, it withholds the matching successful SDK reply
+  # before MRP acknowledgement or workflow delivery.
   class SdkMigrationReplyLossClient < Matter::Controller::Client
-    def initialize(@drop_path : String)
+    def initialize(@drop_path : String, @remove_drop_path : String? = nil)
       super()
     end
 
@@ -32,19 +32,35 @@ module MatterJointFabricAdministrator
                                requires_ack : Bool = true,
                                acknowledged_message_id : UInt32? = nil) : UInt16
       if protocol_id == PROTOCOL_INTERACTION_MODEL &&
-         message_type == Matter::InteractionModel::MessageType::InvokeRequest.value &&
-         Matter::InteractionModel::InvokeRequestMessage.from_slice(payload.to_slice).invoke_requests.any? do |request|
-           path = request.command_path
-           path.cluster == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
-           path.command == Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE
-         end
-        if File.exists?(@drop_path)
-          @lost_exchange = exchange_id
-          @lost_session_id = session.session_id
+         message_type == Matter::InteractionModel::MessageType::InvokeRequest.value
+        paths = Matter::InteractionModel::InvokeRequestMessage.from_slice(payload.to_slice)
+          .invoke_requests.map(&.command_path)
+        if paths.any? do |path|
+             path.cluster == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
+             path.command == Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE
+           end
+          if File.exists?(@drop_path)
+            @lost_exchange = exchange_id
+            @lost_session_id = session.session_id
+          end
+          count_path = "#{@drop_path}.sent"
+          sent = File.exists?(count_path) ? File.read(count_path).to_i : 0
+          File.write(count_path, (sent + 1).to_s)
         end
-        count_path = "#{@drop_path}.sent"
-        sent = File.exists?(count_path) ? File.read(count_path).to_i : 0
-        File.write(count_path, (sent + 1).to_s)
+        if remove_path = @remove_drop_path
+          if paths.any? do |path|
+               path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
+               path.command == Matter::Cluster::OperationalCredentials::CMD_REMOVE_FABRIC
+             end
+            if File.exists?(remove_path)
+              @lost_remove_exchange = exchange_id
+              @lost_remove_session_id = session.session_id
+            end
+            count_path = "#{remove_path}.sent"
+            sent = File.exists?(count_path) ? File.read(count_path).to_i : 0
+            File.write(count_path, (sent + 1).to_s)
+          end
+        end
       end
       super(session, peer, protocol_id, message_type, payload, exchange_id,
         initiator_message, requires_ack, acknowledged_message_id)
@@ -52,19 +68,27 @@ module MatterJointFabricAdministrator
 
     protected def drop_authenticated_inbound?(message : Matter::Codec::MessageCodec::Message,
                                               _peer : Socket::IPAddress) : Bool
-      return false unless message.packet_header.session_id == @lost_session_id &&
-                          message.payload_header.exchange_id == @lost_exchange &&
-                          message.payload_header.protocol_id == PROTOCOL_INTERACTION_MODEL &&
+      return false unless message.payload_header.protocol_id == PROTOCOL_INTERACTION_MODEL &&
                           message.payload_header.message_type == Matter::InteractionModel::MessageType::InvokeResponse.value
+      completion_reply = message.packet_header.session_id == @lost_session_id &&
+                         message.payload_header.exchange_id == @lost_exchange
+      removal_reply = message.packet_header.session_id == @lost_remove_session_id &&
+                      message.payload_header.exchange_id == @lost_remove_exchange
+      return false unless completion_reply || removal_reply
       response = Matter::InteractionModel::InvokeResponseMessage.from_slice(message.payload.to_slice)
-      successful_completion = response.invoke_responses.any? do |entry|
+      successful_reply = response.invoke_responses.any? do |entry|
         if command = entry.command_data
           path = command.command_path
-          if path.cluster == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
+          if completion_reply && path.cluster == Matter::Cluster::GeneralCommissioning::CLUSTER_ID &&
              path.command == Matter::Cluster::GeneralCommissioning::CMD_COMMISSIONING_COMPLETE_RESPONSE
             fields = command.command_fields
             fields && Matter::Cluster::GeneralCommissioning::CommissioningCompleteResponse
               .from_slice(fields.to_slice).error_code == Matter::Commissioning::ErrorCode::OK
+          elsif removal_reply && path.cluster == Matter::Cluster::OperationalCredentials::CLUSTER_ID &&
+                path.command == Matter::Cluster::OperationalCredentials::CMD_ADD_NOC_RESPONSE
+            fields = command.command_fields
+            fields && Matter::Cluster::OperationalCredentials::Tlv::TlvNocResponse
+              .from_slice(fields.to_slice).status_code.ok?
           else
             false
           end
@@ -72,8 +96,12 @@ module MatterJointFabricAdministrator
           false
         end
       end
-      return false unless successful_completion
-      File.write("#{@drop_path}.dropped", "successful SDK CommissioningComplete response\n")
+      return false unless successful_reply
+      if completion_reply
+        File.write("#{@drop_path}.dropped", "successful SDK CommissioningComplete response\n")
+      elsif remove_path = @remove_drop_path
+        File.write("#{remove_path}.dropped", "successful SDK RemoveFabric response\n")
+      end
       true
     end
   end
@@ -4136,8 +4164,9 @@ module MatterJointFabricAdministrator
         old_fabric.root_public_key, anchor_fabric.root_public_key)
       local_peer = Socket::IPAddress.new("127.0.0.1", port)
       reply_loss_path = ENV["MATTER_JFA_MIGRATION_TEST_SDK_REPLY_LOSS_PATH"]?
+      remove_reply_loss_path = ENV["MATTER_JFA_MIGRATION_TEST_SDK_REMOVE_REPLY_LOSS_PATH"]?
       migration_client = if reply_loss_path
-                           SdkMigrationReplyLossClient.new(reply_loss_path)
+                           SdkMigrationReplyLossClient.new(reply_loss_path, remove_reply_loss_path)
                          else
                            Matter::Controller::Client.new
                          end

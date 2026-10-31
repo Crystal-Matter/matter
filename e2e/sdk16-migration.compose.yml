@@ -4,6 +4,7 @@ services:
       MATTER_JFA_MIGRATION_TEST_SDK_PAA: /e2e/logs/jf-sdk-migration-paa.der
       MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR: /e2e/logs/jf-sdk-migration-cd
       MATTER_JFA_MIGRATION_TEST_SDK_REPLY_LOSS_PATH: /e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.completion_reply_loss
+      MATTER_JFA_MIGRATION_TEST_SDK_REMOVE_REPLY_LOSS_PATH: /e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.remove_fabric_reply_loss
   tests:
     volumes:
       - ./tmp/connectedhomeip/credentials/development:/sdk16-credentials:ro
