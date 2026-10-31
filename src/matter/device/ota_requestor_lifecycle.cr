@@ -89,7 +89,7 @@ module Matter
       end
 
       def process_default(fabric_index : UInt8) : Result
-        provider = @cluster.default_ota_providers(fabric_index).first?
+        provider = @cluster.providers_for_fabric(fabric_index).first?
         return Result::NoUpdate unless provider
         process_provider(fabric_index, provider.provider_node_id, provider.endpoint)
       end
