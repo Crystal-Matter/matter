@@ -184,6 +184,7 @@ module Matter
                        @attestation_verifier : DeviceAttestationVerifier,
                        @commissioning_ack : Proc(Nil)? = nil,
                        @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
+                       @before_complete : Proc(Nil)? = nil,
                        @anchor_registration_committed : Proc(Nil)? = nil,
                        @anchor_node_removed : Proc(Nil)? = nil,
                        @anchor_fabric_removed : Proc(Nil)? = nil,
@@ -253,7 +254,7 @@ module Matter
             Random::Secure.rand(0_u16..SetupPayload::MAX_DISCRIMINATOR))
           deadline_callback = @fail_safe_deadline ? ->(deadline : Int64, max_seconds : UInt16) { persist_fail_safe_deadline!(deadline, max_seconds) } : nil
           hooks = Credentials.new(@issuer, @administrator_cat, @old_fabric.admin_vendor_id,
-            @crypto, -> { persist_commissioning_ack! }, deadline_callback)
+            @crypto, -> { persist_commissioning_ack! }, deadline_callback, @before_complete)
           registrar = datastore_registrar
           commissioner = Commissioning::Commissioner.new(@store, @client, @timeout,
             @crypto, hooks: hooks, attestation_verifier: @attestation_verifier,
@@ -958,7 +959,8 @@ module Matter
                        @administrator_cat : UInt32, @admin_vendor_id : UInt16,
                        @crypto : Crypto::CryptoBase = Crypto::StandardCrypto.new,
                        @commissioning_ack : Proc(Nil)? = nil,
-                       @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil)
+                       @fail_safe_deadline : Proc(Int64, UInt16, Nil)? = nil,
+                       @before_complete : Proc(Nil)? = nil)
           unless @administrator_cat >> 16 == ADMINISTRATOR_CAT_ID &&
                  (@administrator_cat & DataType::CaseAuthenticatedTag::VERSION_MASK) != 0_u32
             raise Matter::ConfigurationError.new("A current Administrator CAT is required")
@@ -984,6 +986,7 @@ module Matter
         def before_complete(fabric : FabricInfo, node_id : UInt64, im : ImClient,
                             case_session : Session::SecureContext,
                             peer : Socket::IPAddress) : Nil
+          @before_complete.try(&.call)
         end
 
         def complete_acknowledged(fabric : FabricInfo, node_id : UInt64,
