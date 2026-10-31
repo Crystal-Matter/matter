@@ -556,13 +556,13 @@ blocked removal for operator reconciliation.
   both credentials, both Datastores retain their node entries, and an ordinary
   retry remains blocked. Authenticated no-effect reconciliation permits B to
   retry RemoveFabric.
-  The same SDK fixture then interrupts B after the device successfully
-  responds to RemoveFabric but before B advances its durable journal. After
-  B restarts, A establishes fresh CASE and reads the SDK device's sole A
-  fabric while B still retains its old NodeList entry. B blocks an ordinary
-  replay until authenticated reconciliation records `OldFabricRemoved`, then
-  resumes by removing only B's old Datastore entry. This injection follows
-  a successful command response; it does not simulate a dropped wire reply.
+  The same SDK fixture then withholds the successful RemoveFabric response
+  before MRP acknowledgement or IM delivery. After B and the SDK process
+  restart, A establishes fresh CASE and reads the SDK device's sole A fabric
+  while B still retains its old NodeList entry. B blocks an ordinary replay,
+  rejects a no-effect claim, and records `OldFabricRemoved` only after
+  authenticated reconciliation. It then removes only B's old Datastore entry.
+  The test checks that the removal command was sent exactly once.
   Before that handoff, the fixture interrupts after B durably saves the
   device's cumulative fail-safe bound but before AddNOC or AddPendingNode.
   It restarts B and the device, verifies B remains the sole owner, checks that
