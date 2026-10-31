@@ -990,8 +990,8 @@ describe "three provisioned Joint Fabric Administrators" do
       # Migrate a pinned SDK v1.6 ordinary device while A and B still have
       # their original Anchor roles. First interrupt after AddNOC but before
       # CommissioningComplete and prove the SDK rolls back its provisional
-      # fabric. Then interrupt B before it saves the successful completion
-      # acknowledgement and exercise both old-fabric removal outcomes.
+      # fabric. Then lose the SDK's successful completion reply on B's actual
+      # encrypted wire path and exercise both old-fabric removal outcomes.
       sdk_paa = File.read("/sdk16-credentials/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der").to_slice.dup
       sdk_paa_path = File.join(E2E::LOG_DIR, "jf-sdk-migration-paa.der")
       sdk_cd_dir = File.join(E2E::LOG_DIR, "jf-sdk-migration-cd")
@@ -1189,16 +1189,34 @@ describe "three provisioned Joint Fabric Administrators" do
           root_public_key: anchor_bootstrap.fabric.root_public_key,
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
       sdk_rolled_back_controller_node.inspected_controller_migration_node_present.should be_false
+      sdk_reply_loss_path = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.completion_reply_loss")
+      File.delete?("#{sdk_reply_loss_path}.sent")
+      File.delete?("#{sdk_reply_loss_path}.dropped")
+      File.write(sdk_reply_loss_path, "")
       sdk_unacknowledged_commissioning = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
           root_public_key: anchor_bootstrap.fabric.root_public_key,
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
-          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
-          interrupt_after_migration_complete_before_ack: true))
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      File.delete?(sdk_reply_loss_path)
       sdk_unacknowledged_commissioning.status.should eq("error")
-      sdk_unacknowledged_commissioning.error.to_s.should contain("Injected interruption after device CommissioningComplete")
+      sdk_unacknowledged_commissioning.error.to_s.should contain("timeout waiting for InvokeResponse")
+      File.read("#{sdk_reply_loss_path}.sent").should eq("1")
+      File.read("#{sdk_reply_loss_path}.dropped").should contain("successful SDK CommissioningComplete response")
       joiner.restart!
+      sdk_restart_marker = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.restart")
+      sdk_log_path = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.log")
+      File.write(sdk_restart_marker, "")
+      sdk_restart_deadline = Time.instant + E2E::RESTART_TIMEOUT
+      until File.exists?(sdk_log_path) && File.read(sdk_log_path).includes?("=== sdk restart ===")
+        raise Matter::TimeoutError.new("SDK device did not restart") if Time.instant >= sdk_restart_deadline
+        sleep E2E::LOG_POLL
+      end
+      sleep E2E::RESTART_SETTLE
       joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
         joiner_peer, joiner_bootstrap.fabric,
         peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
@@ -1255,6 +1273,7 @@ describe "three provisioned Joint Fabric Administrators" do
       sdk_interrupted_removal.status.should eq("error")
       sdk_interrupted_removal.error.to_s.should contain("Injected interruption before device RemoveFabric")
       (Time.instant - sdk_recovery_started).should be >= sdk_recovery_interval
+      File.read("#{sdk_reply_loss_path}.sent").should eq("1")
       joiner.restart!
       joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
         joiner_peer, joiner_bootstrap.fabric,
@@ -1446,6 +1465,19 @@ describe "three provisioned Joint Fabric Administrators" do
         MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
         entry.node_id == SDK_MIGRATION_OLD_NODE_ID
       end.should be_false
+      sdk_complete_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_complete_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::Complete.value)
+      sdk_committed_controller_node = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_committed_controller_node.inspected_controller_migration_node_present.should be_true
     end
 
     # B's bootstrap Datastore remains on endpoint 2 after the JFA joins A.

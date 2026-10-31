@@ -13,6 +13,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   maximum of 100 before changing the attribute or DataVersion. Nil remains
   valid for unknown progress.
 
+### Independent SDK migration reply-loss coverage
+
+- The pinned Matter 1.6 SDK migration E2E now drops the SDK device's successful
+  CommissioningComplete reply before B acknowledges or delivers it. After B
+  and the SDK process restart, it verifies both CASE paths and Datastore
+  NodeLists, waits the cumulative fail-safe bound, and proves B does not send
+  CommissioningComplete again before authenticated reconciliation.
+
 ### Access Control ARL fabric filtering
 
 - Authenticated `FabricFiltered=false` reads of the Managed Device ARL include

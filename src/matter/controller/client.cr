@@ -704,6 +704,7 @@ module Matter
           return
         end
         decrypted_message = decrypt_message(session, msg)
+        return if drop_authenticated_inbound?(decrypted_message, peer)
         @transport.mark_mrp_peer_active(peer, session.session_id)
         if ack = decrypted_message.payload_header.acknowledged_message_id
           @transport.acknowledge_reliable(session.session_id,
@@ -714,6 +715,14 @@ module Matter
         @inbox.send(received)
       rescue ex
         Log.error(exception: ex) { "Controller: failed handling inbound message (peer=#{peer} session_id=#{msg.packet_header.session_id} data_hex=#{msg.payload.hexstring})" }
+      end
+
+      # An opt-in receive boundary for protocol fault injection. The default
+      # accepts every authenticated message; a test client can suppress a
+      # selected reply before either MRP acknowledgement or IM delivery.
+      protected def drop_authenticated_inbound?(_message : Codec::MessageCodec::Message,
+                                                _peer : Socket::IPAddress) : Bool
+        false
       end
 
       private def closed_subscription_report?(session_id : UInt16,
