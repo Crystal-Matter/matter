@@ -475,6 +475,16 @@ module Matter
         end
       end
 
+      def read_attribute(attribute_id : UInt32, fabric_index : UInt8? = nil) : InteractionModel::Status | TLV::Any
+        if attribute_id == ATTR_ARL && @feature_map.managed_device? && !request_fabric_filtered? && fabric_index
+          # The policy keys are candidates only. arl(index) checks each current
+          # fabric identity and fails closed if stale policy cleanup cannot save.
+          entries = @access_restrictions.keys.sort.flat_map { |index| arl(index) }
+          return tlv(entries)
+        end
+        super
+      end
+
       # A host-owned policy replaces one fabric's durable ARL. Empty entries
       # remove that fabric's restrictions. A StorageError after a backend write
       # can mean the write committed before reporting failure. If both marker
