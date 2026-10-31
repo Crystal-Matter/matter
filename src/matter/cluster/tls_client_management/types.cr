@@ -27,9 +27,12 @@ module Matter
           getter ccdid : UInt16?
           @[::TLV::Field(tag: 5)]
           getter reference_count : UInt8
+          @[::TLV::Field(tag: 254)]
+          getter fabric_index : UInt8
 
           def initialize(@endpoint_id : UInt16, @hostname : Bytes, @port : UInt16,
-                         @caid : UInt16, @ccdid : UInt16?, @reference_count : UInt8); end
+                         @caid : UInt16, @ccdid : UInt16?, @reference_count : UInt8,
+                         @fabric_index : UInt8); end
         end
 
         struct ProvisionEndpointRequest

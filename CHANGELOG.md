@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### TLS Client Management fabric filtering
+
+- `ProvisionedEndpoints` now includes the required `fabricIndex` field in each
+  endpoint and honors `FabricFiltered=false` on authenticated reads. A filtered
+  read returns the requesting fabric's endpoints; an unfiltered read includes
+  endpoints from all fabrics. `FindEndpoint` remains fabric owned.
+
 ### Groupcast Membership fabric filtering
 
 - Authenticated `FabricFiltered=false` reads of Groupcast Membership now include
