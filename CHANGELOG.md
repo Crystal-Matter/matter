@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Scenes Management fabric filtering
+
+- Authenticated `FabricSceneInfo` reads honor `FabricFiltered=false` by
+  including scene information for every stored fabric. Filtered reads still
+  return only the requesting fabric's information, including its empty default.
+
 ### Group Key Management fabric filtering
 
 - Honor `FabricFiltered=false` on GroupKeyMap and GroupTable reads by returning
