@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### OTA Requestor progress validation
+
+- Reject host-supplied `UpdateStateProgress` values above the Matter 1.6
+  maximum of 100 before changing the attribute or DataVersion. Nil remains
+  valid for unknown progress.
+
 ### Independent SDK migration reply-loss coverage
 
 - The pinned Matter 1.6 SDK migration E2E now drops the SDK device's successful
