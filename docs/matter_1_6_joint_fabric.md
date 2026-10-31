@@ -578,13 +578,15 @@ blocked removal for operator reconciliation.
   During the provisional interval, the pinned SDK omits B's ICAC from a fresh
   B CASE Sigma2; the test reads through its preexisting B session and requires
   a fresh B CASE after rollback.
-  On the SDK retry, B then stops after the device successfully responds to
-  CommissioningComplete but before B saves the acknowledgement. After B
-  restarts, the test observes both fabric CASE paths and NodeLists without
+  On the SDK retry, B receives the device's successful
+  CommissioningComplete reply and drops it before MRP acknowledgement or IM
+  delivery. After B and the SDK process restart, the test observes both fabric
+  CASE paths and NodeLists without
   treating the visible A fabric as durable yet. B waits the SDK device's
   advertised cumulative fail-safe bound plus the recovery margin, authenticates
   the completed handoff, and continues to the old-fabric removal boundary
-  without recommissioning the device. This injection does not drop a wire reply.
+  without recommissioning the device. The test records one completion command
+  send and checks that recovery sends no duplicate.
   The Crystal switch fixture also injects an interruption after it commits
   CommissioningComplete but before B durably records acknowledgement. It
   restarts B and checks that recovery waits the advertised cumulative fail-safe

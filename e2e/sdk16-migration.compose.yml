@@ -3,6 +3,7 @@ services:
     environment:
       MATTER_JFA_MIGRATION_TEST_SDK_PAA: /e2e/logs/jf-sdk-migration-paa.der
       MATTER_JFA_MIGRATION_TEST_SDK_CD_DIR: /e2e/logs/jf-sdk-migration-cd
+      MATTER_JFA_MIGRATION_TEST_SDK_REPLY_LOSS_PATH: /e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.completion_reply_loss
   tests:
     volumes:
       - ./tmp/connectedhomeip/credentials/development:/sdk16-credentials:ro
@@ -12,4 +13,25 @@ services:
     command:
       - |
         until [ -f /e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.start ]; do sleep 0.2; done
-        exec /opt/sdk16/chip-all-clusters-app --discriminator 3842 --passcode 20202022 --KVS /tmp/official-jf-migration-target.kvs
+        restart=/e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.restart
+        log=/e2e/logs/official-jf-migration-target-${MATTER_E2E_RUN_ID:-manual}.log
+        rm -f "$$restart"
+        : > "$$log"
+        while :; do
+          /opt/sdk16/chip-all-clusters-app --discriminator 3842 --passcode 20202022 --KVS /tmp/official-jf-migration-target.kvs >> "$$log" 2>&1 &
+          sdk_pid=$$!
+          requested=0
+          while kill -0 "$$sdk_pid" 2>/dev/null; do
+            if [ -f "$$restart" ]; then
+              rm -f "$$restart"
+              kill -TERM "$$sdk_pid" 2>/dev/null || true
+              requested=1
+              break
+            fi
+            sleep 0.2
+          done
+          status=0
+          wait "$$sdk_pid" || status=$$?
+          if [ "$$requested" -ne 1 ]; then exit "$$status"; fi
+          echo '=== sdk restart ===' >> "$$log"
+        done
