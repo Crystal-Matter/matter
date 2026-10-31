@@ -151,12 +151,19 @@ describe Provider do
     read_provider_sessions(provider, acl, nil, 101_u64, false, case_session: false).first.attribute_status
       .try(&.status.status).should eq(StatusCode::UnsupportedAccess.value)
 
-    first_id = provider.current_sessions(1_u8).as(Array(Provider::Session)).first.id
+    first_id = TLV::Serializable.deserialize_value(
+      read_provider_sessions(provider, acl, 1_u8, 101_u64, true).first.attribute_data
+        .as(Matter::InteractionModel::AttributeDataIB).data,
+      Array(Provider::Session)).first.id
     invoke_provider(provider, Provider::CMD_END_SESSION,
       Provider::EndSessionRequest.new(first_id, Provider::EndReason::UserHangup),
       fabric: 2_u8, node: 202_u64).as(Status).status.should eq(StatusCode::NotFound)
     peer.endings.should be_empty
-    provider.current_sessions(1_u8).as(Array(Provider::Session)).size.should eq(1)
+    remaining = TLV::Serializable.deserialize_value(
+      read_provider_sessions(provider, acl, 1_u8, 101_u64, true).first.attribute_data
+        .as(Matter::InteractionModel::AttributeDataIB).data,
+      Array(Provider::Session))
+    remaining.map(&.fabric_index).should eq([1_u8])
   end
 
   it "assigns an allocated audio stream for a legacy null SolicitOffer ID" do
