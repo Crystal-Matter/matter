@@ -43,7 +43,7 @@ module Matter
       end
 
       Log = ::Log.for("matter.cluster.network_commissioning")
-      cluster 0x0031, revision: 2
+      cluster 0x0031, revision: 2, persist_state: false
 
       # Network Types
       enum NetworkType : UInt8
@@ -290,7 +290,7 @@ module Matter
       attribute 0x0002, :scan_max_time_seconds, UInt8, default: DEFAULT_SCAN_MAX_TIME_SECONDS, fixed: true, requires: ANY_WIRELESS_INTERFACE
       attribute 0x0003, :connect_max_time_seconds, UInt8, default: DEFAULT_CONNECT_MAX_TIME_SECONDS, fixed: true, requires: ANY_WIRELESS_INTERFACE
       attribute 0x0004, :interface_enabled, Bool, default: true, writable: true,
-        persist_default: true, validate: :validate_interface_enabled, write_access: :administer
+        validate: :validate_interface_enabled, write_access: :administer
       attribute 0x0005, :last_networking_status, NetworkCommissioningStatus, nullable: true, read_access: :administer
       attribute 0x0006, :last_network_id, Bytes, nullable: true, read_access: :administer
       attribute 0x0007, :last_connect_error_value, Int32, nullable: true, read_access: :administer
@@ -408,20 +408,6 @@ module Matter
       rescue ex
         Log.warn(exception: ex) { "Network backend could not change interface state" }
         InteractionModel::Status.failure
-      end
-
-      private def after_restore_state : Nil
-        case apply_interface_enabled(@interface_enabled)
-        when Network::Backend::InterfaceEnabledResult::Success
-          nil
-        else
-          Log.warn { "Network backend could not restore interface state; using its current state" }
-          if backend = @backend
-            @interface_enabled = backend.interface_enabled?
-          else
-            @interface_enabled = true
-          end
-        end
       end
 
       # Command handlers that accept struct parameters (used by tests and high-level API)
@@ -1159,11 +1145,26 @@ module Matter
         end
         document = super || Storage::Document.new
         document["networks"] = entries
+        document["interface_enabled"] = @interface_enabled
         document
       end
 
       def restore_state(document : Storage::Document) : Nil
         super(document)
+        if document.has_key?("interface_enabled")
+          enabled = document["interface_enabled"].as(Bool)
+          case apply_interface_enabled(enabled)
+          when Network::Backend::InterfaceEnabledResult::Success
+            @interface_enabled = enabled
+          else
+            Log.warn { "Network backend could not restore interface state; using its current state" }
+            if backend = @backend
+              @interface_enabled = backend.interface_enabled?
+            else
+              @interface_enabled = true
+            end
+          end
+        end
         if entries = document["networks"]?
           @networks = entries.as(Array(Storage::Type)).map do |entry|
             network = entry.as(Storage::Document)
