@@ -152,11 +152,12 @@ module Matter::Commissioning
       it "stores the root certificate of this failsafe" do
         target = RecordingCredentialTarget.new
         service = credential_service(target)
+        root = CommissioningCertificates.root_certificate
 
-        outcome = service.add_trusted_root_certificate(CommissioningCertificates.root_certificate)
+        outcome = service.add_trusted_root_certificate(root)
 
         outcome.ok?.should be_true
-        service.pending.root_certificate.should eq(CommissioningCertificates.root_certificate)
+        service.pending.root_certificate.should eq(root)
         target.changes.should eq(1)
       end
 

@@ -313,7 +313,7 @@ describe Matter::Cluster::OperationalCredentials do
       response.should be_nil
     end
 
-    it "accepts a byte-identical root certificate in the same failsafe" do
+    it "rejects a second root installation in the same failsafe" do
       fabric_table = OpCredsTestHelpers.create_fabric_table
       cluster = Matter::Cluster::OperationalCredentials.new(fabric_table)
 
@@ -338,7 +338,7 @@ describe Matter::Cluster::OperationalCredentials do
 
       # Try to add again
       response = cluster.handle_add_trusted_root_certificate(cmd, failsafe_armed: true)
-      response.should be_nil
+      response.as(Matter::Cluster::OperationalCredentials::NOCResponse).status_code.should eq Matter::Commissioning::NocStatus::InvalidNoc
       cluster.trusted_root_certificates.size.should eq 1
     end
   end
