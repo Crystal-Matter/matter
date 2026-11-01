@@ -36,8 +36,14 @@ module Matter
     class NetworkCommissioning < Base
       include Commissioning::NetworkStateStore
 
+      class InterfaceDisableUnsupported < ClusterError
+      end
+
+      class InterfaceChangeFailed < ClusterError
+      end
+
       Log = ::Log.for("matter.cluster.network_commissioning")
-      cluster 0x0031, revision: 2
+      cluster 0x0031, revision: 2, persist_state: false
 
       # Network Types
       enum NetworkType : UInt8
@@ -283,7 +289,8 @@ module Matter
 
       attribute 0x0002, :scan_max_time_seconds, UInt8, default: DEFAULT_SCAN_MAX_TIME_SECONDS, fixed: true, requires: ANY_WIRELESS_INTERFACE
       attribute 0x0003, :connect_max_time_seconds, UInt8, default: DEFAULT_CONNECT_MAX_TIME_SECONDS, fixed: true, requires: ANY_WIRELESS_INTERFACE
-      attribute 0x0004, :interface_enabled, Bool, default: true, writable: true, persist: false, write_access: :administer
+      attribute 0x0004, :interface_enabled, Bool, default: true, writable: true,
+        validate: :validate_interface_enabled, write_access: :administer
       attribute 0x0005, :last_networking_status, NetworkCommissioningStatus, nullable: true, read_access: :administer
       attribute 0x0006, :last_network_id, Bytes, nullable: true, read_access: :administer
       attribute 0x0007, :last_connect_error_value, Int32, nullable: true, read_access: :administer
@@ -356,6 +363,10 @@ module Matter
 
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
 
+        if backend = @backend
+          @interface_enabled = backend.interface_enabled?
+        end
+
         @connected_network_index = nil
 
         @wifi_credentials = {} of Bytes => Bytes
@@ -368,6 +379,35 @@ module Matter
         if @feature_map.thread_network_interface?
           @supported_thread_features = ThreadCapabilitiesBitmap::IsRouterCapable | ThreadCapabilitiesBitmap::IsFullThreadDevice
         end
+      end
+
+      private def validate_interface_enabled(enabled : Bool) : Nil
+        case apply_interface_enabled(enabled)
+        when Network::Backend::InterfaceEnabledResult::Success
+          nil
+        when Network::Backend::InterfaceEnabledResult::Unsupported
+          raise InterfaceDisableUnsupported.new("Network backend does not support disabling its interface")
+        when Network::Backend::InterfaceEnabledResult::Failure
+          raise InterfaceChangeFailed.new("Network backend could not change interface state")
+        end
+      end
+
+      private def apply_interface_enabled(enabled : Bool) : Network::Backend::InterfaceEnabledResult
+        if backend = @backend
+          backend.apply_interface_enabled(enabled)
+        else
+          enabled ? Network::Backend::InterfaceEnabledResult::Success : Network::Backend::InterfaceEnabledResult::Unsupported
+        end
+      end
+
+      private def dsl_before_write_interface_enabled(enabled : Bool) : InteractionModel::Status
+        self.interface_enabled = enabled
+        InteractionModel::Status.success
+      rescue InterfaceDisableUnsupported
+        InteractionModel::Status.invalid_action
+      rescue ex
+        Log.warn(exception: ex) { "Network backend could not change interface state" }
+        InteractionModel::Status.failure
       end
 
       # Command handlers that accept struct parameters (used by tests and high-level API)
@@ -1030,7 +1070,8 @@ module Matter
           raise CommissioningError.new("Network backend could not restore checkpoint")
         end
 
-        restore_state(snapshot["cluster"].as(Storage::Document))
+        cluster_snapshot = snapshot["cluster"].as(Storage::Document)
+        restore_state(cluster_snapshot)
         @wifi_credentials = decode_credentials(snapshot["wifi_credentials"].as(Array(Storage::Type)))
         @thread_credentials = decode_credentials(snapshot["thread_credentials"].as(Array(Storage::Type)))
         @last_networking_status = snapshot["last_networking_status"].as(Int64?).try do |value|
@@ -1039,7 +1080,11 @@ module Matter
         @last_network_id = snapshot["last_network_id"].as(Bytes?).try(&.dup)
         @last_connect_error_value = snapshot["last_connect_error_value"].as(Int64?).try(&.to_i32)
         @connected_network_index = snapshot["connected_network_index"].as(Int64?).try(&.to_i32)
-        @interface_enabled = snapshot["interface_enabled"].as(Bool)
+        # Checkpoints from before InterfaceEnabled joined the persisted cluster
+        # record kept it only in the outer snapshot.
+        unless cluster_snapshot.has_key?("interface_enabled")
+          self.interface_enabled = snapshot["interface_enabled"].as(Bool)
+        end
         @on_persist_network_state.try(&.call)
         Log.info { "Restored network commissioning state" }
       end
@@ -1100,11 +1145,26 @@ module Matter
         end
         document = super || Storage::Document.new
         document["networks"] = entries
+        document["interface_enabled"] = @interface_enabled
         document
       end
 
       def restore_state(document : Storage::Document) : Nil
         super(document)
+        if document.has_key?("interface_enabled")
+          enabled = document["interface_enabled"].as(Bool)
+          case apply_interface_enabled(enabled)
+          when Network::Backend::InterfaceEnabledResult::Success
+            @interface_enabled = enabled
+          else
+            Log.warn { "Network backend could not restore interface state; using its current state" }
+            if backend = @backend
+              @interface_enabled = backend.interface_enabled?
+            else
+              @interface_enabled = true
+            end
+          end
+        end
         if entries = document["networks"]?
           @networks = entries.as(Array(Storage::Type)).map do |entry|
             network = entry.as(Storage::Document)

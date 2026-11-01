@@ -10,13 +10,35 @@ module Matter
       # Storage for configured networks
       property configured_networks : Hash(Bytes, Bytes) = {} of Bytes => Bytes
       property connected_network_id : Bytes? = nil
+      property? allow_disable = false
+      property? fail_next = false
+      getter? enabled = true
+
+      def apply_interface_enabled(enabled : Bool) : Backend::InterfaceEnabledResult
+        if @fail_next
+          @fail_next = false
+          return Backend::InterfaceEnabledResult::Failure
+        end
+        return Backend::InterfaceEnabledResult::Unsupported if !enabled && !@allow_disable
+
+        @enabled = enabled
+        Backend::InterfaceEnabledResult::Success
+      end
+
+      def interface_enabled? : Bool
+        @enabled
+      end
 
       def checkpoint_configuration : Storage::Document?
         entries = [] of Storage::Type
         @configured_networks.each do |id, credentials|
           entries << Storage::Document{"id" => id.dup, "credentials" => credentials.dup}
         end
-        Storage::Document{"entries" => entries, "connected" => @connected_network_id.try(&.dup)}
+        Storage::Document{
+          "entries"           => entries,
+          "connected"         => @connected_network_id.try(&.dup),
+          "interface_enabled" => @enabled,
+        }
       end
 
       def restore_configuration(snapshot : Storage::Document) : Bool
@@ -28,6 +50,9 @@ module Matter
         end
         @configured_networks = restored
         @connected_network_id = snapshot["connected"].as(Bytes?).try(&.dup)
+        if snapshot.has_key?("interface_enabled")
+          @enabled = snapshot["interface_enabled"].as(Bool)
+        end
         true
       end
 

@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Network Commissioning interface state
+
+- `InterfaceEnabled` writes now apply to the network backend before reporting
+  success. An unsupported disable returns `InvalidAction`, a backend failure
+  leaves the attribute unchanged, and supported changes survive restart.
+
 ### Basic Information NodeLabel validation
 
 - Host updates and device construction now enforce Matter 1.6's 32-byte
