@@ -16,6 +16,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Fabric Administrator example and three thermostat E2E fixtures now use
   conforming product names so their default NodeLabels also fit.
 
+### OTA Requestor progress validation
+
+- Reject host-supplied `UpdateStateProgress` values above the Matter 1.6
+  maximum of 100 before changing the attribute or DataVersion. Nil remains
+  valid for unknown progress.
+
+### Operational Credentials fabricless filtered reads
+
+- Filtered `NOCs` and `Fabrics` reads without an accessing fabric now return
+  empty lists, matching the Matter 1.6 fabric-scoped list rule. Authenticated
+  CASE reads still select their own fabric, and unfiltered reads include all
+  installed fabrics.
+
 ### Independent SDK migration reply-loss coverage
 
 - The pinned Matter 1.6 SDK migration E2E now drops the SDK device's successful

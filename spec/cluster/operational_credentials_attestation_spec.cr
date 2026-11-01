@@ -390,8 +390,8 @@ describe Matter::Cluster::OperationalCredentials do
         status.should eq(0) # Success
 
         # Verify fabric was created with correct public key
-        cluster.fabrics.size.should eq(1)
-        cluster.fabrics[0].root_public_key.should eq(public_key)
+        cluster.fabric_table.all_fabrics.size.should eq(1)
+        cluster.fabric_table.all_fabrics[0].root_public_key.should eq(public_key)
       end
 
       it "processes AddNOC with a Matter root generated from an OpenSSL key" do
@@ -453,8 +453,8 @@ describe Matter::Cluster::OperationalCredentials do
         status.should eq(0) # Success
 
         # Verify fabric was created with correct public key
-        cluster.fabrics.size.should eq(1)
-        cluster.fabrics[0].root_public_key.should eq(public_key_bytes)
+        cluster.fabric_table.all_fabrics.size.should eq(1)
+        cluster.fabric_table.all_fabrics[0].root_public_key.should eq(public_key_bytes)
       end
 
       it "computes correct compressed fabric ID from extracted public key" do
@@ -493,8 +493,8 @@ describe Matter::Cluster::OperationalCredentials do
         )
 
         # Verify fabric was created with correct public key extracted from certificate
-        cluster.fabrics.size.should eq(1)
-        fabric = cluster.fabrics[0]
+        cluster.fabric_table.all_fabrics.size.should eq(1)
+        fabric = cluster.fabric_table.all_fabrics[0]
 
         # The compressed fabric ID is computed from the public key (bytes 1-64)
         # using HKDF-SHA256 with fabric_id as salt. We verify the fabric has
