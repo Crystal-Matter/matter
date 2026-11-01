@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### General Diagnostics monotonic uptime
+
+- Measure mandatory UpTime from the same monotonic clock as TimeSnapshot.
+  Wall-clock corrections no longer make UpTime regress or disagree with
+  SystemTimeMs.
+
 ### Joint Fabric Datastore administrator list validation
 
 - Enforce Matter 1.6's 32-entry AdminList limit and the 32-byte FriendlyName

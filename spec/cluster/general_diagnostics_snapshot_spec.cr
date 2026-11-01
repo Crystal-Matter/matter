@@ -45,7 +45,7 @@ describe GeneralDiagnostics do
   end
 
   it "keeps UpTime consistent with TimeSnapshot when the wall clock moves forward" do
-    cluster = build(GeneralDiagnostics, 0)
+    cluster = build(GeneralDiagnostics, 0, monotonic_now: -> { Time.instant_without_mock_time })
     Timecop.travel(Time.utc + 1.hour) do
       up_time = cluster.up_time
       response = invoke(cluster, GeneralDiagnostics::CMD_TIME_SNAPSHOT).as(Matter::Cluster::CommandResponse)
@@ -55,7 +55,7 @@ describe GeneralDiagnostics do
   end
 
   it "does not regress UpTime when the wall clock moves backward" do
-    cluster = build(GeneralDiagnostics, 0)
+    cluster = build(GeneralDiagnostics, 0, monotonic_now: -> { Time.instant_without_mock_time })
     before = cluster.up_time
     Timecop.travel(Time.utc - 1.hour) do
       cluster.up_time.should be >= before
