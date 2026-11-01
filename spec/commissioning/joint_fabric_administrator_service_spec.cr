@@ -591,9 +591,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     cluster.request_peer_icac = ordinary_icac
     service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.unsupported_access)
     cluster.request_peer_icac = anchor_icac
-    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
+    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.failure)
     cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0002_u64]
-    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
+    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.failure)
     cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0000_u64]
     service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.unsupported_access)
   end
