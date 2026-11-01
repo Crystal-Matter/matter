@@ -61,7 +61,7 @@ module Matter
       attribute 0x0001, :fabrics, Array(Tlv::FabricDescriptor), computed: true, fabric_scoped: true
       attribute 0x0002, :supported_fabrics, UInt8, computed: true, fixed: true
       attribute 0x0003, :commissioned_fabrics, UInt8, computed: true
-      attribute 0x0004, :trusted_root_certificates, Array(Bytes), default: [] of Bytes
+      attribute 0x0004, :trusted_root_certificates, Array(Bytes), computed: true
       attribute 0x0005, :current_fabric_index, UInt8, computed: true
 
       command 0x00, :attestation_request, request: Tlv::AttestationRequest, response: Tlv::AttestationResponse, response_id: 0x01, access: :administer
@@ -253,7 +253,6 @@ module Matter
         on_fabric_removal_app_snapshot_keys, :on_fabric_removal_app_snapshot_keys=,
         on_fabric_updated, :on_fabric_updated=,
         set_attestation_credentials, set_attestation_from_manager,
-        restore_root_cert,
         to: credentials
 
       def initialize(
@@ -321,6 +320,17 @@ module Matter
       # CommissionedFabrics attribute (0x03) - Current number of fabrics
       def commissioned_fabrics : UInt8
         fabric_table.size.to_u8
+      end
+
+      # The attribute follows the current fabric table. Each installed fabric
+      # contributes its RCAC, even when another fabric uses the same one.
+      # A root received before AddNOC remains visible only for its fail-safe.
+      def trusted_root_certificates : Array(Bytes)
+        roots = fabric_table.all_fabrics.compact_map(&.root_cert)
+        if pending_root = @credentials.try(&.pending.root_certificate)
+          roots << pending_root unless roots.includes?(pending_root)
+        end
+        roots
       end
 
       # CurrentFabricIndex attribute (0x05): the accessing fabric, none outside one

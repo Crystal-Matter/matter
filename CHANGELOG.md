@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Operational Credentials root certificate lifecycle
+
+- `TrustedRootCertificates` now reflects each installed fabric's RCAC and a
+  root still pending in the armed fail-safe. Expiry and fabric removal drop
+  unreferenced roots immediately; shared RCACs retain one list entry per
+  installed fabric, including after restart. Root reuse is checked against
+  installed fabrics rather than an old attribute cache.
+
 ### Network Commissioning interface state
 
 - `InterfaceEnabled` writes now apply to the network backend before reporting

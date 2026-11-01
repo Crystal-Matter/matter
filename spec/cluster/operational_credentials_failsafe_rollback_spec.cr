@@ -45,6 +45,7 @@ describe "OperationalCredentials fail-safe NOC rollback" do
 
     commissioning.commissioning_complete(index, true).error_code.ok?.should be_true
     cluster.fabric_table.get_fabric(index).should_not be_nil
+    cluster.trusted_root_certificates.should eq([cluster.fabric_table.get_fabric(index).as(Matter::Fabric).root_cert.as(Bytes)])
     Matter::FabricTable.new(cluster.fabric_table.backend).get_fabric(index).should_not be_nil
   end
 
@@ -58,12 +59,14 @@ describe "OperationalCredentials fail-safe NOC rollback" do
       nil
     }
     cluster.fabric_table.get_fabric(index).should_not be_nil
+    cluster.trusted_root_certificates.should eq([cluster.fabric_table.get_fabric(index).as(Matter::Fabric).root_cert.as(Bytes)])
 
     cluster.on_failsafe_expired
 
     cluster.fabric_table.get_fabric(index).should be_nil
     cluster.fabrics.should be_empty
     cluster.nocs.should be_empty
+    cluster.trusted_root_certificates.should be_empty
     Matter::FabricTable.new(cluster.fabric_table.backend).get_fabric(index).should be_nil
     removed.should eq([index])
     changed.should contain(Matter::Cluster::OperationalCredentials::ATTR_FABRICS)

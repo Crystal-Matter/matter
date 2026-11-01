@@ -95,9 +95,6 @@ module Matter
     # The state a credential change touches outside the fabric table,
     # implemented by `Cluster::OperationalCredentials`.
     module CredentialTarget
-      # The TrustedRootCertificates attribute, appended to in place
-      abstract def trusted_root_certificates : Array(Bytes)
-
       # Bump the cluster data version after a credential change
       abstract def credentials_changed : Nil
 
@@ -365,7 +362,7 @@ module Matter
         # Reusing an installed root is idempotent and still chooses that root
         # for the next AddNOC, even when another installed root is last in the
         # attribute list (Core §11.18.6.13).
-        if @target.trusted_root_certificates.includes?(root_certificate)
+        if @fabric_table.all_fabrics.any? { |fabric| fabric.root_cert == root_certificate }
           @pending.root_cert_set = true
           @pending.root_certificate = root_certificate
           return NocOutcome.new(NocStatus::Ok)
@@ -393,24 +390,12 @@ module Matter
             root_install_failure: RootInstallFailure::InvalidCertificate)
         end
 
-        @target.trusted_root_certificates << root_certificate
         @pending.root_cert_set = true
         @pending.root_certificate = root_certificate
         Log.info { "AddTrustedRootCertificate succeeded, root_cert_set=true" }
         @target.credentials_changed
 
         NocOutcome.new(NocStatus::Ok)
-      ensure
-        protocol_lock.try(&.unlock)
-      end
-
-      # Restore a root certificate from persisted fabric data at startup
-      def restore_root_cert(root_cert : Bytes) : Nil
-        protocol_lock = @protocol_lock
-        protocol_lock.try(&.lock)
-        @on_before_credential_change.try(&.call(CredentialMutation::AddTrustedRootCertificate))
-        certificates = @target.trusted_root_certificates
-        certificates << root_cert unless certificates.includes?(root_cert)
       ensure
         protocol_lock.try(&.unlock)
       end
@@ -469,7 +454,7 @@ module Matter
 
         # The compressed fabric ID is computed from the root public key, not
         # from the certificate it is carried in.
-        root_cert = @pending.root_certificate || @target.trusted_root_certificates.last
+        root_cert = @pending.root_certificate || return NocOutcome.new(NocStatus::InvalidNoc, debug_text: "Root certificate not set")
         root_public_key = public_key_from_certificate(root_cert)
         Log.debug { "Extracted root public key: #{root_public_key.size} bytes, first byte: 0x#{root_public_key[0].to_s(16)}" }
 
@@ -791,10 +776,13 @@ module Matter
         protocol_lock = @protocol_lock
         protocol_lock.try(&.lock)
         @on_before_credential_change.try(&.call(CredentialMutation::ResetPending))
+        pending_root = @pending.root_certificate
+        root_will_disappear = pending_root && @fabric_table.all_fabrics.none? { |fabric| fabric.root_cert == pending_root }
         @pending.reset
         @pending_noc_key = nil
         @pending_added_fabric_index = nil
         @pending_noc_update = nil
+        @target.credentials_changed if root_will_disappear
       ensure
         protocol_lock.try(&.unlock)
       end
