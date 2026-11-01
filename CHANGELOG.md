@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Basic Information version string lengths
+
+- Validate `HardwareVersionString` and `SoftwareVersionString` as 1–64 UTF-8
+  bytes during device construction and host updates. Invalid updates leave
+  their wire values and data version unchanged.
+
 ### Joint Fabric commissioning window fail-safe guard
 
 - Reject an authenticated `OpenJointCommissioningWindow` request with the
@@ -43,7 +49,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unreferenced roots immediately; shared RCACs retain one list entry per
   installed fabric, including after restart. Root reuse is checked against
   installed fabrics rather than an old attribute cache.
-
 ### Network Commissioning interface state
 
 - `InterfaceEnabled` writes now apply to the network backend before reporting
