@@ -184,9 +184,11 @@ module Matter
         max_length: NODE_LABEL_MAX_LENGTH, validate: :validate_node_label!
       attribute 0x0006, :location, String, default: LOCATION_UNKNOWN, writable: true, write_access: :administer
       attribute 0x0007, :hardware_version, UInt16, default: 0_u16, fixed: true
-      attribute 0x0008, :hardware_version_string, String, default: "1.0", fixed: true
+      attribute 0x0008, :hardware_version_string, String, default: "1.0", fixed: true,
+        validate: :validate_hardware_version_string!
       attribute 0x0009, :software_version, UInt32, default: 0_u32, fixed: true
-      attribute 0x000A, :software_version_string, String, default: "1.0.0", fixed: true
+      attribute 0x000A, :software_version_string, String, default: "1.0.0", fixed: true,
+        validate: :validate_software_version_string!
       attribute 0x000B, :manufacturing_date, String, default: "", fixed: true, optional: true
       attribute 0x000C, :part_number, String, default: "", fixed: true, optional: true
       attribute 0x000D, :product_url, String, default: "", fixed: true, optional: true
@@ -270,16 +272,6 @@ module Matter
         previous_def(value)
       end
 
-      def hardware_version_string=(value : String) : Nil
-        validate_version_string!(value, "HardwareVersionString")
-        previous_def(value)
-      end
-
-      def software_version_string=(value : String) : Nil
-        validate_version_string!(value, "SoftwareVersionString")
-        previous_def(value)
-      end
-
       def self.next_configuration_version(current : UInt32) : UInt32
         current == UInt32::MAX ? INITIAL_CONFIGURATION_VERSION : current + 1_u32
       end
@@ -325,6 +317,14 @@ module Matter
         return if value.valid_encoding? && VERSION_STRING_MIN_BYTES <= bytes <= VERSION_STRING_MAX_BYTES
 
         raise Matter::ConfigurationError.new("#{name} must contain #{VERSION_STRING_MIN_BYTES}-#{VERSION_STRING_MAX_BYTES} UTF-8 bytes")
+      end
+
+      private def validate_hardware_version_string!(value : String) : Nil
+        validate_version_string!(value, "HardwareVersionString")
+      end
+
+      private def validate_software_version_string!(value : String) : Nil
+        validate_version_string!(value, "SoftwareVersionString")
       end
 
       # Journals the StartUp event (call when the node boots) and returns its

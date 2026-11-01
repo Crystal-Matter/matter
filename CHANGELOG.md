@@ -49,6 +49,7 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unreferenced roots immediately; shared RCACs retain one list entry per
   installed fabric, including after restart. Root reuse is checked against
   installed fabrics rather than an old attribute cache.
+
 ### Network Commissioning interface state
 
 - `InterfaceEnabled` writes now apply to the network backend before reporting
