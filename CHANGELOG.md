@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Basic Information identity name validation
+
+- Enforce Matter 1.6's 32-byte limits for mandatory VendorName and
+  ProductName when constructing a device or updating its host attributes.
+  Rejected host updates preserve the prior value, DataVersion, and callbacks.
+
 ### Operational Credentials root certificate lifecycle
 
 - `TrustedRootCertificates` now reflects each installed fabric's RCAC and a
