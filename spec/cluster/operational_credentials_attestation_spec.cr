@@ -223,11 +223,12 @@ describe Matter::Cluster::OperationalCredentials do
       cluster.trusted_root_certificates.should be_empty
     end
 
-    it "can add trusted root certificate" do
+    it "shows the pending root certificate" do
       cluster = build_op_creds_cluster
 
-      root_cert = "mock_root_certificate".to_slice
-      cluster.trusted_root_certificates << root_cert
+      root_cert = TestCertificateAuthority.new.root_certificate
+      request = Matter::Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(root_cert)
+      cluster.add_trusted_root_certificate(request).status.should eq Matter::InteractionModel::StatusCode::Success
 
       cluster.trusted_root_certificates.size.should eq(1)
       cluster.trusted_root_certificates[0].should eq(root_cert)

@@ -93,7 +93,7 @@ module Matter::Commissioning
       backend.read(FabricRemovalJournal::COLLECTION, FabricRemovalJournal::ID).should be_nil
     end
 
-    it "rejects direct root restoration while a recovery lease is held" do
+    it "rejects direct root installation while a recovery lease is held" do
       target = RecordingCredentialTarget.new
       service = credential_service(target)
       service.on_before_credential_change = ->(_mutation : CredentialService::CredentialMutation) {
@@ -101,9 +101,9 @@ module Matter::Commissioning
       }
 
       expect_raises(Matter::ClusterError) do
-        service.restore_root_cert(CommissioningCertificates.root_certificate)
+        service.add_trusted_root_certificate(CommissioningCertificates.root_certificate)
       end
-      target.trusted_root_certificates.should be_empty
+      service.pending.root_certificate.should be_nil
     end
 
     describe "#create_csr" do
@@ -156,7 +156,7 @@ module Matter::Commissioning
         outcome = service.add_trusted_root_certificate(CommissioningCertificates.root_certificate)
 
         outcome.ok?.should be_true
-        target.trusted_root_certificates.size.should eq(1)
+        service.pending.root_certificate.should eq(CommissioningCertificates.root_certificate)
         target.changes.should eq(1)
       end
 

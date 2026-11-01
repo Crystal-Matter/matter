@@ -1,4 +1,4 @@
-require "../spec_helper"
+require "../support/operational_credentials_helpers"
 require "../../src/matter/cluster/operational_credentials"
 
 describe Matter::Cluster::OperationalCredentials do
@@ -39,11 +39,16 @@ describe Matter::Cluster::OperationalCredentials do
   end
 
   it "accepts an already installed root without adding a duplicate and selects it for AddNOC" do
-    cluster = Matter::Cluster::OperationalCredentials.new(Matter::FabricTable.new(Matter::Storage::Memory.new))
+    table = Matter::FabricTable.new(Matter::Storage::Memory.new)
     root = TestCertificateAuthority.new.root_certificate
     later_root = TestCertificateAuthority.new.root_certificate
-    cluster.credentials.restore_root_cert(root)
-    cluster.credentials.restore_root_cert(later_root)
+    first = OpCredsTestHelpers.create_test_fabric(0x111_u64, 1_u8)
+    second = OpCredsTestHelpers.create_test_fabric(0x222_u64, 2_u8)
+    first.root_cert = root
+    second.root_cert = later_root
+    table.add_fabric(first)
+    table.add_fabric(second)
+    cluster = Matter::Cluster::OperationalCredentials.new(table)
     request = Matter::Cluster::OperationalCredentials::Tlv::AddTrustedRootCertificateRequest.new(root)
 
     cluster.add_trusted_root_certificate(request).status.should eq Matter::InteractionModel::StatusCode::Success

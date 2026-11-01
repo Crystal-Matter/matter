@@ -48,7 +48,6 @@ module Matter
         @fabric_session_cleanup_delay : Time::Span = 1.second,
       )
         @mode = @fabric_table.empty? ? Mode::Commissioning : Mode::Operational
-        restore_root_certs
         install!
       end
 
@@ -73,11 +72,6 @@ module Matter
       end
 
       private def handle_fabric_added(fabric : Fabric) : Nil
-        # Ensure trusted roots include the RCAC from the new fabric (if present)
-        if root_cert = fabric.root_cert
-          @operational_credentials.restore_root_cert(root_cert)
-        end
-
         first_fabric = @fabric_table.size == 1
         if first_fabric
           @responder.stop_commissioning
@@ -172,14 +166,6 @@ module Matter
             node_id: fabric.node_id,
             tcp_supported: false
           )
-        end
-      end
-
-      private def restore_root_certs : Nil
-        @fabric_table.all_fabrics.each do |fabric|
-          if root_cert = fabric.root_cert
-            @operational_credentials.restore_root_cert(root_cert)
-          end
         end
       end
     end
