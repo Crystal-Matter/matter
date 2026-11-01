@@ -203,7 +203,7 @@ describe Matter::Cluster::NetworkCommissioning do
       backend: backend)
     cluster.interface_enabled = false
     document = cluster.save_state.as(Matter::Storage::Document)
-    document["interface_enabled"].should eq(false)
+    document["interface_enabled"].should be_false
 
     restarted_backend = Matter::Network::TestBackend.new
     restarted_backend.allow_disable = true
@@ -211,6 +211,6 @@ describe Matter::Cluster::NetworkCommissioning do
     reloaded.backend = restarted_backend
     reloaded.restore_state(document)
     reloaded.interface_enabled?.should be_false
-    restarted_backend.enabled.should be_false
+    restarted_backend.enabled?.should be_false
   end
 end

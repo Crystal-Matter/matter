@@ -114,7 +114,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
       cluster.interface_enabled?.should be_false
-      backend.enabled.should be_false
+      backend.enabled?.should be_false
     end
 
     it "reads LastNetworkingStatus when nil" do
@@ -147,11 +147,11 @@ describe Matter::Cluster::NetworkCommissioning do
 
     cluster.interface_enabled = false
     cluster.interface_enabled?.should be_false
-    backend.enabled.should be_false
+    backend.enabled?.should be_false
 
     cluster.interface_enabled = true
     cluster.interface_enabled?.should be_true
-    backend.enabled.should be_true
+    backend.enabled?.should be_true
   end
 
   describe "metadata" do

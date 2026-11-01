@@ -394,7 +394,7 @@ module Matter
 
       private def apply_interface_enabled(enabled : Bool) : Network::Backend::InterfaceEnabledResult
         if backend = @backend
-          backend.set_interface_enabled(enabled)
+          backend.apply_interface_enabled(enabled)
         else
           enabled ? Network::Backend::InterfaceEnabledResult::Success : Network::Backend::InterfaceEnabledResult::Unsupported
         end

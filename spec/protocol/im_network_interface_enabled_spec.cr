@@ -44,7 +44,7 @@ describe "Network Commissioning InterfaceEnabled over authenticated IM" do
 
     interface_write(clusters, false).should eq(Matter::InteractionModel::StatusCode::InvalidAction.value)
     interface_read(clusters).should be_true
-    backend.enabled.should be_true
+    backend.enabled?.should be_true
     network.data_version.should eq(version)
   end
 
@@ -56,20 +56,20 @@ describe "Network Commissioning InterfaceEnabled over authenticated IM" do
 
     interface_write(clusters, false).should eq(Matter::InteractionModel::StatusCode::Success.value)
     interface_read(clusters).should be_false
-    backend.enabled.should be_false
+    backend.enabled?.should be_false
 
     snapshot = network.save_state.as(Matter::Storage::Document)
-    snapshot["interface_enabled"].should eq(false)
+    snapshot["interface_enabled"].should be_false
     restarted_backend = InterfaceBackend.new
     restarted_backend.allow_disable = true
     restarted = InterfaceNetwork.new(endpoint(0), backend: restarted_backend)
     restarted.restore_state(snapshot)
     interface_read(interface_clusters(restarted)).should be_false
-    restarted_backend.enabled.should be_false
+    restarted_backend.enabled?.should be_false
 
     interface_write(clusters, true).should eq(Matter::InteractionModel::StatusCode::Success.value)
     interface_read(clusters).should be_true
-    backend.enabled.should be_true
+    backend.enabled?.should be_true
   end
 
   it "fails without mutation when the backend cannot apply a supported change" do
@@ -81,7 +81,7 @@ describe "Network Commissioning InterfaceEnabled over authenticated IM" do
 
     interface_write(clusters, false).should eq(Matter::InteractionModel::StatusCode::Failure.value)
     interface_read(clusters).should be_true
-    backend.enabled.should be_true
+    backend.enabled?.should be_true
   end
 
   it "accepts an older persisted record without InterfaceEnabled" do
@@ -94,7 +94,7 @@ describe "Network Commissioning InterfaceEnabled over authenticated IM" do
     restarted.restore_state(snapshot)
 
     interface_read(interface_clusters(restarted)).should be_true
-    restarted_backend.enabled.should be_true
+    restarted_backend.enabled?.should be_true
   end
 
   it "requires Administer privilege for a disable write" do
@@ -105,6 +105,6 @@ describe "Network Commissioning InterfaceEnabled over authenticated IM" do
 
     interface_write(clusters, false).should eq(Matter::InteractionModel::StatusCode::UnsupportedAccess.value)
     interface_read(clusters).should be_true
-    backend.enabled.should be_true
+    backend.enabled?.should be_true
   end
 end

@@ -10,11 +10,11 @@ module Matter
       # Storage for configured networks
       property configured_networks : Hash(Bytes, Bytes) = {} of Bytes => Bytes
       property connected_network_id : Bytes? = nil
-      property allow_disable = false
-      property fail_next = false
-      getter enabled = true
+      property? allow_disable = false
+      property? fail_next = false
+      getter? enabled = true
 
-      def set_interface_enabled(enabled : Bool) : Backend::InterfaceEnabledResult
+      def apply_interface_enabled(enabled : Bool) : Backend::InterfaceEnabledResult
         if @fail_next
           @fail_next = false
           return Backend::InterfaceEnabledResult::Failure
