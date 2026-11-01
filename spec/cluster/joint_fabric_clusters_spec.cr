@@ -40,7 +40,7 @@ describe Matter::Cluster::JointFabricDatastore do
     changed.should eq(1)
     notified.should eq(1)
     cluster.save_state.should eq(saved)
-    String.from_tlv(cluster.read_attribute(Datastore::ATTR_FRIENDLY_NAME, 1_u8).as(TLV::Any)).should eq(valid_name)
+    String.from_tlv(cluster.read_attribute(Datastore::ATTR_FRIENDLY_NAME, 1_u8).as(TLV::Any).to_slice).should eq(valid_name)
 
     restored = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
     restored.restore_state(saved)
