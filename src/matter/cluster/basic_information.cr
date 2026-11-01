@@ -21,11 +21,13 @@ module Matter
       DEFAULT_MAX_PATHS_PER_INVOKE      =          1_u16
       INITIAL_CONFIGURATION_VERSION     =          1_u32
 
-      # NodeLabel is at most 32 bytes; Location is an ISO 3166-1 alpha-2 code
-      # (two ASCII letters, or "XX" for an unknown region).
-      NODE_LABEL_MAX_LENGTH = 32
-      LOCATION_LENGTH       =  2
-      LOCATION_UNKNOWN      = "XX"
+      # Mandatory identity names and NodeLabel are at most 32 bytes; Location
+      # is an ISO 3166-1 alpha-2 code (two ASCII letters, or "XX" if unknown).
+      VENDOR_NAME_MAX_LENGTH  = 32
+      PRODUCT_NAME_MAX_LENGTH = 32
+      NODE_LABEL_MAX_LENGTH   = 32
+      LOCATION_LENGTH         =  2
+      LOCATION_UNKNOWN        = "XX"
 
       # Product Finish enum
       enum ProductFinish : UInt8
@@ -170,9 +172,11 @@ module Matter
       end
 
       attribute 0x0000, :data_model_revision, UInt16, default: DATA_MODEL_REVISION_1_6, fixed: true
-      attribute 0x0001, :vendor_name, String, default: "", fixed: true
+      attribute 0x0001, :vendor_name, String, default: "", fixed: true,
+        max_length: VENDOR_NAME_MAX_LENGTH, validate: :validate_vendor_name!
       attribute 0x0002, :vendor_id, UInt16, default: 0_u16, fixed: true
-      attribute 0x0003, :product_name, String, default: "", fixed: true
+      attribute 0x0003, :product_name, String, default: "", fixed: true,
+        max_length: PRODUCT_NAME_MAX_LENGTH, validate: :validate_product_name!
       attribute 0x0004, :product_id, UInt16, default: 0_u16, fixed: true
       attribute 0x0005, :node_label, String, default: "", writable: true, write_access: :manage,
         max_length: NODE_LABEL_MAX_LENGTH, validate: :validate_node_label!
@@ -235,6 +239,8 @@ module Matter
         raise Matter::ConfigurationError.new("MaxPathsPerInvoke must be positive") if @max_paths_per_invoke == 0_u16
         raise Matter::ConfigurationError.new("ConfigurationVersion must be positive") if @configuration_version == 0_u32
         @capability_minima.validate!
+        validate_vendor_name!(@vendor_name)
+        validate_product_name!(@product_name)
 
         # Default node_label to product_name if not explicitly set
         # This ensures iOS/controllers show a meaningful device name
@@ -286,6 +292,18 @@ module Matter
         return if label.bytesize <= NODE_LABEL_MAX_LENGTH
 
         raise Matter::ConfigurationError.new("NodeLabel must be at most #{NODE_LABEL_MAX_LENGTH} bytes")
+      end
+
+      private def validate_vendor_name!(name : String) : Nil
+        return if name.bytesize <= VENDOR_NAME_MAX_LENGTH
+
+        raise Matter::ConfigurationError.new("VendorName must be at most #{VENDOR_NAME_MAX_LENGTH} bytes")
+      end
+
+      private def validate_product_name!(name : String) : Nil
+        return if name.bytesize <= PRODUCT_NAME_MAX_LENGTH
+
+        raise Matter::ConfigurationError.new("ProductName must be at most #{PRODUCT_NAME_MAX_LENGTH} bytes")
       end
 
       # Journals the StartUp event (call when the node boots) and returns its
