@@ -196,14 +196,21 @@ describe Matter::Cluster::NetworkCommissioning do
     reloaded.networks.map(&.network_id).should eq(["restart".to_slice])
   end
 
-  it "keeps direct InterfaceEnabled writes outside network command persistence" do
-    cluster = build(RollbackNetwork, network_type: RollbackNetwork::NetworkType::WiFi)
+  it "persists direct InterfaceEnabled writes and restores the backend state" do
+    backend = Matter::Network::TestBackend.new
+    backend.allow_disable = true
+    cluster = build(RollbackNetwork, network_type: RollbackNetwork::NetworkType::WiFi,
+      backend: backend)
     cluster.interface_enabled = false
     document = cluster.save_state.as(Matter::Storage::Document)
-    document.has_key?("interface_enabled").should be_false
+    document["interface_enabled"].should eq(false)
 
+    restarted_backend = Matter::Network::TestBackend.new
+    restarted_backend.allow_disable = true
     reloaded = build(RollbackNetwork, network_type: RollbackNetwork::NetworkType::WiFi)
+    reloaded.backend = restarted_backend
     reloaded.restore_state(document)
-    reloaded.interface_enabled?.should be_true
+    reloaded.interface_enabled?.should be_false
+    restarted_backend.enabled.should be_false
   end
 end

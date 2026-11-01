@@ -26,6 +26,23 @@ module Matter
     # The NetworkCommissioning delegates to this backend for all
     # actual network operations.
     abstract class Backend
+      enum InterfaceEnabledResult
+        Success
+        Unsupported
+        Failure
+      end
+
+      # Platforms that cannot disable their interface leave this default in
+      # place. A supported implementation must apply the change before success
+      # and leave its state unchanged when returning Unsupported or Failure.
+      def set_interface_enabled(enabled : Bool) : InterfaceEnabledResult
+        enabled ? InterfaceEnabledResult::Success : InterfaceEnabledResult::Unsupported
+      end
+
+      def interface_enabled? : Bool
+        true
+      end
+
       # Return a complete, independent checkpoint of mutable network state.
       # Nil means tentative network changes are unsupported by this backend.
       def checkpoint_configuration : Storage::Document?

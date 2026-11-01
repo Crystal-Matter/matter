@@ -100,8 +100,11 @@ describe Matter::Cluster::NetworkCommissioning do
     end
 
     it "writes InterfaceEnabled attribute" do
+      backend = Matter::Network::TestBackend.new
+      backend.allow_disable = true
       cluster = build(Matter::Cluster::NetworkCommissioning,
-        network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi
+        network_type: Matter::Cluster::NetworkCommissioning::NetworkType::WiFi,
+        backend: backend
       )
 
       status = write(cluster,
@@ -111,6 +114,7 @@ describe Matter::Cluster::NetworkCommissioning do
 
       status.status.should eq(Matter::InteractionModel::StatusCode::Success)
       cluster.interface_enabled?.should be_false
+      backend.enabled.should be_false
     end
 
     it "reads LastNetworkingStatus when nil" do
@@ -137,13 +141,17 @@ describe Matter::Cluster::NetworkCommissioning do
   end
 
   it "allows setting interface_enabled" do
-    cluster = Matter::Cluster::NetworkCommissioning.new
+    backend = Matter::Network::TestBackend.new
+    backend.allow_disable = true
+    cluster = Matter::Cluster::NetworkCommissioning.new(backend: backend)
 
     cluster.interface_enabled = false
     cluster.interface_enabled?.should be_false
+    backend.enabled.should be_false
 
     cluster.interface_enabled = true
     cluster.interface_enabled?.should be_true
+    backend.enabled.should be_true
   end
 
   describe "metadata" do
