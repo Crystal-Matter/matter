@@ -402,7 +402,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     opened = 0
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
-      -> { true }, ->(_index : UInt8) { true },
+      -> { false }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) {
         opened += 1
         opened == 1 ? Matter::InteractionModel::Status.success : Matter::InteractionModel::Status.busy
@@ -431,6 +431,44 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::Busy))
   end
 
+  it "rejects an authenticated joint window while the fail-safe is armed without opening it" do
+    armed = true
+    opened = 0
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { armed }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) {
+        opened += 1
+        Matter::InteractionModel::Status.success
+      },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto
+    )
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_is_case_session = true
+    cluster.request_fabric_index = 1_u8
+    cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
+    cluster.jcm_add_noc_guard_ready = -> { true }
+    valid = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
+      180_u16, Bytes.new(97, 0_u8), 3839_u16, 2000_u32, Bytes.new(16, 0_u8))
+
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::Busy))
+    opened.should eq(0)
+
+    invalid = Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest.new(
+      180_u16, Bytes.new(96, 0_u8), 3839_u16, 2000_u32, Bytes.new(16, 0_u8))
+    service.open_joint_commissioning_window(cluster, invalid).should eq(Matter::InteractionModel::Status.invalid_command)
+    cluster.request_peer_subject_ids = [0x44_u64]
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.unsupported_access)
+    opened.should eq(0)
+
+    cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFF_0001_u64]
+    armed = false
+    service.open_joint_commissioning_window(cluster, valid).should eq(Matter::InteractionModel::Status.success)
+    opened.should eq(1)
+  end
+
   it "rejects a different fabric's Administrator CAT for JFA control commands" do
     fabrics = Matter::FabricTable.new(Matter::Storage::Memory.new)
     {1_u8, 2_u8}.each do |index|
@@ -448,7 +486,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     transferred = 0
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, fabric_id,
-      -> { true }, ->(_index : UInt8) { true },
+      -> { false }, ->(_index : UInt8) { true },
       ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) {
         opened += 1
         Matter::InteractionModel::Status.success

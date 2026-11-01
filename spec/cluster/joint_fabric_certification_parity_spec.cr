@@ -174,7 +174,7 @@ describe "Matter 1.6 Joint Fabric certification parity" do
     busy = false
     service = Matter::Commissioning::JointFabricAdministratorService.new(
       icac_key, root, 0x1234_u64,
-      -> { true }, ->(_index : UInt8) { true },
+      -> { false }, ->(_index : UInt8) { true },
       ->(_request : JFA::OpenJointCommissioningWindowRequest) {
         opened += 1 unless busy
         busy ? IMStatus.busy : IMStatus.success
