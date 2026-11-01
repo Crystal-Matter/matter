@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric commissioning window fail-safe guard
+
+- Reject an authenticated `OpenJointCommissioningWindow` request with the
+  JFA `Busy` cluster status while the fail-safe is armed, before calling the
+  host window opener. Existing invalid-command and access checks remain first.
+
 ### Joint Fabric Datastore FriendlyName validation
 
 - Enforce the mandatory 32-byte FriendlyName limit on host updates before
