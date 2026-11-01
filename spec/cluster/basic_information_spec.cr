@@ -109,6 +109,50 @@ describe Matter::Cluster::BasicInformation do
       end
     end
 
+    it "enforces the mandatory vendor and product name limits at construction" do
+      valid_name = "é" * 16
+      oversized_name = valid_name + "a"
+      valid_name.bytesize.should eq(Matter::Cluster::BasicInformation::VENDOR_NAME_MAX_LENGTH)
+      valid_name.bytesize.should eq(Matter::Cluster::BasicInformation::PRODUCT_NAME_MAX_LENGTH)
+
+      cluster = build(Matter::Cluster::BasicInformation, 0,
+        vendor_name: valid_name, product_name: valid_name)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_VENDOR_NAME).should eq(valid_name)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_PRODUCT_NAME).should eq(valid_name)
+
+      expect_raises(Matter::ConfigurationError) do
+        build(Matter::Cluster::BasicInformation, 0, vendor_name: oversized_name)
+      end
+      expect_raises(Matter::ConfigurationError) do
+        build(Matter::Cluster::BasicInformation, 0,
+          product_name: oversized_name, node_label: "Short label")
+      end
+    end
+
+    it "rejects oversized host identity names before changing versions or callbacks" do
+      cluster = build(Matter::Cluster::BasicInformation, 0)
+      valid_name = "é" * 16
+      oversized_name = valid_name + "a"
+      vendor_changes = 0
+      product_changes = 0
+      cluster.on_vendor_name_changed { |_old_value, _new_value| vendor_changes += 1 }
+      cluster.on_product_name_changed { |_old_value, _new_value| product_changes += 1 }
+
+      cluster.vendor_name = valid_name
+      cluster.product_name = valid_name
+      accepted_version = cluster.data_version
+      vendor_changes.should eq(1)
+      product_changes.should eq(1)
+
+      expect_raises(Matter::ConfigurationError) { cluster.vendor_name = oversized_name }
+      expect_raises(Matter::ConfigurationError) { cluster.product_name = oversized_name }
+      cluster.data_version.should eq(accepted_version)
+      vendor_changes.should eq(1)
+      product_changes.should eq(1)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_VENDOR_NAME).should eq(valid_name)
+      read(cluster, Matter::Cluster::BasicInformation::ATTR_PRODUCT_NAME).should eq(valid_name)
+    end
+
     it "rejects an oversized host NodeLabel before updating version or notifying" do
       cluster = build(Matter::Cluster::BasicInformation, 0)
       valid_label = "é" * 16
