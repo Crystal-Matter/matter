@@ -83,7 +83,7 @@ describe Matter::Commissioning::JointFabricAdministratorService do
 
     service.announce_joint_fabric_administrator(cluster,
       Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(2_u16)).should eq(
-      Matter::InteractionModel::Status.success)
+      Matter::InteractionModel::Status.failure)
     observed_endpoint.should eq(2_u16)
     service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
@@ -91,6 +91,43 @@ describe Matter::Commissioning::JointFabricAdministratorService do
       Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16)).should eq(
       Matter::InteractionModel::Status.success)
     observed_endpoint.should eq(1_u16)
+    service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+  end
+
+  it "reports failed Anchor trust verification through authenticated Announce and clears prior verification" do
+    trust_verified = true
+    service = Matter::Commissioning::JointFabricAdministratorService.new(
+      icac_key, root, fabric_id,
+      -> { true }, ->(_index : UInt8) { true },
+      ->(_request : Matter::Cluster::JointFabricAdministrator::OpenJointCommissioningWindowRequest) { Matter::InteractionModel::Status.success },
+      ->(_node : UInt64) { true }, -> { false }, -> { nil }, -> { nil }, crypto,
+      verify_anchor_initiator: ->(_node : UInt64, _fabric : UInt8, _peer : Socket::IPAddress, _endpoint : UInt16) { trust_verified },
+      failsafe_fabric_matches: ->(index : UInt8?) { index == 2_u8 })
+    cluster = Matter::Cluster::JointFabricAdministrator.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.service = service
+    cluster.administrator_fabric_index = 1_u8
+    cluster.request_peer_subject_ids = [Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(Matter::Cluster::JointFabricDatastore::ANCHOR_CAT, 1_u16)).id]
+    cluster.request_peer_icac = anchor_icac
+    cluster.request_peer_node_id = 7_u64
+    cluster.request_peer_address = Socket::IPAddress.new("127.0.0.1", 5540)
+    announce = Matter::Cluster::JointFabricAdministrator::AnnounceJointFabricAdministratorRequest.new(1_u16)
+
+    cluster.invoke_command(Matter::Cluster::JointFabricAdministrator::CMD_ANNOUNCE_JOINT_FABRIC_ADMINISTRATOR,
+      announce.to_tlv(nil), is_case_session: true, fabric_index: 2_u8).should eq(Matter::InteractionModel::Status.success)
+    service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
+
+    trust_verified = false
+    cluster.invoke_command(Matter::Cluster::JointFabricAdministrator::CMD_ANNOUNCE_JOINT_FABRIC_ADMINISTRATOR,
+      announce.to_tlv(nil), is_case_session: true, fabric_index: 2_u8).should eq(Matter::InteractionModel::Status.failure)
+    service.icaccsr_request(cluster).should eq(Matter::InteractionModel::Status.cluster_failure(
+      Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::VIDNotVerified))
+
+    trust_verified = true
+    cluster.invoke_command(Matter::Cluster::JointFabricAdministrator::CMD_ANNOUNCE_JOINT_FABRIC_ADMINISTRATOR,
+      announce.to_tlv(nil), is_case_session: true, fabric_index: 2_u8).should eq(Matter::InteractionModel::Status.success)
     service.icaccsr_request(cluster).as(Matter::Cluster::JointFabricAdministrator::ICACCSRResponse).status_code.should eq(
       Matter::Cluster::JointFabricAdministrator::ICACCSRResponseStatusCodeEnum::OK)
   end
@@ -554,9 +591,9 @@ describe Matter::Commissioning::JointFabricAdministratorService do
     cluster.request_peer_icac = ordinary_icac
     service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.unsupported_access)
     cluster.request_peer_icac = anchor_icac
-    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
+    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.failure)
     cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0002_u64]
-    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.success)
+    service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.failure)
     cluster.request_peer_subject_ids = [0xFFFF_FFFD_FFFE_0000_u64]
     service.announce_joint_fabric_administrator(cluster, announce).should eq(Matter::InteractionModel::Status.unsupported_access)
   end

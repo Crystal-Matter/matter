@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   JFA `Busy` cluster status while the fail-safe is armed, before calling the
   host window opener. Existing invalid-command and access checks remain first.
 
+### Joint Fabric Administrator trust verification status
+
+- `AnnounceJointFabricAdministrator` now reports Interaction Model Failure when
+  Anchor VID trust verification fails. A failed announcement also clears prior
+  verification, so `ICACCSRRequest` remains blocked until verification succeeds.
+
 ### Joint Fabric Datastore FriendlyName validation
 
 - Enforce the mandatory 32-byte FriendlyName limit on host updates before
