@@ -113,7 +113,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
       end
     end
     value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST && (admins = @remote_admin_list)
-              TLV::Any.new(admins, nil)
+              TLV::Any.from_slice(admins.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ANCHOR_ROOT_CA && (root = @remote_anchor_root_ca)
               TLV::Any.new(root, nil)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_FRIENDLY_NAME && (name = @remote_friendly_name)
@@ -481,6 +481,35 @@ describe Matter::Controller::AnchorTransfer::Workflow do
       Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
     end
     candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects oversized administrator names and lists from the old Anchor" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+    oversized_name = TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(
+      0xA101_u64, "é" * (TransferDatastore::MAX_FRIENDLY_NAME_BYTES // 2) + "a", 1_u16, Bytes[1_u8])
+    too_many = Array.new(TransferDatastore::MAX_ADMINS + 1) do |index|
+      TransferDatastore::DatastoreAdministratorInformationEntryStruct.new(
+        0xA101_u64 + index.to_u64, "admin", 1_u16, Bytes[1_u8])
+    end
+
+    [[oversized_name], too_many].each do |entries|
+      im.remote_admin_list = entries
+      expect_raises(Matter::ConfigurationError, /AdminList/) do
+        snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+          Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+        Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+      end
+      candidate.save_state.should eq(before)
+    end
   ensure
     im.try(&.close)
   end
