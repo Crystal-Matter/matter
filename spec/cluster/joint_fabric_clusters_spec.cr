@@ -16,6 +16,30 @@ private def full_node_key_set_list : Array(Datastore::DatastoreNodeKeySetEntrySt
 end
 
 describe Matter::Cluster::JointFabricDatastore do
+  it "keeps AnchorRootCA within the Matter 1.6 wire limit on host updates" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    root = Bytes.new(Datastore::MAX_ANCHOR_ROOT_CA_BYTES, 0xAA_u8)
+    oversized_root = Bytes.new(Datastore::MAX_ANCHOR_ROOT_CA_BYTES + 1, 0xAA_u8)
+    notifications = 0
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, _attribute : UInt32) { notifications += 1; nil }
+
+    cluster.anchor_root_ca = root
+    version = cluster.data_version
+    saved = cluster.save_state
+    notifications.should eq(1)
+    expect_raises(Matter::ConfigurationError, /AnchorRootCA/) { cluster.anchor_root_ca = oversized_root }
+    cluster.anchor_root_ca.should eq(root)
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(saved)
+    notifications.should eq(1)
+    cluster.configure_anchor(oversized_root, 7_u64, 0xFFF1_u16, "Anchor").status.should eq(
+      Matter::InteractionModel::StatusCode::ConstraintError)
+
+    restored = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    restored.restore_state(saved)
+    restored.anchor_root_ca.should eq(root)
+  end
+
   it "keeps the mandatory FriendlyName within 32 bytes across host writes and persistence" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
     cluster.joint_fabric_index = 1_u8

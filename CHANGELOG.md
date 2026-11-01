@@ -19,6 +19,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Anchor VID trust verification fails. A failed announcement also clears prior
   verification, so `ICACCSRRequest` remains blocked until verification succeeds.
 
+### Joint Fabric Datastore AnchorRootCA validation
+
+- Enforce the Matter 1.6 400-byte AnchorRootCA limit on host updates and
+  reject an oversized root from a remote Anchor before transfer state is copied.
+
 ### Joint Fabric Datastore FriendlyName validation
 
 - Enforce the mandatory 32-byte FriendlyName limit on host updates before

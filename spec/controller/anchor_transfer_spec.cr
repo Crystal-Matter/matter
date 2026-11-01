@@ -83,6 +83,7 @@ end
 private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property? change_status_between_reads = false
   property remote_friendly_name : String? = nil
+  property remote_anchor_root_ca : Bytes? = nil
   @status_reads = 0
 
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
@@ -110,7 +111,9 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
           Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32, 0_u8)
       end
     end
-    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_FRIENDLY_NAME && (name = @remote_friendly_name)
+    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ANCHOR_ROOT_CA && (root = @remote_anchor_root_ca)
+              TLV::Any.new(root, nil)
+            elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_FRIENDLY_NAME && (name = @remote_friendly_name)
               TLV::Any.new(name, nil)
             else
               @source.read_attribute(attribute_id, 1_u8).as(TLV::Any)
@@ -432,6 +435,27 @@ describe Matter::Controller::AnchorTransfer::Workflow do
       Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
         Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
     end
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects an oversized AnchorRootCA before copying or persisting a transfer snapshot" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    im.remote_anchor_root_ca = Bytes.new(TransferDatastore::MAX_ANCHOR_ROOT_CA_BYTES + 1, 0xAA_u8)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /AnchorRootCA/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
   ensure
     im.try(&.close)
   end
