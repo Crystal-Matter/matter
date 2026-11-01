@@ -445,7 +445,7 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     candidate = committed_anchor_store
     before = candidate.save_state
     im = FakeAnchorReadImClient.new(source)
-    im.remote_anchor_root_ca = Bytes.new(401, 0xAA_u8)
+    im.remote_anchor_root_ca = Bytes.new(TransferDatastore::MAX_ANCHOR_ROOT_CA_BYTES + 1, 0xAA_u8)
     session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
       session_type: Matter::Session::SessionType::Unicast,
       encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))

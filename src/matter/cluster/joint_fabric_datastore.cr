@@ -20,6 +20,7 @@ module Matter
       RESERVED_GROUP_CAT_VERSION    = UInt16::MAX
       NO_FAILURE_CODE               = 0_u8
       MAX_FRIENDLY_NAME_BYTES       =   32
+      MAX_ANCHOR_ROOT_CA_BYTES      =  400
 
       enum DatastoreAccessControlEntryAuthModeEnum : UInt8
         PASE  = 1
@@ -807,7 +808,8 @@ module Matter
         end
       end
 
-      attribute 0x0000, :anchor_root_ca, Bytes, default: Bytes.empty, read_access: :administer, persist: true
+      attribute 0x0000, :anchor_root_ca, Bytes, default: Bytes.empty, read_access: :administer, persist: true,
+        validate: :validate_anchor_root_ca!
       attribute 0x0001, :anchor_node_id, UInt64, default: 0_u64, read_access: :administer, persist: true
       attribute 0x0002, :anchor_vendor_id, UInt16, default: UNSPECIFIED_ANCHOR_VENDOR_ID, read_access: :administer, persist: true
       attribute 0x0003, :friendly_name, String, default: "", read_access: :administer, persist: true,
@@ -944,7 +946,7 @@ module Matter
       def configure_anchor(root_ca : Bytes, node_id : UInt64, vendor_id : UInt16, name : String,
                            ipk : Bytes? = nil) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
-        return InteractionModel::Status.constraint_error if root_ca.empty? || root_ca.size > 400 || !valid_name?(name)
+        return InteractionModel::Status.constraint_error if root_ca.empty? || root_ca.size > MAX_ANCHOR_ROOT_CA_BYTES || !valid_name?(name)
         return InteractionModel::Status.constraint_error if ipk && ipk.size != Fabric::IPK_SIZE
         # Reattaching a promoted Anchor must preserve the timestamp copied
         # from the frozen old Datastore when its configuration is unchanged.
@@ -1701,6 +1703,12 @@ module Matter
 
       private def valid_name?(name : String) : Bool
         name.bytesize <= MAX_FRIENDLY_NAME_BYTES
+      end
+
+      private def validate_anchor_root_ca!(root_ca : Bytes) : Nil
+        return if root_ca.size <= MAX_ANCHOR_ROOT_CA_BYTES
+
+        raise Matter::ConfigurationError.new("AnchorRootCA must be at most #{MAX_ANCHOR_ROOT_CA_BYTES} bytes")
       end
 
       private def validate_friendly_name!(name : String) : Nil
