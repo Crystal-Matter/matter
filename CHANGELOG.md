@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Basic Information version string lengths
+
+- Validate `HardwareVersionString` and `SoftwareVersionString` as 1–64 UTF-8
+  bytes during device construction and host updates. Invalid updates leave
+  their wire values and data version unchanged.
+
 ### Joint Fabric Datastore administrator list validation
 
 - Enforce Matter 1.6's 32-entry AdminList limit and the 32-byte FriendlyName

@@ -23,11 +23,13 @@ module Matter
 
       # Mandatory identity names and NodeLabel are at most 32 bytes; Location
       # is an ISO 3166-1 alpha-2 code (two ASCII letters, or "XX" if unknown).
-      VENDOR_NAME_MAX_LENGTH  = 32
-      PRODUCT_NAME_MAX_LENGTH = 32
-      NODE_LABEL_MAX_LENGTH   = 32
-      LOCATION_LENGTH         =  2
-      LOCATION_UNKNOWN        = "XX"
+      VENDOR_NAME_MAX_LENGTH   = 32
+      PRODUCT_NAME_MAX_LENGTH  = 32
+      NODE_LABEL_MAX_LENGTH    = 32
+      LOCATION_LENGTH          =  2
+      LOCATION_UNKNOWN         = "XX"
+      VERSION_STRING_MIN_BYTES =  1
+      VERSION_STRING_MAX_BYTES = 64
 
       # Product Finish enum
       enum ProductFinish : UInt8
@@ -182,9 +184,11 @@ module Matter
         max_length: NODE_LABEL_MAX_LENGTH, validate: :validate_node_label!
       attribute 0x0006, :location, String, default: LOCATION_UNKNOWN, writable: true, write_access: :administer
       attribute 0x0007, :hardware_version, UInt16, default: 0_u16, fixed: true
-      attribute 0x0008, :hardware_version_string, String, default: "1.0", fixed: true
+      attribute 0x0008, :hardware_version_string, String, default: "1.0", fixed: true,
+        validate: :validate_hardware_version_string!
       attribute 0x0009, :software_version, UInt32, default: 0_u32, fixed: true
-      attribute 0x000A, :software_version_string, String, default: "1.0.0", fixed: true
+      attribute 0x000A, :software_version_string, String, default: "1.0.0", fixed: true,
+        validate: :validate_software_version_string!
       attribute 0x000B, :manufacturing_date, String, default: "", fixed: true, optional: true
       attribute 0x000C, :part_number, String, default: "", fixed: true, optional: true
       attribute 0x000D, :product_url, String, default: "", fixed: true, optional: true
@@ -241,6 +245,8 @@ module Matter
         @capability_minima.validate!
         validate_vendor_name!(@vendor_name)
         validate_product_name!(@product_name)
+        validate_version_string!(@hardware_version_string, "HardwareVersionString")
+        validate_version_string!(@software_version_string, "SoftwareVersionString")
 
         # Default node_label to product_name if not explicitly set
         # This ensures iOS/controllers show a meaningful device name
@@ -304,6 +310,21 @@ module Matter
         return if name.bytesize <= PRODUCT_NAME_MAX_LENGTH
 
         raise Matter::ConfigurationError.new("ProductName must be at most #{PRODUCT_NAME_MAX_LENGTH} bytes")
+      end
+
+      private def validate_version_string!(value : String, name : String) : Nil
+        bytes = value.bytesize
+        return if value.valid_encoding? && VERSION_STRING_MIN_BYTES <= bytes <= VERSION_STRING_MAX_BYTES
+
+        raise Matter::ConfigurationError.new("#{name} must contain #{VERSION_STRING_MIN_BYTES}-#{VERSION_STRING_MAX_BYTES} UTF-8 bytes")
+      end
+
+      private def validate_hardware_version_string!(value : String) : Nil
+        validate_version_string!(value, "HardwareVersionString")
+      end
+
+      private def validate_software_version_string!(value : String) : Nil
+        validate_version_string!(value, "SoftwareVersionString")
       end
 
       # Journals the StartUp event (call when the node boots) and returns its
