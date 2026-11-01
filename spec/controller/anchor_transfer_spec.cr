@@ -82,6 +82,7 @@ end
 
 private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property? change_status_between_reads = false
+  property remote_friendly_name : String? = nil
   @status_reads = 0
 
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
@@ -109,7 +110,11 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
           Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32, 0_u8)
       end
     end
-    value = @source.read_attribute(attribute_id, 1_u8).as(TLV::Any)
+    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_FRIENDLY_NAME && (name = @remote_friendly_name)
+              TLV::Any.new(name, nil)
+            else
+              @source.read_attribute(attribute_id, 1_u8).as(TLV::Any)
+            end
     path = Matter::InteractionModel::AttributePath.new(endpoint: endpoint_id, cluster: cluster_id, attribute: attribute_id)
     data = Matter::InteractionModel::AttributeDataIB.new(path: path, data: value)
     Matter::InteractionModel::ReportDataMessage.new(attribute_reports: [Matter::InteractionModel::AttributeReportIB.new(attribute_data: data)])
@@ -407,6 +412,23 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     im.change_status_between_reads = true
     im.reset_status_reads
     expect_raises(Matter::CommissioningError, /not frozen|changed/) do
+      Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+    end
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects an oversized FriendlyName from the old Anchor before copying its snapshot" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    im = FakeAnchorReadImClient.new(source)
+    im.remote_friendly_name = "é" * 16 + "a"
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /FriendlyName/) do
       Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
         Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
     end

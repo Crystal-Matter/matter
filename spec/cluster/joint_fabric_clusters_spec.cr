@@ -16,6 +16,37 @@ private def full_node_key_set_list : Array(Datastore::DatastoreNodeKeySetEntrySt
 end
 
 describe Matter::Cluster::JointFabricDatastore do
+  it "keeps the mandatory FriendlyName within 32 bytes across host writes and persistence" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    cluster.joint_fabric_index = 1_u8
+    cluster.access_mode = Datastore::AccessMode::Active
+    cluster.request_is_case_session = true
+    valid_name = "é" * 16
+    oversized_name = valid_name + "a"
+    valid_name.bytesize.should eq(Datastore::MAX_FRIENDLY_NAME_BYTES)
+    changed = 0
+    notified = 0
+    cluster.on_friendly_name_changed { |_old_value, _new_value| changed += 1 }
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, _attribute : UInt32) { notified += 1; nil }
+
+    cluster.friendly_name = valid_name
+    changed.should eq(1)
+    notified.should eq(1)
+    version = cluster.data_version
+    saved = cluster.save_state.as(Matter::Storage::Document)
+
+    expect_raises(Matter::ConfigurationError) { cluster.friendly_name = oversized_name }
+    cluster.data_version.should eq(version)
+    changed.should eq(1)
+    notified.should eq(1)
+    cluster.save_state.should eq(saved)
+    String.from_tlv(cluster.read_attribute(Datastore::ATTR_FRIENDLY_NAME, 1_u8).as(TLV::Any)).should eq(valid_name)
+
+    restored = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    restored.restore_state(saved)
+    restored.friendly_name.should eq(valid_name)
+  end
+
   it "preserves a committed Anchor status when the same configuration is attached again" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
     root = Bytes[1_u8]
