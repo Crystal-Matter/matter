@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bytes during device construction and host updates. Invalid updates leave
   their wire values and data version unchanged.
 
+### Joint Fabric Datastore administrator list validation
+
+- Enforce Matter 1.6's 32-entry AdminList limit and the 32-byte FriendlyName
+  and 400-byte ICAC limits for each administrator on host updates and remote
+  Anchor transfer snapshots.
+
 ### Joint Fabric commissioning window fail-safe guard
 
 - Reject an authenticated `OpenJointCommissioningWindow` request with the
