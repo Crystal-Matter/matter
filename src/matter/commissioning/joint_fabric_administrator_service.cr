@@ -302,11 +302,12 @@ module Matter
         if node_id && fabric_index && peer_address && verifier && verifier.call(node_id, fabric_index, peer_address, request.endpoint_id)
           @verified_initiator_node_id = node_id
           @verified_initiator_fabric_index = fabric_index
+          InteractionModel::Status.success
         else
           @verified_initiator_node_id = nil
           @verified_initiator_fabric_index = nil
+          InteractionModel::Status.failure
         end
-        InteractionModel::Status.success
       end
 
       # Operational VID verification belongs to the authenticated Anchor on
