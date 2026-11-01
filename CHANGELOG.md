@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### General Diagnostics monotonic uptime
+
+- Measure mandatory UpTime from the same monotonic clock as TimeSnapshot.
+  Wall-clock corrections no longer make UpTime regress or disagree with
+  SystemTimeMs.
+
 ### Basic Information version string lengths
 
 - Validate `HardwareVersionString` and `SoftwareVersionString` as 1–64 UTF-8

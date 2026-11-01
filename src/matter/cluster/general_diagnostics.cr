@@ -378,8 +378,8 @@ module Matter
 
       event 0x03, :boot_reason, priority: :critical, payload: Events::BootReasonEvent
 
-      @start_time : Time
       @start_instant : Time::Instant
+      @monotonic_now : Proc(Time::Instant)
 
       @test_enable_key : Bytes?
 
@@ -398,6 +398,7 @@ module Matter
         @reboot_count : UInt16 = 0_u16,
         @boot_reason : BootReason = BootReason::Unspecified,
         test_enable_key : Bytes? = nil,
+        monotonic_now : Proc(Time::Instant) = -> { Time.instant },
       )
         if key = test_enable_key
           raise ArgumentError.new("test enable key must be #{ENABLE_KEY_LENGTH} bytes and nonzero") unless key.size == ENABLE_KEY_LENGTH && key.any? { |byte| byte != 0_u8 }
@@ -406,8 +407,8 @@ module Matter
         @feature_map = @test_enable_key ? Feature::DataModelTest : Feature::None
         @test_event_triggers_enabled = !@test_enable_key.nil?
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        @start_time = Time.utc
-        @start_instant = Time.instant
+        @monotonic_now = monotonic_now
+        @start_instant = @monotonic_now.call
         @on_posix_time_ms = nil
         @on_device_load_status = nil
         @on_test_event_trigger = nil
@@ -418,7 +419,7 @@ module Matter
       end
 
       def time_snapshot : TimeSnapshotResponse
-        elapsed_ms = (Time.instant - @start_instant).total_milliseconds.to_u64
+        elapsed_ms = elapsed.total_milliseconds.to_u64
         TimeSnapshotResponse.new(elapsed_ms, @on_posix_time_ms.try(&.call))
       end
 
@@ -426,13 +427,13 @@ module Matter
         emit_event(EVENT_BOOT_REASON, Events::BootReasonEvent.new(@boot_reason))
       end
 
-      # UpTime attribute (0x02): seconds since the cluster was created
+      # UpTime uses the same monotonic origin as TimeSnapshot.
       def up_time : UInt64
         elapsed.total_seconds.to_u64
       end
 
       private def elapsed : Time::Span
-        Time.utc - @start_time
+        @monotonic_now.call - @start_instant
       end
 
       def test_event_trigger(request : TestEventTriggerRequest) : InteractionModel::Status
