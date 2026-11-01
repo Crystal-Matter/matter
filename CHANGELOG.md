@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore FriendlyName validation
+
+- Enforce the mandatory 32-byte FriendlyName limit on host updates before
+  changing or persisting Datastore state. An oversized name from a remote
+  Anchor is rejected when its transfer snapshot is read.
+
 ### Basic Information identity name validation
 
 - Enforce Matter 1.6's 32-byte limits for mandatory VendorName and

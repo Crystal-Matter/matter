@@ -19,6 +19,7 @@ module Matter
       FIRST_GROUP_CAT_VERSION       = 1_u16
       RESERVED_GROUP_CAT_VERSION    = UInt16::MAX
       NO_FAILURE_CODE               = 0_u8
+      MAX_FRIENDLY_NAME_BYTES       =   32
 
       enum DatastoreAccessControlEntryAuthModeEnum : UInt8
         PASE  = 1
@@ -809,7 +810,8 @@ module Matter
       attribute 0x0000, :anchor_root_ca, Bytes, default: Bytes.empty, read_access: :administer, persist: true
       attribute 0x0001, :anchor_node_id, UInt64, default: 0_u64, read_access: :administer, persist: true
       attribute 0x0002, :anchor_vendor_id, UInt16, default: UNSPECIFIED_ANCHOR_VENDOR_ID, read_access: :administer, persist: true
-      attribute 0x0003, :friendly_name, String, default: "", read_access: :administer, persist: true
+      attribute 0x0003, :friendly_name, String, default: "", read_access: :administer, persist: true,
+        max_length: MAX_FRIENDLY_NAME_BYTES, validate: :validate_friendly_name!
       attribute 0x0004, :group_key_set_list, Array(DatastoreGroupKeySetStruct), default: [] of DatastoreGroupKeySetStruct, read_access: :administer, persist: true
       attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
@@ -846,7 +848,6 @@ module Matter
       MAX_NODES                 = 1024
       MAX_ADMINS                =   32
       MAX_NODE_ENTRIES          = 8192
-      MAX_FRIENDLY_NAME_BYTES   =   32
       EPOCH_KEY_BYTES           =   16
       RESERVED_GROUP_ID         = DataType::GroupId::RESERVED.id
       IPK_KEY_SET_ID            = GroupKeyManagement::IPK_KEY_SET_ID
@@ -1700,6 +1701,12 @@ module Matter
 
       private def valid_name?(name : String) : Bool
         name.bytesize <= MAX_FRIENDLY_NAME_BYTES
+      end
+
+      private def validate_friendly_name!(name : String) : Nil
+        return if valid_name?(name)
+
+        raise Matter::ConfigurationError.new("FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
       end
 
       private def valid_binding_target?(binding : DatastoreBindingTargetStruct) : Bool
