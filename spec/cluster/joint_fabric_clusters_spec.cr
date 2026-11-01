@@ -71,6 +71,36 @@ describe Matter::Cluster::JointFabricDatastore do
     restored.friendly_name.should eq(valid_name)
   end
 
+  it "keeps the administrator list and its entries within Matter 1.6 bounds on host updates" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
+    name = "é" * (Datastore::MAX_FRIENDLY_NAME_BYTES // 2)
+    icac = Bytes.new(Datastore::MAX_ADMIN_ICAC_BYTES, 0xAA_u8)
+    valid = Datastore::DatastoreAdministratorInformationEntryStruct.new(0xA101_u64, name, 1_u16, icac)
+    cluster.admin_list = [valid]
+    saved = cluster.save_state
+    version = cluster.data_version
+
+    oversized_name = Datastore::DatastoreAdministratorInformationEntryStruct.new(
+      valid.node_id, name + "a", valid.vendor_id, icac)
+    oversized_icac = Datastore::DatastoreAdministratorInformationEntryStruct.new(
+      valid.node_id, name, valid.vendor_id, Bytes.new(Datastore::MAX_ADMIN_ICAC_BYTES + 1, 0xAA_u8))
+    too_many = Array.new(Datastore::MAX_ADMINS + 1) do |index|
+      Datastore::DatastoreAdministratorInformationEntryStruct.new(
+        valid.node_id + index.to_u64, "admin", valid.vendor_id, Bytes[1_u8])
+    end
+    expect_raises(Matter::ConfigurationError, /AdminList/) { cluster.admin_list = [oversized_name] }
+    expect_raises(Matter::ConfigurationError, /AdminList/) { cluster.admin_list = [oversized_icac] }
+    expect_raises(Matter::ConfigurationError, /AdminList/) { cluster.admin_list = too_many }
+    cluster.admin_list.size.should eq(1)
+    cluster.admin_list.first.friendly_name.should eq(name)
+    cluster.admin_list.first.icac.should eq(icac)
+    cluster.data_version.should eq(version)
+    cluster.save_state.should eq(saved)
+
+    cluster.admin_list = [] of Datastore::DatastoreAdministratorInformationEntryStruct
+    cluster.admin_list.should be_empty
+  end
+
   it "preserves a committed Anchor status when the same configuration is attached again" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber::ROOT)
     root = Bytes[1_u8]

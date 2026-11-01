@@ -21,6 +21,7 @@ module Matter
       NO_FAILURE_CODE               = 0_u8
       MAX_FRIENDLY_NAME_BYTES       =   32
       MAX_ANCHOR_ROOT_CA_BYTES      =  400
+      MAX_ADMIN_ICAC_BYTES          =  400
 
       enum DatastoreAccessControlEntryAuthModeEnum : UInt8
         PASE  = 1
@@ -817,7 +818,8 @@ module Matter
       attribute 0x0004, :group_key_set_list, Array(DatastoreGroupKeySetStruct), default: [] of DatastoreGroupKeySetStruct, read_access: :administer, persist: true
       attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
-      attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true
+      attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_admin_list!
       attribute 0x0008, :status, DatastoreStatusEntryStruct, default: DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, NO_FAILURE_CODE), read_access: :administer, persist: true
       attribute 0x0009, :endpoint_group_id_list, Array(DatastoreEndpointGroupIDEntryStruct), default: [] of DatastoreEndpointGroupIDEntryStruct, read_access: :administer, persist: true
       attribute 0x000A, :endpoint_binding_list, Array(DatastoreEndpointBindingEntryStruct), default: [] of DatastoreEndpointBindingEntryStruct, read_access: :administer, persist: true
@@ -1191,7 +1193,7 @@ module Matter
       def add_admin(request : AddAdminRequest) : InteractionModel::Status
         return InteractionModel::Status.busy if transfer_pending?
         return InteractionModel::Status.constraint_error unless DataType::NodeId.valid_joint_fabric?(request.node_id)
-        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name) && request.icac.size <= 400
+        return InteractionModel::Status.constraint_error unless valid_name?(request.friendly_name) && request.icac.size <= MAX_ADMIN_ICAC_BYTES
         return InteractionModel::Status.constraint_error if @admin_list.any?(&.node_id.==(request.node_id))
         return InteractionModel::Status.resource_exhausted if @admin_list.size >= MAX_ADMINS
         entry = DatastoreAdministratorInformationEntryStruct.new(request.node_id, request.friendly_name,
@@ -1205,7 +1207,7 @@ module Matter
         index = @admin_list.index { |entry| entry.node_id == request.node_id }
         return InteractionModel::Status.not_found unless index
         return InteractionModel::Status.constraint_error if (name = request.friendly_name) && !valid_name?(name)
-        return InteractionModel::Status.constraint_error if (icac = request.icac) && icac.size > 400
+        return InteractionModel::Status.constraint_error if (icac = request.icac) && icac.size > MAX_ADMIN_ICAC_BYTES
         entry = @admin_list[index]
         entry.friendly_name = name if name
         entry.icac = icac if icac
@@ -1715,6 +1717,16 @@ module Matter
         return if valid_name?(name)
 
         raise Matter::ConfigurationError.new("FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
+      end
+
+      private def validate_admin_list!(entries : Array(DatastoreAdministratorInformationEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("AdminList must have at most #{MAX_ADMINS} entries") if entries.size > MAX_ADMINS
+
+        entries.each do |entry|
+          unless valid_name?(entry.friendly_name) && entry.icac.size <= MAX_ADMIN_ICAC_BYTES
+            raise Matter::ConfigurationError.new("AdminList entries require a FriendlyName of at most #{MAX_FRIENDLY_NAME_BYTES} bytes and an ICAC of at most #{MAX_ADMIN_ICAC_BYTES} bytes")
+          end
+        end
       end
 
       private def valid_binding_target?(binding : DatastoreBindingTargetStruct) : Bool
