@@ -91,6 +91,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property remote_node_endpoint_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreEndpointEntryStruct)? = nil
   property remote_node_key_set_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct)? = nil
   property remote_node_acl_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreACLEntryStruct)? = nil
+  property remote_endpoint_group_id_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreEndpointGroupIDEntryStruct)? = nil
   property remote_endpoint_binding_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreEndpointBindingEntryStruct)? = nil
   @status_reads = 0
 
@@ -121,6 +122,8 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
     end
     value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ENDPOINT_BINDING_LIST && (bindings = @remote_endpoint_binding_list)
               TLV::Any.from_slice(bindings.to_tlv)
+            elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ENDPOINT_GROUP_ID_LIST && (memberships = @remote_endpoint_group_id_list)
+              TLV::Any.from_slice(memberships.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_NODE_ACL_LIST && (acls = @remote_node_acl_list)
               TLV::Any.from_slice(acls.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_NODE_ENDPOINT_LIST && (endpoints = @remote_node_endpoint_list)
@@ -797,6 +800,53 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     store.data_version.should eq(version)
     store.node_acl_list = [] of TransferDatastore::DatastoreACLEntryStruct
     store.node_acl_list.should be_empty
+  end
+
+  it "rejects an oversized remote EndpointGroupIDList before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    im.remote_endpoint_group_id_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1) do |index|
+      TransferDatastore::DatastoreEndpointGroupIDEntryStruct.new(index.to_u64 + 1_u64, 1_u16, 1_u16, status)
+    end
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /EndpointGroupIDList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "accepts the EndpointGroupIDList host boundary and rejects an oversized update without mutation" do
+    store = committed_anchor_store
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    valid = TransferDatastore::DatastoreEndpointGroupIDEntryStruct.new(1_u64, 1_u16, 1_u16, status)
+    store.endpoint_group_id_list = [valid]
+    store.endpoint_group_id_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES) do |index|
+      TransferDatastore::DatastoreEndpointGroupIDEntryStruct.new(index.to_u64 + 1_u64, 1_u16, 1_u16, status)
+    end
+    store.endpoint_group_id_list.size.should eq(TransferDatastore::MAX_NODE_ENTRIES)
+    before = store.save_state
+    version = store.data_version
+
+    expect_raises(Matter::ConfigurationError, /EndpointGroupIDList/) do
+      store.endpoint_group_id_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.endpoint_group_id_list = [] of TransferDatastore::DatastoreEndpointGroupIDEntryStruct
+    store.endpoint_group_id_list.should be_empty
   end
 
   it "rejects an oversized remote EndpointBindingList before copying or persisting" do
