@@ -519,6 +519,12 @@ describe Matter::Controller::AnchorTransfer::Workflow do
       TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
       Bytes.new(TransferDatastore::EPOCH_KEY_BYTES, 0xAA_u8), 0_u64, nil, nil, nil, nil)
     store.group_key_set_list = [valid]
+    store.group_key_set_list = Array.new(TransferDatastore::MAX_KEY_SETS) do |index|
+      TransferDatastore::DatastoreGroupKeySetStruct.new(index.to_u16,
+        TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        Bytes.new(TransferDatastore::EPOCH_KEY_BYTES, 0xAA_u8), 0_u64, nil, nil, nil, nil)
+    end
+    store.group_key_set_list.size.should eq(TransferDatastore::MAX_KEY_SETS)
     before = store.save_state
     version = store.data_version
 
