@@ -557,7 +557,9 @@ fixed Tolerance attribute, including zero. Omit it when unsupported. Sensor
 readings start from the configured value after restart and are not persisted.
 
 The root node's General Diagnostics cluster answers TimeSnapshot with monotonic
-milliseconds since startup. Its nullable POSIX time remains absent until an
+milliseconds since startup. The mandatory UpTime attribute uses that same
+monotonic origin, so wall-clock corrections cannot change its elapsed time.
+Its nullable POSIX time remains absent until an
 application supplies a synchronized clock through `on_posix_time_ms`. Device
 startup journals the configured BootReason as a critical event.
 When the application has no platform boot-cause signal, the reported reason is
