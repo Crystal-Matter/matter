@@ -88,6 +88,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property remote_group_key_set_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct)? = nil
   property remote_node_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct)? = nil
   property remote_group_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupInformationEntryStruct)? = nil
+  property remote_node_endpoint_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreEndpointEntryStruct)? = nil
   @status_reads = 0
 
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
@@ -115,7 +116,9 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
           Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32, 0_u8)
       end
     end
-    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST && (groups = @remote_group_list)
+    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_NODE_ENDPOINT_LIST && (endpoints = @remote_node_endpoint_list)
+              TLV::Any.from_slice(endpoints.to_tlv)
+            elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_GROUP_LIST && (groups = @remote_group_list)
               TLV::Any.from_slice(groups.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST && (nodes = @remote_node_list)
               TLV::Any.from_slice(nodes.to_tlv)
@@ -616,6 +619,75 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     store.data_version.should eq(version)
     store.node_list = [] of TransferDatastore::DatastoreNodeInformationEntryStruct
     store.node_list.should be_empty
+  end
+
+  it "rejects an oversized remote NodeEndpointList FriendlyName before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    im.remote_node_endpoint_list = [TransferDatastore::DatastoreEndpointEntryStruct.new(1_u16, 1_u64, "é" * 16 + "a")]
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /NodeEndpointList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects an oversized remote NodeEndpointList before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    im.remote_node_endpoint_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1) do |index|
+      TransferDatastore::DatastoreEndpointEntryStruct.new(index.to_u16 + 1_u16, 1_u64, "endpoint")
+    end
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /NodeEndpointList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "accepts NodeEndpointList host boundaries and rejects malformed updates without mutation" do
+    store = committed_anchor_store
+    valid = TransferDatastore::DatastoreEndpointEntryStruct.new(1_u16, 1_u64, "é" * 16)
+    store.node_endpoint_list = [valid]
+    store.node_endpoint_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES) do |index|
+      TransferDatastore::DatastoreEndpointEntryStruct.new(index.to_u16 + 1_u16, 1_u64, valid.friendly_name)
+    end
+    store.node_endpoint_list.size.should eq(TransferDatastore::MAX_NODE_ENTRIES)
+    before = store.save_state
+    version = store.data_version
+
+    invalid = TransferDatastore::DatastoreEndpointEntryStruct.new(1_u16, 1_u64, "é" * 16 + "a")
+    expect_raises(Matter::ConfigurationError, /NodeEndpointList/) { store.node_endpoint_list = [invalid] }
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+
+    expect_raises(Matter::ConfigurationError, /NodeEndpointList/) do
+      store.node_endpoint_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.node_endpoint_list = [] of TransferDatastore::DatastoreEndpointEntryStruct
+    store.node_endpoint_list.should be_empty
   end
 
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
