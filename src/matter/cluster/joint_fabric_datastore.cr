@@ -817,7 +817,8 @@ module Matter
         max_length: MAX_FRIENDLY_NAME_BYTES, validate: :validate_friendly_name!
       attribute 0x0004, :group_key_set_list, Array(DatastoreGroupKeySetStruct), default: [] of DatastoreGroupKeySetStruct, read_access: :administer, persist: true,
         validate: :validate_group_key_set_list!
-      attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true
+      attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_group_list!
       attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true,
         validate: :validate_admin_list!
@@ -1727,6 +1728,14 @@ module Matter
           unless {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}.all? { |key| key.nil? || key.size == EPOCH_KEY_BYTES }
             raise Matter::ConfigurationError.new("GroupKeySetList epoch keys must be #{EPOCH_KEY_BYTES} bytes")
           end
+        end
+      end
+
+      private def validate_group_list!(entries : Array(DatastoreGroupInformationEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("GroupList must have at most #{MAX_GROUPS} entries") if entries.size > MAX_GROUPS
+
+        unless entries.all? { |entry| valid_name?(entry.friendly_name) }
+          raise Matter::ConfigurationError.new("GroupList FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
         end
       end
 

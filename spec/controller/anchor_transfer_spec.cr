@@ -515,6 +515,34 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     im.try(&.close)
   end
 
+  it "accepts GroupList host boundaries and rejects malformed updates without mutation" do
+    store = committed_anchor_store
+    valid = TransferDatastore::DatastoreGroupInformationEntryStruct.new(1_u64,
+      "é" * 16, nil, nil, nil, TransferDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)
+    store.group_list = [valid]
+    store.group_list = Array.new(TransferDatastore::MAX_GROUPS) do |index|
+      TransferDatastore::DatastoreGroupInformationEntryStruct.new(index.to_u64 + 1_u64,
+        valid.friendly_name, nil, nil, nil, TransferDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)
+    end
+    store.group_list.size.should eq(TransferDatastore::MAX_GROUPS)
+    before = store.save_state
+    version = store.data_version
+
+    invalid = TransferDatastore::DatastoreGroupInformationEntryStruct.new(1_u64,
+      "é" * 16 + "a", nil, nil, nil, TransferDatastore::DatastoreAccessControlEntryPrivilegeEnum::Operate)
+    expect_raises(Matter::ConfigurationError, /GroupList/) { store.group_list = [invalid] }
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+
+    expect_raises(Matter::ConfigurationError, /GroupList/) do
+      store.group_list = Array.new(TransferDatastore::MAX_GROUPS + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.group_list = [] of TransferDatastore::DatastoreGroupInformationEntryStruct
+    store.group_list.should be_empty
+  end
+
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true
