@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore node list snapshot bounds
+
+- Enforce the Matter 1.6 NodeList maximum of 1,024 entries and the 32-byte
+  FriendlyName limit per node on host updates and remote Anchor transfer
+  snapshots. Rejected updates preserve the Datastore and DataVersion; empty
+  pending/clear lists and existing node status semantics remain valid.
+
 ### Joint Fabric Datastore group list snapshot bounds
 
 - Enforce the Matter 1.6 GroupList maximum of 254 entries and the 32-byte
