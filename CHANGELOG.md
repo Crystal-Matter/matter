@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore node key set snapshot bound
+
+- Enforce Matter 1.6's 8,192-entry NodeKeySetList maximum on host updates and
+  remote Anchor transfer snapshots. Rejected updates leave the Datastore and
+  DataVersion unchanged; empty clear lists and legacy key-set semantics remain valid.
+
 ### Joint Fabric Datastore group list snapshot bounds
 
 - Enforce the Matter 1.6 GroupList maximum of 254 entries and the 32-byte
