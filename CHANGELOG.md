@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore UpdateGroup key rotation
+
+- Stage replacement group key sets for every Datastore NodeList node, including
+  nodes without a current membership in the group. Check the full capacity
+  before changing GroupList so an oversized rotation leaves state unchanged.
+
 ### Joint Fabric Datastore endpoint binding snapshot bound
 
 - Enforce Matter 1.6's 8,192-entry EndpointBindingList maximum on host updates

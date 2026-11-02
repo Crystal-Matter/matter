@@ -1108,6 +1108,30 @@ describe Matter::Cluster::JointFabricDatastore do
     notifications.should eq(0)
   end
 
+  it "checks UpdateGroup key-set capacity for nonmember Datastore nodes before mutation" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Member"))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(43_u64, "Nonmember"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", nil, nil, nil, privilege))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 10_u16))
+    cluster.node_key_set_list = full_node_key_set_list.first(Datastore::MAX_NODE_ENTRIES - 1)
+    before = cluster.save_state
+    version = cluster.data_version
+    notifications = 0
+    cluster.on_version_changed = -> { notifications += 1; nil }
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, "Changed", 10_u16, nil, nil, nil))
+      .status.should eq(Matter::InteractionModel::StatusCode::ResourceExhausted)
+    cluster.group_list.first.friendly_name.should eq("Group")
+    cluster.group_list.first.group_key_set_id.should be_nil
+    cluster.node_key_set_list.size.should eq(Datastore::MAX_NODE_ENTRIES - 1)
+    cluster.save_state.should eq(before)
+    cluster.data_version.should eq(version)
+    notifications.should eq(0)
+  end
+
   it "counts distinct nodes once when a group key-set update fills the final slot" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Light"))
