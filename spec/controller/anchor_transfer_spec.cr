@@ -86,6 +86,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property remote_anchor_root_ca : Bytes? = nil
   property remote_admin_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)? = nil
   property remote_group_key_set_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct)? = nil
+  property remote_node_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeInformationEntryStruct)? = nil
   @status_reads = 0
 
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
@@ -113,7 +114,9 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
           Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32, 0_u8)
       end
     end
-    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_GROUP_KEY_SET_LIST && (key_sets = @remote_group_key_set_list)
+    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_NODE_LIST && (nodes = @remote_node_list)
+              TLV::Any.from_slice(nodes.to_tlv)
+            elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_GROUP_KEY_SET_LIST && (key_sets = @remote_group_key_set_list)
               TLV::Any.from_slice(key_sets.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST && (admins = @remote_admin_list)
               TLV::Any.from_slice(admins.to_tlv)
@@ -457,6 +460,52 @@ describe Matter::Controller::AnchorTransfer::Workflow do
       encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
 
     expect_raises(Matter::ConfigurationError, /AnchorRootCA/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects an oversized remote NodeList FriendlyName before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(TransferDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    im.remote_node_list = [TransferDatastore::DatastoreNodeInformationEntryStruct.new(1_u64, "é" * 16 + "a", status)]
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /NodeList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects an oversized remote NodeList before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(TransferDatastore::DatastoreStateEnum::Committed, 0_u32, 0_u8)
+    im.remote_node_list = Array.new(TransferDatastore::MAX_NODES + 1) do |index|
+      TransferDatastore::DatastoreNodeInformationEntryStruct.new(index.to_u64 + 1_u64, "node", status)
+    end
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /NodeList/) do
       snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
         Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
       Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
