@@ -825,6 +825,29 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     im.try(&.close)
   end
 
+  it "accepts the EndpointBindingList host boundary and rejects an oversized update without mutation" do
+    store = committed_anchor_store
+    binding = TransferDatastore::DatastoreBindingTargetStruct.new(1_u64)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    valid = TransferDatastore::DatastoreEndpointBindingEntryStruct.new(1_u64, 1_u16, 1_u16, binding, status)
+    store.endpoint_binding_list = [valid]
+    store.endpoint_binding_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES) do |index|
+      TransferDatastore::DatastoreEndpointBindingEntryStruct.new(1_u64, 1_u16, index.to_u16 + 1_u16, binding, status)
+    end
+    store.endpoint_binding_list.size.should eq(TransferDatastore::MAX_NODE_ENTRIES)
+    before = store.save_state
+    version = store.data_version
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList/) do
+      store.endpoint_binding_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.endpoint_binding_list = [] of TransferDatastore::DatastoreEndpointBindingEntryStruct
+    store.endpoint_binding_list.should be_empty
+  end
+
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true

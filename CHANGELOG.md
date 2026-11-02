@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore endpoint binding snapshot bound
+
+- Enforce Matter 1.6's 8,192-entry EndpointBindingList maximum on host updates
+  and remote Anchor transfer snapshots. Rejected updates leave the Datastore
+  and DataVersion unchanged; empty clear lists and binding semantics remain valid.
+
 ### Joint Fabric Datastore node ACL snapshot bound
 
 - Enforce Matter 1.6's 8,192-entry NodeACLList maximum on host updates and
