@@ -898,6 +898,52 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     store.endpoint_binding_list.should be_empty
   end
 
+  it "rejects a remote EndpointBindingList target with reserved Group ID before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    binding = TransferDatastore::DatastoreBindingTargetStruct.new(nil, Matter::DataType::GroupId::RESERVED.id)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    im.remote_endpoint_binding_list = [TransferDatastore::DatastoreEndpointBindingEntryStruct.new(
+      1_u64, 1_u16, 1_u16, binding, status)]
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList.*Group/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "accepts valid EndpointBindingList Group IDs and rejects the reserved ID without mutation" do
+    store = committed_anchor_store
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    valid_binding = TransferDatastore::DatastoreBindingTargetStruct.new(nil, 1_u16)
+    store.endpoint_binding_list = [TransferDatastore::DatastoreEndpointBindingEntryStruct.new(
+      1_u64, 1_u16, 1_u16, valid_binding, status)]
+    before = store.save_state
+    version = store.data_version
+    invalid_binding = TransferDatastore::DatastoreBindingTargetStruct.new(nil, Matter::DataType::GroupId::RESERVED.id)
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList.*Group/) do
+      store.endpoint_binding_list = [TransferDatastore::DatastoreEndpointBindingEntryStruct.new(
+        1_u64, 1_u16, 1_u16, invalid_binding, status)]
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.endpoint_binding_list = [] of TransferDatastore::DatastoreEndpointBindingEntryStruct
+    store.endpoint_binding_list.should be_empty
+  end
+
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true
