@@ -819,7 +819,8 @@ module Matter
         validate: :validate_group_key_set_list!
       attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true,
         validate: :validate_group_list!
-      attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
+      attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_node_list!
       attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true,
         validate: :validate_admin_list!
       attribute 0x0008, :status, DatastoreStatusEntryStruct, default: DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, NO_FAILURE_CODE), read_access: :administer, persist: true
@@ -828,7 +829,8 @@ module Matter
       attribute 0x000B, :node_key_set_list, Array(DatastoreNodeKeySetEntryStruct), default: [] of DatastoreNodeKeySetEntryStruct, read_access: :administer, persist: true,
         validate: :validate_node_key_set_list!
       attribute 0x000C, :node_acl_list, Array(DatastoreACLEntryStruct), default: [] of DatastoreACLEntryStruct, read_access: :administer, persist: true
-      attribute 0x000D, :node_endpoint_list, Array(DatastoreEndpointEntryStruct), default: [] of DatastoreEndpointEntryStruct, read_access: :administer, persist: true
+      attribute 0x000D, :node_endpoint_list, Array(DatastoreEndpointEntryStruct), default: [] of DatastoreEndpointEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_node_endpoint_list!
 
       command 0x00, :add_key_set, request: AddKeySetRequest, access: :administer
       command 0x01, :update_key_set, request: UpdateKeySetRequest, access: :administer
@@ -1732,6 +1734,14 @@ module Matter
         end
       end
 
+      private def validate_node_list!(entries : Array(DatastoreNodeInformationEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("NodeList must have at most #{MAX_NODES} entries") if entries.size > MAX_NODES
+
+        unless entries.all? { |entry| valid_name?(entry.friendly_name) }
+          raise Matter::ConfigurationError.new("NodeList FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
+        end
+      end
+
       private def validate_group_list!(entries : Array(DatastoreGroupInformationEntryStruct)) : Nil
         raise Matter::ConfigurationError.new("GroupList must have at most #{MAX_GROUPS} entries") if entries.size > MAX_GROUPS
 
@@ -1742,6 +1752,14 @@ module Matter
 
       private def validate_node_key_set_list!(entries : Array(DatastoreNodeKeySetEntryStruct)) : Nil
         raise Matter::ConfigurationError.new("NodeKeySetList must have at most #{MAX_NODE_ENTRIES} entries") if entries.size > MAX_NODE_ENTRIES
+      end
+
+      private def validate_node_endpoint_list!(entries : Array(DatastoreEndpointEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("NodeEndpointList must have at most #{MAX_NODE_ENTRIES} entries") if entries.size > MAX_NODE_ENTRIES
+
+        unless entries.all? { |entry| valid_name?(entry.friendly_name) }
+          raise Matter::ConfigurationError.new("NodeEndpointList FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
+        end
       end
 
       private def validate_admin_list!(entries : Array(DatastoreAdministratorInformationEntryStruct)) : Nil
