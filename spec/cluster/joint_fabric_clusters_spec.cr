@@ -1048,6 +1048,22 @@ describe Matter::Cluster::JointFabricDatastore do
     new_key.status_entry.state.should eq(Datastore::DatastoreStateEnum::Pending)
   end
 
+  it "stages a replacement group key set for every Datastore node after UpdateGroup" do
+    cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Member"))
+    cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(43_u64, "Nonmember"))
+    cluster.record_endpoint(42_u64, 1_u16, "Light")
+    privilege = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Operate
+    cluster.add_group(Datastore::AddGroupRequest.new(10_u16, "Group", 10_u16, nil, nil, privilege))
+    cluster.add_group_id_to_endpoint_for_node(Datastore::AddGroupIDToEndpointForNodeRequest.new(42_u64, 1_u16, 10_u16))
+
+    cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, 11_u16, nil, nil, nil))
+      .success?.should be_true
+    new_keys = cluster.node_key_set_list.select(&.group_key_set_id.==(11_u16))
+    new_keys.map(&.node_id).sort.should eq([42_u64, 43_u64])
+    new_keys.map(&.status_entry.state).uniq.should eq([Datastore::DatastoreStateEnum::Pending])
+  end
+
   it "rejects a group membership when its key set would exceed NodeKeySetList capacity" do
     cluster = Datastore.new(Matter::DataType::EndpointNumber.new(1_u16))
     cluster.add_pending_node(Datastore::AddPendingNodeRequest.new(42_u64, "Light"))
