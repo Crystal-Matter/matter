@@ -13,6 +13,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   remote Anchor transfer snapshots. Rejected updates leave the Datastore and
   DataVersion unchanged; empty clear lists and legacy ACL semantics remain valid.
 
+### Joint Fabric Datastore node key set snapshot bound
+
+- Enforce Matter 1.6's 8,192-entry NodeKeySetList maximum on host updates and
+  remote Anchor transfer snapshots. Rejected updates leave the Datastore and
+  DataVersion unchanged; empty clear lists and legacy key-set semantics remain valid.
+
 ### Joint Fabric Datastore node endpoint snapshot bounds
 
 - Enforce the Matter 1.6 NodeEndpointList maximum of 8,192 entries and the
