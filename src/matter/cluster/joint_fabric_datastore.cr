@@ -1766,6 +1766,8 @@ module Matter
       end
 
       private def validate_endpoint_binding_list!(entries : Array(DatastoreEndpointBindingEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("EndpointBindingList must have at most #{MAX_NODE_ENTRIES} entries") if entries.size > MAX_NODE_ENTRIES
+
         if entries.any? { |entry| entry.binding.group == RESERVED_GROUP_ID }
           raise Matter::ConfigurationError.new("EndpointBindingList Group must not be reserved")
         end

@@ -849,6 +849,55 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     store.endpoint_group_id_list.should be_empty
   end
 
+  it "rejects an oversized remote EndpointBindingList before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    binding = TransferDatastore::DatastoreBindingTargetStruct.new(1_u64)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    im.remote_endpoint_binding_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1) do |index|
+      TransferDatastore::DatastoreEndpointBindingEntryStruct.new(1_u64, 1_u16, index.to_u16 + 1_u16, binding, status)
+    end
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "accepts the EndpointBindingList host boundary and rejects an oversized update without mutation" do
+    store = committed_anchor_store
+    binding = TransferDatastore::DatastoreBindingTargetStruct.new(1_u64)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    valid = TransferDatastore::DatastoreEndpointBindingEntryStruct.new(1_u64, 1_u16, 1_u16, binding, status)
+    store.endpoint_binding_list = [valid]
+    store.endpoint_binding_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES) do |index|
+      TransferDatastore::DatastoreEndpointBindingEntryStruct.new(1_u64, 1_u16, index.to_u16 + 1_u16, binding, status)
+    end
+    store.endpoint_binding_list.size.should eq(TransferDatastore::MAX_NODE_ENTRIES)
+    before = store.save_state
+    version = store.data_version
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList/) do
+      store.endpoint_binding_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.endpoint_binding_list = [] of TransferDatastore::DatastoreEndpointBindingEntryStruct
+    store.endpoint_binding_list.should be_empty
+  end
+
   it "rejects a remote EndpointBindingList target with reserved Group ID before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true

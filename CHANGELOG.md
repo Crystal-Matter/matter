@@ -12,6 +12,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Reject reserved Group ID zero in EndpointBindingList host updates and remote
   Anchor snapshots before persistence, matching Matter 1.6's minimum Group ID.
 
+### Joint Fabric Datastore endpoint binding snapshot bound
+
+- Enforce Matter 1.6's 8,192-entry EndpointBindingList maximum on host updates
+  and remote Anchor transfer snapshots. Rejected updates leave the Datastore
+  and DataVersion unchanged; empty clear lists and binding semantics remain valid.
+
 ### Joint Fabric Datastore endpoint group snapshot bound
 
 - Enforce Matter 1.6's 8,192-entry EndpointGroupIDList maximum on host updates
