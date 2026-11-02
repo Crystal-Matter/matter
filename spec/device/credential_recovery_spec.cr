@@ -7,11 +7,23 @@ require "../../src/matter/cluster/binding"
 require "../../src/matter/cluster/scenes_management"
 
 private class CredentialRecoveryDevice < Matter::Device
+  @@instances = [] of CredentialRecoveryDevice
+
+  # Crash simulations close storage directly; stop their timers without
+  # committing or rolling back the persisted state under test.
+  def self.cancel_test_failsafe_timers : Nil
+    @@instances.each do |device|
+      device.general_commissioning.failsafe_context.try(&.disarm)
+    end
+    @@instances.clear
+  end
+
   def initialize(path : String, tc_min_required_version : UInt16? = nil,
                  tc_required_acknowledgements : UInt16 = 0_u16)
     super(Matter::Storage::YamlFile.new(path), port: 0,
       tc_min_required_version: tc_min_required_version,
       tc_required_acknowledgements: tc_required_acknowledgements)
+    @@instances << self
   end
 
   def initialize(storage : Matter::Storage::Backend, tc_min_required_version : UInt16? = nil,
@@ -19,6 +31,7 @@ private class CredentialRecoveryDevice < Matter::Device
     super(storage, port: 0,
       tc_min_required_version: tc_min_required_version,
       tc_required_acknowledgements: tc_required_acknowledgements)
+    @@instances << self
   end
 
   def device_name : String
@@ -155,6 +168,8 @@ private def update_recovery_fabric(device : CredentialRecoveryDevice, index : UI
 end
 
 describe "durable fail-safe credential recovery" do
+  after_each { CredentialRecoveryDevice.cancel_test_failsafe_timers }
+
   it "restores direct Terms and Conditions state after a failed file flush" do
     path = File.join(Dir.tempdir, "matter-credential-recovery-#{Random::Secure.hex(6)}.yml")
     begin
