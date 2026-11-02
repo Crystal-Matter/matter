@@ -590,6 +590,31 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     im.try(&.close)
   end
 
+  it "accepts NodeEndpointList host boundaries and rejects malformed updates without mutation" do
+    store = committed_anchor_store
+    valid = TransferDatastore::DatastoreEndpointEntryStruct.new(1_u16, 1_u64, "é" * 16)
+    store.node_endpoint_list = [valid]
+    store.node_endpoint_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES) do |index|
+      TransferDatastore::DatastoreEndpointEntryStruct.new(index.to_u16 + 1_u16, 1_u64, valid.friendly_name)
+    end
+    store.node_endpoint_list.size.should eq(TransferDatastore::MAX_NODE_ENTRIES)
+    before = store.save_state
+    version = store.data_version
+
+    invalid = TransferDatastore::DatastoreEndpointEntryStruct.new(1_u16, 1_u64, "é" * 16 + "a")
+    expect_raises(Matter::ConfigurationError, /NodeEndpointList/) { store.node_endpoint_list = [invalid] }
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+
+    expect_raises(Matter::ConfigurationError, /NodeEndpointList/) do
+      store.node_endpoint_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.node_endpoint_list = [] of TransferDatastore::DatastoreEndpointEntryStruct
+    store.node_endpoint_list.should be_empty
+  end
+
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true
