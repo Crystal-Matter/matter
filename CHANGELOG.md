@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore group list snapshot bounds
+
+- Enforce the Matter 1.6 GroupList maximum of 254 entries and the 32-byte
+  FriendlyName limit per group on host updates and remote Anchor transfer
+  snapshots. Rejected updates leave the Datastore and DataVersion unchanged;
+  empty pending/clear lists and legacy group semantics remain valid.
+
 ### Joint Fabric Datastore group key set snapshot bounds
 
 - Validate the Matter 1.6 GroupKeySetList maximum of 254 entries and require
