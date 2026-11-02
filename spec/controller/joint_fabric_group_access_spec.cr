@@ -24,6 +24,7 @@ private class JointGroupImClient < Matter::Controller::ImClient
             when JointStore::ATTR_ANCHOR_NODE_ID         then (@reported_anchor_node_id || @store.anchor_node_id).to_tlv
             when JointStore::ATTR_GROUP_LIST             then @store.group_list.to_tlv
             when JointStore::ATTR_GROUP_KEY_SET_LIST     then @store.group_key_set_list.to_tlv
+            when JointStore::ATTR_NODE_LIST              then @store.node_list.to_tlv
             when JointStore::ATTR_NODE_KEY_SET_LIST      then @store.node_key_set_list.to_tlv
             when JointStore::ATTR_ENDPOINT_GROUP_ID_LIST then @store.endpoint_group_id_list.to_tlv
             when JointStore::ATTR_NODE_ACL_LIST          then @store.node_acl_list.to_tlv
@@ -258,10 +259,15 @@ describe "Joint Fabric shared group revocation" do
     datastore.add_group(JointStore::AddGroupRequest.new(10_u16, "Viewers", 10_u16, 0x1234_u16,
       2_u16, view)).success?.should be_true
     datastore.add_pending_node(JointStore::AddPendingNodeRequest.new(0x200_u64, "Lamp"))
+    datastore.add_pending_node(JointStore::AddPendingNodeRequest.new(0x201_u64, "Nonmember"))
     datastore.record_endpoint(0x200_u64, 1_u16, "Light")
     datastore.add_group_id_to_endpoint_for_node(JointStore::AddGroupIDToEndpointForNodeRequest.new(
       0x200_u64, 1_u16, 10_u16)).success?.should be_true
     datastore.complete_node_key_set(0x200_u64, 10_u16).should be_true
+    datastore.node_key_set_list = datastore.node_key_set_list + [
+      JointStore::DatastoreNodeKeySetEntryStruct.new(0x201_u64, 10_u16,
+        JointStore::DatastoreStatusEntryStruct.new(JointStore::DatastoreStateEnum::Committed, 0_u32, 0_u8)),
+    ]
     datastore.complete_group_membership(0x200_u64, 1_u16, 10_u16).should be_true
     subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(0x1234_u16, 2_u16)).id
@@ -327,6 +333,12 @@ describe "Joint Fabric shared group revocation" do
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
     datastore.complete_node_key_set(0x200_u64, 10_u16).should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.complete_node_key_set(0x201_u64, 11_u16).should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.complete_node_key_set(0x201_u64, 10_u16).should be_true
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
   ensure
