@@ -92,6 +92,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property remote_node_key_set_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreNodeKeySetEntryStruct)? = nil
   property remote_node_acl_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreACLEntryStruct)? = nil
   property remote_endpoint_group_id_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreEndpointGroupIDEntryStruct)? = nil
+  property remote_endpoint_binding_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreEndpointBindingEntryStruct)? = nil
   @status_reads = 0
 
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
@@ -119,7 +120,9 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
           Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32, 0_u8)
       end
     end
-    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ENDPOINT_GROUP_ID_LIST && (memberships = @remote_endpoint_group_id_list)
+    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ENDPOINT_BINDING_LIST && (bindings = @remote_endpoint_binding_list)
+              TLV::Any.from_slice(bindings.to_tlv)
+            elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ENDPOINT_GROUP_ID_LIST && (memberships = @remote_endpoint_group_id_list)
               TLV::Any.from_slice(memberships.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_NODE_ACL_LIST && (acls = @remote_node_acl_list)
               TLV::Any.from_slice(acls.to_tlv)
@@ -844,6 +847,31 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     store.data_version.should eq(version)
     store.endpoint_group_id_list = [] of TransferDatastore::DatastoreEndpointGroupIDEntryStruct
     store.endpoint_group_id_list.should be_empty
+  end
+
+  it "rejects a remote EndpointBindingList target with reserved Group ID before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    binding = TransferDatastore::DatastoreBindingTargetStruct.new(nil, Matter::DataType::GroupId::RESERVED.id)
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    im.remote_endpoint_binding_list = [TransferDatastore::DatastoreEndpointBindingEntryStruct.new(
+      1_u64, 1_u16, 1_u16, binding, status)]
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList.*Group/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
   end
 
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
