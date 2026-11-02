@@ -768,6 +768,28 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     im.try(&.close)
   end
 
+  it "accepts the EndpointGroupIDList host boundary and rejects an oversized update without mutation" do
+    store = committed_anchor_store
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    valid = TransferDatastore::DatastoreEndpointGroupIDEntryStruct.new(1_u64, 1_u16, 1_u16, status)
+    store.endpoint_group_id_list = [valid]
+    store.endpoint_group_id_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES) do |index|
+      TransferDatastore::DatastoreEndpointGroupIDEntryStruct.new(index.to_u64 + 1_u64, 1_u16, 1_u16, status)
+    end
+    store.endpoint_group_id_list.size.should eq(TransferDatastore::MAX_NODE_ENTRIES)
+    before = store.save_state
+    version = store.data_version
+
+    expect_raises(Matter::ConfigurationError, /EndpointGroupIDList/) do
+      store.endpoint_group_id_list = Array.new(TransferDatastore::MAX_NODE_ENTRIES + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.endpoint_group_id_list = [] of TransferDatastore::DatastoreEndpointGroupIDEntryStruct
+    store.endpoint_group_id_list.should be_empty
+  end
+
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true

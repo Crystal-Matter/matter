@@ -824,7 +824,8 @@ module Matter
       attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true,
         validate: :validate_admin_list!
       attribute 0x0008, :status, DatastoreStatusEntryStruct, default: DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, NO_FAILURE_CODE), read_access: :administer, persist: true
-      attribute 0x0009, :endpoint_group_id_list, Array(DatastoreEndpointGroupIDEntryStruct), default: [] of DatastoreEndpointGroupIDEntryStruct, read_access: :administer, persist: true
+      attribute 0x0009, :endpoint_group_id_list, Array(DatastoreEndpointGroupIDEntryStruct), default: [] of DatastoreEndpointGroupIDEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_endpoint_group_id_list!
       attribute 0x000A, :endpoint_binding_list, Array(DatastoreEndpointBindingEntryStruct), default: [] of DatastoreEndpointBindingEntryStruct, read_access: :administer, persist: true
       attribute 0x000B, :node_key_set_list, Array(DatastoreNodeKeySetEntryStruct), default: [] of DatastoreNodeKeySetEntryStruct, read_access: :administer, persist: true,
         validate: :validate_node_key_set_list!
@@ -1752,6 +1753,10 @@ module Matter
 
       private def validate_node_key_set_list!(entries : Array(DatastoreNodeKeySetEntryStruct)) : Nil
         raise Matter::ConfigurationError.new("NodeKeySetList must have at most #{MAX_NODE_ENTRIES} entries") if entries.size > MAX_NODE_ENTRIES
+      end
+
+      private def validate_endpoint_group_id_list!(entries : Array(DatastoreEndpointGroupIDEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("EndpointGroupIDList must have at most #{MAX_NODE_ENTRIES} entries") if entries.size > MAX_NODE_ENTRIES
       end
 
       private def validate_node_endpoint_list!(entries : Array(DatastoreEndpointEntryStruct)) : Nil
