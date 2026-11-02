@@ -85,6 +85,7 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
   property remote_friendly_name : String? = nil
   property remote_anchor_root_ca : Bytes? = nil
   property remote_admin_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)? = nil
+  property remote_group_key_set_list : Array(Matter::Cluster::JointFabricDatastore::DatastoreGroupKeySetStruct)? = nil
   @status_reads = 0
 
   def initialize(@source : Matter::Cluster::JointFabricDatastore)
@@ -112,7 +113,9 @@ private class FakeAnchorReadImClient < Matter::Controller::ImClient
           Matter::Cluster::JointFabricDatastore::DatastoreStateEnum::Committed, 1_u32, 0_u8)
       end
     end
-    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST && (admins = @remote_admin_list)
+    value = if attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_GROUP_KEY_SET_LIST && (key_sets = @remote_group_key_set_list)
+              TLV::Any.from_slice(key_sets.to_tlv)
+            elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST && (admins = @remote_admin_list)
               TLV::Any.from_slice(admins.to_tlv)
             elsif attribute_id == Matter::Cluster::JointFabricDatastore::ATTR_ANCHOR_ROOT_CA && (root = @remote_anchor_root_ca)
               TLV::Any.new(root, nil)
@@ -461,6 +464,86 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     candidate.save_state.should eq(before)
   ensure
     im.try(&.close)
+  end
+
+  it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    im.remote_group_key_set_list = [TransferDatastore::DatastoreGroupKeySetStruct.new(1_u16,
+      TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(TransferDatastore::EPOCH_KEY_BYTES - 1, 0xAA_u8), 1_u64, nil, nil, nil, nil)]
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /GroupKeySetList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "rejects an oversized remote GroupKeySetList before copying or persisting" do
+    source = committed_anchor_store
+    source.begin_anchor_transfer.should be_true
+    candidate = committed_anchor_store
+    before = candidate.save_state
+    im = FakeAnchorReadImClient.new(source)
+    entry = TransferDatastore::DatastoreGroupKeySetStruct.new(1_u16,
+      TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(TransferDatastore::EPOCH_KEY_BYTES, 0xAA_u8), 1_u64, nil, nil, nil, nil)
+    im.remote_group_key_set_list = Array.new(TransferDatastore::MAX_KEY_SETS + 1, entry)
+    session = Matter::Session::SecureContext.new(session_id: 1_u16, peer_session_id: 1_u16,
+      session_type: Matter::Session::SessionType::Unicast,
+      encryption_key: Bytes.new(16), decryption_key: Bytes.new(16))
+
+    expect_raises(Matter::ConfigurationError, /GroupKeySetList/) do
+      snapshot = Matter::Controller::AnchorTransfer::Snapshot.read_remote(im, session,
+        Socket::IPAddress.new("127.0.0.1", 5540), 1_u16)
+      Matter::Controller::AnchorTransfer::Snapshot.copy!(snapshot, candidate, 0x200_u64)
+    end
+    candidate.save_state.should eq(before)
+  ensure
+    im.try(&.close)
+  end
+
+  it "accepts valid GroupKeySetList host updates and rejects malformed updates without mutation" do
+    store = committed_anchor_store
+    valid = TransferDatastore::DatastoreGroupKeySetStruct.new(1_u16,
+      TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+      Bytes.new(TransferDatastore::EPOCH_KEY_BYTES, 0xAA_u8), 0_u64, nil, nil, nil, nil)
+    store.group_key_set_list = [valid]
+    store.group_key_set_list = Array.new(TransferDatastore::MAX_KEY_SETS) do |index|
+      TransferDatastore::DatastoreGroupKeySetStruct.new(index.to_u16,
+        TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        Bytes.new(TransferDatastore::EPOCH_KEY_BYTES, 0xAA_u8), 0_u64, nil, nil, nil, nil)
+    end
+    store.group_key_set_list.size.should eq(TransferDatastore::MAX_KEY_SETS)
+    before = store.save_state
+    version = store.data_version
+
+    [TransferDatastore::EPOCH_KEY_BYTES - 1, TransferDatastore::EPOCH_KEY_BYTES + 1].each do |size|
+      invalid = TransferDatastore::DatastoreGroupKeySetStruct.new(1_u16,
+        TransferDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        Bytes.new(size, 0xAA_u8), 0_u64, nil, nil, nil, nil)
+      expect_raises(Matter::ConfigurationError, /GroupKeySetList/) { store.group_key_set_list = [invalid] }
+      store.save_state.should eq(before)
+      store.data_version.should eq(version)
+    end
+
+    expect_raises(Matter::ConfigurationError, /GroupKeySetList/) do
+      store.group_key_set_list = Array.new(TransferDatastore::MAX_KEY_SETS + 1, valid)
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.group_key_set_list = [] of TransferDatastore::DatastoreGroupKeySetStruct
+    store.group_key_set_list.should be_empty
   end
 
   it "rejects an oversized administrator ICAC from the old Anchor before copying its snapshot" do

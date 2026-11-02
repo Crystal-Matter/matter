@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore group key set snapshot bounds
+
+- Validate the Matter 1.6 GroupKeySetList maximum of 254 entries and require
+  each present epoch key to be exactly 16 bytes. Host updates and remote
+  Anchor transfer snapshots reject malformed lists before state changes or
+  persistence; empty pending/clear lists and legacy key-set timing remain valid.
+
 ### General Diagnostics monotonic uptime
 
 - Measure mandatory UpTime from the same monotonic clock as TimeSnapshot.

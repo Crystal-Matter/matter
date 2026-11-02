@@ -815,7 +815,8 @@ module Matter
       attribute 0x0002, :anchor_vendor_id, UInt16, default: UNSPECIFIED_ANCHOR_VENDOR_ID, read_access: :administer, persist: true
       attribute 0x0003, :friendly_name, String, default: "", read_access: :administer, persist: true,
         max_length: MAX_FRIENDLY_NAME_BYTES, validate: :validate_friendly_name!
-      attribute 0x0004, :group_key_set_list, Array(DatastoreGroupKeySetStruct), default: [] of DatastoreGroupKeySetStruct, read_access: :administer, persist: true
+      attribute 0x0004, :group_key_set_list, Array(DatastoreGroupKeySetStruct), default: [] of DatastoreGroupKeySetStruct, read_access: :administer, persist: true,
+        validate: :validate_group_key_set_list!
       attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
       attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true,
@@ -1717,6 +1718,16 @@ module Matter
         return if valid_name?(name)
 
         raise Matter::ConfigurationError.new("FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
+      end
+
+      private def validate_group_key_set_list!(entries : Array(DatastoreGroupKeySetStruct)) : Nil
+        raise Matter::ConfigurationError.new("GroupKeySetList must have at most #{MAX_KEY_SETS} entries") if entries.size > MAX_KEY_SETS
+
+        entries.each do |entry|
+          unless {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}.all? { |key| key.nil? || key.size == EPOCH_KEY_BYTES }
+            raise Matter::ConfigurationError.new("GroupKeySetList epoch keys must be #{EPOCH_KEY_BYTES} bytes")
+          end
+        end
       end
 
       private def validate_admin_list!(entries : Array(DatastoreAdministratorInformationEntryStruct)) : Nil
