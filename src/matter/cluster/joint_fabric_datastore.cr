@@ -819,7 +819,8 @@ module Matter
         validate: :validate_group_key_set_list!
       attribute 0x0005, :group_list, Array(DatastoreGroupInformationEntryStruct), default: [] of DatastoreGroupInformationEntryStruct, read_access: :administer, persist: true,
         validate: :validate_group_list!
-      attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true
+      attribute 0x0006, :node_list, Array(DatastoreNodeInformationEntryStruct), default: [] of DatastoreNodeInformationEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_node_list!
       attribute 0x0007, :admin_list, Array(DatastoreAdministratorInformationEntryStruct), default: [] of DatastoreAdministratorInformationEntryStruct, read_access: :administer, persist: true,
         validate: :validate_admin_list!
       attribute 0x0008, :status, DatastoreStatusEntryStruct, default: DatastoreStatusEntryStruct.new(DatastoreStateEnum::Pending, 0_u32, NO_FAILURE_CODE), read_access: :administer, persist: true
@@ -1729,6 +1730,14 @@ module Matter
           unless {entry.epoch_key0, entry.epoch_key1, entry.epoch_key2}.all? { |key| key.nil? || key.size == EPOCH_KEY_BYTES }
             raise Matter::ConfigurationError.new("GroupKeySetList epoch keys must be #{EPOCH_KEY_BYTES} bytes")
           end
+        end
+      end
+
+      private def validate_node_list!(entries : Array(DatastoreNodeInformationEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("NodeList must have at most #{MAX_NODES} entries") if entries.size > MAX_NODES
+
+        unless entries.all? { |entry| valid_name?(entry.friendly_name) }
+          raise Matter::ConfigurationError.new("NodeList FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
         end
       end
 
