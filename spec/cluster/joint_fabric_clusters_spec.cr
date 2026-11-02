@@ -1060,8 +1060,8 @@ describe Matter::Cluster::JointFabricDatastore do
     cluster.update_group(Datastore::UpdateGroupRequest.new(10_u16, nil, 11_u16, nil, nil, nil))
       .success?.should be_true
     new_keys = cluster.node_key_set_list.select(&.group_key_set_id.==(11_u16))
-    new_keys.map(&.node_id).sort.should eq([42_u64, 43_u64])
-    new_keys.map(&.status_entry.state).uniq.should eq([Datastore::DatastoreStateEnum::Pending])
+    new_keys.map(&.node_id).sort!.should eq([42_u64, 43_u64])
+    new_keys.map(&.status_entry.state).uniq!.should eq([Datastore::DatastoreStateEnum::Pending])
   end
 
   it "rejects a group membership when its key set would exceed NodeKeySetList capacity" do
