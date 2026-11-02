@@ -468,6 +468,8 @@ module Matter
                                                               Crypto::StandardCrypto.new.compute_sha256(key_set.to_slice) == digest
           memberships = read_datastore_list(Datastore::DatastoreEndpointGroupIDEntryStruct, im, session, peer,
             datastore_endpoint, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+          nodes = read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_LIST)
           node_keys = read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
             datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
           receipt.target_memberships.each do |target|
@@ -477,13 +479,17 @@ module Matter
             end
             return JointGroupRevocation::Status::Pending unless membership &&
                                                                 membership.status_entry.state == Datastore::DatastoreStateEnum::Committed
+          end
+          # UpdateGroup distributes the replacement key to every Datastore
+          # node. A receipt cannot be effective while a nonmember still has
+          # the old key or is waiting for the new key to arrive.
+          nodes.each do |node|
+            node_id = node.node_id
             installed = node_keys.find do |entry|
-              entry.node_id == target.node_id && entry.group_key_set_id == key_set_id
+              entry.node_id == node_id && entry.group_key_set_id == key_set_id
             end
             return JointGroupRevocation::Status::Pending unless installed &&
                                                                 installed.status_entry.state == Datastore::DatastoreStateEnum::Committed
-          end
-          receipt.target_memberships.map(&.node_id).uniq!.each do |node_id|
             old_needed = groups.any? do |candidate|
               candidate.group_id != receipt.group_id.to_u64 && candidate.group_key_set_id == old_id &&
                 memberships.any? do |membership|
@@ -538,9 +544,16 @@ module Matter
                     else
                       [] of Datastore::DatastoreNodeKeySetEntryStruct
                     end
+        node_ids = receipt.target_node_ids.dup
+        if receipt.current_key_set_id
+          nodes = read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_LIST)
+          node_ids.concat(nodes.map(&.node_id))
+          node_ids.uniq!
+        end
         new_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
-        receipt.target_node_ids.each do |node_id|
+        node_ids.each do |node_id|
           failed_acl = entries.any? do |entry|
             entry.node_id == node_id && entry.acl_entry.subjects == [new_subject] &&
               entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed

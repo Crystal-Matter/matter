@@ -1132,6 +1132,7 @@ module Matter
         if key_changed && !node_key_set_capacity_for_all_nodes?(request.group_key_set_id)
           return InteractionModel::Status.resource_exhausted
         end
+        previous_key_set_id = entry.group_key_set_id
         entry.friendly_name = name if name
         entry.group_key_set_id = request.group_key_set_id if request.group_key_set_id
         entry.group_cat = request.group_cat if request.group_cat
@@ -1171,6 +1172,15 @@ module Matter
           node_ids.uniq!
           node_ids.each do |node_id|
             mark_unused_key_sets_for_node(node_id)
+          end
+          # Key replacement reaches every NodeList node, including nodes with
+          # no membership in this group. Retire the previous key there too,
+          # while leaving keys needed by another group in place.
+          if old_id = previous_key_set_id
+            @node_list.each do |node|
+              next if node_ids.includes?(node.node_id)
+              mark_unused_key_sets_for_node(node.node_id, old_id)
+            end
           end
         end
         commit!
@@ -1985,9 +1995,10 @@ module Matter
         @node_key_set_list.size + missing <= MAX_NODE_ENTRIES
       end
 
-      private def mark_unused_key_sets_for_node(node_id : UInt64) : Nil
+      private def mark_unused_key_sets_for_node(node_id : UInt64, only_key_set_id : UInt16? = nil) : Nil
         entries = @node_key_set_list.map do |entry|
-          if entry.node_id == node_id && entry.group_key_set_id != IPK_KEY_SET_ID
+          if entry.node_id == node_id && entry.group_key_set_id != IPK_KEY_SET_ID &&
+             (only_key_set_id.nil? || entry.group_key_set_id == only_key_set_id)
             needed = @endpoint_group_id_list.any? do |membership|
               membership.node_id == node_id && membership.status_entry.state != DatastoreStateEnum::DeletePending &&
                 @group_list.any? { |group| group.group_id == membership.group_id.to_u64 && group.group_key_set_id == entry.group_key_set_id }

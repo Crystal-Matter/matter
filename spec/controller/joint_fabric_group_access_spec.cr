@@ -335,6 +335,11 @@ describe "Joint Fabric shared group revocation" do
     datastore.complete_node_key_set(0x200_u64, 10_u16).should be_true
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.complete_node_key_set(0x201_u64, 11_u16, 1_u8).should be_true
+    Matter::Controller::SharedFabric.retry_failed_joint_group_revocation(im, session, peer, 1_u16, receipt)
+    im.commands.last.should eq(JointStore::CMD_REFRESH_NODE)
+    datastore.node_key_set_list.find { |entry| entry.node_id == 0x201_u64 && entry.group_key_set_id == 11_u16 }
+      .as(JointStore::DatastoreNodeKeySetEntryStruct).status_entry.state.should eq(JointStore::DatastoreStateEnum::Pending)
     datastore.complete_node_key_set(0x201_u64, 11_u16).should be_true
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)

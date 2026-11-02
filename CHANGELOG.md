@@ -12,6 +12,10 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stage replacement group key sets for every Datastore NodeList node, including
   nodes without a current membership in the group. Check the full capacity
   before changing GroupList so an oversized rotation leaves state unchanged.
+  Retire an unused previous key on nonmember nodes after rotation while
+  preserving keys required by another group. Keyed revocation receipts wait
+  for every Datastore node's replacement and prior-key removal, and retries
+  include failed nonmember key deliveries.
 
 ### Joint Fabric Datastore binding Group ID validation
 
