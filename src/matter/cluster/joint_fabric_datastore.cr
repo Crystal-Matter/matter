@@ -827,7 +827,8 @@ module Matter
       attribute 0x0009, :endpoint_group_id_list, Array(DatastoreEndpointGroupIDEntryStruct), default: [] of DatastoreEndpointGroupIDEntryStruct, read_access: :administer, persist: true
       attribute 0x000A, :endpoint_binding_list, Array(DatastoreEndpointBindingEntryStruct), default: [] of DatastoreEndpointBindingEntryStruct, read_access: :administer, persist: true
       attribute 0x000B, :node_key_set_list, Array(DatastoreNodeKeySetEntryStruct), default: [] of DatastoreNodeKeySetEntryStruct, read_access: :administer, persist: true
-      attribute 0x000C, :node_acl_list, Array(DatastoreACLEntryStruct), default: [] of DatastoreACLEntryStruct, read_access: :administer, persist: true
+      attribute 0x000C, :node_acl_list, Array(DatastoreACLEntryStruct), default: [] of DatastoreACLEntryStruct, read_access: :administer, persist: true,
+        validate: :validate_node_acl_list!
       attribute 0x000D, :node_endpoint_list, Array(DatastoreEndpointEntryStruct), default: [] of DatastoreEndpointEntryStruct, read_access: :administer, persist: true,
         validate: :validate_node_endpoint_list!
 
@@ -1747,6 +1748,10 @@ module Matter
         unless entries.all? { |entry| valid_name?(entry.friendly_name) }
           raise Matter::ConfigurationError.new("GroupList FriendlyName must be at most #{MAX_FRIENDLY_NAME_BYTES} bytes")
         end
+      end
+
+      private def validate_node_acl_list!(entries : Array(DatastoreACLEntryStruct)) : Nil
+        raise Matter::ConfigurationError.new("NodeACLList must have at most #{MAX_NODE_ENTRIES} entries") if entries.size > MAX_NODE_ENTRIES
       end
 
       private def validate_node_endpoint_list!(entries : Array(DatastoreEndpointEntryStruct)) : Nil
