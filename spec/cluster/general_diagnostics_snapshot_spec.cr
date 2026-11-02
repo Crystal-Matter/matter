@@ -44,6 +44,24 @@ describe GeneralDiagnostics do
     second_snapshot.system_time_ms.should be >= first_snapshot.system_time_ms
   end
 
+  it "keeps UpTime consistent with TimeSnapshot when the wall clock moves forward" do
+    cluster = build(GeneralDiagnostics, 0, monotonic_now: -> { Time.instant_without_mock_time })
+    Timecop.travel(Time.utc + 1.hour) do
+      up_time = cluster.up_time
+      response = invoke(cluster, GeneralDiagnostics::CMD_TIME_SNAPSHOT).as(Matter::Cluster::CommandResponse)
+      snapshot = TimeSnapshotWire.from_tlv(response.response.as(TLV::Any))
+      up_time.should be <= snapshot.system_time_ms // 1000_u64
+    end
+  end
+
+  it "does not regress UpTime when the wall clock moves backward" do
+    cluster = build(GeneralDiagnostics, 0, monotonic_now: -> { Time.instant_without_mock_time })
+    before = cluster.up_time
+    Timecop.travel(Time.utc - 1.hour) do
+      cluster.up_time.should be >= before
+    end
+  end
+
   it "includes POSIX milliseconds only when a synchronized source supplies them" do
     cluster = build(GeneralDiagnostics, 0)
     cluster.on_posix_time_ms = -> : UInt64? { 1_800_000_000_000_u64 }
