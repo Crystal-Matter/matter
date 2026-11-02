@@ -874,6 +874,27 @@ describe Matter::Controller::AnchorTransfer::Workflow do
     im.try(&.close)
   end
 
+  it "accepts valid EndpointBindingList Group IDs and rejects the reserved ID without mutation" do
+    store = committed_anchor_store
+    status = TransferDatastore::DatastoreStatusEntryStruct.new(
+      TransferDatastore::DatastoreStateEnum::Committed, 1_u32, TransferDatastore::NO_FAILURE_CODE)
+    valid_binding = TransferDatastore::DatastoreBindingTargetStruct.new(nil, 1_u16)
+    store.endpoint_binding_list = [TransferDatastore::DatastoreEndpointBindingEntryStruct.new(
+      1_u64, 1_u16, 1_u16, valid_binding, status)]
+    before = store.save_state
+    version = store.data_version
+    invalid_binding = TransferDatastore::DatastoreBindingTargetStruct.new(nil, Matter::DataType::GroupId::RESERVED.id)
+
+    expect_raises(Matter::ConfigurationError, /EndpointBindingList.*Group/) do
+      store.endpoint_binding_list = [TransferDatastore::DatastoreEndpointBindingEntryStruct.new(
+        1_u64, 1_u16, 1_u16, invalid_binding, status)]
+    end
+    store.save_state.should eq(before)
+    store.data_version.should eq(version)
+    store.endpoint_binding_list = [] of TransferDatastore::DatastoreEndpointBindingEntryStruct
+    store.endpoint_binding_list.should be_empty
+  end
+
   it "rejects malformed GroupKeySetList epoch keys from the old Anchor before copying or persisting" do
     source = committed_anchor_store
     source.begin_anchor_transfer.should be_true
