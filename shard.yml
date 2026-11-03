@@ -5,6 +5,10 @@ authors:
   - Stephen von Takach <steve@place.technology>
 
 dependencies:
+  crimage:
+    github: naqvis/crimage
+    commit: 7d3244a3850646e3d398cef071f7c3e3f52c7518
+
   spake2_plus:
     github: Crystal-Matter/spake2_plus
 
