@@ -321,6 +321,7 @@ describe "Joint Fabric shared group revocation" do
     receipt = Matter::Controller::SharedFabric::JointGroupRevocation.from_document(receipt.to_document)
     receipt.previous_key_set_id.should eq(10_u16)
     receipt.current_key_set_id.should eq(11_u16)
+    receipt.key_rotation_node_ids.should eq([0x200_u64, 0x201_u64])
     receipt.group_permission.should eq(view)
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
