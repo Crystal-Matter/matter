@@ -161,7 +161,7 @@ module SdkJfaInverseDriver
         SdkDatastore::RemoveGroupRequest.new(TEST_GROUP_ID).to_slice)
       final_groups = group_list(im, session, peer)
       if final_groups.any?(&.group_id.==(TEST_GROUP_ID.to_u64)) ||
-         final_groups.map(&.group_id).sort != initial_groups.map(&.group_id).sort
+         final_groups.map(&.group_id).sort! != initial_groups.map(&.group_id).sort!
         raise Matter::ProtocolError.new("SDK Datastore RemoveGroup did not restore GroupList")
       end
       puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore group over CASE"
