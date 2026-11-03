@@ -7,6 +7,19 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Joint Fabric Datastore UpdateGroup key rotation
+
+- Stage replacement group key sets for every Datastore NodeList node, including
+  nodes without a current membership in the group. Check the full capacity
+  before changing GroupList so an oversized rotation leaves state unchanged.
+  Retire an unused previous key on nonmember nodes after rotation while
+  preserving keys required by another group. Keyed revocation receipts wait
+  for the rotation's durable node cohort to receive the replacement and for
+  unused prior keys to be removed, including from nonmembers. Later nodes
+  without the old key do not delay an already complete rotation; retries
+  include failed nonmember key deliveries. A lost-response recovery refuses
+  an incomplete replacement snapshot instead of guessing its original cohort.
+
 ### Joint Fabric Datastore binding Group ID validation
 
 - Reject reserved Group ID zero in EndpointBindingList host updates and remote

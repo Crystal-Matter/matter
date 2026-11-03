@@ -74,13 +74,17 @@ module Matter
         getter current_key_set_id : UInt16? = nil
         getter replacement_key_set_digest : Bytes? = nil
         getter target_memberships : Array(JointGroupMembershipTarget) = [] of JointGroupMembershipTarget
+        # Captured when UpdateGroup is issued. Later NodeList additions do not
+        # acquire a replacement-key task in this rotation.
+        getter key_rotation_node_ids : Array(UInt64)? = nil
 
         def initialize(@group_id, @group_cat, @previous_version, @current_version,
                        @target_node_ids, @target_acls, @anchor_root_cert, @anchor_node_id,
                        @group_permission = Datastore::DatastoreAccessControlEntryPrivilegeEnum::Administer,
                        @previous_key_set_id = nil, @current_key_set_id = nil,
                        @replacement_key_set_digest = nil,
-                       @target_memberships = [] of JointGroupMembershipTarget)
+                       @target_memberships = [] of JointGroupMembershipTarget,
+                       @key_rotation_node_ids = nil)
         end
       end
 
@@ -367,6 +371,25 @@ module Matter
                         [] of Datastore::DatastoreEndpointGroupIDEntryStruct
                       end
         membership_targets = memberships.map { |entry| JointGroupMembershipTarget.new(entry.node_id, entry.endpoint_id) }
+        rotation_node_ids : Array(UInt64)? = nil
+        if rotation = key_rotation
+          rotation_node_ids = read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_LIST).map(&.node_id).uniq!
+          if recovered
+            # A lost UpdateGroup reply leaves no receipt. NodeKeySetList can
+            # change before recovery, so it cannot prove which current nodes
+            # were in the original cohort if any replacement row is missing.
+            # A later node without a row is indistinguishable: fail closed.
+            staged_node_ids = read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
+              datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
+              .select(&.group_key_set_id.==(rotation.replacement.group_key_set_id))
+              .map(&.node_id).uniq!
+            unless rotation_node_ids.all? { |node_id| staged_node_ids.includes?(node_id) } &&
+                   membership_targets.all? { |target| rotation_node_ids.includes?(target.node_id) }
+              raise Matter::ConfigurationError.new("Cannot reconstruct keyed group rotation cohort from Datastore entries")
+            end
+          end
+        end
         target_acls = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
         new_subject = DataType::NodeId.from_case_authenticated_tag(
@@ -440,7 +463,8 @@ module Matter
         end
         JointGroupRevocation.new(group_id, cat, previous_version, next_version, target_ids, target_refs,
           authority.root_cert.dup, anchor_node_id, group.group_permission, previous_key_set_id,
-          key_rotation.try(&.replacement.group_key_set_id), replacement_digest, membership_targets)
+          key_rotation.try(&.replacement.group_key_set_id), replacement_digest, membership_targets,
+          rotation_node_ids)
       end
 
       # A pending receipt becomes effective only after every target ACL is
@@ -468,6 +492,9 @@ module Matter
                                                               Crypto::StandardCrypto.new.compute_sha256(key_set.to_slice) == digest
           memberships = read_datastore_list(Datastore::DatastoreEndpointGroupIDEntryStruct, im, session, peer,
             datastore_endpoint, Datastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+          nodes = read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_LIST)
+          current_node_ids = nodes.map(&.node_id)
           node_keys = read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
             datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
           receipt.target_memberships.each do |target|
@@ -477,13 +504,21 @@ module Matter
             end
             return JointGroupRevocation::Status::Pending unless membership &&
                                                                 membership.status_entry.state == Datastore::DatastoreStateEnum::Committed
+          end
+          # Only nodes present when UpdateGroup ran owe this replacement key.
+          # Older receipts predate this cohort field and retain their recorded
+          # membership targets. A later node with the old key still blocks.
+          rotation_node_ids = receipt.key_rotation_node_ids || receipt.target_memberships.map(&.node_id).uniq!
+          rotation_node_ids.each do |node_id|
+            next unless current_node_ids.includes?(node_id)
             installed = node_keys.find do |entry|
-              entry.node_id == target.node_id && entry.group_key_set_id == key_set_id
+              entry.node_id == node_id && entry.group_key_set_id == key_set_id
             end
             return JointGroupRevocation::Status::Pending unless installed &&
                                                                 installed.status_entry.state == Datastore::DatastoreStateEnum::Committed
           end
-          receipt.target_memberships.map(&.node_id).uniq!.each do |node_id|
+          nodes.each do |node|
+            node_id = node.node_id
             old_needed = groups.any? do |candidate|
               candidate.group_id != receipt.group_id.to_u64 && candidate.group_key_set_id == old_id &&
                 memberships.any? do |membership|
@@ -538,9 +573,16 @@ module Matter
                     else
                       [] of Datastore::DatastoreNodeKeySetEntryStruct
                     end
+        node_ids = receipt.target_node_ids.dup
+        if receipt.current_key_set_id
+          nodes = read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_LIST)
+          node_ids.concat(nodes.map(&.node_id))
+          node_ids.uniq!
+        end
         new_subject = DataType::NodeId.from_case_authenticated_tag(
           DataType::CaseAuthenticatedTag.create(receipt.group_cat, receipt.current_version)).id
-        receipt.target_node_ids.each do |node_id|
+        node_ids.each do |node_id|
           failed_acl = entries.any? do |entry|
             entry.node_id == node_id && entry.acl_entry.subjects == [new_subject] &&
               entry.status_entry.state == Datastore::DatastoreStateEnum::CommitFailed
