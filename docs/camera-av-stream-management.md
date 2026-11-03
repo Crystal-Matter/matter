@@ -132,8 +132,8 @@ Applications with a decoded RGB24 camera source can explicitly require
 pure-Crystal `crimage` shard to encode a JPEG from the supplied pixels, with
 no FFmpeg executable. Frames must be tightly packed RGB24 with exactly three
 bytes per pixel, nonzero dimensions, and at most 8,294,400 pixels. Quality is
-1 through 100. The focused media test uses `crimage` to decode the JPEG and
-checks its dimensions and pixel regions, then passes it through
+1 through 100. The focused media test decodes the JPEG to check its dimensions,
+then passes it through
 `CaptureSnapshot`. Applications still own sensor capture, privacy enforcement
 at the source, and host resource
 admission. Neither this adapter nor the synthetic fixture advertises Camera
