@@ -17,7 +17,8 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for the rotation's durable node cohort to receive the replacement and for
   unused prior keys to be removed, including from nonmembers. Later nodes
   without the old key do not delay an already complete rotation; retries
-  include failed nonmember key deliveries.
+  include failed nonmember key deliveries. A lost-response recovery refuses
+  an incomplete replacement snapshot instead of guessing its original cohort.
 
 ### Joint Fabric Datastore binding Group ID validation
 

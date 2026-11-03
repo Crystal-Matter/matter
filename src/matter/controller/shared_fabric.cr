@@ -373,17 +373,22 @@ module Matter
         membership_targets = memberships.map { |entry| JointGroupMembershipTarget.new(entry.node_id, entry.endpoint_id) }
         rotation_node_ids : Array(UInt64)? = nil
         if rotation = key_rotation
-          rotation_node_ids = if recovered
-                                # A lost UpdateGroup reply leaves no receipt. Recover
-                                # the original cohort from its staged key entries.
-                                read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
-                                  datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
-                                  .select(&.group_key_set_id.==(rotation.replacement.group_key_set_id))
-                                  .map(&.node_id).uniq!
-                              else
-                                read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
-                                  datastore_endpoint, Datastore::ATTR_NODE_LIST).map(&.node_id).uniq!
-                              end
+          rotation_node_ids = read_datastore_list(Datastore::DatastoreNodeInformationEntryStruct, im, session, peer,
+            datastore_endpoint, Datastore::ATTR_NODE_LIST).map(&.node_id).uniq!
+          if recovered
+            # A lost UpdateGroup reply leaves no receipt. NodeKeySetList can
+            # change before recovery, so it cannot prove which current nodes
+            # were in the original cohort if any replacement row is missing.
+            # A later node without a row is indistinguishable: fail closed.
+            staged_node_ids = read_datastore_list(Datastore::DatastoreNodeKeySetEntryStruct, im, session, peer,
+              datastore_endpoint, Datastore::ATTR_NODE_KEY_SET_LIST)
+              .select(&.group_key_set_id.==(rotation.replacement.group_key_set_id))
+              .map(&.node_id).uniq!
+            unless rotation_node_ids.all? { |node_id| staged_node_ids.includes?(node_id) } &&
+                   membership_targets.all? { |target| rotation_node_ids.includes?(target.node_id) }
+              raise Matter::ConfigurationError.new("Cannot reconstruct keyed group rotation cohort from Datastore entries")
+            end
+          end
         end
         target_acls = read_datastore_list(Datastore::DatastoreACLEntryStruct, im, session, peer,
           datastore_endpoint, Datastore::ATTR_NODE_ACL_LIST)
