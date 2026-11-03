@@ -311,6 +311,22 @@ describe "Joint Fabric shared group revocation" do
         anchor_node_id: 0x100_u64, key_rotation: rotation)
     end
     im.commands.should eq([JointStore::CMD_ADD_KEY_SET, JointStore::CMD_UPDATE_GROUP])
+    # A lost reply leaves no durable receipt. If RefreshNode removes either a
+    # member or nonmember replacement row, recovery cannot infer the original
+    # rotation cohort from the surviving rows.
+    staged_keys = datastore.node_key_set_list
+    {0x200_u64, 0x201_u64}.each do |missing_node|
+      datastore.node_key_set_list = staged_keys.reject do |entry|
+        entry.node_id == missing_node && entry.group_key_set_id == 11_u16
+      end
+      expect_raises(Matter::ConfigurationError, /cannot reconstruct.*rotation cohort/i) do
+        Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
+          datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
+          survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
+          anchor_node_id: 0x100_u64, key_rotation: rotation)
+      end
+    end
+    datastore.node_key_set_list = staged_keys
     receipt = Matter::Controller::SharedFabric.stage_joint_group_revocation(im, session, peer,
       datastore_endpoint: 1_u16, group_id: 10_u16, revoked: revoked,
       survivors: [{survivor_store, survivor.controller_node_id}], authority: authority,
