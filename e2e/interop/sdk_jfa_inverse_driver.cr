@@ -4,8 +4,8 @@ require "../../src/matter/controller/joint_commissioning"
 private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
 
 # An independent Crystal controller commissions the official SDK JFA as an
-# Anchor, then reads its Joint Fabric identity and exercises Datastore group
-# commands over CASE. The SDK JFC -> Crystal device smoke runs separately in
+# Anchor, then reads its Joint Fabric identity and exercises Datastore key-set
+# and group commands over CASE. The SDK JFC -> Crystal device smoke runs separately in
 # the same CI job, using a fresh JFA store for this inverse direction.
 module SdkJfaInverseDriver
   extend self
@@ -22,6 +22,7 @@ module SdkJfaInverseDriver
   SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
   SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
   TEST_GROUP_ID     = 0x1234_u16
+  TEST_KEY_SET_ID   = 0x1235_u16
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
   # test-only IPK when its commissioned JFA enters commissioner mode.
   SDK_EXAMPLE_IPK = "temporary ipk 01".to_slice
@@ -65,6 +66,14 @@ module SdkJfaInverseDriver
     data = attribute(im, session, peer,
       SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_GROUP_LIST)
     Array(SdkDatastore::DatastoreGroupInformationEntryStruct).from_tlv(data.to_slice)
+  end
+
+  private def key_set_list(im : Matter::Controller::ImClient,
+                           session : Matter::Session::SecureContext,
+                           peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreGroupKeySetStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_GROUP_KEY_SET_LIST)
+    Array(SdkDatastore::DatastoreGroupKeySetStruct).from_tlv(data.to_slice)
   end
 
   private def invoke_datastore(im : Matter::Controller::ImClient,
@@ -133,6 +142,42 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore AdminList omitted Anchor JFA")
       end
       puts "PASS: Crystal CASE read official SDK JFA and Datastore Anchor identity"
+
+      initial_key_sets = key_set_list(im, session, peer)
+      unless initial_key_sets.any?(&.group_key_set_id.==(SdkDatastore::IPK_KEY_SET_ID))
+        raise Matter::ProtocolError.new("SDK Datastore GroupKeySetList omitted reserved IPK key set")
+      end
+      if initial_key_sets.any?(&.group_key_set_id.==(TEST_KEY_SET_ID))
+        raise Matter::ProtocolError.new("SDK Datastore test GroupKeySetID already exists")
+      end
+      first_key_set = SdkDatastore::DatastoreGroupKeySetStruct.new(TEST_KEY_SET_ID,
+        SdkDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        Bytes.new(16, 0x11_u8), 2_220_000_u64, nil, nil, nil, nil)
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_KEY_SET,
+        SdkDatastore::AddKeySetRequest.new(first_key_set).to_slice)
+      added_key_set = key_set_list(im, session, peer).find(&.group_key_set_id.==(TEST_KEY_SET_ID)) ||
+                      raise Matter::ProtocolError.new("SDK Datastore AddKeySet did not update GroupKeySetList")
+      unless added_key_set == first_key_set
+        raise Matter::ProtocolError.new("SDK Datastore AddKeySet returned different epoch fields")
+      end
+      rotated_key_set = SdkDatastore::DatastoreGroupKeySetStruct.new(TEST_KEY_SET_ID,
+        SdkDatastore::DatastoreGroupKeySecurityPolicyEnum::TrustFirst,
+        Bytes.new(16, 0x22_u8), 2_220_001_u64, nil, nil, nil, nil)
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_KEY_SET,
+        SdkDatastore::UpdateKeySetRequest.new(rotated_key_set).to_slice)
+      updated_key_set = key_set_list(im, session, peer).find(&.group_key_set_id.==(TEST_KEY_SET_ID)) ||
+                        raise Matter::ProtocolError.new("SDK Datastore UpdateKeySet removed the key set")
+      unless updated_key_set == rotated_key_set
+        raise Matter::ProtocolError.new("SDK Datastore UpdateKeySet did not replace the epoch key and time")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_KEY_SET,
+        SdkDatastore::RemoveKeySetRequest.new(TEST_KEY_SET_ID).to_slice)
+      final_key_sets = key_set_list(im, session, peer)
+      if final_key_sets.any?(&.group_key_set_id.==(TEST_KEY_SET_ID)) ||
+         final_key_sets.map(&.group_key_set_id).sort! != initial_key_sets.map(&.group_key_set_id).sort!
+        raise Matter::ProtocolError.new("SDK Datastore RemoveKeySet did not restore GroupKeySetList")
+      end
+      puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore key set over CASE"
 
       initial_groups = group_list(im, session, peer)
       if initial_groups.any?(&.group_id.==(TEST_GROUP_ID.to_u64))
