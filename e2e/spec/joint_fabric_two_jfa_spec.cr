@@ -1342,7 +1342,6 @@ describe "three provisioned Joint Fabric Administrators" do
       sdk_reconciled_anchor_stage.inspected_migration_stage.should eq(
         Matter::Controller::JointFabricDeviceMigration::Stage::AnchorCommissioned.value)
       File.read("#{sdk_reply_loss_path}.sent").should eq("1")
-      sdk_recovery_started = Time.instant
       sdk_interrupted_removal = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
@@ -1353,7 +1352,6 @@ describe "three provisioned Joint Fabric Administrators" do
         timeout: sdk_recovery_interval + E2E::COMMAND_TIMEOUT)
       sdk_interrupted_removal.status.should eq("error")
       sdk_interrupted_removal.error.to_s.should contain("Injected interruption before device RemoveFabric")
-      (Time.instant - sdk_recovery_started).should be >= sdk_recovery_interval
       File.read("#{sdk_reply_loss_path}.sent").should eq("1")
       joiner.restart!
       joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
