@@ -13,6 +13,7 @@ MIGRATION_COMPLETION_DROP_PATH = File.join(E2E::LOG_DIR,
 ROLLBACK_ANCHOR_NODE_ID      = 0xA202_u64
 SDK_MIGRATION_OLD_NODE_ID    = 0xB202_u64
 SDK_MIGRATION_ANCHOR_NODE_ID = 0xA203_u64
+SDK_ROLLBACK_ANCHOR_NODE_ID  = 0xA204_u64
 
 # The joining Administrator's original fabric has an ICAC, so its VVS signer
 # must be provisioned out of band rather than carried as a VVSC in NOCStruct.
@@ -1070,6 +1071,202 @@ describe "three provisioned Joint Fabric Administrators" do
         MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
         entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID
       end.should be_false
+      # Roll back a first A identity before the later forward SDK migration.
+      sdk_rollback_registration = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_anchor_node_committed: true))
+      sdk_rollback_registration.status.should eq("error")
+      sdk_rollback_registration.error.to_s.should contain("Injected interruption after Anchor NodeList committed")
+      joiner.restart!
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_rollback_registration_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_registration_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::AddingAnchorNode.value)
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      sdk_rollback_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_peer, anchor_bootstrap.fabric,
+        peer_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_rollback_dual_report = anchor_im.read_attribute(session: sdk_rollback_a_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+        attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+        fabric_filtered: false)
+      sdk_rollback_dual_data = sdk_rollback_dual_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_rollback_dual_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+        .from_tlv(sdk_rollback_dual_data.to_slice)
+      sdk_rollback_dual_fabrics.size.should eq(2)
+      sdk_rollback_dual_fabrics.any? do |fabric|
+        fabric.fabric_id == anchor_bootstrap.fabric.fabric_id &&
+          fabric.root_public_key == anchor_bootstrap.fabric.root_public_key &&
+          fabric.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID
+      end.should be_true
+      sdk_rollback_dual_fabrics.any? do |fabric|
+        fabric.fabric_id == joiner_bootstrap.fabric.fabric_id &&
+          fabric.root_public_key == joiner_bootstrap.fabric.root_public_key &&
+          fabric.node_id == SDK_MIGRATION_OLD_NODE_ID
+      end.should be_true
+      sdk_rollback_registered = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_rollback_registered.status.should eq("ok"), sdk_rollback_registered.error.to_s
+      sdk_rollback_registered_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_registered_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::AnchorNodeAdded.value)
+      sdk_rollback_node_removed = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("rollback-device-migration", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_anchor_node_removed: true))
+      sdk_rollback_node_removed.status.should eq("error")
+      sdk_rollback_node_removed.error.to_s.should contain("Injected interruption after Anchor RemoveNode")
+      joiner.restart!
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_rollback_uncertain_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_uncertain_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::RollingBack.value)
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID
+      end.should be_false
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      sdk_rollback_blocked_replay = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_rollback_blocked_replay.status.should eq("error")
+      sdk_rollback_blocked_replay.error.to_s.should contain("needs authenticated reconciliation")
+      sdk_rollback_no_effect = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration-no-effect", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_rollback_no_effect.status.should eq("error")
+      sdk_rollback_no_effect.error.to_s.should contain("not awaiting a command outcome")
+      sdk_rollback_premature = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_rollback_premature.status.should eq("error")
+      sdk_rollback_premature.error.to_s.should contain("Anchor fabric remains installed after rollback")
+      sdk_rollback_fabric_removed = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("resume-rollback-device-migration", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_anchor_fabric_removed: true))
+      sdk_rollback_fabric_removed.status.should eq("error")
+      sdk_rollback_fabric_removed.error.to_s.should contain("Injected interruption after Anchor RemoveFabric")
+      joiner.restart!
+      sdk_restart_marker = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.restart")
+      sdk_log_path = File.join(E2E::LOG_DIR,
+        "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.log")
+      sdk_restart_count = File.read(sdk_log_path).scan(/=== sdk restart ===/).size
+      File.write(sdk_restart_marker, "")
+      sdk_restart_deadline = Time.instant + E2E::RESTART_TIMEOUT
+      until File.read(sdk_log_path).scan(/=== sdk restart ===/).size > sdk_restart_count
+        raise Matter::TimeoutError.new("SDK device did not restart after rollback") if Time.instant >= sdk_restart_deadline
+        sleep E2E::LOG_POLL
+      end
+      sleep E2E::RESTART_SETTLE
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_b_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        sdk_peer, joiner_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_OLD_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_rollback_removed_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_removed_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::RollingBack.value)
+      sdk_rollback_b_report = joiner_im.read_attribute(session: sdk_b_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+        attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+        fabric_filtered: false)
+      sdk_rollback_b_data = sdk_rollback_b_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_rollback_b_fabrics = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+        .from_tlv(sdk_rollback_b_data.to_slice)
+      sdk_rollback_b_fabrics.size.should eq(1)
+      sdk_rollback_b_fabrics.first.fabric_id.should eq(joiner_bootstrap.fabric.fabric_id)
+      sdk_rollback_b_fabrics.first.root_public_key.should eq(joiner_bootstrap.fabric.root_public_key)
+      sdk_rollback_b_fabrics.first.node_id.should eq(SDK_MIGRATION_OLD_NODE_ID)
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_ROLLBACK_ANCHOR_NODE_ID
+      end.should be_false
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      sdk_rollback_controller_before = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_controller_before.inspected_controller_migration_node_present.should be_true
+      sdk_rollback_reconciled = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_rollback_reconciled.status.should eq("ok"), sdk_rollback_reconciled.error.to_s
+      sdk_rollback_complete = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_complete.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::RolledBack.value)
+      sdk_rollback_controller_after = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-controller-migration-node", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_ROLLBACK_ANCHOR_NODE_ID))
+      sdk_rollback_controller_after.inspected_controller_migration_node_present.should be_false
       sdk_basic_commissioning = joiner_im.read_attribute(session: sdk_b_session, peer: sdk_peer,
         endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
         cluster_id: Matter::Cluster::GeneralCommissioning::CLUSTER_ID,
@@ -1210,9 +1407,10 @@ describe "three provisioned Joint Fabric Administrators" do
         "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.restart")
       sdk_log_path = File.join(E2E::LOG_DIR,
         "official-jf-migration-target-#{ENV.fetch("MATTER_E2E_RUN_ID", "manual")}.log")
+      sdk_restart_count = File.read(sdk_log_path).scan(/=== sdk restart ===/).size
       File.write(sdk_restart_marker, "")
       sdk_restart_deadline = Time.instant + E2E::RESTART_TIMEOUT
-      until File.exists?(sdk_log_path) && File.read(sdk_log_path).includes?("=== sdk restart ===")
+      until File.read(sdk_log_path).scan(/=== sdk restart ===/).size > sdk_restart_count
         raise Matter::TimeoutError.new("SDK device did not restart") if Time.instant >= sdk_restart_deadline
         sleep E2E::LOG_POLL
       end
