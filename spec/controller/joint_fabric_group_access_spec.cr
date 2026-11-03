@@ -346,6 +346,24 @@ describe "Joint Fabric shared group revocation" do
     datastore.complete_node_key_set(0x201_u64, 10_u16).should be_true
     Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
       .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
+    # A node added after the rotation has no replacement-key task in this
+    # receipt. Its arrival cannot keep an already completed rotation pending.
+    datastore.add_pending_node(JointStore::AddPendingNodeRequest.new(0x202_u64, "Later node"))
+      .success?.should be_true
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
+    # Reintroducing the revoked key on that node must still block Effective.
+    datastore.node_key_set_list = datastore.node_key_set_list + [
+      JointStore::DatastoreNodeKeySetEntryStruct.new(0x202_u64, 10_u16,
+        JointStore::DatastoreStatusEntryStruct.new(JointStore::DatastoreStateEnum::Committed, 0_u32, 0_u8)),
+    ]
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Pending)
+    datastore.node_key_set_list = datastore.node_key_set_list.reject do |entry|
+      entry.node_id == 0x202_u64 && entry.group_key_set_id == 10_u16
+    end
+    Matter::Controller::SharedFabric.joint_group_revocation_status(im, session, peer, 1_u16, receipt)
+      .should eq(Matter::Controller::SharedFabric::JointGroupRevocation::Status::Effective)
   ensure
     im.try(&.close)
   end
