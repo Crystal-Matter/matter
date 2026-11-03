@@ -239,9 +239,10 @@ after that JFC-to-Crystal switch scenario ends, it starts a fresh official
 `jfa-app`. `sdk_jfa_inverse_driver.cr` bootstraps a Crystal-owned Anchor fabric,
 commissions the SDK JFA with Administrator and Anchor CATs, establishes CASE,
 then reads its AdministratorFabricIndex, Datastore AnchorRootCA/AnchorNodeID,
-and AdminList. The inverse scenario uses a separate JFA store and Crystal
-controller state. It verifies Anchor activation and authenticated datastore
-reads, while Joint Commissioning with a VVS-bearing independent JFA remains a
+and AdminList. Over authenticated CASE it adds, updates, reads back, and removes
+a Datastore key set and group, checking that both lists return to their starting
+IDs. The inverse scenario uses a separate JFA store and Crystal controller
+state. Joint Commissioning with a VVS-bearing independent JFA remains a
 separate interoperability gate.
 
 Wire contract: Matter SDK v1.6.0.0

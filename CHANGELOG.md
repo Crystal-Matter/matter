@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 SDK Joint Fabric Datastore key-set interoperability
+
+- Extend the Crystal controller to official SDK JFA smoke with authenticated
+  AddKeySet, UpdateKeySet, RemoveKeySet, and GroupKeySetList readback, including
+  epoch-key replacement and restoration of the initial key-set list.
+
 ### Joint Fabric Datastore UpdateGroup key rotation
 
 - Stage replacement group key sets for every Datastore NodeList node, including
