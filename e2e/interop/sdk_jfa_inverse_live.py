@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Crystal controller -> official Matter 1.6 JFA Anchor CASE smoke.
+"""Crystal controller -> official Matter 1.6 JFA CASE and Datastore commands.
 
 Run after sdk_jfc_switch_smoke.py so the expensive SDK build is reused. This
 test starts a fresh SDK JFA because the first scenario has already paired its
@@ -59,12 +59,14 @@ def run(args):
                 except subprocess.TimeoutExpired as error:
                     raise RuntimeError("Crystal -> SDK JFA CASE driver timed out") from error
             transcript = driver_log.read_text(errors="replace")
-            if result.returncode != 0 or "PASS: Crystal CASE read official SDK JFA and Datastore Anchor identity" not in transcript:
+            if (result.returncode != 0 or
+                    "PASS: Crystal CASE read official SDK JFA and Datastore Anchor identity" not in transcript or
+                    "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore group over CASE" not in transcript):
                 raise RuntimeError(
-                    f"Crystal -> SDK JFA CASE driver exited {result.returncode}; "
+                    f"Crystal -> SDK JFA Datastore driver exited {result.returncode}; "
                     f"log tail:\n{transcript[-5000:]}"
                 )
-            print(f"PASS: Crystal controller commissioned official SDK JFA and read JFA/Datastore over CASE; logs: {logs}")
+            print(f"PASS: Crystal controller commissioned official SDK JFA and exercised Datastore groups over CASE; logs: {logs}")
         finally:
             jfa.close()
 
