@@ -1129,9 +1129,10 @@ module Matter
                          (!request.group_permission.nil? && request.group_permission != entry.group_permission)
         key_changed = !request.group_key_set_id.nil? && request.group_key_set_id != entry.group_key_set_id
         return InteractionModel::Status.success unless name_changed || access_changed || key_changed
-        if key_changed && !node_key_set_capacity_for_group?(request.group_id, request.group_key_set_id)
+        if key_changed && !node_key_set_capacity_for_all_nodes?(request.group_key_set_id)
           return InteractionModel::Status.resource_exhausted
         end
+        previous_key_set_id = entry.group_key_set_id
         entry.friendly_name = name if name
         entry.group_key_set_id = request.group_key_set_id if request.group_key_set_id
         entry.group_cat = request.group_cat if request.group_cat
@@ -1163,7 +1164,7 @@ module Matter
         # (or Groupcast membership) to move to the replacement key.
         mark_group_memberships_pending(request.group_id) if name_changed || key_changed
         if key_changed
-          mark_group_key_sets_pending(request.group_id, entry.group_key_set_id)
+          mark_group_key_set_pending_for_all_nodes(entry.group_key_set_id)
           memberships = @endpoint_group_id_list.select do |membership|
             membership.group_id == request.group_id && membership.status_entry.state != DatastoreStateEnum::DeletePending
           end
@@ -1171,6 +1172,15 @@ module Matter
           node_ids.uniq!
           node_ids.each do |node_id|
             mark_unused_key_sets_for_node(node_id)
+          end
+          # Key replacement reaches every NodeList node, including nodes with
+          # no membership in this group. Retire the previous key there too,
+          # while leaving keys needed by another group in place.
+          if old_id = previous_key_set_id
+            @node_list.each do |node|
+              next if node_ids.includes?(node.node_id)
+              mark_unused_key_sets_for_node(node.node_id, old_id)
+            end
           end
         end
         commit!
@@ -1961,15 +1971,10 @@ module Matter
         result
       end
 
-      private def mark_group_key_sets_pending(group_id : UInt16, key_set_id : UInt16?) : Nil
+      private def mark_group_key_set_pending_for_all_nodes(key_set_id : UInt16?) : Nil
         return unless key_set_id
-        memberships = @endpoint_group_id_list.select do |entry|
-          entry.group_id == group_id && entry.status_entry.state != DatastoreStateEnum::DeletePending
-        end
-        node_ids = memberships.map(&.node_id)
-        node_ids.uniq!
         entries = @node_key_set_list.dup
-        node_ids.each do |node_id|
+        @node_list.map(&.node_id).uniq!.each do |node_id|
           index = entries.index { |entry| entry.node_id == node_id && entry.group_key_set_id == key_set_id }
           if index
             entry = entries[index]
@@ -1982,21 +1987,18 @@ module Matter
         self.node_key_set_list = entries
       end
 
-      private def node_key_set_capacity_for_group?(group_id : UInt16, key_set_id : UInt16?) : Bool
+      private def node_key_set_capacity_for_all_nodes?(key_set_id : UInt16?) : Bool
         return true unless key_set_id
-        node_ids = @endpoint_group_id_list.select do |entry|
-          entry.group_id == group_id && entry.status_entry.state != DatastoreStateEnum::DeletePending
-        end.map(&.node_id)
-        node_ids.uniq!
-        missing = node_ids.count do |node_id|
+        missing = @node_list.map(&.node_id).uniq!.count do |node_id|
           !@node_key_set_list.any? { |entry| entry.node_id == node_id && entry.group_key_set_id == key_set_id }
         end
         @node_key_set_list.size + missing <= MAX_NODE_ENTRIES
       end
 
-      private def mark_unused_key_sets_for_node(node_id : UInt64) : Nil
+      private def mark_unused_key_sets_for_node(node_id : UInt64, only_key_set_id : UInt16? = nil) : Nil
         entries = @node_key_set_list.map do |entry|
-          if entry.node_id == node_id && entry.group_key_set_id != IPK_KEY_SET_ID
+          if entry.node_id == node_id && entry.group_key_set_id != IPK_KEY_SET_ID &&
+             (only_key_set_id.nil? || entry.group_key_set_id == only_key_set_id)
             needed = @endpoint_group_id_list.any? do |membership|
               membership.node_id == node_id && membership.status_entry.state != DatastoreStateEnum::DeletePending &&
                 @group_list.any? { |group| group.group_id == membership.group_id.to_u64 && group.group_key_set_id == entry.group_key_set_id }
