@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 SDK Joint Fabric Datastore pending-node interoperability
+
+- Extend the Crystal controller to official SDK JFA smoke with authenticated
+  AddPendingNode, UpdateNode, RemoveNode, and NodeList readback. Verify the
+  pending state and updated name, then restore the initial NodeList IDs.
+
 ### Matter 1.6 SDK Joint Fabric Datastore key-set interoperability
 
 - Extend the Crystal controller to official SDK JFA smoke with authenticated

@@ -4,9 +4,9 @@ require "../../src/matter/controller/joint_commissioning"
 private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
 
 # An independent Crystal controller commissions the official SDK JFA as an
-# Anchor, then reads its Joint Fabric identity and exercises Datastore key-set
-# and group commands over CASE. The SDK JFC -> Crystal device smoke runs separately in
-# the same CI job, using a fresh JFA store for this inverse direction.
+# Anchor, then reads its Joint Fabric identity and exercises Datastore key-set,
+# group, and pending-node commands over CASE. The SDK JFC -> Crystal device smoke
+# runs separately in the same CI job, using a fresh JFA store for this direction.
 module SdkJfaInverseDriver
   extend self
 
@@ -23,6 +23,7 @@ module SdkJfaInverseDriver
   SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
   TEST_GROUP_ID     = 0x1234_u16
   TEST_KEY_SET_ID   = 0x1235_u16
+  TEST_NODE_ID      = 0xA203_u64
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
   # test-only IPK when its commissioned JFA enters commissioner mode.
   SDK_EXAMPLE_IPK = "temporary ipk 01".to_slice
@@ -74,6 +75,14 @@ module SdkJfaInverseDriver
     data = attribute(im, session, peer,
       SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_GROUP_KEY_SET_LIST)
     Array(SdkDatastore::DatastoreGroupKeySetStruct).from_tlv(data.to_slice)
+  end
+
+  private def node_list(im : Matter::Controller::ImClient,
+                        session : Matter::Session::SecureContext,
+                        peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreNodeInformationEntryStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_NODE_LIST)
+    Array(SdkDatastore::DatastoreNodeInformationEntryStruct).from_tlv(data.to_slice)
   end
 
   private def invoke_datastore(im : Matter::Controller::ImClient,
@@ -210,6 +219,35 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore RemoveGroup did not restore GroupList")
       end
       puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore group over CASE"
+
+      initial_nodes = node_list(im, session, peer)
+      if initial_nodes.any?(&.node_id.==(TEST_NODE_ID))
+        raise Matter::ProtocolError.new("SDK Datastore test NodeID already exists")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_PENDING_NODE,
+        SdkDatastore::AddPendingNodeRequest.new(TEST_NODE_ID, "Crystal pending node").to_slice)
+      added_node = node_list(im, session, peer).find(&.node_id.==(TEST_NODE_ID)) ||
+                   raise Matter::ProtocolError.new("SDK Datastore AddPendingNode did not update NodeList")
+      unless added_node.friendly_name == "Crystal pending node" &&
+             added_node.commissioning_status_entry.state == SdkDatastore::DatastoreStateEnum::Pending
+        raise Matter::ProtocolError.new("SDK Datastore AddPendingNode returned different node fields")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_NODE,
+        SdkDatastore::UpdateNodeRequest.new(TEST_NODE_ID, "Crystal pending node updated").to_slice)
+      updated_node = node_list(im, session, peer).find(&.node_id.==(TEST_NODE_ID)) ||
+                     raise Matter::ProtocolError.new("SDK Datastore UpdateNode removed the node")
+      unless updated_node.friendly_name == "Crystal pending node updated" &&
+             updated_node.commissioning_status_entry.state == SdkDatastore::DatastoreStateEnum::Pending
+        raise Matter::ProtocolError.new("SDK Datastore UpdateNode did not preserve pending state")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_NODE,
+        SdkDatastore::RemoveNodeRequest.new(TEST_NODE_ID).to_slice)
+      final_nodes = node_list(im, session, peer)
+      if final_nodes.any?(&.node_id.==(TEST_NODE_ID)) ||
+         final_nodes.map(&.node_id).sort! != initial_nodes.map(&.node_id).sort!
+        raise Matter::ProtocolError.new("SDK Datastore RemoveNode did not restore NodeList")
+      end
+      puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE"
     ensure
       client.close
     end

@@ -240,10 +240,10 @@ after that JFC-to-Crystal switch scenario ends, it starts a fresh official
 commissions the SDK JFA with Administrator and Anchor CATs, establishes CASE,
 then reads its AdministratorFabricIndex, Datastore AnchorRootCA/AnchorNodeID,
 and AdminList. Over authenticated CASE it adds, updates, reads back, and removes
-a Datastore key set and group, checking that both lists return to their starting
-IDs. The inverse scenario uses a separate JFA store and Crystal controller
-state. Joint Commissioning with a VVS-bearing independent JFA remains a
-separate interoperability gate.
+a Datastore key set, group, and pending node, checking that all three lists
+return to their starting IDs. The inverse scenario uses a separate JFA store
+and Crystal controller state. Joint Commissioning with a VVS-bearing
+independent JFA remains a separate interoperability gate.
 
 Wire contract: Matter SDK v1.6.0.0
 [`joint_fabric_service.proto`](https://github.com/project-chip/connectedhomeip/blob/v1.6.0.0/examples/common/pigweed/protos/joint_fabric_service.proto)
