@@ -1,10 +1,12 @@
 require "../../src/matter/controller"
 require "../../src/matter/controller/joint_commissioning"
 
+private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
+
 # An independent Crystal controller commissions the official SDK JFA as an
-# Anchor, then reads its Joint Fabric clusters over a newly established CASE
-# session. The SDK JFC -> Crystal device smoke runs separately in the same CI
-# job, using a fresh JFA store for this inverse direction.
+# Anchor, then reads its Joint Fabric identity and exercises Datastore group
+# commands over CASE. The SDK JFC -> Crystal device smoke runs separately in
+# the same CI job, using a fresh JFA store for this inverse direction.
 module SdkJfaInverseDriver
   extend self
 
@@ -19,6 +21,7 @@ module SdkJfaInverseDriver
   TIMEOUT           = 90.seconds
   SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
   SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+  TEST_GROUP_ID     = 0x1234_u16
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
   # test-only IPK when its commissioned JFA enters commissioner mode.
   SDK_EXAMPLE_IPK = "temporary ipk 01".to_slice
@@ -54,6 +57,25 @@ module SdkJfaInverseDriver
     data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
       .first.attribute_data || raise Matter::ProtocolError.new("SDK JFA attribute read returned a status")
     data.data || raise Matter::ProtocolError.new("SDK JFA attribute read omitted data")
+  end
+
+  private def group_list(im : Matter::Controller::ImClient,
+                         session : Matter::Session::SecureContext,
+                         peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreGroupInformationEntryStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_GROUP_LIST)
+    Array(SdkDatastore::DatastoreGroupInformationEntryStruct).from_tlv(data.to_slice)
+  end
+
+  private def invoke_datastore(im : Matter::Controller::ImClient,
+                               session : Matter::Session::SecureContext,
+                               peer : Socket::IPAddress,
+                               command_id : UInt32, fields : Bytes) : Nil
+    response = im.invoke(session: session, peer: peer,
+      endpoint_id: JFA_ENDPOINT,
+      cluster_id: SdkDatastore::CLUSTER_ID,
+      command_id: command_id, fields: fields)
+    Matter::Controller::JointCommissioning.assert_status_success(response)
   end
 
   def run(path : String, address : String, sdk_root : String) : Nil
@@ -111,6 +133,38 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore AdminList omitted Anchor JFA")
       end
       puts "PASS: Crystal CASE read official SDK JFA and Datastore Anchor identity"
+
+      initial_groups = group_list(im, session, peer)
+      if initial_groups.any?(&.group_id.==(TEST_GROUP_ID.to_u64))
+        raise Matter::ProtocolError.new("SDK Datastore test GroupID already exists")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_GROUP,
+        SdkDatastore::AddGroupRequest.new(TEST_GROUP_ID, "Crystal SDK group", nil, nil, nil,
+          SdkDatastore::DatastoreAccessControlEntryPrivilegeEnum::View).to_slice)
+      added = group_list(im, session, peer).find(&.group_id.==(TEST_GROUP_ID.to_u64)) ||
+              raise Matter::ProtocolError.new("SDK Datastore AddGroup did not update GroupList")
+      unless added.friendly_name == "Crystal SDK group" &&
+             added.group_key_set_id.nil? && added.group_cat.nil? &&
+             added.group_cat_version.nil? &&
+             added.group_permission == SdkDatastore::DatastoreAccessControlEntryPrivilegeEnum::View
+        raise Matter::ProtocolError.new("SDK Datastore AddGroup returned different group fields")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_GROUP,
+        SdkDatastore::UpdateGroupRequest.new(TEST_GROUP_ID, "Crystal SDK group updated", nil, nil, nil, nil).to_slice)
+      updated = group_list(im, session, peer).find(&.group_id.==(TEST_GROUP_ID.to_u64)) ||
+                raise Matter::ProtocolError.new("SDK Datastore UpdateGroup removed the group")
+      unless updated.friendly_name == "Crystal SDK group updated" &&
+             updated.group_permission == SdkDatastore::DatastoreAccessControlEntryPrivilegeEnum::View
+        raise Matter::ProtocolError.new("SDK Datastore UpdateGroup did not preserve group fields")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_GROUP,
+        SdkDatastore::RemoveGroupRequest.new(TEST_GROUP_ID).to_slice)
+      final_groups = group_list(im, session, peer)
+      if final_groups.any?(&.group_id.==(TEST_GROUP_ID.to_u64)) ||
+         final_groups.map(&.group_id).sort! != initial_groups.map(&.group_id).sort!
+        raise Matter::ProtocolError.new("SDK Datastore RemoveGroup did not restore GroupList")
+      end
+      puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore group over CASE"
     ensure
       client.close
     end
