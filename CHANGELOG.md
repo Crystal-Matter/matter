@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 SDK Joint Fabric Datastore administrator interoperability
+
+- Extend the Crystal controller to official SDK JFA smoke with authenticated
+  AddAdmin, UpdateAdmin, RemoveAdmin, and AdminList readback. Verify the
+  administrator identity and ICAC bytes, then restore the initial AdminList IDs.
+
 ### Matter 1.6 SDK Joint Fabric Datastore pending-node interoperability
 
 - Extend the Crystal controller to official SDK JFA smoke with authenticated

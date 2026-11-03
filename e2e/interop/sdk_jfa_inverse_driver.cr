@@ -5,25 +5,27 @@ private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
 
 # An independent Crystal controller commissions the official SDK JFA as an
 # Anchor, then reads its Joint Fabric identity and exercises Datastore key-set,
-# group, and pending-node commands over CASE. The SDK JFC -> Crystal device smoke
-# runs separately in the same CI job, using a fresh JFA store for this direction.
+# group, pending-node, and administrator commands over CASE. The SDK JFC ->
+# Crystal device smoke runs separately, using a fresh JFA store for this direction.
 module SdkJfaInverseDriver
   extend self
 
-  FABRIC_ID         =   0xA200_u64
-  CONTROLLER_ID     =   0xA201_u64
-  SDK_JFA_ID        =   0xA202_u64
-  TEST_VENDOR_ID    =   0xFFF1_u16
-  SDK_JFA_PORT      =         5533
-  SDK_DISCRIMINATOR =     3840_u16
-  SDK_PASSCODE      = 11022033_u32
-  JFA_ENDPOINT      =        1_u16
-  TIMEOUT           = 90.seconds
-  SDK_PAA_CERT      = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
-  SDK_CD_CERT_GLOB  = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
-  TEST_GROUP_ID     = 0x1234_u16
-  TEST_KEY_SET_ID   = 0x1235_u16
-  TEST_NODE_ID      = 0xA203_u64
+  FABRIC_ID            =   0xA200_u64
+  CONTROLLER_ID        =   0xA201_u64
+  SDK_JFA_ID           =   0xA202_u64
+  TEST_VENDOR_ID       =   0xFFF1_u16
+  SDK_JFA_PORT         =         5533
+  SDK_DISCRIMINATOR    =     3840_u16
+  SDK_PASSCODE         = 11022033_u32
+  JFA_ENDPOINT         =        1_u16
+  TIMEOUT              = 90.seconds
+  SDK_PAA_CERT         = "credentials/development/paa-root-certs/Chip-Test-PAA-FFF1-Cert.der"
+  SDK_CD_CERT_GLOB     = "credentials/development/cd-certs/CSA_Matter_CD_Signing_Key_*.cert.der"
+  TEST_GROUP_ID        = 0x1234_u16
+  TEST_KEY_SET_ID      = 0x1235_u16
+  TEST_NODE_ID         = 0xA203_u64
+  TEST_ADMIN_ID        = 0xA204_u64
+  TEST_ADMIN_VENDOR_ID = 0xFFF2_u16
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
   # test-only IPK when its commissioned JFA enters commissioner mode.
   SDK_EXAMPLE_IPK = "temporary ipk 01".to_slice
@@ -85,6 +87,14 @@ module SdkJfaInverseDriver
     Array(SdkDatastore::DatastoreNodeInformationEntryStruct).from_tlv(data.to_slice)
   end
 
+  private def admin_list(im : Matter::Controller::ImClient,
+                         session : Matter::Session::SecureContext,
+                         peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreAdministratorInformationEntryStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_ADMIN_LIST)
+    Array(SdkDatastore::DatastoreAdministratorInformationEntryStruct).from_tlv(data.to_slice)
+  end
+
   private def invoke_datastore(im : Matter::Controller::ImClient,
                                session : Matter::Session::SecureContext,
                                peer : Socket::IPAddress,
@@ -142,11 +152,7 @@ module SdkJfaInverseDriver
       unless anchor_id.as_u64 == SDK_JFA_ID
         raise Matter::ProtocolError.new("SDK Datastore AnchorNodeID differs from commissioned JFA")
       end
-      admins = attribute(im, session, peer,
-        Matter::Cluster::JointFabricDatastore::CLUSTER_ID,
-        Matter::Cluster::JointFabricDatastore::ATTR_ADMIN_LIST)
-      entries = Array(Matter::Cluster::JointFabricDatastore::DatastoreAdministratorInformationEntryStruct)
-        .from_tlv(admins.to_slice)
+      entries = admin_list(im, session, peer)
       unless entries.any? { |entry| entry.node_id == SDK_JFA_ID && entry.vendor_id == TEST_VENDOR_ID }
         raise Matter::ProtocolError.new("SDK Datastore AdminList omitted Anchor JFA")
       end
@@ -248,6 +254,38 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore RemoveNode did not restore NodeList")
       end
       puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE"
+
+      if entries.any?(&.node_id.==(TEST_ADMIN_ID))
+        raise Matter::ProtocolError.new("SDK Datastore test Administrator NodeID already exists")
+      end
+      test_icac = fabric.intermediate_cert ||
+                  raise Matter::ConfigurationError.new("Anchor ICAC is missing")
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_ADMIN,
+        SdkDatastore::AddAdminRequest.new(TEST_ADMIN_ID, "Crystal SDK administrator",
+          TEST_ADMIN_VENDOR_ID, test_icac).to_slice)
+      added_admin = admin_list(im, session, peer).find(&.node_id.==(TEST_ADMIN_ID)) ||
+                    raise Matter::ProtocolError.new("SDK Datastore AddAdmin did not update AdminList")
+      unless added_admin.friendly_name == "Crystal SDK administrator" &&
+             added_admin.vendor_id == TEST_ADMIN_VENDOR_ID && added_admin.icac == test_icac
+        raise Matter::ProtocolError.new("SDK Datastore AddAdmin returned different administrator fields")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_ADMIN,
+        SdkDatastore::UpdateAdminRequest.new(TEST_ADMIN_ID,
+          friendly_name: "Crystal SDK administrator updated").to_slice)
+      updated_admin = admin_list(im, session, peer).find(&.node_id.==(TEST_ADMIN_ID)) ||
+                      raise Matter::ProtocolError.new("SDK Datastore UpdateAdmin removed the administrator")
+      unless updated_admin.friendly_name == "Crystal SDK administrator updated" &&
+             updated_admin.vendor_id == TEST_ADMIN_VENDOR_ID && updated_admin.icac == test_icac
+        raise Matter::ProtocolError.new("SDK Datastore UpdateAdmin did not preserve vendor and ICAC")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_ADMIN,
+        SdkDatastore::RemoveAdminRequest.new(TEST_ADMIN_ID).to_slice)
+      final_admins = admin_list(im, session, peer)
+      if final_admins.any?(&.node_id.==(TEST_ADMIN_ID)) ||
+         final_admins.map(&.node_id).sort! != entries.map(&.node_id).sort!
+        raise Matter::ProtocolError.new("SDK Datastore RemoveAdmin did not restore AdminList")
+      end
+      puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE"
     ensure
       client.close
     end
