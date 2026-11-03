@@ -1613,6 +1613,80 @@ describe "three provisioned Joint Fabric Administrators" do
           anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
       sdk_reconciled_stage.inspected_migration_stage.should eq(
         Matter::Controller::JointFabricDeviceMigration::Stage::OldFabricRemoved.value)
+      sdk_interrupted_old_node_removal = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT,
+          interrupt_after_migration_old_node_removed: true))
+      sdk_interrupted_old_node_removal.status.should eq("error")
+      sdk_interrupted_old_node_removal.error.to_s.should contain("Injected interruption after Datastore RemoveNode")
+      joiner.restart!
+      joiner_session = Matter::Controller::Pairing::CasePairing.new.pair(joiner_client,
+        joiner_peer, joiner_bootstrap.fabric,
+        peer_node_id: 0xB102_u64, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_old_node_removal_stage = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_old_node_removal_stage.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldNode.value)
+      jfa_node_list(anchor_im, anchor_session, anchor_peer,
+        MatterJointFabricAdministrator::Device::ANCHOR_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_ANCHOR_NODE_ID && entry.commissioning_status_entry.state.committed?
+      end.should be_true
+      jfa_node_list(joiner_im, joiner_session, joiner_peer,
+        MatterJointFabricAdministrator::Device::BOOTSTRAP_JFA_ENDPOINT_ID).any? do |entry|
+        entry.node_id == SDK_MIGRATION_OLD_NODE_ID
+      end.should be_false
+      sdk_old_node_a_session = Matter::Controller::Pairing::CasePairing.new.pair(anchor_client,
+        sdk_peer, anchor_bootstrap.fabric,
+        peer_node_id: SDK_MIGRATION_ANCHOR_NODE_ID, timeout: E2E::COMMAND_TIMEOUT)
+      sdk_old_node_fabrics = anchor_im.read_attribute(session: sdk_old_node_a_session, peer: sdk_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+        attribute_id: Matter::Cluster::OperationalCredentials::ATTR_FABRICS,
+        fabric_filtered: false)
+      sdk_old_node_data = sdk_old_node_fabrics.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data.as(Matter::InteractionModel::AttributeDataIB).data.as(TLV::Any)
+      sdk_old_node_descriptors = Array(Matter::Cluster::OperationalCredentials::Tlv::FabricDescriptor)
+        .from_tlv(sdk_old_node_data.to_slice)
+      sdk_old_node_descriptors.size.should eq(1)
+      sdk_old_node_descriptors.first.fabric_id.should eq(anchor_bootstrap.fabric.fabric_id)
+      sdk_old_node_descriptors.first.root_public_key.should eq(anchor_bootstrap.fabric.root_public_key)
+      sdk_old_node_descriptors.first.node_id.should eq(SDK_MIGRATION_ANCHOR_NODE_ID)
+      sdk_old_node_replay = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_old_node_replay.status.should eq("error")
+      sdk_old_node_replay.error.to_s.should contain("needs authenticated reconciliation")
+      sdk_old_node_no_effect = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration-no-effect", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_old_node_no_effect.status.should eq("error")
+      sdk_old_node_no_effect.error.to_s.should contain("Fabric B Datastore no longer contains the migrated node")
+      sdk_old_node_still_uncertain = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("inspect-device-migration-stage", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID))
+      sdk_old_node_still_uncertain.inspected_migration_stage.should eq(
+        Matter::Controller::JointFabricDeviceMigration::Stage::RemovingOldNode.value)
+      sdk_reconciled_old_node = jfa_command("matter_joint_fabric_joiner",
+        MatterJointFabricAdministrator::Device::CommandRequest.new("reconcile-device-migration", SDK_MIGRATION_OLD_NODE_ID,
+          fabric_id: anchor_bootstrap.fabric.fabric_id,
+          root_public_key: anchor_bootstrap.fabric.root_public_key,
+          anchor_node_id: SDK_MIGRATION_ANCHOR_NODE_ID,
+          peer_address: sdk_address, peer_port: E2E::DEVICE_PORT))
+      sdk_reconciled_old_node.status.should eq("ok"), sdk_reconciled_old_node.error.to_s
       sdk_migration = jfa_command("matter_joint_fabric_joiner",
         MatterJointFabricAdministrator::Device::CommandRequest.new("migrate-device", SDK_MIGRATION_OLD_NODE_ID,
           fabric_id: anchor_bootstrap.fabric.fabric_id,
