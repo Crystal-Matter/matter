@@ -7,12 +7,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Pure Crystal JPEG snapshot adapter
-
-- Replace the optional FFmpeg JPEG snapshot encoder with `crimage`. Camera
-  hosts no longer need an FFmpeg
-  executable for RGB24 snapshot encoding.
-
 ### Matter 1.6 SDK Joint Fabric Datastore key-set interoperability
 
 - Extend the Crystal controller to official SDK JFA smoke with authenticated
@@ -31,6 +25,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   without the old key do not delay an already complete rotation; retries
   include failed nonmember key deliveries. A lost-response recovery refuses
   an incomplete replacement snapshot instead of guessing its original cohort.
+
+### Pure Crystal JPEG snapshot adapter
+
+- Replace the optional FFmpeg JPEG snapshot encoder with `crimage`. Camera
+  hosts no longer need an FFmpeg executable for RGB24 snapshot encoding.
 
 ### Joint Fabric Datastore binding Group ID validation
 
