@@ -1,5 +1,6 @@
 require "./support/console"
 require "./support/main"
+require "../src/matter/controller"
 
 # Test-only Camera composition probe. Its Provider deliberately declines media
 # signaling; this fixture proves Descriptor and root roles, not a media path.
@@ -85,6 +86,16 @@ module MatterCameraCompositionProbe
       camera = clusters.find(&.is_a?(CameraAv)).as(CameraAv)
       clusters << Provider.new(camera.endpoint_id, camera, NoMediaPeer.new)
       clusters
+    end
+
+    protected def before_start : Nil
+      client = Matter::Controller::TrustedTimeClient.new
+      time_sync = node.get_cluster!(TimeSync)
+      time_sync.on_trusted_time_query = ->(fabric_index : UInt8, node_id : UInt64, endpoint : UInt16) : TimeSync::TrustedTimeSample? do
+        fabric = fabric_table.get_fabric(fabric_index)
+        fabric ? client.query(fabric, node_id, endpoint) : nil
+      end
+      super
     end
 
     def console_notes : Array(String)
