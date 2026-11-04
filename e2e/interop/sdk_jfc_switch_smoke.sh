@@ -79,5 +79,6 @@ else
   python3 "${repo_root}/e2e/interop/sdk_jfc_switch_smoke.py" \
     --sdk "${sdk_root}" --switch "${switch_bin}" --log-dir "${log_dir}"
   python3 "${repo_root}/e2e/interop/sdk_jfa_inverse_live.py" \
-    --sdk "${sdk_root}" --driver "${inverse_driver_bin}" --log-dir "${log_dir}"
+    --sdk "${sdk_root}" --driver "${inverse_driver_bin}" \
+    --switch "${switch_bin}" --log-dir "${log_dir}"
 fi

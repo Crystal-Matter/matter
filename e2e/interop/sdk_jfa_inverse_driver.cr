@@ -5,7 +5,7 @@ private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
 
 # An independent Crystal controller commissions the official SDK JFA as an
 # Anchor, then reads its Joint Fabric identity and exercises Datastore key-set,
-# group, pending-node, and administrator commands over CASE. The SDK JFC ->
+# group, pending-node, administrator, and live-node endpoint commands over CASE. The SDK JFC ->
 # Crystal device smoke runs separately, using a fresh JFA store for this direction.
 module SdkJfaInverseDriver
   extend self
@@ -25,6 +25,8 @@ module SdkJfaInverseDriver
   TEST_KEY_SET_ID      = 0x1235_u16
   TEST_NODE_ID         = 0xA203_u64
   TEST_ADMIN_ID        = 0xA204_u64
+  TEST_LIVE_NODE_ID    = 0xA205_u64
+  SWITCH_ENDPOINT      =      1_u16
   TEST_ADMIN_VENDOR_ID = 0xFFF2_u16
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
   # test-only IPK when its commissioned JFA enters commissioner mode.
@@ -95,6 +97,14 @@ module SdkJfaInverseDriver
     Array(SdkDatastore::DatastoreAdministratorInformationEntryStruct).from_tlv(data.to_slice)
   end
 
+  private def endpoint_list(im : Matter::Controller::ImClient,
+                            session : Matter::Session::SecureContext,
+                            peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreEndpointEntryStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_NODE_ENDPOINT_LIST)
+    Array(SdkDatastore::DatastoreEndpointEntryStruct).from_tlv(data.to_slice)
+  end
+
   private def invoke_datastore(im : Matter::Controller::ImClient,
                                session : Matter::Session::SecureContext,
                                peer : Socket::IPAddress,
@@ -106,7 +116,8 @@ module SdkJfaInverseDriver
     Matter::Controller::JointCommissioning.assert_status_success(response)
   end
 
-  def run(path : String, address : String, sdk_root : String) : Nil
+  def run(path : String, address : String, sdk_root : String,
+          switch_pin : UInt32, switch_discriminator : UInt16) : Nil
     bootstrap = Matter::Controller::JointCommissioning.bootstrap_anchor_fabric(
       FABRIC_ID, CONTROLLER_ID, TEST_VENDOR_ID, ipk_value: SDK_EXAMPLE_IPK)
     state_store = store(path)
@@ -286,14 +297,100 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore RemoveAdmin did not restore AdminList")
       end
       puts "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE"
+
+      # RefreshNode needs a real operational peer: the SDK JFA reads its
+      # Descriptor and Access Control state before it can name an endpoint.
+      switch_peer = Socket::IPAddress.new(address, Matter::Device::DEFAULT_PORT)
+      switch_code = Matter::SetupPayload.generate_manual_code(switch_discriminator, switch_pin)
+      Matter::Controller::Commissioning::Commissioner.new(state_store, client,
+        timeout: TIMEOUT,
+        attestation_verifier: Matter::Controller::DeviceAttestationVerifier.new(
+          Matter::Controller::AttestationTrustStore.matter_test_fixture)).pairing_code(
+        TEST_LIVE_NODE_ID, switch_code, switch_peer,
+        fabric_id: FABRIC_ID, root_public_key: fabric.root_public_key,
+        controller_node_id: CONTROLLER_ID)
+      switch_session = Matter::Controller::Pairing::CasePairing.new.pair(client,
+        switch_peer, fabric, peer_node_id: TEST_LIVE_NODE_ID, timeout: TIMEOUT)
+      acl_report = im.read_attribute(session: switch_session, peer: switch_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+      acl_data = acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL read returned a status")
+      acl_value = acl_data.data || raise Matter::ProtocolError.new("Switch ACL read omitted data")
+      acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_value.to_slice)
+      anchor_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+        Matter::DataType::CaseAuthenticatedTag.create(
+          SdkDatastore::ADMINISTRATOR_CAT, 1_u16)).id
+      acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+        [anchor_admin_subject], nil)
+      acl_write = im.write_attribute(session: switch_session, peer: switch_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL,
+        value: acl.to_tlv)
+      unless acl_write.write_responses.first.status.status == Matter::InteractionModel::StatusCode::Success.value
+        raise Matter::ProtocolError.new("Switch did not grant SDK Anchor administrator access")
+      end
+
+      initial_endpoints = endpoint_list(im, session, peer)
+      if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
+        raise Matter::ProtocolError.new("SDK Datastore live NodeID already has endpoints")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_PENDING_NODE,
+        SdkDatastore::AddPendingNodeRequest.new(TEST_LIVE_NODE_ID, "Crystal live switch").to_slice)
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REFRESH_NODE,
+        SdkDatastore::RefreshNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)
+      deadline = Time.instant + 120.seconds
+      loop do
+        live_node = node_list(im, session, peer).find(&.node_id.==(TEST_LIVE_NODE_ID))
+        discovered = endpoint_list(im, session, peer).any? do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT
+        end
+        break if live_node &&
+                 live_node.commissioning_status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
+                 discovered
+        if Time.instant >= deadline
+          raise Matter::TimeoutError.new("SDK JFA did not commit the live switch and discover its endpoint")
+        end
+        sleep 1.second
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_ENDPOINT_FOR_NODE,
+        SdkDatastore::UpdateEndpointForNodeRequest.new(
+          SWITCH_ENDPOINT, TEST_LIVE_NODE_ID, "Crystal live endpoint").to_slice)
+      updated_endpoint = endpoint_list(im, session, peer).find do |entry|
+        entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT
+      end || raise Matter::ProtocolError.new("SDK Datastore lost the live endpoint")
+      unless updated_endpoint.friendly_name == "Crystal live endpoint"
+        raise Matter::ProtocolError.new("SDK Datastore UpdateEndpointForNode did not rename the endpoint")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_NODE,
+        SdkDatastore::RemoveNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)
+      if node_list(im, session, peer).map(&.node_id).sort! != initial_nodes.map(&.node_id).sort!
+        raise Matter::ProtocolError.new("SDK Datastore live-node cleanup did not restore baseline NodeList")
+      end
+      final_endpoints = endpoint_list(im, session, peer)
+      baseline_preserved = initial_endpoints.all? do |original|
+        final_endpoints.any? do |entry|
+          entry.node_id == original.node_id &&
+            entry.endpoint_id == original.endpoint_id &&
+            entry.friendly_name == original.friendly_name
+        end
+      end
+      unless baseline_preserved
+        raise Matter::ProtocolError.new("SDK Datastore live-node update changed a baseline endpoint")
+      end
+      puts "PASS: Crystal controller refreshed and renamed a live SDK JFA Datastore endpoint over CASE"
     ensure
       client.close
     end
   end
 end
 
-unless ARGV.size == 3
-  STDERR.puts "Usage: sdk_jfa_inverse_driver <private-controller-state.yml> <sdk-jfa-ipv6-address> <sdk-root>"
+unless ARGV.size == 5
+  STDERR.puts "Usage: sdk_jfa_inverse_driver <private-controller-state.yml> <sdk-jfa-ipv6-address> <sdk-root> <switch-pin> <switch-discriminator>"
   exit 2
 end
-SdkJfaInverseDriver.run(ARGV[0], ARGV[1], ARGV[2])
+SdkJfaInverseDriver.run(ARGV[0], ARGV[1], ARGV[2], ARGV[3].to_u32, ARGV[4].to_u16)
