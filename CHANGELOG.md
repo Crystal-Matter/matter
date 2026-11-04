@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 SDK Joint Fabric Datastore live binding propagation
+
+- Extend the inverse SDK JFA smoke with typed AddBindingToEndpointForNode and
+  RemoveBindingFromEndpointForNode. Check the committed EndpointBindingList
+  entry and a live Crystal switch Binding read over CASE, then restore both
+  initial lists. The pinned SDK writes Binding at the root endpoint for this
+  command, which the fixture makes available explicitly.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live group propagation
 
 - Extend the Crystal controller to official SDK JFA smoke with typed

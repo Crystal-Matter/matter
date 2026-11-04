@@ -22,6 +22,11 @@ module MatterSwitch
 
     storage yaml: "matter_switch_storage.yml"
 
+    # The pinned SDK JFA writes Binding to the root endpoint during Datastore sync.
+    endpoint 0, device_type: Matter::DeviceType::ROOT_NODE do
+      cluster Matter::Cluster::Binding
+    end
+
     endpoint 1, device_type: Matter::DeviceType::ON_OFF_LIGHT do
       cluster Matter::Cluster::OnOff, feature_map: :lighting, as: :switch
       # FixedLabel is optional, but can help controllers show a friendly name for this endpoint.

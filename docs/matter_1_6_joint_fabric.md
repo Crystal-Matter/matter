@@ -753,8 +753,15 @@ entries are unchanged and discards the private SDK store after the scenario.
 This covers endpoint discovery and naming against the SDK server. The same
 fixture then creates a Datastore group, adds and removes its membership on
 the live switch, and checks both the SDK EndpointGroupIDList state and the
-switch's Groups GetGroupMembership response over CASE. Binding and ACL
-command propagation need separate tests.
+switch's Groups GetGroupMembership response over CASE. The binding extension sends typed
+AddBindingToEndpointForNode and RemoveBindingFromEndpointForNode, checks
+EndpointBindingList reaches Committed, and reads the switch's Binding attribute
+over CASE before and after removal. The pinned SDK JFA currently writes the
+Binding attribute at endpoint 0 even when its Datastore entry names endpoint 1;
+the test switch exposes Binding there and verifies that actual wire behavior.
+This is interoperability coverage for the SDK command path, not validation of
+endpoint-1 Binding placement. ACL command propagation still needs a separate
+test.
 
 The opt-in SDK JFC JCM fixture also publishes the SDK issuer's **public**
 operational root through an ephemeral HTTPS DCL-shaped mirror on loopback.
