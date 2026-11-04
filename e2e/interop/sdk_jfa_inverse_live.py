@@ -63,12 +63,13 @@ def run(args):
                     "PASS: Crystal CASE read official SDK JFA and Datastore Anchor identity" not in transcript or
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore key set over CASE" not in transcript or
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore group over CASE" not in transcript or
-                    "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE" not in transcript):
+                    "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE" not in transcript or
+                    "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE" not in transcript):
                 raise RuntimeError(
                     f"Crystal -> SDK JFA Datastore driver exited {result.returncode}; "
                     f"log tail:\n{transcript[-5000:]}"
                 )
-            print(f"PASS: Crystal controller commissioned official SDK JFA and exercised Datastore key sets, groups, and pending nodes over CASE; logs: {logs}")
+            print(f"PASS: Crystal controller commissioned official SDK JFA and exercised Datastore key sets, groups, pending nodes, and administrators over CASE; logs: {logs}")
         finally:
             jfa.close()
 
