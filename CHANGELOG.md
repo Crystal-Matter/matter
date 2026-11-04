@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Camera composition wire probe
+
+- Add a test-only Camera endpoint fixture and official chip-tool E2E that read
+  its required server/client roles, Audio/Video/Snapshot features, and Root
+  Node power, time, and TLS composition before and after restart. The fixture
+  has no media peer or real stream delivery and is not a production Camera.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live group propagation
 
 - Extend the Crystal controller to official SDK JFA smoke with typed
