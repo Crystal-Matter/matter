@@ -549,6 +549,20 @@ module SdkJfaInverseDriver
       end
       committed_binding = binding_entry ||
                           raise Matter::ProtocolError.new("SDK JFA committed binding entry disappeared")
+      # The pinned JFA's Binding fetch callback dereferences an absent
+      # objectToWrite when reading a nonempty list. Restore the live target
+      # directly so its RemoveBinding command can clear the Datastore entry.
+      binding_restore = im.write_attribute(session: switch_session, peer: switch_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: SwitchBinding::CLUSTER_ID,
+        attribute_id: SwitchBinding::ATTR_BINDING,
+        value: initial_switch_bindings.to_tlv)
+      unless binding_restore.write_responses.all? { |entry| entry.status.status == Matter::InteractionModel::StatusCode::Success.value }
+        raise Matter::ProtocolError.new("Crystal CASE could not restore the switch Binding baseline")
+      end
+      unless switch_binding_targets(im, switch_session, switch_peer) == initial_switch_bindings
+        raise Matter::ProtocolError.new("Switch Binding baseline changed after direct CASE cleanup")
+      end
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_BINDING_FROM_ENDPOINT_FOR_NODE,
         SdkDatastore::RemoveBindingFromEndpointForNodeRequest.new(
           committed_binding.list_id, SWITCH_ENDPOINT, TEST_LIVE_NODE_ID).to_slice)
@@ -584,7 +598,7 @@ module SdkJfaInverseDriver
              endpoint_bindings_preserved && switch_bindings_preserved
         raise Matter::ProtocolError.new("SDK Datastore live binding cleanup changed baseline lists")
       end
-      puts "PASS: Crystal controller propagated and removed an SDK JFA Datastore binding on a live switch"
+      puts "PASS: Crystal controller observed SDK JFA Binding add on a live switch and cleared the Datastore entry"
 
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_NODE,
         SdkDatastore::RemoveNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)

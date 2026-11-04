@@ -13,7 +13,9 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   RemoveBindingFromEndpointForNode. Check the committed EndpointBindingList
   entry and a live Crystal switch Binding read over CASE, then restore both
   initial lists. The pinned SDK writes Binding at the root endpoint for this
-  command, which the fixture makes available explicitly.
+  command, which the fixture makes available explicitly. Its Binding fetch
+  callback crashes on a nonempty list, so the test restores the switch target
+  over Crystal CASE before using RemoveBinding to clear the Datastore entry.
 
 ### Matter 1.6 Camera composition wire probe
 
