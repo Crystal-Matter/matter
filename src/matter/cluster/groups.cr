@@ -224,7 +224,10 @@ module Matter
       def invoke_command(command_id : UInt32, fields : TLV::Any? = nil, session_id : UInt64? = nil,
                          is_case_session : Bool = false, fabric_index : UInt8? = nil) : InteractionModel::Status | CommandResponse
         if get_command_metadata(command_id)
-          return InteractionModel::Status.unsupported_access unless fabric_index && Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX
+          unless fabric_index && Fabric::MIN_FABRIC_INDEX <= fabric_index <= Fabric::MAX_FABRIC_INDEX
+            Log.warn { "Groups command denied without fabric index: command=#{command_id} fabric=#{fabric_index}" }
+            return InteractionModel::Status.unsupported_access
+          end
         end
         super
       end

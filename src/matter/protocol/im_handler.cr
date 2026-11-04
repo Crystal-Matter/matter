@@ -1055,6 +1055,10 @@ module Matter
 
           if metadata = cluster.commands.find { |cmd| cmd.id.id == path.command }
             unless authorized?(clusters, metadata.access, endpoint_id, path.cluster, is_case_session, fabric_index, peer_subject_ids)
+              Log.warn do
+                "Command ACL denied endpoint=#{endpoint_id} cluster=#{path.cluster} command=#{path.command} " \
+                "case=#{is_case_session} fabric=#{fabric_index} subjects=#{peer_subject_ids} required=#{metadata.access}"
+              end
               status_ib = InteractionModel::StatusIB.new(status: InteractionModel::StatusCode::UnsupportedAccess.value)
               cmd_status = InteractionModel::CommandStatusIB.new(command_path: path, status: status_ib)
               invoke_responses << InteractionModel::InvokeResponseIB.new(command_status: cmd_status)
