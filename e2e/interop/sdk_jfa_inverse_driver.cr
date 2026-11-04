@@ -359,6 +359,17 @@ module SdkJfaInverseDriver
       unless acl_write.write_responses.first.status.status == Matter::InteractionModel::StatusCode::Success.value
         raise Matter::ProtocolError.new("Switch did not grant SDK Anchor administrator access")
       end
+      acl_readback = im.read_attribute(session: switch_session, peer: switch_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+      acl_readback_data = acl_readback.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+        .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL readback returned a status")
+      acl_readback_value = acl_readback_data.data || raise Matter::ProtocolError.new("Switch ACL readback omitted data")
+      acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_readback_value.to_slice)
+      unless acl_entries.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) }
+        raise Matter::ProtocolError.new("Switch ACL did not retain SDK JFA node grant")
+      end
 
       initial_endpoints = endpoint_list(im, session, peer)
       if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
@@ -414,7 +425,8 @@ module SdkJfaInverseDriver
         break if membership && membership.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
                  switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID)
         if Time.instant >= group_deadline
-          raise Matter::TimeoutError.new("SDK JFA did not commit the live switch group membership")
+          raise Matter::TimeoutError.new("SDK JFA did not commit live switch group membership: " +
+                                         "Datastore=#{membership.try(&.status_entry.state)}, switch=#{switch_group_ids(im, switch_session, switch_peer).inspect}")
         end
         sleep 1.second
       end
