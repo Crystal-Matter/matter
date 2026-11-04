@@ -528,7 +528,8 @@ module SdkJfaInverseDriver
                  live_binding
         if Time.instant >= binding_deadline
           raise Matter::TimeoutError.new("SDK JFA did not commit the live switch binding: " +
-                                         "Datastore=#{binding_entry.try(&.status_entry.state)}, switch=#{live_binding}")
+                                         "Datastore=#{binding_entry.try(&.status_entry.state)}, " +
+                                         "switch=#{switch_binding_targets(im, switch_session, switch_peer).inspect}")
         end
         sleep 1.second
       end
