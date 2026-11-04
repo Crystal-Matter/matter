@@ -336,6 +336,40 @@ module SdkJfaInverseDriver
         controller_node_id: CONTROLLER_ID)
       switch_session = Matter::Controller::Pairing::CasePairing.new.pair(client,
         switch_peer, fabric, peer_node_id: TEST_LIVE_NODE_ID, timeout: TIMEOUT)
+
+      initial_endpoints = endpoint_list(im, session, peer)
+      if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
+        raise Matter::ProtocolError.new("SDK Datastore live NodeID already has endpoints")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_PENDING_NODE,
+        SdkDatastore::AddPendingNodeRequest.new(TEST_LIVE_NODE_ID, "Crystal live switch").to_slice)
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REFRESH_NODE,
+        SdkDatastore::RefreshNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)
+      deadline = Time.instant + 120.seconds
+      loop do
+        live_node = node_list(im, session, peer).find(&.node_id.==(TEST_LIVE_NODE_ID))
+        discovered = endpoint_list(im, session, peer).any? do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT
+        end
+        break if live_node &&
+                 live_node.commissioning_status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
+                 discovered
+        if Time.instant >= deadline
+          raise Matter::TimeoutError.new("SDK JFA did not commit the live switch and discover its endpoint")
+        end
+        sleep 1.second
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_ENDPOINT_FOR_NODE,
+        SdkDatastore::UpdateEndpointForNodeRequest.new(
+          SWITCH_ENDPOINT, TEST_LIVE_NODE_ID, "Crystal live endpoint").to_slice)
+      updated_endpoint = endpoint_list(im, session, peer).find do |entry|
+        entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT
+      end || raise Matter::ProtocolError.new("SDK Datastore lost the live endpoint")
+      unless updated_endpoint.friendly_name == "Crystal live endpoint"
+        raise Matter::ProtocolError.new("SDK Datastore UpdateEndpointForNode did not rename the endpoint")
+      end
+
+      # RefreshNode synchronizes Access Control; grant the JFA after that sync.
       acl_report = im.read_attribute(session: switch_session, peer: switch_peer,
         endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
         cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
@@ -369,38 +403,6 @@ module SdkJfaInverseDriver
       acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_readback_value.to_slice)
       unless acl_entries.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) }
         raise Matter::ProtocolError.new("Switch ACL did not retain SDK JFA node grant")
-      end
-
-      initial_endpoints = endpoint_list(im, session, peer)
-      if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
-        raise Matter::ProtocolError.new("SDK Datastore live NodeID already has endpoints")
-      end
-      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_PENDING_NODE,
-        SdkDatastore::AddPendingNodeRequest.new(TEST_LIVE_NODE_ID, "Crystal live switch").to_slice)
-      invoke_datastore(im, session, peer, SdkDatastore::CMD_REFRESH_NODE,
-        SdkDatastore::RefreshNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)
-      deadline = Time.instant + 120.seconds
-      loop do
-        live_node = node_list(im, session, peer).find(&.node_id.==(TEST_LIVE_NODE_ID))
-        discovered = endpoint_list(im, session, peer).any? do |entry|
-          entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT
-        end
-        break if live_node &&
-                 live_node.commissioning_status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
-                 discovered
-        if Time.instant >= deadline
-          raise Matter::TimeoutError.new("SDK JFA did not commit the live switch and discover its endpoint")
-        end
-        sleep 1.second
-      end
-      invoke_datastore(im, session, peer, SdkDatastore::CMD_UPDATE_ENDPOINT_FOR_NODE,
-        SdkDatastore::UpdateEndpointForNodeRequest.new(
-          SWITCH_ENDPOINT, TEST_LIVE_NODE_ID, "Crystal live endpoint").to_slice)
-      updated_endpoint = endpoint_list(im, session, peer).find do |entry|
-        entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT
-      end || raise Matter::ProtocolError.new("SDK Datastore lost the live endpoint")
-      unless updated_endpoint.friendly_name == "Crystal live endpoint"
-        raise Matter::ProtocolError.new("SDK Datastore UpdateEndpointForNode did not rename the endpoint")
       end
 
       # The SDK JFA sends Groups commands to this live switch and updates the
