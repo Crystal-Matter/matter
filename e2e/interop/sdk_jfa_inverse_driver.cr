@@ -137,6 +137,19 @@ module SdkJfaInverseDriver
     Array(SwitchBinding::Target).from_tlv(value.to_slice)
   end
 
+  private def switch_current_fabric_index(im : Matter::Controller::ImClient,
+                                          session : Matter::Session::SecureContext,
+                                          peer : Socket::IPAddress) : UInt8
+    report = im.read_attribute(session: session, peer: peer,
+      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::OperationalCredentials::CLUSTER_ID,
+      attribute_id: Matter::Cluster::OperationalCredentials::ATTR_CURRENT_FABRIC_INDEX)
+    data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data || raise Matter::ProtocolError.new("Switch CurrentFabricIndex read returned a status")
+    value = data.data || raise Matter::ProtocolError.new("Switch CurrentFabricIndex read omitted data")
+    UInt8.from_tlv(value.to_slice)
+  end
+
   private def grant_sdk_jfa_switch_access(im : Matter::Controller::ImClient,
                                           session : Matter::Session::SecureContext,
                                           peer : Socket::IPAddress) : Nil
@@ -405,6 +418,7 @@ module SdkJfaInverseDriver
       switch_session = Matter::Controller::Pairing::CasePairing.new.pair(client,
         switch_peer, fabric, peer_node_id: TEST_LIVE_NODE_ID, timeout: TIMEOUT)
       grant_sdk_jfa_switch_access(im, switch_session, switch_peer)
+      switch_fabric_index = switch_current_fabric_index(im, switch_session, switch_peer)
 
       initial_endpoints = endpoint_list(im, session, peer)
       if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
@@ -522,7 +536,7 @@ module SdkJfaInverseDriver
         end
         live_binding = switch_binding_targets(im, switch_session, switch_peer).any? do |entry|
           entry.node == TEST_BINDING_NODE_ID && entry.endpoint == SWITCH_ENDPOINT &&
-            entry.group.nil? && entry.cluster.nil? && entry.fabric_index == switch_session.fabric_index
+            entry.group.nil? && entry.cluster.nil? && entry.fabric_index == switch_fabric_index
         end
         break if binding_entry && binding_entry.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
                  live_binding
