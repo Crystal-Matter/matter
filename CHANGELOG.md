@@ -32,6 +32,11 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   include failed nonmember key deliveries. A lost-response recovery refuses
   an incomplete replacement snapshot instead of guessing its original cohort.
 
+### Pure Crystal JPEG snapshot adapter
+
+- Replace the optional FFmpeg JPEG snapshot encoder with `crimage`. Camera
+  hosts no longer need an FFmpeg executable for RGB24 snapshot encoding.
+
 ### Joint Fabric Datastore binding Group ID validation
 
 - Reject reserved Group ID zero in EndpointBindingList host updates and remote
