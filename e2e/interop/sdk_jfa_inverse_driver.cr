@@ -128,8 +128,11 @@ module SdkJfaInverseDriver
     anchor_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
       Matter::DataType::CaseAuthenticatedTag.create(
         SdkDatastore::ADMINISTRATOR_CAT, 1_u16)).id
-    unless acl.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) &&
-           entry.privilege == Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer }
+    already_granted = acl.any? do |entry|
+      entry.subjects.try(&.includes?(SDK_JFA_ID)) &&
+        entry.privilege == Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer
+    end
+    unless already_granted
       acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
         Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
         Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
