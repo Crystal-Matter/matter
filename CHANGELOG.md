@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Node power, time, and TLS composition before and after restart. The fixture
   has no media peer or real stream delivery and is not a production Camera.
 
+### Matter 1.6 SDK Joint Fabric Datastore live group propagation
+
+- Extend the Crystal controller to official SDK JFA smoke with typed
+  AddGroupIDToEndpointForNode and RemoveGroupIDFromEndpointForNode against a
+  commissioned Crystal switch. Check committed Datastore status and the
+  switch's Groups membership over CASE, then restore the initial group lists.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live endpoint interoperability
 
 - Extend the Crystal controller to official SDK JFA smoke with a live Crystal
