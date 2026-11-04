@@ -750,8 +750,11 @@ switch's endpoint before UpdateEndpointForNode renames it. The test reads
 NodeEndpointList over CASE and removes the test node from NodeList. The SDK's
 RemoveNode retains discovered endpoint entries, so the test checks that initial
 entries are unchanged and discards the private SDK store after the scenario.
-This covers endpoint discovery and naming against the SDK
-server; group, binding, and ACL command propagation need separate tests.
+This covers endpoint discovery and naming against the SDK server. The same
+fixture then creates a Datastore group, adds and removes its membership on
+the live switch, and checks both the SDK EndpointGroupIDList state and the
+switch's Groups GetGroupMembership response over CASE. Binding and ACL
+command propagation need separate tests.
 
 The opt-in SDK JFC JCM fixture also publishes the SDK issuer's **public**
 operational root through an ephemeral HTTPS DCL-shaped mirror on loopback.

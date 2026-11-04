@@ -2,10 +2,11 @@ require "../../src/matter/controller"
 require "../../src/matter/controller/joint_commissioning"
 
 private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
+private alias SwitchGroups = Matter::Cluster::Groups
 
 # An independent Crystal controller commissions the official SDK JFA as an
 # Anchor, then reads its Joint Fabric identity and exercises Datastore key-set,
-# group, pending-node, administrator, and live-node endpoint commands over CASE. The SDK JFC ->
+# group, pending-node, administrator, and live-node endpoint/group commands over CASE. The SDK JFC ->
 # Crystal device smoke runs separately, using a fresh JFA store for this direction.
 module SdkJfaInverseDriver
   extend self
@@ -103,6 +104,75 @@ module SdkJfaInverseDriver
     data = attribute(im, session, peer,
       SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_NODE_ENDPOINT_LIST)
     Array(SdkDatastore::DatastoreEndpointEntryStruct).from_tlv(data.to_slice)
+  end
+
+  private def endpoint_group_list(im : Matter::Controller::ImClient,
+                                  session : Matter::Session::SecureContext,
+                                  peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreEndpointGroupIDEntryStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_ENDPOINT_GROUP_ID_LIST)
+    Array(SdkDatastore::DatastoreEndpointGroupIDEntryStruct).from_tlv(data.to_slice)
+  end
+
+  private def grant_sdk_jfa_switch_access(im : Matter::Controller::ImClient,
+                                          session : Matter::Session::SecureContext,
+                                          peer : Socket::IPAddress) : Nil
+    acl_report = im.read_attribute(session: session, peer: peer,
+      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+    acl_data = acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL read returned a status")
+    acl_value = acl_data.data || raise Matter::ProtocolError.new("Switch ACL read omitted data")
+    acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_value.to_slice)
+    anchor_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(
+        SdkDatastore::ADMINISTRATOR_CAT, 1_u16)).id
+    already_granted = acl.any? do |entry|
+      entry.subjects.try(&.includes?(SDK_JFA_ID)) &&
+        entry.privilege == Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer
+    end
+    unless already_granted
+      acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+        [anchor_admin_subject, SDK_JFA_ID], nil)
+      acl_write = im.write_attribute(session: session, peer: peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL,
+        value: acl.to_tlv)
+      unless acl_write.write_responses.first.status.status == Matter::InteractionModel::StatusCode::Success.value
+        raise Matter::ProtocolError.new("Switch did not grant SDK Anchor administrator access")
+      end
+    end
+    acl_readback = im.read_attribute(session: session, peer: peer,
+      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+    acl_readback_data = acl_readback.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL readback returned a status")
+    acl_readback_value = acl_readback_data.data || raise Matter::ProtocolError.new("Switch ACL readback omitted data")
+    acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_readback_value.to_slice)
+    unless acl_entries.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) }
+      raise Matter::ProtocolError.new("Switch ACL did not retain SDK JFA node grant")
+    end
+  end
+
+  private def switch_group_ids(im : Matter::Controller::ImClient,
+                               session : Matter::Session::SecureContext,
+                               peer : Socket::IPAddress) : Array(UInt16)
+    response = im.invoke(session: session, peer: peer,
+      endpoint_id: SWITCH_ENDPOINT, cluster_id: SwitchGroups::CLUSTER_ID,
+      command_id: SwitchGroups::CMD_GET_GROUP_MEMBERSHIP,
+      fields: SwitchGroups::GetGroupMembershipRequest.new([] of Matter::DataType::GroupId).to_slice)
+    entry = Matter::Controller::ImClient.single_invoke_response!(response, "Switch group membership")
+    data = entry.command_data || raise Matter::ProtocolError.new("Switch group membership returned no data")
+    unless data.command_path.command == SwitchGroups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE
+      raise Matter::ProtocolError.new("Switch group membership returned a different command")
+    end
+    fields = data.command_fields || raise Matter::ProtocolError.new("Switch group membership omitted fields")
+    SwitchGroups::GetGroupMembershipResponse.from_slice(fields.to_slice).group_list.map(&.id)
   end
 
   private def invoke_datastore(im : Matter::Controller::ImClient,
@@ -311,29 +381,7 @@ module SdkJfaInverseDriver
         controller_node_id: CONTROLLER_ID)
       switch_session = Matter::Controller::Pairing::CasePairing.new.pair(client,
         switch_peer, fabric, peer_node_id: TEST_LIVE_NODE_ID, timeout: TIMEOUT)
-      acl_report = im.read_attribute(session: switch_session, peer: switch_peer,
-        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
-        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
-      acl_data = acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-        .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL read returned a status")
-      acl_value = acl_data.data || raise Matter::ProtocolError.new("Switch ACL read omitted data")
-      acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_value.to_slice)
-      anchor_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
-        Matter::DataType::CaseAuthenticatedTag.create(
-          SdkDatastore::ADMINISTRATOR_CAT, 1_u16)).id
-      acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
-        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
-        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
-        [anchor_admin_subject], nil)
-      acl_write = im.write_attribute(session: switch_session, peer: switch_peer,
-        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
-        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL,
-        value: acl.to_tlv)
-      unless acl_write.write_responses.first.status.status == Matter::InteractionModel::StatusCode::Success.value
-        raise Matter::ProtocolError.new("Switch did not grant SDK Anchor administrator access")
-      end
+      grant_sdk_jfa_switch_access(im, switch_session, switch_peer)
 
       initial_endpoints = endpoint_list(im, session, peer)
       if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
@@ -366,6 +414,69 @@ module SdkJfaInverseDriver
       unless updated_endpoint.friendly_name == "Crystal live endpoint"
         raise Matter::ProtocolError.new("SDK Datastore UpdateEndpointForNode did not rename the endpoint")
       end
+
+      # RefreshNode synchronizes Access Control; restore the grant before group sync.
+      grant_sdk_jfa_switch_access(im, switch_session, switch_peer)
+
+      # The SDK JFA sends Groups commands to this live switch and updates the
+      # Datastore status after the target acknowledges them.
+      initial_endpoint_groups = endpoint_group_list(im, session, peer)
+      if initial_endpoint_groups.any?(&.group_id.==(TEST_GROUP_ID)) ||
+         switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID)
+        raise Matter::ProtocolError.new("Live switch test group already exists")
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_GROUP,
+        SdkDatastore::AddGroupRequest.new(TEST_GROUP_ID, "Crystal live group", nil, nil, nil,
+          SdkDatastore::DatastoreAccessControlEntryPrivilegeEnum::View).to_slice)
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_GROUP_ID_TO_ENDPOINT_FOR_NODE,
+        SdkDatastore::AddGroupIDToEndpointForNodeRequest.new(
+          TEST_LIVE_NODE_ID, SWITCH_ENDPOINT, TEST_GROUP_ID).to_slice)
+      group_deadline = Time.instant + 90.seconds
+      loop do
+        membership = endpoint_group_list(im, session, peer).find do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT &&
+            entry.group_id == TEST_GROUP_ID
+        end
+        break if membership && membership.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
+                 switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID)
+        if Time.instant >= group_deadline
+          raise Matter::TimeoutError.new("SDK JFA did not commit live switch group membership: " +
+                                         "Datastore=#{membership.try(&.status_entry.state)}, switch=#{switch_group_ids(im, switch_session, switch_peer).inspect}")
+        end
+        sleep 1.second
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_GROUP_ID_FROM_ENDPOINT_FOR_NODE,
+        SdkDatastore::RemoveGroupIDFromEndpointForNodeRequest.new(
+          TEST_LIVE_NODE_ID, SWITCH_ENDPOINT, TEST_GROUP_ID).to_slice)
+      removal_deadline = Time.instant + 90.seconds
+      loop do
+        membership = endpoint_group_list(im, session, peer).any? do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.endpoint_id == SWITCH_ENDPOINT &&
+            entry.group_id == TEST_GROUP_ID
+        end
+        break if !membership && !switch_group_ids(im, switch_session, switch_peer).includes?(TEST_GROUP_ID)
+        if Time.instant >= removal_deadline
+          raise Matter::TimeoutError.new("SDK JFA did not remove the live switch group membership")
+        end
+        sleep 1.second
+      end
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_GROUP,
+        SdkDatastore::RemoveGroupRequest.new(TEST_GROUP_ID).to_slice)
+      final_endpoint_groups = endpoint_group_list(im, session, peer)
+      endpoint_baseline_preserved = initial_endpoint_groups.all? do |original|
+        final_endpoint_groups.any? do |entry|
+          entry.node_id == original.node_id &&
+            entry.endpoint_id == original.endpoint_id &&
+            entry.group_id == original.group_id
+        end
+      end
+      if group_list(im, session, peer).map(&.group_id).sort! != initial_groups.map(&.group_id).sort! ||
+         final_endpoint_groups.size != initial_endpoint_groups.size ||
+         !endpoint_baseline_preserved
+        raise Matter::ProtocolError.new("SDK Datastore live group cleanup changed baseline lists")
+      end
+      puts "PASS: Crystal controller propagated and removed an SDK JFA Datastore group on a live switch"
+
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_NODE,
         SdkDatastore::RemoveNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)
       if node_list(im, session, peer).map(&.node_id).sort! != initial_nodes.map(&.node_id).sort!
