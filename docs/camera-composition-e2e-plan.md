@@ -5,8 +5,10 @@ and WebRTC Requestor client/server slices. `DeviceType.camera` declares Camera
 type `0x0142` revision 1, its mandatory server/client roles, and its Root Node
 dependencies. `Node#validate` applies `CameraComposition.validate` to every
 endpoint declaring that type. Device startup rejects incomplete composition.
-No example advertises Camera until the conditions below and an independent
-media peer are implemented.
+The `matter_camera_composition_probe` fixture advertises Camera only inside
+the test suite. Official chip-tool reads verify its structural endpoint and
+Root Node roles; its Provider declines media signaling. No production example
+advertises Camera until an independent media peer is implemented.
 
 ## Required composition
 
@@ -52,6 +54,7 @@ media peer are implemented.
    mandatory root attributes after restart.
 
 The stack supplies Requestor signaling and opt-in NTPClient/TimeSyncClient
-behavior, but the E2E fixture still needs a Camera host adapter connecting
-Provider callbacks to outbound Requestor signaling, configured root time
-sources, and real media delivery.
+behavior. The composition probe verifies the required root feature bits and
+readable attributes, but the full E2E scenario still needs a Camera host
+adapter connecting Provider callbacks to outbound Requestor signaling,
+operational root time sources, and real media delivery.
