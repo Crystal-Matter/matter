@@ -532,9 +532,11 @@ module SdkJfaInverseDriver
         end
         sleep 1.second
       end
+      committed_binding = binding_entry ||
+                          raise Matter::ProtocolError.new("SDK JFA committed binding entry disappeared")
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_BINDING_FROM_ENDPOINT_FOR_NODE,
         SdkDatastore::RemoveBindingFromEndpointForNodeRequest.new(
-          binding_entry.not_nil!.list_id, SWITCH_ENDPOINT, TEST_LIVE_NODE_ID).to_slice)
+          committed_binding.list_id, SWITCH_ENDPOINT, TEST_LIVE_NODE_ID).to_slice)
       binding_removal_deadline = Time.instant + 90.seconds
       loop do
         datastore_binding = endpoint_binding_list(im, session, peer).any? do |entry|
