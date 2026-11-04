@@ -457,6 +457,11 @@ services:
     environment:
       E2E_DEVICE: matter_camera_snapshot
 
+  camera-composition-probe:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_camera_composition_probe
+
   oven:
     <<: *device
     environment:
