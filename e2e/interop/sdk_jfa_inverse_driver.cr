@@ -126,7 +126,8 @@ module SdkJfaInverseDriver
     unless data.command_path.command == SwitchGroups::CMD_GET_GROUP_MEMBERSHIP_RESPONSE
       raise Matter::ProtocolError.new("Switch group membership returned a different command")
     end
-    SwitchGroups::GetGroupMembershipResponse.from_slice(data.command_fields.to_slice).group_list.map(&.id)
+    fields = data.command_fields || raise Matter::ProtocolError.new("Switch group membership omitted fields")
+    SwitchGroups::GetGroupMembershipResponse.from_slice(fields.to_slice).group_list.map(&.id)
   end
 
   private def invoke_datastore(im : Matter::Controller::ImClient,
