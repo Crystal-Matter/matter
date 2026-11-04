@@ -114,6 +114,48 @@ module SdkJfaInverseDriver
     Array(SdkDatastore::DatastoreEndpointGroupIDEntryStruct).from_tlv(data.to_slice)
   end
 
+  private def grant_sdk_jfa_switch_access(im : Matter::Controller::ImClient,
+                                          session : Matter::Session::SecureContext,
+                                          peer : Socket::IPAddress) : Nil
+    acl_report = im.read_attribute(session: session, peer: peer,
+      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+    acl_data = acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL read returned a status")
+    acl_value = acl_data.data || raise Matter::ProtocolError.new("Switch ACL read omitted data")
+    acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_value.to_slice)
+    anchor_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
+      Matter::DataType::CaseAuthenticatedTag.create(
+        SdkDatastore::ADMINISTRATOR_CAT, 1_u16)).id
+    unless acl.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) &&
+           entry.privilege == Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer }
+      acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
+        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
+        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
+        [anchor_admin_subject, SDK_JFA_ID], nil)
+      acl_write = im.write_attribute(session: session, peer: peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL,
+        value: acl.to_tlv)
+      unless acl_write.write_responses.first.status.status == Matter::InteractionModel::StatusCode::Success.value
+        raise Matter::ProtocolError.new("Switch did not grant SDK Anchor administrator access")
+      end
+    end
+    acl_readback = im.read_attribute(session: session, peer: peer,
+      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+      cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
+      attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
+    acl_readback_data = acl_readback.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL readback returned a status")
+    acl_readback_value = acl_readback_data.data || raise Matter::ProtocolError.new("Switch ACL readback omitted data")
+    acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_readback_value.to_slice)
+    unless acl_entries.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) }
+      raise Matter::ProtocolError.new("Switch ACL did not retain SDK JFA node grant")
+    end
+  end
+
   private def switch_group_ids(im : Matter::Controller::ImClient,
                                session : Matter::Session::SecureContext,
                                peer : Socket::IPAddress) : Array(UInt16)
@@ -336,6 +378,7 @@ module SdkJfaInverseDriver
         controller_node_id: CONTROLLER_ID)
       switch_session = Matter::Controller::Pairing::CasePairing.new.pair(client,
         switch_peer, fabric, peer_node_id: TEST_LIVE_NODE_ID, timeout: TIMEOUT)
+      grant_sdk_jfa_switch_access(im, switch_session, switch_peer)
 
       initial_endpoints = endpoint_list(im, session, peer)
       if initial_endpoints.any?(&.node_id.==(TEST_LIVE_NODE_ID))
@@ -369,41 +412,8 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore UpdateEndpointForNode did not rename the endpoint")
       end
 
-      # RefreshNode synchronizes Access Control; grant the JFA after that sync.
-      acl_report = im.read_attribute(session: switch_session, peer: switch_peer,
-        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
-        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
-      acl_data = acl_report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-        .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL read returned a status")
-      acl_value = acl_data.data || raise Matter::ProtocolError.new("Switch ACL read omitted data")
-      acl = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_value.to_slice)
-      anchor_admin_subject = Matter::DataType::NodeId.from_case_authenticated_tag(
-        Matter::DataType::CaseAuthenticatedTag.create(
-          SdkDatastore::ADMINISTRATOR_CAT, 1_u16)).id
-      acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
-        Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
-        Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
-        [anchor_admin_subject, SDK_JFA_ID], nil)
-      acl_write = im.write_attribute(session: switch_session, peer: switch_peer,
-        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
-        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL,
-        value: acl.to_tlv)
-      unless acl_write.write_responses.first.status.status == Matter::InteractionModel::StatusCode::Success.value
-        raise Matter::ProtocolError.new("Switch did not grant SDK Anchor administrator access")
-      end
-      acl_readback = im.read_attribute(session: switch_session, peer: switch_peer,
-        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
-        cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
-        attribute_id: Matter::Cluster::AccessControl::ATTR_ACL)
-      acl_readback_data = acl_readback.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
-        .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL readback returned a status")
-      acl_readback_value = acl_readback_data.data || raise Matter::ProtocolError.new("Switch ACL readback omitted data")
-      acl_entries = Array(Matter::Cluster::AccessControl::AccessControlEntry).from_tlv(acl_readback_value.to_slice)
-      unless acl_entries.any? { |entry| entry.subjects.try(&.includes?(SDK_JFA_ID)) }
-        raise Matter::ProtocolError.new("Switch ACL did not retain SDK JFA node grant")
-      end
+      # RefreshNode synchronizes Access Control; restore the grant before group sync.
+      grant_sdk_jfa_switch_access(im, switch_session, switch_peer)
 
       # The SDK JFA sends Groups commands to this live switch and updates the
       # Datastore status after the target acknowledges them.
