@@ -742,6 +742,17 @@ The [integrated JCM run](https://github.com/Crystal-Matter/matter/actions/runs/3
 passed against merged `develop`, including a streamed Anchor ICAC CSR signature
 and Datastore registration.
 
+The manual `sdk-jfc-smoke.yml` workflow also runs the inverse Crystal
+controller to pinned SDK v1.6 JFA scenario. Its fresh Anchor fabric now
+commissions a live Crystal switch, grants the SDK Anchor's Administrator CAT
+access, and checks that typed Datastore RefreshNode discovers and commits the
+switch's endpoint before UpdateEndpointForNode renames it. The test reads
+NodeEndpointList over CASE and removes the test node from NodeList. The SDK's
+RemoveNode retains discovered endpoint entries, so the test checks that initial
+entries are unchanged and discards the private SDK store after the scenario.
+This covers endpoint discovery and naming against the SDK
+server; group, binding, and ACL command propagation need separate tests.
+
 The opt-in SDK JFC JCM fixture also publishes the SDK issuer's **public**
 operational root through an ephemeral HTTPS DCL-shaped mirror on loopback.
 Crystal's `DclOperationalTrustAnchors` must reject the SDK-issued joining

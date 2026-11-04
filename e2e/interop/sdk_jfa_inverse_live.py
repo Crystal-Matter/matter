@@ -24,7 +24,8 @@ def run(args):
     sdk = args.sdk.resolve()
     jfa_bin = sdk / "objdir-jf/linux-x64-jf-admin-app-ipv6only-no-ble-no-wifi-clang/jfa-app"
     driver = args.driver.resolve()
-    for binary in (jfa_bin, driver):
+    switch_bin = args.switch.resolve()
+    for binary in (jfa_bin, driver, switch_bin):
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise RuntimeError(f"missing executable: {binary}")
 
@@ -42,17 +43,31 @@ def run(args):
              "--rpc-server-port", "33033", "--KVS", str(kvs)],
             state, logs,
         )
+        switch = None
         try:
             jfa.start_background_drain()
             time.sleep(3)
             if jfa.process.poll() is not None:
                 raise RuntimeError("official JFA exited before Crystal commissioning")
+            switch_state = state / "switch"
+            switch_state.mkdir()
+            switch_env = os.environ.copy()
+            switch_env["MATTER_SWITCH_IP_ADDRESS"] = args.ipv6_address
+            switch = ManagedProcess(
+                f"inverse-switch-{run_id}", [str(switch_bin), "--no-interactive"],
+                switch_state, logs, switch_env,
+            )
+            pin = switch.expect(r"Setup PIN:\s*(\d{1,8})(?!\d)", 60).group(1)
+            discriminator = switch.expect(r"Discriminator:\s*(\d+)", 60).group(1)
+            switch.expect(r"Starting in Commissioning Mode", 60)
+            switch.start_background_drain()
             private_state = state / "controller-state.yml"
             driver_log = logs / f"inverse-driver-{run_id}.log"
             with driver_log.open("wb") as output:
                 try:
                     result = subprocess.run(
-                        [str(driver), str(private_state), args.ipv6_address, str(sdk)],
+                        [str(driver), str(private_state), args.ipv6_address,
+                         str(sdk), pin, discriminator],
                         cwd=state, stdout=output, stderr=subprocess.STDOUT,
                         timeout=300, check=False,
                     )
@@ -64,13 +79,16 @@ def run(args):
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore key set over CASE" not in transcript or
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore group over CASE" not in transcript or
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE" not in transcript or
-                    "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE" not in transcript):
+                    "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE" not in transcript or
+                    "PASS: Crystal controller refreshed and renamed a live SDK JFA Datastore endpoint over CASE" not in transcript):
                 raise RuntimeError(
                     f"Crystal -> SDK JFA Datastore driver exited {result.returncode}; "
                     f"log tail:\n{transcript[-5000:]}"
                 )
-            print(f"PASS: Crystal controller commissioned official SDK JFA and exercised Datastore key sets, groups, pending nodes, and administrators over CASE; logs: {logs}")
+            print(f"PASS: Crystal controller exercised official SDK JFA Datastore commands and refreshed a live endpoint over CASE; logs: {logs}")
         finally:
+            if switch is not None:
+                switch.close()
             jfa.close()
 
 
@@ -78,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path, required=True)
     parser.add_argument("--driver", type=Path, required=True)
+    parser.add_argument("--switch", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--ipv6-address", default="fd42:4d41:5454::2")
     args = parser.parse_args()

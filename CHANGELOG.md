@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 SDK Joint Fabric Datastore live endpoint interoperability
+
+- Extend the Crystal controller to official SDK JFA smoke with a live Crystal
+  switch on the Anchor fabric. RefreshNode discovers its endpoint and commits
+  the node; UpdateEndpointForNode renames the endpoint, with NodeEndpointList
+  readback while preserving the initial Datastore entries. The fixture's
+  private SDK store is discarded after the scenario.
+
 ### Matter 1.6 SDK Joint Fabric Datastore administrator interoperability
 
 - Extend the Crystal controller to official SDK JFA smoke with authenticated
