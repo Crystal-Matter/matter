@@ -350,7 +350,7 @@ module SdkJfaInverseDriver
       acl << Matter::Cluster::AccessControl::AccessControlEntry.new(
         Matter::Cluster::AccessControl::AccessControlEntryPrivilege::Administer,
         Matter::Cluster::AccessControl::AccessControlEntryAuthMode::CASE,
-        [anchor_admin_subject], nil)
+        [anchor_admin_subject, SDK_JFA_ID], nil)
       acl_write = im.write_attribute(session: switch_session, peer: switch_peer,
         endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
         cluster_id: Matter::Cluster::AccessControl::CLUSTER_ID,
