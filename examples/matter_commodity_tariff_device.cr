@@ -52,8 +52,7 @@ module MatterCommodityTariff
         pattern = Tariff::DayPattern.new(1_u32, Tariff::ALL_WEEKDAYS, [1_u32, 2_u32])
         calendar = Tariff::CalendarPeriod.new(0_u32, [1_u32])
         components = [
-          Tariff::TariffComponent.new(1_u32,
-            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 25_i64), nil,
+          Tariff::TariffComponent.new(1_u32, nil, nil,
             "Friendly entry", friendly_credit: true),
           Tariff::TariffComponent.new(2_u32,
             Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 25_i64), nil,

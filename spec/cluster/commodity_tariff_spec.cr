@@ -36,9 +36,7 @@ describe Tariff do
     end
     baseline = tariff_publication
     components = [
-      Tariff::TariffComponent.new(30_u32,
-        Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 20_i64), nil,
-        friendly_credit: true),
+      Tariff::TariffComponent.new(30_u32, nil, nil, friendly_credit: true),
       Tariff::TariffComponent.new(31_u32,
         Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
         friendly_credit: false),
@@ -51,6 +49,7 @@ describe Tariff do
     cluster.next_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_false
     current = read_tlv(cluster, Tariff::ATTR_CURRENT_TARIFF_COMPONENTS).as_list.first.as_structure
     current[2_u8].as_bool.should be_true
+    current.has_key?(1_u8).should be_false
     response = invoke(cluster, Tariff::CMD_GET_TARIFF_COMPONENT,
       Tariff::GetTariffComponentRequest.new(30_u32)).as(Matter::Cluster::CommandResponse)
     Tariff::GetTariffComponentResponse.from_tlv(response.response.as(TLV::Any))
@@ -65,6 +64,11 @@ describe Tariff do
 
     pricing = tariff_fixture
     expect_raises(ArgumentError, /FriendlyCredit/) { pricing.publish(publication, at: 100_u32) }
+    no_price = Tariff::Publication.new(baseline.info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, [Tariff::TariffComponent.new(30_u32, nil, nil)] + baseline.components.last(1),
+      baseline.tariff_periods)
+    expect_raises(ArgumentError, /price/) { pricing.publish(no_price, at: 100_u32) }
     pricing.publish(baseline, at: 100_u32)
     read_tlv(pricing, Tariff::ATTR_TARIFF_COMPONENTS).as_list.first.as_structure.has_key?(2_u8).should be_false
   end

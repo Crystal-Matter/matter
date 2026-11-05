@@ -72,7 +72,7 @@ module Matter
         @[TLV::Field(tag: 0, optional: false)]
         getter tariff_label : String?
 
-        @[TLV::Field(tag: 1, optional: false)]
+        @[TLV::Field(tag: 1, optional: true)]
         getter provider_name : String?
 
         @[TLV::Field(tag: 2, optional: false)]
@@ -562,8 +562,11 @@ module Matter
         days = publication.individual_days.map(&.date)
         raise ArgumentError.new("individual days must be sorted and unique") unless days == days.sort.uniq!
         publication.components.each do |component|
-          raise ArgumentError.new("price or price level is required") unless price = component.price
-          if price.price.nil? && price.price_level.nil?
+          if price = component.price
+            if price.price.nil? && price.price_level.nil?
+              raise ArgumentError.new("price or price level is required")
+            end
+          elsif component.friendly_credit.nil?
             raise ArgumentError.new("price or price level is required")
           end
           if !@feature_map.friendly_credit? && !component.friendly_credit.nil?

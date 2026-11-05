@@ -29,7 +29,8 @@ responses, and restored publications preserve that value. Pricing-only servers
 reject components with a FriendlyCredit value. The host publishes the schedule;
 a meter or application owns credit accounting and supply control.
 Auxiliary Load, Peak Period, Power Threshold, and Randomization feature bits
-are not advertised. Price components must carry a price or price level.
+are not advertised. A component with a Price field must carry a price or price
+level; a FriendlyCredit-only transition may omit Price.
 The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
