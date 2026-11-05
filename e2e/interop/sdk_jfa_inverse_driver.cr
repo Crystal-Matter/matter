@@ -638,7 +638,7 @@ module SdkJfaInverseDriver
       test_acl = SdkDatastore::DatastoreAccessControlEntryStruct.new(
         SdkDatastore::DatastoreAccessControlEntryPrivilegeEnum::View,
         SdkDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
-        [TEST_ACL_SUBJECT_ID], nil)
+        [TEST_ACL_SUBJECT_ID], [] of SdkDatastore::DatastoreAccessControlTargetStruct)
       invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_ACL_TO_NODE,
         SdkDatastore::AddACLToNodeRequest.new(TEST_LIVE_NODE_ID, test_acl).to_slice)
       acl_deadline = Time.instant + 90.seconds
@@ -650,14 +650,14 @@ module SdkJfaInverseDriver
         live_acl = switch_acl(im, switch_session, switch_peer).any? do |entry|
           entry.privilege == SwitchAccessControl::AccessControlEntryPrivilege::View &&
             entry.auth_mode == SwitchAccessControl::AccessControlEntryAuthMode::CASE &&
-            entry.subjects == [TEST_ACL_SUBJECT_ID] && entry.targets.nil? &&
+            entry.subjects == [TEST_ACL_SUBJECT_ID] && entry.targets.try(&.empty?) == true &&
             entry.fabric_index == switch_fabric_index
         end
         break if committed_acl && committed_acl.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
                  live_acl
         if Time.instant >= acl_deadline
           raise Matter::TimeoutError.new("SDK JFA did not commit the live switch ACL: " +
-                                         "Datastore=#{committed_acl.try(&.status_entry.state)}, " +
+                                         "Datastore=#{node_acl_list(im, session, peer).inspect}, " +
                                          "switch=#{switch_acl(im, switch_session, switch_peer).inspect}")
         end
         sleep 1.second
