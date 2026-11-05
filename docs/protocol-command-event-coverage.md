@@ -301,8 +301,8 @@ Crystal `requires:` is shown verbatim where a literal DSL declaration provides i
 | 0x0300 | command | 0x004B | feature(CT) | declared; requires `:color_temperature` |
 | 0x0300 | command | 0x004C | feature(CT) | declared; requires `:color_temperature` |
 | 0x0406 | event | 0x0000 | feature(OCCEVENT) | declared; requires `:occupancy_event` |
-| 0x0431 | event | 0x0000 | feature(HA) | declared; requires `[:human_activity, :object_identification]` |
-| 0x0431 | event | 0x0001 | feature(HA) | declared; requires `[:human_activity, :object_identification]` |
+| 0x0431 | event | 0x0000 | feature(HA) | declared; requires `[:human_activity, :object_identification, :sound_identification]` |
+| 0x0431 | event | 0x0001 | feature(HA) | declared; requires `[:human_activity, :object_identification, :sound_identification]` |
 | 0x0452 | command | 0x0004 | feature(PC) | declared; requires `:pan_change` |
 | 0x0504 | command | 0x0000 | (feature(CL) or feature(LI)) | declared; requires `[:channel_list, :lineup_info]` |
 | 0x0504 | command | 0x0004 | feature(EG) | declared; requires `:electronic_guide` |

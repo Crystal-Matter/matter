@@ -10,6 +10,8 @@ module MatterAmbientContext
     alias Ambient = Matter::Cluster::AmbientContextSensing
     UNKNOWN_OBJECT = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
     PERSON_OBJECT  = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+    UNKNOWN_SOUND  = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+    BARKING_SOUND  = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
 
     @hook_active = false
 
@@ -41,6 +43,14 @@ module MatterAmbientContext
         as: :object_ambient
     end
 
+    endpoint 3, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::SoundIdentification,
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        hold_time: 30_u16,
+        as: :sound_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -65,6 +75,9 @@ module MatterAmbientContext
           elsif nonce.starts_with?("person-count:")
             count = nonce.split(':')[1].to_u16
             object_ambient.observe_object_count(PERSON_OBJECT, count)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking:")
+            sound_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           end
         end
