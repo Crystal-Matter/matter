@@ -1,0 +1,54 @@
+name: Matter.js Camera Requestor signaling interoperability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/matterjs-camera-signaling-interop.yml'
+      - 'e2e/interop/matterjs_camera_signaling*'
+      - 'examples/matter_camera_signaling_interop_device.cr'
+      - 'src/matter/camera/signaling_sink.cr'
+      - 'src/matter/controller/webrtc_requestor_client.cr'
+      - 'src/matter/cluster/web_rtc_transport_provider.cr'
+      - 'docs/camera-composition-e2e-plan.md'
+
+jobs:
+  matterjs-camera-requestor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: matter-js/matter.js
+          ref: 7e1f5d7892dcea4330828b6a82d31ffe2a04cc0b
+          path: matter-js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: matter-js/package-lock.json
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Install Crystal dependencies
+        run: shards install --ignore-crystal-version --skip-postinstall --skip-executables
+      - name: Install matter.js dependencies
+        run: npm ci --prefix matter-js
+      - name: Compile Crystal signaling fixture
+        run: |
+          mkdir -p bin
+          crystal build examples/matter_camera_signaling_interop_device.cr -o bin/matter-camera-signaling-interop --error-trace
+      - name: Verify independent Requestor signaling over CASE
+        timeout-minutes: 20
+        run: |
+          python3 e2e/interop/matterjs_camera_signaling_live.py \
+            --matter-js matter-js --camera bin/matter-camera-signaling-interop \
+            --log-dir tmp/interop-matterjs-camera-signaling
+      - name: Upload protocol logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matterjs-camera-signaling-logs
+          path: tmp/interop-matterjs-camera-signaling/*.log
+          if-no-files-found: warn
