@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for either HA or the OC+OI profile.
+    # One active detection is supported for HA, AUD, or the OC+OI profile.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
 
@@ -16,6 +16,7 @@ module Matter
 
       HUMAN_ACTIVITY_NAMESPACE    = 0x4b_u8
       IDENTIFIED_OBJECT_NAMESPACE = 0x49_u8
+      IDENTIFIED_SOUND_NAMESPACE  = 0x4a_u8
       MAX_SUPPORTED_TYPES         =      50
       MAX_SENSED_TYPES            =       2
       MAX_SIMULTANEOUS_DETECTIONS =   10_u8
@@ -50,6 +51,31 @@ module Matter
         Clothes = 12
       end
 
+      enum IdentifiedSound : UInt8
+        Unknown        =  0
+        ObjectFall     =  1
+        Snoring        =  2
+        Coughing       =  3
+        Barking        =  4
+        Shattering     =  5
+        BabyCrying     =  6
+        UtilityAlarm   =  7
+        UrgentShouting =  8
+        Doorbell       =  9
+        Knocking       = 10
+        UrgentSiren    = 11
+        FaucetRunning  = 12
+        KettleBoiling  = 13
+        FanDryer       = 14
+        Clapping       = 15
+        FingerSnapping = 16
+        Meowing        = 17
+        Laughing       = 18
+        GlassBreaking  = 19
+        DoorKnocking   = 20
+        PersonTalking  = 21
+      end
+
       # Core SemanticTagStruct, rather than Mode Select's separate two-field
       # SemanticTagStruct. Standard human-activity tags use a null MfgCode.
       struct SemanticTag
@@ -78,6 +104,10 @@ module Matter
 
         def self.identified_object(object : IdentifiedObject) : self
           new(nil, IDENTIFIED_OBJECT_NAMESPACE, object.value)
+        end
+
+        def self.identified_sound(sound : IdentifiedSound) : self
+          new(nil, IDENTIFIED_SOUND_NAMESPACE, sound.value)
         end
       end
 
@@ -167,10 +197,11 @@ module Matter
 
       attribute 0x0000, :human_activity_detected, Bool, computed: true, requires: :human_activity
       attribute 0x0001, :object_identified, Bool, computed: true, requires: :object_identification
+      attribute 0x0002, :audio_context_detected, Bool, computed: true, requires: :sound_identification
       attribute 0x0003, :ambient_context_type, Array(AmbientContextTypeStruct), computed: true,
-        requires: [:human_activity, :object_identification]
+        requires: [:human_activity, :object_identification, :sound_identification]
       attribute 0x0004, :ambient_context_type_supported, Array(SemanticTag), computed: true,
-        requires: [:human_activity, :object_identification]
+        requires: [:human_activity, :object_identification, :sound_identification]
       attribute 0x0005, :object_count_reached, Bool, computed: true,
         requires: {object_counting: true, object_identification: true}
       attribute 0x0006, :object_count_config, ObjectCountConfig,
@@ -192,9 +223,9 @@ module Matter
         validate: :reject_fixed_attribute_change!
 
       event 0x00, :ambient_context_detect_started, priority: :info,
-        requires: [:human_activity, :object_identification], payload: AmbientContextDetectStartedEvent
+        requires: [:human_activity, :object_identification, :sound_identification], payload: AmbientContextDetectStartedEvent
       event 0x01, :ambient_context_detect_ended, priority: :info,
-        requires: [:human_activity, :object_identification], payload: AmbientContextDetectEndedEvent
+        requires: [:human_activity, :object_identification, :sound_identification], payload: AmbientContextDetectEndedEvent
 
       before_write :simultaneous_detection_limit do |value|
         InteractionModel::Status.constraint_error unless value == SINGLE_DETECTION_LIMIT
@@ -211,11 +242,13 @@ module Matter
       @state_mutex = Mutex.new(:reentrant)
       @human_activity_detected = false
       @object_identified = false
+      @audio_context_detected = false
       @object_count_reached = false
       @observed_object_count = 0_u16
       @current_type : Array(AmbientContextTypeStruct)
       @supported_activity_tags : Array(SemanticTag)
       @supported_object_tags : Array(SemanticTag)
+      @supported_sound_tags : Array(SemanticTag)
       @last_observed_at : Time::Instant? = nil
       @event_start_time = 0_u64
       @expiry_generation = 0_u64
@@ -226,28 +259,36 @@ module Matter
                      hold_time : UInt16? = nil,
                      @simultaneous_detection_limit : UInt8 = SINGLE_DETECTION_LIMIT,
                      supported_object_tags : Array(SemanticTag) = [] of SemanticTag,
+                     supported_sound_tags : Array(SemanticTag) = [] of SemanticTag,
                      object_count_config : ObjectCountConfig? = nil,
                      @feature_map : Feature = Feature::HumanActivity)
         unless @feature_map == Feature::HumanActivity ||
-               @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification)
-          raise ArgumentError.new("only HumanActivity or the ObjectCounting+ObjectIdentification profile is implemented")
+               @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
+               @feature_map == Feature::SoundIdentification
+          raise ArgumentError.new("only HumanActivity, SoundIdentification, or ObjectCounting+ObjectIdentification is implemented")
         end
         validate_detection_limit(@simultaneous_detection_limit)
         @hold_time = hold_time || @hold_time_limits.hold_time_default
         validate_hold_time(@hold_time)
         @supported_activity_tags = [] of SemanticTag
         @supported_object_tags = [] of SemanticTag
+        @supported_sound_tags = [] of SemanticTag
         if @feature_map.human_activity?
           validate_supported_tags!(supported_activity_tags)
           @supported_activity_tags = supported_activity_tags.dup
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.human_activity(HumanActivity::Unknown)])]
           @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
-        else
+        elsif @feature_map.object_identification?
           validate_supported_object_tags!(supported_object_tags)
           @supported_object_tags = supported_object_tags.dup
           @object_count_config = object_count_config || default_object_count_config
           validate_object_count_config!(@object_count_config)
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
+        else
+          validate_supported_sound_tags!(supported_sound_tags)
+          @supported_sound_tags = supported_sound_tags.dup
+          @object_count_config = ObjectCountConfig.new(SemanticTag.identified_object(IdentifiedObject::Unknown), 1_u16)
+          @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_sound(IdentifiedSound::Unknown)])]
         end
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
       end
@@ -256,12 +297,22 @@ module Matter
         @state_mutex.synchronize { @human_activity_detected }
       end
 
+      def audio_context_detected? : Bool
+        @state_mutex.synchronize { @audio_context_detected }
+      end
+
       def ambient_context_type : Array(AmbientContextTypeStruct)
         @state_mutex.synchronize { @current_type.map(&.copy) }
       end
 
       def ambient_context_type_supported : Array(SemanticTag)
-        @feature_map.human_activity? ? @supported_activity_tags.dup : @supported_object_tags.dup
+        if @feature_map.human_activity?
+          @supported_activity_tags.dup
+        elsif @feature_map.object_identification?
+          @supported_object_tags.dup
+        else
+          @supported_sound_tags.dup
+        end
       end
 
       def object_identified? : Bool
@@ -293,6 +344,33 @@ module Matter
             @event_start_time = Time.utc.to_unix_ms.to_u64
             increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)
             increment_version_and_notify(ATTR_HUMAN_ACTIVITY_DETECTED)
+            emit_ambient_context_detect_started(
+              AmbientContextDetectStartedEvent.new(@current_type.first.copy))
+          end
+          @last_observed_at = Time.instant
+          schedule_expiry
+        end
+      end
+
+      # Record a host-classified sound observation. Repeated observations
+      # refresh HoldTime without emitting another start event.
+      def observe_sound(tag : SemanticTag) : Nil
+        raise ArgumentError.new("SoundIdentification feature is not enabled") unless @feature_map.sound_identification?
+        if tag == SemanticTag.identified_sound(IdentifiedSound::Unknown)
+          raise ArgumentError.new("Unknown is the inactive state, not a detected sound")
+        end
+        unless @supported_sound_tags.includes?(tag)
+          raise ArgumentError.new("sound tag is not supported by this sensor")
+        end
+        @state_mutex.synchronize do
+          current = @current_type.first.ambient_context_sensed.first
+          finish_detection if @audio_context_detected && current != tag
+          unless @audio_context_detected
+            @current_type = [AmbientContextTypeStruct.new([tag])]
+            @audio_context_detected = true
+            @event_start_time = Time.utc.to_unix_ms.to_u64
+            increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)
+            increment_version_and_notify(ATTR_AUDIO_CONTEXT_DETECTED)
             emit_ambient_context_detect_started(
               AmbientContextDetectStartedEvent.new(@current_type.first.copy))
           end
@@ -373,6 +451,19 @@ module Matter
         end
       end
 
+      private def validate_supported_sound_tags!(tags : Array(SemanticTag)) : Nil
+        unless (2..MAX_SUPPORTED_TYPES).includes?(tags.size) &&
+               tags.includes?(SemanticTag.identified_sound(IdentifiedSound::Unknown))
+          raise ArgumentError.new("sound tags must include Unknown and one identified sound")
+        end
+        if tags.uniq.size != tags.size || tags.any? do |tag|
+             !tag.mfg_code.nil? || tag.namespace_id != IDENTIFIED_SOUND_NAMESPACE ||
+             IdentifiedSound.from_value?(tag.tag).nil? || !tag.label.nil?
+           end
+          raise ArgumentError.new("sound tags must be unique standard identified-sound tags")
+        end
+      end
+
       protected def validate_feature_map_change(value : Feature) : Nil
         raise ArgumentError.new("Ambient Context Sensing feature profile is fixed after construction") unless value == @feature_map
       end
@@ -432,7 +523,7 @@ module Matter
       end
 
       private def reschedule_expiry(_value : UInt16) : Nil
-        @state_mutex.synchronize { schedule_expiry if @human_activity_detected || @object_identified }
+        @state_mutex.synchronize { schedule_expiry if @human_activity_detected || @object_identified || @audio_context_detected }
       end
 
       private def schedule_expiry : Nil
@@ -449,7 +540,7 @@ module Matter
 
       private def expire_if_current(generation : UInt64) : Nil
         @state_mutex.synchronize do
-          return unless (@human_activity_detected || @object_identified) && generation == @expiry_generation
+          return unless (@human_activity_detected || @object_identified || @audio_context_detected) && generation == @expiry_generation
           if observed_at = @last_observed_at
             remaining = observed_at + @hold_time.seconds - Time.instant
             if remaining > 0.seconds
@@ -469,7 +560,7 @@ module Matter
           @human_activity_detected = false
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.human_activity(HumanActivity::Unknown)])]
           increment_version_and_notify(ATTR_HUMAN_ACTIVITY_DETECTED)
-        else
+        elsif @feature_map.object_identification?
           @object_identified = false
           @observed_object_count = 0_u16
           @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_object(IdentifiedObject::Unknown)])]
@@ -482,6 +573,10 @@ module Matter
             @object_count = nil
             increment_version_and_notify(ATTR_OBJECT_COUNT)
           end
+        else
+          @audio_context_detected = false
+          @current_type = [AmbientContextTypeStruct.new([SemanticTag.identified_sound(IdentifiedSound::Unknown)])]
+          increment_version_and_notify(ATTR_AUDIO_CONTEXT_DETECTED)
         end
         @last_observed_at = nil
         increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)

@@ -7,8 +7,48 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA and OC+OI fixture" do
+  it "commissions the HA, OC+OI, and AUD fixture" do
     device.commission!
+  end
+
+  it "advertises AUD and reports a host-classified sound and expiry" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 3).should eq(8)
+    expect_success(device.read("ambientcontextsensing", "audio-context-detected", 3))
+      .bool("AudioContextDetected").should be_false
+    supported = expect_success(device.read("ambientcontextsensing", "ambient-context-type-supported", 3))
+    supported.output.should contain("NamespaceID")
+    supported.output.should contain("Tag: 4")
+
+    File.delete(ack) if File.exists?(ack)
+    nonce = "barking:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not acknowledge Barking" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+
+    expect_success(device.read("ambientcontextsensing", "audio-context-detected", 3))
+      .bool("AudioContextDetected").should be_true
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 3)).output.should contain("Tag: 4")
+    started = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, "3"]))
+    started.output.should contain("Tag: 4")
+
+    expect_success(device.write("ambientcontextsensing", "hold-time", 1, 3))
+    deadline = Time.instant + 10.seconds
+    loop do
+      break if expect_success(device.read("ambientcontextsensing", "audio-context-detected", 3))
+                 .bool("AudioContextDetected") == false
+      raise "Ambient Context sound detection did not expire" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    ended = expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, "3"]))
+    start_time = ended.int("EventStartTime") || ended.int("EventStartTimePos")
+    start_time.as(Int64).should be > 0_i64
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 3)).output.should contain("Tag: 0")
   end
 
   it "advertises OC+OI on endpoint 2 and reports threshold observations" do
