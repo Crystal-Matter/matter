@@ -330,4 +330,37 @@ describe "Thermostat guarded suggestion wire" do
     timers.last[1].call
     read(cluster, SuggestWire::ATTR_ACTIVE_PRESET_HANDLE).should eq(Bytes[2_u8])
   end
+
+  it "clears the current suggestion when synchronized UTC is lost and reselects it on recovery" do
+    now = 1_000_u32.as(UInt32?)
+    timers = [] of Tuple(Time::Span, Proc(Nil))
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Nil { timers << {delay, action}; nil }
+    cluster = ready_suggestion_thermostat(-> : UInt32? { now }, scheduler)
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) : Nil {
+      changed << attribute
+      nil
+    }
+    added = suggestion_im_invoke(cluster, SuggestWire::CMD_ADD_THERMOSTAT_SUGGESTION,
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], nil, 30_u16))
+    added.command_data.should_not be_nil
+    cluster.current_thermostat_suggestion.should_not be_nil
+    old_timer = timers.last[1]
+
+    now = nil
+    changed.clear
+    cluster.poll_suggestions.should eq(0)
+    cluster.current_thermostat_suggestion.should be_nil
+    read(cluster, SuggestWire::ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON).should be_nil
+    cluster.thermostat_suggestions.size.should eq(1)
+    changed.should contain(SuggestWire::ATTR_CURRENT_THERMOSTAT_SUGGESTION)
+
+    version = cluster.data_version
+    old_timer.call
+    cluster.data_version.should eq(version)
+    now = 1_100_u32
+    cluster.poll_suggestions.should eq(0)
+    cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    timers.last[0].should eq(1_700.seconds)
+  end
 end
