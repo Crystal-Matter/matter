@@ -18,30 +18,32 @@ const controller = await ServerNode.create(ServerNode.RootEndpointWithoutGroupca
 const requestor = new Endpoint(CameraControllerDevice, { id: "camera-controller" });
 await controller.add(requestor);
 const received: string[] = [];
-await requestor.act(agent => {
-    const server = agent.get(WebRtcTransportRequestorServer);
-    server.events.offer.on((_session, args) => {
-        if (!args.sdp.startsWith("v=0") || args.webRtcSessionId !== 1) throw new Error("bad Offer");
-        received.push("offer");
+async function observeRequestor() {
+    await requestor.act(agent => {
+        const server = agent.get(WebRtcTransportRequestorServer);
+        server.events.offer.on((_session, args) => {
+            if (!args.sdp.startsWith("v=0") || args.webRtcSessionId !== 1) throw new Error("bad Offer");
+            received.push("offer");
+        });
+        server.events.answer.on((_session, sdp) => {
+            if (!sdp.startsWith("v=0")) throw new Error("bad Answer");
+            received.push("answer");
+        });
+        server.events.iceCandidates.on((_session, candidates) => {
+            if (candidates.length !== 1 || !candidates[0].candidate.startsWith("candidate:")) {
+                throw new Error("bad ICE candidates");
+            }
+            received.push("ice");
+        });
+        server.events.end.on((_session, reason) => {
+            received.push("end");
+        });
+        server.events.refused.on((_signal, id, _peer) => {
+            if (id !== 0) throw new Error("unexpected refused session");
+            received.push("refused");
+        });
     });
-    server.events.answer.on((_session, sdp) => {
-        if (!sdp.startsWith("v=0")) throw new Error("bad Answer");
-        received.push("answer");
-    });
-    server.events.iceCandidates.on((_session, candidates) => {
-        if (candidates.length !== 1 || !candidates[0].candidate.startsWith("candidate:")) {
-            throw new Error("bad ICE candidates");
-        }
-        received.push("ice");
-    });
-    server.events.end.on((_session, reason) => {
-        received.push("end");
-    });
-    server.events.refused.on((_signal, id, _peer) => {
-        if (id !== 0) throw new Error("unexpected refused session");
-        received.push("refused");
-    });
-});
+}
 
 async function waitFor(name: string) {
     for (let n = 0; n < 200; n++) {
@@ -53,6 +55,7 @@ async function waitFor(name: string) {
 
 try {
     await controller.start();
+    await observeRequestor();
     const camera = await controller.peers.commission({ id: "camera", pairingCode });
     await camera.start();
     const address = camera.peerAddress;
