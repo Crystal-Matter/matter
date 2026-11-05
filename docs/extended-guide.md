@@ -526,7 +526,16 @@ emits fabric-scoped completion events, and retains pending messages and expiry
 times across restarts. Call `replay_messages_to_host!` after loading storage to
 resume the UI. The content-app example enables this profile with
 `MATTER_MESSAGES_PROFILE=1`; its automatic confirmation is for demonstration.
-ProtectedMessages remains unavailable until a host verifier is integrated.
+To advertise the optional ProtectedMessages (PROT) feature, supply a
+`Messages::ProtectedHost`. Its `authenticated_for_view?` decision must reflect
+a real user authentication for the specific MessageID and fabric before the
+host displays the content. The cluster checks that decision before `present`
+and user `complete`, but the trusted host owns the UI and credentials. A
+denied or unavailable decision leaves the message queued; expiry and
+cancellation still remove it. Approval state and credentials are never saved
+by the cluster, so a host must authenticate again after restart. The
+`MATTER_MESSAGES_PROTECTED_PROFILE=1` content-app profile uses an explicit
+test-only approval switch for chip-tool E2E; it is not a product verifier.
 Basic Video Player endpoints can add the provisional Matter 1.6
 `Cluster::ContentControl` server. The supported BlockUnrated, rating, channel,
 and application features retain policy across restart; the host calls

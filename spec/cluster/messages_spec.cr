@@ -17,8 +17,15 @@ private class MessagePresentationHost < Messages::Host
 end
 
 private class ProtectedMessageHost < Messages::ProtectedHost
+  SECRET = "protected-test-pin-4930"
   getter approvals = Set(Tuple(String, UInt8)).new
   getter queued = [] of {Bytes, UInt8}
+
+  def approve(message_id : Bytes, fabric_index : UInt8, pin : String) : Bool
+    return false unless pin == SECRET
+    @approvals.add({message_id.hexstring, fabric_index})
+    true
+  end
 
   def authenticated_for_view?(message_id : Bytes, fabric_index : UInt8) : Bool
     @approvals.includes?({message_id.hexstring, fabric_index})
@@ -94,18 +101,19 @@ describe Messages do
     expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
       is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
     host.queued.should eq([{id, 1_u8}])
-    host.approvals.add({other.hexstring, 1_u8})
-    host.approvals.add({id.hexstring, 2_u8})
+    host.approve(id, 1_u8, "wrong-pin").should be_false
+    host.approve(other, 1_u8, ProtectedMessageHost::SECRET).should be_true
+    host.approve(id, 2_u8, ProtectedMessageHost::SECRET).should be_true
     expect_raises(ArgumentError) { cluster.present(id, 1_u8) }
     expect_raises(ArgumentError) { cluster.complete(id, 1_u8) }
     cluster.active_message_ids.should be_empty
     events.should eq([Messages::EVENT_MESSAGE_QUEUED])
-    host.approvals.add({id.hexstring, 1_u8})
+    host.approve(id, 1_u8, ProtectedMessageHost::SECRET).should be_true
     cluster.present(id, 1_u8)
     cluster.active_message_ids.should eq([id])
     host.approvals.delete({id.hexstring, 1_u8})
     expect_raises(ArgumentError) { cluster.complete(id, 1_u8) }
-    host.approvals.add({id.hexstring, 1_u8})
+    host.approve(id, 1_u8, ProtectedMessageHost::SECRET).should be_true
     cluster.complete(id, 1_u8)
     cluster.messages(1_u8).as(Array(Messages::Message)).should be_empty
   end
@@ -118,17 +126,32 @@ describe Messages do
       Messages::CONTROL_PROTECTED, nil, nil, "Restored private notice")
     expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
       is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
-    host.approvals.add({id.hexstring, 1_u8})
+    host.approve(id, 1_u8, ProtectedMessageHost::SECRET).should be_true
     state = cluster.save_state || fail("Messages state missing")
-    state.to_s.should_not contain("approvals")
+    state.to_s.should_not contain(ProtectedMessageHost::SECRET)
     restored_host = ProtectedMessageHost.new
     restored = build(Messages, feature_map: Messages::Feature::ProtectedMessages, host: restored_host)
     restored.restore_state(state)
     restored.replay_messages_to_host!
     restored_host.queued.should eq([{id, 1_u8}])
     expect_raises(ArgumentError) { restored.present(id, 1_u8) }
-    restored_host.approvals.add({id.hexstring, 1_u8})
+    restored_host.approve(id, 1_u8, ProtectedMessageHost::SECRET).should be_true
     restored.present(id, 1_u8)
+  end
+
+  it "expires a protected message even when its user has not authenticated" do
+    host = ProtectedMessageHost.new
+    now_ms = 1_700_000_000_000_i64
+    clock = -> { Time.unix_ms(now_ms) }
+    cluster = build(Messages, feature_map: Messages::Feature::ProtectedMessages, host: host, clock: clock)
+    id = message_id(53_u8)
+    request = Messages::PresentRequest.new(id, Messages::Priority::Medium,
+      Messages::CONTROL_PROTECTED, nil, 1_000_u64, "Expiring private notice")
+    expect_status(invoke(cluster, Messages::CMD_PRESENT_MESSAGES_REQUEST, request,
+      is_case_session: true, fabric_index: 1_u8), MessageStatus::Success)
+    now_ms += 1_000
+    cluster.process_due_messages
+    cluster.messages(1_u8).as(Array(Messages::Message)).should be_empty
   end
   it "declares revision 3 and rejects unsupported feature combinations" do
     cluster = build(Messages)

@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Messages protected presentation
+
+- Add opt-in PROT support through a host-owned authentication decision scoped
+  to each MessageID and fabric. Presentation and user completion fail closed
+  until the host verifies the user; expiry and cancellation still clear state.
+  The cluster never stores PINs or approval state. An explicit test profile
+  exercises the protected path through chip-tool.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live ACL propagation
 
 - Extend the inverse SDK JFA smoke with AddACLToNode and verify both Committed
