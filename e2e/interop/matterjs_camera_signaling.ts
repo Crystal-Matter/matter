@@ -6,7 +6,8 @@ import { CameraControllerDevice } from "@matter/main/devices/camera-controller";
 import { CameraAvStreamManagementClient } from "@matter/main/behaviors/camera-av-stream-management";
 import { WebRtcTransportProviderClient } from "@matter/main/behaviors/web-rtc-transport-provider";
 import { WebRtcTransportRequestorServer } from "@matter/main/behaviors/web-rtc-transport-requestor";
-import { EndpointNumber, NodeId, StreamUsage, VideoCodec } from "@matter/main/types";
+import { CameraAvStreamManagement } from "@matter/main/clusters/camera-av-stream-management";
+import { EndpointNumber, NodeId, StreamUsage } from "@matter/main/types";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -35,7 +36,7 @@ async function observeRequestor() {
             }
             received.push("ice");
         });
-        server.events.end.on((_session, reason) => {
+        server.events.end.on((_session, _reason) => {
             received.push("end");
         });
         server.events.refused.on((_signal, id, _peer) => {
@@ -66,7 +67,7 @@ try {
     const provider = endpoint.commandsOf(WebRtcTransportProviderClient);
     const stream = await cameraAv.videoStreamAllocate({
         streamUsage: StreamUsage.LiveView,
-        videoCodec: VideoCodec.H264,
+        videoCodec: CameraAvStreamManagement.VideoCodec.H264,
         minFrameRate: 15,
         maxFrameRate: 30,
         minResolution: { width: 320, height: 180 },
@@ -102,7 +103,7 @@ try {
     await provider.provideAnswer({ webRtcSessionId: 1,
         sdp: "v=0\r\no=matterjs 2 2 IN IP4 127.0.0.1\r\ns=signaling-only\r\nt=0 0\r\n" });
     await provider.provideIceCandidates({ webRtcSessionId: 1, iceCandidates: [{
-        candidate: "candidate:2 1 UDP 1 127.0.0.1 1235 typ host", sdpMid: "0", sdpMLineIndex: 0,
+        candidate: "candidate:2 1 UDP 1 127.0.0.1 1235 typ host", sdpMid: "0", sdpmLineIndex: 0,
     }] });
     await waitFor("ice");
     writeFileSync(join(controlDir, "end-1"), "end");
