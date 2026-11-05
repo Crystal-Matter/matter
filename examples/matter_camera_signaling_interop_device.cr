@@ -105,7 +105,7 @@ module MatterCameraSignalingInterop
     @host_end_enabled = false
 
     private def camera_provider : Provider
-      @provider || raise Matter::ConfigurationError.new("Camera Provider is not initialized")
+      node.get_cluster!(CAMERA_ENDPOINT_ID, Provider)
     end
 
     private def outbound_client : Matter::Controller::Client
@@ -159,7 +159,8 @@ module MatterCameraSignalingInterop
       address = provider.request_peer_address
       secure = wire_id.try { |id| message_handler.registry.session(id.to_u16) }
       unless wire_id && address && secure
-        puts "SIGNALING CONTEXT MISSING wire_id=#{wire_id.inspect} address=#{address.inspect} secure=#{!secure.nil?}"
+        puts "SIGNALING CONTEXT MISSING wire_id=#{wire_id.inspect} address=#{address.inspect} secure=#{!secure.nil?} " \
+             "active=#{provider.request_command_active?} provider=#{provider.object_id} constructed=#{@provider.try(&.object_id)}"
         return Status.invalid_in_state
       end
       client = outbound_client
