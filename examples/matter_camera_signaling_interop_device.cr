@@ -156,11 +156,11 @@ module MatterCameraSignalingInterop
     def defer_signal(session : Provider::Session, &block : Sink -> Nil) : Status
       provider = camera_provider
       wire_id = provider.request_session_id
-      address = provider.request_peer_address
       secure = wire_id.try { |id| message_handler.registry.session(id.to_u16) }
+      address = provider.request_peer_address || secure.try(&.tcp_peer)
       unless wire_id && address && secure
         puts "SIGNALING CONTEXT MISSING wire_id=#{wire_id.inspect} address=#{address.inspect} secure=#{!secure.nil?} " \
-             "active=#{provider.request_command_active?} provider=#{provider.object_id} constructed=#{@provider.try(&.object_id)}"
+             "tcp_peer=#{secure.try(&.tcp_peer).inspect} active=#{provider.request_command_active?}"
         return Status.invalid_in_state
       end
       client = outbound_client
