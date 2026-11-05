@@ -7,6 +7,14 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 SDK Joint Fabric Datastore live ACL propagation
+
+- Extend the inverse SDK JFA smoke with AddACLToNode and verify both Committed
+  NodeACLList state and the live Crystal switch root AccessControl ACL over
+  CASE. Restore the target ACL baseline directly before clearing the SDK
+  Datastore entry, because pinned SDK v1.6 loses ACL list IDs on target reads.
+  This checks addition, not SDK propagation of ACL deletion.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live binding propagation
 
 - Extend the inverse SDK JFA smoke with typed AddBindingToEndpointForNode and

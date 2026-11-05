@@ -4,6 +4,7 @@ require "../../src/matter/controller/joint_commissioning"
 private alias SdkDatastore = Matter::Cluster::JointFabricDatastore
 private alias SwitchGroups = Matter::Cluster::Groups
 private alias SwitchBinding = Matter::Cluster::Binding
+private alias SwitchAccessControl = Matter::Cluster::AccessControl
 
 # An independent Crystal controller commissions the official SDK JFA as an
 # Anchor, then reads its Joint Fabric identity and exercises Datastore key-set,
@@ -29,6 +30,7 @@ module SdkJfaInverseDriver
   TEST_ADMIN_ID        = 0xA204_u64
   TEST_LIVE_NODE_ID    = 0xA205_u64
   TEST_BINDING_NODE_ID = 0xA206_u64
+  TEST_ACL_SUBJECT_ID  = 0xA207_u64
   SWITCH_ENDPOINT      =      1_u16
   TEST_ADMIN_VENDOR_ID = 0xFFF2_u16
   # SDK v1.6.0.0 examples/platform/linux/CommissionerMain.cpp installs this
@@ -122,6 +124,27 @@ module SdkJfaInverseDriver
     data = attribute(im, session, peer,
       SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_ENDPOINT_BINDING_LIST)
     Array(SdkDatastore::DatastoreEndpointBindingEntryStruct).from_tlv(data.to_slice)
+  end
+
+  private def node_acl_list(im : Matter::Controller::ImClient,
+                            session : Matter::Session::SecureContext,
+                            peer : Socket::IPAddress) : Array(SdkDatastore::DatastoreACLEntryStruct)
+    data = attribute(im, session, peer,
+      SdkDatastore::CLUSTER_ID, SdkDatastore::ATTR_NODE_ACL_LIST)
+    Array(SdkDatastore::DatastoreACLEntryStruct).from_tlv(data.to_slice)
+  end
+
+  private def switch_acl(im : Matter::Controller::ImClient,
+                         session : Matter::Session::SecureContext,
+                         peer : Socket::IPAddress) : Array(SwitchAccessControl::AccessControlEntry)
+    report = im.read_attribute(session: session, peer: peer,
+      endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+      cluster_id: SwitchAccessControl::CLUSTER_ID,
+      attribute_id: SwitchAccessControl::ATTR_ACL)
+    data = report.attribute_reports.as(Array(Matter::InteractionModel::AttributeReportIB))
+      .first.attribute_data || raise Matter::ProtocolError.new("Switch ACL read returned a status")
+    value = data.data || raise Matter::ProtocolError.new("Switch ACL read omitted data")
+    Array(SwitchAccessControl::AccessControlEntry).from_tlv(value.to_slice)
   end
 
   private def switch_binding_targets(im : Matter::Controller::ImClient,
@@ -599,6 +622,81 @@ module SdkJfaInverseDriver
         raise Matter::ProtocolError.new("SDK Datastore live binding cleanup changed baseline lists")
       end
       puts "PASS: Crystal controller observed SDK JFA Binding add on a live switch and cleared the Datastore entry"
+
+      initial_node_acls = node_acl_list(im, session, peer)
+      initial_switch_acl = switch_acl(im, switch_session, switch_peer)
+      datastore_acl_exists = initial_node_acls.any? do |entry|
+        entry.node_id == TEST_LIVE_NODE_ID &&
+          entry.acl_entry.subjects.try(&.includes?(TEST_ACL_SUBJECT_ID))
+      end
+      switch_acl_exists = initial_switch_acl.any? do |entry|
+        entry.subjects.try(&.includes?(TEST_ACL_SUBJECT_ID))
+      end
+      if datastore_acl_exists || switch_acl_exists
+        raise Matter::ProtocolError.new("Live switch test ACL subject already exists")
+      end
+      test_acl = SdkDatastore::DatastoreAccessControlEntryStruct.new(
+        SdkDatastore::DatastoreAccessControlEntryPrivilegeEnum::View,
+        SdkDatastore::DatastoreAccessControlEntryAuthModeEnum::CASE,
+        [TEST_ACL_SUBJECT_ID], [] of SdkDatastore::DatastoreAccessControlTargetStruct)
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_ADD_ACL_TO_NODE,
+        SdkDatastore::AddACLToNodeRequest.new(TEST_LIVE_NODE_ID, test_acl).to_slice)
+      acl_deadline = Time.instant + 90.seconds
+      committed_acl = nil.as(SdkDatastore::DatastoreACLEntryStruct?)
+      loop do
+        committed_acl = node_acl_list(im, session, peer).find do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.acl_entry == test_acl
+        end
+        live_acl = switch_acl(im, switch_session, switch_peer).any? do |entry|
+          entry.privilege == SwitchAccessControl::AccessControlEntryPrivilege::View &&
+            entry.auth_mode == SwitchAccessControl::AccessControlEntryAuthMode::CASE &&
+            entry.subjects == [TEST_ACL_SUBJECT_ID] && entry.targets.try(&.empty?) == true &&
+            entry.fabric_index == switch_fabric_index
+        end
+        break if committed_acl && committed_acl.status_entry.state == SdkDatastore::DatastoreStateEnum::Committed &&
+                 live_acl
+        if Time.instant >= acl_deadline
+          raise Matter::TimeoutError.new("SDK JFA did not commit the live switch ACL: " +
+                                         "Datastore=#{node_acl_list(im, session, peer).inspect}, " +
+                                         "switch=#{switch_acl(im, switch_session, switch_peer).inspect}")
+        end
+        sleep 1.second
+      end
+
+      # Pinned SDK v1.6 loses Datastore list IDs when it reads a target ACL.
+      # Restore the target directly before RemoveACLFromNode, so the SDK's
+      # delete path sees only the baseline. This verifies Add propagation and
+      # Datastore cleanup, not SDK delivery of a target ACL deletion.
+      acl_restore = im.write_attribute(session: switch_session, peer: switch_peer,
+        endpoint_id: Matter::Node::ROOT_ENDPOINT_ID,
+        cluster_id: SwitchAccessControl::CLUSTER_ID,
+        attribute_id: SwitchAccessControl::ATTR_ACL,
+        value: initial_switch_acl.to_tlv)
+      unless acl_restore.write_responses.all? { |entry| entry.status.status == Matter::InteractionModel::StatusCode::Success.value }
+        raise Matter::ProtocolError.new("Crystal CASE could not restore the switch ACL baseline")
+      end
+      unless switch_acl(im, switch_session, switch_peer) == initial_switch_acl
+        raise Matter::ProtocolError.new("Switch ACL baseline changed after direct CASE cleanup")
+      end
+      acl_entry = committed_acl || raise Matter::ProtocolError.new("SDK JFA committed ACL entry disappeared")
+      invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_ACL_FROM_NODE,
+        SdkDatastore::RemoveACLFromNodeRequest.new(acl_entry.list_id, TEST_LIVE_NODE_ID).to_slice)
+      acl_removal_deadline = Time.instant + 90.seconds
+      loop do
+        remaining_acl = node_acl_list(im, session, peer).any? do |entry|
+          entry.node_id == TEST_LIVE_NODE_ID && entry.list_id == acl_entry.list_id
+        end
+        break unless remaining_acl
+        if Time.instant >= acl_removal_deadline
+          raise Matter::TimeoutError.new("SDK JFA did not clear the test Datastore ACL entry")
+        end
+        sleep 1.second
+      end
+      unless node_acl_list(im, session, peer) == initial_node_acls &&
+             switch_acl(im, switch_session, switch_peer) == initial_switch_acl
+        raise Matter::ProtocolError.new("SDK JFA ACL cleanup changed baseline lists")
+      end
+      puts "PASS: Crystal controller observed SDK JFA ACL add on a live switch and cleared the Datastore entry"
 
       invoke_datastore(im, session, peer, SdkDatastore::CMD_REMOVE_NODE,
         SdkDatastore::RemoveNodeRequest.new(TEST_LIVE_NODE_ID).to_slice)

@@ -763,9 +763,14 @@ Binding fetch callback dereferences an absent `objectToWrite` when it reads a
 nonempty list, aborting RemoveBinding before it can propagate the removal. The
 test restores the live switch's Binding baseline with a direct Crystal CASE
 write, then invokes RemoveBinding to clear the SDK Datastore entry. SDK removal
-propagation and endpoint-1 Binding placement remain unverified. ACL command
-propagation still needs a separate
-test.
+propagation and endpoint-1 Binding placement remain unverified. The inverse
+fixture also sends AddACLToNode, requires NodeACLList to reach Committed, and
+reads the new CASE View entry on the Crystal switch's root AccessControl ACL
+over CASE. The pinned SDK JFA's ACL fetch path drops Datastore list IDs, so its
+RemoveACLFromNode path cannot reliably identify the added target entry. The test
+restores the switch's baseline ACL directly over Crystal CASE before invoking
+RemoveACLFromNode to clear the SDK Datastore record. SDK delivery of ACL
+deletion remains unverified.
 
 The opt-in SDK JFC JCM fixture also publishes the SDK issuer's **public**
 operational root through an ephemeral HTTPS DCL-shaped mirror on loopback.
