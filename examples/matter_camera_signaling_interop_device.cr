@@ -193,4 +193,4 @@ module MatterCameraSignalingInterop
   end
 end
 
-Examples.main("Camera signaling interop") { MatterCameraSignalingInterop::Device.new }
+Examples.main("Camera signaling interop") { MatterCameraSignalingInterop::Device.new(tcp_enabled: true) }
