@@ -120,6 +120,73 @@ describe Ambient do
   end
 end
 
+describe "Ambient Context Sensing AUD profile" do
+  unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+
+  it "advertises the provisional sound profile and validates its supported tags" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
+      supported_sound_tags: [unknown_sound, barking])
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(8_u32)
+    attribute_ids(cluster).should contain(Ambient::ATTR_AUDIO_CONTEXT_DETECTED)
+    attribute_ids(cluster).should contain(Ambient::ATTR_AMBIENT_CONTEXT_TYPE)
+    attribute_ids(cluster).should contain(Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED)
+    attribute_ids(cluster).should_not contain(Ambient::ATTR_HUMAN_ACTIVITY_DETECTED)
+    attribute_ids(cluster).should_not contain(Ambient::ATTR_OBJECT_IDENTIFIED)
+    read(cluster, Ambient::ATTR_AUDIO_CONTEXT_DETECTED).should be_false
+    Ambient::AmbientContextTypeStruct.from_tlv(
+      read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE).as_list[0]).ambient_context_sensed.should eq([unknown_sound])
+    Ambient::SemanticTag.from_tlv(
+      read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE_SUPPORTED).as_list[1]).should eq(barking)
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+
+    expect_raises(ArgumentError) do
+      build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
+        supported_sound_tags: [barking])
+    end
+    expect_raises(ArgumentError) do
+      build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
+        supported_sound_tags: [unknown_sound, unknown_sound])
+    end
+    expect_raises(ArgumentError) do
+      build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
+        supported_sound_tags: [unknown_sound, Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)])
+    end
+  end
+
+  it "emits sound start and end events and expires after HoldTime" do
+    cluster = build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
+      supported_sound_tags: [unknown_sound, barking], hold_time: 1_u16)
+    events = [] of Tuple(UInt32, TLV::Any)
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, data : TLV::Any, _fabric : UInt8?) do
+      events << {id, data}
+      nil
+    end
+
+    expect_raises(ArgumentError) { cluster.observe_sound(unknown_sound) }
+    cluster.observe_sound(barking)
+    read(cluster, Ambient::ATTR_AUDIO_CONTEXT_DETECTED).should be_true
+    cluster.observe_sound(barking)
+    events.size.should eq(1)
+    events[0][0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED)
+    Ambient::AmbientContextDetectStartedEvent.from_tlv(events[0][1])
+      .ambient_context_detected.ambient_context_sensed.should eq([barking])
+
+    deadline = Time.instant + 3.seconds
+    while cluster.audio_context_detected? && Time.instant < deadline
+      sleep 20.milliseconds
+    end
+    cluster.audio_context_detected?.should be_false
+    read(cluster, Ambient::ATTR_AUDIO_CONTEXT_DETECTED).should be_false
+    events.size.should eq(2)
+    events[1][0].should eq(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED)
+    Ambient::AmbientContextDetectEndedEvent.from_tlv(events[1][1]).event_start_time.should be > 0_u64
+    Ambient::AmbientContextTypeStruct.from_tlv(
+      read_tlv(cluster, Ambient::ATTR_AMBIENT_CONTEXT_TYPE).as_list[0]).ambient_context_sensed.should eq([unknown_sound])
+  end
+end
+
 describe "Ambient Context Sensing OC+OI profile" do
   unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
   person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
