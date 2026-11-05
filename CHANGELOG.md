@@ -15,6 +15,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The cluster never stores PINs or approval state. An explicit test profile
   exercises the protected path through chip-tool.
 
+### Matter 1.6 Thermostat suggestion capacity profile
+
+- Set the guarded TSUGGEST MaxThermostatSuggestions capacity at construction,
+  as required for this fixed attribute. Reject runtime changes; restore legacy
+  suggestions when they fit the configured profile, and start fresh when the
+  old list exceeds its capacity. Production TSUGGEST advertisement remains gated.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live ACL propagation
 
 - Extend the inverse SDK JFA smoke with AddACLToNode and verify both Committed

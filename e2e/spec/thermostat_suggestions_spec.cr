@@ -34,6 +34,7 @@ describe "Matter Thermostat Suggestions guarded fixture" do
 
     # Commissioning may set UTC. Restart clears it while keeping the fabric.
     device.restart!
+    read_int(device, "thermostat", "max-thermostat-suggestions", "MaxThermostatSuggestions", 1).should eq(5_i64)
     expect_success(device.read("timesynchronization", "utctime", 0)).output.downcase.should contain("null")
     expect_failure(add_suggestion(device, "hex:01"), "INVALID_IN_STATE")
     set_suggestion_utc(device)
