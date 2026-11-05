@@ -58,3 +58,17 @@ behavior. The composition probe verifies the required root feature bits and
 readable attributes, but the full E2E scenario still needs a Camera host
 adapter connecting Provider callbacks to outbound Requestor signaling,
 operational root time sources, and real media delivery.
+
+## Independent Requestor signaling gate
+
+The separate `matter_camera_signaling_interop` fixture and
+`matterjs-camera-signaling-interop` GitHub workflow use the pinned independent
+matter.js Requestor server as the commissioning peer. The fixture registers its
+inbound CASE session on a shared outbound controller transport and routes
+Provider callbacks through `RequestorSignalingSink`. The CI scenario exercises
+the actual Requestor Offer, Answer, ICECandidates and End commands, including
+wrong-peer session rejection and Requestor session cleanup. Its SDP and ICE
+values are deterministic protocol probes; the fixture has no WebRTC engine,
+media track, microphone, or decoded frame. This gate must not be described as
+media interoperability or Camera conformance. The remaining media and
+two-fabric/restart steps above still require independent verification.
