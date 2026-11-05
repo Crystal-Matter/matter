@@ -625,9 +625,14 @@ module SdkJfaInverseDriver
 
       initial_node_acls = node_acl_list(im, session, peer)
       initial_switch_acl = switch_acl(im, switch_session, switch_peer)
-      if initial_node_acls.any? { |entry| entry.node_id == TEST_LIVE_NODE_ID &&
-         entry.acl_entry.subjects.try(&.includes?(TEST_ACL_SUBJECT_ID)) } ||
-         initial_switch_acl.any? { |entry| entry.subjects.try(&.includes?(TEST_ACL_SUBJECT_ID)) }
+      datastore_acl_exists = initial_node_acls.any? do |entry|
+        entry.node_id == TEST_LIVE_NODE_ID &&
+          entry.acl_entry.subjects.try(&.includes?(TEST_ACL_SUBJECT_ID))
+      end
+      switch_acl_exists = initial_switch_acl.any? do |entry|
+        entry.subjects.try(&.includes?(TEST_ACL_SUBJECT_ID))
+      end
+      if datastore_acl_exists || switch_acl_exists
         raise Matter::ProtocolError.new("Live switch test ACL subject already exists")
       end
       test_acl = SdkDatastore::DatastoreAccessControlEntryStruct.new(
