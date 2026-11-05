@@ -122,16 +122,29 @@ describe "Thermostat guarded suggestion host state" do
     restored.current_thermostat_suggestion.should be_nil
   end
 
-  it "rejects a persisted capacity that differs from the fixed profile" do
+  it "keeps compatible legacy suggestions when the fixed profile capacity changes" do
     cluster = host_suggestion_cluster(6_u8)
-    cluster.add_thermostat_suggestion(host_suggestion_request, 1_000_u32)
+    added = cluster.add_thermostat_suggestion(host_suggestion_request, 1_000_u32)
+      .as(HostSuggest::AddThermostatSuggestionResponse)
     saved = cluster.save_state
-    expect_raises(Matter::StorageError, /capacity differs from fixed profile/) do
-      host_suggestion_cluster.restore_state(saved)
-    end
+    restored = host_suggestion_cluster
+    restored.restore_state(saved)
+    restored.max_thermostat_suggestions.should eq(5_u8)
+    restored.thermostat_suggestions.map(&.unique_id).should eq([added.unique_id])
     expect_raises(ArgumentError, /at least five/) do
       host_suggestion_cluster(4_u8)
     end
+  end
+
+  it "does not expose an over-capacity legacy list under a smaller fixed profile" do
+    cluster = host_suggestion_cluster(6_u8)
+    6.times do
+      cluster.add_thermostat_suggestion(host_suggestion_request, 1_000_u32)
+    end
+    restored = host_suggestion_cluster
+    restored.restore_state(cluster.save_state)
+    restored.max_thermostat_suggestions.should eq(5_u8)
+    restored.thermostat_suggestions.should be_empty
   end
 
   it "keeps following a suggestion when host presets are reconfigured" do

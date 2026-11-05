@@ -2598,8 +2598,8 @@ module Matter
           state = SuggestionState.from_document(suggestion_raw.as?(Storage::Document) ||
                                                 raise StorageError.new("invalid thermostat suggestion state"))
           raise StorageError.new("invalid thermostat suggestion capacity") if state.capacity < MIN_SUGGESTION_CAPACITY
-          raise StorageError.new("persisted thermostat suggestion capacity differs from fixed profile") if state.capacity != @max_thermostat_suggestions
           raise StorageError.new("too many thermostat suggestions") if state.suggestions.size > state.capacity
+          raise StorageError.new("persisted suggestions exceed fixed capacity") if state.suggestions.size > @max_thermostat_suggestions
           ids = state.suggestions.map(&.unique_id)
           raise StorageError.new("duplicate thermostat suggestion ID") if ids.uniq.size != ids.size
           state.suggestions.each do |entry|
