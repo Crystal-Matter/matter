@@ -1075,7 +1075,22 @@ module Matter
       # Called by a host time service. UTC is deliberately explicit; the wire
       # feature cannot rely on an unverified local wall clock.
       def tick_suggestions(now_epoch : UInt32?) : Int32
-        now = now_epoch || return 0
+        unless now = now_epoch
+          @last_suggestion_now = nil
+          if @suggestion_timer_boundary
+            @suggestion_timer_generation &+= 1_u64
+            @suggestion_timer_boundary = nil
+          end
+          if @current_thermostat_suggestion
+            @current_thermostat_suggestion = nil
+            suggestion_attribute_changed(ATTR_CURRENT_THERMOSTAT_SUGGESTION)
+          end
+          if @suggestion_not_following_reason
+            @suggestion_not_following_reason = nil
+            suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON)
+          end
+          return 0
+        end
         @last_suggestion_now = now
         removed = @thermostat_suggestions.count { |entry| entry.expiration_time <= now }
         if removed > 0

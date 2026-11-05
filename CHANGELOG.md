@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat suggestion UTC loss
+
+- Clear the guarded profile's current suggestion and not-following reason when
+  synchronized UTC becomes unavailable, without discarding queued suggestions.
+  Cancel the pending time-bound reevaluation and reselect after UTC returns.
+  Production TSUGGEST remains gated pending schedule and occupancy arbitration.
+
 ### Matter 1.6 Messages protected presentation
 
 - Add opt-in PROT support through a host-owned authentication decision scoped

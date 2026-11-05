@@ -341,10 +341,12 @@ describe "Thermostat guarded suggestion wire" do
       changed << attribute
       nil
     }
+    write(cluster, SuggestWire::ATTR_TEMPERATURE_SETPOINT_HOLD, 1_u8).status.should eq(SuggestCode::Success)
     added = suggestion_im_invoke(cluster, SuggestWire::CMD_ADD_THERMOSTAT_SUGGESTION,
       SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], nil, 30_u16))
     added.command_data.should_not be_nil
     cluster.current_thermostat_suggestion.should_not be_nil
+    read(cluster, SuggestWire::ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON).should eq(2_u16)
     old_timer = timers.last[1]
 
     now = nil
@@ -361,6 +363,7 @@ describe "Thermostat guarded suggestion wire" do
     now = 1_100_u32
     cluster.poll_suggestions.should eq(0)
     cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    read(cluster, SuggestWire::ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON).should eq(2_u16)
     timers.last[0].should eq(1_700.seconds)
   end
 end
