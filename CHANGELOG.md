@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Commodity Tariff Friendly Credit
+
+- Add opt-in Pricing+FriendlyCredit tariff components. Published entry and exit
+  states appear in current/next projections and component lookup responses,
+  survive restart, and are verified through the official chip-tool fixture.
+  Pricing-only components retain their existing wire shape.
+
 ### Matter 1.6 Messages protected presentation
 
 - Add opt-in PROT support through a host-owned authentication decision scoped

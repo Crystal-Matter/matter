@@ -562,6 +562,7 @@ services:
     <<: *device
     environment:
       E2E_DEVICE: matter_commodity_tariff
+      MATTER_COMMODITY_TARIFF_HOOK_PATH: /e2e/logs/matter_commodity_tariff.trigger
   zone-management:
     <<: *device
     environment:

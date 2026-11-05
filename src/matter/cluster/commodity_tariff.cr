@@ -195,6 +195,9 @@ module Matter
         @[TLV::Field(tag: 1, optional: false)]
         getter price : TariffPrice?
 
+        @[TLV::Field(tag: 2, optional: true)]
+        getter friendly_credit : Bool?
+
         @[TLV::Field(tag: 6, optional: false)]
         getter threshold : Int64?
 
@@ -206,7 +209,7 @@ module Matter
 
         def initialize(@tariff_component_id : UInt32, @price : TariffPrice?,
                        @threshold : Int64?, @label : String? = nil,
-                       @predicted : Bool? = nil)
+                       @predicted : Bool? = nil, @friendly_credit : Bool? = nil)
         end
       end
 
@@ -358,7 +361,14 @@ module Matter
                      @tariff_components : Array(TariffComponent) = [] of TariffComponent,
                      @tariff_periods : Array(TariffPeriod) = [] of TariffPeriod)
         super(endpoint_id, DataType::ClusterId.new(CLUSTER_ID))
-        raise ArgumentError.new("only the Pricing feature is supported") unless @feature_map == Feature::Pricing
+        unless @feature_map == Feature::Pricing ||
+               @feature_map == (Feature::Pricing | Feature::FriendlyCredit)
+          raise ArgumentError.new("only Pricing and Pricing+FriendlyCredit profiles are supported")
+        end
+      end
+
+      protected def validate_feature_map_change(value : Feature) : Nil
+        raise ArgumentError.new("Commodity Tariff feature profile is fixed after construction") unless value == @feature_map
       end
 
       def publish(publication : Publication, at : UInt32 = matter_now) : Nil
@@ -555,6 +565,9 @@ module Matter
           raise ArgumentError.new("price or price level is required") unless price = component.price
           if price.price.nil? && price.price_level.nil?
             raise ArgumentError.new("price or price level is required")
+          end
+          if !@feature_map.friendly_credit? && !component.friendly_credit.nil?
+            raise ArgumentError.new("FriendlyCredit field requires the FriendlyCredit feature")
           end
           if label = component.label
             raise ArgumentError.new("component label exceeds 128 bytes") if label.bytesize > MAX_LABEL_BYTES
