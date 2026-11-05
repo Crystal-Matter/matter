@@ -10,7 +10,8 @@ import subprocess
 import time
 
 MATTER_JS_COMMIT = "7e1f5d7892dcea4330828b6a82d31ffe2a04cc0b"
-PAIRING = re.compile(r"chip-tool pairing code 1\s+([0-9-]+)")
+PASSCODE = re.compile(r"Setup PIN:\s*(\d+)")
+DISCRIMINATOR = re.compile(r"Discriminator:\s*(\d+)")
 
 
 def stop(process):
@@ -53,20 +54,25 @@ def main():
                                   cwd=logs, env=env, stdout=camera_output,
                                   stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.monotonic() + 90
-        code = None
+        passcode = None
+        discriminator = None
         while time.monotonic() < deadline:
             if camera.poll() is not None:
                 raise RuntimeError(f"Camera exited {camera.returncode}:\n" + camera_log.read_text(errors="replace")[-6000:])
-            match = PAIRING.search(camera_log.read_text(errors="replace"))
-            if match:
-                code = match.group(1)
+            output = camera_log.read_text(errors="replace")
+            passcode_match = PASSCODE.search(output)
+            discriminator_match = DISCRIMINATOR.search(output)
+            if passcode_match and discriminator_match:
+                passcode = passcode_match.group(1)
+                discriminator = discriminator_match.group(1)
                 break
             time.sleep(0.2)
-        if code is None:
-            raise RuntimeError("Camera pairing code did not appear:\n" + camera_log.read_text(errors="replace")[-6000:])
+        if passcode is None or discriminator is None:
+            raise RuntimeError("Camera setup credentials did not appear:\n" + camera_log.read_text(errors="replace")[-6000:])
         nacho = matter_js / "node_modules/.bin/nacho-run"
         with requestor_log.open("wb") as output:
-            result = subprocess.run([str(nacho), str(target.relative_to(matter_js)), code, str(control)],
+            result = subprocess.run([str(nacho), str(target.relative_to(matter_js)),
+                                     passcode, discriminator, str(control)],
                                     cwd=matter_js, stdout=output, stderr=subprocess.STDOUT,
                                     timeout=240, check=False)
         if result.returncode:

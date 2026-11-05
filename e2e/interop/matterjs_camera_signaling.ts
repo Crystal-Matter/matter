@@ -1,7 +1,7 @@
 /** Independent Matter.js Requestor signaling against the Crystal Camera test fixture.
  * SDP and ICE are deterministic protocol probes. This does not create a media track.
  */
-import { Endpoint, ServerNode } from "@matter/main";
+import { Endpoint, Seconds, ServerNode } from "@matter/main";
 import { CameraControllerDevice } from "@matter/main/devices/camera-controller";
 import { CameraAvStreamManagementClient } from "@matter/main/behaviors/camera-av-stream-management";
 import { WebRtcTransportProviderClient } from "@matter/main/behaviors/web-rtc-transport-provider";
@@ -11,8 +11,10 @@ import { EndpointNumber, NodeId, StreamUsage } from "@matter/main/types";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const [pairingCode, controlDir] = process.argv.slice(2);
-if (!pairingCode || !controlDir) throw new Error("pairing code and control directory are required");
+const [passcodeText, discriminatorText, controlDir] = process.argv.slice(2);
+if (!passcodeText || !discriminatorText || !controlDir) {
+    throw new Error("passcode, full discriminator and control directory are required");
+}
 const controller = await ServerNode.create(ServerNode.RootEndpointWithoutGroupcast, {
     id: "camera-signaling-requestor", network: { port: 5561 },
 });
@@ -57,7 +59,10 @@ async function waitFor(name: string) {
 try {
     await controller.start();
     await observeRequestor();
-    const camera = await controller.peers.commission({ id: "camera", pairingCode });
+    const camera = await controller.peers.commission({
+        id: "camera", passcode: Number(passcodeText), discriminator: Number(discriminatorText),
+        timeout: Seconds(60),
+    });
     await camera.start();
     const address = camera.peerAddress;
     if (!address) throw new Error("Commissioned Camera has no peer address");
