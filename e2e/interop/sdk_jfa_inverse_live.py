@@ -81,12 +81,13 @@ def run(args):
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore pending node over CASE" not in transcript or
                     "PASS: Crystal controller added, updated, and removed an SDK JFA Datastore administrator over CASE" not in transcript or
                     "PASS: Crystal controller refreshed and renamed a live SDK JFA Datastore endpoint over CASE" not in transcript or
-                    "PASS: Crystal controller propagated and removed an SDK JFA Datastore group on a live switch" not in transcript):
+                    "PASS: Crystal controller propagated and removed an SDK JFA Datastore group on a live switch" not in transcript or
+                    "PASS: Crystal controller observed SDK JFA Binding add on a live switch and cleared the Datastore entry" not in transcript):
                 raise RuntimeError(
                     f"Crystal -> SDK JFA Datastore driver exited {result.returncode}; "
                     f"log tail:\n{transcript[-5000:]}"
                 )
-            print(f"PASS: Crystal controller exercised official SDK JFA Datastore commands and propagated a live group over CASE; logs: {logs}")
+            print(f"PASS: Crystal controller exercised official SDK JFA Datastore commands and propagated a live group and binding over CASE; logs: {logs}")
         finally:
             if switch is not None:
                 switch.close()
