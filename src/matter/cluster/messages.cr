@@ -25,7 +25,7 @@ module Matter
       MAX_RESPONSE_OPTIONS =   4
       MAX_LABEL_BYTES      =  32
       SUPPORTED_FEATURES   = (Feature::ReceivedConfirmation | Feature::ConfirmationResponse |
-                              Feature::ConfirmationReply).value
+                              Feature::ConfirmationReply | Feature::ProtectedMessages).value
       CONTROL_CONFIRMATION = 0x0001_u16
       CONTROL_RESPONSE     = 0x0002_u16
       CONTROL_REPLY        = 0x0004_u16
@@ -241,6 +241,13 @@ module Matter
         abstract def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
       end
 
+      # The application verifies the user before releasing protected content
+      # to its display. Approval is scoped to this message and fabric and is
+      # never stored by the cluster.
+      abstract class ProtectedHost < Host
+        abstract def authenticated_for_view?(message_id : Bytes, fabric_index : UInt8) : Bool
+      end
+
       struct PersistedState
         include Storage::Record
 
@@ -348,6 +355,7 @@ module Matter
       def present(message_id : Bytes, fabric_index : UInt8) : Nil
         message = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         raise ArgumentError.new("unknown message") unless message
+        require_protected_authentication!(message)
         now_ms = @clock.call.to_unix_ms.to_u128
         raise ArgumentError.new("message is not yet available") if now_ms < start_ms(message, now_ms)
         if (deadline = deadline_ms(message)) && now_ms >= deadline
@@ -366,6 +374,14 @@ module Matter
         message = @messages.find { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         raise ArgumentError.new("unknown message") unless message
         validate_completion!(message, response_id, reply)
+        require_protected_authentication!(message)
+        finish_message(message, response_id, reply, future_preference)
+      end
+
+      private def finish_message(message : Message, response_id : UInt32? = nil,
+                                 reply : String? = nil, future_preference : FuturePreference? = nil) : Nil
+        message_id = message.message_id
+        fabric_index = message.fabric_index
         @active_message_ids.reject!(&.==(message_id))
         @messages.reject! { |entry| entry.fabric_index == fabric_index && entry.message_id == message_id }
         @accepted_at_ms.delete(message_id.hexstring)
@@ -383,7 +399,7 @@ module Matter
       def process_due_messages : Nil
         now_ms = @clock.call.to_unix_ms.to_u128
         expired = @messages.select { |message| (deadline = deadline_ms(message)) && deadline <= now_ms }
-        expired.each { |message| complete(message.message_id, message.fabric_index) }
+        expired.each { |message| finish_message(message) }
         schedule_expiry if expired.empty?
       end
 
@@ -456,8 +472,10 @@ module Matter
       end
 
       private def validate_supported_features!(value : Feature) : Nil
-        raise ArgumentError.new("PROT requires a verified authentication host") if value.protected_messages?
         raise ArgumentError.new("unknown Messages feature") if (value.value & ~SUPPORTED_FEATURES) != 0
+        if value.protected_messages? && !@host.is_a?(ProtectedHost)
+          raise ArgumentError.new("PROT requires a protected authentication host")
+        end
         if (value.confirmation_response? || value.confirmation_reply?) && !value.received_confirmation?
           raise ArgumentError.new("RESP and RPLY require CONF")
         end
@@ -469,6 +487,19 @@ module Matter
           @origin_node_ids[message.message_id.hexstring]?, self))
       rescue ex
         Log.error(exception: ex) { "Messages host could not present queued message" }
+      end
+
+      private def require_protected_authentication!(message : Message) : Nil
+        return if (message.control & CONTROL_PROTECTED) == 0
+        host = @host.as?(ProtectedHost)
+        raise ArgumentError.new("protected message host unavailable") unless host
+        authenticated = host.authenticated_for_view?(message.message_id.dup, message.fabric_index)
+        raise ArgumentError.new("protected message user authentication required") unless authenticated
+      rescue ex : ArgumentError
+        raise ex
+      rescue ex
+        Log.warn(exception: ex) { "Messages protected host could not verify user" }
+        raise ArgumentError.new("protected message user authentication unavailable")
       end
 
       private def notify_host_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil

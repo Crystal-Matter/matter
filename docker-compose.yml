@@ -535,6 +535,14 @@ services:
       E2E_BINARY: matter_content_app
       MATTER_MESSAGES_PROFILE: "1"
 
+  content-app-protected-messages:
+    <<: *device
+    environment:
+      E2E_DEVICE: matter_content_app_protected_messages
+      E2E_BINARY: matter_content_app
+      MATTER_MESSAGES_PROTECTED_PROFILE: "1"
+      MATTER_MESSAGES_PROTECTED_TEST_APPROVAL: "1"
+
   content-app-observer:
     <<: *device
     environment:

@@ -6,11 +6,13 @@ module MatterContentApp
   alias Messages = Matter::Cluster::Messages
   alias AccountLogin = Matter::Cluster::AccountLogin
 
-  MESSAGE_PROFILE  = ENV["MATTER_MESSAGES_PROFILE"]? == "1"
-  MESSAGE_FEATURES = Messages::Feature::ReceivedConfirmation |
-                     Messages::Feature::ConfirmationResponse |
-                     Messages::Feature::ConfirmationReply
-  AUTO_CONFIRM_RESPONSE_ID = 2_u32
+  PROTECTED_MESSAGE_PROFILE = ENV["MATTER_MESSAGES_PROTECTED_PROFILE"]? == "1"
+  MESSAGE_PROFILE           = ENV["MATTER_MESSAGES_PROFILE"]? == "1" || PROTECTED_MESSAGE_PROFILE
+  MESSAGE_FEATURES          = Messages::Feature::ReceivedConfirmation |
+                              Messages::Feature::ConfirmationResponse |
+                              Messages::Feature::ConfirmationReply
+  AUTO_CONFIRM_RESPONSE_ID  = 2_u32
+  PROTECTED_TEST_MESSAGE_ID = "804132435465768798a9bacbdcedfe0f"
 
   class AccountHost < AccountLogin::Host
     TEMP_ACCOUNT_IDENTIFIER = "crystal-radio-user"
@@ -41,7 +43,7 @@ module MatterContentApp
 
   # The opt-in E2E profile demonstrates how an application presents and
   # confirms messages. A real UI can make these calls after user interaction.
-  class MessageHost < Messages::Host
+  class MessageHost < Messages::ProtectedHost
     AUTO_CONFIRM_TEXT = "Confirm in demo UI"
     Log               = ::Log.for("matter.example.content_app.messages")
 
@@ -69,6 +71,14 @@ module MatterContentApp
     end
 
     def message_cancelled(message_id : Bytes, fabric_index : UInt8) : Nil
+    end
+
+    # This explicit CI-only switch stands in for a user's successful PIN
+    # check. A product host must verify its own credential before returning
+    # true for the particular message and fabric.
+    def authenticated_for_view?(message_id : Bytes, fabric_index : UInt8) : Bool
+      PROTECTED_MESSAGE_PROFILE && ENV["MATTER_MESSAGES_PROTECTED_TEST_APPROVAL"]? == "1" &&
+        message_id.hexstring == PROTECTED_TEST_MESSAGE_ID && fabric_index == Matter::Fabric::MIN_FABRIC_INDEX
     end
   end
 
@@ -99,7 +109,7 @@ module MatterContentApp
         as: :application_basic
 
       cluster Messages,
-        feature_map: MESSAGE_PROFILE ? MESSAGE_FEATURES : Messages::Feature::None,
+        feature_map: PROTECTED_MESSAGE_PROFILE ? Messages::Feature::ProtectedMessages : (MESSAGE_PROFILE ? MESSAGE_FEATURES : Messages::Feature::None),
         host: MESSAGE_PROFILE ? MessageHost.new : nil,
         as: :messages
     end
