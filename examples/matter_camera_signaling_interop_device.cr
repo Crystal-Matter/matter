@@ -23,12 +23,16 @@ module MatterCameraSignalingInterop
   class SignalingPeer < Provider::Peer
     property device : Device? = nil
 
+    private def bound_device : Device
+      @device || raise Matter::ConfigurationError.new("Camera signaling peer is not bound")
+    end
+
     def solicit_offer(session : Provider::Session, request : Provider::SolicitOfferRequest) : Status
-      @device.not_nil!.defer_signal(session) { |sink| sink.offer(session, TEST_OFFER) }
+      bound_device.defer_signal(session) { |sink| sink.offer(session, TEST_OFFER) }
     end
 
     def accept_offer(session : Provider::Session, request : Provider::ProvideOfferRequest) : Status
-      @device.not_nil!.defer_signal(session) { |sink| sink.answer(session, TEST_ANSWER) }
+      bound_device.defer_signal(session) { |sink| sink.answer(session, TEST_ANSWER) }
     end
 
     def accept_answer(session : Provider::Session, sdp : String) : Status
@@ -36,13 +40,13 @@ module MatterCameraSignalingInterop
     end
 
     def add_ice_candidates(session : Provider::Session, candidates : Array(Provider::IceCandidate)) : Status
-      @device.not_nil!.defer_signal(session) do |sink|
+      bound_device.defer_signal(session) do |sink|
         sink.ice_candidates(session, [Provider::IceCandidate.new(TEST_CANDIDATE, "0", 0_u16)])
       end
     end
 
     def end_session(session : Provider::Session, reason : Provider::EndReason) : Nil
-      @device.not_nil!.forward_host_end(session, reason)
+      bound_device.forward_host_end(session, reason)
     end
   end
 
@@ -100,6 +104,18 @@ module MatterCameraSignalingInterop
     @destination : Sink::Destination? = nil
     @host_end_enabled = false
 
+    private def camera_provider : Provider
+      @provider || raise Matter::ConfigurationError.new("Camera Provider is not initialized")
+    end
+
+    private def outbound_client : Matter::Controller::Client
+      @client || raise Matter::ConfigurationError.new("Camera signaling client is not initialized")
+    end
+
+    private def signaling_sink : Sink
+      @sink || raise Matter::ConfigurationError.new("Camera signaling sink is not initialized")
+    end
+
     protected def device_clusters : Array(Matter::Cluster::Base)
       clusters = super
       camera = clusters.find(&.is_a?(CameraAv)).as(CameraAv)
@@ -112,14 +128,15 @@ module MatterCameraSignalingInterop
     end
 
     protected def before_start : Nil
-      @peer.not_nil!.device = self
+      peer = @peer || raise Matter::ConfigurationError.new("Camera signaling peer is not initialized")
+      peer.device = self
       camera = node.get_cluster!(CAMERA_ENDPOINT_ID, CameraAv)
       camera.on_video_allocate { |_request, _id| Status.success }
       camera.on_video_deallocate { |_id| Status.success }
       @client = Matter::Controller::Client.new(transport: message_handler.transport,
         delegate_peer_initiated: true)
-      @sink = Sink.new(@provider.not_nil!, Matter::Controller::WebrtcRequestorClient.new(
-        Matter::Controller::ImClient.new(@client.not_nil!)),
+      @sink = Sink.new(camera_provider, Matter::Controller::WebrtcRequestorClient.new(
+        Matter::Controller::ImClient.new(outbound_client)),
         ->(fabric : UInt8, node_id : UInt64) {
           destination = @destination
           if destination && destination.session.fabric_index == fabric &&
@@ -137,19 +154,25 @@ module MatterCameraSignalingInterop
     end
 
     def defer_signal(session : Provider::Session, &block : Sink -> Nil) : Status
-      provider = @provider.not_nil!
-      wire_id = provider.request_session_id || return Status.invalid_in_state
-      address = provider.request_peer_address || return Status.invalid_in_state
-      secure = message_handler.registry.session(wire_id.to_u16) || return Status.invalid_in_state
-      client = @client.not_nil!
+      provider = camera_provider
+      wire_id = provider.request_session_id
+      address = provider.request_peer_address
+      secure = wire_id.try { |id| message_handler.registry.session(id.to_u16) }
+      unless wire_id && address && secure
+        puts "SIGNALING CONTEXT MISSING wire_id=#{wire_id.inspect} address=#{address.inspect} secure=#{!secure.nil?}"
+        return Status.invalid_in_state
+      end
+      client = outbound_client
       client.register_session(secure, address) unless client.session?(secure.session_id)
       @destination = Sink::Destination.new(secure, address)
-      sink = @sink.not_nil!
-      provider.defer_signaling(session) { block.call(sink) } ? Status.success : Status.invalid_in_state
+      sink = signaling_sink
+      queued = provider.defer_signaling(session) { block.call(sink) }
+      puts "SIGNALING DEFER queued=#{queued} session=#{session.id} fabric=#{session.fabric_index} peer=#{session.peer_node_id}"
+      queued ? Status.success : Status.invalid_in_state
     end
 
     def forward_host_end(session : Provider::Session, reason : Provider::EndReason) : Nil
-      @sink.not_nil!.end_session(session, reason) if @host_end_enabled
+      signaling_sink.end_session(session, reason) if @host_end_enabled
     end
 
     protected def on_started : Nil
@@ -167,7 +190,7 @@ module MatterCameraSignalingInterop
                   if peer = secure.peer_node_id
                     @host_end_enabled = true
                     begin
-                      @provider.not_nil!.end_host_session(fabric, peer.id, id, Provider::EndReason::UserHangup)
+                      camera_provider.end_host_session(fabric, peer.id, id, Provider::EndReason::UserHangup)
                     ensure
                       @host_end_enabled = false
                     end
