@@ -16,7 +16,7 @@ if (!passcodeText || !discriminatorText || !controlDir) {
     throw new Error("passcode, full discriminator and control directory are required");
 }
 const controller = await ServerNode.create(ServerNode.RootEndpointWithoutGroupcast, {
-    id: "camera-signaling-requestor", network: { port: 5561 },
+    id: "camera-signaling-requestor", network: { port: 5561, tcp: true },
 });
 const requestor = new Endpoint(CameraControllerDevice, { id: "camera-controller" });
 await controller.add(requestor);
