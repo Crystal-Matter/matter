@@ -21,15 +21,14 @@ module MatterCameraSignalingInterop
   TEST_CANDIDATE = "candidate:1 1 UDP 1 127.0.0.1 1234 typ host"
 
   class SignalingPeer < Provider::Peer
-    def initialize(@device : Device)
-    end
+    property device : Device? = nil
 
     def solicit_offer(session : Provider::Session, request : Provider::SolicitOfferRequest) : Status
-      @device.defer_signal(session) { |sink| sink.offer(session, TEST_OFFER) }
+      @device.not_nil!.defer_signal(session) { |sink| sink.offer(session, TEST_OFFER) }
     end
 
     def accept_offer(session : Provider::Session, request : Provider::ProvideOfferRequest) : Status
-      @device.defer_signal(session) { |sink| sink.answer(session, TEST_ANSWER) }
+      @device.not_nil!.defer_signal(session) { |sink| sink.answer(session, TEST_ANSWER) }
     end
 
     def accept_answer(session : Provider::Session, sdp : String) : Status
@@ -37,13 +36,13 @@ module MatterCameraSignalingInterop
     end
 
     def add_ice_candidates(session : Provider::Session, candidates : Array(Provider::IceCandidate)) : Status
-      @device.defer_signal(session) do |sink|
+      @device.not_nil!.defer_signal(session) do |sink|
         sink.ice_candidates(session, [Provider::IceCandidate.new(TEST_CANDIDATE, "0", 0_u16)])
       end
     end
 
     def end_session(session : Provider::Session, reason : Provider::EndReason) : Nil
-      @device.forward_host_end(session, reason)
+      @device.not_nil!.forward_host_end(session, reason)
     end
   end
 
@@ -95,6 +94,7 @@ module MatterCameraSignalingInterop
     alias Sink = Matter::Camera::RequestorSignalingSink(Matter::Controller::ImClient)
 
     @provider : Provider? = nil
+    @peer : SignalingPeer? = nil
     @client : Matter::Controller::Client? = nil
     @sink : Sink? = nil
     @destination : Sink::Destination? = nil
@@ -103,13 +103,16 @@ module MatterCameraSignalingInterop
     protected def device_clusters : Array(Matter::Cluster::Base)
       clusters = super
       camera = clusters.find(&.is_a?(CameraAv)).as(CameraAv)
-      provider = Provider.new(camera.endpoint_id, camera, SignalingPeer.new(self))
+      peer = SignalingPeer.new
+      @peer = peer
+      provider = Provider.new(camera.endpoint_id, camera, peer)
       @provider = provider
       clusters << provider
       clusters
     end
 
     protected def before_start : Nil
+      @peer.not_nil!.device = self
       camera = node.get_cluster!(CAMERA_ENDPOINT_ID, CameraAv)
       camera.on_video_allocate { |_request, _id| Status.success }
       camera.on_video_deallocate { |_id| Status.success }
