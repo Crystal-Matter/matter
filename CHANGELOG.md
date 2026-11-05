@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat suggestion capacity profile
+
+- Set the guarded TSUGGEST MaxThermostatSuggestions capacity at construction,
+  as required for this fixed attribute. Reject runtime changes and persisted
+  capacity that differs from the configured profile. Production TSUGGEST
+  advertisement remains gated.
+
 ### Matter 1.6 SDK Joint Fabric Datastore live ACL propagation
 
 - Extend the inverse SDK JFA smoke with AddACLToNode and verify both Committed

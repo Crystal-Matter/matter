@@ -721,6 +721,7 @@ module Matter
                      schedule_max_per_day : UInt8? = nil,
                      local_time_provider : Proc(Time?)? = nil,
                      utc_time_provider : Proc(UInt32?)? = nil,
+                     @max_thermostat_suggestions : UInt8 = MIN_SUGGESTION_CAPACITY,
                      @suggestion_timer_scheduler : Proc(Time::Span, Proc(Nil), Nil) = ->(delay : Time::Span, action : Proc(Nil)) : Nil {
                        spawn { sleep delay; action.call }
                        nil
@@ -749,7 +750,7 @@ module Matter
         @presets = [] of Preset
         @used_preset_handles = [] of Bytes
         @active_preset_handle = nil.as(Bytes?)
-        @max_thermostat_suggestions = MIN_SUGGESTION_CAPACITY
+        raise ArgumentError.new("suggestion capacity must be at least five") if @max_thermostat_suggestions < MIN_SUGGESTION_CAPACITY
         @thermostat_suggestions = [] of ThermostatSuggestion
         @next_suggestion_id = 0_u8
         @current_thermostat_suggestion = nil.as(ThermostatSuggestion?)
@@ -959,13 +960,10 @@ module Matter
         copy_presets(@presets)
       end
 
-      # Host state and guarded TSUGGEST wire behavior. Production remains gated
-      # until the remaining suggestion policy and conformance checks complete.
+      # Compatibility for host configuration that matched the fixed profile.
+      # Matter marks MaxThermostatSuggestions fixed, so it cannot change at runtime.
       def configure_suggestion_capacity(capacity : UInt8) : Nil
-        raise ArgumentError.new("suggestion capacity must be at least five") if capacity < MIN_SUGGESTION_CAPACITY
-        raise ArgumentError.new("suggestion capacity below live suggestion count") if capacity < @thermostat_suggestions.size
-        @max_thermostat_suggestions = capacity
-        suggestion_attribute_changed(ATTR_MAX_THERMOSTAT_SUGGESTIONS)
+        raise ArgumentError.new("suggestion capacity is fixed at construction") unless capacity == @max_thermostat_suggestions
       end
 
       def max_thermostat_suggestions : UInt8
@@ -2600,6 +2598,7 @@ module Matter
           state = SuggestionState.from_document(suggestion_raw.as?(Storage::Document) ||
                                                 raise StorageError.new("invalid thermostat suggestion state"))
           raise StorageError.new("invalid thermostat suggestion capacity") if state.capacity < MIN_SUGGESTION_CAPACITY
+          raise StorageError.new("persisted thermostat suggestion capacity differs from fixed profile") if state.capacity != @max_thermostat_suggestions
           raise StorageError.new("too many thermostat suggestions") if state.suggestions.size > state.capacity
           ids = state.suggestions.map(&.unique_id)
           raise StorageError.new("duplicate thermostat suggestion ID") if ids.uniq.size != ids.size
@@ -2609,7 +2608,6 @@ module Matter
             end
           end
           @thermostat_suggestions = copy_suggestions(state.suggestions)
-          @max_thermostat_suggestions = state.capacity
           @next_suggestion_id = state.next_id
           @current_thermostat_suggestion = nil
           @last_suggestion_now = nil

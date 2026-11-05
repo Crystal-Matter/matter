@@ -3,8 +3,9 @@ require "../spec_helper"
 private alias HostSuggest = Matter::Cluster::Thermostat
 private alias HostSuggestCode = Matter::InteractionModel::StatusCode
 
-private def host_suggestion_cluster : HostSuggest
-  cluster = build(HostSuggest, feature_map: HostSuggest::Feature::Heating)
+private def host_suggestion_cluster(capacity : UInt8 = HostSuggest::MIN_SUGGESTION_CAPACITY) : HostSuggest
+  cluster = build(HostSuggest, feature_map: HostSuggest::Feature::Heating,
+    max_thermostat_suggestions: capacity)
   types = [
     HostSuggest::PresetType.new(HostSuggest::PresetScenario::Sleep, 1_u8),
     HostSuggest::PresetType.new(HostSuggest::PresetScenario::Wake, 1_u8),
@@ -97,15 +98,18 @@ describe "Thermostat guarded suggestion host state" do
   end
 
   it "persists the list, returns independent handles, and removes orphan suggestions" do
-    cluster = host_suggestion_cluster
+    cluster = host_suggestion_cluster(6_u8)
     response = cluster.add_thermostat_suggestion(host_suggestion_request, 1_000_u32)
       .as(HostSuggest::AddThermostatSuggestionResponse)
     cluster.thermostat_suggestions.first.preset_handle[0] = 99_u8
     cluster.thermostat_suggestions.first.preset_handle.should eq(Bytes[1_u8])
-    cluster.configure_suggestion_capacity(6_u8)
-    restored = host_suggestion_cluster
+    expect_raises(ArgumentError, /fixed at construction/) do
+      cluster.configure_suggestion_capacity(7_u8)
+    end
+    restored = host_suggestion_cluster(6_u8)
     restored.restore_state(cluster.save_state)
     restored.thermostat_suggestions.first.unique_id.should eq(response.unique_id)
+    restored.max_thermostat_suggestions.should eq(6_u8)
     5.times do
       restored.add_thermostat_suggestion(host_suggestion_request, 1_000_u32)
         .should be_a(HostSuggest::AddThermostatSuggestionResponse)
@@ -116,6 +120,18 @@ describe "Thermostat guarded suggestion host state" do
       [restored.presets.last])
     restored.thermostat_suggestions.should be_empty
     restored.current_thermostat_suggestion.should be_nil
+  end
+
+  it "rejects a persisted capacity that differs from the fixed profile" do
+    cluster = host_suggestion_cluster(6_u8)
+    cluster.add_thermostat_suggestion(host_suggestion_request, 1_000_u32)
+    saved = cluster.save_state
+    expect_raises(Matter::StorageError, /capacity differs from fixed profile/) do
+      host_suggestion_cluster.restore_state(saved)
+    end
+    expect_raises(ArgumentError, /at least five/) do
+      host_suggestion_cluster(4_u8)
+    end
   end
 
   it "keeps following a suggestion when host presets are reconfigured" do
