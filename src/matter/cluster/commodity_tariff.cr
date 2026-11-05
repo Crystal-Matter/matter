@@ -72,7 +72,7 @@ module Matter
         @[TLV::Field(tag: 0, optional: false)]
         getter tariff_label : String?
 
-        @[TLV::Field(tag: 1, optional: true)]
+        @[TLV::Field(tag: 1, optional: false)]
         getter provider_name : String?
 
         @[TLV::Field(tag: 2, optional: false)]
@@ -192,7 +192,7 @@ module Matter
         @[TLV::Field(tag: 0)]
         getter tariff_component_id : UInt32
 
-        @[TLV::Field(tag: 1, optional: false)]
+        @[TLV::Field(tag: 1, optional: true)]
         getter price : TariffPrice?
 
         @[TLV::Field(tag: 2, optional: true)]
