@@ -363,7 +363,8 @@ module Matter
       def replace_predicted_activities(predictions : Array(PredictedActivityStruct)) : Nil
         raise ArgumentError.new("PredictedActivity feature is not enabled") unless @feature_map.predicted_activity?
         @state_mutex.synchronize do
-          now = @prediction_clock.not_nil!.call
+          clock = @prediction_clock || raise ArgumentError.new("prediction clock is unavailable")
+          now = clock.call
           raise ArgumentError.new("prediction clock is unavailable") unless now
           raise ArgumentError.new("too many predicted activities") if predictions.size > MAX_PREDICTED_ACTIVITIES
           previous_end : UInt32? = nil
@@ -391,7 +392,8 @@ module Matter
       def refresh_predicted_activities : Nil
         return unless @feature_map.predicted_activity?
         @state_mutex.synchronize do
-          now = @prediction_clock.not_nil!.call
+          clock = @prediction_clock || raise ArgumentError.new("prediction clock is unavailable")
+          now = clock.call
           remaining = now ? @predicted_activities.select { |item| item.start_timestamp > now } : [] of PredictedActivityStruct
           if @predicted_activities != remaining
             @predicted_activities = remaining

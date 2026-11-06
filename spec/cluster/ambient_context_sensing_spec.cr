@@ -149,7 +149,7 @@ describe "Ambient Context Sensing HA+PRED profile" do
     decoded.end_timestamp.should eq(180_u32)
     decoded.ambient_context_type.should eq([walking])
     decoded.confidence.should eq(80_u8)
-    wire[0].as_struct.keys.should eq([0_u8, 1_u8, 2_u8, 5_u8])
+    wire[0].as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 5_u8])
     cluster.replace_predicted_activities([forecast])
     cluster.data_version.should eq(version + 1_u32)
 
