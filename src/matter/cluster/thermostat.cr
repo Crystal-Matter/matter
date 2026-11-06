@@ -185,6 +185,7 @@ module Matter
       # arbitration with schedules and occupancy is completed.
       @[Flags]
       enum ThermostatSuggestionNotFollowingReason : UInt16
+        NoDefinedReason        = 0x0000
         DemandResponseEvent    = 0x0001
         OngoingHold            = 0x0002
         Schedule               = 0x0004
@@ -758,6 +759,7 @@ module Matter
         @last_suggestion_now = nil.as(UInt32?)
         @suggestion_timer_boundary = nil.as(UInt32?)
         @suggestion_timer_generation = 0_u64
+        @applying_suggestion = false
         @applying_preset = false
         @pending_preset_write = nil.as(PendingPresetWrite?)
         @pending_schedule_write = nil.as(PendingScheduleWrite?)
@@ -1099,8 +1101,7 @@ module Matter
         end
         selected = @thermostat_suggestions
           .select do |entry|
-            entry.effective_time <= now && entry.expiration_time > now &&
-              @presets.any? { |preset| preset.preset_handle == entry.preset_handle && valid_preset_setpoints?(preset) }
+            entry.effective_time <= now && entry.expiration_time > now
           end
           .min_by? { |entry| {entry.effective_time, entry.unique_id} }
         if @current_thermostat_suggestion.try(&.unique_id) != selected.try(&.unique_id)
@@ -1114,13 +1115,23 @@ module Matter
             schedule_reason = ThermostatSuggestionNotFollowingReason::Schedule
             reason = reason ? reason | schedule_reason : schedule_reason
           end
+          preset = @presets.find { |entry| entry.preset_handle == selected.preset_handle }
+          reason ||= ThermostatSuggestionNotFollowingReason::NoDefinedReason unless preset && valid_preset_setpoints?(preset)
+        end
+        if selected && reason.nil? && @active_preset_handle != selected.preset_handle
+          @applying_suggestion = true
+          begin
+            status = activate_preset(SetActivePresetRequest.new(selected.preset_handle))
+            if status.status != InteractionModel::StatusCode::Success || @active_preset_handle != selected.preset_handle
+              reason = ThermostatSuggestionNotFollowingReason::NoDefinedReason
+            end
+          ensure
+            @applying_suggestion = false
+          end
         end
         if @suggestion_not_following_reason != reason
           @suggestion_not_following_reason = reason
           suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON)
-        end
-        if selected && reason.nil? && @active_preset_handle != selected.preset_handle
-          activate_preset(SetActivePresetRequest.new(selected.preset_handle))
         end
         schedule_suggestion_boundary(now)
         removed
@@ -1320,6 +1331,7 @@ module Matter
         handle = request.preset_handle
         if handle.nil?
           update_active_preset_handle(nil)
+          tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready? && !@applying_suggestion
           return InteractionModel::Status.success
         end
         return InteractionModel::Status.constraint_error if handle.size > MAX_PRESET_HANDLE_LENGTH
@@ -1347,6 +1359,7 @@ module Matter
         ensure
           @applying_preset = false
         end
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready? && !@applying_suggestion
         InteractionModel::Status.success
       end
 
@@ -2675,6 +2688,7 @@ module Matter
         if @feature_map.occupancy? && @unoccupied_heating_setpoint < limit
           self.unoccupied_heating_setpoint = limit
         end
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
       end
 
       private def max_heat_limit_changed(limit : Int16) : Nil
@@ -2682,6 +2696,7 @@ module Matter
         if @feature_map.occupancy? && @unoccupied_heating_setpoint > limit
           self.unoccupied_heating_setpoint = limit
         end
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
       end
 
       private def min_cool_limit_changed(limit : Int16) : Nil
@@ -2689,6 +2704,7 @@ module Matter
         if @feature_map.occupancy? && @unoccupied_cooling_setpoint < limit
           self.unoccupied_cooling_setpoint = limit
         end
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
       end
 
       private def max_cool_limit_changed(limit : Int16) : Nil
@@ -2696,6 +2712,7 @@ module Matter
         if @feature_map.occupancy? && @unoccupied_cooling_setpoint > limit
           self.unoccupied_cooling_setpoint = limit
         end
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
       end
 
       private def cooling_setpoint_changed(value : Int16) : Nil
@@ -2703,6 +2720,7 @@ module Matter
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value,
           @feature_map.occupancy? ? 1_u8 : nil)) if @feature_map.events?
         update_running_mode
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready? && !@applying_preset
       end
 
       private def heating_setpoint_changed(value : Int16) : Nil
@@ -2710,18 +2728,21 @@ module Matter
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value,
           @feature_map.occupancy? ? 1_u8 : nil)) if @feature_map.events?
         update_running_mode
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready? && !@applying_preset
       end
 
       private def unoccupied_cooling_setpoint_changed(value : Int16) : Nil
         update_active_preset_handle(nil) unless @applying_preset || @occupancy == 1_u8
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Cool, value, 0_u8)) if @feature_map.events? && @feature_map.occupancy?
         update_running_mode if @occupancy == 0_u8
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready? && !@applying_preset
       end
 
       private def unoccupied_heating_setpoint_changed(value : Int16) : Nil
         update_active_preset_handle(nil) unless @applying_preset || @occupancy == 1_u8
         emit_setpoint_change(SetpointChangeEvent.new(SystemMode::Heat, value, 0_u8)) if @feature_map.events? && @feature_map.occupancy?
         update_running_mode if @occupancy == 0_u8
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready? && !@applying_preset
       end
 
       private def occupancy_changed(value : UInt8) : Nil

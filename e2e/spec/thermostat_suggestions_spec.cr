@@ -90,6 +90,36 @@ describe "Matter Thermostat Suggestions guarded fixture" do
     end
   end
 
+  it "keeps a selected suggestion when a preset is temporarily outside a setpoint limit" do
+    set_suggestion_utc(device)
+    id = suggestion_id(expect_success(add_suggestion(device, "hex:01")))
+    begin
+      expect_success(device.write("thermostat", "min-heat-setpoint-limit", 2_000, 1))
+      expect_success(device.read("thermostat", "current-thermostat-suggestion", 1)).output
+        .should contain("PresetHandle")
+      read_int(device, "thermostat", "thermostat-suggestion-not-following-reason",
+        "ThermostatSuggestionNotFollowingReason", 1).should eq(0_i64)
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output.downcase
+        .should contain("null")
+
+      expect_success(device.write("thermostat", "min-heat-setpoint-limit", 700, 1))
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output
+        .should contain("01")
+      expect_success(device.read("thermostat", "thermostat-suggestion-not-following-reason", 1))
+        .output.downcase.should contain("null")
+
+      expect_success(device.chip("thermostat", "set-active-preset-request", "hex:02", device.node, "1"))
+      expect_success(device.read("thermostat", "active-preset-handle", 1)).output
+        .should contain("01")
+      expect_success(device.write("thermostat", "occupied-heating-setpoint", 2_000, 1))
+      read_int(device, "thermostat", "occupied-heating-setpoint", "OccupiedHeatingSetpoint", 1)
+        .should eq(1_900_i64)
+    ensure
+      expect_success(device.write("thermostat", "min-heat-setpoint-limit", 700, 1))
+      expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
+    end
+  end
+
   it "accepts up to MaxThermostatSuggestions and then reports resource exhaustion" do
     set_suggestion_utc(device)
     ids = Array.new(5) { suggestion_id(expect_success(add_suggestion(device, "hex:01"))) }
