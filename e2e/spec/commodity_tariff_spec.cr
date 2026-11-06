@@ -6,6 +6,7 @@ private TARIFF_ENDPOINT          = 1
 private FRIENDLY_CREDIT_ENDPOINT = 2
 private PEAK_PERIOD_ENDPOINT     = 3
 private AUXILIARY_LOAD_ENDPOINT  = 4
+private POWER_THRESHOLD_ENDPOINT = 5
 
 private def refresh_tariffs(at : UInt32) : Nil
   trigger = File.join(E2E::LOG_DIR, "matter_commodity_tariff.trigger")
@@ -110,5 +111,27 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
       endpoint: AUXILIARY_LOAD_ENDPOINT)).int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::On.value.to_i64)
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
       endpoint: AUXILIARY_LOAD_ENDPOINT)).int("RequiredState").should eq(Tariff::AuxiliaryLoadSetting::Off.value.to_i64)
+  end
+
+  it "projects power and apparent power thresholds through reads, lookup, and restart" do
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", POWER_THRESHOLD_ENDPOINT).should eq(17_i64)
+    refresh_tariffs(100_u32)
+    current = expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", POWER_THRESHOLD_ENDPOINT))
+    current.ints("PowerThreshold").should contain(2_000_i64)
+    current.int("PowerThresholdSource").should eq(Tariff::PowerThresholdSource::Contract.value.to_i64)
+    next_components = expect_success(device.read(TARIFF_CLUSTER, "next-tariff-components", POWER_THRESHOLD_ENDPOINT))
+    next_components.int("ApparentPowerThreshold").should eq(3_000_i64)
+    entry = expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
+      endpoint: POWER_THRESHOLD_ENDPOINT))
+    entry.ints("PowerThreshold").should contain(2_000_i64)
+    refresh_tariffs(43_200_u32)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", POWER_THRESHOLD_ENDPOINT))
+      .int("ApparentPowerThreshold").should eq(3_000_i64)
+    device.restart!
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", POWER_THRESHOLD_ENDPOINT).should eq(17_i64)
+    expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
+      endpoint: POWER_THRESHOLD_ENDPOINT)).ints("PowerThreshold").should contain(2_000_i64)
+    expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
+      endpoint: POWER_THRESHOLD_ENDPOINT)).int("ApparentPowerThreshold").should eq(3_000_i64)
   end
 end

@@ -62,6 +62,12 @@ module Matter
         None = 2
       end
 
+      enum PowerThresholdSource : UInt8
+        Contract  = 0
+        Regulator = 1
+        Equipment = 2
+      end
+
       struct Currency
         # The shared DataType::Currency has the same wire fields, but tariff
         # information is persisted through Storage::Record as a nested value.
@@ -226,6 +232,25 @@ module Matter
         end
       end
 
+      struct PowerThreshold
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0, optional: true)]
+        getter power_threshold : Int64?
+
+        @[TLV::Field(tag: 1, optional: true)]
+        getter apparent_power_threshold : Int64?
+
+        @[TLV::Field(tag: 2, optional: false)]
+        getter power_threshold_source : PowerThresholdSource?
+
+        def initialize(@power_threshold : Int64? = nil,
+                       @apparent_power_threshold : Int64? = nil,
+                       @power_threshold_source : PowerThresholdSource? = nil)
+        end
+      end
+
       struct TariffComponent
         include TLV::Serializable
         include Storage::Record
@@ -245,6 +270,9 @@ module Matter
         @[TLV::Field(tag: 4, optional: true)]
         getter peak_period : PeakPeriod?
 
+        @[TLV::Field(tag: 5, optional: true)]
+        getter power_threshold : PowerThreshold?
+
         @[TLV::Field(tag: 6, optional: false)]
         getter threshold : Int64?
 
@@ -258,7 +286,8 @@ module Matter
                        @threshold : Int64?, @label : String? = nil,
                        @predicted : Bool? = nil, @friendly_credit : Bool? = nil,
                        @peak_period : PeakPeriod? = nil,
-                       @auxiliary_load : AuxiliaryLoadSwitchSettings? = nil)
+                       @auxiliary_load : AuxiliaryLoadSwitchSettings? = nil,
+                       @power_threshold : PowerThreshold? = nil)
         end
       end
 
@@ -414,8 +443,9 @@ module Matter
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit) ||
                @feature_map == (Feature::Pricing | Feature::PeakPeriod) ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit | Feature::PeakPeriod) ||
-               @feature_map == (Feature::Pricing | Feature::AuxiliaryLoad)
-          raise ArgumentError.new("only Pricing, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, and Pricing+AuxiliaryLoad profiles are supported")
+               @feature_map == (Feature::Pricing | Feature::AuxiliaryLoad) ||
+               @feature_map == (Feature::Pricing | Feature::PowerThreshold)
+          raise ArgumentError.new("only Pricing, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, Pricing+AuxiliaryLoad, and Pricing+PowerThreshold profiles are supported")
         end
       end
 
@@ -618,7 +648,8 @@ module Matter
             if price.price.nil? && price.price_level.nil?
               raise ArgumentError.new("price or price level is required")
             end
-          elsif component.friendly_credit.nil? && component.peak_period.nil? && component.auxiliary_load.nil?
+          elsif component.friendly_credit.nil? && component.peak_period.nil? &&
+                component.auxiliary_load.nil? && component.power_threshold.nil?
             raise ArgumentError.new("price or price level is required")
           end
           if !@feature_map.friendly_credit? && !component.friendly_credit.nil?
@@ -630,6 +661,9 @@ module Matter
           end
           if !@feature_map.auxiliary_load? && !component.auxiliary_load.nil?
             raise ArgumentError.new("AuxiliaryLoad field requires the AuxiliaryLoad feature")
+          end
+          if !@feature_map.power_threshold? && !component.power_threshold.nil?
+            raise ArgumentError.new("PowerThreshold field requires the PowerThreshold feature")
           end
           if label = component.label
             raise ArgumentError.new("component label exceeds 128 bytes") if label.bytesize > MAX_LABEL_BYTES

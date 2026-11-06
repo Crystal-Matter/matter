@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Commodity Tariff Power Threshold
+
+- Add opt-in Pricing+PowerThreshold tariff components with optional active and
+  apparent power values and a nullable source. Current/next projections,
+  lookup, and restored publications preserve threshold-only transitions.
+
 ### Matter 1.6 Ambient Context Sensing HoldTimeMax
 
 - Cap continuous HA, HA+PRED, AUD, and OC+OI detection at the fixed
