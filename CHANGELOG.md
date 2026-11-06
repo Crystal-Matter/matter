@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   re-evaluate after transitions. Occupancy changes reapply the controlling
   preset to the active setpoint bank. Production TSUGGEST remains gated.
 
+### Matter 1.6 Commodity Tariff Peak Period
+
+- Add opt-in Pricing+PeakPeriod tariff components with severity and positive
+  period numbers. Peak-only components may omit Price; projections, lookup,
+  and restored publications preserve the published value. The official
+  chip-tool fixture checks current/next periods and restart behavior.
+
 ### Matter 1.6 Thermostat suggestion UTC loss
 
 - Clear the guarded profile's current suggestion and not-following reason when
