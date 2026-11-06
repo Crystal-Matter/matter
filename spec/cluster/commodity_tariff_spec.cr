@@ -26,6 +26,57 @@ private def tariff_publication
 end
 
 describe Tariff do
+  it "projects and persists opt-in power thresholds with nullable source" do
+    feature_map = Tariff::Feature::Pricing | Tariff::Feature::PowerThreshold
+    cluster = build(Tariff, feature_map: feature_map)
+    read(cluster, Tariff::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    expect_raises(ArgumentError, /fixed/) { cluster.feature_map = Tariff::Feature::Pricing }
+    expect_raises(ArgumentError, /Pricing/) { build(Tariff, feature_map: Tariff::Feature::PowerThreshold) }
+    baseline = tariff_publication
+    components = [
+      Tariff::TariffComponent.new(30_u32, nil, nil, power_threshold: Tariff::PowerThreshold.new(power_threshold: 2_000_i64,
+        power_threshold_source: Tariff::PowerThresholdSource::Contract)),
+      Tariff::TariffComponent.new(31_u32,
+        Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
+        power_threshold: Tariff::PowerThreshold.new(apparent_power_threshold: 3_000_i64)),
+    ]
+    publication = Tariff::Publication.new(baseline.info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, components, baseline.tariff_periods)
+    cluster.publish(publication, at: 100_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.power_threshold
+      .as(Tariff::PowerThreshold).power_threshold.should eq(2_000_i64)
+    cluster.next_tariff_components.as(Array(Tariff::TariffComponent)).first.power_threshold
+      .as(Tariff::PowerThreshold).apparent_power_threshold.should eq(3_000_i64)
+    current = read_tlv(cluster, Tariff::ATTR_CURRENT_TARIFF_COMPONENTS).as_list.first.as_structure
+    current.has_key?(1_u8).should be_false
+    current[5_u8].as_structure[0_u8].value.should eq(2_000_i64)
+    current[5_u8].as_structure.has_key?(1_u8).should be_false
+    current[5_u8].as_structure[2_u8].value.should eq(Tariff::PowerThresholdSource::Contract.value)
+    following = read_tlv(cluster, Tariff::ATTR_NEXT_TARIFF_COMPONENTS).as_list.first.as_structure
+    following[5_u8].as_structure.has_key?(0_u8).should be_false
+    following[5_u8].as_structure[1_u8].value.should eq(3_000_i64)
+    following[5_u8].as_structure[2_u8].value.should be_nil
+    response = invoke(cluster, Tariff::CMD_GET_TARIFF_COMPONENT,
+      Tariff::GetTariffComponentRequest.new(30_u32)).as(Matter::Cluster::CommandResponse)
+    Tariff::GetTariffComponentResponse.from_tlv(response.response.as(TLV::Any))
+      .tariff_component.power_threshold.as(Tariff::PowerThreshold).power_threshold_source
+      .should eq(Tariff::PowerThresholdSource::Contract)
+    cluster.refresh_at(43_200_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.power_threshold
+      .as(Tariff::PowerThreshold).apparent_power_threshold.should eq(3_000_i64)
+    restored = build(Tariff, feature_map: feature_map)
+    restored.restore_state(cluster.save_state)
+    restored.refresh_at(43_200_u32)
+    restored.current_tariff_components.as(Array(Tariff::TariffComponent)).first.power_threshold
+      .as(Tariff::PowerThreshold).apparent_power_threshold.should eq(3_000_i64)
+
+    pricing = tariff_fixture
+    expect_raises(ArgumentError, /PowerThreshold/) { pricing.publish(publication, at: 100_u32) }
+    pricing.publish(baseline, at: 100_u32)
+    read_tlv(pricing, Tariff::ATTR_TARIFF_COMPONENTS).as_list.first.as_structure.has_key?(5_u8).should be_false
+  end
+
   it "projects and persists opt-in auxiliary switch settings" do
     feature_map = Tariff::Feature::Pricing | Tariff::Feature::AuxiliaryLoad
     cluster = build(Tariff, feature_map: feature_map)

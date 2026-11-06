@@ -41,6 +41,11 @@ module MatterCommodityTariff
         as: :auxiliary_load_tariff
     end
 
+    endpoint 5, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::PowerThreshold,
+        as: :power_threshold_tariff
+    end
+
     protected def before_start : Nil
       unless commodity_tariff.tariff_info
         info = Tariff::TariffInformation.new("Daily energy", "Crystal Utility",
@@ -119,6 +124,28 @@ module MatterCommodityTariff
           0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
           components, periods), at: 100_u32)
       end
+      unless power_threshold_tariff.tariff_info
+        info = Tariff::TariffInformation.new("Power thresholds", "Crystal Utility",
+          Tariff::Currency.new(36_u16, 2_u8), Tariff::BlockMode::NoBlock)
+        entries = [Tariff::DayEntry.new(1_u32, 0_u16), Tariff::DayEntry.new(2_u32, 720_u16)]
+        pattern = Tariff::DayPattern.new(1_u32, Tariff::ALL_WEEKDAYS, [1_u32, 2_u32])
+        calendar = Tariff::CalendarPeriod.new(0_u32, [1_u32])
+        components = [
+          Tariff::TariffComponent.new(1_u32, nil, nil, "Contract threshold",
+            power_threshold: Tariff::PowerThreshold.new(power_threshold: 2_000_i64,
+              power_threshold_source: Tariff::PowerThresholdSource::Contract)),
+          Tariff::TariffComponent.new(2_u32,
+            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
+            "Apparent threshold", power_threshold: Tariff::PowerThreshold.new(apparent_power_threshold: 3_000_i64)),
+        ]
+        periods = [
+          Tariff::TariffPeriod.new("Contract threshold", [1_u32], [1_u32]),
+          Tariff::TariffPeriod.new("Apparent threshold", [2_u32], [2_u32]),
+        ]
+        power_threshold_tariff.publish(Tariff::Publication.new(info, Tariff::TariffUnit::KWh,
+          0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
+          components, periods), at: 100_u32)
+      end
       spawn do
         loop do
           sleep 60.seconds
@@ -127,6 +154,7 @@ module MatterCommodityTariff
           friendly_credit_tariff.refresh_at(now)
           peak_period_tariff.refresh_at(now)
           auxiliary_load_tariff.refresh_at(now)
+          power_threshold_tariff.refresh_at(now)
         end
       end
       super
@@ -155,6 +183,7 @@ module MatterCommodityTariff
             friendly_credit_tariff.refresh_at(at)
             peak_period_tariff.refresh_at(at)
             auxiliary_load_tariff.refresh_at(at)
+            power_threshold_tariff.refresh_at(at)
             File.write("#{path}.ack", nonce)
           end
         end
