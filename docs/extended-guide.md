@@ -783,6 +783,9 @@ the newly active setpoint bank. If a setpoint limit temporarily makes a
 suggested preset inapplicable, the current suggestion remains selected with a
 non-null zero not-following reason. Relaxing that limit resumes following;
 direct preset and setpoint changes also trigger immediate re-evaluation.
+In this guarded policy, a direct preset or setpoint change without a hold is
+immediately superseded by the selected suggestion; an indefinite setpoint hold
+retains the manual choice and reports the OngoingHold reason until released.
 Production TSUGGEST remains gated until the normal class and its time source
 are verified with official chip-tool.
 
