@@ -14,6 +14,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   re-evaluate after transitions. Occupancy changes reapply the controlling
   preset to the active setpoint bank. Production TSUGGEST remains gated.
 
+### Matter 1.6 Ambient Context Sensing prediction profile
+
+- Add opt-in HA+PRED with a trusted Matter epoch clock and atomic host forecast
+  replacement. Validate supported activity tags, confidence, ordering, and
+  future timestamps; prune started predictions on clock changes and reads.
+  The synthetic endpoint exercises the wire list with official chip-tool.
+
 ### Matter 1.6 Commodity Tariff Peak Period
 
 - Add opt-in Pricing+PeakPeriod tariff components with severity and positive

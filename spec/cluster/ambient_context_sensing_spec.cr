@@ -120,6 +120,120 @@ describe Ambient do
   end
 end
 
+describe "Ambient Context Sensing HA+PRED profile" do
+  unknown = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+  walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+  feature_map = Ambient::Feature::HumanActivity | Ambient::Feature::PredictedActivity
+
+  it "advertises the conditional prediction list and its canonical Matter epoch wire fields" do
+    now = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown, walking], prediction_clock: -> : UInt32? { now })
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    attribute_ids(cluster).should contain(Ambient::ATTR_PREDICTED_ACTIVITY)
+    read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+
+    changed = [] of UInt32
+    cluster.on_attribute_changed = ->(_ep : UInt16, _cl : UInt32, attr : UInt32) { changed << attr; nil }
+    forecast = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [walking], 80_u8)
+    version = cluster.data_version
+    cluster.replace_predicted_activities([forecast])
+    cluster.data_version.should eq(version + 1_u32)
+    changed.should eq([Ambient::ATTR_PREDICTED_ACTIVITY])
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire.size.should eq(1)
+    decoded = Ambient::PredictedActivityStruct.from_tlv(wire[0])
+    decoded.start_timestamp.should eq(120_u32)
+    decoded.end_timestamp.should eq(180_u32)
+    decoded.ambient_context_type.should eq([walking])
+    decoded.confidence.should eq(80_u8)
+    wire[0].as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 5_u8])
+    cluster.replace_predicted_activities([forecast])
+    cluster.data_version.should eq(version + 1_u32)
+
+    now = 120_u32
+    read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
+    cluster.data_version.should eq(version + 2_u32)
+    changed.should eq([Ambient::ATTR_PREDICTED_ACTIVITY, Ambient::ATTR_PREDICTED_ACTIVITY])
+  end
+
+  it "validates the entire replacement before publication and prunes on clock advance" do
+    now = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown, walking], prediction_clock: -> : UInt32? { now })
+    first = Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking], 50_u8)
+    second = Ambient::PredictedActivityStruct.new(130_u32, 140_u32, [unknown], 75_u8)
+    cluster.replace_predicted_activities([first, second])
+    version = cluster.data_version
+    expect_raises(ArgumentError, /ordered/) do
+      cluster.replace_predicted_activities([first,
+                                            Ambient::PredictedActivityStruct.new(120_u32, 150_u32, [walking], 50_u8)])
+    end
+    expect_raises(ArgumentError, /future/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(100_u32, 120_u32, [walking], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /supported/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(110_u32, 120_u32,
+          [Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Sleeping)], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /one supported/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking, unknown], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /too many/) do
+      cluster.replace_predicted_activities(Array.new(Ambient::MAX_PREDICTED_ACTIVITIES + 1) { first })
+    end
+    cluster.data_version.should eq(version)
+    cluster.predicted_activity.size.should eq(2)
+    now = 110_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([second])
+    now = 130_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+  end
+
+  it "rejects unsupported shapes, missing clocks, and unavailable time" do
+    expect_raises(ArgumentError, /clock/) { build(Ambient, feature_map: feature_map) }
+    now : UInt32? = nil
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_activity_tags: [unknown, walking], prediction_clock: -> : UInt32? { now })
+    expect_raises(ArgumentError, /unavailable/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking], 50_u8),
+      ])
+    end
+    now = 100_u32
+    cluster.replace_predicted_activities([
+      Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking], 50_u8),
+    ])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+    expect_raises(ArgumentError, /precede/) do
+      Ambient::PredictedActivityStruct.new(120_u32, 120_u32, [walking], 50_u8)
+    end
+    expect_raises(ArgumentError, /confidence/) do
+      Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking], 101_u8)
+    end
+    expect_raises(ArgumentError, /tags/) do
+      Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [] of Ambient::SemanticTag, 50_u8)
+    end
+    normal = build(Ambient, supported_activity_tags: [unknown, walking])
+    attribute_ids(normal).should_not contain(Ambient::ATTR_PREDICTED_ACTIVITY)
+    expect_raises(ArgumentError, /not enabled/) do
+      normal.replace_predicted_activities([] of Ambient::PredictedActivityStruct)
+    end
+  end
+end
+
 describe "Ambient Context Sensing AUD profile" do
   unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
   barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
