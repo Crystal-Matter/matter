@@ -26,6 +26,53 @@ private def tariff_publication
 end
 
 describe Tariff do
+  it "projects and persists opt-in friendly credit transitions without changing Pricing-only components" do
+    feature_map = Tariff::Feature::Pricing | Tariff::Feature::FriendlyCredit
+    cluster = build(Tariff, feature_map: feature_map)
+    read(cluster, Tariff::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    expect_raises(ArgumentError, /fixed/) { cluster.feature_map = Tariff::Feature::Pricing }
+    expect_raises(ArgumentError, /Pricing\+FriendlyCredit/) do
+      build(Tariff, feature_map: Tariff::Feature::FriendlyCredit)
+    end
+    baseline = tariff_publication
+    components = [
+      Tariff::TariffComponent.new(30_u32, nil, nil, friendly_credit: true),
+      Tariff::TariffComponent.new(31_u32,
+        Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
+        friendly_credit: false),
+    ]
+    publication = Tariff::Publication.new(baseline.info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, components, baseline.tariff_periods)
+    cluster.publish(publication, at: 100_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_true
+    cluster.next_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_false
+    current = read_tlv(cluster, Tariff::ATTR_CURRENT_TARIFF_COMPONENTS).as_list.first.as_structure
+    current[2_u8].as_bool.should be_true
+    current.has_key?(1_u8).should be_false
+    response = invoke(cluster, Tariff::CMD_GET_TARIFF_COMPONENT,
+      Tariff::GetTariffComponentRequest.new(30_u32)).as(Matter::Cluster::CommandResponse)
+    Tariff::GetTariffComponentResponse.from_tlv(response.response.as(TLV::Any))
+      .tariff_component.friendly_credit.should be_true
+    cluster.refresh_at(43_200_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_false
+    restored = build(Tariff, feature_map: feature_map)
+    restored.restore_state(cluster.save_state)
+    restored.refresh_at(43_200_u32)
+    restored.current_tariff_components.as(Array(Tariff::TariffComponent)).first.friendly_credit.should be_false
+    read_tlv(restored, Tariff::ATTR_TARIFF_COMPONENTS).as_list.first.as_structure[2_u8].as_bool.should be_true
+
+    pricing = tariff_fixture
+    expect_raises(ArgumentError, /FriendlyCredit/) { pricing.publish(publication, at: 100_u32) }
+    no_price = Tariff::Publication.new(baseline.info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, [Tariff::TariffComponent.new(30_u32, nil, nil)] + baseline.components.last(1),
+      baseline.tariff_periods)
+    expect_raises(ArgumentError, /price/) { pricing.publish(no_price, at: 100_u32) }
+    pricing.publish(baseline, at: 100_u32)
+    read_tlv(pricing, Tariff::ATTR_TARIFF_COMPONENTS).as_list.first.as_structure.has_key?(2_u8).should be_false
+  end
+
   it "declares revision-one mandatory attributes and operate-level lookup commands" do
     cluster = tariff_fixture
     cluster.cluster_id.id.should eq(0x0700_u32)

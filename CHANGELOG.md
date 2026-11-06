@@ -14,6 +14,20 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Cancel the pending time-bound reevaluation and reselect after UTC returns.
   Production TSUGGEST remains gated pending schedule and occupancy arbitration.
 
+### Matter 1.6 Commodity Tariff Friendly Credit
+
+- Add opt-in Pricing+FriendlyCredit tariff components. Published entry and exit
+  states appear in current/next projections and component lookup responses,
+  survive restart, and are verified through the official chip-tool fixture.
+  Pricing-only components retain their existing wire shape.
+
+### Matter 1.6 Ambient Context Sensing sound profile
+
+- Add opt-in AUD-only sensing with host-classified Identified Sound tags,
+  `AudioContextDetected`, and HoldTime-driven start/end events. The synthetic
+  endpoint exercises its wire surface through official chip-tool; physical
+  sensing and classification remain application-owned.
+
 ### Matter 1.6 Messages protected presentation
 
 - Add opt-in PROT support through a host-owned authentication decision scoped

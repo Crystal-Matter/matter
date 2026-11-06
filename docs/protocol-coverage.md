@@ -125,7 +125,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x042E | Total Volatile Organic Compounds Concentration Measurement | 5 | 5 | — | — |
 | 0x042F | Radon Concentration Measurement | 5 | 5 | — | — |
 | 0x0430 | Soil Measurement Cluster | 1 | 1 | — | Fixed accuracy limits and nullable validated percentage reading; Soil Sensor chip-tool E2E |
-| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — | Opt-in HA or combined OC+OI provisional profiles; AUD, PRED and other feature combinations remain unavailable |
+| 0x0431 | Ambient Context Sensing Cluster | 1 | 1 | — | Opt-in HA, AUD, or combined OC+OI provisional profiles; PRED and other feature combinations remain unavailable |
 | 0x0451 | Wi-Fi Network Management Cluster | 1 | 1 | — | — |
 | 0x0452 | Thread Border Router Management Cluster | 1 | 1 | — | — |
 | 0x0453 | Thread Network Directory Cluster | 1 | 1 | — | — |
@@ -150,7 +150,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
-| 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | Pricing calendar; other feature families unavailable |
+| 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | Pricing calendar and opt-in PRICE+FCRED transitions; other feature families unavailable |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
