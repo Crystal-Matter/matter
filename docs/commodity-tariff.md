@@ -1,7 +1,7 @@
 # Commodity Tariff (Matter 1.6)
 
 `Cluster::CommodityTariff` implements revision 1 of cluster `0x0700` with the
-Pricing feature and opt-in FriendlyCredit, PeakPeriod, and AuxiliaryLoad profiles. A host publishes
+Pricing feature and opt-in FriendlyCredit, PeakPeriod, AuxiliaryLoad, and PowerThreshold profiles. A host publishes
 a validated calendar with `publish`, then
 calls `refresh_at` with Matter epoch seconds as its clock advances. The server
 exposes all mandatory base attributes, including current and next day/entry
@@ -39,12 +39,17 @@ carry a price or price level. The AuxiliaryLoad profile carries one optional
 and a `required_state` of `Off`, `On`, or `None`. A switch-only component may
 omit Price. Current and next projections, lookup responses, and restored
 publications preserve the setting. The tariff host publishes the desired state;
-physical switch control belongs to the host or another application. Power
-Threshold and Randomization feature bits are not advertised.
+physical switch control belongs to the host or another application. The
+PowerThreshold profile carries optional signed active power (mW) and apparent
+power (mVA) values plus a required nullable source (`Contract`, `Regulator`, or
+`Equipment`) in a component. A threshold-only component may omit Price; current
+and next projections, lookup, and restored publications preserve the values.
+The tariff host publishes threshold changes, while metering and load control
+remain with the host. The Randomization feature is not advertised.
 The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
 `examples/matter_commodity_tariff_device.cr` publishes a synthetic daily
-Pricing tariff and separate FriendlyCredit, PeakPeriod, and AuxiliaryLoad profiles on Aggregator
+Pricing tariff and separate FriendlyCredit, PeakPeriod, AuxiliaryLoad, and PowerThreshold profiles on Aggregator
 endpoints. The official chip-tool E2E exercises all profiles and host-driven
 transitions.
