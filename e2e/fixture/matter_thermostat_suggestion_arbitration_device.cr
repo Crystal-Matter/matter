@@ -47,7 +47,7 @@ module MatterThermostatSuggestionArbitrationFixture
 
     OCCUPANCY_PATH = "/e2e/logs/matter_thermostat_suggestion_arbitration.occupancy"
 
-    identity vendor: "Spider-Gazelle", product: "Crystal Suggestion Arbitration Thermostat",
+    identity vendor: "Spider-Gazelle", product: "Crystal Suggestion Thermostat",
       vendor_id: Matter::SetupPayload.test_vendor_id,
       product_id: rand(0x0001_u16..0xFFFF_u16),
       discriminator: Matter::SetupPayload.generate_random_discriminator,
