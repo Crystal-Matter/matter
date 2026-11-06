@@ -7,8 +7,43 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, and AUD fixture" do
+  it "commissions the HA, OC+OI, AUD, and HA+PRED fixture" do
     device.commission!
+  end
+
+  it "reads host-published HA predictions and prunes them when the test clock advances" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 4).should eq(17)
+    initial = expect_success(device.read("ambientcontextsensing", "predicted-activity", 4))
+    initial.output.should_not contain("StartTimestamp")
+
+    File.delete(ack) if File.exists?(ack)
+    nonce = "predict-walking:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not publish prediction" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", 4))
+    forecast.output.should contain("StartTimestamp")
+    forecast.output.should contain("EndTimestamp")
+    forecast.output.should contain("Tag: 3")
+    forecast.output.should contain("Confidence: 80")
+    forecast.output.should contain("Confidence: 60")
+
+    File.delete(ack)
+    nonce = "advance-prediction-clock:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not advance prediction clock" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    remaining = expect_success(device.read("ambientcontextsensing", "predicted-activity", 4))
+    remaining.output.should_not contain("Confidence: 80")
+    remaining.output.should contain("Confidence: 60")
   end
 
   it "advertises AUD and reports a host-classified sound and expiry" do
