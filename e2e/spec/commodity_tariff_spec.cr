@@ -1,7 +1,22 @@
 require "./e2e_helper"
 
-private TARIFF_CLUSTER  = "commoditytariff"
-private TARIFF_ENDPOINT = 1
+private TARIFF_CLUSTER           = "commoditytariff"
+private TARIFF_ENDPOINT          = 1
+private FRIENDLY_CREDIT_ENDPOINT = 2
+
+private def refresh_friendly_credit(at : UInt32) : Nil
+  trigger = File.join(E2E::LOG_DIR, "matter_commodity_tariff.trigger")
+  ack = "#{trigger}.ack"
+  File.delete(ack) if File.exists?(ack)
+  nonce = "refresh:#{at}:#{Time.utc.to_unix_ms}"
+  File.write("#{trigger}.tmp", nonce)
+  File.rename("#{trigger}.tmp", trigger)
+  deadline = Time.instant + 10.seconds
+  until File.exists?(ack) && File.read(ack) == nonce
+    raise "Commodity Tariff host did not acknowledge refresh" if Time.instant >= deadline
+    sleep 100.milliseconds
+  end
+end
 
 describe "Matter 1.6 Commodity Tariff interoperability" do
   device = E2E::Device["matter_commodity_tariff"]
@@ -25,5 +40,26 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
     device.restart!
     expect_success(device.read(TARIFF_CLUSTER, "tariff-info", TARIFF_ENDPOINT)).output.should contain("Daily energy")
     expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", TARIFF_ENDPOINT)).output.should contain("Energy")
+  end
+
+  it "projects FriendlyCredit entry and exit on an opt-in endpoint and retains the published tariff" do
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(3_i64)
+    refresh_friendly_credit(100_u32)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
+      .bool("FriendlyCredit").should be_true
+    expect_success(device.read(TARIFF_CLUSTER, "next-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
+      .bool("FriendlyCredit").should be_false
+    entry = expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
+      endpoint: FRIENDLY_CREDIT_ENDPOINT))
+    entry.bool("FriendlyCredit").should be_true
+    refresh_friendly_credit(43_200_u32)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
+      .bool("FriendlyCredit").should be_false
+    device.restart!
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(3_i64)
+    expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
+      endpoint: FRIENDLY_CREDIT_ENDPOINT)).bool("FriendlyCredit").should be_true
+    expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
+      endpoint: FRIENDLY_CREDIT_ENDPOINT)).bool("FriendlyCredit").should be_false
   end
 end

@@ -1,7 +1,8 @@
 # Commodity Tariff (Matter 1.6)
 
 `Cluster::CommodityTariff` implements revision 1 of cluster `0x0700` with the
-Pricing feature. A host publishes a validated calendar with `publish`, then
+Pricing feature and an opt-in Pricing+FriendlyCredit profile. A host publishes
+a validated calendar with `publish`, then
 calls `refresh_at` with Matter epoch seconds as its clock advances. The server
 exposes all mandatory base attributes, including current and next day/entry
 projections, and answers `GetTariffComponent` and `GetDayEntry` at Operate
@@ -21,11 +22,18 @@ tariff exposes null metadata and empty component and period lists. Call
 The schedule projection uses UTC dates. Providers whose tariff follows a local
 time zone must convert their timetable before publishing or supply a host
 scheduler that refreshes at the appropriate transitions. Randomized day
-entries are not supported. Friendly Credit,
+entries are not supported. The FriendlyCredit profile carries an optional
+boolean in each tariff component: `true` marks entry to a friendly credit
+period and `false` marks exit. Current and next component projections, lookup
+responses, and restored publications preserve that value. Pricing-only servers
+reject components with a FriendlyCredit value. The host publishes the schedule;
+a meter or application owns credit accounting and supply control.
 Auxiliary Load, Peak Period, Power Threshold, and Randomization feature bits
-are not advertised. Price components must carry a price or price level.
+are not advertised. A component with a Price field must carry a price or price
+level; a FriendlyCredit-only transition may omit Price.
 The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
 `examples/matter_commodity_tariff_device.cr` publishes a synthetic daily
-tariff on an Aggregator endpoint and is exercised with official chip-tool.
+Pricing tariff and a separate FriendlyCredit profile on Aggregator endpoints.
+The official chip-tool E2E exercises both profiles and host-driven entry/exit.
