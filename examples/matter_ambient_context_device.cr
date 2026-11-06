@@ -8,12 +8,16 @@ module MatterAmbientContext
     include Examples::Console
 
     alias Ambient = Matter::Cluster::AmbientContextSensing
-    UNKNOWN_OBJECT = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
-    PERSON_OBJECT  = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
-    UNKNOWN_SOUND  = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
-    BARKING_SOUND  = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+    UNKNOWN_OBJECT            = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+    PERSON_OBJECT             = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+    UNKNOWN_SOUND             = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+    BARKING_SOUND             = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+    UNKNOWN_ACTIVITY          = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+    WALKING_ACTIVITY          = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+    MATTER_EPOCH_UNIX_SECONDS = 946_684_800_i64
 
     @hook_active = false
+    @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Ambient Context",
       vendor_id: Matter::SetupPayload.test_vendor_id,
@@ -51,6 +55,14 @@ module MatterAmbientContext
         as: :sound_ambient
     end
 
+    endpoint 4, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::PredictedActivity,
+        supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        prediction_clock: -> { @prediction_now.as(UInt32?) },
+        as: :predicted_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -78,6 +90,19 @@ module MatterAmbientContext
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("barking:")
             sound_ambient.observe_sound(BARKING_SOUND)
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("predict-walking:")
+            first_start = @prediction_now + 120_u32
+            predicted_ambient.replace_predicted_activities([
+              Ambient::PredictedActivityStruct.new(first_start, first_start + 60_u32,
+                [WALKING_ACTIVITY], 80_u8),
+              Ambient::PredictedActivityStruct.new(first_start + 120_u32, first_start + 180_u32,
+                [UNKNOWN_ACTIVITY], 60_u8),
+            ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("advance-prediction-clock:")
+            @prediction_now += 120_u32
+            predicted_ambient.refresh_predicted_activities
             File.write("#{path}.ack", nonce)
           end
         end

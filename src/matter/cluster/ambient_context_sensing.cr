@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, AUD, or the OC+OI profile.
+    # One active detection is supported for HA, HA+PRED, AUD, or OC+OI.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
 
@@ -19,6 +19,9 @@ module Matter
       IDENTIFIED_SOUND_NAMESPACE  = 0x4a_u8
       MAX_SUPPORTED_TYPES         =      50
       MAX_SENSED_TYPES            =       2
+      MAX_PREDICTED_ACTIVITIES    =      20
+      MAX_PREDICTION_TAGS         =     100
+      MAX_CONFIDENCE              =  100_u8
       MAX_SIMULTANEOUS_DETECTIONS =   10_u8
       SINGLE_DETECTION_LIMIT      =    1_u8
 
@@ -144,6 +147,38 @@ module Matter
         end
       end
 
+      # HA-only prediction: OC fields are absent because this profile does
+      # not advertise ObjectCounting. Timestamps use the Matter epoch.
+      struct PredictedActivityStruct
+        include TLV::Serializable
+
+        @[TLV::Field(tag: 0)]
+        getter start_timestamp : UInt32
+
+        @[TLV::Field(tag: 1)]
+        getter end_timestamp : UInt32
+
+        @[TLV::Field(tag: 2)]
+        getter ambient_context_type : Array(SemanticTag)
+
+        @[TLV::Field(tag: 5)]
+        getter confidence : UInt8
+
+        def initialize(@start_timestamp : UInt32, @end_timestamp : UInt32,
+                       tags : Array(SemanticTag), @confidence : UInt8)
+          raise ArgumentError.new("prediction start must precede end") unless @start_timestamp < @end_timestamp
+          unless (1..MAX_PREDICTION_TAGS).includes?(tags.size)
+            raise ArgumentError.new("prediction must contain 1..#{MAX_PREDICTION_TAGS} activity tags")
+          end
+          raise ArgumentError.new("prediction confidence must be at most 100") if @confidence > MAX_CONFIDENCE
+          @ambient_context_type = tags.dup
+        end
+
+        def copy : self
+          self.class.new(@start_timestamp, @end_timestamp, @ambient_context_type, @confidence)
+        end
+      end
+
       struct HoldTimeLimits
         include TLV::Serializable
 
@@ -221,6 +256,8 @@ module Matter
       attribute 0x000A, :hold_time_limits, HoldTimeLimits,
         default: HoldTimeLimits.new, fixed: true,
         validate: :reject_fixed_attribute_change!
+      attribute 0x000B, :predicted_activity, Array(PredictedActivityStruct),
+        computed: true, requires: :predicted_activity
 
       event 0x00, :ambient_context_detect_started, priority: :info,
         requires: [:human_activity, :object_identification, :sound_identification], payload: AmbientContextDetectStartedEvent
@@ -249,6 +286,7 @@ module Matter
       @supported_activity_tags : Array(SemanticTag)
       @supported_object_tags : Array(SemanticTag)
       @supported_sound_tags : Array(SemanticTag)
+      @predicted_activities = [] of PredictedActivityStruct
       @last_observed_at : Time::Instant? = nil
       @event_start_time = 0_u64
       @expiry_generation = 0_u64
@@ -261,11 +299,16 @@ module Matter
                      supported_object_tags : Array(SemanticTag) = [] of SemanticTag,
                      supported_sound_tags : Array(SemanticTag) = [] of SemanticTag,
                      object_count_config : ObjectCountConfig? = nil,
+                     @prediction_clock : Proc(UInt32?)? = nil,
                      @feature_map : Feature = Feature::HumanActivity)
         unless @feature_map == Feature::HumanActivity ||
+               @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
                @feature_map == Feature::SoundIdentification
-          raise ArgumentError.new("only HumanActivity, SoundIdentification, or ObjectCounting+ObjectIdentification is implemented")
+          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, SoundIdentification, or ObjectCounting+ObjectIdentification is implemented")
+        end
+        if @feature_map.predicted_activity? && @prediction_clock.nil?
+          raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
         end
         validate_detection_limit(@simultaneous_detection_limit)
         @hold_time = hold_time || @hold_time_limits.hold_time_default
@@ -313,6 +356,53 @@ module Matter
         else
           @supported_sound_tags.dup
         end
+      end
+
+      # Replace the complete host forecast after validation. The host owns
+      # the predictor and supplies a trusted Matter epoch clock callback.
+      def replace_predicted_activities(predictions : Array(PredictedActivityStruct)) : Nil
+        raise ArgumentError.new("PredictedActivity feature is not enabled") unless @feature_map.predicted_activity?
+        @state_mutex.synchronize do
+          now = @prediction_clock.not_nil!.call
+          raise ArgumentError.new("prediction clock is unavailable") unless now
+          raise ArgumentError.new("too many predicted activities") if predictions.size > MAX_PREDICTED_ACTIVITIES
+          previous_end : UInt32? = nil
+          replacement = predictions.map do |prediction|
+            raise ArgumentError.new("prediction must start in the future") unless prediction.start_timestamp > now
+            if previous_end && prediction.start_timestamp <= previous_end
+              raise ArgumentError.new("predictions must be ordered and non-overlapping")
+            end
+            tags = prediction.ambient_context_type
+            unless tags.size == 1 && tags.uniq.size == tags.size && tags.all? { |tag| @supported_activity_tags.includes?(tag) }
+              raise ArgumentError.new("prediction must use one supported human activity tag")
+            end
+            previous_end = prediction.end_timestamp
+            prediction.copy
+          end
+          if @predicted_activities != replacement
+            @predicted_activities = replacement
+            increment_version_and_notify(ATTR_PREDICTED_ACTIVITY)
+          end
+        end
+      end
+
+      # A started prediction is no longer an upcoming change. The host can
+      # call this on clock changes; reads also refresh the exposed list.
+      def refresh_predicted_activities : Nil
+        return unless @feature_map.predicted_activity?
+        @state_mutex.synchronize do
+          now = @prediction_clock.not_nil!.call
+          remaining = now ? @predicted_activities.select { |item| item.start_timestamp > now } : [] of PredictedActivityStruct
+          if @predicted_activities != remaining
+            @predicted_activities = remaining
+            increment_version_and_notify(ATTR_PREDICTED_ACTIVITY)
+          end
+        end
+      end
+
+      def predicted_activity : Array(PredictedActivityStruct)
+        refresh_predicted_activities
+        @state_mutex.synchronize { @predicted_activities.map(&.copy) }
       end
 
       def object_identified? : Bool
