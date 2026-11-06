@@ -1,7 +1,7 @@
 # Commodity Tariff (Matter 1.6)
 
 `Cluster::CommodityTariff` implements revision 1 of cluster `0x0700` with the
-Pricing feature and an opt-in Pricing+FriendlyCredit profile. A host publishes
+Pricing feature and opt-in FriendlyCredit and PeakPeriod profiles. A host publishes
 a validated calendar with `publish`, then
 calls `refresh_at` with Matter epoch seconds as its clock advances. The server
 exposes all mandatory base attributes, including current and next day/entry
@@ -28,12 +28,18 @@ period and `false` marks exit. Current and next component projections, lookup
 responses, and restored publications preserve that value. Pricing-only servers
 reject components with a FriendlyCredit value. The host publishes the schedule;
 a meter or application owns credit accounting and supply control.
-Auxiliary Load, Peak Period, Power Threshold, and Randomization feature bits
-are not advertised. A component with a Price field must carry a price or price
-level; a FriendlyCredit-only transition may omit Price.
+The PeakPeriod profile carries an optional `PeakPeriod` structure in each
+component, with `severity` (`Unused`, `Low`, `Medium`, `High`) and a positive
+`period` number. Current and next projections, lookup responses, and restored
+publications preserve it. Components reporting only a peak period may omit
+Price. The profile is available with or without FriendlyCredit, alongside
+Pricing; unadvertised fields are rejected. A component with a Price field must
+carry a price or price level. Auxiliary Load, Power Threshold, and Randomization
+feature bits are not advertised.
 The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
 `examples/matter_commodity_tariff_device.cr` publishes a synthetic daily
-Pricing tariff and a separate FriendlyCredit profile on Aggregator endpoints.
-The official chip-tool E2E exercises both profiles and host-driven entry/exit.
+Pricing tariff and separate FriendlyCredit and PeakPeriod profiles on Aggregator
+endpoints. The official chip-tool E2E exercises all profiles and host-driven
+transitions.

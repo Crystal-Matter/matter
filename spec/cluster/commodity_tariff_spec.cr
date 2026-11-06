@@ -26,6 +26,62 @@ private def tariff_publication
 end
 
 describe Tariff do
+  it "projects and persists opt-in peak periods without changing Pricing or FriendlyCredit" do
+    feature_map = Tariff::Feature::Pricing | Tariff::Feature::PeakPeriod
+    cluster = build(Tariff, feature_map: feature_map)
+    read(cluster, Tariff::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    expect_raises(ArgumentError, /fixed/) { cluster.feature_map = Tariff::Feature::Pricing }
+    baseline = tariff_publication
+    components = [
+      Tariff::TariffComponent.new(30_u32, nil, nil,
+        peak_period: Tariff::PeakPeriod.new(Tariff::PeakPeriodSeverity::Low, 1_u16)),
+      Tariff::TariffComponent.new(31_u32,
+        Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
+        peak_period: Tariff::PeakPeriod.new(Tariff::PeakPeriodSeverity::High, 2_u16)),
+    ]
+    publication = Tariff::Publication.new(baseline.info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, components, baseline.tariff_periods)
+    cluster.publish(publication, at: 100_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.peak_period
+      .as(Tariff::PeakPeriod).severity.should eq(Tariff::PeakPeriodSeverity::Low)
+    cluster.next_tariff_components.as(Array(Tariff::TariffComponent)).first.peak_period
+      .as(Tariff::PeakPeriod).period.should eq(2_u16)
+    current = read_tlv(cluster, Tariff::ATTR_CURRENT_TARIFF_COMPONENTS).as_list.first.as_structure
+    current.has_key?(1_u8).should be_false
+    current[4_u8].as_structure[0_u8].value.should eq(Tariff::PeakPeriodSeverity::Low.value)
+    current[4_u8].as_structure[1_u8].value.should eq(1_u16)
+    response = invoke(cluster, Tariff::CMD_GET_TARIFF_COMPONENT,
+      Tariff::GetTariffComponentRequest.new(30_u32)).as(Matter::Cluster::CommandResponse)
+    Tariff::GetTariffComponentResponse.from_tlv(response.response.as(TLV::Any))
+      .tariff_component.peak_period.as(Tariff::PeakPeriod).period.should eq(1_u16)
+    cluster.refresh_at(43_200_u32)
+    cluster.current_tariff_components.as(Array(Tariff::TariffComponent)).first.peak_period
+      .as(Tariff::PeakPeriod).severity.should eq(Tariff::PeakPeriodSeverity::High)
+    restored = build(Tariff, feature_map: feature_map)
+    restored.restore_state(cluster.save_state)
+    restored.refresh_at(43_200_u32)
+    restored.current_tariff_components.as(Array(Tariff::TariffComponent)).first.peak_period
+      .as(Tariff::PeakPeriod).period.should eq(2_u16)
+
+    pricing = tariff_fixture
+    expect_raises(ArgumentError, /PeakPeriod/) { pricing.publish(publication, at: 100_u32) }
+    zero_peak = components.dup
+    zero_peak[0] = Tariff::TariffComponent.new(30_u32, nil, nil,
+      peak_period: Tariff::PeakPeriod.new(Tariff::PeakPeriodSeverity::Low, 0_u16))
+    invalid = Tariff::Publication.new(baseline.info, baseline.unit, baseline.start_date,
+      baseline.day_entries, baseline.day_patterns, baseline.calendar_periods,
+      baseline.individual_days, zero_peak, baseline.tariff_periods)
+    expect_raises(ArgumentError, /PeakPeriod number/) { cluster.publish(invalid, at: 100_u32) }
+    pricing.publish(baseline, at: 100_u32)
+    read_tlv(pricing, Tariff::ATTR_TARIFF_COMPONENTS).as_list.first.as_structure.has_key?(4_u8).should be_false
+
+    credit = build(Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::FriendlyCredit |
+                                        Tariff::Feature::PeakPeriod)
+    credit.publish(publication, at: 100_u32)
+    read(credit, Tariff::GLOBAL_FEATURE_MAP).should eq(credit.feature_map.value)
+  end
+
   it "projects and persists opt-in friendly credit transitions without changing Pricing-only components" do
     feature_map = Tariff::Feature::Pricing | Tariff::Feature::FriendlyCredit
     cluster = build(Tariff, feature_map: feature_map)
