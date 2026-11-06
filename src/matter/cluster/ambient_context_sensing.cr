@@ -14,16 +14,17 @@ module Matter
       feature :sound_identification, bit: 3
       feature :predicted_activity, bit: 4
 
-      HUMAN_ACTIVITY_NAMESPACE    = 0x4b_u8
-      IDENTIFIED_OBJECT_NAMESPACE = 0x49_u8
-      IDENTIFIED_SOUND_NAMESPACE  = 0x4a_u8
-      MAX_SUPPORTED_TYPES         =      50
-      MAX_SENSED_TYPES            =       2
-      MAX_PREDICTED_ACTIVITIES    =      20
-      MAX_PREDICTION_TAGS         =     100
-      MAX_CONFIDENCE              =  100_u8
-      MAX_SIMULTANEOUS_DETECTIONS =   10_u8
-      SINGLE_DETECTION_LIMIT      =    1_u8
+      HUMAN_ACTIVITY_NAMESPACE    =   0x4b_u8
+      IDENTIFIED_OBJECT_NAMESPACE =   0x49_u8
+      IDENTIFIED_SOUND_NAMESPACE  =   0x4a_u8
+      MAX_SUPPORTED_TYPES         =        50
+      MAX_SENSED_TYPES            =         2
+      MAX_PREDICTED_ACTIVITIES    =        20
+      MAX_PREDICTION_TAGS         =       100
+      MAX_CONFIDENCE              =    100_u8
+      MAX_SIMULTANEOUS_DETECTIONS =     10_u8
+      SINGLE_DETECTION_LIMIT      =      1_u8
+      MILLISECONDS_PER_SECOND     = 1_000_i64
 
       enum HumanActivity : UInt8
         Unknown          = 0
@@ -288,6 +289,9 @@ module Matter
       @supported_sound_tags : Array(SemanticTag)
       @predicted_activities = [] of PredictedActivityStruct
       @last_observed_at : Time::Instant? = nil
+      @detection_started_at : Time::Instant? = nil
+      @detection_deadline : Time::Instant? = nil
+      @last_extension_period = -1_i64
       @event_start_time = 0_u64
       @expiry_generation = 0_u64
 
@@ -426,11 +430,14 @@ module Matter
           raise ArgumentError.new("human activity tag is not supported by this sensor")
         end
         @state_mutex.synchronize do
+          observed_at = Time.instant
+          finish_detection if @human_activity_detected && detection_deadline_reached?(observed_at)
           current = @current_type.first.ambient_context_sensed.first
           if @human_activity_detected && current != tag
             finish_detection
           end
-          unless @human_activity_detected
+          new_detection = !@human_activity_detected
+          if new_detection
             @current_type = [AmbientContextTypeStruct.new([tag])]
             @human_activity_detected = true
             @event_start_time = Time.utc.to_unix_ms.to_u64
@@ -439,8 +446,7 @@ module Matter
             emit_ambient_context_detect_started(
               AmbientContextDetectStartedEvent.new(@current_type.first.copy))
           end
-          @last_observed_at = Time.instant
-          schedule_expiry
+          record_detection_observation(observed_at, new_detection)
         end
       end
 
@@ -455,9 +461,12 @@ module Matter
           raise ArgumentError.new("sound tag is not supported by this sensor")
         end
         @state_mutex.synchronize do
+          observed_at = Time.instant
+          finish_detection if @audio_context_detected && detection_deadline_reached?(observed_at)
           current = @current_type.first.ambient_context_sensed.first
           finish_detection if @audio_context_detected && current != tag
-          unless @audio_context_detected
+          new_detection = !@audio_context_detected
+          if new_detection
             @current_type = [AmbientContextTypeStruct.new([tag])]
             @audio_context_detected = true
             @event_start_time = Time.utc.to_unix_ms.to_u64
@@ -466,8 +475,7 @@ module Matter
             emit_ambient_context_detect_started(
               AmbientContextDetectStartedEvent.new(@current_type.first.copy))
           end
-          @last_observed_at = Time.instant
-          schedule_expiry
+          record_detection_observation(observed_at, new_detection)
         end
       end
 
@@ -480,6 +488,8 @@ module Matter
           raise ArgumentError.new("object tag is not supported by this sensor")
         end
         @state_mutex.synchronize do
+          observed_at = Time.instant
+          finish_detection if @object_identified && detection_deadline_reached?(observed_at)
           if count.zero?
             finish_detection if @object_identified
             return
@@ -510,8 +520,7 @@ module Matter
             emit_ambient_context_detect_started(
               AmbientContextDetectStartedEvent.new(@current_type.first.copy, reached, exposed_count))
           end
-          @last_observed_at = Time.instant
-          schedule_expiry
+          record_detection_observation(observed_at, new_detection)
         end
       end
 
@@ -615,14 +624,55 @@ module Matter
       end
 
       private def reschedule_expiry(_value : UInt16) : Nil
-        @state_mutex.synchronize { schedule_expiry if @human_activity_detected || @object_identified || @audio_context_detected }
+        @state_mutex.synchronize do
+          return unless @human_activity_detected || @object_identified || @audio_context_detected
+          started_at = @detection_started_at || Time.instant
+          observed_at = @last_observed_at || started_at
+          @detection_deadline = capped_detection_deadline(observed_at + @hold_time.seconds, started_at)
+          @last_extension_period = -1_i64
+          schedule_expiry
+        end
+      end
+
+      private def detection_deadline_reached?(now : Time::Instant) : Bool
+        deadline = @detection_deadline
+        !deadline.nil? && now >= deadline
+      end
+
+      # A repeat adds one HoldTime at most once in each HoldTime period, and
+      # the continuous triggered state never crosses HoldTimeMax.
+      private def record_detection_observation(now : Time::Instant, new_detection : Bool) : Nil
+        @last_observed_at = now
+        if new_detection
+          @detection_started_at = now
+          @detection_deadline = capped_detection_deadline(now + @hold_time.seconds, now)
+          @last_extension_period = -1_i64
+          schedule_expiry
+          return
+        end
+
+        started_at = @detection_started_at || now
+        period = ((now - started_at).total_milliseconds / (@hold_time.to_i64 * MILLISECONDS_PER_SECOND)).floor.to_i64
+        return if period <= @last_extension_period
+        @last_extension_period = period
+        deadline = @detection_deadline || now
+        extended = capped_detection_deadline(deadline + @hold_time.seconds, started_at)
+        if extended > deadline
+          @detection_deadline = extended
+          schedule_expiry
+        end
+      end
+
+      private def capped_detection_deadline(proposed : Time::Instant, started_at : Time::Instant) : Time::Instant
+        maximum = started_at + @hold_time_limits.hold_time_max.seconds
+        proposed < maximum ? proposed : maximum
       end
 
       private def schedule_expiry : Nil
         @expiry_generation &+= 1
         generation = @expiry_generation
-        observed_at = @last_observed_at || Time.instant
-        delay = observed_at + @hold_time.seconds - Time.instant
+        deadline = @detection_deadline || Time.instant
+        delay = deadline - Time.instant
         delay = 0.seconds if delay < 0.seconds
         spawn do
           sleep delay
@@ -633,8 +683,8 @@ module Matter
       private def expire_if_current(generation : UInt64) : Nil
         @state_mutex.synchronize do
           return unless (@human_activity_detected || @object_identified || @audio_context_detected) && generation == @expiry_generation
-          if observed_at = @last_observed_at
-            remaining = observed_at + @hold_time.seconds - Time.instant
+          if deadline = @detection_deadline
+            remaining = deadline - Time.instant
             if remaining > 0.seconds
               spawn do
                 sleep remaining
@@ -671,6 +721,9 @@ module Matter
           increment_version_and_notify(ATTR_AUDIO_CONTEXT_DETECTED)
         end
         @last_observed_at = nil
+        @detection_started_at = nil
+        @detection_deadline = nil
+        @last_extension_period = -1_i64
         increment_version_and_notify(ATTR_AMBIENT_CONTEXT_TYPE)
         emit_ambient_context_detect_ended(AmbientContextDetectEndedEvent.new(@event_start_time))
       end

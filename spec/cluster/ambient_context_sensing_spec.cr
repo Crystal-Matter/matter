@@ -120,6 +120,76 @@ describe Ambient do
   end
 end
 
+describe "Ambient Context Sensing HoldTimeMax" do
+  it "extends the same detection only once in a HoldTime period" do
+    limits = Ambient::HoldTimeLimits.new(1_u16, 10_u16, 1_u16)
+    unknown = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+    walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+    cluster = build(Ambient, supported_activity_tags: [unknown, walking], hold_time_limits: limits)
+    events = [] of UInt32
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      events << id
+      nil
+    end
+
+    started_at = Time.instant
+    cluster.observe_human_activity(walking)
+    sleep 200.milliseconds
+    cluster.observe_human_activity(walking)
+    sleep 200.milliseconds
+    cluster.observe_human_activity(walking)
+    before_expiry = started_at + 1.25.seconds - Time.instant
+    sleep before_expiry if before_expiry > 0.seconds
+    cluster.human_activity_detected?.should be_true
+    after_expiry = started_at + 2.25.seconds - Time.instant
+    sleep after_expiry if after_expiry > 0.seconds
+    cluster.human_activity_detected?.should be_false
+    events.should eq([Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+                      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED])
+  end
+
+  it "ends a continuously repeated detection by HoldTimeMax in every supported sensing profile" do
+    limits = Ambient::HoldTimeLimits.new(1_u16, 10_u16, 1_u16)
+    unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+    walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+    unknown_sound = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+    barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+    unknown_object = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Unknown)
+    person = Ambient::SemanticTag.identified_object(Ambient::IdentifiedObject::Person)
+    ha = build(Ambient, supported_activity_tags: [unknown_activity, walking],
+      hold_time_limits: limits)
+    ha_pred = build(Ambient,
+      feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::PredictedActivity,
+      supported_activity_tags: [unknown_activity, walking], hold_time_limits: limits,
+      prediction_clock: -> : UInt32? { 100_u32 })
+    aud = build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
+      supported_sound_tags: [unknown_sound, barking], hold_time_limits: limits)
+    oc_oi = build(Ambient,
+      feature_map: Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification,
+      supported_object_tags: [unknown_object, person], hold_time_limits: limits)
+
+    started_at = Time.instant
+    ha.observe_human_activity(walking)
+    ha_pred.observe_human_activity(walking)
+    aud.observe_sound(barking)
+    oc_oi.observe_object_count(person, 1_u16)
+    while Time.instant - started_at < 9.4.seconds
+      sleep 250.milliseconds
+      ha.observe_human_activity(walking)
+      ha_pred.observe_human_activity(walking)
+      aud.observe_sound(barking)
+      oc_oi.observe_object_count(person, 1_u16)
+    end
+    remaining = started_at + 10.2.seconds - Time.instant
+    sleep remaining if remaining > 0.seconds
+
+    ha.human_activity_detected?.should be_false
+    ha_pred.human_activity_detected?.should be_false
+    aud.audio_context_detected?.should be_false
+    oc_oi.object_identified?.should be_false
+  end
+end
+
 describe "Ambient Context Sensing HA+PRED profile" do
   unknown = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
   walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
