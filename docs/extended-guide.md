@@ -772,6 +772,14 @@ used by Auto mode while LocalTemperature always reads as TLV null. A direct
 synthetic `examples/matter_thermostat_ltne_device.cr` and its chip-tool test.
 The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significant local-temperature, setpoint, running-state, and Auto running-mode changes. Local-temperature events are limited to one per minute; LTNE suppresses them. Thermostat Occupancy (OCC) exposes read-only occupancy and separate unoccupied heating/cooling setpoints; the host changes occupancy through `occupancy=`. TEVT also reports occupancy changes and labels setpoint changes when OCC is enabled. The `examples/matter_thermostat_events_device.cr` and `e2e/fixture/matter_thermostat_occupancy_device.cr` fixtures exercise these features with official chip-tool. The Thermostat cluster advertises revision 11 for supported base configurations; TSUGGEST remains unavailable in production.
 
+The guarded TSUGGEST fixture keeps its suggestion queue when synchronized UTC
+becomes unavailable, but clears `CurrentThermostatSuggestion` and its reason
+until time returns. The fixture's chip-tool test checks restart and time
+recovery. Production TSUGGEST remains gated: schedule transitions can change
+`ActivePresetHandle` without re-evaluating the current suggestion, and an
+occupancy change does not re-evaluate suggestions. These interactions and a
+normal-class chip-tool profile need verification before enabling the feature.
+
 An opted-in production Thermostat advertises Presets (PRES) when constructed
 with fixed `preset_types` containing one to seven scenarios and a total preset
 capacity of one to 255. `configure_presets` can update the host-owned list but

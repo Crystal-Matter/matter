@@ -99,4 +99,25 @@ describe "Matter Thermostat Suggestions guarded fixture" do
       expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
     end
   end
+
+  it "keeps queued suggestions across a restart without UTC and reselects after time recovery" do
+    set_suggestion_utc(device)
+    id = suggestion_id(expect_success(add_suggestion(device, "hex:01")))
+    begin
+      expect_success(device.read("thermostat", "current-thermostat-suggestion", 1)).output
+        .should contain("PresetHandle")
+      device.restart!
+      expect_success(device.read("timesynchronization", "utctime", 0)).output.downcase.should contain("null")
+      expect_success(device.read("thermostat", "thermostat-suggestions", 1)).output
+        .should contain("1 entries")
+      expect_success(device.read("thermostat", "current-thermostat-suggestion", 1)).output.downcase
+        .should contain("null")
+      set_suggestion_utc(device)
+      expect_success(device.read("thermostat", "current-thermostat-suggestion", 1)).output
+        .should contain("PresetHandle")
+    ensure
+      set_suggestion_utc(device)
+      expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
+    end
+  end
 end
