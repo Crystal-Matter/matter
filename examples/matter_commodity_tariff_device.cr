@@ -36,6 +36,11 @@ module MatterCommodityTariff
         as: :peak_period_tariff
     end
 
+    endpoint 4, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::AuxiliaryLoad,
+        as: :auxiliary_load_tariff
+    end
+
     protected def before_start : Nil
       unless commodity_tariff.tariff_info
         info = Tariff::TariffInformation.new("Daily energy", "Crystal Utility",
@@ -92,6 +97,28 @@ module MatterCommodityTariff
           0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
           components, periods), at: 100_u32)
       end
+      unless auxiliary_load_tariff.tariff_info
+        info = Tariff::TariffInformation.new("Auxiliary load", "Crystal Utility",
+          Tariff::Currency.new(36_u16, 2_u8), Tariff::BlockMode::NoBlock)
+        entries = [Tariff::DayEntry.new(1_u32, 0_u16), Tariff::DayEntry.new(2_u32, 720_u16)]
+        pattern = Tariff::DayPattern.new(1_u32, Tariff::ALL_WEEKDAYS, [1_u32, 2_u32])
+        calendar = Tariff::CalendarPeriod.new(0_u32, [1_u32])
+        components = [
+          Tariff::TariffComponent.new(1_u32, nil, nil, "Switch on",
+            auxiliary_load: Tariff::AuxiliaryLoadSwitchSettings.new(1_u8, Tariff::AuxiliaryLoadSetting::On)),
+          Tariff::TariffComponent.new(2_u32,
+            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
+            "Switch off", auxiliary_load: Tariff::AuxiliaryLoadSwitchSettings.new(1_u8,
+            Tariff::AuxiliaryLoadSetting::Off)),
+        ]
+        periods = [
+          Tariff::TariffPeriod.new("Switch on", [1_u32], [1_u32]),
+          Tariff::TariffPeriod.new("Switch off", [2_u32], [2_u32]),
+        ]
+        auxiliary_load_tariff.publish(Tariff::Publication.new(info, Tariff::TariffUnit::KWh,
+          0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
+          components, periods), at: 100_u32)
+      end
       spawn do
         loop do
           sleep 60.seconds
@@ -99,6 +126,7 @@ module MatterCommodityTariff
           commodity_tariff.refresh_at(now)
           friendly_credit_tariff.refresh_at(now)
           peak_period_tariff.refresh_at(now)
+          auxiliary_load_tariff.refresh_at(now)
         end
       end
       super
@@ -126,6 +154,7 @@ module MatterCommodityTariff
             at = nonce.split(':')[1].to_u32
             friendly_credit_tariff.refresh_at(at)
             peak_period_tariff.refresh_at(at)
+            auxiliary_load_tariff.refresh_at(at)
             File.write("#{path}.ack", nonce)
           end
         end
