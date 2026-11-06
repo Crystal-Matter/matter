@@ -31,6 +31,11 @@ module MatterCommodityTariff
         as: :friendly_credit_tariff
     end
 
+    endpoint 3, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Tariff, feature_map: Tariff::Feature::Pricing | Tariff::Feature::PeakPeriod,
+        as: :peak_period_tariff
+    end
+
     protected def before_start : Nil
       unless commodity_tariff.tariff_info
         info = Tariff::TariffInformation.new("Daily energy", "Crystal Utility",
@@ -66,12 +71,34 @@ module MatterCommodityTariff
           0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
           components, periods), at: 100_u32)
       end
+      unless peak_period_tariff.tariff_info
+        info = Tariff::TariffInformation.new("Peak periods", "Crystal Utility",
+          Tariff::Currency.new(36_u16, 2_u8), Tariff::BlockMode::NoBlock)
+        entries = [Tariff::DayEntry.new(1_u32, 0_u16), Tariff::DayEntry.new(2_u32, 720_u16)]
+        pattern = Tariff::DayPattern.new(1_u32, Tariff::ALL_WEEKDAYS, [1_u32, 2_u32])
+        calendar = Tariff::CalendarPeriod.new(0_u32, [1_u32])
+        components = [
+          Tariff::TariffComponent.new(1_u32, nil, nil, "Low peak",
+            peak_period: Tariff::PeakPeriod.new(Tariff::PeakPeriodSeverity::Low, 1_u16)),
+          Tariff::TariffComponent.new(2_u32,
+            Tariff::TariffPrice.new(Tariff::TariffPriceType::Standard, 35_i64), nil,
+            "High peak", peak_period: Tariff::PeakPeriod.new(Tariff::PeakPeriodSeverity::High, 2_u16)),
+        ]
+        periods = [
+          Tariff::TariffPeriod.new("Low peak", [1_u32], [1_u32]),
+          Tariff::TariffPeriod.new("High peak", [2_u32], [2_u32]),
+        ]
+        peak_period_tariff.publish(Tariff::Publication.new(info, Tariff::TariffUnit::KWh,
+          0_u32, entries, [pattern], [calendar], [] of Tariff::Day,
+          components, periods), at: 100_u32)
+      end
       spawn do
         loop do
           sleep 60.seconds
           now = (Time.utc.to_unix - Tariff::MATTER_EPOCH_UNIX).to_u32
           commodity_tariff.refresh_at(now)
           friendly_credit_tariff.refresh_at(now)
+          peak_period_tariff.refresh_at(now)
         end
       end
       super
@@ -96,7 +123,9 @@ module MatterCommodityTariff
           nonce = File.read(path).strip
           File.delete(path)
           if nonce.starts_with?("refresh:")
-            friendly_credit_tariff.refresh_at(nonce.split(':')[1].to_u32)
+            at = nonce.split(':')[1].to_u32
+            friendly_credit_tariff.refresh_at(at)
+            peak_period_tariff.refresh_at(at)
             File.write("#{path}.ack", nonce)
           end
         end

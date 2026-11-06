@@ -1,10 +1,12 @@
 require "./e2e_helper"
 
+private alias Tariff = Matter::Cluster::CommodityTariff
 private TARIFF_CLUSTER           = "commoditytariff"
 private TARIFF_ENDPOINT          = 1
 private FRIENDLY_CREDIT_ENDPOINT = 2
+private PEAK_PERIOD_ENDPOINT     = 3
 
-private def refresh_friendly_credit(at : UInt32) : Nil
+private def refresh_tariffs(at : UInt32) : Nil
   trigger = File.join(E2E::LOG_DIR, "matter_commodity_tariff.trigger")
   ack = "#{trigger}.ack"
   File.delete(ack) if File.exists?(ack)
@@ -44,7 +46,7 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
 
   it "projects FriendlyCredit entry and exit on an opt-in endpoint and retains the published tariff" do
     read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", FRIENDLY_CREDIT_ENDPOINT).should eq(3_i64)
-    refresh_friendly_credit(100_u32)
+    refresh_tariffs(100_u32)
     expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
       .bool("FriendlyCredit").should be_true
     expect_success(device.read(TARIFF_CLUSTER, "next-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
@@ -52,7 +54,7 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
     entry = expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
       endpoint: FRIENDLY_CREDIT_ENDPOINT))
     entry.bool("FriendlyCredit").should be_true
-    refresh_friendly_credit(43_200_u32)
+    refresh_tariffs(43_200_u32)
     expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", FRIENDLY_CREDIT_ENDPOINT))
       .bool("FriendlyCredit").should be_false
     device.restart!
@@ -61,5 +63,28 @@ describe "Matter 1.6 Commodity Tariff interoperability" do
       endpoint: FRIENDLY_CREDIT_ENDPOINT)).bool("FriendlyCredit").should be_true
     expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
       endpoint: FRIENDLY_CREDIT_ENDPOINT)).bool("FriendlyCredit").should be_false
+  end
+
+  it "projects PeakPeriod severity and number through reads, lookup, and restart" do
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", PEAK_PERIOD_ENDPOINT).should eq(9_i64)
+    refresh_tariffs(100_u32)
+    current = expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", PEAK_PERIOD_ENDPOINT))
+    current.int("Severity").should eq(Tariff::PeakPeriodSeverity::Low.value.to_i64)
+    current.ints("PeakPeriod").should contain(1_i64)
+    next_components = expect_success(device.read(TARIFF_CLUSTER, "next-tariff-components", PEAK_PERIOD_ENDPOINT))
+    next_components.int("Severity").should eq(Tariff::PeakPeriodSeverity::High.value.to_i64)
+    next_components.ints("PeakPeriod").should contain(2_i64)
+    entry = expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
+      endpoint: PEAK_PERIOD_ENDPOINT))
+    entry.ints("PeakPeriod").should contain(1_i64)
+    refresh_tariffs(43_200_u32)
+    expect_success(device.read(TARIFF_CLUSTER, "current-tariff-components", PEAK_PERIOD_ENDPOINT))
+      .ints("PeakPeriod").should contain(2_i64)
+    device.restart!
+    read_int(device, TARIFF_CLUSTER, "feature-map", "FeatureMap", PEAK_PERIOD_ENDPOINT).should eq(9_i64)
+    expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["1"],
+      endpoint: PEAK_PERIOD_ENDPOINT)).ints("PeakPeriod").should contain(1_i64)
+    expect_success(device.invoke(TARIFF_CLUSTER, "get-tariff-component", ["2"],
+      endpoint: PEAK_PERIOD_ENDPOINT)).ints("PeakPeriod").should contain(2_i64)
   end
 end
