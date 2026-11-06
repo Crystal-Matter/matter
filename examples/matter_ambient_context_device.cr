@@ -59,6 +59,7 @@ module MatterAmbientContext
       cluster Ambient,
         feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::PredictedActivity,
         supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
+        hold_time_limits: Ambient::HoldTimeLimits.new(1_u16, 10_u16, 1_u16),
         prediction_clock: -> : UInt32? { @prediction_now },
         as: :predicted_ambient
     end
@@ -104,6 +105,20 @@ module MatterAmbientContext
             @prediction_now += 120_u32
             predicted_ambient.refresh_predicted_activities
             File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("walking-cap:")
+            spawn do
+              started_at = Time.instant
+              predicted_ambient.observe_human_activity(WALKING_ACTIVITY)
+              File.write("#{path}.started", nonce)
+              while Time.instant - started_at < 9.4.seconds && @hook_active
+                sleep 250.milliseconds
+                predicted_ambient.observe_human_activity(WALKING_ACTIVITY)
+              end
+              remaining = started_at + 10.2.seconds - Time.instant
+              sleep remaining if remaining > 0.seconds
+              state = predicted_ambient.human_activity_detected? ? "active" : "expired"
+              File.write("#{path}.ack", "#{nonce}:#{state}")
+            end
           end
         end
         sleep 100.milliseconds

@@ -161,4 +161,33 @@ describe "synthetic Ambient Context Sensing examples" do
     start_time.as(Int64).should be > 0_i64
     expect_success(device.read("ambientcontextsensing", "ambient-context-type")).output.should contain("Tag: 0")
   end
+
+  it "ends a repeated HA detection at the advertised HoldTimeMax" do
+    started = "#{trigger}.started"
+    File.delete(started) if File.exists?(started)
+    File.delete(ack) if File.exists?(ack)
+    nonce = "walking-cap:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(started) && File.read(started) == nonce
+      raise "Ambient Context host did not start repeated Walking" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+
+    expect_success(device.read("ambientcontextsensing", "human-activity-detected", 4))
+      .bool("HumanActivityDetected").should be_true
+    deadline = Time.instant + 15.seconds
+    until File.exists?(ack) && File.read(ack).starts_with?(nonce)
+      raise "Ambient Context host did not complete HoldTimeMax probe" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    File.read(ack).should eq("#{nonce}:expired")
+    expect_success(device.read("ambientcontextsensing", "human-activity-detected", 4))
+      .bool("HumanActivityDetected").should be_false
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 4)).output.should contain("Tag: 0")
+    expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-ended", device.node, "4"]))
+      .output.should contain("EventStartTime")
+  end
 end
