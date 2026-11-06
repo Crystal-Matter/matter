@@ -56,6 +56,12 @@ module Matter
         High   = 3
       end
 
+      enum AuxiliaryLoadSetting : UInt8
+        Off  = 0
+        On   = 1
+        None = 2
+      end
+
       struct Currency
         # The shared DataType::Currency has the same wire fields, but tariff
         # information is persisted through Storage::Record as a nested value.
@@ -206,6 +212,20 @@ module Matter
         end
       end
 
+      struct AuxiliaryLoadSwitchSettings
+        include TLV::Serializable
+        include Storage::Record
+
+        @[TLV::Field(tag: 0)]
+        getter number : UInt8
+
+        @[TLV::Field(tag: 1)]
+        getter required_state : AuxiliaryLoadSetting
+
+        def initialize(@number : UInt8, @required_state : AuxiliaryLoadSetting)
+        end
+      end
+
       struct TariffComponent
         include TLV::Serializable
         include Storage::Record
@@ -218,6 +238,9 @@ module Matter
 
         @[TLV::Field(tag: 2, optional: true)]
         getter friendly_credit : Bool?
+
+        @[TLV::Field(tag: 3, optional: true)]
+        getter auxiliary_load : AuxiliaryLoadSwitchSettings?
 
         @[TLV::Field(tag: 4, optional: true)]
         getter peak_period : PeakPeriod?
@@ -234,7 +257,8 @@ module Matter
         def initialize(@tariff_component_id : UInt32, @price : TariffPrice?,
                        @threshold : Int64?, @label : String? = nil,
                        @predicted : Bool? = nil, @friendly_credit : Bool? = nil,
-                       @peak_period : PeakPeriod? = nil)
+                       @peak_period : PeakPeriod? = nil,
+                       @auxiliary_load : AuxiliaryLoadSwitchSettings? = nil)
         end
       end
 
@@ -389,8 +413,9 @@ module Matter
         unless @feature_map == Feature::Pricing ||
                @feature_map == (Feature::Pricing | Feature::FriendlyCredit) ||
                @feature_map == (Feature::Pricing | Feature::PeakPeriod) ||
-               @feature_map == (Feature::Pricing | Feature::FriendlyCredit | Feature::PeakPeriod)
-          raise ArgumentError.new("only Pricing, Pricing+FriendlyCredit, Pricing+PeakPeriod, and Pricing+FriendlyCredit+PeakPeriod profiles are supported")
+               @feature_map == (Feature::Pricing | Feature::FriendlyCredit | Feature::PeakPeriod) ||
+               @feature_map == (Feature::Pricing | Feature::AuxiliaryLoad)
+          raise ArgumentError.new("only Pricing, Pricing+FriendlyCredit, Pricing+PeakPeriod, Pricing+FriendlyCredit+PeakPeriod, and Pricing+AuxiliaryLoad profiles are supported")
         end
       end
 
@@ -593,7 +618,7 @@ module Matter
             if price.price.nil? && price.price_level.nil?
               raise ArgumentError.new("price or price level is required")
             end
-          elsif component.friendly_credit.nil? && component.peak_period.nil?
+          elsif component.friendly_credit.nil? && component.peak_period.nil? && component.auxiliary_load.nil?
             raise ArgumentError.new("price or price level is required")
           end
           if !@feature_map.friendly_credit? && !component.friendly_credit.nil?
@@ -602,6 +627,9 @@ module Matter
           if peak = component.peak_period
             raise ArgumentError.new("PeakPeriod field requires the PeakPeriod feature") unless @feature_map.peak_period?
             raise ArgumentError.new("PeakPeriod number must be at least one") if peak.period.zero?
+          end
+          if !@feature_map.auxiliary_load? && !component.auxiliary_load.nil?
+            raise ArgumentError.new("AuxiliaryLoad field requires the AuxiliaryLoad feature")
           end
           if label = component.label
             raise ArgumentError.new("component label exceeds 128 bytes") if label.bytesize > MAX_LABEL_BYTES

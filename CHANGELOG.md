@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Commodity Tariff Auxiliary Load
+
+- Add opt-in Pricing+AuxiliaryLoad tariff components with switch number and
+  Off, On, or None required state. Current/next projections, lookup, and
+  restored publications retain the setting; official chip-tool E2E verifies
+  entry, exit, and restart without controlling physical switches.
+
 ### Matter 1.6 Thermostat suggestion schedule and occupancy arbitration
 
 - Keep a guarded profile's current suggestion visible while an active schedule

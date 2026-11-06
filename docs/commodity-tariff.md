@@ -1,7 +1,7 @@
 # Commodity Tariff (Matter 1.6)
 
 `Cluster::CommodityTariff` implements revision 1 of cluster `0x0700` with the
-Pricing feature and opt-in FriendlyCredit and PeakPeriod profiles. A host publishes
+Pricing feature and opt-in FriendlyCredit, PeakPeriod, and AuxiliaryLoad profiles. A host publishes
 a validated calendar with `publish`, then
 calls `refresh_at` with Matter epoch seconds as its clock advances. The server
 exposes all mandatory base attributes, including current and next day/entry
@@ -34,12 +34,17 @@ component, with `severity` (`Unused`, `Low`, `Medium`, `High`) and a positive
 publications preserve it. Components reporting only a peak period may omit
 Price. The profile is available with or without FriendlyCredit, alongside
 Pricing; unadvertised fields are rejected. A component with a Price field must
-carry a price or price level. Auxiliary Load, Power Threshold, and Randomization
-feature bits are not advertised.
+carry a price or price level. The AuxiliaryLoad profile carries one optional
+`AuxiliaryLoadSwitchSettings` value per component: an unsigned switch `number`
+and a `required_state` of `Off`, `On`, or `None`. A switch-only component may
+omit Price. Current and next projections, lookup responses, and restored
+publications preserve the setting. The tariff host publishes the desired state;
+physical switch control belongs to the host or another application. Power
+Threshold and Randomization feature bits are not advertised.
 The lookup commands retain only the current published tariff, so historical
 IDs from superseded tariffs are not available.
 
 `examples/matter_commodity_tariff_device.cr` publishes a synthetic daily
-Pricing tariff and separate FriendlyCredit and PeakPeriod profiles on Aggregator
+Pricing tariff and separate FriendlyCredit, PeakPeriod, and AuxiliaryLoad profiles on Aggregator
 endpoints. The official chip-tool E2E exercises all profiles and host-driven
 transitions.

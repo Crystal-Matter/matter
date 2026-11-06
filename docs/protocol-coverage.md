@@ -150,7 +150,7 @@ XML input: 127 files; XML tree SHA-256 `050dd40cab8d621fe1c97a4b8010095a41d927db
 | 0x0554 | WebRTC Transport Requestor Cluster | 2 | 2 | — | — |
 | 0x0555 | Push AV Stream Transport Cluster | 2 | 2 | — | — |
 | 0x0556 | Chime Cluster | 2 | 2 | — | — |
-| 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | Pricing calendar with opt-in FCRED and PEAKP transitions; AUXLD, PWRTHLD, RNDM unavailable |
+| 0x0700 | Commodity Tariff Cluster | 1 | 1 | — | Pricing calendar with opt-in FCRED, PEAKP, and AUXLD transitions; PWRTHLD and RNDM unavailable |
 | 0x0750 | Ecosystem Information Cluster | 1 | 1 | — | — |
 | 0x0751 | Commissioner Control Cluster | 1 | 1 | — | — |
 | 0x0752 | Joint Fabric Datastore Cluster | 1 | 1 | — | — |
