@@ -41,6 +41,29 @@ private def ready_suggestion_thermostat(clock : Proc(UInt32?) = -> : UInt32? { 1
   cluster
 end
 
+private def scheduled_suggestion_thermostat(local_clock : Proc(Time?)) : ReadySuggestionThermostat
+  presets = [
+    SuggestWire::Preset.new(Bytes[1_u8], SuggestWire::PresetScenario::Sleep, nil, nil, 1900_i16, false),
+    SuggestWire::Preset.new(Bytes[2_u8], SuggestWire::PresetScenario::Wake, nil, nil, 2100_i16, false),
+  ]
+  transitions = [
+    SuggestWire::ScheduleTransition.new(0x02_u8, 480_u16, Bytes[2_u8], nil, nil, nil),
+    SuggestWire::ScheduleTransition.new(0x02_u8, 540_u16, Bytes[1_u8], nil, nil, nil),
+  ]
+  schedule = SuggestWire::Schedule.new(Bytes[3_u8], SuggestWire::SystemMode::Heat,
+    nil, nil, transitions, false)
+  build(ReadySuggestionThermostat,
+    feature_map: suggestion_features | SuggestWire::Feature::MatterSchedules | SuggestWire::Feature::Occupancy,
+    preset_types: [
+      SuggestWire::PresetType.new(SuggestWire::PresetScenario::Sleep, 1_u8),
+      SuggestWire::PresetType.new(SuggestWire::PresetScenario::Wake, 1_u8),
+    ], presets: presets,
+    schedule_types: [SuggestWire::ScheduleType.new(SuggestWire::SystemMode::Heat, 1_u8,
+      SuggestWire::ScheduleTypeFeatures::SupportsPresets | SuggestWire::ScheduleTypeFeatures::SupportsSetpoints)],
+    schedules: [schedule], schedule_max_transitions: 2_u8, schedule_max_per_day: 2_u8,
+    local_time_provider: local_clock, utc_time_provider: -> : UInt32? { 1_000_u32 })
+end
+
 private def suggestion_im_invoke(cluster : SuggestWire, command_id : UInt32, request) : Matter::InteractionModel::InvokeResponseIB
   endpoint = cluster.endpoint_id.number
   path = Matter::InteractionModel::CommandPath.new(endpoint, SuggestWire::CLUSTER_ID, command_id)
@@ -57,6 +80,80 @@ private def suggestion_im_status(response : Matter::InteractionModel::InvokeResp
 end
 
 describe "Thermostat guarded suggestion wire" do
+  it "keeps the selected suggestion visible while a schedule controls a different preset, then follows a matching transition" do
+    local = Time.utc(2026, 10, 26, 7, 59)
+    cluster = scheduled_suggestion_thermostat(-> : Time? { local })
+    cluster.activate_schedule(SuggestWire::SetActiveScheduleRequest.new(Bytes[3_u8])).status.should eq(SuggestCode::Success)
+    cluster.add_thermostat_suggestion(
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], nil, 30_u16), 1_000_u32)
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+
+    local = Time.utc(2026, 10, 26, 8, 0)
+    cluster.tick_schedule.should be_true
+    cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    cluster.active_preset_handle.should eq(Bytes[2_u8])
+    cluster.thermostat_suggestion_not_following_reason.should eq(SuggestWire::ThermostatSuggestionNotFollowingReason::Schedule)
+    cluster.occupied_heating_setpoint.should eq(2100_i16)
+
+    local = Time.utc(2026, 10, 26, 9, 0)
+    cluster.tick_schedule.should be_true
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+    cluster.thermostat_suggestion_not_following_reason.should be_nil
+    cluster.occupied_heating_setpoint.should eq(1900_i16)
+  end
+
+  it "reapplies the controlling preset to each occupancy setpoint bank" do
+    local = Time.utc(2026, 10, 26, 7, 59)
+    cluster = scheduled_suggestion_thermostat(-> : Time? { local })
+    cluster.activate_schedule(SuggestWire::SetActiveScheduleRequest.new(Bytes[3_u8])).status.should eq(SuggestCode::Success)
+    cluster.add_thermostat_suggestion(
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], nil, 30_u16), 1_000_u32)
+    cluster.occupancy = 0_u8
+    cluster.unoccupied_heating_setpoint.should eq(1900_i16)
+    cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    cluster.thermostat_suggestion_not_following_reason.should be_nil
+
+    local = Time.utc(2026, 10, 26, 8, 0)
+    cluster.tick_schedule.should be_true
+    cluster.occupancy = 1_u8
+    cluster.occupied_heating_setpoint.should eq(2100_i16)
+    cluster.occupancy = 0_u8
+    cluster.unoccupied_heating_setpoint.should eq(2100_i16)
+    cluster.active_preset_handle.should eq(Bytes[2_u8])
+    cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    cluster.thermostat_suggestion_not_following_reason.should eq(SuggestWire::ThermostatSuggestionNotFollowingReason::Schedule)
+  end
+
+  it "keeps a direct scheduled setpoint above a suggestion through an occupancy change" do
+    local = Time.utc(2026, 10, 26, 7, 59)
+    cluster = scheduled_suggestion_thermostat(-> : Time? { local })
+    direct = SuggestWire::Schedule.new(Bytes[3_u8], SuggestWire::SystemMode::Heat, nil, nil, [
+      SuggestWire::ScheduleTransition.new(0x02_u8, 480_u16, nil, nil, nil, 1800_i16),
+      SuggestWire::ScheduleTransition.new(0x02_u8, 540_u16, Bytes[1_u8], nil, nil, nil),
+    ], false)
+    cluster.configure_schedules(cluster.schedule_types, [direct], 2_u8, 2_u8)
+    cluster.add_thermostat_suggestion(
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], nil, 30_u16), 1_000_u32)
+    cluster.activate_schedule(SuggestWire::SetActiveScheduleRequest.new(Bytes[3_u8])).status.should eq(SuggestCode::Success)
+
+    local = Time.utc(2026, 10, 26, 8, 0)
+    cluster.tick_schedule.should be_true
+    cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    cluster.active_preset_handle.should be_nil
+    cluster.thermostat_suggestion_not_following_reason.should eq(SuggestWire::ThermostatSuggestionNotFollowingReason::Schedule)
+    cluster.occupied_heating_setpoint.should eq(1800_i16)
+
+    cluster.occupancy = 0_u8
+    cluster.unoccupied_heating_setpoint.should eq(1800_i16)
+    cluster.active_preset_handle.should be_nil
+    cluster.thermostat_suggestion_not_following_reason.should eq(SuggestWire::ThermostatSuggestionNotFollowingReason::Schedule)
+
+    local = Time.utc(2026, 10, 26, 9, 0)
+    cluster.tick_schedule.should be_true
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+    cluster.thermostat_suggestion_not_following_reason.should be_nil
+  end
+
   it "advertises canonical read-only metadata and Manage commands only in the ready fixture" do
     expect_raises(ArgumentError) { build(SuggestWire, feature_map: suggestion_features) }
     hidden = build(SuggestWire)

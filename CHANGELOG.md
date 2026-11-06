@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Thermostat suggestion schedule and occupancy arbitration
+
+- Keep a guarded profile's current suggestion visible while an active schedule
+  controls a different preset, report Schedule as the not-following reason, and
+  re-evaluate after transitions. Occupancy changes reapply the controlling
+  preset to the active setpoint bank. Production TSUGGEST remains gated.
+
 ### Matter 1.6 Ambient Context Sensing prediction profile
 
 - Add opt-in HA+PRED with a trusted Matter epoch clock and atomic host forecast

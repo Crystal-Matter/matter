@@ -1107,9 +1107,14 @@ module Matter
           @current_thermostat_suggestion = selected.try { |entry| copy_suggestion(entry) }
           suggestion_attribute_changed(ATTR_CURRENT_THERMOSTAT_SUGGESTION)
         end
-        reason = if selected && @temperature_setpoint_hold.on? && @active_preset_handle != selected.preset_handle
-                   ThermostatSuggestionNotFollowingReason::OngoingHold
-                 end
+        reason = nil.as(ThermostatSuggestionNotFollowingReason?)
+        if selected && @active_preset_handle != selected.preset_handle
+          reason = ThermostatSuggestionNotFollowingReason::OngoingHold if @temperature_setpoint_hold.on?
+          if active_schedule_transition
+            schedule_reason = ThermostatSuggestionNotFollowingReason::Schedule
+            reason = reason ? reason | schedule_reason : schedule_reason
+          end
+        end
         if @suggestion_not_following_reason != reason
           @suggestion_not_following_reason = reason
           suggestion_attribute_changed(ATTR_THERMOSTAT_SUGGESTION_NOT_FOLLOWING_REASON)
@@ -1231,6 +1236,7 @@ module Matter
 
         update_active_schedule_handle(handle)
         tick_schedule
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
         InteractionModel::Status.success
       end
 
@@ -1256,6 +1262,7 @@ module Matter
 
         return false unless apply_schedule_transition(schedule, transition)
         @last_schedule_occurrence = key
+        tick_suggestions(@utc_time_provider.call) if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
         true
       end
 
@@ -2441,6 +2448,17 @@ module Matter
         true
       end
 
+      private def active_schedule_transition : Tuple(Schedule, ScheduleTransition)?
+        handle = @active_schedule_handle || return
+        date, minute = @last_schedule_occurrence || return
+        schedule = @schedules.find { |entry| entry.schedule_handle == handle } || return
+        day_bit = (1_u8 << (Time.unix(date).day_of_week.value % 7)).to_u8
+        transition = schedule.transitions.find do |entry|
+          (entry.day_of_week & day_bit) != 0_u8 && entry.transition_time == minute
+        end || return
+        {schedule, transition}
+      end
+
       private def planned_scheduled_setpoints(cooling : Int16?, heating : Int16?, occupied : Bool) : Tuple(Int16, Int16, Bool)?
         current_cooling = occupied ? @occupied_cooling_setpoint : @unoccupied_cooling_setpoint
         current_heating = occupied ? @occupied_heating_setpoint : @unoccupied_heating_setpoint
@@ -2710,6 +2728,14 @@ module Matter
         previous = @last_occupancy
         @last_occupancy = value
         emit_occupancy_change(OccupancyChangeEvent.new(previous, value)) if @feature_map.events? && @feature_map.occupancy?
+        if @feature_map.thermostat_suggestions? && suggestion_wire_ready?
+          if scheduled = active_schedule_transition
+            apply_schedule_transition(scheduled[0], scheduled[1])
+          elsif handle = @active_preset_handle
+            activate_preset(SetActivePresetRequest.new(handle))
+          end
+          tick_suggestions(@utc_time_provider.call)
+        end
         update_running_mode
       end
 

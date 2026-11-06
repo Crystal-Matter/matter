@@ -775,10 +775,12 @@ The opt-in Thermostat Events (TEVT) feature reports typed system-mode, significa
 The guarded TSUGGEST fixture keeps its suggestion queue when synchronized UTC
 becomes unavailable, but clears `CurrentThermostatSuggestion` and its reason
 until time returns. The fixture's chip-tool test checks restart and time
-recovery. Production TSUGGEST remains gated: schedule transitions can change
-`ActivePresetHandle` without re-evaluating the current suggestion, and an
-occupancy change does not re-evaluate suggestions. These interactions and a
-normal-class chip-tool profile need verification before enabling the feature.
+recovery. A separate guarded MSCH+OCC fixture checks the arbitration policy:
+an active schedule controls its preset and sets the Schedule not-following bit
+when that preset differs from the current suggestion; a later matching
+transition clears the bit. Occupancy changes reapply the controlling preset to
+the newly active setpoint bank. Production TSUGGEST remains gated until this
+combined profile is verified on the normal class with official chip-tool.
 
 An opted-in production Thermostat advertises Presets (PRES) when constructed
 with fixed `preset_types` containing one to seven scenarios and a total preset
