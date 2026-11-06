@@ -59,7 +59,7 @@ module MatterAmbientContext
       cluster Ambient,
         feature_map: Ambient::Feature::HumanActivity | Ambient::Feature::PredictedActivity,
         supported_activity_tags: [UNKNOWN_ACTIVITY, WALKING_ACTIVITY],
-        prediction_clock: -> { @prediction_now.as(UInt32?) },
+        prediction_clock: -> : UInt32? { @prediction_now },
         as: :predicted_ambient
     end
 

@@ -128,7 +128,7 @@ describe "Ambient Context Sensing HA+PRED profile" do
   it "advertises the conditional prediction list and its canonical Matter epoch wire fields" do
     now = 100_u32
     cluster = build(Ambient, feature_map: feature_map,
-      supported_activity_tags: [unknown, walking], prediction_clock: -> { now.as(UInt32?) })
+      supported_activity_tags: [unknown, walking], prediction_clock: -> : UInt32? { now })
     read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
     attribute_ids(cluster).should contain(Ambient::ATTR_PREDICTED_ACTIVITY)
     read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
@@ -162,7 +162,7 @@ describe "Ambient Context Sensing HA+PRED profile" do
   it "validates the entire replacement before publication and prunes on clock advance" do
     now = 100_u32
     cluster = build(Ambient, feature_map: feature_map,
-      supported_activity_tags: [unknown, walking], prediction_clock: -> { now.as(UInt32?) })
+      supported_activity_tags: [unknown, walking], prediction_clock: -> : UInt32? { now })
     first = Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking], 50_u8)
     second = Ambient::PredictedActivityStruct.new(130_u32, 140_u32, [unknown], 75_u8)
     cluster.replace_predicted_activities([first, second])
@@ -204,7 +204,7 @@ describe "Ambient Context Sensing HA+PRED profile" do
     expect_raises(ArgumentError, /clock/) { build(Ambient, feature_map: feature_map) }
     now : UInt32? = nil
     cluster = build(Ambient, feature_map: feature_map,
-      supported_activity_tags: [unknown, walking], prediction_clock: -> { now })
+      supported_activity_tags: [unknown, walking], prediction_clock: -> : UInt32? { now })
     expect_raises(ArgumentError, /unavailable/) do
       cluster.replace_predicted_activities([
         Ambient::PredictedActivityStruct.new(110_u32, 120_u32, [walking], 50_u8),
