@@ -121,6 +121,33 @@ describe Ambient do
 end
 
 describe "Ambient Context Sensing HoldTimeMax" do
+  it "extends the same detection only once in a HoldTime period" do
+    limits = Ambient::HoldTimeLimits.new(1_u16, 10_u16, 1_u16)
+    unknown = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)
+    walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+    cluster = build(Ambient, supported_activity_tags: [unknown, walking], hold_time_limits: limits)
+    events = [] of UInt32
+    cluster.on_event_emitted = ->(_ep : UInt16, _cl : UInt32, id : UInt32, _priority : Matter::InteractionModel::EventPriority, _data : TLV::Any, _fabric : UInt8?) do
+      events << id
+      nil
+    end
+
+    started_at = Time.instant
+    cluster.observe_human_activity(walking)
+    sleep 200.milliseconds
+    cluster.observe_human_activity(walking)
+    sleep 200.milliseconds
+    cluster.observe_human_activity(walking)
+    before_expiry = started_at + 1.25.seconds - Time.instant
+    sleep before_expiry if before_expiry > 0.seconds
+    cluster.human_activity_detected?.should be_true
+    after_expiry = started_at + 2.25.seconds - Time.instant
+    sleep after_expiry if after_expiry > 0.seconds
+    cluster.human_activity_detected?.should be_false
+    events.should eq([Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED,
+                      Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED])
+  end
+
   it "ends a continuously repeated detection by HoldTimeMax in every supported sensing profile" do
     limits = Ambient::HoldTimeLimits.new(1_u16, 10_u16, 1_u16)
     unknown_activity = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Unknown)

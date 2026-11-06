@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing HoldTimeMax
+
+- Cap continuous HA, HA+PRED, AUD, and OC+OI detection at the fixed
+  `HoldTimeLimits.HoldTimeMax`. Repeated classifications extend the deadline
+  once per HoldTime period; a later classification starts a new detection.
+  Correct the generated Ambient Context coverage row for merged HA+PRED.
+
 ### Matter 1.6 Commodity Tariff Auxiliary Load
 
 - Add opt-in Pricing+AuxiliaryLoad tariff components with switch number and
