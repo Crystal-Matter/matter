@@ -7,6 +7,12 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Ambient Context Sensing sound prediction profile
+
+- Add opt-in AUD+PRED with sound-tag-validated, atomic future forecasts and
+  clock-driven pruning. A synthetic sound endpoint exercises the official
+  chip-tool prediction and detection wire surface.
+
 ### Matter 1.6 Ambient Context Sensing HoldTimeMax
 
 - Cap continuous HA, HA+PRED, AUD, and OC+OI detection at the fixed
