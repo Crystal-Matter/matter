@@ -123,10 +123,16 @@ describe "Matter Thermostat Suggestions guarded fixture" do
   it "accepts up to MaxThermostatSuggestions and then reports resource exhaustion" do
     set_suggestion_utc(device)
     ids = Array.new(5) { suggestion_id(expect_success(add_suggestion(device, "hex:01"))) }
-    ids.uniq.size.should eq(5)
-    expect_failure(add_suggestion(device, "hex:01"), "RESOURCE_EXHAUSTED")
-    ids.each do |id|
-      expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
+    begin
+      ids.uniq.size.should eq(5)
+      expect_failure(add_suggestion(device, "hex:01"), "RESOURCE_EXHAUSTED")
+      future = (suggestion_now.to_i64 + 25_i64 * 60_i64 * 60_i64).to_s
+      expect_failure(add_suggestion(device, "hex:01", future), "RESOURCE_EXHAUSTED")
+      expect_success(device.read("thermostat", "thermostat-suggestions", 1)).output.should contain("5 entries")
+    ensure
+      ids.each do |id|
+        expect_success(device.chip("thermostat", "remove-thermostat-suggestion", id, device.node, "1"))
+      end
     end
   end
 
