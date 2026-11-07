@@ -27,8 +27,18 @@ private def suggestion_features : SuggestWire::Feature
 end
 
 private def ready_suggestion_thermostat(clock : Proc(UInt32?) = -> : UInt32? { 1_000_u32 },
-                                        scheduler : Proc(Time::Span, Proc(Nil), Nil)? = nil) : ReadySuggestionThermostat
-  scheduler ||= ->(delay : Time::Span, action : Proc(Nil)) : Nil { spawn { sleep delay; action.call } }
+                                        scheduler : Proc(Time::Span, Proc(Nil), Proc(Nil))? = nil) : ReadySuggestionThermostat
+  scheduler ||= ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+    cancel = Channel(Nil).new
+    spawn do
+      select
+      when cancel.receive?
+      when timeout(delay)
+        action.call
+      end
+    end
+    -> : Nil { cancel.close unless cancel.closed? }
+  }
   cluster = build(ReadySuggestionThermostat, feature_map: suggestion_features,
     utc_time_provider: clock, suggestion_timer_scheduler: scheduler)
   cluster.configure_presets([
@@ -371,7 +381,10 @@ describe "Thermostat guarded suggestion wire" do
   it "reevaluates at future effective and expiry boundaries and reports changes" do
     now = 1_000_u32
     timers = [] of Tuple(Time::Span, Proc(Nil))
-    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Nil { timers << {delay, action}; nil }
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+      timers << {delay, action}
+      -> : Nil { nil }
+    }
     cluster = ready_suggestion_thermostat(-> : UInt32? { now }, scheduler)
     changed = [] of UInt32
     cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) : Nil {
@@ -408,7 +421,10 @@ describe "Thermostat guarded suggestion wire" do
   it "rearms a pending suggestion after restoring persisted state" do
     now = 1_000_u32
     timers = [] of Tuple(Time::Span, Proc(Nil))
-    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Nil { timers << {delay, action}; nil }
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+      timers << {delay, action}
+      -> : Nil { nil }
+    }
     clock = -> : UInt32? { now }
     original = ready_suggestion_thermostat(clock, scheduler)
     original.add_thermostat_suggestion(
@@ -434,10 +450,88 @@ describe "Thermostat guarded suggestion wire" do
     restored.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[2_u8])
   end
 
+  it "cancels and rearms a fixed boundary when synchronized UTC jumps forward" do
+    now = 1_000_u32
+    timers = [] of Tuple(Time::Span, Proc(Nil))
+    cancelled = [] of Int32
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+      index = timers.size
+      timers << {delay, action}
+      -> : Nil { cancelled << index; nil }
+    }
+    cluster = ready_suggestion_thermostat(-> : UInt32? { now }, scheduler)
+    cluster.add_thermostat_suggestion(
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_200_u32, 30_u16), now)
+    timers.size.should eq(1)
+    timers.last[0].should eq(200.seconds)
+
+    now = 1_100_u32
+    cluster.poll_suggestions.should eq(0)
+    cancelled.should eq([0])
+    timers.size.should eq(2)
+    timers.last[0].should eq(100.seconds)
+    cluster.poll_suggestions.should eq(0)
+    timers.size.should eq(2)
+
+    now = 1_150_u32
+    cluster.poll_suggestions.should eq(0)
+    cancelled.should eq([0, 1])
+    timers.last[0].should eq(50.seconds)
+    version = cluster.data_version
+    timers[0][1].call
+    timers[1][1].call
+    cluster.data_version.should eq(version)
+
+    now = 1_200_u32
+    timers.last[1].call
+    cluster.current_thermostat_suggestion.try(&.preset_handle).should eq(Bytes[1_u8])
+    cluster.active_preset_handle.should eq(Bytes[1_u8])
+    timers.last[0].should eq(1_800.seconds)
+  end
+
+  it "cancels pending boundaries on removal, time loss, and state restoration" do
+    now = 1_000_u32.as(UInt32?)
+    timers = [] of Tuple(Time::Span, Proc(Nil))
+    cancelled = [] of Int32
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+      index = timers.size
+      timers << {delay, action}
+      -> : Nil { cancelled << index; nil }
+    }
+    cluster = ready_suggestion_thermostat(-> : UInt32? { now }, scheduler)
+    added = cluster.add_thermostat_suggestion(
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_200_u32, 30_u16), 1_000_u32)
+      .as(SuggestWire::AddThermostatSuggestionResponse)
+    cluster.remove_thermostat_suggestion(SuggestWire::RemoveThermostatSuggestionRequest.new(added.unique_id))
+      .status.should eq(SuggestCode::Success)
+    cancelled.should eq([0])
+
+    cluster.add_thermostat_suggestion(
+      SuggestWire::AddThermostatSuggestionRequest.new(Bytes[2_u8], 1_300_u32, 30_u16), 1_000_u32)
+    now = nil
+    cluster.poll_suggestions.should eq(0)
+    cancelled.should eq([0, 1])
+    cluster.current_thermostat_suggestion.should be_nil
+
+    now = 1_000_u32
+    cluster.poll_suggestions.should eq(0)
+    timers.last[0].should eq(300.seconds)
+    saved = cluster.save_state
+    cluster.restore_state(saved)
+    cancelled.should eq([0, 1, 2])
+    timers.last[0].should eq(300.seconds)
+    version = cluster.data_version
+    timers[2][1].call
+    cluster.data_version.should eq(version)
+  end
+
   it "ignores a cancelled timer after removal and rescheduling" do
     now = 1_000_u32
     timers = [] of Tuple(Time::Span, Proc(Nil))
-    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Nil { timers << {delay, action}; nil }
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+      timers << {delay, action}
+      -> : Nil { nil }
+    }
     cluster = ready_suggestion_thermostat(-> : UInt32? { now }, scheduler)
     added = suggestion_im_invoke(cluster, 0x07_u32,
       SuggestWire::AddThermostatSuggestionRequest.new(Bytes[1_u8], 1_200_u32, 30_u16))
@@ -461,7 +555,10 @@ describe "Thermostat guarded suggestion wire" do
   it "clears the current suggestion when synchronized UTC is lost and reselects it on recovery" do
     now = 1_000_u32.as(UInt32?)
     timers = [] of Tuple(Time::Span, Proc(Nil))
-    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Nil { timers << {delay, action}; nil }
+    scheduler = ->(delay : Time::Span, action : Proc(Nil)) : Proc(Nil) {
+      timers << {delay, action}
+      -> : Nil { nil }
+    }
     cluster = ready_suggestion_thermostat(-> : UInt32? { now }, scheduler)
     changed = [] of UInt32
     cluster.on_attribute_changed = ->(_endpoint : UInt16, _cluster : UInt32, attribute : UInt32) : Nil {
