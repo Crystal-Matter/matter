@@ -2,11 +2,24 @@ name: Matter 1.6 SDK JFC and inverse JFA smoke
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/sdk-jfc-smoke.yml
+      - e2e/interop/sdk_jfc_switch_smoke.sh
+      - e2e/interop/sdk_jfa_inverse_driver.cr
+      - e2e/interop/sdk_jfa_inverse_live.py
 
 jobs:
   official-jfc-crystal-switch:
+    name: official-jfc-crystal-switch (${{ matrix.sdk-tag }})
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk-tag: [v1.6.0.0, v1.6.1.0]
+    env:
+      MATTER_SDK_TAG: ${{ matrix.sdk-tag }}
     steps:
       - uses: actions/checkout@v5
       - uses: crystal-lang/install-crystal@v1
@@ -38,6 +51,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sdk-jfc-smoke-logs
+          name: sdk-jfc-smoke-logs-${{ matrix.sdk-tag }}
           path: tmp/interop-sdk-jfc/*.log
           if-no-files-found: warn

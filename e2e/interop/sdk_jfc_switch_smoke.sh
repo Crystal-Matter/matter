@@ -5,7 +5,20 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 sdk_root="${MATTER_SDK_ROOT:-${repo_root}/tmp/connectedhomeip}"
 log_dir="${MATTER_INTEROP_LOG_DIR:-${repo_root}/tmp/interop-sdk-jfc}"
-sdk_tag="v1.6.0.0"
+sdk_tag="${MATTER_SDK_TAG:-v1.6.0.0}"
+
+case "${sdk_tag}" in
+  v1.6.0.0)
+    export MATTER_INTEROP_REQUIRE_BINDING_REMOVAL=0
+    ;;
+  v1.6.1.0)
+    export MATTER_INTEROP_REQUIRE_BINDING_REMOVAL=1
+    ;;
+  *)
+    echo "Unsupported Matter SDK tag: ${sdk_tag}" >&2
+    exit 2
+    ;;
+esac
 
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo "This smoke test requires Linux x86_64" >&2

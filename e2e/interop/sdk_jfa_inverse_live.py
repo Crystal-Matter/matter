@@ -88,6 +88,9 @@ def run(args):
                     f"Crystal -> SDK JFA Datastore driver exited {result.returncode}; "
                     f"log tail:\n{transcript[-5000:]}"
                 )
+            if (os.environ.get("MATTER_INTEROP_REQUIRE_BINDING_REMOVAL") == "1" and
+                    "PASS: SDK JFA removed the live switch Binding and preserved an unrelated target over CASE" not in transcript):
+                raise RuntimeError("SDK JFA did not prove live Binding removal over CASE")
             print(f"PASS: Crystal controller exercised official SDK JFA Datastore commands and propagated a live group, binding, and ACL over CASE; logs: {logs}")
         finally:
             if switch is not None:

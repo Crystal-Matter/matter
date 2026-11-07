@@ -763,7 +763,12 @@ Binding fetch callback dereferences an absent `objectToWrite` when it reads a
 nonempty list, aborting RemoveBinding before it can propagate the removal. The
 test restores the live switch's Binding baseline with a direct Crystal CASE
 write, then invokes RemoveBinding to clear the SDK Datastore entry. SDK removal
-propagation and endpoint-1 Binding placement remain unverified. The inverse
+propagation and endpoint-1 Binding placement remain unverified in v1.6.0.0.
+The separate v1.6.1.0 inverse smoke lane retains the managed Binding until
+RemoveBinding runs and places an unrelated target beside it. It requires the
+SDK to remove only the managed target from the live switch over CASE. This
+checks the SDK's corrected nonempty Binding fetch; endpoint-1 placement remains
+unverified because the SDK still writes the root Binding attribute. The inverse
 fixture also sends AddACLToNode, requires NodeACLList to reach Committed, and
 reads the new CASE View entry on the Crystal switch's root AccessControl ACL
 over CASE. The pinned SDK JFA's ACL fetch path drops Datastore list IDs, so its

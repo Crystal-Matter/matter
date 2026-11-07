@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Matter 1.6 Joint Fabric SDK Binding removal interoperability
+
+- Add a separate official SDK v1.6.1.0 inverse-JFA GitHub Actions lane that
+  requires RemoveBindingFromEndpointForNode to remove a managed Binding from a
+  live Crystal switch over CASE while preserving an unrelated target. Retain
+  the v1.6.0.0 smoke baseline and its documented SDK workaround.
+
 ### Matter 1.6 Thermostat suggestion following-state reconciliation
 
 - Keep a guarded profile's effective suggestion selected when a later setpoint
