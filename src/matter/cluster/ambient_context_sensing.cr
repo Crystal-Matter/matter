@@ -4,7 +4,7 @@ module Matter
   module Cluster
     # Provisional Matter 1.6 Ambient Context Sensing server (0x0431).
     # The host owns physical sensing and supplies classified observations.
-    # One active detection is supported for HA, HA+PRED, AUD, or OC+OI.
+    # One active detection is supported for HA, HA+PRED, AUD, AUD+PRED, or OC+OI.
     class AmbientContextSensing < Base
       cluster 0x0431, revision: 1
 
@@ -148,7 +148,7 @@ module Matter
         end
       end
 
-      # HA-only prediction: OC fields are absent because this profile does
+      # HA or AUD prediction: OC fields are absent because these profiles do
       # not advertise ObjectCounting. Timestamps use the Matter epoch.
       struct PredictedActivityStruct
         include TLV::Serializable
@@ -308,8 +308,9 @@ module Matter
         unless @feature_map == Feature::HumanActivity ||
                @feature_map == (Feature::HumanActivity | Feature::PredictedActivity) ||
                @feature_map == (Feature::ObjectCounting | Feature::ObjectIdentification) ||
-               @feature_map == Feature::SoundIdentification
-          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, SoundIdentification, or ObjectCounting+ObjectIdentification is implemented")
+               @feature_map == Feature::SoundIdentification ||
+               @feature_map == (Feature::SoundIdentification | Feature::PredictedActivity)
+          raise ArgumentError.new("only HumanActivity, HumanActivity+PredictedActivity, SoundIdentification, SoundIdentification+PredictedActivity, or ObjectCounting+ObjectIdentification is implemented")
         end
         if @feature_map.predicted_activity? && @prediction_clock.nil?
           raise ArgumentError.new("PredictedActivity requires a Matter epoch clock")
@@ -372,14 +373,15 @@ module Matter
           raise ArgumentError.new("prediction clock is unavailable") unless now
           raise ArgumentError.new("too many predicted activities") if predictions.size > MAX_PREDICTED_ACTIVITIES
           previous_end : UInt32? = nil
+          supported_tags = @feature_map.human_activity? ? @supported_activity_tags : @supported_sound_tags
           replacement = predictions.map do |prediction|
             raise ArgumentError.new("prediction must start in the future") unless prediction.start_timestamp > now
             if previous_end && prediction.start_timestamp <= previous_end
               raise ArgumentError.new("predictions must be ordered and non-overlapping")
             end
             tags = prediction.ambient_context_type
-            unless tags.size == 1 && tags.uniq.size == tags.size && tags.all? { |tag| @supported_activity_tags.includes?(tag) }
-              raise ArgumentError.new("prediction must use one supported human activity tag")
+            unless tags.size == 1 && supported_tags.includes?(tags.first)
+              raise ArgumentError.new("prediction must use one supported ambient context tag")
             end
             previous_end = prediction.end_timestamp
             prediction.copy
