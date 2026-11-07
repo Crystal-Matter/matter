@@ -164,6 +164,10 @@ describe "Ambient Context Sensing HoldTimeMax" do
       prediction_clock: -> : UInt32? { 100_u32 })
     aud = build(Ambient, feature_map: Ambient::Feature::SoundIdentification,
       supported_sound_tags: [unknown_sound, barking], hold_time_limits: limits)
+    aud_pred = build(Ambient,
+      feature_map: Ambient::Feature::SoundIdentification | Ambient::Feature::PredictedActivity,
+      supported_sound_tags: [unknown_sound, barking], hold_time_limits: limits,
+      prediction_clock: -> : UInt32? { 100_u32 })
     oc_oi = build(Ambient,
       feature_map: Ambient::Feature::ObjectCounting | Ambient::Feature::ObjectIdentification,
       supported_object_tags: [unknown_object, person], hold_time_limits: limits)
@@ -172,12 +176,14 @@ describe "Ambient Context Sensing HoldTimeMax" do
     ha.observe_human_activity(walking)
     ha_pred.observe_human_activity(walking)
     aud.observe_sound(barking)
+    aud_pred.observe_sound(barking)
     oc_oi.observe_object_count(person, 1_u16)
     while Time.instant - started_at < 9.4.seconds
       sleep 250.milliseconds
       ha.observe_human_activity(walking)
       ha_pred.observe_human_activity(walking)
       aud.observe_sound(barking)
+      aud_pred.observe_sound(barking)
       oc_oi.observe_object_count(person, 1_u16)
     end
     remaining = started_at + 10.2.seconds - Time.instant
@@ -186,6 +192,7 @@ describe "Ambient Context Sensing HoldTimeMax" do
     ha.human_activity_detected?.should be_false
     ha_pred.human_activity_detected?.should be_false
     aud.audio_context_detected?.should be_false
+    aud_pred.audio_context_detected?.should be_false
     oc_oi.object_identified?.should be_false
   end
 end
@@ -300,6 +307,71 @@ describe "Ambient Context Sensing HA+PRED profile" do
     attribute_ids(normal).should_not contain(Ambient::ATTR_PREDICTED_ACTIVITY)
     expect_raises(ArgumentError, /not enabled/) do
       normal.replace_predicted_activities([] of Ambient::PredictedActivityStruct)
+    end
+  end
+end
+
+describe "Ambient Context Sensing AUD+PRED profile" do
+  unknown = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Unknown)
+  barking = Ambient::SemanticTag.identified_sound(Ambient::IdentifiedSound::Barking)
+  walking = Ambient::SemanticTag.human_activity(Ambient::HumanActivity::Walking)
+  feature_map = Ambient::Feature::SoundIdentification | Ambient::Feature::PredictedActivity
+
+  it "publishes sound forecasts atomically and prunes them on clock advance" do
+    now : UInt32? = 100_u32
+    cluster = build(Ambient, feature_map: feature_map,
+      supported_sound_tags: [unknown, barking], prediction_clock: -> : UInt32? { now })
+    read(cluster, Matter::Cluster::Base::GLOBAL_FEATURE_MAP).should eq(feature_map.value)
+    attribute_ids(cluster).should contain(Ambient::ATTR_AUDIO_CONTEXT_DETECTED)
+    attribute_ids(cluster).should contain(Ambient::ATTR_PREDICTED_ACTIVITY)
+    cluster.ambient_context_type_supported.should eq([unknown, barking])
+    read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list.should be_empty
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_STARTED).should_not be_nil
+    cluster.get_event_metadata(Ambient::EVENT_AMBIENT_CONTEXT_DETECT_ENDED).should_not be_nil
+
+    first = Ambient::PredictedActivityStruct.new(120_u32, 180_u32, [barking], 80_u8)
+    second = Ambient::PredictedActivityStruct.new(190_u32, 210_u32, [unknown], 60_u8)
+    version = cluster.data_version
+    cluster.replace_predicted_activities([first, second])
+    cluster.data_version.should eq(version + 1_u32)
+    wire = read_tlv(cluster, Ambient::ATTR_PREDICTED_ACTIVITY).as_list
+    wire.size.should eq(2)
+    wire[0].as_structure.keys.should eq([0_u8, 1_u8, 2_u8, 5_u8])
+    decoded = Ambient::PredictedActivityStruct.from_tlv(wire[0])
+    decoded.ambient_context_type.should eq([barking])
+    decoded.confidence.should eq(80_u8)
+
+    expect_raises(ArgumentError, /supported/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32, [walking], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /one supported/) do
+      cluster.replace_predicted_activities([
+        Ambient::PredictedActivityStruct.new(130_u32, 140_u32, [barking, unknown], 50_u8),
+      ])
+    end
+    expect_raises(ArgumentError, /ordered/) do
+      cluster.replace_predicted_activities([first,
+                                            Ambient::PredictedActivityStruct.new(180_u32, 220_u32, [barking], 50_u8)])
+    end
+    cluster.data_version.should eq(version + 1_u32)
+    cluster.predicted_activity.should eq([first, second])
+
+    now = 120_u32
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should eq([second])
+    now = nil
+    cluster.refresh_predicted_activities
+    cluster.predicted_activity.should be_empty
+    expect_raises(ArgumentError, /unavailable/) { cluster.replace_predicted_activities([first]) }
+    cluster.observe_sound(barking)
+    cluster.audio_context_detected?.should be_true
+  end
+
+  it "requires a prediction clock" do
+    expect_raises(ArgumentError, /clock/) do
+      build(Ambient, feature_map: feature_map, supported_sound_tags: [unknown, barking])
     end
   end
 end

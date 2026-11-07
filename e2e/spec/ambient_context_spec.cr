@@ -7,8 +7,62 @@ describe "synthetic Ambient Context Sensing examples" do
   trigger = File.join(E2E::LOG_DIR, "matter_ambient_context.trigger")
   ack = "#{trigger}.ack"
 
-  it "commissions the HA, OC+OI, AUD, and HA+PRED fixture" do
+  it "commissions the HA, OC+OI, AUD, HA+PRED, and AUD+PRED fixture" do
     device.commission!
+  end
+
+  it "reads host-published AUD predictions and prunes them when the test clock advances" do
+    read_int(device, "ambientcontextsensing", "feature-map", "FeatureMap", 5).should eq(24)
+    expect_success(device.read("ambientcontextsensing", "audio-context-detected", 5))
+      .bool("AudioContextDetected").should be_false
+    initial = expect_success(device.read("ambientcontextsensing", "predicted-activity", 5))
+    initial.output.should_not contain("StartTimestamp")
+
+    File.delete(ack) if File.exists?(ack)
+    nonce = "predict-barking:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not publish sound prediction" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    forecast = expect_success(device.read("ambientcontextsensing", "predicted-activity", 5))
+    forecast.output.should contain("StartTimestamp")
+    forecast.output.should contain("EndTimestamp")
+    forecast.output.should contain("Tag: 4")
+    forecast.output.should contain("Confidence: 80")
+    forecast.output.should contain("Confidence: 60")
+
+    File.delete(ack)
+    nonce = "advance-sound-prediction-clock:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not advance sound prediction clock" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    remaining = expect_success(device.read("ambientcontextsensing", "predicted-activity", 5))
+    remaining.output.should_not contain("Confidence: 80")
+    remaining.output.should contain("Confidence: 60")
+
+    File.delete(ack)
+    nonce = "barking-pred:#{Time.utc.to_unix_ms}"
+    File.write("#{trigger}.tmp", nonce)
+    File.rename("#{trigger}.tmp", trigger)
+    deadline = Time.instant + 10.seconds
+    until File.exists?(ack) && File.read(ack) == nonce
+      raise "Ambient Context host did not classify sound on predicted endpoint" if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+    expect_success(device.read("ambientcontextsensing", "audio-context-detected", 5))
+      .bool("AudioContextDetected").should be_true
+    expect_success(device.read("ambientcontextsensing", "ambient-context-type", 5))
+      .output.should contain("Tag: 4")
+    expect_success(device.chip(
+      ["ambientcontextsensing", "read-event", "ambient-context-detect-started", device.node, "5"]))
+      .output.should contain("Tag: 4")
   end
 
   it "reads host-published HA predictions and prunes them when the test clock advances" do

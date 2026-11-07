@@ -18,6 +18,7 @@ module MatterAmbientContext
 
     @hook_active = false
     @prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
+    @sound_prediction_now = (Time.utc.to_unix - MATTER_EPOCH_UNIX_SECONDS).to_u32
 
     identity vendor: "Spider-Gazelle", product: "Synthetic Ambient Context",
       vendor_id: Matter::SetupPayload.test_vendor_id,
@@ -64,6 +65,14 @@ module MatterAmbientContext
         as: :predicted_ambient
     end
 
+    endpoint 5, device_type: Matter::DeviceType::AGGREGATOR do
+      cluster Ambient,
+        feature_map: Ambient::Feature::SoundIdentification | Ambient::Feature::PredictedActivity,
+        supported_sound_tags: [UNKNOWN_SOUND, BARKING_SOUND],
+        prediction_clock: -> : UInt32? { @sound_prediction_now },
+        as: :predicted_sound_ambient
+    end
+
     protected def on_started : Nil
       super
       if path = ENV["MATTER_AMBIENT_CONTEXT_HOOK_PATH"]?
@@ -104,6 +113,22 @@ module MatterAmbientContext
           elsif nonce.starts_with?("advance-prediction-clock:")
             @prediction_now += 120_u32
             predicted_ambient.refresh_predicted_activities
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("predict-barking:")
+            start_at = @sound_prediction_now + 120_u32
+            predicted_sound_ambient.replace_predicted_activities([
+              Ambient::PredictedActivityStruct.new(start_at, start_at + 60_u32,
+                [BARKING_SOUND], 80_u8),
+              Ambient::PredictedActivityStruct.new(start_at + 120_u32, start_at + 180_u32,
+                [UNKNOWN_SOUND], 60_u8),
+            ])
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("advance-sound-prediction-clock:")
+            @sound_prediction_now += 120_u32
+            predicted_sound_ambient.refresh_predicted_activities
+            File.write("#{path}.ack", nonce)
+          elsif nonce.starts_with?("barking-pred:")
+            predicted_sound_ambient.observe_sound(BARKING_SOUND)
             File.write("#{path}.ack", nonce)
           elsif nonce.starts_with?("walking-cap:")
             spawn do
